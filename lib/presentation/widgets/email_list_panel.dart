@@ -295,10 +295,8 @@ class _EmailListView extends StatelessWidget {
               isExpanded: item.isExpanded,
               hasUnread: item.hasUnread,
               isSelected: item.latestEmail.id == selectedEmailId,
-              onTap: () {
-                onEmailSelected(item.latestEmail);
-                onToggleConversation(item.conversationId);
-              },
+              onTap: () => onEmailSelected(item.latestEmail),
+              onToggleExpand: () => onToggleConversation(item.conversationId),
             ),
         };
       },
@@ -315,6 +313,7 @@ class _ConversationHeader extends StatelessWidget {
     required this.hasUnread,
     required this.isSelected,
     required this.onTap,
+    required this.onToggleExpand,
   });
 
   final Email latestEmail;
@@ -323,134 +322,149 @@ class _ConversationHeader extends StatelessWidget {
   final bool hasUnread;
   final bool isSelected;
   final VoidCallback onTap;
+  final VoidCallback onToggleExpand;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 120),
-        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: isSelected ? c.selectionEmailBg : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-          border: isSelected ? Border.all(color: c.selectionBorder) : null,
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Unread dot
-            Padding(
-              padding: const EdgeInsets.only(top: 6, right: 8),
-              child: AnimatedOpacity(
-                opacity: hasUnread ? 1.0 : 0.0,
-                duration: const Duration(milliseconds: 300),
-                child: Container(
-                  width: 7,
-                  height: 7,
-                  decoration: const BoxDecoration(
-                    color: AppColors.accent,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onToggleExpand,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 10, 4, 10),
+            child: Icon(
+              isExpanded
+                  ? Icons.expand_more_rounded
+                  : Icons.chevron_right_rounded,
+              size: 14,
+              color: c.textMuted,
             ),
-            Expanded(
-              child: Column(
+          ),
+        ),
+        Expanded(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onTap,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              margin: const EdgeInsets.fromLTRB(0, 1, 8, 1),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: isSelected ? c.selectionEmailBg : Colors.transparent,
+                borderRadius: BorderRadius.circular(8),
+                border: isSelected ? Border.all(color: c.selectionBorder) : null,
+              ),
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          latestEmail.from.displayName,
-                          style: TextStyle(
-                            color: hasUnread ? c.textSecondary : c.textTertiary,
-                            fontSize: 13,
-                            fontWeight: hasUnread ? FontWeight.w600 : FontWeight.w400,
-                          ),
-                          overflow: TextOverflow.ellipsis,
+                  // Unread dot
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6, right: 8),
+                    child: AnimatedOpacity(
+                      opacity: hasUnread ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 300),
+                      child: Container(
+                        width: 7,
+                        height: 7,
+                        decoration: const BoxDecoration(
+                          color: AppColors.accent,
+                          shape: BoxShape.circle,
                         ),
                       ),
-                      const SizedBox(width: 4),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                        decoration: BoxDecoration(
-                          color: c.badgeBg,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          '$totalCount',
-                          style: TextStyle(
-                            color: AppColors.accent,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        formatEmailDate(latestEmail.receivedDateTime),
-                        style: TextStyle(
-                          color: hasUnread ? AppColors.accent : c.textDimmed,
-                          fontSize: 11,
-                          fontWeight: hasUnread ? FontWeight.w500 : FontWeight.w400,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 3),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          latestEmail.subject,
-                          style: TextStyle(
-                            color: hasUnread ? c.textBody : c.textMuted,
-                            fontSize: 12,
-                            fontWeight: hasUnread ? FontWeight.w500 : FontWeight.w400,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      if (latestEmail.hasAttachments)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 4),
-                          child: Icon(
-                            Icons.attach_file_rounded,
-                            size: 12,
-                            color: c.textDimmed,
-                          ),
-                        ),
-                      const SizedBox(width: 4),
-                      Icon(
-                        isExpanded
-                            ? Icons.expand_more_rounded
-                            : Icons.chevron_right_rounded,
-                        size: 14,
-                        color: c.textMuted,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    latestEmail.bodyPreview,
-                    style: TextStyle(
-                      color: c.textDimmed,
-                      fontSize: 11,
-                      height: 1.3,
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                latestEmail.from.displayName,
+                                style: TextStyle(
+                                  color: hasUnread ? c.textSecondary : c.textTertiary,
+                                  fontSize: 13,
+                                  fontWeight: hasUnread ? FontWeight.w600 : FontWeight.w400,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: c.badgeBg,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                '$totalCount',
+                                style: TextStyle(
+                                  color: AppColors.accent,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              formatEmailDate(latestEmail.receivedDateTime),
+                              style: TextStyle(
+                                color: hasUnread ? AppColors.accent : c.textDimmed,
+                                fontSize: 11,
+                                fontWeight: hasUnread ? FontWeight.w500 : FontWeight.w400,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 3),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                latestEmail.subject,
+                                style: TextStyle(
+                                  color: hasUnread ? c.textBody : c.textMuted,
+                                  fontSize: 12,
+                                  fontWeight: hasUnread ? FontWeight.w500 : FontWeight.w400,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (latestEmail.hasAttachments)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 4),
+                                child: Icon(
+                                  Icons.attach_file_rounded,
+                                  size: 12,
+                                  color: c.textDimmed,
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          latestEmail.bodyPreview,
+                          style: TextStyle(
+                            color: c.textDimmed,
+                            fontSize: 11,
+                            height: 1.3,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
             ),
-          ],
+          ),
         ),
-      ),
+      ],
     );
   }
 }

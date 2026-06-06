@@ -392,19 +392,26 @@ class _EmailBody extends StatelessWidget {
                       height: 1.6,
                     ),
                     customStylesBuilder: (element) {
+                      final styles = <String, String>{};
+
                       // Override explicit black/white colors from the email's stylesheet.
                       if (['p', 'div', 'span', 'td', 'li']
                           .contains(element.localName)) {
-                        return {'color': htmlColor};
+                        styles['color'] = htmlColor;
                       }
 
-                      // Force tables to have auto height to avoid issues with 'height: 100%'
-                      // inside a scrollable view with unbounded height.
-                      if (element.localName == 'table') {
-                        return {'height': 'auto'};
+                      // Force tables and common containers to be responsive and fill width.
+                      if (['table', 'div', 'section', 'article', 'body']
+                          .contains(element.localName)) {
+                        styles['max-width'] = 'none';
+                        styles['min-width'] = '0';
+                        if (element.localName == 'table') {
+                          styles['height'] = 'auto';
+                          styles['width'] = '100%';
+                        }
                       }
 
-                      return null;
+                      return styles.isEmpty ? null : styles;
                     },
                   )
                 : SelectableText(

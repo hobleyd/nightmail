@@ -18,7 +18,7 @@ import 'web_auth_stub.dart' if (dart.library.html) 'web_auth_web.dart';
 ///   - Platform: Mobile and Desktop (for native/desktop), or Single-page
 ///     application (for web)
 ///   - Redirect URI matching [redirectUri]
-///   - API permissions: Mail.Read, Mail.ReadWrite, offline_access
+///   - API permissions: Mail.Read, Mail.ReadWrite, Mail.Send, offline_access
 class MicrosoftAuthService implements AuthService {
   MicrosoftAuthService({
     required this.clientId,
@@ -52,6 +52,7 @@ class MicrosoftAuthService implements AuthService {
     'offline_access',
     'https://graph.microsoft.com/Mail.Read',
     'https://graph.microsoft.com/Mail.ReadWrite',
+    'https://graph.microsoft.com/Mail.Send',
     'https://graph.microsoft.com/MailboxSettings.Read',
     'https://graph.microsoft.com/Calendars.Read',
   ];

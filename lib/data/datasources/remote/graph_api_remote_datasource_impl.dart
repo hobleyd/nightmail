@@ -117,7 +117,7 @@ class GraphApiRemoteDatasourceImpl implements GraphApiRemoteDatasource {
         '/me/mailFolders',
         queryParameters: {
           '\$select':
-              'id,displayName,totalItemCount,unreadItemCount,parentFolderId,isHidden',
+              'id,displayName,totalItemCount,unreadItemCount,parentFolderId,isHidden,childFolderCount',
           '\$top': 100,
         },
       );
@@ -141,7 +141,7 @@ class GraphApiRemoteDatasourceImpl implements GraphApiRemoteDatasource {
         '/me/mailFolders/$parentFolderId/childFolders',
         queryParameters: {
           '\$select':
-              'id,displayName,totalItemCount,unreadItemCount,parentFolderId,isHidden',
+              'id,displayName,totalItemCount,unreadItemCount,parentFolderId,isHidden,childFolderCount',
           '\$top': 100,
         },
       );

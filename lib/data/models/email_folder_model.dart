@@ -8,6 +8,7 @@ class EmailFolderModel extends EmailFolder {
     required super.unreadItemCount,
     super.parentFolderId,
     super.isHidden,
+    super.childFolderCount,
   });
 
   factory EmailFolderModel.fromJson(Map<String, dynamic> json) {
@@ -18,6 +19,7 @@ class EmailFolderModel extends EmailFolder {
       unreadItemCount: json['unreadItemCount'] as int? ?? 0,
       parentFolderId: json['parentFolderId'] as String?,
       isHidden: json['isHidden'] as bool? ?? false,
+      childFolderCount: json['childFolderCount'] as int? ?? 0,
     );
   }
 
@@ -29,6 +31,7 @@ class EmailFolderModel extends EmailFolder {
       unreadItemCount: entity.unreadItemCount,
       parentFolderId: entity.parentFolderId,
       isHidden: entity.isHidden,
+      childFolderCount: entity.childFolderCount,
     );
   }
 }

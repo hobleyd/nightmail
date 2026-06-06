@@ -47,7 +47,36 @@ class EmailRepositoryImpl implements EmailRepository {
 
   @override
   Future<Either<Failure, List<EmailFolder>>> getMailFolders() async {
-    return _execute(() => _remote.getMailFolders());
+    try {
+      final topLevel = await _remote.getMailFolders();
+      final all = <EmailFolder>[...topLevel];
+
+      List<EmailFolder> toExpand =
+          topLevel.where((f) => f.childFolderCount > 0).toList();
+      while (toExpand.isNotEmpty) {
+        final nextLevel = <EmailFolder>[];
+        final childResults = await Future.wait(
+          toExpand.map((f) => _remote.getChildFolders(f.id)),
+        );
+        for (final children in childResults) {
+          all.addAll(children);
+          nextLevel.addAll(children.where((f) => f.childFolderCount > 0));
+        }
+        toExpand = nextLevel;
+      }
+
+      return Right(all);
+    } on AuthException catch (e) {
+      return Left(AuthFailure(message: e.message));
+    } on NetworkException catch (e) {
+      return Left(NetworkFailure(message: e.message));
+    } on ServerException catch (e) {
+      return Left(ServerFailure(message: e.message, statusCode: e.statusCode));
+    } on CacheException catch (e) {
+      return Left(CacheFailure(message: e.message));
+    } catch (e) {
+      return Left(ServerFailure(message: e.toString()));
+    }
   }
 
   @override

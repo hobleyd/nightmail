@@ -8,6 +8,7 @@ class EmailFolder extends Equatable {
     required this.unreadItemCount,
     this.parentFolderId,
     this.isHidden = false,
+    this.childFolderCount = 0,
   });
 
   final String id;
@@ -16,6 +17,7 @@ class EmailFolder extends Equatable {
   final int unreadItemCount;
   final String? parentFolderId;
   final bool isHidden;
+  final int childFolderCount;
 
   bool get hasUnread => unreadItemCount > 0;
 

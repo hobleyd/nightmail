@@ -228,8 +228,9 @@ class _ResizeHandleState extends State<_ResizeHandle> {
       cursor: SystemMouseCursors.resizeColumn,
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-        onHorizontalDragUpdate: (details) => widget.onDrag(details.delta.dx),
+      child: Listener(
+        behavior: HitTestBehavior.opaque,
+        onPointerMove: (event) => widget.onDrag(event.delta.dx),
         child: SizedBox(
           width: 8,
           child: Center(

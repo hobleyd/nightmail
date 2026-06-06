@@ -1,0 +1,341 @@
+import 'dart:convert';
+
+import 'package:dio/dio.dart';
+
+import '../../../core/error/exceptions.dart';
+import '../../../domain/entities/email.dart';
+import '../../../infrastructure/http/gmail_http_client.dart';
+import '../../models/email_address_model.dart';
+import '../../models/email_folder_model.dart';
+import '../../models/email_model.dart';
+import 'email_remote_datasource.dart';
+
+class GmailDatasourceImpl implements EmailRemoteDatasource {
+  GmailDatasourceImpl({required GmailHttpClient client}) : _dio = client.dio;
+
+  final Dio _dio;
+
+  @override
+  Future<List<EmailFolderModel>> getMailFolders() async {
+    try {
+      final response =
+          await _dio.get<Map<String, dynamic>>('/users/me/labels');
+      final data = response.data;
+      if (data == null) return [];
+
+      final labels = data['labels'] as List<dynamic>? ?? [];
+      final folders = <EmailFolderModel>[];
+
+      for (final label in labels) {
+        final map = label as Map<String, dynamic>;
+        final id = map['id'] as String;
+        final type = map['type'] as String? ?? '';
+
+        // Skip hidden system labels that don't correspond to mailboxes.
+        if (type == 'system' && _isHiddenSystemLabel(id)) continue;
+
+        // Get message counts via a second call (label list doesn't include counts).
+        folders.add(EmailFolderModel(
+          id: id,
+          displayName: _labelDisplayName(map['name'] as String? ?? id),
+          totalItemCount: 0,
+          unreadItemCount: 0,
+          isHidden: type == 'system' && id.startsWith('CATEGORY_'),
+          childFolderCount: 0,
+        ));
+      }
+
+      return folders;
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  @override
+  Future<List<EmailFolderModel>> getChildFolders(String parentFolderId) async {
+    // Gmail labels are flat — no children.
+    return [];
+  }
+
+  @override
+  Future<List<EmailModel>> getEmails({
+    String? folderId,
+    int top = 25,
+    int skip = 0,
+    String? filter,
+    String orderBy = 'receivedDateTime desc',
+  }) async {
+    try {
+      final queryParams = <String, dynamic>{
+        'maxResults': top,
+        if (folderId != null) 'labelIds': folderId,
+      };
+
+      final listResp = await _dio.get<Map<String, dynamic>>(
+        '/users/me/messages',
+        queryParameters: queryParams,
+      );
+
+      final data = listResp.data;
+      if (data == null) return [];
+
+      final messages = data['messages'] as List<dynamic>? ?? [];
+      if (messages.isEmpty) return [];
+
+      // Batch fetch message metadata.
+      final metaFutures = messages.map((m) {
+        final id = (m as Map<String, dynamic>)['id'] as String;
+        return _fetchMessageMetadata(id);
+      });
+
+      return (await Future.wait(metaFutures)).whereType<EmailModel>().toList();
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  Future<EmailModel?> _fetchMessageMetadata(String id) async {
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '/users/me/messages/$id',
+        queryParameters: {
+          'format': 'metadata',
+          'metadataHeaders': ['From', 'To', 'Cc', 'Subject', 'Date'].join(','),
+        },
+      );
+      if (resp.data == null) return null;
+      return _parseMessage(resp.data!, fullBody: false);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<EmailModel> getEmail(String id) async {
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '/users/me/messages/$id',
+        queryParameters: {'format': 'full'},
+      );
+      if (resp.data == null) {
+        throw ServerException(message: 'Empty response for message $id');
+      }
+      return _parseMessage(resp.data!, fullBody: true);
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  @override
+  Future<EmailModel> updateEmailReadStatus({
+    required String id,
+    required bool isRead,
+  }) async {
+    try {
+      final body = isRead
+          ? {'removeLabelIds': ['UNREAD']}
+          : {'addLabelIds': ['UNREAD']};
+
+      await _dio.post<Map<String, dynamic>>(
+        '/users/me/messages/$id/modify',
+        data: body,
+      );
+
+      // Re-fetch the message to return updated state.
+      return getEmail(id);
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Parsing helpers
+  // ---------------------------------------------------------------------------
+
+  EmailModel _parseMessage(Map<String, dynamic> json, {required bool fullBody}) {
+    final id = json['id'] as String;
+    final labelIds = (json['labelIds'] as List<dynamic>? ?? []).cast<String>();
+    final isRead = !labelIds.contains('UNREAD');
+    final snippet = json['snippet'] as String? ?? '';
+
+    final payload = json['payload'] as Map<String, dynamic>? ?? {};
+    final headers = (payload['headers'] as List<dynamic>? ?? [])
+        .cast<Map<String, dynamic>>();
+
+    String headerValue(String name) {
+      return headers
+          .firstWhere(
+            (h) => (h['name'] as String).toLowerCase() == name.toLowerCase(),
+            orElse: () => {'value': ''},
+          )['value'] as String;
+    }
+
+    final subject = headerValue('Subject');
+    final fromStr = headerValue('From');
+    final toStr = headerValue('To');
+    final ccStr = headerValue('Cc');
+    final dateStr = headerValue('Date');
+
+    DateTime receivedAt;
+    try {
+      final internalDate = json['internalDate'] as String?;
+      if (internalDate != null) {
+        receivedAt = DateTime.fromMillisecondsSinceEpoch(
+          int.parse(internalDate),
+          isUtc: true,
+        );
+      } else {
+        receivedAt = _parseRfc2822Date(dateStr);
+      }
+    } catch (_) {
+      receivedAt = DateTime.now().toUtc();
+    }
+
+    String body = '';
+    EmailBodyType bodyType = EmailBodyType.text;
+
+    if (fullBody) {
+      final (extractedBody, extractedType) = _extractBody(payload);
+      body = extractedBody;
+      bodyType = extractedType;
+    }
+
+    final parentFolderId = labelIds.contains('INBOX')
+        ? 'INBOX'
+        : labelIds.where((l) => !_isSystemLabel(l)).firstOrNull;
+
+    return EmailModel(
+      id: id,
+      subject: subject.isEmpty ? '(No Subject)' : subject,
+      from: _parseAddress(fromStr),
+      toRecipients: _parseAddressList(toStr),
+      ccRecipients: _parseAddressList(ccStr),
+      bodyPreview: snippet,
+      body: body,
+      bodyType: bodyType,
+      isRead: isRead,
+      receivedDateTime: receivedAt,
+      importance: EmailImportance.normal,
+      parentFolderId: parentFolderId,
+      hasAttachments: false,
+    );
+  }
+
+  (String, EmailBodyType) _extractBody(Map<String, dynamic> payload) {
+    final mimeType = payload['mimeType'] as String? ?? '';
+
+    if (mimeType == 'text/html' || mimeType == 'text/plain') {
+      final data = (payload['body'] as Map<String, dynamic>?)?['data'] as String?;
+      if (data != null) {
+        final decoded = utf8.decode(base64Url.decode(_padBase64(data)));
+        return (decoded, mimeType == 'text/html' ? EmailBodyType.html : EmailBodyType.text);
+      }
+    }
+
+    // Multipart: prefer HTML part.
+    final parts = (payload['parts'] as List<dynamic>? ?? [])
+        .cast<Map<String, dynamic>>();
+
+    String? htmlBody;
+    String? textBody;
+
+    void scanParts(List<Map<String, dynamic>> partList) {
+      for (final part in partList) {
+        final mt = part['mimeType'] as String? ?? '';
+        if (mt == 'text/html') {
+          final data = (part['body'] as Map<String, dynamic>?)?['data'] as String?;
+          if (data != null) {
+            htmlBody = utf8.decode(base64Url.decode(_padBase64(data)));
+          }
+        } else if (mt == 'text/plain' && htmlBody == null) {
+          final data = (part['body'] as Map<String, dynamic>?)?['data'] as String?;
+          if (data != null) {
+            textBody = utf8.decode(base64Url.decode(_padBase64(data)));
+          }
+        } else if (mt.startsWith('multipart/')) {
+          final nested = (part['parts'] as List<dynamic>? ?? [])
+              .cast<Map<String, dynamic>>();
+          scanParts(nested);
+        }
+      }
+    }
+
+    scanParts(parts);
+
+    if (htmlBody != null) return (htmlBody!, EmailBodyType.html);
+    if (textBody != null) return (textBody!, EmailBodyType.text);
+    return ('', EmailBodyType.text);
+  }
+
+  String _padBase64(String s) {
+    final padding = (4 - s.length % 4) % 4;
+    return s + ('=' * padding);
+  }
+
+  EmailAddressModel _parseAddress(String raw) {
+    if (raw.isEmpty) return const EmailAddressModel(address: '', name: '');
+    // Format: "Display Name <email@example.com>" or just "email@example.com"
+    final match = RegExp(r'^(.+?)\s*<([^>]+)>$').firstMatch(raw.trim());
+    if (match != null) {
+      return EmailAddressModel(
+        name: match.group(1)?.replaceAll('"', '').trim() ?? '',
+        address: match.group(2)?.trim() ?? '',
+      );
+    }
+    return EmailAddressModel(address: raw.trim(), name: '');
+  }
+
+  List<EmailAddressModel> _parseAddressList(String raw) {
+    if (raw.isEmpty) return [];
+    return raw.split(',').map((s) => _parseAddress(s.trim())).toList();
+  }
+
+  DateTime _parseRfc2822Date(String date) {
+    // Attempt parsing — fallback to now.
+    try {
+      return DateTime.parse(date);
+    } catch (_) {
+      return DateTime.now().toUtc();
+    }
+  }
+
+  bool _isSystemLabel(String id) {
+    const system = {
+      'INBOX', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'STARRED', 'IMPORTANT',
+      'UNREAD', 'CHAT', 'CATEGORY_PERSONAL', 'CATEGORY_SOCIAL',
+      'CATEGORY_PROMOTIONS', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS',
+    };
+    return system.contains(id);
+  }
+
+  bool _isHiddenSystemLabel(String id) {
+    const hidden = {'CHAT', 'STARRED', 'IMPORTANT', 'UNREAD'};
+    return hidden.contains(id);
+  }
+
+  String _labelDisplayName(String name) {
+    return switch (name) {
+      'INBOX' => 'Inbox',
+      'SENT' => 'Sent',
+      'DRAFT' => 'Drafts',
+      'TRASH' => 'Trash',
+      'SPAM' => 'Spam',
+      _ => name,
+    };
+  }
+
+  Exception _mapException(DioException e) {
+    final statusCode = e.response?.statusCode;
+    if (e.type == DioExceptionType.connectionError ||
+        e.type == DioExceptionType.connectionTimeout ||
+        e.type == DioExceptionType.receiveTimeout) {
+      return NetworkException(message: e.message ?? 'Network error');
+    }
+    if (statusCode == 401) {
+      return const AuthException(message: 'Authentication required');
+    }
+    return ServerException(
+        message: e.message ?? 'Server error ($statusCode)',
+        statusCode: statusCode);
+  }
+}

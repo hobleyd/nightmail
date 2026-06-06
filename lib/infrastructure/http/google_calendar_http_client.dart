@@ -3,12 +3,11 @@ import 'package:dio/dio.dart';
 import '../auth/auth_service.dart';
 import 'auth_interceptor.dart';
 
-/// Dio instance pre-configured for Microsoft Graph API calls.
-/// Automatically injects the Bearer token and refreshes it on 401.
-class GraphHttpClient {
-  GraphHttpClient({required AuthService authService}) {
+/// Dio instance pre-configured for the Google Calendar REST API.
+class GoogleCalendarHttpClient {
+  GoogleCalendarHttpClient({required AuthService authService}) {
     _dio = Dio(BaseOptions(
-      baseUrl: 'https://graph.microsoft.com/v1.0',
+      baseUrl: 'https://www.googleapis.com/calendar/v3',
       headers: {
         'Accept': 'application/json',
         'Content-Type': 'application/json',

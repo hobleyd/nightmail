@@ -2,12 +2,12 @@ import 'package:dio/dio.dart';
 
 import '../../../core/error/exceptions.dart';
 import '../../../infrastructure/http/graph_http_client.dart';
+import '../../models/calendar_event_model.dart';
 import '../../models/email_folder_model.dart';
 import '../../models/email_model.dart';
-import 'graph_api_remote_datasource.dart';
+import 'calendar_remote_datasource.dart';
+import 'email_remote_datasource.dart';
 
-/// Fields selected from the Graph API for list views (excludes body for
-/// performance — full body is fetched only by [getEmail]).
 final _emailListSelect = [
   'id',
   'subject',
@@ -26,8 +26,9 @@ final _emailListSelect = [
 
 final _emailDetailSelect = '$_emailListSelect,body';
 
-class GraphApiRemoteDatasourceImpl implements GraphApiRemoteDatasource {
-  GraphApiRemoteDatasourceImpl({required GraphHttpClient client})
+class GraphApiDatasourceImpl
+    implements EmailRemoteDatasource, CalendarRemoteDatasource {
+  GraphApiDatasourceImpl({required GraphHttpClient client})
       : _dio = client.dio;
 
   final Dio _dio;
@@ -152,6 +153,39 @@ class GraphApiRemoteDatasourceImpl implements GraphApiRemoteDatasource {
       final value = data['value'] as List<dynamic>? ?? [];
       return value
           .map((e) => EmailFolderModel.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<List<CalendarEventModel>> getCalendarEvents({
+    required DateTime startDateTime,
+    required DateTime endDateTime,
+  }) async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/me/calendarView',
+        queryParameters: {
+          'startDateTime': startDateTime.toUtc().toIso8601String(),
+          'endDateTime': endDateTime.toUtc().toIso8601String(),
+          '\$select':
+              'id,subject,start,end,isAllDay,location,bodyPreview,showAs,isOrganizer',
+          '\$orderby': 'start/dateTime asc',
+          '\$top': 100,
+        },
+        options: Options(
+          headers: {'Prefer': 'outlook.timezone="UTC"'},
+        ),
+      );
+
+      final data = response.data;
+      if (data == null) return [];
+
+      final value = data['value'] as List<dynamic>? ?? [];
+      return value
+          .map((e) => CalendarEventModel.fromJson(e as Map<String, dynamic>))
           .toList();
     } on DioException catch (e) {
       throw _mapDioException(e);

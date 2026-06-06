@@ -1,0 +1,229 @@
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:uuid/uuid.dart';
+
+import '../../core/config/app_config.dart';
+import '../../data/datasources/remote/calendar_remote_datasource.dart';
+import '../../data/datasources/remote/email_remote_datasource.dart';
+import '../../data/datasources/remote/gmail_datasource_impl.dart';
+import '../../data/datasources/remote/google_calendar_datasource_impl.dart';
+import '../../data/datasources/remote/graph_api_datasource_impl.dart';
+import '../../data/datasources/remote/imap_datasource_impl.dart';
+import '../auth/auth_service.dart';
+import '../auth/gmail_auth_service.dart';
+import '../auth/imap_auth_service.dart';
+import '../auth/imap_credential_storage.dart';
+import '../auth/microsoft_auth_service.dart';
+import '../auth/token_storage.dart';
+import '../http/gmail_http_client.dart';
+import '../http/google_calendar_http_client.dart';
+import '../http/graph_http_client.dart';
+import 'account.dart';
+import 'account_storage.dart';
+
+class AccountManager {
+  AccountManager({
+    required AccountStorage accountStorage,
+    required FlutterSecureStorage secureStorage,
+  })  : _accountStorage = accountStorage,
+        _secureStorage = secureStorage;
+
+  final AccountStorage _accountStorage;
+  final FlutterSecureStorage _secureStorage;
+
+  List<Account> _accounts = [];
+  int _activeIndex = 0;
+
+  EmailRemoteDatasource? _emailDatasource;
+  CalendarRemoteDatasource? _calendarDatasource;
+  AuthService? _authService;
+
+  List<Account> get accounts => List.unmodifiable(_accounts);
+  bool get hasAccounts => _accounts.isNotEmpty;
+  int get activeIndex => _activeIndex;
+
+  Account? get activeAccount =>
+      _accounts.isEmpty ? null : _accounts[_activeIndex];
+
+  EmailRemoteDatasource get emailDatasource {
+    if (_emailDatasource == null) throw StateError('No active account');
+    return _emailDatasource!;
+  }
+
+  CalendarRemoteDatasource? get calendarDatasource => _calendarDatasource;
+
+  AuthService get activeAuthService {
+    if (_authService == null) throw StateError('No active account');
+    return _authService!;
+  }
+
+  /// Load persisted accounts and run legacy token migration if needed.
+  Future<void> initialize() async {
+    _accounts = await _accountStorage.loadAccounts();
+    if (_accounts.isEmpty) {
+      await _migrateLegacyAccount();
+      _accounts = await _accountStorage.loadAccounts();
+    }
+    _activeIndex = await _accountStorage.loadActiveIndex();
+    if (_activeIndex >= _accounts.length) _activeIndex = 0;
+    if (_accounts.isNotEmpty) _buildDatasourcesForActiveAccount();
+  }
+
+  /// Add a new account and make it the active account.
+  Future<void> addAccount(Account account) async {
+    _accounts = [..._accounts, account];
+    _activeIndex = _accounts.length - 1;
+    await _accountStorage.saveAccounts(_accounts);
+    await _accountStorage.saveActiveIndex(_activeIndex);
+    _buildDatasourcesForActiveAccount();
+  }
+
+  /// Update an existing account.
+  Future<void> updateAccount(Account updatedAccount) async {
+    final idx = _accounts.indexWhere((a) => a.id == updatedAccount.id);
+    if (idx == -1) return;
+
+    final updatedList = List<Account>.from(_accounts);
+    updatedList[idx] = updatedAccount;
+    _accounts = updatedList;
+
+    await _accountStorage.saveAccounts(_accounts);
+
+    if (idx == _activeIndex) {
+      _buildDatasourcesForActiveAccount();
+    }
+  }
+
+  /// Cycle to the next account. Returns the newly active account.
+  Future<Account> cycleToNextAccount() async {
+    if (_accounts.length < 2) throw StateError('Need at least 2 accounts to cycle');
+    _activeIndex = (_activeIndex + 1) % _accounts.length;
+    await _accountStorage.saveActiveIndex(_activeIndex);
+    _buildDatasourcesForActiveAccount();
+    return _accounts[_activeIndex];
+  }
+
+  /// Switch to a specific account by index.
+  Future<void> switchToAccount(int index) async {
+    if (index < 0 || index >= _accounts.length) {
+      throw RangeError.index(index, _accounts);
+    }
+    _activeIndex = index;
+    await _accountStorage.saveActiveIndex(_activeIndex);
+    _buildDatasourcesForActiveAccount();
+  }
+
+  /// Remove account by ID. Adjusts active index if needed.
+  Future<void> removeAccount(String accountId) async {
+    final idx = _accounts.indexWhere((a) => a.id == accountId);
+    if (idx == -1) return;
+
+    await _clearCredentials(_accounts[idx]);
+
+    final updated = [..._accounts]..removeAt(idx);
+    _accounts = updated;
+    if (_accounts.isEmpty) {
+      _activeIndex = 0;
+      _emailDatasource = null;
+      _calendarDatasource = null;
+      _authService = null;
+    } else {
+      _activeIndex = _activeIndex.clamp(0, _accounts.length - 1);
+      _buildDatasourcesForActiveAccount();
+    }
+
+    await _accountStorage.saveAccounts(_accounts);
+    await _accountStorage.saveActiveIndex(_activeIndex);
+  }
+
+  void _buildDatasourcesForActiveAccount() {
+    final account = activeAccount;
+    if (account == null) return;
+
+    switch (account) {
+      case MicrosoftAccount():
+        final tokenStorage = TokenStorage(
+          _secureStorage,
+          storageKey: 'token_${account.id}',
+        );
+        final authSvc = MicrosoftAuthService(
+          clientId: AppConfig.microsoftClientId,
+          tenantId: account.tenantId,
+          redirectUri: AppConfig.microsoftRedirectUri,
+          tokenStorage: tokenStorage,
+        );
+        final httpClient = GraphHttpClient(authService: authSvc);
+        final ds = GraphApiDatasourceImpl(client: httpClient);
+        _authService = authSvc;
+        _emailDatasource = ds;
+        _calendarDatasource = ds;
+
+      case GmailAccount():
+        final tokenStorage = TokenStorage(
+          _secureStorage,
+          storageKey: 'token_${account.id}',
+        );
+        final authSvc = GmailAuthService(
+          clientId: AppConfig.gmailClientId,
+          redirectUri: AppConfig.gmailRedirectUri,
+          tokenStorage: tokenStorage,
+        );
+        final gmailClient = GmailHttpClient(authService: authSvc);
+        final calendarClient = GoogleCalendarHttpClient(authService: authSvc);
+        _authService = authSvc;
+        _emailDatasource = GmailDatasourceImpl(client: gmailClient);
+        _calendarDatasource =
+            GoogleCalendarDatasourceImpl(client: calendarClient);
+
+      case ImapAccount():
+        final credStorage = ImapCredentialStorage(_secureStorage);
+        _authService = ImapAuthService(
+          accountId: account.id,
+          credentialStorage: credStorage,
+        );
+        _emailDatasource = ImapDatasourceImpl(
+          account: account,
+          credentialStorage: credStorage,
+        );
+        _calendarDatasource = null;
+    }
+  }
+
+  Future<void> _clearCredentials(Account account) async {
+    switch (account) {
+      case MicrosoftAccount() || GmailAccount():
+        final tokenStorage = TokenStorage(
+          _secureStorage,
+          storageKey: 'token_${account.id}',
+        );
+        await tokenStorage.clearToken();
+      case ImapAccount():
+        final credStorage = ImapCredentialStorage(_secureStorage);
+        await credStorage.deletePassword(account.id);
+    }
+  }
+
+  /// One-time migration: if a legacy single-account token exists (from before
+  /// multi-account support), convert it into a MicrosoftAccount entry.
+  Future<void> _migrateLegacyAccount() async {
+    final legacyStorage = TokenStorage(_secureStorage);
+    final token = await legacyStorage.loadToken();
+    if (token == null) return;
+
+    const uuid = Uuid();
+    final id = uuid.v4();
+
+    final newStorage = TokenStorage(_secureStorage, storageKey: 'token_$id');
+    await newStorage.saveToken(token);
+    await legacyStorage.clearToken();
+
+    final account = MicrosoftAccount(
+      id: id,
+      displayName: 'Microsoft Account',
+      emailAddress: '',
+      tenantId: AppConfig.microsoftTenantId,
+    );
+
+    await _accountStorage.saveAccounts([account]);
+    await _accountStorage.saveActiveIndex(0);
+  }
+}

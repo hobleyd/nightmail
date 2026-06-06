@@ -4,8 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email_folder.dart';
 import '../../injection_container.dart';
-import '../blocs/auth/auth_bloc.dart';
-import '../blocs/auth/auth_event.dart';
+import '../blocs/account/account_cubit.dart';
 import '../blocs/calendar/calendar_bloc.dart';
 import '../blocs/calendar/calendar_event.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
@@ -19,6 +18,7 @@ import '../blocs/home/home_cubit.dart';
 import '../widgets/email_list_panel.dart';
 import '../widgets/folder_panel.dart';
 import '../widgets/reading_pane.dart';
+import 'add_account_page.dart';
 import 'calendar_page.dart';
 
 class HomePage extends StatelessWidget {
@@ -28,6 +28,7 @@ class HomePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiBlocProvider(
       providers: [
+        BlocProvider.value(value: sl<AccountCubit>()),
         BlocProvider(
           create: (_) =>
               sl<FolderListBloc>()..add(const FolderListLoadRequested()),
@@ -47,7 +48,6 @@ class _HomeView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // When folders finish loading, auto-select Inbox and load its emails.
     return BlocListener<FolderListBloc, FolderListState>(
       listenWhen: (prev, curr) =>
           prev is! FolderListLoaded && curr is FolderListLoaded,
@@ -69,43 +69,15 @@ class _HomeView extends StatelessWidget {
       },
       child: Scaffold(
         backgroundColor: context.colors.surfaceBase,
-        body: Column(
-          children: [
-            _AppBar(),
-            Expanded(child: _ThreePanelLayout()),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _AppBar extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Container(
-      height: 48,
-      color: c.surfaceBase,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
-        children: [
-          const Spacer(),
-          IconButton(
-            icon: Icon(Icons.logout_rounded, size: 18, color: c.textDimmed),
-            tooltip: 'Sign out',
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            onPressed: () =>
-                context.read<AuthBloc>().add(const AuthSignOutRequested()),
-          ),
-        ],
+        body: const _ThreePanelLayout(),
       ),
     );
   }
 }
 
 class _ThreePanelLayout extends StatefulWidget {
+  const _ThreePanelLayout();
+
   @override
   State<_ThreePanelLayout> createState() => _ThreePanelLayoutState();
 }
@@ -129,17 +101,31 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
             final totalWidth = constraints.maxWidth;
             const totalHandleWidth = _handleWidth * 2;
 
+            final accountState = context.read<AccountCubit>().state;
+            final accountId = accountState is AccountsLoaded
+                ? accountState.activeAccount.id
+                : '';
+            final homeCubit = context.read<HomeCubit>();
+
             final folderPanel = FolderPanel(
+              key: ValueKey(accountId),
               selectedFolderId: homeState.selectedFolderId,
+              initialExpandedIds: homeCubit.savedExpandedForAccount(accountId),
+              onExpandedIdsChanged: (ids) {
+                final state = context.read<AccountCubit>().state;
+                if (state is AccountsLoaded) {
+                  homeCubit.rememberExpandedForAccount(
+                      state.activeAccount.id, ids);
+                }
+              },
               onFolderSelected: (folder) {
-                context.read<HomeCubit>().selectFolder(folder.id);
+                homeCubit.selectFolder(folder.id);
                 context.read<EmailDetailBloc>().add(const EmailDetailCleared());
                 context.read<EmailListBloc>().add(
                       EmailListLoadRequested(folderId: folder.id),
                     );
               },
               onCalendarTapped: () {
-                final homeCubit = context.read<HomeCubit>();
                 homeCubit.showCalendar();
                 final monday = _mondayOfWeek(DateTime.now());
                 context.read<CalendarBloc>().add(
@@ -155,8 +141,11 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                   _ResizeHandle(
                     onDrag: (delta) {
                       setState(() {
-                        final max = totalWidth - _handleWidth - _minReadingPaneWidth;
-                        _folderWidth = (_folderWidth + delta).clamp(_minPanelWidth, max);
+                        final max = totalWidth -
+                            _handleWidth -
+                            _minReadingPaneWidth;
+                        _folderWidth =
+                            (_folderWidth + delta).clamp(_minPanelWidth, max);
                       });
                     },
                   ),
@@ -167,7 +156,6 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
 
             return Row(
               children: [
-                // Panel 1 — Folders
                 SizedBox(width: _folderWidth, child: folderPanel),
                 _ResizeHandle(
                   onDrag: (delta) {
@@ -181,7 +169,6 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                     });
                   },
                 ),
-                // Panel 2 — Email list
                 SizedBox(
                   width: _emailListWidth,
                   child: EmailListPanel(
@@ -214,7 +201,6 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                     });
                   },
                 ),
-                // Panel 3 — Reading pane (flex)
                 const Expanded(child: ReadingPane()),
               ],
             );

@@ -14,12 +14,16 @@ import 'auth_token.dart';
 ///   The macOS Keychain requires a developer-signed binary; using a file
 ///   avoids the -34018 entitlement error during development with ad-hoc signing.
 class TokenStorage {
-  TokenStorage(this._storage);
+  TokenStorage(
+    this._storage, {
+    String storageKey = 'nightmail_auth_token',
+  })  : _tokenKey = storageKey,
+        _fileName = '.$storageKey';
 
   final FlutterSecureStorage _storage;
 
-  static const _tokenKey = 'nightmail_auth_token';
-  static const _fileName = '.nightmail_token';
+  final String _tokenKey;
+  final String _fileName;
 
   // Use file storage on desktop (non-web, non-mobile) platforms.
   static bool get _useFile =>

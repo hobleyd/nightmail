@@ -12,17 +12,10 @@ import 'auth_token.dart';
 import 'token_storage.dart';
 import 'web_auth_stub.dart' if (dart.library.html) 'web_auth_web.dart';
 
-/// Microsoft identity platform OAuth2 + PKCE implementation.
-///
-/// Requires an Azure AD app registration with:
-///   - Platform: Mobile and Desktop (for native/desktop), or Single-page
-///     application (for web)
-///   - Redirect URI matching [redirectUri]
-///   - API permissions: Mail.Read, Mail.ReadWrite, offline_access
-class MicrosoftAuthService implements AuthService {
-  MicrosoftAuthService({
+/// Google OAuth2 + PKCE implementation for Gmail and Google Calendar access.
+class GmailAuthService implements AuthService {
+  GmailAuthService({
     required this.clientId,
-    required this.tenantId,
     required this.redirectUri,
     required TokenStorage tokenStorage,
     Dio? httpClient,
@@ -30,58 +23,47 @@ class MicrosoftAuthService implements AuthService {
         _http = httpClient ?? Dio();
 
   final String clientId;
-  final String tenantId;
   final String redirectUri;
   final TokenStorage _tokenStorage;
   final Dio _http;
-
-  // On web: serve callback.html from the same origin so the BroadcastChannel
-  // can relay the code back. On native/desktop: use the custom URI scheme that
-  // ASWebAuthenticationSession / Custom Tabs intercept without a web server.
-  String get _effectiveRedirectUri {
-    if (kIsWeb) {
-      return '${Uri.base.origin}/callback.html';
-    }
-    return redirectUri;
-  }
 
   static const _scopes = [
     'openid',
     'profile',
     'email',
     'offline_access',
-    'https://graph.microsoft.com/Mail.Read',
-    'https://graph.microsoft.com/Mail.ReadWrite',
-    'https://graph.microsoft.com/MailboxSettings.Read',
-    'https://graph.microsoft.com/Calendars.Read',
+    'https://www.googleapis.com/auth/gmail.modify',
+    'https://www.googleapis.com/auth/calendar.readonly',
   ];
 
-  String get _baseUrl =>
-      'https://login.microsoftonline.com/$tenantId/oauth2/v2.0';
+  static const _authEndpoint = 'https://accounts.google.com/o/oauth2/v2/auth';
+  static const _tokenEndpoint = 'https://oauth2.googleapis.com/token';
+
+  String get _callbackUrlScheme {
+    final uri = Uri.parse(redirectUri);
+    return uri.scheme;
+  }
 
   @override
   Future<AuthToken> signIn() async {
     final codeVerifier = _generateCodeVerifier();
     final codeChallenge = _generateCodeChallenge(codeVerifier);
 
-    final authUri = Uri.parse('$_baseUrl/authorize').replace(
+    final authUri = Uri.parse(_authEndpoint).replace(
       queryParameters: {
         'client_id': clientId,
         'response_type': 'code',
-        'redirect_uri': _effectiveRedirectUri,
+        'redirect_uri': redirectUri,
         'scope': _scopes.join(' '),
         'code_challenge': codeChallenge,
         'code_challenge_method': 'S256',
-        'response_mode': 'query',
+        'access_type': 'offline',
+        'prompt': 'consent',
       },
     );
 
-    // On web, flutter_web_auth_2 is bypassed because Microsoft's COOP headers
-    // sever window.opener in the popup, breaking its postMessage approach.
-    // We use BroadcastChannel instead (see web_auth_web.dart / callback.html).
-    //
     // preferEphemeral=true: on macOS without a sandbox, ASWebAuthenticationSession
-    // would otherwise try to share session cookies via the Keychain (requiring
+    // would try to share session cookies via the Keychain (requiring the
     // keychain-access-groups entitlement). Ephemeral mode skips that store.
     final String resultUrl;
     if (kIsWeb) {
@@ -89,7 +71,7 @@ class MicrosoftAuthService implements AuthService {
     } else {
       resultUrl = await FlutterWebAuth2.authenticate(
         url: authUri.toString(),
-        callbackUrlScheme: 'nightmail',
+        callbackUrlScheme: _callbackUrlScheme,
         options: const FlutterWebAuth2Options(preferEphemeral: true),
       );
     }
@@ -118,17 +100,13 @@ class MicrosoftAuthService implements AuthService {
 
     try {
       final response = await _http.post(
-        '$_baseUrl/token',
+        _tokenEndpoint,
         data: {
           'client_id': clientId,
           'grant_type': 'refresh_token',
           'refresh_token': currentToken.refreshToken,
-          'scope': _scopes.join(' '),
-          'redirect_uri': redirectUri,
         },
-        options: Options(
-          contentType: 'application/x-www-form-urlencoded',
-        ),
+        options: Options(contentType: 'application/x-www-form-urlencoded'),
       );
 
       final token = AuthToken.fromJson(response.data as Map<String, dynamic>);
@@ -154,17 +132,15 @@ class MicrosoftAuthService implements AuthService {
   }) async {
     try {
       final response = await _http.post(
-        '$_baseUrl/token',
+        _tokenEndpoint,
         data: {
           'client_id': clientId,
           'grant_type': 'authorization_code',
           'code': code,
-          'redirect_uri': _effectiveRedirectUri,
+          'redirect_uri': redirectUri,
           'code_verifier': codeVerifier,
         },
-        options: Options(
-          contentType: 'application/x-www-form-urlencoded',
-        ),
+        options: Options(contentType: 'application/x-www-form-urlencoded'),
       );
 
       final token = AuthToken.fromJson(response.data as Map<String, dynamic>);
@@ -198,8 +174,7 @@ class MicrosoftAuthService implements AuthService {
     try {
       final data = e.response?.data;
       if (data is Map) {
-        return data['error_description'] as String? ??
-            data['error'] as String?;
+        return data['error_description'] as String? ?? data['error'] as String?;
       }
     } catch (_) {}
     return null;

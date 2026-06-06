@@ -3,27 +3,47 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email_folder.dart';
+import '../blocs/account/account_cubit.dart';
+import '../blocs/email_detail/email_detail_bloc.dart';
+import '../blocs/email_detail/email_detail_event.dart';
+import '../blocs/email_list/email_list_bloc.dart';
+import '../blocs/email_list/email_list_event.dart';
 import '../blocs/folder_list/folder_list_bloc.dart';
+import '../blocs/folder_list/folder_list_event.dart';
 import '../blocs/folder_list/folder_list_state.dart';
+import '../blocs/home/home_cubit.dart';
 import '../blocs/theme/theme_cubit.dart';
 import '../pages/settings_page.dart';
+import '../pages/add_account_page.dart';
 
 class FolderPanel extends StatefulWidget {
   const FolderPanel({
     super.key,
     required this.selectedFolderId,
     required this.onFolderSelected,
+    required this.onCalendarTapped,
+    this.initialExpandedIds = const {},
+    this.onExpandedIdsChanged,
   });
 
   final String? selectedFolderId;
   final ValueChanged<EmailFolder> onFolderSelected;
+  final VoidCallback onCalendarTapped;
+  final Set<String> initialExpandedIds;
+  final ValueChanged<Set<String>>? onExpandedIdsChanged;
 
   @override
   State<FolderPanel> createState() => _FolderPanelState();
 }
 
 class _FolderPanelState extends State<FolderPanel> {
-  final Set<String> _expandedIds = {};
+  late Set<String> _expandedIds;
+
+  @override
+  void initState() {
+    super.initState();
+    _expandedIds = Set.of(widget.initialExpandedIds);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -52,7 +72,9 @@ class _FolderPanelState extends State<FolderPanel> {
             ),
           ),
           Divider(height: 1, color: c.separatorStrong),
-          _SettingsFooter(),
+          _SettingsFooter(
+            onCalendarTapped: widget.onCalendarTapped,
+          ),
         ],
       ),
     );
@@ -72,13 +94,16 @@ class _FolderPanelState extends State<FolderPanel> {
           isExpanded: _expandedIds.contains(item.folder.id),
           hasChildren: item.folder.childFolderCount > 0,
           onTap: () => widget.onFolderSelected(item.folder),
-          onExpandTap: () => setState(() {
-            if (_expandedIds.contains(item.folder.id)) {
-              _expandedIds.remove(item.folder.id);
-            } else {
-              _expandedIds.add(item.folder.id);
-            }
-          }),
+          onExpandTap: () {
+            setState(() {
+              if (_expandedIds.contains(item.folder.id)) {
+                _expandedIds.remove(item.folder.id);
+              } else {
+                _expandedIds.add(item.folder.id);
+              }
+            });
+            widget.onExpandedIdsChanged?.call(_expandedIds);
+          },
         );
       },
     );
@@ -294,26 +319,164 @@ class _FolderItem extends StatelessWidget {
 }
 
 class _SettingsFooter extends StatelessWidget {
+  const _SettingsFooter({
+    required this.onCalendarTapped,
+  });
+
+  final VoidCallback onCalendarTapped;
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final accountState = context.watch<AccountCubit>().state;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      child: IconButton(
-        icon: Icon(Icons.settings_outlined, size: 16, color: c.textMuted),
-        tooltip: 'Settings',
-        padding: EdgeInsets.zero,
-        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-        onPressed: () {
-          final themeCubit = context.read<ThemeCubit>();
-          showDialog(
-            context: context,
-            builder: (ctx) => BlocProvider.value(
-              value: themeCubit,
-              child: const SettingsDialog(),
-            ),
-          );
-        },
+      child: Row(
+        children: [
+          PopupMenuButton<int>(
+            tooltip: 'Accounts',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            icon: Icon(Icons.manage_accounts_outlined,
+                size: 16, color: c.textMuted),
+            onSelected: (index) async {
+              if (index == -1) {
+                _showAddAccountDialog(context);
+                return;
+              }
+
+              final accountCubit = context.read<AccountCubit>();
+              final homeCubit = context.read<HomeCubit>();
+
+              // Save current folder before switching accounts.
+              final prevState = accountCubit.state;
+              if (prevState is AccountsLoaded) {
+                final currentFolder = homeCubit.state.selectedFolderId;
+                if (currentFolder != null && currentFolder.isNotEmpty) {
+                  homeCubit.rememberFolderForAccount(
+                      prevState.activeAccount.id, currentFolder);
+                }
+              }
+
+              await accountCubit.switchToAccount(index);
+
+              if (context.mounted) {
+                final folderBloc = context.read<FolderListBloc>();
+                final emailListBloc = context.read<EmailListBloc>();
+                final emailDetailBloc = context.read<EmailDetailBloc>();
+
+                final newState = accountCubit.state;
+                if (newState is AccountsLoaded) {
+                  homeCubit.setAccountLabel(newState.activeAccount.displayName);
+
+                  final savedFolder = homeCubit
+                      .savedFolderForAccount(newState.activeAccount.id);
+                  if (savedFolder != null) {
+                    homeCubit.selectFolder(savedFolder);
+                    emailListBloc
+                        .add(EmailListLoadRequested(folderId: savedFolder));
+                  } else {
+                    homeCubit.clearFolder();
+                  }
+
+                  folderBloc.add(const FolderListLoadRequested());
+                  emailDetailBloc.add(const EmailDetailCleared());
+                }
+              }
+            },
+            itemBuilder: (context) {
+              final items = <PopupMenuEntry<int>>[];
+              if (accountState is AccountsLoaded) {
+                for (int i = 0; i < accountState.accounts.length; i++) {
+                  final acc = accountState.accounts[i];
+                  final isActive = i == accountState.activeIndex;
+                  items.add(
+                    PopupMenuItem(
+                      value: i,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              acc.displayName,
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: isActive
+                                    ? FontWeight.w600
+                                    : FontWeight.normal,
+                              ),
+                            ),
+                          ),
+                          if (isActive)
+                            Icon(Icons.check, size: 14, color: AppColors.accent),
+                        ],
+                      ),
+                    ),
+                  );
+                }
+                items.add(const PopupMenuDivider());
+              }
+              items.add(
+                const PopupMenuItem(
+                  value: -1,
+                  child: Text('Add Account', style: TextStyle(fontSize: 13)),
+                ),
+              );
+              return items;
+            },
+          ),
+          IconButton(
+            icon: Icon(Icons.calendar_month_outlined, size: 16, color: c.textMuted),
+            tooltip: 'Calendar',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            onPressed: onCalendarTapped,
+          ),
+          const Spacer(),
+          IconButton(
+            icon: Icon(Icons.settings_outlined, size: 16, color: c.textMuted),
+            tooltip: 'Settings',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            onPressed: () {
+              final themeCubit = context.read<ThemeCubit>();
+              final accountCubit = context.read<AccountCubit>();
+              showDialog<void>(
+                context: context,
+                builder: (ctx) => MultiBlocProvider(
+                  providers: [
+                    BlocProvider.value(value: themeCubit),
+                    BlocProvider.value(value: accountCubit),
+                  ],
+                  child: const SettingsDialog(),
+                ),
+              );
+            },
+          ),
+          IconButton(
+            icon: Icon(Icons.logout_rounded, size: 16, color: c.textMuted),
+            tooltip: 'Sign out',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            onPressed: () =>
+                context.read<AccountCubit>().signOutActiveAccount(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAddAccountDialog(BuildContext context) {
+    final themeCubit = context.read<ThemeCubit>();
+    final accountCubit = context.read<AccountCubit>();
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => MultiBlocProvider(
+        providers: [
+          BlocProvider.value(value: themeCubit),
+          BlocProvider.value(value: accountCubit),
+        ],
+        child: const AddAccountPage(),
       ),
     );
   }

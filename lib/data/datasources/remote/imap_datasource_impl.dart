@@ -1,0 +1,361 @@
+import 'package:enough_mail/enough_mail.dart';
+
+import '../../../core/error/exceptions.dart';
+import '../../../domain/entities/email.dart';
+import '../../../infrastructure/accounts/account.dart';
+import '../../../infrastructure/auth/imap_credential_storage.dart';
+import '../../models/email_address_model.dart';
+import '../../models/email_folder_model.dart';
+import '../../models/email_model.dart';
+import 'email_remote_datasource.dart';
+
+class ImapDatasourceImpl implements EmailRemoteDatasource {
+  ImapDatasourceImpl({
+    required ImapAccount account,
+    required ImapCredentialStorage credentialStorage,
+  })  : _account = account,
+        _credentialStorage = credentialStorage;
+
+  final ImapAccount _account;
+  final ImapCredentialStorage _credentialStorage;
+
+  ImapClient? _client;
+  String? _selectedMailboxPath;
+
+  /// Non-empty when the server uses abbreviated folder names that must be
+  /// prefixed (e.g. Courier IMAP returns "Sent" in LIST but requires
+  /// SELECT "INBOX.Sent"). Set once in [getMailFolders] and reused thereafter.
+  String _inboxFolderPrefix = '';
+
+  Future<ImapClient> _getConnectedClient() async {
+    if (_client != null && _client!.isConnected) return _client!;
+
+    final password = await _credentialStorage.loadPassword(_account.id);
+    if (password == null) {
+      throw const AuthException(message: 'No IMAP credentials stored');
+    }
+
+    final client = ImapClient(isLogEnabled: false);
+    await client.connectToServer(
+      _account.host,
+      _account.port,
+      isSecure: _account.useSsl,
+    );
+    await client.login(_account.emailAddress, password);
+    _client = client;
+    _selectedMailboxPath = null;
+    return client;
+  }
+
+  /// SELECT the mailbox at [path].
+  ///
+  /// On servers that use abbreviated folder names in LIST but require the
+  /// full INBOX-prefixed path in SELECT (Courier IMAP, some Dovecot configs),
+  /// the first attempt will fail. We retry unconditionally with the INBOX
+  /// prefix and cache the result so [getMailFolders] can normalise IDs on the
+  /// next call.
+  Future<void> _selectMailboxPath(ImapClient client, String path) async {
+    if (_selectedMailboxPath == path) return;
+    try {
+      await client.selectMailboxByPath(path);
+      _selectedMailboxPath = path;
+    } on ImapException catch (first) {
+      if (path.toUpperCase().startsWith('INBOX')) {
+        // Already prefixed — nothing more we can do.
+        throw ServerException(message: first.message ?? 'IMAP error');
+      }
+      // Try with INBOX prefix. If this also fails, surface the original error.
+      try {
+        final sep = _inboxFolderPrefix.isNotEmpty
+            ? _inboxFolderPrefix.replaceAll('INBOX', '')
+            : '.';
+        final prefixed = 'INBOX$sep$path';
+        await client.selectMailboxByPath(prefixed);
+        _selectedMailboxPath = prefixed;
+        // Cache so getMailFolders() normalises IDs on the next refresh.
+        _inboxFolderPrefix = 'INBOX$sep';
+      } on ImapException {
+        throw ServerException(message: first.message ?? 'IMAP error');
+      }
+    }
+  }
+
+  @override
+  Future<List<EmailFolderModel>> getMailFolders() async {
+    try {
+      final client = await _getConnectedClient();
+
+      // List only the root-level mailboxes (LIST "" %).
+      // The EmailRepository expansion loop will call getChildFolders() for
+      // folders with children — this avoids the duplicate-folder problem that
+      // would occur if we returned the full recursive list here while the repo
+      // also tries to expand children on top of it.
+      final rootMailboxes = await client.listMailboxes(recursive: false);
+
+      // Detect Courier IMAP / similar abbreviated namespace convention:
+      //   root LIST returns: INBOX, Sent, Drafts, Trash   (no INBOX. prefix)
+      //   SELECT requires: INBOX, INBOX.Sent, INBOX.Drafts, INBOX.Trash
+      //
+      // Detection: INBOX is present, other root-level selectable folders exist
+      // without a separator in their path, and none start with INBOX<sep>.
+      // We do NOT rely on \HasChildren because many servers omit it.
+      final sep = rootMailboxes.firstOrNull?.pathSeparator ?? '.';
+      final inboxExists = rootMailboxes.any(
+        (mb) => mb.path.toUpperCase() == 'INBOX',
+      );
+      if (inboxExists) {
+        final hasExplicitInboxChildren = rootMailboxes.any(
+          (mb) => mb.path.toUpperCase().startsWith('INBOX$sep'),
+        );
+        final hasAbbreviatedRoots = rootMailboxes.any(
+          (mb) =>
+              mb.path.toUpperCase() != 'INBOX' &&
+              !mb.path.contains(sep) &&
+              !mb.isNotSelectable,
+        );
+        _inboxFolderPrefix =
+            (!hasExplicitInboxChildren && hasAbbreviatedRoots)
+                ? 'INBOX$sep'
+                : '';
+      } else {
+        _inboxFolderPrefix = '';
+      }
+
+      return rootMailboxes.map((mb) {
+        // Normalise path for servers that use abbreviated naming (Courier IMAP).
+        final fullPath =
+            (_inboxFolderPrefix.isNotEmpty &&
+                    !mb.path.toUpperCase().startsWith('INBOX'))
+                ? '$_inboxFolderPrefix${mb.path}'
+                : mb.path;
+
+        // Derive parent from the full path so prefixed folders (e.g. Courier's
+        // "Sent" → "INBOX.Sent") get parentFolderId = "INBOX" not null.
+        final parts = fullPath.split(sep);
+        final parentPath =
+            parts.length > 1 ? parts.sublist(0, parts.length - 1).join(sep) : null;
+
+        return EmailFolderModel(
+          id: fullPath,
+          displayName: mb.name,
+          totalItemCount: mb.messagesExists,
+          unreadItemCount: mb.messagesUnseen,
+          parentFolderId: parentPath,
+          isHidden: mb.isNotSelectable,
+          childFolderCount: mb.hasChildren ? 1 : 0,
+        );
+      }).toList();
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    } on AuthException {
+      rethrow;
+    }
+  }
+
+  @override
+  Future<List<EmailFolderModel>> getChildFolders(String parentFolderId) async {
+    try {
+      final client = await _getConnectedClient();
+
+      // LIST "parent." % lists direct children.
+      // Using the reference with a trailing separator is the standard portable
+      // approach — LIST "INBOX" % returns INBOX itself on many servers.
+      final sep = _inboxFolderPrefix.isNotEmpty
+          ? _inboxFolderPrefix.replaceAll('INBOX', '')
+          : '.';
+      final mailboxes = await client.listMailboxes(
+        path: '"$parentFolderId$sep"',
+        recursive: false,
+      );
+
+      return mailboxes.map((mb) {
+        // Derive the actual parent from the child's full path.
+        final parts = mb.path.split(sep);
+        final parentPath = parts.length > 1
+            ? parts.sublist(0, parts.length - 1).join(sep)
+            : null;
+
+        return EmailFolderModel(
+          id: mb.path,
+          displayName: mb.name,
+          totalItemCount: mb.messagesExists,
+          unreadItemCount: mb.messagesUnseen,
+          parentFolderId: parentPath,
+          isHidden: mb.isNotSelectable,
+          childFolderCount: mb.hasChildren ? 1 : 0,
+        );
+      }).toList();
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    }
+  }
+
+  @override
+  Future<List<EmailModel>> getEmails({
+    String? folderId,
+    int top = 25,
+    int skip = 0,
+    String? filter,
+    String orderBy = 'receivedDateTime desc',
+  }) async {
+    final mailboxPath = folderId ?? 'INBOX';
+    try {
+      final client = await _getConnectedClient();
+      await _selectMailboxPath(client, mailboxPath);
+
+      // UID SEARCH returns UIDs directly; plain SEARCH returns sequence numbers.
+      final searchResult = await client.uidSearchMessages(
+        searchCriteria: 'ALL',
+      );
+      final allUids = searchResult.matchingSequence?.toList() ?? [];
+      if (allUids.isEmpty) return [];
+
+      // Most recent first (IMAP UID sequences are ascending).
+      final reversed = allUids.reversed.toList();
+      final page = reversed.skip(skip).take(top).toList();
+      if (page.isEmpty) return [];
+
+      final sequence = MessageSequence.fromIds(page, isUid: true);
+      // Multiple fetch items must be wrapped in parentheses per RFC 3501.
+      final fetchResult = await client.uidFetchMessages(
+        sequence,
+        '(FLAGS INTERNALDATE ENVELOPE BODY.PEEK[TEXT]<0.500>)',
+      );
+
+      return fetchResult.messages
+          .map((msg) => _parseToModel(msg, folderId: _selectedMailboxPath ?? mailboxPath))
+          .toList();
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    } on AuthException {
+      rethrow;
+    }
+  }
+
+  @override
+  Future<EmailModel> getEmail(String id) async {
+    // id format: "mailboxPath:uid"
+    final separatorIdx = id.lastIndexOf(':');
+    final mailboxPath =
+        separatorIdx > 0 ? id.substring(0, separatorIdx) : 'INBOX';
+    final uid = int.tryParse(id.substring(separatorIdx + 1)) ?? 0;
+
+    try {
+      final client = await _getConnectedClient();
+      await _selectMailboxPath(client, mailboxPath);
+
+      final sequence = MessageSequence.fromId(uid, isUid: true);
+      final fetchResult = await client.uidFetchMessages(
+        sequence,
+        '(FLAGS INTERNALDATE ENVELOPE BODY[])',
+      );
+
+      if (fetchResult.messages.isEmpty) {
+        throw ServerException(message: 'Message not found: $id');
+      }
+
+      return _parseToModel(
+        fetchResult.messages.first,
+        folderId: _selectedMailboxPath ?? mailboxPath,
+        fullBody: true,
+      );
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    } on AuthException {
+      rethrow;
+    }
+  }
+
+  @override
+  Future<EmailModel> updateEmailReadStatus({
+    required String id,
+    required bool isRead,
+  }) async {
+    final separatorIdx = id.lastIndexOf(':');
+    final mailboxPath =
+        separatorIdx > 0 ? id.substring(0, separatorIdx) : 'INBOX';
+    final uid = int.tryParse(id.substring(separatorIdx + 1)) ?? 0;
+
+    try {
+      final client = await _getConnectedClient();
+      await _selectMailboxPath(client, mailboxPath);
+
+      final sequence = MessageSequence.fromId(uid, isUid: true);
+      await client.uidStore(
+        sequence,
+        [MessageFlags.seen],
+        action: isRead ? StoreAction.add : StoreAction.remove,
+      );
+
+      return getEmail(id);
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Parsing
+  // ---------------------------------------------------------------------------
+
+  EmailModel _parseToModel(
+    MimeMessage msg, {
+    required String folderId,
+    bool fullBody = false,
+  }) {
+    final uid = msg.uid ?? msg.sequenceId ?? 0;
+    final id = '$folderId:$uid';
+    final isRead = msg.isSeen;
+    final date = msg.decodeDate() ?? DateTime.now().toUtc();
+
+    String body = '';
+    EmailBodyType bodyType = EmailBodyType.text;
+
+    if (fullBody) {
+      final html = msg.decodeTextHtmlPart();
+      if (html != null && html.isNotEmpty) {
+        body = html;
+        bodyType = EmailBodyType.html;
+      } else {
+        body = msg.decodeTextPlainPart() ?? '';
+      }
+    }
+
+    final fromAddresses = msg.from;
+    final from = fromAddresses?.firstOrNull;
+    final fromModel = from != null
+        ? EmailAddressModel(
+            address: from.email,
+            name: from.personalName ?? '',
+          )
+        : const EmailAddressModel(address: '', name: '');
+
+    List<EmailAddressModel> mapAddresses(List<MailAddress>? list) {
+      return (list ?? [])
+          .map((a) => EmailAddressModel(
+                address: a.email,
+                name: a.personalName ?? '',
+              ))
+          .toList();
+    }
+
+    final preview = msg.decodeTextPlainPart() ?? '';
+    final bodyPreview =
+        preview.length > 200 ? preview.substring(0, 200) : preview;
+
+    return EmailModel(
+      id: id,
+      subject: msg.decodeSubject() ?? '(No Subject)',
+      from: fromModel,
+      toRecipients: mapAddresses(msg.to),
+      ccRecipients: mapAddresses(msg.cc),
+      bodyPreview: bodyPreview,
+      body: body,
+      bodyType: bodyType,
+      isRead: isRead,
+      receivedDateTime: date,
+      importance: EmailImportance.normal,
+      parentFolderId: folderId,
+      hasAttachments: msg.hasAttachments(),
+    );
+  }
+}

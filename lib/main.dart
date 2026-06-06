@@ -2,39 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'injection_container.dart';
-import 'presentation/blocs/auth/auth_bloc.dart';
-import 'presentation/blocs/auth/auth_event.dart';
-import 'presentation/blocs/auth/auth_state.dart';
+import 'presentation/blocs/account/account_cubit.dart';
 import 'presentation/blocs/theme/theme_cubit.dart';
 import 'presentation/blocs/theme/theme_state.dart';
+import 'presentation/pages/account_selection_page.dart';
 import 'presentation/pages/home_page.dart';
-import 'presentation/pages/sign_in_page.dart';
-
-/// Azure AD app registration values.
-/// Supply via --dart-define at build time:
-///   flutter run --dart-define=AZURE_CLIENT_ID=xxx --dart-define=AZURE_TENANT_ID=yyy
-const _clientId = String.fromEnvironment(
-  'AZURE_CLIENT_ID',
-  defaultValue: 'YOUR_CLIENT_ID',
-);
-const _tenantId = String.fromEnvironment(
-  'AZURE_TENANT_ID',
-  defaultValue: 'common',
-);
-const _redirectUri = String.fromEnvironment(
-  'AZURE_REDIRECT_URI',
-  defaultValue: 'nightmail://auth-callback',
-);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  await configureDependencies(
-    clientId: _clientId,
-    tenantId: _tenantId,
-    redirectUri: _redirectUri,
-  );
-
+  await configureDependencies();
   runApp(const NightMailApp());
 }
 
@@ -62,8 +38,8 @@ class NightMailApp extends StatelessWidget {
       create: (_) => sl<ThemeCubit>()..load(),
       child: BlocBuilder<ThemeCubit, ThemeState>(
         builder: (context, themeState) {
-          return BlocProvider<AuthBloc>(
-            create: (_) => sl<AuthBloc>()..add(const AuthCheckRequested()),
+          return BlocProvider<AccountCubit>(
+            create: (_) => sl<AccountCubit>()..initialize(),
             child: MaterialApp(
               title: 'NightMail',
               debugShowCheckedModeBanner: false,
@@ -74,7 +50,7 @@ class NightMailApp extends StatelessWidget {
                 AppThemeMode.dark => ThemeMode.dark,
                 AppThemeMode.system => ThemeMode.system,
               },
-              home: const _AuthGate(),
+              home: const _AccountGate(),
             ),
           );
         },
@@ -83,21 +59,21 @@ class NightMailApp extends StatelessWidget {
   }
 }
 
-/// Switches between [SignInPage] and [HomePage] based on [AuthBloc] state,
-/// with a fade transition between them.
-class _AuthGate extends StatelessWidget {
-  const _AuthGate();
+class _AccountGate extends StatelessWidget {
+  const _AccountGate();
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<AuthBloc, AuthState>(
+    return BlocBuilder<AccountCubit, AccountState>(
       builder: (context, state) {
         return AnimatedSwitcher(
           duration: const Duration(milliseconds: 300),
           child: switch (state) {
-            AuthInitial() || AuthLoading() => const _SplashScreen(),
-            AuthAuthenticated() => const HomePage(),
-            AuthUnauthenticated() || AuthError() => const SignInPage(),
+            AccountLoading() => const _SplashScreen(),
+            AccountNoAccounts() => const AccountSelectionPage(),
+            AccountsLoaded() => const HomePage(),
+            AccountError(:final message) =>
+              AccountSelectionPage(errorMessage: message),
           },
         );
       },

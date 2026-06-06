@@ -1,7 +1,7 @@
 import '../../models/email_folder_model.dart';
 import '../../models/email_model.dart';
 
-abstract interface class GraphApiRemoteDatasource {
+abstract interface class EmailRemoteDatasource {
   Future<List<EmailModel>> getEmails({
     String? folderId,
     int top = 25,

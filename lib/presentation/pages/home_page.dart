@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../domain/entities/email_folder.dart';
 import '../../injection_container.dart';
 import '../blocs/auth/auth_bloc.dart';
 import '../blocs/auth/auth_event.dart';
+import '../blocs/calendar/calendar_bloc.dart';
+import '../blocs/calendar/calendar_event.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
 import '../blocs/email_detail/email_detail_event.dart';
 import '../blocs/email_list/email_list_bloc.dart';
@@ -16,6 +19,7 @@ import '../blocs/home/home_cubit.dart';
 import '../widgets/email_list_panel.dart';
 import '../widgets/folder_panel.dart';
 import '../widgets/reading_pane.dart';
+import 'calendar_page.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -31,6 +35,7 @@ class HomePage extends StatelessWidget {
         BlocProvider(create: (_) => sl<EmailListBloc>()),
         BlocProvider(create: (_) => sl<EmailDetailBloc>()),
         BlocProvider(create: (_) => HomeCubit()),
+        BlocProvider(create: (_) => sl<CalendarBloc>()),
       ],
       child: const _HomeView(),
     );
@@ -117,31 +122,53 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
   Widget build(BuildContext context) {
     return BlocBuilder<HomeCubit, HomeState>(
       builder: (context, homeState) {
-        final selectedFolder = _resolveSelectedFolder(context, homeState);
+        final selectedFolder = _resolveFolder(context, homeState);
 
         return LayoutBuilder(
           builder: (context, constraints) {
             final totalWidth = constraints.maxWidth;
             const totalHandleWidth = _handleWidth * 2;
 
+            final folderPanel = FolderPanel(
+              selectedFolderId: homeState.selectedFolderId,
+              onFolderSelected: (folder) {
+                context.read<HomeCubit>().selectFolder(folder.id);
+                context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+                context.read<EmailListBloc>().add(
+                      EmailListLoadRequested(folderId: folder.id),
+                    );
+              },
+              onCalendarTapped: () {
+                final homeCubit = context.read<HomeCubit>();
+                homeCubit.showCalendar();
+                final monday = _mondayOfWeek(DateTime.now());
+                context.read<CalendarBloc>().add(
+                      CalendarWeekLoadRequested(weekStart: monday),
+                    );
+              },
+            );
+
+            if (homeState.view == HomeView.calendar) {
+              return Row(
+                children: [
+                  SizedBox(width: _folderWidth, child: folderPanel),
+                  _ResizeHandle(
+                    onDrag: (delta) {
+                      setState(() {
+                        final max = totalWidth - _handleWidth - _minReadingPaneWidth;
+                        _folderWidth = (_folderWidth + delta).clamp(_minPanelWidth, max);
+                      });
+                    },
+                  ),
+                  const Expanded(child: CalendarPage()),
+                ],
+              );
+            }
+
             return Row(
               children: [
                 // Panel 1 — Folders
-                SizedBox(
-                  width: _folderWidth,
-                  child: FolderPanel(
-                    selectedFolderId: homeState.selectedFolderId,
-                    onFolderSelected: (folder) {
-                      context.read<HomeCubit>().selectFolder(folder.id);
-                      context
-                          .read<EmailDetailBloc>()
-                          .add(const EmailDetailCleared());
-                      context.read<EmailListBloc>().add(
-                            EmailListLoadRequested(folderId: folder.id),
-                          );
-                    },
-                  ),
-                ),
+                SizedBox(width: _folderWidth, child: folderPanel),
                 _ResizeHandle(
                   onDrag: (delta) {
                     setState(() {
@@ -158,7 +185,8 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                 SizedBox(
                   width: _emailListWidth,
                   child: EmailListPanel(
-                    folderName: selectedFolder,
+                    folderName: selectedFolder?.displayName ?? 'Inbox',
+                    folder: selectedFolder,
                     selectedEmailId: homeState.selectedEmailId,
                     onEmailSelected: (email) {
                       context.read<HomeCubit>().selectEmail(email.id);
@@ -196,17 +224,21 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
     );
   }
 
-  String _resolveSelectedFolder(BuildContext context, HomeState homeState) {
-    if (homeState.selectedFolderId == null) return 'Inbox';
+  static DateTime _mondayOfWeek(DateTime date) {
+    final daysFromMonday = (date.weekday - 1) % 7;
+    return DateTime(date.year, date.month, date.day - daysFromMonday);
+  }
+
+  EmailFolder? _resolveFolder(BuildContext context, HomeState homeState) {
+    if (homeState.selectedFolderId == null) return null;
     final folderState = context.read<FolderListBloc>().state;
     if (folderState is FolderListLoaded) {
       try {
         return folderState.folders
-            .firstWhere((f) => f.id == homeState.selectedFolderId)
-            .displayName;
+            .firstWhere((f) => f.id == homeState.selectedFolderId);
       } catch (_) {}
     }
-    return 'Inbox';
+    return null;
   }
 }
 

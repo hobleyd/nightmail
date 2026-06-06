@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
+import '../../domain/entities/email_folder.dart';
 import '../blocs/email_list/email_list_bloc.dart';
 import '../blocs/email_list/email_list_event.dart';
 import '../blocs/email_list/email_list_state.dart';
@@ -14,9 +15,11 @@ class EmailListPanel extends StatefulWidget {
     required this.folderName,
     required this.selectedEmailId,
     required this.onEmailSelected,
+    this.folder,
   });
 
   final String folderName;
+  final EmailFolder? folder;
   final String? selectedEmailId;
   final ValueChanged<Email> onEmailSelected;
 
@@ -95,6 +98,10 @@ class _EmailListPanelState extends State<EmailListPanel> {
               },
             ),
           ),
+          if (widget.folder != null) ...[
+            Divider(height: 1, color: c.separator),
+            _FolderCountFooter(folder: widget.folder!),
+          ],
         ],
       ),
     );
@@ -216,6 +223,31 @@ class _ErrorView extends StatelessWidget {
               style: TextStyle(color: c.textMuted, fontSize: 13),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FolderCountFooter extends StatelessWidget {
+  const _FolderCountFooter({required this.folder});
+  final EmailFolder folder;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final unread = folder.unreadItemCount;
+    final total = folder.totalItemCount;
+    final label = unread > 0
+        ? '$unread unread · $total total'
+        : '$total total';
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: c.textDimmed,
+          fontSize: 11,
         ),
       ),
     );

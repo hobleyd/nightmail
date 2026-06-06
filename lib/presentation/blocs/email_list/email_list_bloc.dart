@@ -105,7 +105,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     );
 
     result.fold(
-      (failure) => emit(EmailListError(message: failure.message)),
+      (_) {},
       (updated) {
         final updatedList = current.emails.map((e) {
           return e.id == updated.id ? updated : e;

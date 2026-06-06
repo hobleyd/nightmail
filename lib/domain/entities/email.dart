@@ -61,5 +61,19 @@ class Email extends Equatable {
   }
 
   @override
-  List<Object?> get props => [id];
+  List<Object?> get props => [
+        id,
+        subject,
+        from,
+        toRecipients,
+        ccRecipients,
+        bodyPreview,
+        isRead,
+        receivedDateTime,
+        sentDateTime,
+        importance,
+        conversationId,
+        hasAttachments,
+        parentFolderId,
+      ];
 }

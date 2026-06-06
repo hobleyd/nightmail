@@ -99,56 +99,97 @@ class _AppBar extends StatelessWidget {
   }
 }
 
-class _ThreePanelLayout extends StatelessWidget {
+class _ThreePanelLayout extends StatefulWidget {
+  @override
+  State<_ThreePanelLayout> createState() => _ThreePanelLayoutState();
+}
+
+class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
+  double _folderWidth = 220;
+  double _emailListWidth = 320;
+
+  static const double _minPanelWidth = 120;
+  static const double _minReadingPaneWidth = 200;
+  static const double _handleWidth = 8;
+
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<HomeCubit, HomeState>(
       builder: (context, homeState) {
         final selectedFolder = _resolveSelectedFolder(context, homeState);
 
-        return Row(
-          children: [
-            // Panel 1 — Folders (fixed 220px)
-            SizedBox(
-              width: 220,
-              child: FolderPanel(
-                selectedFolderId: homeState.selectedFolderId,
-                onFolderSelected: (folder) {
-                  context.read<HomeCubit>().selectFolder(folder.id);
-                  context.read<EmailDetailBloc>().add(const EmailDetailCleared());
-                  context.read<EmailListBloc>().add(
-                        EmailListLoadRequested(folderId: folder.id),
-                      );
-                },
-              ),
-            ),
-            const VerticalDivider(
-                width: 1, thickness: 1, color: Color(0xFF1E2130)),
-            // Panel 2 — Email list (fixed 320px)
-            SizedBox(
-              width: 320,
-              child: EmailListPanel(
-                folderName: selectedFolder,
-                selectedEmailId: homeState.selectedEmailId,
-                onEmailSelected: (email) {
-                  context.read<HomeCubit>().selectEmail(email.id);
-                  context.read<EmailDetailBloc>().add(
-                        EmailDetailLoadRequested(emailId: email.id),
-                      );
-                  if (!email.isRead) {
-                    context.read<EmailListBloc>().add(
-                          EmailListMarkReadRequested(
-                              emailId: email.id, isRead: true),
-                        );
-                  }
-                },
-              ),
-            ),
-            const VerticalDivider(
-                width: 1, thickness: 1, color: Color(0xFF1E2130)),
-            // Panel 3 — Reading pane (flex)
-            const Expanded(child: ReadingPane()),
-          ],
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final totalWidth = constraints.maxWidth;
+            const totalHandleWidth = _handleWidth * 2;
+
+            return Row(
+              children: [
+                // Panel 1 — Folders
+                SizedBox(
+                  width: _folderWidth,
+                  child: FolderPanel(
+                    selectedFolderId: homeState.selectedFolderId,
+                    onFolderSelected: (folder) {
+                      context.read<HomeCubit>().selectFolder(folder.id);
+                      context
+                          .read<EmailDetailBloc>()
+                          .add(const EmailDetailCleared());
+                      context.read<EmailListBloc>().add(
+                            EmailListLoadRequested(folderId: folder.id),
+                          );
+                    },
+                  ),
+                ),
+                _ResizeHandle(
+                  onDrag: (delta) {
+                    setState(() {
+                      final maxWidth = totalWidth -
+                          totalHandleWidth -
+                          _emailListWidth -
+                          _minReadingPaneWidth;
+                      _folderWidth =
+                          (_folderWidth + delta).clamp(_minPanelWidth, maxWidth);
+                    });
+                  },
+                ),
+                // Panel 2 — Email list
+                SizedBox(
+                  width: _emailListWidth,
+                  child: EmailListPanel(
+                    folderName: selectedFolder,
+                    selectedEmailId: homeState.selectedEmailId,
+                    onEmailSelected: (email) {
+                      context.read<HomeCubit>().selectEmail(email.id);
+                      context.read<EmailDetailBloc>().add(
+                            EmailDetailLoadRequested(emailId: email.id),
+                          );
+                      if (!email.isRead) {
+                        context.read<EmailListBloc>().add(
+                              EmailListMarkReadRequested(
+                                  emailId: email.id, isRead: true),
+                            );
+                      }
+                    },
+                  ),
+                ),
+                _ResizeHandle(
+                  onDrag: (delta) {
+                    setState(() {
+                      final maxWidth = totalWidth -
+                          totalHandleWidth -
+                          _folderWidth -
+                          _minReadingPaneWidth;
+                      _emailListWidth = (_emailListWidth + delta)
+                          .clamp(_minPanelWidth, maxWidth);
+                    });
+                  },
+                ),
+                // Panel 3 — Reading pane (flex)
+                const Expanded(child: ReadingPane()),
+              ],
+            );
+          },
         );
       },
     );
@@ -165,5 +206,41 @@ class _ThreePanelLayout extends StatelessWidget {
       } catch (_) {}
     }
     return 'Inbox';
+  }
+}
+
+class _ResizeHandle extends StatefulWidget {
+  final ValueChanged<double> onDrag;
+
+  const _ResizeHandle({required this.onDrag});
+
+  @override
+  State<_ResizeHandle> createState() => _ResizeHandleState();
+}
+
+class _ResizeHandleState extends State<_ResizeHandle> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onHorizontalDragUpdate: (details) => widget.onDrag(details.delta.dx),
+        child: SizedBox(
+          width: 8,
+          child: Center(
+            child: Container(
+              width: 1,
+              color: _hovered
+                  ? const Color(0xFF4B5563)
+                  : const Color(0xFF1E2130),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

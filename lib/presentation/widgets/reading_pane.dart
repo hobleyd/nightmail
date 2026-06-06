@@ -374,33 +374,50 @@ class _EmailBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     final htmlColor = c.textBodyHtml;
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(28, 20, 28, 40),
-      child: email.bodyType == EmailBodyType.html
-          ? HtmlWidget(
-              email.body,
-              textStyle: TextStyle(
-                color: c.textBody,
-                fontSize: 14,
-                height: 1.6,
-              ),
-              customStylesBuilder: (element) {
-                // Override explicit black/white colors from the email's stylesheet.
-                if (['p', 'div', 'span', 'td', 'li']
-                    .contains(element.localName)) {
-                  return {'color': htmlColor};
-                }
-                return null;
-              },
-            )
-          : SelectableText(
-              email.body,
-              style: TextStyle(
-                color: c.textBody,
-                fontSize: 14,
-                height: 1.6,
-              ),
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(28, 20, 28, 40),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              minWidth: constraints.maxWidth - 56, // Account for horizontal padding
             ),
+            child: email.bodyType == EmailBodyType.html
+                ? HtmlWidget(
+                    email.body,
+                    textStyle: TextStyle(
+                      color: c.textBody,
+                      fontSize: 14,
+                      height: 1.6,
+                    ),
+                    customStylesBuilder: (element) {
+                      // Override explicit black/white colors from the email's stylesheet.
+                      if (['p', 'div', 'span', 'td', 'li']
+                          .contains(element.localName)) {
+                        return {'color': htmlColor};
+                      }
+
+                      // Force tables to have auto height to avoid issues with 'height: 100%'
+                      // inside a scrollable view with unbounded height.
+                      if (element.localName == 'table') {
+                        return {'height': 'auto'};
+                      }
+
+                      return null;
+                    },
+                  )
+                : SelectableText(
+                    email.body,
+                    style: TextStyle(
+                      color: c.textBody,
+                      fontSize: 14,
+                      height: 1.6,
+                    ),
+                  ),
+          ),
+        );
+      },
     );
   }
 }

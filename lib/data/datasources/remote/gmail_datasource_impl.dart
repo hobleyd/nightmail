@@ -324,6 +324,39 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     };
   }
 
+  @override
+  Future<void> sendEmail({
+    required List<String> toAddresses,
+    List<String> ccAddresses = const [],
+    required String subject,
+    required String body,
+  }) {
+    throw UnimplementedError('sendEmail not yet supported for Gmail');
+  }
+
+  @override
+  Future<void> replyToEmail({
+    required String messageId,
+    required String comment,
+    bool replyAll = false,
+  }) {
+    throw UnimplementedError('replyToEmail not yet supported for Gmail');
+  }
+
+  @override
+  Future<void> forwardEmail({
+    required String messageId,
+    required List<String> toAddresses,
+    required String comment,
+  }) {
+    throw UnimplementedError('forwardEmail not yet supported for Gmail');
+  }
+
+  @override
+  Future<void> deleteEmail(String id) {
+    throw UnimplementedError('deleteEmail not yet supported for Gmail');
+  }
+
   Exception _mapException(DioException e) {
     final statusCode = e.response?.statusCode;
     if (e.type == DioExceptionType.connectionError ||

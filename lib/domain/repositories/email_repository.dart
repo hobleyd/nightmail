@@ -29,4 +29,29 @@ abstract interface class EmailRepository {
   /// Lists child folders of [parentFolderId].
   Future<Either<Failure, List<EmailFolder>>> getChildFolders(
       String parentFolderId);
+
+  /// Sends a new email.
+  Future<Either<Failure, Unit>> sendEmail({
+    required List<String> toAddresses,
+    List<String> ccAddresses = const [],
+    required String subject,
+    required String body,
+  });
+
+  /// Replies to an existing email. Set [replyAll] to reply to all recipients.
+  Future<Either<Failure, Unit>> replyToEmail({
+    required String messageId,
+    required String comment,
+    bool replyAll = false,
+  });
+
+  /// Forwards an existing email.
+  Future<Either<Failure, Unit>> forwardEmail({
+    required String messageId,
+    required List<String> toAddresses,
+    required String comment,
+  });
+
+  /// Deletes (moves to Deleted Items) an email by [id].
+  Future<Either<Failure, Unit>> deleteEmail(String id);
 }

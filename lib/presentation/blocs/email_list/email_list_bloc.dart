@@ -18,6 +18,8 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     on<EmailListLoadMoreRequested>(_onLoadMoreRequested);
     on<EmailListRefreshRequested>(_onRefreshRequested);
     on<EmailListMarkReadRequested>(_onMarkReadRequested);
+    on<EmailListToggleConversation>(_onToggleConversation);
+    on<EmailListEmailDeleted>(_onEmailDeleted);
   }
 
   final GetEmails _getEmails;
@@ -115,4 +117,31 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     );
   }
 
+  void _onToggleConversation(
+    EmailListToggleConversation event,
+    Emitter<EmailListState> emit,
+  ) {
+    final current = state;
+    if (current is! EmailListLoaded) return;
+
+    final expanded = Set<String>.from(current.expandedConversationIds);
+    if (expanded.contains(event.conversationId)) {
+      expanded.remove(event.conversationId);
+    } else {
+      expanded.add(event.conversationId);
+    }
+
+    emit(current.copyWith(expandedConversationIds: expanded));
+  }
+
+  void _onEmailDeleted(
+    EmailListEmailDeleted event,
+    Emitter<EmailListState> emit,
+  ) {
+    final current = state;
+    if (current is! EmailListLoaded) return;
+    emit(current.copyWith(
+      emails: current.emails.where((e) => e.id != event.emailId).toList(),
+    ));
+  }
 }

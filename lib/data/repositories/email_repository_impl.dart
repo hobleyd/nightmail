@@ -2,10 +2,10 @@ import 'package:fpdart/fpdart.dart';
 
 import '../../core/error/exceptions.dart';
 import '../../core/error/failures.dart';
-import '../../infrastructure/accounts/account_manager.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_folder.dart';
 import '../../domain/repositories/email_repository.dart';
+import '../../infrastructure/accounts/account_manager.dart';
 
 class EmailRepositoryImpl implements EmailRepository {
   const EmailRepositoryImpl({required AccountManager accountManager})
@@ -84,6 +84,64 @@ class EmailRepositoryImpl implements EmailRepository {
       String parentFolderId) async {
     return _execute(
         () => _accountManager.emailDatasource.getChildFolders(parentFolderId));
+  }
+
+  @override
+  Future<Either<Failure, Unit>> sendEmail({
+    required List<String> toAddresses,
+    List<String> ccAddresses = const [],
+    required String subject,
+    required String body,
+  }) async {
+    return _execute(() async {
+      await _accountManager.emailDatasource.sendEmail(
+        toAddresses: toAddresses,
+        ccAddresses: ccAddresses,
+        subject: subject,
+        body: body,
+      );
+      return unit;
+    });
+  }
+
+  @override
+  Future<Either<Failure, Unit>> replyToEmail({
+    required String messageId,
+    required String comment,
+    bool replyAll = false,
+  }) async {
+    return _execute(() async {
+      await _accountManager.emailDatasource.replyToEmail(
+        messageId: messageId,
+        comment: comment,
+        replyAll: replyAll,
+      );
+      return unit;
+    });
+  }
+
+  @override
+  Future<Either<Failure, Unit>> forwardEmail({
+    required String messageId,
+    required List<String> toAddresses,
+    required String comment,
+  }) async {
+    return _execute(() async {
+      await _accountManager.emailDatasource.forwardEmail(
+        messageId: messageId,
+        toAddresses: toAddresses,
+        comment: comment,
+      );
+      return unit;
+    });
+  }
+
+  @override
+  Future<Either<Failure, Unit>> deleteEmail(String id) async {
+    return _execute(() async {
+      await _accountManager.emailDatasource.deleteEmail(id);
+      return unit;
+    });
   }
 
   Future<Either<Failure, T>> _execute<T>(Future<T> Function() fn) async {

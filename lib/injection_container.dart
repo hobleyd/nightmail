@@ -5,15 +5,18 @@ import 'data/repositories/calendar_repository_impl.dart';
 import 'data/repositories/email_repository_impl.dart';
 import 'domain/repositories/calendar_repository.dart';
 import 'domain/repositories/email_repository.dart';
+import 'domain/usecases/delete_email.dart';
 import 'domain/usecases/get_calendar_events.dart';
 import 'domain/usecases/get_email.dart';
 import 'domain/usecases/get_emails.dart';
 import 'domain/usecases/get_mail_folders.dart';
 import 'domain/usecases/mark_email_as_read.dart';
+import 'domain/usecases/send_email.dart';
 import 'infrastructure/accounts/account_manager.dart';
 import 'infrastructure/accounts/account_storage.dart';
 import 'presentation/blocs/account/account_cubit.dart';
 import 'presentation/blocs/calendar/calendar_bloc.dart';
+import 'presentation/blocs/compose/compose_bloc.dart';
 import 'presentation/blocs/email_detail/email_detail_bloc.dart';
 import 'presentation/blocs/email_list/email_list_bloc.dart';
 import 'presentation/blocs/folder_list/folder_list_bloc.dart';
@@ -56,6 +59,8 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => GetEmail(sl<EmailRepository>()));
   sl.registerLazySingleton(() => GetMailFolders(sl<EmailRepository>()));
   sl.registerLazySingleton(() => MarkEmailAsRead(sl<EmailRepository>()));
+  sl.registerLazySingleton(() => SendEmail(sl<EmailRepository>()));
+  sl.registerLazySingleton(() => DeleteEmail(sl<EmailRepository>()));
   sl.registerLazySingleton(() => GetCalendarEvents(sl<CalendarRepository>()));
 
   // Presentation — singletons
@@ -76,4 +81,5 @@ Future<void> configureDependencies() async {
   sl.registerFactory(
     () => CalendarBloc(getCalendarEvents: sl<GetCalendarEvents>()),
   );
+  sl.registerFactory(() => ComposeBloc(sendEmail: sl<SendEmail>()));
 }

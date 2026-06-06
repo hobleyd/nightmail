@@ -20,4 +20,25 @@ abstract interface class EmailRemoteDatasource {
   Future<List<EmailFolderModel>> getMailFolders();
 
   Future<List<EmailFolderModel>> getChildFolders(String parentFolderId);
+
+  Future<void> sendEmail({
+    required List<String> toAddresses,
+    List<String> ccAddresses = const [],
+    required String subject,
+    required String body,
+  });
+
+  Future<void> replyToEmail({
+    required String messageId,
+    required String comment,
+    bool replyAll = false,
+  });
+
+  Future<void> forwardEmail({
+    required String messageId,
+    required List<String> toAddresses,
+    required String comment,
+  });
+
+  Future<void> deleteEmail(String id);
 }

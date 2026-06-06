@@ -1,11 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
+import '../../domain/usecases/delete_email.dart';
+import '../../domain/usecases/send_email.dart';
+import '../../injection_container.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
+import '../blocs/email_detail/email_detail_event.dart';
 import '../blocs/email_detail/email_detail_state.dart';
+import '../blocs/email_list/email_list_bloc.dart';
+import '../blocs/email_list/email_list_event.dart';
+import 'compose_dialog.dart';
 import 'email_date_formatter.dart';
 
 class ReadingPane extends StatelessWidget {
@@ -93,12 +101,154 @@ class _EmailView extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        _ReadingPaneToolbar(email: email),
+        Divider(height: 1, color: c.border),
         _EmailHeader(email: email),
         Divider(height: 1, color: c.border),
         Expanded(
           child: _EmailBody(email: email),
         ),
       ],
+    );
+  }
+}
+
+class _ReadingPaneToolbar extends StatelessWidget {
+  const _ReadingPaneToolbar({required this.email});
+  final Email email;
+
+  Future<void> _confirmAndDelete(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete email', style: TextStyle(fontSize: 15)),
+        content: const Text(
+          'Move this email to Deleted Items?',
+          style: TextStyle(fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete',
+                style: TextStyle(color: Colors.redAccent)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !context.mounted) return;
+
+    final result =
+        await sl<DeleteEmail>()(DeleteEmailParams(id: email.id));
+
+    if (!context.mounted) return;
+
+    result.fold(
+      (f) => ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(f.message)),
+      ),
+      (_) {
+        context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+        context.read<EmailListBloc>().add(
+              EmailListEmailDeleted(emailId: email.id),
+            );
+      },
+    );
+  }
+
+  Future<void> _copyToClipboard(BuildContext context) async {
+    await Clipboard.setData(ClipboardData(text: email.body));
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Email body copied to clipboard'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: Row(
+        children: [
+          _ToolbarButton(
+            icon: Icons.reply_rounded,
+            tooltip: 'Reply',
+            color: c.textMuted,
+            onPressed: () => ComposeDialog.show(
+              context,
+              mode: ComposeMode.reply,
+              originalEmail: email,
+            ),
+          ),
+          _ToolbarButton(
+            icon: Icons.reply_all_rounded,
+            tooltip: 'Reply All',
+            color: c.textMuted,
+            onPressed: () => ComposeDialog.show(
+              context,
+              mode: ComposeMode.replyAll,
+              originalEmail: email,
+            ),
+          ),
+          _ToolbarButton(
+            icon: Icons.forward_to_inbox_rounded,
+            tooltip: 'Forward',
+            color: c.textMuted,
+            onPressed: () => ComposeDialog.show(
+              context,
+              mode: ComposeMode.forward,
+              originalEmail: email,
+            ),
+          ),
+          const Spacer(),
+          _ToolbarButton(
+            icon: Icons.content_copy_outlined,
+            tooltip: 'Debug: copy body to clipboard',
+            color: c.textMuted,
+            onPressed: () => _copyToClipboard(context),
+          ),
+          _ToolbarButton(
+            icon: Icons.delete_outline_rounded,
+            tooltip: 'Delete',
+            color: c.textMuted,
+            onPressed: () => _confirmAndDelete(context),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ToolbarButton extends StatelessWidget {
+  const _ToolbarButton({
+    required this.icon,
+    required this.tooltip,
+    required this.color,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final Color color;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      icon: Icon(icon, size: 16, color: color),
+      tooltip: tooltip,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+      onPressed: onPressed,
     );
   }
 }

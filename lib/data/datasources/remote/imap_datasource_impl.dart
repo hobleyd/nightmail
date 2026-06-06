@@ -217,9 +217,11 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
 
       final sequence = MessageSequence.fromIds(page, isUid: true);
       // Multiple fetch items must be wrapped in parentheses per RFC 3501.
+      // BODY.PEEK[HEADER.FIELDS (REFERENCES)] fetches the References header
+      // for RFC-compliant thread grouping without marking messages as read.
       final fetchResult = await client.uidFetchMessages(
         sequence,
-        '(FLAGS INTERNALDATE ENVELOPE BODY.PEEK[TEXT]<0.500>)',
+        '(FLAGS INTERNALDATE ENVELOPE BODY.PEEK[HEADER.FIELDS (REFERENCES)] BODY.PEEK[TEXT]<0.500>)',
       );
 
       return fetchResult.messages
@@ -354,8 +356,64 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       isRead: isRead,
       receivedDateTime: date,
       importance: EmailImportance.normal,
+      conversationId: _extractConversationId(msg),
       parentFolderId: folderId,
       hasAttachments: msg.hasAttachments(),
     );
+  }
+
+  /// Returns a stable thread key for grouping emails into conversations.
+  ///
+  /// Strategy (RFC 5322):
+  /// 1. References header — first entry is always the thread root's Message-ID,
+  ///    so every message in a thread shares the same value regardless of depth.
+  /// 2. In-Reply-To from ENVELOPE — covers direct replies when References is absent.
+  /// 3. Own Message-ID — the email IS the thread root; replies will reference it.
+  String? _extractConversationId(MimeMessage msg) {
+    final references = msg.getHeaderValue('references');
+    if (references != null && references.trim().isNotEmpty) {
+      final first = references.trim().split(RegExp(r'\s+')).firstOrNull;
+      if (first != null && first.isNotEmpty) return first;
+    }
+
+    final inReplyTo = msg.envelope?.inReplyTo;
+    if (inReplyTo != null && inReplyTo.trim().isNotEmpty) {
+      return inReplyTo.trim();
+    }
+
+    return msg.envelope?.messageId?.trim();
+  }
+
+  @override
+  Future<void> sendEmail({
+    required List<String> toAddresses,
+    List<String> ccAddresses = const [],
+    required String subject,
+    required String body,
+  }) {
+    throw UnimplementedError('sendEmail not yet supported for IMAP');
+  }
+
+  @override
+  Future<void> replyToEmail({
+    required String messageId,
+    required String comment,
+    bool replyAll = false,
+  }) {
+    throw UnimplementedError('replyToEmail not yet supported for IMAP');
+  }
+
+  @override
+  Future<void> forwardEmail({
+    required String messageId,
+    required List<String> toAddresses,
+    required String comment,
+  }) {
+    throw UnimplementedError('forwardEmail not yet supported for IMAP');
+  }
+
+  @override
+  Future<void> deleteEmail(String id) {
+    throw UnimplementedError('deleteEmail not yet supported for IMAP');
   }
 }

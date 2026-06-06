@@ -179,16 +179,28 @@ class _PanelHeader extends StatelessWidget {
           const Icon(Icons.mail_outline_rounded,
               size: 18, color: AppColors.accent),
           const SizedBox(width: 8),
-          Text(
-            'NightMail',
-            style: TextStyle(
-              color: c.textPrimary,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              letterSpacing: -0.2,
+          Expanded(
+            child: BlocBuilder<AccountCubit, AccountState>(
+              builder: (context, state) {
+                String name = 'NightMail';
+                if (state is AccountsLoaded) {
+                  final acc = state.activeAccount;
+                  name = acc.displayName.isEmpty ? acc.emailAddress : acc.displayName;
+                }
+                return Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: c.textPrimary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.2,
+                  ),
+                );
+              },
             ),
           ),
-          const Spacer(),
           IconButton(
             icon: Icon(Icons.edit_square, size: 16, color: c.textMuted),
             tooltip: 'Compose',

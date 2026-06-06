@@ -35,3 +35,19 @@ final class EmailListMarkReadRequested extends EmailListEvent {
   @override
   List<Object?> get props => [emailId, isRead];
 }
+
+final class EmailListToggleConversation extends EmailListEvent {
+  const EmailListToggleConversation({required this.conversationId});
+  final String conversationId;
+
+  @override
+  List<Object?> get props => [conversationId];
+}
+
+final class EmailListEmailDeleted extends EmailListEvent {
+  const EmailListEmailDeleted({required this.emailId});
+  final String emailId;
+
+  @override
+  List<Object?> get props => [emailId];
+}

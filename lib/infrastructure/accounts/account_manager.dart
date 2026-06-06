@@ -65,6 +65,7 @@ class AccountManager {
     }
     _activeIndex = await _accountStorage.loadActiveIndex();
     if (_activeIndex >= _accounts.length) _activeIndex = 0;
+    _sortAccounts();
     if (_accounts.isNotEmpty) _buildDatasourcesForActiveAccount();
   }
 
@@ -72,6 +73,7 @@ class AccountManager {
   Future<void> addAccount(Account account) async {
     _accounts = [..._accounts, account];
     _activeIndex = _accounts.length - 1;
+    _sortAccounts();
     await _accountStorage.saveAccounts(_accounts);
     await _accountStorage.saveActiveIndex(_activeIndex);
     _buildDatasourcesForActiveAccount();
@@ -86,9 +88,12 @@ class AccountManager {
     updatedList[idx] = updatedAccount;
     _accounts = updatedList;
 
-    await _accountStorage.saveAccounts(_accounts);
+    _sortAccounts();
 
-    if (idx == _activeIndex) {
+    await _accountStorage.saveAccounts(_accounts);
+    await _accountStorage.saveActiveIndex(_activeIndex);
+
+    if (activeAccount?.id == updatedAccount.id) {
       _buildDatasourcesForActiveAccount();
     }
   }
@@ -128,11 +133,30 @@ class AccountManager {
       _authService = null;
     } else {
       _activeIndex = _activeIndex.clamp(0, _accounts.length - 1);
+      _sortAccounts();
       _buildDatasourcesForActiveAccount();
     }
 
     await _accountStorage.saveAccounts(_accounts);
     await _accountStorage.saveActiveIndex(_activeIndex);
+  }
+
+  void _sortAccounts() {
+    if (_accounts.isEmpty) return;
+
+    final active = activeAccount;
+
+    _accounts.sort((a, b) {
+      final nameA = (a.displayName.isEmpty ? a.emailAddress : a.displayName)
+          .toLowerCase();
+      final nameB = (b.displayName.isEmpty ? b.emailAddress : b.displayName)
+          .toLowerCase();
+      return nameA.compareTo(nameB);
+    });
+
+    if (active != null) {
+      _activeIndex = _accounts.indexOf(active);
+    }
   }
 
   void _buildDatasourcesForActiveAccount() {

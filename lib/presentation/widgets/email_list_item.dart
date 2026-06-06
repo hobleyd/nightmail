@@ -10,11 +10,13 @@ class EmailListItem extends StatelessWidget {
     required this.email,
     required this.isSelected,
     required this.onTap,
+    this.indent = 0.0,
   });
 
   final Email email;
   final bool isSelected;
   final VoidCallback onTap;
+  final double indent;
 
   @override
   Widget build(BuildContext context) {
@@ -23,7 +25,7 @@ class EmailListItem extends StatelessWidget {
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 120),
-        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+        margin: EdgeInsets.fromLTRB(8 + indent, 1, 8, 1),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
           color: isSelected ? c.selectionEmailBg : Colors.transparent,

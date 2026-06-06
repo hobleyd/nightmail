@@ -23,29 +23,33 @@ final class EmailListLoaded extends EmailListState {
     this.hasMore = true,
     this.isLoadingMore = false,
     this.currentFolderId,
+    this.expandedConversationIds = const {},
   });
 
   final List<Email> emails;
   final bool hasMore;
   final bool isLoadingMore;
   final String? currentFolderId;
+  final Set<String> expandedConversationIds;
 
   EmailListLoaded copyWith({
     List<Email>? emails,
     bool? hasMore,
     bool? isLoadingMore,
     String? currentFolderId,
+    Set<String>? expandedConversationIds,
   }) {
     return EmailListLoaded(
       emails: emails ?? this.emails,
       hasMore: hasMore ?? this.hasMore,
       isLoadingMore: isLoadingMore ?? this.isLoadingMore,
       currentFolderId: currentFolderId ?? this.currentFolderId,
+      expandedConversationIds: expandedConversationIds ?? this.expandedConversationIds,
     );
   }
 
   @override
-  List<Object?> get props => [emails, hasMore, isLoadingMore, currentFolderId];
+  List<Object?> get props => [emails, hasMore, isLoadingMore, currentFolderId, expandedConversationIds];
 }
 
 final class EmailListError extends EmailListState {

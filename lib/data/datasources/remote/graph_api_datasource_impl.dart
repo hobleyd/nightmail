@@ -192,6 +192,82 @@ class GraphApiDatasourceImpl
     }
   }
 
+  @override
+  Future<void> sendEmail({
+    required List<String> toAddresses,
+    List<String> ccAddresses = const [],
+    required String subject,
+    required String body,
+  }) async {
+    try {
+      await _dio.post<void>(
+        '/me/sendMail',
+        data: {
+          'message': {
+            'subject': subject,
+            'body': {'contentType': 'Text', 'content': body},
+            'toRecipients': toAddresses
+                .map((a) => {'emailAddress': {'address': a}})
+                .toList(),
+            if (ccAddresses.isNotEmpty)
+              'ccRecipients': ccAddresses
+                  .map((a) => {'emailAddress': {'address': a}})
+                  .toList(),
+          },
+          'saveToSentItems': true,
+        },
+      );
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<void> replyToEmail({
+    required String messageId,
+    required String comment,
+    bool replyAll = false,
+  }) async {
+    final path = replyAll
+        ? '/me/messages/$messageId/replyAll'
+        : '/me/messages/$messageId/reply';
+    try {
+      await _dio.post<void>(path, data: {'comment': comment});
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<void> forwardEmail({
+    required String messageId,
+    required List<String> toAddresses,
+    required String comment,
+  }) async {
+    try {
+      await _dio.post<void>(
+        '/me/messages/$messageId/forward',
+        data: {
+          'comment': comment,
+          'toRecipients': toAddresses
+              .map((a) => {'emailAddress': {'address': a}})
+              .toList(),
+        },
+      );
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<void> deleteEmail(String id) async {
+    try {
+      await _dio.delete<void>('/me/messages/$id');
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
   Exception _mapDioException(DioException e) {
     final statusCode = e.response?.statusCode;
 

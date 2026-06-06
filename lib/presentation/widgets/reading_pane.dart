@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
 
+import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
 import '../blocs/email_detail/email_detail_state.dart';
@@ -12,15 +13,16 @@ class ReadingPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return ColoredBox(
-      color: const Color(0xFF0D0F17),
+      color: c.surfaceReading,
       child: BlocBuilder<EmailDetailBloc, EmailDetailState>(
         builder: (context, state) {
           return switch (state) {
             EmailDetailInitial() => const _EmptyState(),
-            EmailDetailLoading() => const Center(
+            EmailDetailLoading() => Center(
                 child: CircularProgressIndicator(
-                    color: Color(0xFF7C83FD), strokeWidth: 2),
+                    color: AppColors.accent, strokeWidth: 2),
               ),
             EmailDetailLoaded(:final email) => _EmailView(email: email),
             EmailDetailError(:final message) => _ErrorState(message: message),
@@ -36,16 +38,17 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    final c = context.colors;
+    return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(Icons.mark_email_read_outlined,
-              size: 48, color: Color(0xFF1E2130)),
-          SizedBox(height: 16),
+              size: 48, color: c.stateIcon),
+          const SizedBox(height: 16),
           Text(
             'Select an email to read',
-            style: TextStyle(color: Color(0xFF374151), fontSize: 14),
+            style: TextStyle(color: c.stateText, fontSize: 14),
           ),
         ],
       ),
@@ -59,20 +62,19 @@ class _ErrorState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.error_outline_rounded,
-                color: Color(0xFF6B7280), size: 36),
+            Icon(Icons.error_outline_rounded, color: c.textMuted, size: 36),
             const SizedBox(height: 12),
             Text(
               message,
               textAlign: TextAlign.center,
-              style:
-                  const TextStyle(color: Color(0xFF6B7280), fontSize: 13),
+              style: TextStyle(color: c.textMuted, fontSize: 13),
             ),
           ],
         ),
@@ -87,11 +89,12 @@ class _EmailView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _EmailHeader(email: email),
-        const Divider(height: 1, color: Color(0xFF1A1D27)),
+        Divider(height: 1, color: c.border),
         Expanded(
           child: _EmailBody(email: email),
         ),
@@ -106,6 +109,7 @@ class _EmailHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return Padding(
       padding: const EdgeInsets.fromLTRB(28, 24, 28, 20),
       child: Column(
@@ -113,8 +117,8 @@ class _EmailHeader extends StatelessWidget {
         children: [
           Text(
             email.subject,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: c.textPrimary,
               fontSize: 20,
               fontWeight: FontWeight.w600,
               letterSpacing: -0.5,
@@ -180,17 +184,18 @@ class _MetaRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, size: 14, color: const Color(0xFF4B5563)),
+        Icon(icon, size: 14, color: c.textDimmed),
         const SizedBox(width: 6),
         SizedBox(
           width: 44,
           child: Text(
             label,
-            style: const TextStyle(
-              color: Color(0xFF4B5563),
+            style: TextStyle(
+              color: c.textDimmed,
               fontSize: 12,
               fontWeight: FontWeight.w500,
             ),
@@ -199,8 +204,8 @@ class _MetaRow extends StatelessWidget {
         Expanded(
           child: Text(
             value,
-            style: const TextStyle(
-              color: Color(0xFF9CA3AF),
+            style: TextStyle(
+              color: c.textTertiary,
               fontSize: 12,
             ),
             overflow: TextOverflow.ellipsis,
@@ -217,30 +222,31 @@ class _EmailBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
+    final htmlColor = c.textBodyHtml;
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(28, 20, 28, 40),
       child: email.bodyType == EmailBodyType.html
           ? HtmlWidget(
               email.body,
-              textStyle: const TextStyle(
-                color: Color(0xFFD1D5DB),
+              textStyle: TextStyle(
+                color: c.textBody,
                 fontSize: 14,
                 height: 1.6,
               ),
               customStylesBuilder: (element) {
-                // Force dark-friendly text color on elements that declare
-                // explicit black/white colors from the email's own stylesheet.
+                // Override explicit black/white colors from the email's stylesheet.
                 if (['p', 'div', 'span', 'td', 'li']
                     .contains(element.localName)) {
-                  return {'color': '#D1D5DB'};
+                  return {'color': htmlColor};
                 }
                 return null;
               },
             )
           : SelectableText(
               email.body,
-              style: const TextStyle(
-                color: Color(0xFFD1D5DB),
+              style: TextStyle(
+                color: c.textBody,
                 fontSize: 14,
                 height: 1.6,
               ),

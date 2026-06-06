@@ -5,6 +5,8 @@ import 'injection_container.dart';
 import 'presentation/blocs/auth/auth_bloc.dart';
 import 'presentation/blocs/auth/auth_event.dart';
 import 'presentation/blocs/auth/auth_state.dart';
+import 'presentation/blocs/theme/theme_cubit.dart';
+import 'presentation/blocs/theme/theme_state.dart';
 import 'presentation/pages/home_page.dart';
 import 'presentation/pages/sign_in_page.dart';
 
@@ -39,21 +41,43 @@ void main() async {
 class NightMailApp extends StatelessWidget {
   const NightMailApp({super.key});
 
+  static final _darkTheme = ThemeData(
+    colorScheme: ColorScheme.fromSeed(
+      seedColor: const Color(0xFF7C83FD),
+      brightness: Brightness.dark,
+    ),
+    useMaterial3: true,
+  );
+
+  static final _lightTheme = ThemeData(
+    colorScheme: ColorScheme.fromSeed(
+      seedColor: const Color(0xFF7C83FD),
+    ),
+    useMaterial3: true,
+  );
+
   @override
   Widget build(BuildContext context) {
-    return BlocProvider<AuthBloc>(
-      create: (_) => sl<AuthBloc>()..add(const AuthCheckRequested()),
-      child: MaterialApp(
-        title: 'NightMail',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: const Color(0xFF7C83FD),
-            brightness: Brightness.dark,
-          ),
-          useMaterial3: true,
-        ),
-        home: const _AuthGate(),
+    return BlocProvider<ThemeCubit>(
+      create: (_) => sl<ThemeCubit>()..load(),
+      child: BlocBuilder<ThemeCubit, ThemeState>(
+        builder: (context, themeState) {
+          return BlocProvider<AuthBloc>(
+            create: (_) => sl<AuthBloc>()..add(const AuthCheckRequested()),
+            child: MaterialApp(
+              title: 'NightMail',
+              debugShowCheckedModeBanner: false,
+              theme: _lightTheme,
+              darkTheme: _darkTheme,
+              themeMode: switch (themeState.mode) {
+                AppThemeMode.light => ThemeMode.light,
+                AppThemeMode.dark => ThemeMode.dark,
+                AppThemeMode.system => ThemeMode.system,
+              },
+              home: const _AuthGate(),
+            ),
+          );
+        },
       ),
     );
   }
@@ -86,9 +110,9 @@ class _SplashScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      backgroundColor: Color(0xFF0F1117),
-      body: Center(
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      body: const Center(
         child: CircularProgressIndicator(
           color: Color(0xFF7C83FD),
           strokeWidth: 2,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import '../blocs/email_list/email_list_bloc.dart';
 import '../blocs/email_list/email_list_event.dart';
@@ -53,8 +54,9 @@ class _EmailListPanelState extends State<EmailListPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return ColoredBox(
-      color: const Color(0xFF0F1117),
+      color: c.surfaceBase,
       child: Column(
         children: [
           _ListHeader(
@@ -63,7 +65,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
                 .read<EmailListBloc>()
                 .add(const EmailListRefreshRequested()),
           ),
-          const Divider(height: 1, color: Color(0xFF1E2130)),
+          Divider(height: 1, color: c.separator),
           Expanded(
             child: BlocBuilder<EmailListBloc, EmailListState>(
               builder: (context, state) {
@@ -71,9 +73,9 @@ class _EmailListPanelState extends State<EmailListPanel> {
                   EmailListInitial() => const _EmptyStateView(
                       message: 'Select a folder to view emails',
                     ),
-                  EmailListLoading() => const Center(
+                  EmailListLoading() => Center(
                       child: CircularProgressIndicator(
-                        color: Color(0xFF7C83FD),
+                        color: AppColors.accent,
                         strokeWidth: 2,
                       ),
                     ),
@@ -106,14 +108,15 @@ class _ListHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 14, 8, 12),
       child: Row(
         children: [
           Text(
             folderName,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: c.textPrimary,
               fontSize: 15,
               fontWeight: FontWeight.w600,
               letterSpacing: -0.3,
@@ -121,8 +124,7 @@ class _ListHeader extends StatelessWidget {
           ),
           const Spacer(),
           IconButton(
-            icon: const Icon(Icons.refresh_rounded,
-                size: 18, color: Color(0xFF6B7280)),
+            icon: Icon(Icons.refresh_rounded, size: 18, color: c.textMuted),
             tooltip: 'Refresh',
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -157,11 +159,11 @@ class _EmailListView extends StatelessWidget {
       itemCount: emails.length + (isLoadingMore ? 1 : 0),
       itemBuilder: (context, i) {
         if (i == emails.length) {
-          return const Padding(
-            padding: EdgeInsets.all(16),
+          return Padding(
+            padding: const EdgeInsets.all(16),
             child: Center(
               child: CircularProgressIndicator(
-                  color: Color(0xFF7C83FD), strokeWidth: 2),
+                  color: AppColors.accent, strokeWidth: 2),
             ),
           );
         }
@@ -183,10 +185,11 @@ class _EmptyStateView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return Center(
       child: Text(
         message,
-        style: const TextStyle(color: Color(0xFF4B5563), fontSize: 13),
+        style: TextStyle(color: c.textDimmed, fontSize: 13),
       ),
     );
   }
@@ -198,19 +201,19 @@ class _ErrorView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.error_outline_rounded,
-                color: Color(0xFF6B7280), size: 32),
+            Icon(Icons.error_outline_rounded, color: c.textMuted, size: 32),
             const SizedBox(height: 12),
             Text(
               message,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Color(0xFF6B7280), fontSize: 13),
+              style: TextStyle(color: c.textMuted, fontSize: 13),
             ),
           ],
         ),

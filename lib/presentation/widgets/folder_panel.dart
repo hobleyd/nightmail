@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email_folder.dart';
 import '../blocs/folder_list/folder_list_bloc.dart';
 import '../blocs/folder_list/folder_list_state.dart';
+import '../blocs/theme/theme_cubit.dart';
+import '../pages/settings_page.dart';
 
 class FolderPanel extends StatefulWidget {
   const FolderPanel({
@@ -24,20 +27,21 @@ class _FolderPanelState extends State<FolderPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return ColoredBox(
-      color: const Color(0xFF13161F),
+      color: c.surfacePanel,
       child: Column(
         children: [
           _PanelHeader(),
-          const Divider(height: 1, color: Color(0xFF2A2D3E)),
+          Divider(height: 1, color: c.separatorStrong),
           Expanded(
             child: BlocBuilder<FolderListBloc, FolderListState>(
               builder: (context, state) {
                 return switch (state) {
                   FolderListInitial() || FolderListLoading() =>
-                    const Center(
+                    Center(
                       child: CircularProgressIndicator(
-                        color: Color(0xFF7C83FD),
+                        color: AppColors.accent,
                         strokeWidth: 2,
                       ),
                     ),
@@ -47,6 +51,8 @@ class _FolderPanelState extends State<FolderPanel> {
               },
             ),
           ),
+          Divider(height: 1, color: c.separatorStrong),
+          _SettingsFooter(),
         ],
       ),
     );
@@ -140,17 +146,18 @@ class _DisplayItem {
 class _PanelHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
       child: Row(
         children: [
           const Icon(Icons.mail_outline_rounded,
-              size: 18, color: Color(0xFF7C83FD)),
+              size: 18, color: AppColors.accent),
           const SizedBox(width: 8),
-          const Text(
+          Text(
             'NightMail',
             style: TextStyle(
-              color: Colors.white,
+              color: c.textPrimary,
               fontSize: 14,
               fontWeight: FontWeight.w600,
               letterSpacing: -0.2,
@@ -158,7 +165,7 @@ class _PanelHeader extends StatelessWidget {
           ),
           const Spacer(),
           IconButton(
-            icon: const Icon(Icons.edit_square, size: 16, color: Color(0xFF6B7280)),
+            icon: Icon(Icons.edit_square, size: 16, color: c.textMuted),
             tooltip: 'Compose',
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
@@ -191,6 +198,7 @@ class _FolderItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     final indentWidth = depth * 16.0;
 
     return Material(
@@ -207,9 +215,7 @@ class _FolderItem extends StatelessWidget {
             bottom: 8,
           ),
           decoration: BoxDecoration(
-            color: isSelected
-                ? const Color(0xFF7C83FD).withAlpha(30)
-                : Colors.transparent,
+            color: isSelected ? c.selectionBg : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
           ),
           child: Row(
@@ -225,9 +231,7 @@ class _FolderItem extends StatelessWidget {
                           ? Icons.expand_more_rounded
                           : Icons.chevron_right_rounded,
                       size: 16,
-                      color: isSelected
-                          ? const Color(0xFF7C83FD)
-                          : const Color(0xFF6B7280),
+                      color: isSelected ? AppColors.accent : c.textMuted,
                     ),
                   ),
                 )
@@ -236,18 +240,14 @@ class _FolderItem extends StatelessWidget {
               Icon(
                 _iconFor(folder.displayName),
                 size: 16,
-                color: isSelected
-                    ? const Color(0xFF7C83FD)
-                    : const Color(0xFF6B7280),
+                color: isSelected ? AppColors.accent : c.textMuted,
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   folder.displayName,
                   style: TextStyle(
-                    color: isSelected
-                        ? const Color(0xFFE0E0E0)
-                        : const Color(0xFF9CA3AF),
+                    color: isSelected ? c.textSecondary : c.textTertiary,
                     fontSize: 13,
                     fontWeight:
                         isSelected ? FontWeight.w500 : FontWeight.w400,
@@ -260,13 +260,13 @@ class _FolderItem extends StatelessWidget {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF7C83FD).withAlpha(40),
+                    color: c.badgeBg,
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Text(
                     '${folder.unreadItemCount}',
                     style: const TextStyle(
-                      color: Color(0xFF7C83FD),
+                      color: AppColors.accent,
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
                     ),
@@ -293,17 +293,44 @@ class _FolderItem extends StatelessWidget {
   }
 }
 
+class _SettingsFooter extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: IconButton(
+        icon: Icon(Icons.settings_outlined, size: 16, color: c.textMuted),
+        tooltip: 'Settings',
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+        onPressed: () {
+          final themeCubit = context.read<ThemeCubit>();
+          showDialog(
+            context: context,
+            builder: (ctx) => BlocProvider.value(
+              value: themeCubit,
+              child: const SettingsDialog(),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
 class _ErrorView extends StatelessWidget {
   const _ErrorView({required this.message});
   final String message;
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Text(
         message,
-        style: const TextStyle(color: Color(0xFF6B7280), fontSize: 12),
+        style: TextStyle(color: c.textMuted, fontSize: 12),
       ),
     );
   }

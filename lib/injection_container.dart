@@ -18,6 +18,7 @@ import 'presentation/blocs/auth/auth_bloc.dart';
 import 'presentation/blocs/email_detail/email_detail_bloc.dart';
 import 'presentation/blocs/email_list/email_list_bloc.dart';
 import 'presentation/blocs/folder_list/folder_list_bloc.dart';
+import 'presentation/blocs/theme/theme_cubit.dart';
 
 final sl = GetIt.instance;
 
@@ -67,6 +68,9 @@ Future<void> configureDependencies({
   sl.registerLazySingleton(() => GetEmail(sl<EmailRepository>()));
   sl.registerLazySingleton(() => GetMailFolders(sl<EmailRepository>()));
   sl.registerLazySingleton(() => MarkEmailAsRead(sl<EmailRepository>()));
+
+  // Presentation — theme cubit (singleton — app-wide state)
+  sl.registerLazySingleton(() => ThemeCubit());
 
   // Presentation — BLoCs (factories so each screen gets a fresh instance)
   sl.registerFactory(() => AuthBloc(authService: sl<AuthService>()));

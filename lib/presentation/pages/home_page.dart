@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../core/theme/app_colors.dart';
 import '../../injection_container.dart';
 import '../blocs/auth/auth_bloc.dart';
 import '../blocs/auth/auth_event.dart';
@@ -62,7 +63,7 @@ class _HomeView extends StatelessWidget {
         }
       },
       child: Scaffold(
-        backgroundColor: const Color(0xFF0F1117),
+        backgroundColor: context.colors.surfaceBase,
         body: Column(
           children: [
             _AppBar(),
@@ -77,16 +78,16 @@ class _HomeView extends StatelessWidget {
 class _AppBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return Container(
       height: 48,
-      color: const Color(0xFF0F1117),
+      color: c.surfaceBase,
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(
         children: [
           const Spacer(),
           IconButton(
-            icon: const Icon(Icons.logout_rounded,
-                size: 18, color: Color(0xFF4B5563)),
+            icon: Icon(Icons.logout_rounded, size: 18, color: c.textDimmed),
             tooltip: 'Sign out',
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -235,8 +236,8 @@ class _ResizeHandleState extends State<_ResizeHandle> {
             child: Container(
               width: 1,
               color: _hovered
-                  ? const Color(0xFF4B5563)
-                  : const Color(0xFF1E2130),
+                  ? context.colors.textDimmed
+                  : context.colors.separator,
             ),
           ),
         ),

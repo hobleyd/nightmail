@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import 'email_date_formatter.dart';
 
@@ -17,6 +18,7 @@ class EmailListItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
@@ -24,12 +26,10 @@ class EmailListItem extends StatelessWidget {
         margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: isSelected
-              ? const Color(0xFF7C83FD).withAlpha(25)
-              : Colors.transparent,
+          color: isSelected ? c.selectionEmailBg : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
           border: isSelected
-              ? Border.all(color: const Color(0xFF7C83FD).withAlpha(80))
+              ? Border.all(color: c.selectionBorder)
               : null,
         ),
         child: Row(
@@ -45,7 +45,7 @@ class EmailListItem extends StatelessWidget {
                   width: 7,
                   height: 7,
                   decoration: const BoxDecoration(
-                    color: Color(0xFF7C83FD),
+                    color: AppColors.accent,
                     shape: BoxShape.circle,
                   ),
                 ),
@@ -62,8 +62,8 @@ class EmailListItem extends StatelessWidget {
                           email.from.displayName,
                           style: TextStyle(
                             color: email.isRead
-                                ? const Color(0xFF9CA3AF)
-                                : const Color(0xFFE0E0E0),
+                                ? c.textTertiary
+                                : c.textSecondary,
                             fontSize: 13,
                             fontWeight: email.isRead
                                 ? FontWeight.w400
@@ -77,8 +77,8 @@ class EmailListItem extends StatelessWidget {
                         formatEmailDate(email.receivedDateTime),
                         style: TextStyle(
                           color: email.isRead
-                              ? const Color(0xFF4B5563)
-                              : const Color(0xFF7C83FD),
+                              ? c.textDimmed
+                              : AppColors.accent,
                           fontSize: 11,
                           fontWeight: email.isRead
                               ? FontWeight.w400
@@ -95,8 +95,8 @@ class EmailListItem extends StatelessWidget {
                           email.subject,
                           style: TextStyle(
                             color: email.isRead
-                                ? const Color(0xFF6B7280)
-                                : const Color(0xFFD1D5DB),
+                                ? c.textMuted
+                                : c.textBody,
                             fontSize: 12,
                             fontWeight: email.isRead
                                 ? FontWeight.w400
@@ -106,12 +106,12 @@ class EmailListItem extends StatelessWidget {
                         ),
                       ),
                       if (email.hasAttachments)
-                        const Padding(
-                          padding: EdgeInsets.only(left: 4),
+                        Padding(
+                          padding: const EdgeInsets.only(left: 4),
                           child: Icon(
                             Icons.attach_file_rounded,
                             size: 12,
-                            color: Color(0xFF4B5563),
+                            color: c.textDimmed,
                           ),
                         ),
                     ],
@@ -119,8 +119,8 @@ class EmailListItem extends StatelessWidget {
                   const SizedBox(height: 3),
                   Text(
                     email.bodyPreview,
-                    style: const TextStyle(
-                      color: Color(0xFF4B5563),
+                    style: TextStyle(
+                      color: c.textDimmed,
                       fontSize: 11,
                       height: 1.3,
                     ),

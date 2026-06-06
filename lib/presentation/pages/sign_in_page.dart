@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../core/theme/app_colors.dart';
 import '../blocs/auth/auth_bloc.dart';
 import '../blocs/auth/auth_event.dart';
 import '../blocs/auth/auth_state.dart';
@@ -31,8 +32,9 @@ class SignInPage extends StatelessWidget {
         }
       },
       builder: (context, state) {
+        final c = context.colors;
         return Scaffold(
-          backgroundColor: const Color(0xFF0F1117),
+          backgroundColor: c.surfaceBase,
           body: SafeArea(
             child: Center(
               child: ConstrainedBox(
@@ -80,28 +82,29 @@ class SignInPage extends StatelessWidget {
 class _AppLogo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return Column(
       children: [
         Container(
           width: 72,
           height: 72,
           decoration: BoxDecoration(
-            color: const Color(0xFF1A1D27),
+            color: c.logoContainerBg,
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFF2A2D3E), width: 1),
+            border: Border.all(color: c.logoContainerBorder, width: 1),
           ),
           child: const Icon(
             Icons.mail_outline_rounded,
             size: 36,
-            color: Color(0xFF7C83FD),
+            color: AppColors.accent,
           ),
         ),
         const SizedBox(height: 20),
-        const Text(
+        Text(
           'NightMail',
           textAlign: TextAlign.center,
           style: TextStyle(
-            color: Colors.white,
+            color: c.textPrimary,
             fontSize: 28,
             fontWeight: FontWeight.w600,
             letterSpacing: -0.5,
@@ -115,11 +118,12 @@ class _AppLogo extends StatelessWidget {
 class _Headline extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return const Text(
+    final c = context.colors;
+    return Text(
       'Sign in to get started',
       textAlign: TextAlign.center,
       style: TextStyle(
-        color: Color(0xFFE0E0E0),
+        color: c.textSecondary,
         fontSize: 16,
         fontWeight: FontWeight.w400,
       ),
@@ -130,11 +134,12 @@ class _Headline extends StatelessWidget {
 class _Subheadline extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return const Text(
+    final c = context.colors;
+    return Text(
       'Connect your Office 365 account to access your inbox.',
       textAlign: TextAlign.center,
       style: TextStyle(
-        color: Color(0xFF6B7280),
+        color: c.textMuted,
         fontSize: 14,
         height: 1.5,
       ),
@@ -145,6 +150,7 @@ class _Subheadline extends StatelessWidget {
 class _SignInButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return BlocBuilder<AuthBloc, AuthState>(
       builder: (context, state) {
         final isLoading = state is AuthLoading;
@@ -160,7 +166,7 @@ class _SignInButton extends StatelessWidget {
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF2F2FA2),
               foregroundColor: Colors.white,
-              disabledBackgroundColor: const Color(0xFF1A1D27),
+              disabledBackgroundColor: c.logoContainerBg,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(10),
               ),
@@ -239,11 +245,12 @@ class _MicrosoftLogoPainter extends CustomPainter {
 class _PrivacyNote extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return const Text(
+    final c = context.colors;
+    return Text(
       'Your credentials are handled entirely by Microsoft.\nNightMail never sees your password.',
       textAlign: TextAlign.center,
       style: TextStyle(
-        color: Color(0xFF4B5563),
+        color: c.textDimmed,
         fontSize: 12,
         height: 1.6,
       ),
@@ -257,12 +264,13 @@ class _ErrorBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFF2D1B1B),
+        color: c.errorBannerBg,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF5C2626)),
+        border: Border.all(color: c.errorBannerBorder),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -273,8 +281,8 @@ class _ErrorBanner extends StatelessWidget {
           Expanded(
             child: Text(
               message,
-              style: const TextStyle(
-                color: Color(0xFFFCA5A5),
+              style: TextStyle(
+                color: c.errorBannerText,
                 fontSize: 12,
                 height: 1.5,
               ),

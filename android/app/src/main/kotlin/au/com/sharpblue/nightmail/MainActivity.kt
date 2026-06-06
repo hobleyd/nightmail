@@ -1,4 +1,4 @@
-package com.sharpblue.nightmail
+package au.com.sharpblue.nightmail
 
 import io.flutter.embedding.android.FlutterActivity
 

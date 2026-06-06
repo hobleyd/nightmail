@@ -15,7 +15,9 @@ import 'infrastructure/auth/microsoft_auth_service.dart';
 import 'infrastructure/auth/token_storage.dart';
 import 'infrastructure/http/graph_http_client.dart';
 import 'presentation/blocs/auth/auth_bloc.dart';
+import 'presentation/blocs/email_detail/email_detail_bloc.dart';
 import 'presentation/blocs/email_list/email_list_bloc.dart';
+import 'presentation/blocs/folder_list/folder_list_bloc.dart';
 
 final sl = GetIt.instance;
 
@@ -66,10 +68,12 @@ Future<void> configureDependencies({
   sl.registerLazySingleton(() => GetMailFolders(sl<EmailRepository>()));
   sl.registerLazySingleton(() => MarkEmailAsRead(sl<EmailRepository>()));
 
-  // Presentation — BLoCs (registered as factories so each screen gets a fresh instance)
+  // Presentation — BLoCs (factories so each screen gets a fresh instance)
   sl.registerFactory(() => AuthBloc(authService: sl<AuthService>()));
+  sl.registerFactory(() => FolderListBloc(getMailFolders: sl<GetMailFolders>()));
   sl.registerFactory(() => EmailListBloc(
         getEmails: sl<GetEmails>(),
         markEmailAsRead: sl<MarkEmailAsRead>(),
       ));
+  sl.registerFactory(() => EmailDetailBloc(getEmail: sl<GetEmail>()));
 }

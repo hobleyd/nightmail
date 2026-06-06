@@ -3,12 +3,14 @@ import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 
 import '../../core/error/exceptions.dart';
 import 'auth_service.dart';
 import 'auth_token.dart';
 import 'token_storage.dart';
+import 'web_auth_stub.dart' if (dart.library.html) 'web_auth_web.dart';
 
 /// Microsoft identity platform OAuth2 + PKCE implementation.
 ///
@@ -33,7 +35,15 @@ class MicrosoftAuthService implements AuthService {
   final TokenStorage _tokenStorage;
   final Dio _http;
 
-  static const _callbackUrlScheme = 'nightmail';
+  // On web: serve callback.html from the same origin so the BroadcastChannel
+  // can relay the code back. On native/desktop: use the custom URI scheme that
+  // ASWebAuthenticationSession / Custom Tabs intercept without a web server.
+  String get _effectiveRedirectUri {
+    if (kIsWeb) {
+      return '${Uri.base.origin}/callback.html';
+    }
+    return redirectUri;
+  }
 
   static const _scopes = [
     'openid',
@@ -57,7 +67,7 @@ class MicrosoftAuthService implements AuthService {
       queryParameters: {
         'client_id': clientId,
         'response_type': 'code',
-        'redirect_uri': redirectUri,
+        'redirect_uri': _effectiveRedirectUri,
         'scope': _scopes.join(' '),
         'code_challenge': codeChallenge,
         'code_challenge_method': 'S256',
@@ -65,10 +75,18 @@ class MicrosoftAuthService implements AuthService {
       },
     );
 
-    final resultUrl = await FlutterWebAuth2.authenticate(
-      url: authUri.toString(),
-      callbackUrlScheme: _callbackUrlScheme,
-    );
+    // On web, flutter_web_auth_2 is bypassed because Microsoft's COOP headers
+    // sever window.opener in the popup, breaking its postMessage approach.
+    // We use BroadcastChannel instead (see web_auth_web.dart / callback.html).
+    final String resultUrl;
+    if (kIsWeb) {
+      resultUrl = await authenticateWeb(authUri.toString());
+    } else {
+      resultUrl = await FlutterWebAuth2.authenticate(
+        url: authUri.toString(),
+        callbackUrlScheme: 'nightmail',
+      );
+    }
 
     final uri = Uri.parse(resultUrl);
     final code = uri.queryParameters['code'];
@@ -135,7 +153,7 @@ class MicrosoftAuthService implements AuthService {
           'client_id': clientId,
           'grant_type': 'authorization_code',
           'code': code,
-          'redirect_uri': redirectUri,
+          'redirect_uri': _effectiveRedirectUri,
           'code_verifier': codeVerifier,
         },
         options: Options(

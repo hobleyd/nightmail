@@ -4,6 +4,8 @@
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
 #endif
+#include <limits.h>
+#include <unistd.h>
 
 #include "flutter/generated_plugin_registrant.h"
 
@@ -53,6 +55,18 @@ static void my_application_activate(GApplication* application) {
   }
 
   gtk_window_set_default_size(window, 1280, 720);
+
+  // Set window icon from the bundle data directory.
+  char exe_path[PATH_MAX];
+  ssize_t exe_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+  if (exe_len != -1) {
+    exe_path[exe_len] = '\0';
+    gchar *exe_dir = g_path_get_dirname(exe_path);
+    gchar *icon_path = g_build_filename(exe_dir, "data", "app_icon.png", NULL);
+    gtk_window_set_icon_from_file(window, icon_path, NULL);
+    g_free(icon_path);
+    g_free(exe_dir);
+  }
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(

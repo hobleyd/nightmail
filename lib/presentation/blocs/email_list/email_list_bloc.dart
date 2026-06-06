@@ -1,6 +1,5 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../../../domain/entities/email.dart';
 import '../../../domain/usecases/get_emails.dart';
 import '../../../domain/usecases/mark_email_as_read.dart';
 import 'email_list_event.dart';
@@ -116,21 +115,4 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     );
   }
 
-  // Optimistic local read-status toggle before API round-trip.
-  void toggleReadOptimistic(String emailId) {
-    final current = state;
-    if (current is! EmailListLoaded) return;
-
-    final email = current.emails.firstWhere(
-      (e) => e.id == emailId,
-      orElse: () => throw StateError('Email $emailId not in list'),
-    );
-
-    final optimistic = current.emails.map((e) {
-      return e.id == emailId ? e.copyWith(isRead: !email.isRead) : e;
-    }).toList();
-
-    emit(current.copyWith(emails: optimistic));
-    add(EmailListMarkReadRequested(emailId: emailId, isRead: !email.isRead));
-  }
 }

@@ -8,7 +8,7 @@
 PRODUCT_NAME = nightmail
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.sharpblue.nightmail
+PRODUCT_BUNDLE_IDENTIFIER = au.com.sharpblue.nightmail
 
 // The copyright displayed in application information
-PRODUCT_COPYRIGHT = Copyright © 2026 com.sharpblue. All rights reserved.
+PRODUCT_COPYRIGHT = Copyright © 2026 au.com.sharpblue. All rights reserved.

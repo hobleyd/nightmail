@@ -14,7 +14,6 @@ import 'package:nightmail/core/error/exceptions.dart';
 import 'package:nightmail/infrastructure/auth/auth_service.dart';
 import 'package:nightmail/infrastructure/auth/auth_token.dart';
 import 'package:nightmail/presentation/blocs/auth/auth_bloc.dart';
-import 'package:nightmail/presentation/blocs/auth/auth_event.dart';
 import 'package:nightmail/presentation/blocs/auth/auth_state.dart';
 import 'package:nightmail/presentation/pages/sign_in_page.dart';
 
@@ -61,7 +60,7 @@ void main() {
     expect(find.text('Continue with Microsoft'), findsNothing);
   });
 
-  testWidgets('SignInPage shows snackbar when sign-in fails',
+  testWidgets('SignInPage shows error banner and snackbar when sign-in fails',
       (WidgetTester tester) async {
     when(mockAuthService.signIn())
         .thenThrow(const AuthException(message: 'Sign-in failed'));
@@ -70,6 +69,19 @@ void main() {
     await tester.tap(find.text('Continue with Microsoft'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Sign-in failed'), findsOneWidget);
+    // Error appears in both the inline banner and the snackbar.
+    expect(find.text('Sign-in failed'), findsAtLeastNWidgets(1));
+  });
+
+  testWidgets('SignInPage shows error banner when mounted in AuthError state',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      buildWithAuthBloc(const AuthError(message: 'Session expired')),
+    );
+    await tester.pump();
+
+    // Banner must be visible without any interaction — tests the BlocConsumer
+    // builder path, not just the listener.
+    expect(find.text('Session expired'), findsOneWidget);
   });
 }

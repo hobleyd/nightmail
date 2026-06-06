@@ -10,48 +10,69 @@ class SignInPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocListener<AuthBloc, AuthState>(
+    // BlocConsumer covers both cases:
+    //   • listener fires on state *transitions* (e.g. sign-in attempt while
+    //     already on this page)
+    //   • builder checks the *current* state so an error is visible even when
+    //     this page is first mounted after a failed sign-in
+    return BlocConsumer<AuthBloc, AuthState>(
       listener: (context, state) {
+        // Dismiss any previous snackbar before showing the new one.
         if (state is AuthError) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(state.message),
-              backgroundColor: Theme.of(context).colorScheme.error,
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(
+              SnackBar(
+                content: Text(state.message),
+                backgroundColor: Theme.of(context).colorScheme.error,
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
         }
       },
-      child: Scaffold(
-        backgroundColor: const Color(0xFF0F1117),
-        body: SafeArea(
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 400),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 32),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const Spacer(flex: 2),
-                    _AppLogo(),
-                    const SizedBox(height: 48),
-                    _Headline(),
-                    const SizedBox(height: 12),
-                    _Subheadline(),
-                    const Spacer(flex: 3),
-                    _SignInButton(),
-                    const SizedBox(height: 24),
-                    _PrivacyNote(),
-                    const Spacer(),
-                  ],
+      builder: (context, state) {
+        return Scaffold(
+          backgroundColor: const Color(0xFF0F1117),
+          body: SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 400),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 32),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Spacer(flex: 2),
+                      _AppLogo(),
+                      const SizedBox(height: 48),
+                      _Headline(),
+                      const SizedBox(height: 12),
+                      _Subheadline(),
+                      const Spacer(flex: 3),
+                      _SignInButton(),
+                      const SizedBox(height: 12),
+                      // Inline error — always visible, even on first mount.
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 200),
+                        child: state is AuthError
+                            ? _ErrorBanner(
+                                key: ValueKey(state.message),
+                                message: state.message,
+                              )
+                            : const SizedBox.shrink(),
+                      ),
+                      const SizedBox(height: 12),
+                      _PrivacyNote(),
+                      const Spacer(),
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -225,6 +246,41 @@ class _PrivacyNote extends StatelessWidget {
         color: Color(0xFF4B5563),
         fontSize: 12,
         height: 1.6,
+      ),
+    );
+  }
+}
+
+class _ErrorBanner extends StatelessWidget {
+  const _ErrorBanner({super.key, required this.message});
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2D1B1B),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF5C2626)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.error_outline_rounded,
+              size: 16, color: Color(0xFFEF4444)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                color: Color(0xFFFCA5A5),
+                fontSize: 12,
+                height: 1.5,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

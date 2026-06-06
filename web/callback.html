@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<title>Authentication complete</title>
+<script>
+  var url = window.location.href;
+
+  // Primary: BroadcastChannel works even when window.opener is null.
+  // Microsoft sets COOP: same-origin-allow-popups on their login pages,
+  // which severs window.opener when the popup navigates cross-origin back
+  // to localhost. BroadcastChannel avoids this limitation entirely.
+  try {
+    var bc = new BroadcastChannel('nightmail_auth');
+    bc.postMessage(url);
+    bc.close();
+  } catch (e) {}
+
+  // Fallback: direct postMessage if opener is still available.
+  if (window.opener && !window.opener.closed) {
+    try { window.opener.postMessage(url, window.location.origin); } catch (e) {}
+  }
+
+  window.close();
+</script>
+<p>Authentication complete. This window will close automatically.</p>

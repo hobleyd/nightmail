@@ -4,12 +4,14 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/settings/app_settings.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
+import '../../../infrastructure/badge/badge_service.dart';
 import 'mail_poller_state.dart';
 
 class MailPollerCubit extends Cubit<MailPollerState> {
   MailPollerCubit({
     required this._accountManager,
     required this._appSettings,
+    required this._badgeService,
   }) : super(const MailPollerState(
           accountsWithNewMail: {},
           pollIntervalSeconds: AppSettings.defaultPollIntervalSeconds,
@@ -17,6 +19,7 @@ class MailPollerCubit extends Cubit<MailPollerState> {
 
   final AccountManager _accountManager;
   final AppSettings _appSettings;
+  final BadgeService _badgeService;
 
   Timer? _timer;
   bool _polling = false;
@@ -83,6 +86,9 @@ class MailPollerCubit extends Cubit<MailPollerState> {
       }
 
       _initialized = true;
+      final totalUnread =
+          _latestPolledUnread.values.fold(0, (sum, n) => sum + n);
+      await _badgeService.setBadgeCount(totalUnread);
       if (changed && !isClosed) {
         emit(state.copyWith(accountsWithNewMail: Set.of(_newMailAccounts)));
       }

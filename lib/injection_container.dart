@@ -22,6 +22,7 @@ import 'domain/usecases/update_calendar_event.dart';
 import 'domain/usecases/get_cached_emails.dart';
 import 'infrastructure/accounts/account_manager.dart';
 import 'infrastructure/accounts/account_storage.dart';
+import 'infrastructure/badge/badge_service.dart';
 import 'infrastructure/cache/cache_encryption_service.dart';
 import 'presentation/blocs/account/account_cubit.dart';
 import 'presentation/blocs/calendar/calendar_bloc.dart';
@@ -98,6 +99,7 @@ Future<void> configureDependencies() async {
 
   // Settings
   sl.registerLazySingleton(() => AppSettings());
+  sl.registerLazySingleton(() => BadgeService());
 
   // Presentation — singletons
   sl.registerLazySingleton(() => ThemeCubit());
@@ -111,6 +113,7 @@ Future<void> configureDependencies() async {
     () => MailPollerCubit(
       accountManager: sl<AccountManager>(),
       appSettings: sl<AppSettings>(),
+      badgeService: sl<BadgeService>(),
     ),
   );
 

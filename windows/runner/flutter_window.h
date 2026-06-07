@@ -3,8 +3,12 @@
 
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
+#include <flutter/method_channel.h>
+#include <flutter/standard_method_codec.h>
+#include <shobjidl.h>
 
 #include <memory>
+#include <string>
 
 #include "win32_window.h"
 
@@ -23,11 +27,13 @@ class FlutterWindow : public Win32Window {
                          LPARAM const lparam) noexcept override;
 
  private:
-  // The project to run.
-  flutter::DartProject project_;
+  void UpdateBadge(int count);
+  HICON CreateNumberIcon(int count);
 
-  // The Flutter instance hosted by this window.
+  flutter::DartProject project_;
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> badge_channel_;
+  ITaskbarList3* taskbar_list_ = nullptr;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

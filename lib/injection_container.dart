@@ -9,6 +9,7 @@ import 'data/repositories/calendar_repository_impl.dart';
 import 'data/repositories/email_repository_impl.dart';
 import 'domain/repositories/calendar_repository.dart';
 import 'domain/repositories/email_repository.dart';
+import 'domain/usecases/create_calendar_event.dart';
 import 'domain/usecases/delete_email.dart';
 import 'domain/usecases/download_attachment.dart';
 import 'domain/usecases/get_calendar_events.dart';
@@ -17,6 +18,7 @@ import 'domain/usecases/get_emails.dart';
 import 'domain/usecases/get_mail_folders.dart';
 import 'domain/usecases/mark_email_as_read.dart';
 import 'domain/usecases/send_email.dart';
+import 'domain/usecases/update_calendar_event.dart';
 import 'domain/usecases/get_cached_emails.dart';
 import 'infrastructure/accounts/account_manager.dart';
 import 'infrastructure/accounts/account_storage.dart';
@@ -24,6 +26,7 @@ import 'infrastructure/cache/cache_encryption_service.dart';
 import 'presentation/blocs/account/account_cubit.dart';
 import 'presentation/blocs/calendar/calendar_bloc.dart';
 import 'presentation/blocs/compose/compose_bloc.dart';
+import 'presentation/blocs/event_edit/event_edit_bloc.dart';
 import 'presentation/blocs/email_detail/email_detail_bloc.dart';
 import 'presentation/blocs/email_list/email_list_bloc.dart';
 import 'presentation/blocs/folder_list/folder_list_bloc.dart';
@@ -90,6 +93,8 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => DownloadAttachment(sl<EmailRepository>()));
   sl.registerLazySingleton(() => GetCachedEmails(sl<EmailRepository>()));
   sl.registerLazySingleton(() => GetCalendarEvents(sl<CalendarRepository>()));
+  sl.registerLazySingleton(() => CreateCalendarEvent(sl<CalendarRepository>()));
+  sl.registerLazySingleton(() => UpdateCalendarEvent(sl<CalendarRepository>()));
 
   // Settings
   sl.registerLazySingleton(() => AppSettings());
@@ -124,4 +129,8 @@ Future<void> configureDependencies() async {
     () => CalendarBloc(getCalendarEvents: sl<GetCalendarEvents>()),
   );
   sl.registerFactory(() => ComposeBloc(sendEmail: sl<SendEmail>()));
+  sl.registerFactory(() => EventEditBloc(
+        createCalendarEvent: sl<CreateCalendarEvent>(),
+        updateCalendarEvent: sl<UpdateCalendarEvent>(),
+      ));
 }

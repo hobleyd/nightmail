@@ -7,6 +7,7 @@ import '../../domain/entities/calendar_event.dart';
 import '../blocs/calendar/calendar_bloc.dart';
 import '../blocs/calendar/calendar_event.dart';
 import '../blocs/calendar/calendar_state.dart';
+import '../widgets/event_edit_dialog.dart';
 
 class CalendarPage extends StatelessWidget {
   const CalendarPage({super.key});
@@ -89,6 +90,8 @@ class _WeekNavBar extends StatelessWidget {
             tooltip: 'Next week',
             onTap: () => _navigate(context, 7),
           ),
+          const SizedBox(width: 8),
+          _NewEventButton(calendarBloc: context.read<CalendarBloc>()),
         ],
       ),
     );
@@ -178,6 +181,50 @@ class _IconNavButton extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(4),
           child: Icon(icon, size: 20, color: c.textMuted),
+        ),
+      ),
+    );
+  }
+}
+
+class _NewEventButton extends StatelessWidget {
+  const _NewEventButton({required this.calendarBloc});
+  final CalendarBloc calendarBloc;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'New event',
+      child: InkWell(
+        onTap: () async {
+          final saved =
+              await EventEditDialog.show(context);
+          if (saved && context.mounted) {
+            calendarBloc.add(CalendarWeekNavigated(
+                weekStart: calendarBloc.state.weekStart));
+          }
+        },
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: AppColors.accent,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              Icon(Icons.add_rounded, size: 14, color: Colors.white),
+              SizedBox(width: 4),
+              Text(
+                'New Event',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -424,25 +471,37 @@ class _AllDayEventChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 1),
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-      decoration: BoxDecoration(
-        color: AppColors.accent.withAlpha(40),
-        borderRadius: BorderRadius.circular(3),
-        border: Border(left: BorderSide(color: AppColors.accent, width: 2)),
-      ),
-      child: Text(
-        event.subject,
-        style: const TextStyle(
-          color: AppColors.accent,
-          fontSize: 11,
-          fontWeight: FontWeight.w500,
+    return GestureDetector(
+      onTap: () => _openEdit(context),
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 1),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        decoration: BoxDecoration(
+          color: AppColors.accent.withAlpha(40),
+          borderRadius: BorderRadius.circular(3),
+          border: Border(left: BorderSide(color: AppColors.accent, width: 2)),
         ),
-        overflow: TextOverflow.ellipsis,
+        child: Text(
+          event.subject,
+          style: const TextStyle(
+            color: AppColors.accent,
+            fontSize: 11,
+            fontWeight: FontWeight.w500,
+          ),
+          overflow: TextOverflow.ellipsis,
+        ),
       ),
     );
+  }
+
+  void _openEdit(BuildContext context) {
+    final bloc = context.read<CalendarBloc>();
+    EventEditDialog.show(context, event: event).then((saved) {
+      if (saved && context.mounted) {
+        bloc.add(CalendarWeekNavigated(weekStart: bloc.state.weekStart));
+      }
+    });
   }
 }
 
@@ -604,8 +663,20 @@ class _PositionedEvent extends StatelessWidget {
       left: 2,
       right: 2,
       height: height,
-      child: _EventTile(event: event, compact: height < 36),
+      child: GestureDetector(
+        onTap: () => _openEdit(context),
+        child: _EventTile(event: event, compact: height < 36),
+      ),
     );
+  }
+
+  void _openEdit(BuildContext context) {
+    final bloc = context.read<CalendarBloc>();
+    EventEditDialog.show(context, event: event).then((saved) {
+      if (saved && context.mounted) {
+        bloc.add(CalendarWeekNavigated(weekStart: bloc.state.weekStart));
+      }
+    });
   }
 }
 

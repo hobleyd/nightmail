@@ -1,5 +1,8 @@
 import 'package:equatable/equatable.dart';
 
+import 'calendar_event_attendee.dart';
+import 'calendar_recurrence.dart';
+
 enum CalendarEventStatus { free, busy, tentative, outOfOffice, workingElsewhere }
 
 class CalendarEvent extends Equatable {
@@ -13,6 +16,9 @@ class CalendarEvent extends Equatable {
     this.bodyPreview,
     this.status = CalendarEventStatus.busy,
     this.isOrganizer = false,
+    this.timezone,
+    this.attendees = const [],
+    this.recurrence,
   });
 
   final String id;
@@ -24,6 +30,12 @@ class CalendarEvent extends Equatable {
   final String? bodyPreview;
   final CalendarEventStatus status;
   final bool isOrganizer;
+
+  /// IANA timezone string (e.g. "America/New_York"). Null means UTC.
+  final String? timezone;
+
+  final List<CalendarEventAttendee> attendees;
+  final CalendarRecurrence? recurrence;
 
   Duration get duration => end.difference(start);
 

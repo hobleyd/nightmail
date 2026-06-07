@@ -1,0 +1,211 @@
+name: nightmail-release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      build_number: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version from pubspec.yaml
+        id: version
+        run: |
+          VERSION_FULL=$(grep '^version:' pubspec.yaml | awk '{print $2}')
+          echo "version=${VERSION_FULL%%+*}" >> $GITHUB_OUTPUT
+
+      - name: Push version tag
+        uses: EndBug/latest-tag@latest
+        with:
+          tag-name: ${{ steps.version.outputs.version }}
+
+  build-macos:
+    needs: prepare
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: false
+
+      - run: flutter config --enable-macos-desktop
+      - run: flutter create --platforms=macos .
+      - run: flutter pub get
+      - run: dart run build_runner build --delete-conflicting-outputs
+      - run: dart run flutter_launcher_icons
+      - run: flutter build macos --release --no-tree-shake-icons --build-number ${{ needs.prepare.outputs.build_number }}
+
+      - name: Create DMG
+        uses: lethja/create-dmg-action@v0.0.2
+        with:
+          name: 'nightmail'
+          srcdir: 'build/macos/Build/Products/Release/nightmail.app'
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v0.1.15
+        with:
+          name: 'nightmail-${{ needs.prepare.outputs.version }}'
+          tag_name: ${{ needs.prepare.outputs.version }}
+          files: 'nightmail.dmg'
+
+  build-windows:
+    needs: prepare
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          architecture: x64
+
+      - run: choco install innosetup --no-progress -y
+      - run: flutter config --enable-windows-desktop
+      - run: flutter create --platforms=windows .
+      - run: flutter pub get
+      - run: dart run build_runner build --delete-conflicting-outputs
+      - run: dart run flutter_launcher_icons
+      - run: flutter build windows --release --no-tree-shake-icons --build-number ${{ needs.prepare.outputs.build_number }}
+      - run: dart run windows.dart
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v0.1.15
+        with:
+          name: 'nightmail-${{ needs.prepare.outputs.version }}'
+          tag_name: ${{ needs.prepare.outputs.version }}
+          files: 'build/windows/nightmail-${{ needs.prepare.outputs.version }}.exe'
+
+  build-linux:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          architecture: x64
+          cache: false
+
+      - run: sudo apt-get update -y
+      - run: sudo apt-get install -y ninja-build libgtk-3-dev libmpv-dev libmpv2 binutils coreutils desktop-file-utils fakeroot fuse libgdk-pixbuf2.0-dev patchelf python3-pip python3-setuptools squashfs-tools strace util-linux zsync flatpak flatpak-builder
+
+      - run: flutter config --enable-linux-desktop
+      - run: flutter create --platforms=linux .
+      - run: flutter pub get
+      - run: dart run build_runner build --delete-conflicting-outputs
+      - run: dart run flutter_launcher_icons
+      - run: flutter build linux --release --no-tree-shake-icons
+
+      - name: Copy icon for Flatpak
+        run: cp assets/logo.png build/linux/x64/release/bundle/nightmail.png
+
+      - name: Configure Flatpak runtime
+        run: |
+          sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          sudo flatpak install -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
+
+      - name: Create Flatpak bundle
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+
+          cat > au.com.sharpblue.nightmail.yaml <<'EOF'
+          app-id: au.com.sharpblue.nightmail
+          runtime: org.freedesktop.Platform
+          runtime-version: '24.08'
+          sdk: org.freedesktop.Sdk
+          command: nightmail
+          finish-args:
+            - --share=ipc
+            - --share=network
+            - --socket=fallback-x11
+            - --socket=wayland
+            - --device=dri
+            - --filesystem=home
+            - --talk-name=org.freedesktop.secrets
+          modules:
+            - name: nightmail
+              buildsystem: simple
+              build-commands:
+                - install -Dm755 nightmail /app/bin/nightmail
+                - cp -r lib /app/lib
+                - cp -r data /app/data
+                - install -Dm644 au.com.sharpblue.nightmail.desktop /app/share/applications/au.com.sharpblue.nightmail.desktop
+                - install -Dm644 nightmail.png /app/share/icons/hicolor/512x512/apps/au.com.sharpblue.nightmail.png
+              sources:
+                - type: dir
+                  path: build/linux/x64/release/bundle
+                - type: file
+                  path: au.com.sharpblue.nightmail.desktop
+          EOF
+
+          cat > au.com.sharpblue.nightmail.desktop <<'EOF'
+          [Desktop Entry]
+          Name=NightMail
+          Exec=nightmail
+          Type=Application
+          Categories=Network;Email;
+          Icon=au.com.sharpblue.nightmail
+          Terminal=false
+          EOF
+
+          flatpak-builder --force-clean --repo=repo build-dir au.com.sharpblue.nightmail.yaml
+          flatpak build-bundle repo "nightmail-${VERSION}-linux-x86_64.flatpak" au.com.sharpblue.nightmail
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v0.1.15
+        with:
+          name: 'nightmail-${{ needs.prepare.outputs.version }}'
+          tag_name: ${{ needs.prepare.outputs.version }}
+          files: 'nightmail-${{ needs.prepare.outputs.version }}-linux-x86_64.flatpak'
+
+  build-android:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          architecture: x64
+          cache: false
+
+      - run: flutter pub get
+      - run: dart run build_runner build --delete-conflicting-outputs
+      - run: dart run flutter_launcher_icons
+
+      - name: Create key.properties
+        run: |
+          echo "keyAlias=${{ secrets.KEY_ALIAS }}" > android/key.properties
+          echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> android/key.properties
+          echo "storePassword=${{ secrets.KEY_PASSWORD }}" >> android/key.properties
+          echo "storeFile=keystore.jks" >> android/key.properties
+
+      - name: Decode keystore
+        env:
+          ENCODED_STRING: ${{ secrets.KEY_BASE_64 }}
+        run: echo $ENCODED_STRING | base64 -d > android/app/keystore.jks
+
+      - run: flutter build apk --release --no-tree-shake-icons --build-number ${{ needs.prepare.outputs.build_number }}
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v0.1.15
+        with:
+          name: 'nightmail-${{ needs.prepare.outputs.version }}'
+          tag_name: ${{ needs.prepare.outputs.version }}
+          files: 'build/app/outputs/apk/release/nightmail-${{ needs.prepare.outputs.version }}-release.apk'
+          generate_release_notes: true

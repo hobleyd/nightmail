@@ -248,13 +248,8 @@ class _FolderItem extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onExpandTap;
 
-  bool get _isJunkFolder =>
-      folder.displayName.toLowerCase() == 'junk email';
-
   bool get _isTrashFolder =>
       ['deleted items', 'trash'].contains(folder.displayName.toLowerCase());
-
-  bool get _hasContextMenu => _isJunkFolder || _isTrashFolder;
 
   @override
   Widget build(BuildContext context) {
@@ -337,8 +332,6 @@ class _FolderItem extends StatelessWidget {
         ),
       ),
     );
-
-    if (!_hasContextMenu) return tile;
 
     return GestureDetector(
       onSecondaryTapUp: (details) =>

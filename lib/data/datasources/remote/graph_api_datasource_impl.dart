@@ -280,7 +280,6 @@ class GraphApiDatasourceImpl
     try {
       final response = await _dio.get<Map<String, dynamic>>(
         '/me/messages/$messageId/attachments/$attachmentId',
-        queryParameters: {'\$select': 'contentBytes'},
       );
       final data = response.data;
       final contentBytes = data?['contentBytes'] as String?;

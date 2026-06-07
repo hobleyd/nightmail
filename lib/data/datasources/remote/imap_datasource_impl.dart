@@ -496,11 +496,17 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
 
     try {
       final client = await _getConnectedClient();
+
+      // Resolve the trash folder before selecting the source mailbox so that
+      // the LIST command cannot interfere with the server-side mailbox selection.
+      final trashPath = await _findTrashPath(client, currentPath: mailboxPath);
+
+      // Select source mailbox after the LIST so it remains selected for COPY,
+      // STORE, and EXPUNGE.
       await _selectMailboxPath(client, mailboxPath);
 
       final sequence = MessageSequence.fromId(uid, isUid: true);
 
-      final trashPath = await _findTrashPath(client, currentPath: mailboxPath);
       if (trashPath != null) {
         // Move to Trash: copy to the Trash folder first.
         await client.uidCopy(sequence, targetMailboxPath: trashPath);

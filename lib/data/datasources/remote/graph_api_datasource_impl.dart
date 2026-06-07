@@ -472,7 +472,10 @@ class GraphApiDatasourceImpl
   @override
   Future<void> deleteEmail(String id) async {
     try {
-      await _dio.delete<void>('/me/messages/$id');
+      await _dio.post<void>(
+        '/me/messages/$id/move',
+        data: {'destinationId': 'deleteditems'},
+      );
     } on DioException catch (e) {
       throw _mapDioException(e);
     }

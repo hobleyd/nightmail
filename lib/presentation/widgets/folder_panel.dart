@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
@@ -12,6 +13,7 @@ import '../blocs/email_detail/email_detail_bloc.dart';
 import '../blocs/email_detail/email_detail_event.dart';
 import '../blocs/email_list/email_list_bloc.dart';
 import '../blocs/email_list/email_list_event.dart';
+import '../blocs/email_list/email_list_state.dart';
 import '../blocs/folder_list/folder_list_bloc.dart';
 import '../blocs/folder_list/folder_list_event.dart';
 import '../blocs/folder_list/folder_list_state.dart';
@@ -229,7 +231,7 @@ class _PanelHeader extends StatelessWidget {
 
 enum _FolderAction { deleteAll }
 
-class _FolderItem extends StatelessWidget {
+class _FolderItem extends StatefulWidget {
   const _FolderItem({
     required this.folder,
     required this.depth,
@@ -248,95 +250,177 @@ class _FolderItem extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onExpandTap;
 
-  bool get _isTrashFolder =>
-      ['deleted items', 'trash'].contains(folder.displayName.toLowerCase());
+  @override
+  State<_FolderItem> createState() => _FolderItemState();
+}
+
+class _FolderItemState extends State<_FolderItem>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _shimmer;
+  StreamSubscription<EmailListState>? _sub;
+  bool _isEmptying = false;
+
+  bool get _isTrashFolder => ['deleted items', 'trash']
+      .contains(widget.folder.displayName.toLowerCase());
+
+  @override
+  void initState() {
+    super.initState();
+    _shimmer = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _sub?.cancel();
+    final bloc = context.read<EmailListBloc>();
+    _syncShimmer(bloc.state);
+    _sub = bloc.stream.listen(_syncShimmer);
+  }
+
+  void _syncShimmer(EmailListState state) {
+    final emptying = state is EmailListLoaded &&
+        state.emptyingFolderIds.contains(widget.folder.id);
+    if (emptying == _isEmptying) return;
+    setState(() => _isEmptying = emptying);
+    if (emptying) {
+      _shimmer.repeat();
+    } else {
+      _shimmer.stop();
+      _shimmer.reset();
+    }
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    _shimmer.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final indentWidth = depth * 16.0;
+    final indentWidth = widget.depth * 16.0;
 
-    final tile = Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-          padding: EdgeInsets.only(
-            left: 10 + indentWidth,
-            right: 10,
-            top: 8,
-            bottom: 8,
-          ),
-          decoration: BoxDecoration(
-            color: isSelected ? c.selectionBg : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Row(
-            children: [
-              if (hasChildren)
-                GestureDetector(
-                  onTap: onExpandTap,
-                  behavior: HitTestBehavior.opaque,
-                  child: Padding(
-                    padding: const EdgeInsets.only(right: 4),
-                    child: Icon(
-                      isExpanded
-                          ? Icons.expand_more_rounded
-                          : Icons.chevron_right_rounded,
-                      size: 16,
-                      color: isSelected ? AppColors.accent : c.textMuted,
-                    ),
-                  ),
-                )
-              else
-                const SizedBox(width: 20),
-              Icon(
-                _iconFor(folder.displayName),
+    final rowContent = Row(
+      children: [
+        if (widget.hasChildren)
+          GestureDetector(
+            onTap: widget.onExpandTap,
+            behavior: HitTestBehavior.opaque,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Icon(
+                widget.isExpanded
+                    ? Icons.expand_more_rounded
+                    : Icons.chevron_right_rounded,
                 size: 16,
-                color: isSelected ? AppColors.accent : c.textMuted,
+                color: widget.isSelected ? AppColors.accent : c.textMuted,
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  folder.displayName,
-                  style: TextStyle(
-                    color: isSelected ? c.textSecondary : c.textTertiary,
-                    fontSize: 13,
-                    fontWeight:
-                        isSelected ? FontWeight.w500 : FontWeight.w400,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              if (folder.unreadItemCount > 0)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                  decoration: BoxDecoration(
-                    color: c.badgeBg,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    '${folder.unreadItemCount}',
-                    style: const TextStyle(
-                      color: AppColors.accent,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-            ],
+            ),
+          )
+        else
+          const SizedBox(width: 20),
+        Icon(
+          _iconFor(widget.folder.displayName),
+          size: 16,
+          color: widget.isSelected ? AppColors.accent : c.textMuted,
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            widget.folder.displayName,
+            style: TextStyle(
+              color: widget.isSelected ? c.textSecondary : c.textTertiary,
+              fontSize: 13,
+              fontWeight:
+                  widget.isSelected ? FontWeight.w500 : FontWeight.w400,
+            ),
+            overflow: TextOverflow.ellipsis,
           ),
         ),
-      ),
+        if (widget.folder.unreadItemCount > 0)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+            decoration: BoxDecoration(
+              color: c.badgeBg,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              '${widget.folder.unreadItemCount}',
+              style: const TextStyle(
+                color: AppColors.accent,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+      ],
     );
+
+    final EdgeInsets padding = EdgeInsets.only(
+      left: 10 + indentWidth,
+      right: 10,
+      top: 8,
+      bottom: 8,
+    );
+    const margin = EdgeInsets.symmetric(horizontal: 8, vertical: 1);
+    const radius = BorderRadius.all(Radius.circular(8));
+
+    Widget container;
+    if (_isEmptying) {
+      container = AnimatedBuilder(
+        animation: _shimmer,
+        builder: (context, child) {
+          final t = _shimmer.value;
+          return Container(
+            margin: margin,
+            padding: padding,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment(-2 + t * 4, 0),
+                end: Alignment(-1 + t * 4, 0),
+                colors: [
+                  widget.isSelected ? c.selectionBg : Colors.transparent,
+                  AppColors.accent.withValues(alpha: 0.28),
+                  widget.isSelected ? c.selectionBg : Colors.transparent,
+                ],
+              ),
+              borderRadius: radius,
+            ),
+            child: child,
+          );
+        },
+        child: rowContent,
+      );
+    } else {
+      container = AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        margin: margin,
+        padding: padding,
+        decoration: BoxDecoration(
+          color: widget.isSelected ? c.selectionBg : Colors.transparent,
+          borderRadius: radius,
+        ),
+        child: rowContent,
+      );
+    }
 
     return GestureDetector(
       onSecondaryTapUp: (details) =>
           _showContextMenu(context, details.globalPosition),
-      child: tile,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: widget.onTap,
+          borderRadius: radius,
+          child: container,
+        ),
+      ),
     );
   }
 
@@ -382,8 +466,8 @@ class _FolderItem extends StatelessWidget {
             isPermanent ? 'Permanently Delete All?' : 'Delete All?'),
         content: Text(
           isPermanent
-              ? 'All emails in ${folder.displayName} will be permanently deleted. This cannot be undone.'
-              : 'All emails in ${folder.displayName} will be moved to Deleted Items.',
+              ? 'All emails in ${widget.folder.displayName} will be permanently deleted. This cannot be undone.'
+              : 'All emails in ${widget.folder.displayName} will be moved to Deleted Items.',
         ),
         actions: [
           TextButton(
@@ -395,8 +479,7 @@ class _FolderItem extends StatelessWidget {
             style: isPermanent
                 ? TextButton.styleFrom(foregroundColor: Colors.red)
                 : null,
-            child: Text(
-                isPermanent ? 'Delete Permanently' : 'Delete All'),
+            child: Text(isPermanent ? 'Delete Permanently' : 'Delete All'),
           ),
         ],
       ),
@@ -404,12 +487,12 @@ class _FolderItem extends StatelessWidget {
 
     if (confirmed == true && context.mounted) {
       context.read<EmailListBloc>().add(EmailListFolderEmptied(
-            folderId: folder.id,
+            folderId: widget.folder.id,
             permanentDelete: isPermanent,
           ));
       context.read<EmailDetailBloc>().add(const EmailDetailCleared());
       context.read<FolderListBloc>().add(
-            FolderListFolderEmptied(folderId: folder.id),
+            FolderListFolderEmptied(folderId: widget.folder.id),
           );
     }
   }

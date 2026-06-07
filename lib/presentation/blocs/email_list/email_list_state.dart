@@ -25,6 +25,7 @@ final class EmailListLoaded extends EmailListState {
     this.isLoadingFresh = false,
     this.currentFolderId,
     this.expandedConversationIds = const {},
+    this.emptyingFolderIds = const {},
   });
 
   final List<Email> emails;
@@ -39,6 +40,9 @@ final class EmailListLoaded extends EmailListState {
   final String? currentFolderId;
   final Set<String> expandedConversationIds;
 
+  /// Folder IDs for which a Delete All operation is currently in flight.
+  final Set<String> emptyingFolderIds;
+
   EmailListLoaded copyWith({
     List<Email>? emails,
     bool? hasMore,
@@ -46,6 +50,7 @@ final class EmailListLoaded extends EmailListState {
     bool? isLoadingFresh,
     String? currentFolderId,
     Set<String>? expandedConversationIds,
+    Set<String>? emptyingFolderIds,
   }) {
     return EmailListLoaded(
       emails: emails ?? this.emails,
@@ -54,6 +59,7 @@ final class EmailListLoaded extends EmailListState {
       isLoadingFresh: isLoadingFresh ?? this.isLoadingFresh,
       currentFolderId: currentFolderId ?? this.currentFolderId,
       expandedConversationIds: expandedConversationIds ?? this.expandedConversationIds,
+      emptyingFolderIds: emptyingFolderIds ?? this.emptyingFolderIds,
     );
   }
 
@@ -65,6 +71,7 @@ final class EmailListLoaded extends EmailListState {
         isLoadingFresh,
         currentFolderId,
         expandedConversationIds,
+        emptyingFolderIds,
       ];
 }
 

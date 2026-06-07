@@ -221,13 +221,25 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     Emitter<EmailListState> emit,
   ) async {
     final current = state;
-    // Optimistically clear the list if the user is viewing the folder being emptied.
-    if (current is EmailListLoaded && current.currentFolderId == event.folderId) {
-      emit(current.copyWith(emails: [], hasMore: false));
+    if (current is EmailListLoaded) {
+      final emptyingIds = {...current.emptyingFolderIds, event.folderId};
+      emit(current.copyWith(
+        emails: current.currentFolderId == event.folderId ? [] : current.emails,
+        hasMore: current.currentFolderId == event.folderId ? false : current.hasMore,
+        emptyingFolderIds: emptyingIds,
+      ));
     }
+
     await _emptyFolder(EmptyFolderParams(
       folderId: event.folderId,
       permanentDelete: event.permanentDelete,
     ));
+
+    final after = state;
+    if (after is EmailListLoaded) {
+      emit(after.copyWith(
+        emptyingFolderIds: after.emptyingFolderIds.difference({event.folderId}),
+      ));
+    }
   }
 }

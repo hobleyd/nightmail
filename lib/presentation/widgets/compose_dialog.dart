@@ -6,6 +6,7 @@ import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/usecases/send_email.dart';
 import '../../injection_container.dart';
+import '../blocs/account/account_cubit.dart';
 import '../blocs/compose/compose_bloc.dart';
 import '../blocs/compose/compose_event.dart';
 import '../blocs/compose/compose_state.dart';
@@ -17,40 +18,51 @@ class ComposeDialog extends StatelessWidget {
     super.key,
     required this.mode,
     this.originalEmail,
+    required this.fromAddress,
   });
 
   final ComposeMode mode;
   final Email? originalEmail;
+  final String fromAddress;
 
   static Future<void> show(
     BuildContext context, {
     required ComposeMode mode,
     Email? originalEmail,
   }) {
+    final accountState = context.read<AccountCubit>().state;
+    final fromAddress = accountState is AccountsLoaded
+        ? accountState.activeAccount.emailAddress
+        : '';
     return showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => BlocProvider(
+      builder: (dialogContext) => BlocProvider(
         create: (_) => ComposeBloc(sendEmail: sl<SendEmail>()),
-        child: ComposeDialog(mode: mode, originalEmail: originalEmail),
+        child: ComposeDialog(
+          mode: mode,
+          originalEmail: originalEmail,
+          fromAddress: fromAddress,
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    void close() => Navigator.of(context).pop();
     return BlocListener<ComposeBloc, ComposeState>(
-      listener: (context, state) {
+      listener: (listenerContext, state) {
         if (state is ComposeSent) {
-          Navigator.of(context).pop();
-          ScaffoldMessenger.of(context).showSnackBar(
+          Navigator.of(listenerContext).pop();
+          ScaffoldMessenger.of(listenerContext).showSnackBar(
             const SnackBar(
               content: Text('Email sent'),
               duration: Duration(seconds: 2),
             ),
           );
         } else if (state is ComposeError) {
-          ScaffoldMessenger.of(context).showSnackBar(
+          ScaffoldMessenger.of(listenerContext).showSnackBar(
             SnackBar(
               content: Text(state.message),
               backgroundColor: Colors.red.shade700,
@@ -58,24 +70,44 @@ class ComposeDialog extends StatelessWidget {
           );
         }
       },
-      child: _ComposeForm(mode: mode, originalEmail: originalEmail),
+      child: Dialog(
+        backgroundColor: context.colors.surfacePanel,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        child: ComposeForm(
+          mode: mode,
+          originalEmail: originalEmail,
+          onClose: close,
+          fromAddress: fromAddress,
+        ),
+      ),
     );
   }
 }
 
-class _ComposeForm extends StatefulWidget {
-  const _ComposeForm({required this.mode, this.originalEmail});
+class ComposeForm extends StatefulWidget {
+  const ComposeForm({
+    super.key,
+    required this.mode,
+    this.originalEmail,
+    required this.onClose,
+    required this.fromAddress,
+    this.scrollable = false,
+  });
 
   final ComposeMode mode;
   final Email? originalEmail;
+  final VoidCallback onClose;
+  final String fromAddress;
+  final bool scrollable;
 
   @override
-  State<_ComposeForm> createState() => _ComposeFormState();
+  State<ComposeForm> createState() => _ComposeFormState();
 }
 
-class _ComposeFormState extends State<_ComposeForm> {
+class _ComposeFormState extends State<ComposeForm> {
   late List<String> _toRecipients;
   late List<String> _ccRecipients;
+  late final TextEditingController _fromController;
   late final TextEditingController _subjectController;
   late final TextEditingController _bodyController;
   final FocusNode _bodyFocus = FocusNode();
@@ -85,6 +117,7 @@ class _ComposeFormState extends State<_ComposeForm> {
     super.initState();
     _toRecipients = _parseAddresses(_initialTo());
     _ccRecipients = _parseAddresses(_initialCc());
+    _fromController = TextEditingController(text: widget.fromAddress);
     _subjectController = TextEditingController(text: _initialSubject());
     _bodyController = TextEditingController();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -136,6 +169,7 @@ class _ComposeFormState extends State<_ComposeForm> {
 
   @override
   void dispose() {
+    _fromController.dispose();
     _subjectController.dispose();
     _bodyController.dispose();
     _bodyFocus.dispose();
@@ -210,85 +244,134 @@ class _ComposeFormState extends State<_ComposeForm> {
         ));
   }
 
+  List<Widget> _buildFields(AppColors c) => [
+        _FieldRow(
+          label: 'From',
+          controller: _fromController,
+          enabled: false,
+          hintText: '',
+        ),
+        const SizedBox(height: 8),
+        _RecipientField(
+          label: 'To',
+          fieldId: 'to',
+          recipients: _toRecipients,
+          onChanged: (r) => setState(() => _toRecipients = r),
+          onDropAccepted: (address, fromFieldId) =>
+              _handleDrop(address, fromFieldId, 'to'),
+          showInput: _toInputEditable,
+          hintText: 'recipient@example.com',
+        ),
+        const SizedBox(height: 8),
+        _RecipientField(
+          label: 'Cc',
+          fieldId: 'cc',
+          recipients: _ccRecipients,
+          onChanged: (r) => setState(() => _ccRecipients = r),
+          onDropAccepted: (address, fromFieldId) =>
+              _handleDrop(address, fromFieldId, 'cc'),
+          showInput: _ccInputEditable,
+          hintText: 'cc@example.com',
+        ),
+        const SizedBox(height: 8),
+        _FieldRow(
+          label: 'Subject',
+          controller: _subjectController,
+          enabled: _subjectEditable,
+          hintText: 'Subject',
+        ),
+        const SizedBox(height: 12),
+        Divider(height: 1, color: c.border),
+        const SizedBox(height: 12),
+      ];
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return Dialog(
-      backgroundColor: c.surfacePanel,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      child: SizedBox(
-        width: 600,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _TitleBar(title: _title),
-            Divider(height: 1, color: c.border),
-            Padding(
+
+    if (widget.scrollable) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _TitleBar(title: _title, onClose: widget.onClose),
+          Divider(height: 1, color: c.border),
+          Expanded(
+            child: SingleChildScrollView(
               padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _RecipientField(
-                    label: 'To',
-                    fieldId: 'to',
-                    recipients: _toRecipients,
-                    onChanged: (r) => setState(() => _toRecipients = r),
-                    onDropAccepted: (address, fromFieldId) =>
-                        _handleDrop(address, fromFieldId, 'to'),
-                    showInput: _toInputEditable,
-                    hintText: 'recipient@example.com',
-                  ),
-                  const SizedBox(height: 8),
-                  _RecipientField(
-                    label: 'Cc',
-                    fieldId: 'cc',
-                    recipients: _ccRecipients,
-                    onChanged: (r) => setState(() => _ccRecipients = r),
-                    onDropAccepted: (address, fromFieldId) =>
-                        _handleDrop(address, fromFieldId, 'cc'),
-                    showInput: _ccInputEditable,
-                    hintText: 'cc@example.com',
-                  ),
-                  const SizedBox(height: 8),
-                  _FieldRow(
-                    label: 'Subject',
-                    controller: _subjectController,
-                    enabled: _subjectEditable,
-                    hintText: 'Subject',
-                  ),
-                  const SizedBox(height: 12),
-                  Divider(height: 1, color: c.border),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    height: 240,
-                    child: TextField(
-                      controller: _bodyController,
-                      focusNode: _bodyFocus,
-                      maxLines: null,
-                      expands: true,
-                      textAlignVertical: TextAlignVertical.top,
-                      style: TextStyle(
-                        color: c.textPrimary,
-                        fontSize: 13,
-                        height: 1.5,
-                      ),
-                      decoration: InputDecoration(
-                        hintText: 'Write your message here…',
-                        hintStyle:
-                            TextStyle(color: c.textMuted, fontSize: 13),
-                        border: InputBorder.none,
-                        contentPadding: EdgeInsets.zero,
-                      ),
+                  ..._buildFields(c),
+                  TextField(
+                    controller: _bodyController,
+                    focusNode: _bodyFocus,
+                    maxLines: null,
+                    minLines: 12,
+                    textAlignVertical: TextAlignVertical.top,
+                    style: TextStyle(
+                      color: c.textPrimary,
+                      fontSize: 13,
+                      height: 1.5,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: 'Write your message here…',
+                      hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.zero,
                     ),
                   ),
+                  const SizedBox(height: 8),
                 ],
               ),
             ),
-            Divider(height: 1, color: c.border),
-            _Footer(onSend: () => _submit(context)),
-          ],
-        ),
+          ),
+          Divider(height: 1, color: c.border),
+          _Footer(onSend: () => _submit(context), onClose: widget.onClose),
+        ],
+      );
+    }
+
+    return SizedBox(
+      width: 600,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _TitleBar(title: _title, onClose: widget.onClose),
+          Divider(height: 1, color: c.border),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ..._buildFields(c),
+                SizedBox(
+                  height: 240,
+                  child: TextField(
+                    controller: _bodyController,
+                    focusNode: _bodyFocus,
+                    maxLines: null,
+                    expands: true,
+                    textAlignVertical: TextAlignVertical.top,
+                    style: TextStyle(
+                      color: c.textPrimary,
+                      fontSize: 13,
+                      height: 1.5,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: 'Write your message here…',
+                      hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Divider(height: 1, color: c.border),
+          _Footer(onSend: () => _submit(context), onClose: widget.onClose),
+        ],
       ),
     );
   }
@@ -570,8 +653,9 @@ class _RecipientChip extends StatelessWidget {
 }
 
 class _TitleBar extends StatelessWidget {
-  const _TitleBar({required this.title});
+  const _TitleBar({required this.title, required this.onClose});
   final String title;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -593,7 +677,7 @@ class _TitleBar extends StatelessWidget {
             icon: Icon(Icons.close, size: 16, color: c.textMuted),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: onClose,
           ),
         ],
       ),
@@ -658,8 +742,9 @@ class _FieldRow extends StatelessWidget {
 }
 
 class _Footer extends StatelessWidget {
-  const _Footer({required this.onSend});
+  const _Footer({required this.onSend, required this.onClose});
   final VoidCallback onSend;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -673,8 +758,7 @@ class _Footer extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
               TextButton(
-                onPressed:
-                    isSending ? null : () => Navigator.of(context).pop(),
+                onPressed: isSending ? null : onClose,
                 child: Text(
                   'Cancel',
                   style: TextStyle(color: c.textMuted, fontSize: 13),

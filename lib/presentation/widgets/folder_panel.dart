@@ -1,8 +1,12 @@
+import 'dart:convert';
+
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email_folder.dart';
+import '../../domain/usecases/send_email.dart'; // for ComposeMode
 import '../blocs/account/account_cubit.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
 import '../blocs/email_detail/email_detail_event.dart';
@@ -170,6 +174,14 @@ class _DisplayItem {
 }
 
 class _PanelHeader extends StatelessWidget {
+  Future<void> _openComposeWindow() async {
+    await WindowController.create(
+      WindowConfiguration(
+        arguments: jsonEncode({'mode': ComposeMode.newEmail.name}),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -207,7 +219,7 @@ class _PanelHeader extends StatelessWidget {
             tooltip: 'Compose',
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
-            onPressed: () {},
+            onPressed: () => _openComposeWindow(),
           ),
         ],
       ),

@@ -1,22 +1,61 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:window_manager/window_manager.dart';
 
+import 'domain/usecases/send_email.dart';
 import 'injection_container.dart';
 import 'presentation/blocs/account/account_cubit.dart';
 import 'presentation/blocs/theme/theme_cubit.dart';
 import 'presentation/blocs/theme/theme_state.dart';
 import 'presentation/pages/account_selection_page.dart';
+import 'presentation/pages/compose_window.dart';
 import 'presentation/pages/home_page.dart';
 
-void main() async {
+void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  await windowManager.ensureInitialized();
+
+  if (args.firstOrNull == 'multi_window') {
+    final windowId = args[1];
+    final arguments = args[2].isEmpty
+        ? <String, dynamic>{}
+        : jsonDecode(args[2]) as Map<String, dynamic>;
+
+    await configureDependencies();
+
+    final mode = ComposeMode.values.byName(
+      arguments['mode'] as String? ?? 'newEmail',
+    );
+    final title = switch (mode) {
+      ComposeMode.newEmail => 'New Email',
+      ComposeMode.reply => 'Reply',
+      ComposeMode.replyAll => 'Reply All',
+      ComposeMode.forward => 'Forward',
+    };
+
+    windowManager.waitUntilReadyToShow(
+      WindowOptions(size: const Size(640, 520), center: true, title: title),
+      () async => windowManager.show(),
+    );
+
+    runApp(ComposeWindowApp(windowId: windowId, arguments: arguments));
+    return;
+  }
+
   await configureDependencies();
   runApp(const NightMailApp());
 }
 
-class NightMailApp extends StatelessWidget {
+class NightMailApp extends StatefulWidget {
   const NightMailApp({super.key});
 
+  @override
+  State<NightMailApp> createState() => _NightMailAppState();
+}
+
+class _NightMailAppState extends State<NightMailApp> with WindowListener {
   static final _darkTheme = ThemeData(
     colorScheme: ColorScheme.fromSeed(
       seedColor: const Color(0xFF7C83FD),
@@ -31,6 +70,26 @@ class NightMailApp extends StatelessWidget {
     ),
     useMaterial3: true,
   );
+
+  @override
+  void initState() {
+    super.initState();
+    windowManager.addListener(this);
+    windowManager.setPreventClose(true);
+  }
+
+  @override
+  void dispose() {
+    windowManager.removeListener(this);
+    super.dispose();
+  }
+
+  @override
+  void onWindowClose() {
+    // Quit the whole app when the main window is closed, even if
+    // compose windows are still open.
+    windowManager.destroy();
+  }
 
   @override
   Widget build(BuildContext context) {

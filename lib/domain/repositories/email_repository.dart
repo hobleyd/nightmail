@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:fpdart/fpdart.dart';
 
 import '../../core/error/failures.dart';
@@ -54,4 +56,10 @@ abstract interface class EmailRepository {
 
   /// Deletes (moves to Deleted Items) an email by [id].
   Future<Either<Failure, Unit>> deleteEmail(String id);
+
+  /// Downloads the raw bytes of a file attachment.
+  Future<Either<Failure, Uint8List>> downloadAttachment({
+    required String messageId,
+    required String attachmentId,
+  });
 }

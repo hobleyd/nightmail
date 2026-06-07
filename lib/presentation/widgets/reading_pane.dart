@@ -1,12 +1,18 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:open_file/open_file.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_attachment.dart';
 import '../../domain/usecases/delete_email.dart';
+import '../../domain/usecases/download_attachment.dart';
 import '../../domain/usecases/send_email.dart';
 import '../../injection_container.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
@@ -310,7 +316,10 @@ class _EmailHeader extends StatelessWidget {
           ),
           if (email.attachments.isNotEmpty) ...[
             const SizedBox(height: 10),
-            _AttachmentsSection(attachments: email.attachments),
+            _AttachmentsSection(
+              emailId: email.id,
+              attachments: email.attachments,
+            ),
           ],
         ],
       ),
@@ -364,7 +373,11 @@ class _MetaRow extends StatelessWidget {
 }
 
 class _AttachmentsSection extends StatelessWidget {
-  const _AttachmentsSection({required this.attachments});
+  const _AttachmentsSection({
+    required this.emailId,
+    required this.attachments,
+  });
+  final String emailId;
   final List<EmailAttachment> attachments;
 
   @override
@@ -391,7 +404,7 @@ class _AttachmentsSection extends StatelessWidget {
             spacing: 6,
             runSpacing: 4,
             children: attachments
-                .map((a) => _AttachmentChip(attachment: a))
+                .map((a) => _AttachmentChip(emailId: emailId, attachment: a))
                 .toList(),
           ),
         ),
@@ -400,15 +413,22 @@ class _AttachmentsSection extends StatelessWidget {
   }
 }
 
-class _AttachmentChip extends StatelessWidget {
-  const _AttachmentChip({required this.attachment});
+class _AttachmentChip extends StatefulWidget {
+  const _AttachmentChip({required this.emailId, required this.attachment});
+  final String emailId;
   final EmailAttachment attachment;
+
+  @override
+  State<_AttachmentChip> createState() => _AttachmentChipState();
+}
+
+class _AttachmentChipState extends State<_AttachmentChip> {
+  bool _isLoading = false;
 
   static IconData _iconFor(String contentType, String name) {
     final ct = contentType.toLowerCase();
-    final ext = name.contains('.')
-        ? name.split('.').last.toLowerCase()
-        : '';
+    final ext =
+        name.contains('.') ? name.split('.').last.toLowerCase() : '';
     if (ct.startsWith('image/')) { return Icons.image_rounded; }
     if (ct.contains('pdf') || ext == 'pdf') { return Icons.picture_as_pdf_rounded; }
     if (ct.contains('word') || ext == 'doc' || ext == 'docx') { return Icons.description_rounded; }
@@ -423,29 +443,72 @@ class _AttachmentChip extends StatelessWidget {
     return Icons.attach_file_rounded;
   }
 
+  Future<void> _open() async {
+    if (_isLoading) return;
+    setState(() => _isLoading = true);
+    try {
+      final result = await sl<DownloadAttachment>()(DownloadAttachmentParams(
+        messageId: widget.emailId,
+        attachmentId: widget.attachment.id,
+      ));
+      if (!mounted) return;
+      await result.fold(
+        (failure) async {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not open: ${failure.message}')),
+          );
+        },
+        (bytes) async {
+          final dir = await getTemporaryDirectory();
+          final file = File('${dir.path}/${widget.attachment.name}');
+          await file.writeAsBytes(bytes);
+          await OpenFile.open(file.path);
+        },
+      );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-      decoration: BoxDecoration(
-        color: c.badgeBg,
-        borderRadius: BorderRadius.circular(5),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            _iconFor(attachment.contentType, attachment.name),
-            size: 12,
-            color: c.textMuted,
-          ),
-          const SizedBox(width: 4),
-          Text(
-            attachment.name,
-            style: TextStyle(color: c.textTertiary, fontSize: 11),
-          ),
-        ],
+    final isMobile = defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+    return GestureDetector(
+      onTap: isMobile ? _open : null,
+      onDoubleTap: isMobile ? null : _open,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        decoration: BoxDecoration(
+          color: c.badgeBg,
+          borderRadius: BorderRadius.circular(5),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_isLoading)
+              SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.5,
+                  color: AppColors.accent,
+                ),
+              )
+            else
+              Icon(
+                _iconFor(widget.attachment.contentType, widget.attachment.name),
+                size: 12,
+                color: c.textMuted,
+              ),
+            const SizedBox(width: 4),
+            Text(
+              widget.attachment.name,
+              style: TextStyle(color: c.textTertiary, fontSize: 11),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -494,8 +557,15 @@ class _HtmlBodyWebViewState extends State<_HtmlBodyWebView> {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.disabled)
       ..setNavigationDelegate(NavigationDelegate(
-        // Block link navigation — email links should not drive the WebView.
-        onNavigationRequest: (_) => NavigationDecision.prevent,
+        // Allow the initial HTML load (about:, data:, file:) but block any
+        // outbound http/https navigation triggered by clicking links.
+        onNavigationRequest: (request) {
+          final scheme = Uri.tryParse(request.url)?.scheme ?? '';
+          if (scheme == 'http' || scheme == 'https') {
+            return NavigationDecision.prevent;
+          }
+          return NavigationDecision.navigate;
+        },
       ))
       ..loadHtmlString(_wrapHtml(widget.html));
   }

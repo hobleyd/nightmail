@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:enough_mail/enough_mail.dart';
 
 import '../../../core/error/exceptions.dart';
@@ -217,9 +219,12 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
 
       final sequence = MessageSequence.fromIds(page, isUid: true);
       // Multiple fetch items must be wrapped in parentheses per RFC 3501.
+      // Note: partial fetch (e.g. BODY.PEEK[TEXT]<0.500>) causes the server to
+      // respond with BODY[TEXT]<0>, which enough_mail's parser does not handle.
+      // Fetch the full TEXT part and truncate client-side in _parseToModel.
       final fetchResult = await client.uidFetchMessages(
         sequence,
-        '(FLAGS INTERNALDATE ENVELOPE BODY.PEEK[TEXT]<0.500>)',
+        '(FLAGS INTERNALDATE ENVELOPE BODY.PEEK[TEXT])',
       );
 
       return fetchResult.messages
@@ -490,5 +495,11 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
   @override
   Future<void> deleteEmail(String id) {
     throw UnimplementedError('deleteEmail not yet supported for IMAP');
+  }
+
+  @override
+  Future<Uint8List> downloadAttachment(
+      String messageId, String attachmentId) {
+    throw UnimplementedError('Attachment download not supported for IMAP');
   }
 }

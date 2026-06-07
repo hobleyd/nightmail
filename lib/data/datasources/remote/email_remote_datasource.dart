@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import '../../models/email_folder_model.dart';
 import '../../models/email_model.dart';
 
@@ -41,4 +43,6 @@ abstract interface class EmailRemoteDatasource {
   });
 
   Future<void> deleteEmail(String id);
+
+  Future<Uint8List> downloadAttachment(String messageId, String attachmentId);
 }

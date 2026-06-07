@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 
 import '../../../core/error/exceptions.dart';
@@ -266,6 +268,20 @@ class GraphApiDatasourceImpl
   Future<void> deleteEmail(String id) async {
     try {
       await _dio.delete<void>('/me/messages/$id');
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<Uint8List> downloadAttachment(
+      String messageId, String attachmentId) async {
+    try {
+      final response = await _dio.get<List<int>>(
+        '/me/messages/$messageId/attachments/$attachmentId/\$value',
+        options: Options(responseType: ResponseType.bytes),
+      );
+      return Uint8List.fromList(response.data ?? []);
     } on DioException catch (e) {
       throw _mapDioException(e);
     }

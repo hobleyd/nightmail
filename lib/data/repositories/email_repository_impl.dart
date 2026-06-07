@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:fpdart/fpdart.dart';
 
 import '../../core/error/exceptions.dart';
@@ -142,6 +144,15 @@ class EmailRepositoryImpl implements EmailRepository {
       await _accountManager.emailDatasource.deleteEmail(id);
       return unit;
     });
+  }
+
+  @override
+  Future<Either<Failure, Uint8List>> downloadAttachment({
+    required String messageId,
+    required String attachmentId,
+  }) async {
+    return _execute(() => _accountManager.emailDatasource
+        .downloadAttachment(messageId, attachmentId));
   }
 
   Future<Either<Failure, T>> _execute<T>(Future<T> Function() fn) async {

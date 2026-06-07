@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 
@@ -355,6 +356,12 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   @override
   Future<void> deleteEmail(String id) {
     throw UnimplementedError('deleteEmail not yet supported for Gmail');
+  }
+
+  @override
+  Future<Uint8List> downloadAttachment(
+      String messageId, String attachmentId) {
+    throw UnimplementedError('Attachment download not supported for Gmail');
   }
 
   Exception _mapException(DioException e) {

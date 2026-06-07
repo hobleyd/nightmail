@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/app_colors.dart';
@@ -8,6 +9,8 @@ import '../../injection_container.dart';
 import '../blocs/compose/compose_bloc.dart';
 import '../blocs/compose/compose_event.dart';
 import '../blocs/compose/compose_state.dart';
+
+typedef _RecipientDrag = ({String address, String sourceFieldId});
 
 class ComposeDialog extends StatelessWidget {
   const ComposeDialog({
@@ -71,8 +74,8 @@ class _ComposeForm extends StatefulWidget {
 }
 
 class _ComposeFormState extends State<_ComposeForm> {
-  late final TextEditingController _toController;
-  late final TextEditingController _ccController;
+  late List<String> _toRecipients;
+  late List<String> _ccRecipients;
   late final TextEditingController _subjectController;
   late final TextEditingController _bodyController;
   final FocusNode _bodyFocus = FocusNode();
@@ -80,14 +83,18 @@ class _ComposeFormState extends State<_ComposeForm> {
   @override
   void initState() {
     super.initState();
-    _toController = TextEditingController(text: _initialTo());
-    _ccController = TextEditingController(text: _initialCc());
+    _toRecipients = _parseAddresses(_initialTo());
+    _ccRecipients = _parseAddresses(_initialCc());
     _subjectController = TextEditingController(text: _initialSubject());
     _bodyController = TextEditingController();
-
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _bodyFocus.requestFocus();
     });
+  }
+
+  List<String> _parseAddresses(String text) {
+    if (text.trim().isEmpty) return [];
+    return text.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
   }
 
   String _initialTo() {
@@ -129,8 +136,6 @@ class _ComposeFormState extends State<_ComposeForm> {
 
   @override
   void dispose() {
-    _toController.dispose();
-    _ccController.dispose();
     _subjectController.dispose();
     _bodyController.dispose();
     _bodyFocus.dispose();
@@ -144,21 +149,42 @@ class _ComposeFormState extends State<_ComposeForm> {
         ComposeMode.forward => 'Forward',
       };
 
-  bool get _toEditable => switch (widget.mode) {
+  bool get _toInputEditable => switch (widget.mode) {
         ComposeMode.newEmail || ComposeMode.forward => true,
         _ => false,
       };
 
+  bool get _ccInputEditable => widget.mode == ComposeMode.newEmail;
+
   bool get _subjectEditable => widget.mode == ComposeMode.newEmail;
 
+  void _handleDrop(String address, String fromFieldId, String toFieldId) {
+    if (fromFieldId == toFieldId) return;
+    setState(() {
+      if (fromFieldId == 'to') {
+        _toRecipients = List.from(_toRecipients)..remove(address);
+      } else {
+        _ccRecipients = List.from(_ccRecipients)..remove(address);
+      }
+      if (toFieldId == 'to') {
+        if (!_toRecipients.contains(address)) {
+          _toRecipients = List.from(_toRecipients)..add(address);
+        }
+      } else {
+        if (!_ccRecipients.contains(address)) {
+          _ccRecipients = List.from(_ccRecipients)..add(address);
+        }
+      }
+    });
+  }
+
   void _submit(BuildContext context) {
-    final to = _toController.text.trim();
-    final cc = _ccController.text.trim();
+    final to = _toRecipients;
+    final cc = _ccRecipients;
     final subject = _subjectController.text.trim();
     final body = _bodyController.text.trim();
 
-    if (body.isEmpty &&
-        widget.mode != ComposeMode.forward) {
+    if (body.isEmpty && widget.mode != ComposeMode.forward) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Message body cannot be empty')),
       );
@@ -174,16 +200,11 @@ class _ComposeFormState extends State<_ComposeForm> {
       return;
     }
 
-    final toAddresses =
-        to.isEmpty ? <String>[] : to.split(',').map((s) => s.trim()).toList();
-    final ccAddresses =
-        cc.isEmpty ? <String>[] : cc.split(',').map((s) => s.trim()).toList();
-
     context.read<ComposeBloc>().add(ComposeSubmitted(
           mode: widget.mode,
           originalMessageId: widget.originalEmail?.id,
-          toAddresses: toAddresses,
-          ccAddresses: ccAddresses,
+          toAddresses: to,
+          ccAddresses: cc,
           subject: subject,
           body: body,
         ));
@@ -208,17 +229,25 @@ class _ComposeFormState extends State<_ComposeForm> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _FieldRow(
+                  _RecipientField(
                     label: 'To',
-                    controller: _toController,
-                    enabled: _toEditable,
+                    fieldId: 'to',
+                    recipients: _toRecipients,
+                    onChanged: (r) => setState(() => _toRecipients = r),
+                    onDropAccepted: (address, fromFieldId) =>
+                        _handleDrop(address, fromFieldId, 'to'),
+                    showInput: _toInputEditable,
                     hintText: 'recipient@example.com',
                   ),
                   const SizedBox(height: 8),
-                  _FieldRow(
+                  _RecipientField(
                     label: 'Cc',
-                    controller: _ccController,
-                    enabled: widget.mode == ComposeMode.newEmail,
+                    fieldId: 'cc',
+                    recipients: _ccRecipients,
+                    onChanged: (r) => setState(() => _ccRecipients = r),
+                    onDropAccepted: (address, fromFieldId) =>
+                        _handleDrop(address, fromFieldId, 'cc'),
+                    showInput: _ccInputEditable,
                     hintText: 'cc@example.com',
                   ),
                   const SizedBox(height: 8),
@@ -259,6 +288,281 @@ class _ComposeFormState extends State<_ComposeForm> {
             Divider(height: 1, color: c.border),
             _Footer(onSend: () => _submit(context)),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RecipientField extends StatefulWidget {
+  const _RecipientField({
+    required this.label,
+    required this.fieldId,
+    required this.recipients,
+    required this.onChanged,
+    required this.onDropAccepted,
+    this.showInput = false,
+    this.hintText,
+  });
+
+  final String label;
+  final String fieldId;
+  final List<String> recipients;
+  final ValueChanged<List<String>> onChanged;
+  final void Function(String address, String fromFieldId) onDropAccepted;
+  final bool showInput;
+  final String? hintText;
+
+  @override
+  State<_RecipientField> createState() => _RecipientFieldState();
+}
+
+class _RecipientFieldState extends State<_RecipientField> {
+  int? _selectedIndex;
+  final TextEditingController _inputController = TextEditingController();
+  final FocusNode _inputFocus = FocusNode();
+  final FocusNode _chipKeyFocus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _inputFocus.addListener(_onInputFocusChanged);
+  }
+
+  @override
+  void didUpdateWidget(_RecipientField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_selectedIndex != null &&
+        _selectedIndex! >= widget.recipients.length) {
+      _selectedIndex = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _inputController.dispose();
+    _inputFocus.removeListener(_onInputFocusChanged);
+    _inputFocus.dispose();
+    _chipKeyFocus.dispose();
+    super.dispose();
+  }
+
+  void _onInputFocusChanged() {
+    if (!_inputFocus.hasFocus) _flushInput();
+  }
+
+  void _flushInput() {
+    final text = _inputController.text
+        .trim()
+        .replaceAll(',', '')
+        .replaceAll(';', '');
+    if (text.isEmpty) return;
+    final newList = List<String>.from(widget.recipients)..add(text);
+    _inputController.clear();
+    widget.onChanged(newList);
+  }
+
+  void _selectChip(int index) {
+    setState(() => _selectedIndex = index);
+    _chipKeyFocus.requestFocus();
+  }
+
+  void _deleteSelected() {
+    final idx = _selectedIndex;
+    if (idx == null) return;
+    final newList = List<String>.from(widget.recipients)..removeAt(idx);
+    setState(() => _selectedIndex = null);
+    widget.onChanged(newList);
+    if (widget.showInput) _inputFocus.requestFocus();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: SizedBox(
+            width: 52,
+            child: Text(
+              widget.label,
+              style: TextStyle(
+                color: c.textDimmed,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ),
+        Expanded(
+          child: Focus(
+            focusNode: _chipKeyFocus,
+            onKeyEvent: (node, event) {
+              if (event is! KeyDownEvent || _selectedIndex == null) {
+                return KeyEventResult.ignored;
+              }
+              if (event.logicalKey == LogicalKeyboardKey.backspace ||
+                  event.logicalKey == LogicalKeyboardKey.delete) {
+                _deleteSelected();
+                return KeyEventResult.handled;
+              }
+              if (event.logicalKey == LogicalKeyboardKey.escape) {
+                setState(() => _selectedIndex = null);
+                if (widget.showInput) _inputFocus.requestFocus();
+                return KeyEventResult.handled;
+              }
+              return KeyEventResult.ignored;
+            },
+            child: DragTarget<_RecipientDrag>(
+              onWillAcceptWithDetails: (details) =>
+                  details.data.sourceFieldId != widget.fieldId,
+              onAcceptWithDetails: (details) => widget.onDropAccepted(
+                details.data.address,
+                details.data.sourceFieldId,
+              ),
+              builder: (context, candidateData, _) {
+                final isHovering = candidateData.isNotEmpty;
+                return GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onTap: () {
+                    setState(() => _selectedIndex = null);
+                    if (widget.showInput) _inputFocus.requestFocus();
+                  },
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 28),
+                    decoration: isHovering
+                        ? BoxDecoration(
+                            borderRadius: BorderRadius.circular(4),
+                            color: AppColors.accent.withAlpha(20),
+                            border: Border.all(
+                              color: AppColors.accent.withAlpha(60),
+                            ),
+                          )
+                        : null,
+                    child: Wrap(
+                      spacing: 4,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        for (int i = 0; i < widget.recipients.length; i++)
+                          _buildChip(i, c),
+                        if (widget.showInput)
+                          IntrinsicWidth(
+                            child: Focus(
+                              onKeyEvent: (node, event) {
+                                if (event is KeyDownEvent &&
+                                    event.logicalKey ==
+                                        LogicalKeyboardKey.backspace &&
+                                    _inputController.text.isEmpty &&
+                                    widget.recipients.isNotEmpty) {
+                                  _selectChip(widget.recipients.length - 1);
+                                  return KeyEventResult.handled;
+                                }
+                                return KeyEventResult.ignored;
+                              },
+                              child: TextField(
+                                controller: _inputController,
+                                focusNode: _inputFocus,
+                                style: TextStyle(
+                                  color: c.textPrimary,
+                                  fontSize: 13,
+                                ),
+                                onSubmitted: (_) => _flushInput(),
+                                onChanged: (val) {
+                                  if (val.endsWith(',') ||
+                                      val.endsWith(';')) {
+                                    _flushInput();
+                                  }
+                                },
+                                decoration: InputDecoration(
+                                  hintText: widget.recipients.isEmpty
+                                      ? widget.hintText
+                                      : null,
+                                  hintStyle: TextStyle(
+                                    color: c.textMuted,
+                                    fontSize: 13,
+                                  ),
+                                  border: InputBorder.none,
+                                  contentPadding: EdgeInsets.zero,
+                                  isDense: true,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildChip(int index, AppColors c) {
+    final address = widget.recipients[index];
+    final isSelected = _selectedIndex == index;
+
+    return Draggable<_RecipientDrag>(
+      data: (address: address, sourceFieldId: widget.fieldId),
+      feedback: Material(
+        color: Colors.transparent,
+        child: _RecipientChip(
+          address: address,
+          isSelected: true,
+          opacity: 0.85,
+        ),
+      ),
+      childWhenDragging: _RecipientChip(
+        address: address,
+        isSelected: isSelected,
+        opacity: 0.35,
+      ),
+      child: GestureDetector(
+        onTap: () => _selectChip(index),
+        child: _RecipientChip(address: address, isSelected: isSelected),
+      ),
+    );
+  }
+}
+
+class _RecipientChip extends StatelessWidget {
+  const _RecipientChip({
+    required this.address,
+    required this.isSelected,
+    this.opacity = 1.0,
+  });
+
+  final String address;
+  final bool isSelected;
+  final double opacity;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Opacity(
+      opacity: opacity,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.accent.withAlpha(30) : c.separator,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected
+                ? AppColors.accent
+                : c.separatorStrong,
+          ),
+        ),
+        child: Text(
+          address,
+          style: TextStyle(
+            color: isSelected ? AppColors.accent : c.textSecondary,
+            fontSize: 12,
+          ),
         ),
       ),
     );

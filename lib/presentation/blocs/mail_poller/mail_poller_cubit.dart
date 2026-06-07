@@ -63,14 +63,19 @@ class MailPollerCubit extends Cubit<MailPollerState> {
 
           if (!_initialized || !_baselineUnread.containsKey(account.id)) {
             _baselineUnread[account.id] = unreadCount;
+            if (account.id != activeId && unreadCount > 0) {
+              if (_newMailAccounts.add(account.id)) changed = true;
+            }
             continue;
           }
 
           if (account.id == activeId) {
             _baselineUnread[account.id] = unreadCount;
             if (_newMailAccounts.remove(account.id)) changed = true;
-          } else if (unreadCount > (_baselineUnread[account.id] ?? 0)) {
+          } else if (unreadCount > 0) {
             if (_newMailAccounts.add(account.id)) changed = true;
+          } else {
+            if (_newMailAccounts.remove(account.id)) changed = true;
           }
         } catch (_) {
           // Silently skip accounts that fail to poll.

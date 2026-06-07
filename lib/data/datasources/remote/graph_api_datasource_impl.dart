@@ -74,7 +74,10 @@ class GraphApiDatasourceImpl
     try {
       final response = await _dio.get<Map<String, dynamic>>(
         '/me/messages/$id',
-        queryParameters: {'\$select': _emailDetailSelect},
+        queryParameters: {
+          '\$select': _emailDetailSelect,
+          '\$expand': r'attachments($select=id,name,contentType,size,isInline)',
+        },
       );
 
       if (response.data == null) {

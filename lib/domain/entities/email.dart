@@ -1,5 +1,6 @@
 import 'package:equatable/equatable.dart';
 import 'email_address.dart';
+import 'email_attachment.dart';
 
 enum EmailBodyType { text, html }
 
@@ -21,6 +22,7 @@ class Email extends Equatable {
     this.sentDateTime,
     this.conversationId,
     this.hasAttachments = false,
+    this.attachments = const [],
     this.parentFolderId,
   });
 
@@ -38,6 +40,7 @@ class Email extends Equatable {
   final EmailImportance importance;
   final String? conversationId;
   final bool hasAttachments;
+  final List<EmailAttachment> attachments;
   final String? parentFolderId;
 
   Email copyWith({bool? isRead}) {
@@ -56,6 +59,7 @@ class Email extends Equatable {
       importance: importance,
       conversationId: conversationId,
       hasAttachments: hasAttachments,
+      attachments: attachments,
       parentFolderId: parentFolderId,
     );
   }
@@ -74,6 +78,7 @@ class Email extends Equatable {
         importance,
         conversationId,
         hasAttachments,
+        attachments,
         parentFolderId,
       ];
 }

@@ -1,4 +1,5 @@
 import '../../domain/entities/email.dart';
+import '../../domain/entities/email_attachment.dart';
 import 'email_address_model.dart';
 
 class EmailModel extends Email {
@@ -17,6 +18,7 @@ class EmailModel extends Email {
     super.sentDateTime,
     super.conversationId,
     super.hasAttachments,
+    super.attachments,
     super.parentFolderId,
   });
 
@@ -50,8 +52,23 @@ class EmailModel extends Email {
       importance: _parseImportance(json['importance'] as String?),
       conversationId: json['conversationId'] as String?,
       hasAttachments: json['hasAttachments'] as bool? ?? false,
+      attachments: _parseAttachments(json['attachments']),
       parentFolderId: json['parentFolderId'] as String?,
     );
+  }
+
+  static List<EmailAttachment> _parseAttachments(dynamic raw) {
+    if (raw is! List) return const [];
+    return raw
+        .cast<Map<String, dynamic>>()
+        .where((a) => a['isInline'] != true)
+        .map((a) => EmailAttachment(
+              id: a['id'] as String? ?? '',
+              name: a['name'] as String? ?? 'Attachment',
+              contentType: a['contentType'] as String? ?? 'application/octet-stream',
+              size: a['size'] as int? ?? 0,
+            ))
+        .toList();
   }
 
   static EmailImportance _parseImportance(String? value) {
@@ -82,6 +99,7 @@ class EmailModel extends Email {
       importance: entity.importance,
       conversationId: entity.conversationId,
       hasAttachments: entity.hasAttachments,
+      attachments: entity.attachments,
       parentFolderId: entity.parentFolderId,
     );
   }

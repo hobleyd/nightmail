@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
+import '../../domain/entities/email_attachment.dart';
 import '../../domain/usecases/delete_email.dart';
 import '../../domain/usecases/send_email.dart';
 import '../../injection_container.dart';
@@ -307,13 +308,9 @@ class _EmailHeader extends StatelessWidget {
             label: 'Date',
             value: formatEmailDateLong(email.receivedDateTime),
           ),
-          if (email.hasAttachments) ...[
-            const SizedBox(height: 6),
-            const _MetaRow(
-              icon: Icons.attach_file_rounded,
-              label: 'Attachments',
-              value: 'This email has attachments',
-            ),
+          if (email.attachments.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            _AttachmentsSection(attachments: email.attachments),
           ],
         ],
       ),
@@ -366,6 +363,94 @@ class _MetaRow extends StatelessWidget {
   }
 }
 
+class _AttachmentsSection extends StatelessWidget {
+  const _AttachmentsSection({required this.attachments});
+  final List<EmailAttachment> attachments;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(Icons.attach_file_rounded, size: 14, color: c.textDimmed),
+        const SizedBox(width: 6),
+        SizedBox(
+          width: 44,
+          child: Text(
+            'Files',
+            style: TextStyle(
+              color: c.textDimmed,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: attachments
+                .map((a) => _AttachmentChip(attachment: a))
+                .toList(),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AttachmentChip extends StatelessWidget {
+  const _AttachmentChip({required this.attachment});
+  final EmailAttachment attachment;
+
+  static IconData _iconFor(String contentType, String name) {
+    final ct = contentType.toLowerCase();
+    final ext = name.contains('.')
+        ? name.split('.').last.toLowerCase()
+        : '';
+    if (ct.startsWith('image/')) { return Icons.image_rounded; }
+    if (ct.contains('pdf') || ext == 'pdf') { return Icons.picture_as_pdf_rounded; }
+    if (ct.contains('word') || ext == 'doc' || ext == 'docx') { return Icons.description_rounded; }
+    if (ct.contains('excel') || ct.contains('spreadsheet') ||
+        ext == 'xls' || ext == 'xlsx' || ext == 'csv') { return Icons.table_chart_rounded; }
+    if (ct.contains('powerpoint') || ct.contains('presentation') ||
+        ext == 'ppt' || ext == 'pptx') { return Icons.slideshow_rounded; }
+    if (ct.contains('zip') || ct.contains('archive') ||
+        ext == 'zip' || ext == 'rar' || ext == '7z') { return Icons.folder_zip_rounded; }
+    if (ct.startsWith('audio/')) { return Icons.audio_file_rounded; }
+    if (ct.startsWith('video/')) { return Icons.video_file_rounded; }
+    return Icons.attach_file_rounded;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: c.badgeBg,
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            _iconFor(attachment.contentType, attachment.name),
+            size: 12,
+            color: c.textMuted,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            attachment.name,
+            style: TextStyle(color: c.textTertiary, fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _EmailBody extends StatelessWidget {
   const _EmailBody({required this.email});
   final Email email;
@@ -373,58 +458,76 @@ class _EmailBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final htmlColor = c.textBodyHtml;
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(28, 20, 28, 40),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              minWidth: constraints.maxWidth - 56, // Account for horizontal padding
-            ),
-            child: email.bodyType == EmailBodyType.html
-                ? HtmlWidget(
-                    email.body,
-                    textStyle: TextStyle(
-                      color: c.textBody,
-                      fontSize: 14,
-                      height: 1.6,
-                    ),
-                    customStylesBuilder: (element) {
-                      final styles = <String, String>{};
+    if (email.bodyType == EmailBodyType.html) {
+      return _HtmlBodyWebView(html: email.body);
+    }
 
-                      // Override explicit black/white colors from the email's stylesheet.
-                      if (['p', 'div', 'span', 'td', 'li']
-                          .contains(element.localName)) {
-                        styles['color'] = htmlColor;
-                      }
-
-                      // Force tables and common containers to be responsive and fill width.
-                      if (['table', 'div', 'section', 'article', 'body']
-                          .contains(element.localName)) {
-                        styles['max-width'] = 'none';
-                        styles['min-width'] = '0';
-                        if (element.localName == 'table') {
-                          styles['height'] = 'auto';
-                          styles['width'] = '100%';
-                        }
-                      }
-
-                      return styles.isEmpty ? null : styles;
-                    },
-                  )
-                : SelectableText(
-                    email.body,
-                    style: TextStyle(
-                      color: c.textBody,
-                      fontSize: 14,
-                      height: 1.6,
-                    ),
-                  ),
-          ),
-        );
-      },
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(28, 20, 28, 40),
+      child: SelectableText(
+        email.body,
+        style: TextStyle(
+          color: c.textBody,
+          fontSize: 14,
+          height: 1.6,
+        ),
+      ),
     );
+  }
+}
+
+class _HtmlBodyWebView extends StatefulWidget {
+  const _HtmlBodyWebView({required this.html});
+  final String html;
+
+  @override
+  State<_HtmlBodyWebView> createState() => _HtmlBodyWebViewState();
+}
+
+class _HtmlBodyWebViewState extends State<_HtmlBodyWebView> {
+  late final WebViewController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.disabled)
+      ..setNavigationDelegate(NavigationDelegate(
+        // Block link navigation — email links should not drive the WebView.
+        onNavigationRequest: (_) => NavigationDecision.prevent,
+      ))
+      ..loadHtmlString(_wrapHtml(widget.html));
+  }
+
+  @override
+  void didUpdateWidget(_HtmlBodyWebView old) {
+    super.didUpdateWidget(old);
+    if (old.html != widget.html) {
+      _controller.loadHtmlString(_wrapHtml(widget.html));
+    }
+  }
+
+  static String _wrapHtml(String html) {
+    // Inject viewport + minimal responsive overrides before </head>.
+    // Using a real WKWebView means !important works and table layout is correct.
+    const injected = '''
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+<style>
+* { box-sizing: border-box !important; }
+body { margin: 0; padding: 20px 28px 40px; }
+img { max-width: 100% !important; height: auto !important; }
+</style>
+''';
+    final headEnd = html.indexOf('</head>');
+    if (headEnd != -1) {
+      return html.substring(0, headEnd) + injected + html.substring(headEnd);
+    }
+    return '<html><head>$injected</head><body>$html</body></html>';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return WebViewWidget(controller: _controller);
   }
 }

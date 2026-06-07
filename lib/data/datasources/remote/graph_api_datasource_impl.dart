@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -277,11 +278,17 @@ class GraphApiDatasourceImpl
   Future<Uint8List> downloadAttachment(
       String messageId, String attachmentId) async {
     try {
-      final response = await _dio.get<List<int>>(
-        '/me/messages/$messageId/attachments/$attachmentId/\$value',
-        options: Options(responseType: ResponseType.bytes),
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/me/messages/$messageId/attachments/$attachmentId',
+        queryParameters: {'\$select': 'contentBytes'},
       );
-      return Uint8List.fromList(response.data ?? []);
+      final data = response.data;
+      final contentBytes = data?['contentBytes'] as String?;
+      if (contentBytes == null || contentBytes.isEmpty) {
+        throw ServerException(
+            message: 'Attachment has no content', statusCode: 200);
+      }
+      return base64Decode(contentBytes);
     } on DioException catch (e) {
       throw _mapDioException(e);
     }

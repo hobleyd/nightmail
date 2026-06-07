@@ -477,9 +477,11 @@ class _SaveAllButtonState extends State<_SaveAllButton> {
     final writes = <Future<void>>[];
     for (final (:attachment, :either) in results) {
       either.fold(
-        (f) => errors.add(attachment.name),
+        (f) => errors.add('${attachment.name}: ${f.message}'),
         (bytes) => writes.add(
-          File('$directory/${attachment.name}').writeAsBytes(bytes),
+          File('$directory/${attachment.name}')
+              .writeAsBytes(bytes)
+              .catchError((Object e) => errors.add('${attachment.name}: $e')),
         ),
       );
     }
@@ -488,7 +490,7 @@ class _SaveAllButtonState extends State<_SaveAllButton> {
 
     if (errors.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to save: ${errors.join(', ')}')),
+        SnackBar(content: Text('Failed to save:\n${errors.join('\n')}')),
       );
     }
   }

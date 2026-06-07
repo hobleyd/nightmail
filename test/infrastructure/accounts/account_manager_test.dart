@@ -158,7 +158,7 @@ void main() {
       when(mockSecureStorage.read(key: anyNamed('key')))
           .thenAnswer((_) async => null);
       when(mockSecureStorage.delete(key: anyNamed('key')))
-          .thenAnswer((_) async => null);
+          .thenAnswer((_) async {});
 
       await accountManager.initialize();
 

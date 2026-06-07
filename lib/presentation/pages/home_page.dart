@@ -19,7 +19,6 @@ import '../blocs/mail_poller/mail_poller_cubit.dart';
 import '../widgets/email_list_panel.dart';
 import '../widgets/folder_panel.dart';
 import '../widgets/reading_pane.dart';
-import 'add_account_page.dart';
 import 'calendar_page.dart';
 
 class HomePage extends StatelessWidget {

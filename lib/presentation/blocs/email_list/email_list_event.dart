@@ -52,6 +52,14 @@ final class EmailListEmailDeleted extends EmailListEvent {
   List<Object?> get props => [emailId];
 }
 
+final class EmailListEmailsBulkDeleted extends EmailListEvent {
+  const EmailListEmailsBulkDeleted({required this.emailIds});
+  final List<String> emailIds;
+
+  @override
+  List<Object?> get props => [emailIds];
+}
+
 final class EmailListFolderEmptied extends EmailListEvent {
   const EmailListFolderEmptied({
     required this.folderId,

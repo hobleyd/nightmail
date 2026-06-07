@@ -173,6 +173,12 @@ class _EmailListPanelState extends State<EmailListPanel> {
     });
   }
 
+  void _deleteSelected() {
+    final ids = List.of(_selectedEmailIds);
+    context.read<EmailListBloc>().add(EmailListEmailsBulkDeleted(emailIds: ids));
+    _clearSelection();
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -199,6 +205,22 @@ class _EmailListPanelState extends State<EmailListPanel> {
               ),
             ),
             Divider(height: 1, color: c.separator),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              child: _selectedEmailIds.isNotEmpty
+                  ? Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _MultiSelectActionBar(
+                          count: _selectedEmailIds.length,
+                          onDelete: _deleteSelected,
+                        ),
+                        Divider(height: 1, color: c.separator),
+                      ],
+                    )
+                  : const SizedBox.shrink(),
+            ),
             Expanded(
               child: BlocBuilder<EmailListBloc, EmailListState>(
                 builder: (context, state) {
@@ -662,6 +684,45 @@ class _ConversationHeader extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _MultiSelectActionBar extends StatelessWidget {
+  const _MultiSelectActionBar({
+    required this.count,
+    required this.onDelete,
+  });
+
+  final int count;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      color: c.selectionEmailBg,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '$count selected',
+              style: TextStyle(color: c.textMuted, fontSize: 12),
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.delete_outline_rounded, color: c.textTertiary),
+            tooltip: 'Delete selected',
+            iconSize: 20,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            onPressed: onDelete,
+          ),
+        ],
+      ),
     );
   }
 }

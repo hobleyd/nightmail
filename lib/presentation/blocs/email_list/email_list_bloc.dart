@@ -27,6 +27,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     on<EmailListMarkReadRequested>(_onMarkReadRequested);
     on<EmailListToggleConversation>(_onToggleConversation);
     on<EmailListEmailDeleted>(_onEmailDeleted);
+    on<EmailListEmailsBulkDeleted>(_onEmailsBulkDeleted);
     on<EmailListFolderEmptied>(_onFolderEmptied);
   }
 
@@ -197,6 +198,22 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       emails: current.emails.where((e) => e.id != event.emailId).toList(),
     ));
     await _deleteEmail(DeleteEmailParams(id: event.emailId));
+  }
+
+  Future<void> _onEmailsBulkDeleted(
+    EmailListEmailsBulkDeleted event,
+    Emitter<EmailListState> emit,
+  ) async {
+    final current = state;
+    if (current is! EmailListLoaded) return;
+    final ids = event.emailIds.toSet();
+    // Optimistically remove all selected emails before API calls complete
+    emit(current.copyWith(
+      emails: current.emails.where((e) => !ids.contains(e.id)).toList(),
+    ));
+    await Future.wait(
+      event.emailIds.map((id) => _deleteEmail(DeleteEmailParams(id: id))),
+    );
   }
 
   Future<void> _onFolderEmptied(

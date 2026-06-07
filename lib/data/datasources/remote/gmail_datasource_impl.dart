@@ -359,6 +359,11 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   }
 
   @override
+  Future<void> emptyFolder(String folderId, {bool permanentDelete = false}) {
+    throw UnimplementedError('emptyFolder not yet supported for Gmail');
+  }
+
+  @override
   Future<Uint8List> downloadAttachment(
       String messageId, String attachmentId) {
     throw UnimplementedError('Attachment download not supported for Gmail');

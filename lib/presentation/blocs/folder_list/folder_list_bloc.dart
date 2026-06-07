@@ -9,6 +9,7 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
   FolderListBloc({required this._getMailFolders})
       : super(const FolderListInitial()) {
     on<FolderListLoadRequested>(_onLoadRequested);
+    on<FolderListFolderEmptied>(_onFolderEmptied);
   }
 
   final GetMailFolders _getMailFolders;
@@ -32,6 +33,20 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
         emit(FolderListLoaded(folders: sorted));
       },
     );
+  }
+
+  void _onFolderEmptied(
+    FolderListFolderEmptied event,
+    Emitter<FolderListState> emit,
+  ) {
+    final current = state;
+    if (current is! FolderListLoaded) return;
+    emit(current.copyWith(
+      folders: current.folders.map((f) {
+        if (f.id != event.folderId) return f;
+        return f.copyWith(totalItemCount: 0, unreadItemCount: 0);
+      }).toList(),
+    ));
   }
 
   static int _systemFolderOrder(String name) {

@@ -10,3 +10,11 @@ sealed class FolderListEvent extends Equatable {
 final class FolderListLoadRequested extends FolderListEvent {
   const FolderListLoadRequested();
 }
+
+final class FolderListFolderEmptied extends FolderListEvent {
+  const FolderListFolderEmptied({required this.folderId});
+  final String folderId;
+
+  @override
+  List<Object?> get props => [folderId];
+}

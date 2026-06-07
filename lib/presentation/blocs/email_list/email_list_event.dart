@@ -51,3 +51,15 @@ final class EmailListEmailDeleted extends EmailListEvent {
   @override
   List<Object?> get props => [emailId];
 }
+
+final class EmailListFolderEmptied extends EmailListEvent {
+  const EmailListFolderEmptied({
+    required this.folderId,
+    this.permanentDelete = false,
+  });
+  final String folderId;
+  final bool permanentDelete;
+
+  @override
+  List<Object?> get props => [folderId, permanentDelete];
+}

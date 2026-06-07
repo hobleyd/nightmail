@@ -1,6 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../domain/usecases/delete_email.dart';
+import '../../../domain/usecases/empty_folder.dart';
 import '../../../domain/usecases/get_cached_emails.dart';
 import '../../../domain/usecases/get_emails.dart';
 import '../../../domain/usecases/mark_email_as_read.dart';
@@ -17,6 +18,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     required this._getCachedEmails,
     required this._markEmailAsRead,
     required this._deleteEmail,
+    required this._emptyFolder,
     required this._accountManager,
   }) : super(const EmailListInitial()) {
     on<EmailListLoadRequested>(_onLoadRequested);
@@ -25,12 +27,14 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     on<EmailListMarkReadRequested>(_onMarkReadRequested);
     on<EmailListToggleConversation>(_onToggleConversation);
     on<EmailListEmailDeleted>(_onEmailDeleted);
+    on<EmailListFolderEmptied>(_onFolderEmptied);
   }
 
   final GetEmails _getEmails;
   final GetCachedEmails _getCachedEmails;
   final MarkEmailAsRead _markEmailAsRead;
   final DeleteEmail _deleteEmail;
+  final EmptyFolder _emptyFolder;
   final AccountManager _accountManager;
 
   Future<void> _onLoadRequested(
@@ -193,5 +197,20 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       emails: current.emails.where((e) => e.id != event.emailId).toList(),
     ));
     await _deleteEmail(DeleteEmailParams(id: event.emailId));
+  }
+
+  Future<void> _onFolderEmptied(
+    EmailListFolderEmptied event,
+    Emitter<EmailListState> emit,
+  ) async {
+    final current = state;
+    // Optimistically clear the list if the user is viewing the folder being emptied.
+    if (current is EmailListLoaded && current.currentFolderId == event.folderId) {
+      emit(current.copyWith(emails: [], hasMore: false));
+    }
+    await _emptyFolder(EmptyFolderParams(
+      folderId: event.folderId,
+      permanentDelete: event.permanentDelete,
+    ));
   }
 }

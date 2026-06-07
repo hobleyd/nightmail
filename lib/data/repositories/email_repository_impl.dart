@@ -167,6 +167,18 @@ class EmailRepositoryImpl implements EmailRepository {
   }
 
   @override
+  Future<Either<Failure, Unit>> emptyFolder(
+    String folderId, {
+    bool permanentDelete = false,
+  }) async {
+    return _execute(() async {
+      await _accountManager.emailDatasource
+          .emptyFolder(folderId, permanentDelete: permanentDelete);
+      return unit;
+    });
+  }
+
+  @override
   Future<Either<Failure, Uint8List>> downloadAttachment({
     required String messageId,
     required String attachmentId,

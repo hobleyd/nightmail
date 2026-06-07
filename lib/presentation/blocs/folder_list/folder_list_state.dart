@@ -21,6 +21,9 @@ final class FolderListLoaded extends FolderListState {
   const FolderListLoaded({required this.folders});
   final List<EmailFolder> folders;
 
+  FolderListLoaded copyWith({List<EmailFolder>? folders}) =>
+      FolderListLoaded(folders: folders ?? this.folders);
+
   @override
   List<Object?> get props => [folders];
 }

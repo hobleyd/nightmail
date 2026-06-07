@@ -44,5 +44,10 @@ abstract interface class EmailRemoteDatasource {
 
   Future<void> deleteEmail(String id);
 
+  /// Empties all emails from [folderId].
+  /// If [permanentDelete] is true, messages are irrecoverably deleted;
+  /// otherwise they are moved to the trash/deleted-items folder.
+  Future<void> emptyFolder(String folderId, {bool permanentDelete = false});
+
   Future<Uint8List> downloadAttachment(String messageId, String attachmentId);
 }

@@ -227,6 +227,8 @@ class _PanelHeader extends StatelessWidget {
   }
 }
 
+enum _FolderAction { deleteAll }
+
 class _FolderItem extends StatelessWidget {
   const _FolderItem({
     required this.folder,
@@ -246,12 +248,20 @@ class _FolderItem extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onExpandTap;
 
+  bool get _isJunkFolder =>
+      folder.displayName.toLowerCase() == 'junk email';
+
+  bool get _isTrashFolder =>
+      ['deleted items', 'trash'].contains(folder.displayName.toLowerCase());
+
+  bool get _hasContextMenu => _isJunkFolder || _isTrashFolder;
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final indentWidth = depth * 16.0;
 
-    return Material(
+    final tile = Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
@@ -327,6 +337,88 @@ class _FolderItem extends StatelessWidget {
         ),
       ),
     );
+
+    if (!_hasContextMenu) return tile;
+
+    return GestureDetector(
+      onSecondaryTapUp: (details) =>
+          _showContextMenu(context, details.globalPosition),
+      child: tile,
+    );
+  }
+
+  Future<void> _showContextMenu(BuildContext context, Offset position) async {
+    final overlay =
+        Overlay.of(context).context.findRenderObject()! as RenderBox;
+    final result = await showMenu<_FolderAction>(
+      context: context,
+      position: RelativeRect.fromRect(
+        position & const Size(40, 40),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        PopupMenuItem(
+          value: _FolderAction.deleteAll,
+          child: Row(
+            children: [
+              Icon(
+                _isTrashFolder
+                    ? Icons.delete_forever_outlined
+                    : Icons.delete_outline_rounded,
+                size: 16,
+              ),
+              const SizedBox(width: 8),
+              const Text('Delete All', style: TextStyle(fontSize: 13)),
+            ],
+          ),
+        ),
+      ],
+    );
+
+    if (result == _FolderAction.deleteAll && context.mounted) {
+      await _confirmDeleteAll(context);
+    }
+  }
+
+  Future<void> _confirmDeleteAll(BuildContext context) async {
+    final isPermanent = _isTrashFolder;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+            isPermanent ? 'Permanently Delete All?' : 'Delete All?'),
+        content: Text(
+          isPermanent
+              ? 'All emails in ${folder.displayName} will be permanently deleted. This cannot be undone.'
+              : 'All emails in ${folder.displayName} will be moved to Deleted Items.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: isPermanent
+                ? TextButton.styleFrom(foregroundColor: Colors.red)
+                : null,
+            child: Text(
+                isPermanent ? 'Delete Permanently' : 'Delete All'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && context.mounted) {
+      context.read<EmailListBloc>().add(EmailListFolderEmptied(
+            folderId: folder.id,
+            permanentDelete: isPermanent,
+          ));
+      context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+      context.read<FolderListBloc>().add(
+            FolderListFolderEmptied(folderId: folder.id),
+          );
+    }
   }
 
   IconData _iconFor(String name) {

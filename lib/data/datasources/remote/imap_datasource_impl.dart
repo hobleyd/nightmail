@@ -81,6 +81,26 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     }
   }
 
+  /// Issues STATUS (MESSAGES UNSEEN) for each selectable mailbox, mutating
+  /// [mb.messagesExists] and [mb.messagesUnseen] in-place. Used on servers
+  /// that don't support the LIST-STATUS extension (RFC 5819).
+  Future<void> _fetchStatusForMailboxes(
+    ImapClient client,
+    List<Mailbox> mailboxes,
+  ) async {
+    for (final mb in mailboxes) {
+      if (mb.isNotSelectable) continue;
+      try {
+        await client.statusMailbox(
+          mb,
+          [StatusFlags.messages, StatusFlags.unseen],
+        );
+      } on ImapException {
+        // Ignore — some virtual/special mailboxes reject STATUS.
+      }
+    }
+  }
+
   @override
   Future<List<EmailFolderModel>> getMailFolders() async {
     try {
@@ -91,7 +111,16 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       // folders with children — this avoids the duplicate-folder problem that
       // would occur if we returned the full recursive list here while the repo
       // also tries to expand children on top of it.
-      final rootMailboxes = await client.listMailboxes(recursive: false);
+      final supportsListStatus = client.serverInfo.supports('LIST-STATUS');
+      final rootMailboxes = await client.listMailboxes(
+        recursive: false,
+        returnOptions: supportsListStatus
+            ? [ReturnOption.status(['MESSAGES', 'UNSEEN'])]
+            : null,
+      );
+      if (!supportsListStatus) {
+        await _fetchStatusForMailboxes(client, rootMailboxes);
+      }
 
       // Detect Courier IMAP / similar abbreviated namespace convention:
       //   root LIST returns: INBOX, Sent, Drafts, Trash   (no INBOX. prefix)
@@ -164,10 +193,17 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       final sep = _inboxFolderPrefix.isNotEmpty
           ? _inboxFolderPrefix.replaceAll('INBOX', '')
           : '.';
+      final supportsListStatus = client.serverInfo.supports('LIST-STATUS');
       final mailboxes = await client.listMailboxes(
         path: '"$parentFolderId$sep"',
         recursive: false,
+        returnOptions: supportsListStatus
+            ? [ReturnOption.status(['MESSAGES', 'UNSEEN'])]
+            : null,
       );
+      if (!supportsListStatus) {
+        await _fetchStatusForMailboxes(client, mailboxes);
+      }
 
       return mailboxes.map((mb) {
         // Derive the actual parent from the child's full path.
@@ -513,6 +549,44 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       }
 
       // Mark \Deleted and expunge to remove from the source mailbox.
+      await client.uidStore(
+        sequence,
+        [MessageFlags.deleted],
+        action: StoreAction.add,
+      );
+      await client.expunge();
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    }
+  }
+
+  @override
+  Future<void> emptyFolder(String folderId,
+      {bool permanentDelete = false}) async {
+    final mailboxPath = folderId;
+    try {
+      final client = await _getConnectedClient();
+
+      String? trashPath;
+      if (!permanentDelete) {
+        // Resolve trash before SELECT so LIST doesn't interfere with the
+        // subsequent mailbox selection.
+        trashPath = await _findTrashPath(client, currentPath: mailboxPath);
+      }
+
+      await _selectMailboxPath(client, mailboxPath);
+
+      final searchResult =
+          await client.uidSearchMessages(searchCriteria: 'ALL');
+      final allUids = searchResult.matchingSequence?.toList() ?? [];
+      if (allUids.isEmpty) return;
+
+      final sequence = MessageSequence.fromIds(allUids, isUid: true);
+
+      if (!permanentDelete && trashPath != null) {
+        await client.uidCopy(sequence, targetMailboxPath: trashPath);
+      }
+
       await client.uidStore(
         sequence,
         [MessageFlags.deleted],

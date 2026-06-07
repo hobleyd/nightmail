@@ -57,6 +57,14 @@ abstract interface class EmailRepository {
   /// Deletes (moves to Deleted Items) an email by [id].
   Future<Either<Failure, Unit>> deleteEmail(String id);
 
+  /// Empties all emails from [folderId].
+  /// If [permanentDelete] is true, messages are irrecoverably deleted;
+  /// otherwise they are moved to trash/deleted-items.
+  Future<Either<Failure, Unit>> emptyFolder(
+    String folderId, {
+    bool permanentDelete = false,
+  });
+
   /// Downloads the raw bytes of a file attachment.
   Future<Either<Failure, Uint8List>> downloadAttachment({
     required String messageId,

@@ -21,6 +21,21 @@ class EmailFolder extends Equatable {
 
   bool get hasUnread => unreadItemCount > 0;
 
+  EmailFolder copyWith({
+    int? totalItemCount,
+    int? unreadItemCount,
+  }) {
+    return EmailFolder(
+      id: id,
+      displayName: displayName,
+      totalItemCount: totalItemCount ?? this.totalItemCount,
+      unreadItemCount: unreadItemCount ?? this.unreadItemCount,
+      parentFolderId: parentFolderId,
+      isHidden: isHidden,
+      childFolderCount: childFolderCount,
+    );
+  }
+
   @override
   List<Object?> get props => [id];
 }

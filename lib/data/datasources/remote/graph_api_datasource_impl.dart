@@ -482,6 +482,39 @@ class GraphApiDatasourceImpl
   }
 
   @override
+  Future<void> emptyFolder(String folderId,
+      {bool permanentDelete = false}) async {
+    try {
+      const pageSize = 100;
+      while (true) {
+        final response = await _dio.get<Map<String, dynamic>>(
+          '/me/mailFolders/$folderId/messages',
+          queryParameters: {'\$top': pageSize, '\$select': 'id'},
+        );
+        final messages = ((response.data?['value'] as List<dynamic>?) ?? [])
+            .cast<Map<String, dynamic>>();
+        if (messages.isEmpty) break;
+
+        for (final msg in messages) {
+          final id = msg['id'] as String;
+          if (permanentDelete) {
+            await _dio.post<void>('/me/messages/$id/permanentDelete');
+          } else {
+            await _dio.post<void>(
+              '/me/messages/$id/move',
+              data: {'destinationId': 'deleteditems'},
+            );
+          }
+        }
+
+        if (messages.length < pageSize) break;
+      }
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
   Future<Uint8List> downloadAttachment(
       String messageId, String attachmentId) async {
     try {

@@ -10,12 +10,16 @@ class EmailListItem extends StatelessWidget {
     required this.email,
     required this.isSelected,
     required this.onTap,
+    required this.onDelete,
+    required this.onFlag,
     this.indent = 0.0,
   });
 
   final Email email;
   final bool isSelected;
   final VoidCallback onTap;
+  final VoidCallback onDelete;
+  final VoidCallback onFlag;
   final double indent;
 
   @override
@@ -132,8 +136,49 @@ class EmailListItem extends StatelessWidget {
                 ],
               ),
             ),
+            const SizedBox(width: 4),
+            Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _ActionIcon(
+                  icon: Icons.delete_outline_rounded,
+                  color: c.textDimmed,
+                  onTap: onDelete,
+                ),
+                const SizedBox(height: 2),
+                _ActionIcon(
+                  icon: Icons.flag_outlined,
+                  color: c.textDimmed,
+                  onTap: onFlag,
+                ),
+              ],
+            ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _ActionIcon extends StatelessWidget {
+  const _ActionIcon({
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: Icon(icon, size: 15, color: color),
       ),
     );
   }

@@ -307,6 +307,10 @@ class _EmailListView extends StatelessWidget {
               isSelected: email.id == selectedEmailId,
               indent: isChild ? 20.0 : 0.0,
               onTap: () => onEmailSelected(email),
+              onDelete: () => context
+                  .read<EmailListBloc>()
+                  .add(EmailListEmailDeleted(emailId: email.id)),
+              onFlag: () {},
             ),
           _ConversationHeaderItem() => _ConversationHeader(
               key: ValueKey('conv_${item.conversationId}'),

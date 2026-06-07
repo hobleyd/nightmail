@@ -125,6 +125,7 @@ Future<void> configureDependencies() async {
         getEmails: sl<GetEmails>(),
         getCachedEmails: sl<GetCachedEmails>(),
         markEmailAsRead: sl<MarkEmailAsRead>(),
+        deleteEmail: sl<DeleteEmail>(),
         accountManager: sl<AccountManager>(),
       ));
   sl.registerFactory(() => EmailDetailBloc(getEmail: sl<GetEmail>()));

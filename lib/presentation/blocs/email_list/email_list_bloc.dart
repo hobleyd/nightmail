@@ -1,5 +1,6 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../domain/usecases/delete_email.dart';
 import '../../../domain/usecases/get_cached_emails.dart';
 import '../../../domain/usecases/get_emails.dart';
 import '../../../domain/usecases/mark_email_as_read.dart';
@@ -15,6 +16,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     required this._getEmails,
     required this._getCachedEmails,
     required this._markEmailAsRead,
+    required this._deleteEmail,
     required this._accountManager,
   }) : super(const EmailListInitial()) {
     on<EmailListLoadRequested>(_onLoadRequested);
@@ -28,6 +30,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   final GetEmails _getEmails;
   final GetCachedEmails _getCachedEmails;
   final MarkEmailAsRead _markEmailAsRead;
+  final DeleteEmail _deleteEmail;
   final AccountManager _accountManager;
 
   Future<void> _onLoadRequested(
@@ -179,14 +182,16 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     emit(current.copyWith(expandedConversationIds: expanded));
   }
 
-  void _onEmailDeleted(
+  Future<void> _onEmailDeleted(
     EmailListEmailDeleted event,
     Emitter<EmailListState> emit,
-  ) {
+  ) async {
     final current = state;
     if (current is! EmailListLoaded) return;
+    // Optimistically remove from list before API call completes
     emit(current.copyWith(
       emails: current.emails.where((e) => e.id != event.emailId).toList(),
     ));
+    await _deleteEmail(DeleteEmailParams(id: event.emailId));
   }
 }

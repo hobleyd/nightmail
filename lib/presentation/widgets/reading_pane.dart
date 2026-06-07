@@ -4,8 +4,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:open_file/open_file.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../core/theme/app_colors.dart';
@@ -425,6 +427,10 @@ class _AttachmentChip extends StatefulWidget {
 class _AttachmentChipState extends State<_AttachmentChip> {
   bool _isLoading = false;
 
+  bool get _isMobile =>
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+
   static IconData _iconFor(String contentType, String name) {
     final ct = contentType.toLowerCase();
     final ext =
@@ -443,7 +449,7 @@ class _AttachmentChipState extends State<_AttachmentChip> {
     return Icons.attach_file_rounded;
   }
 
-  Future<void> _open() async {
+  Future<void> _withBytes(Future<void> Function(List<int> bytes) action) async {
     if (_isLoading) return;
     setState(() => _isLoading = true);
     try {
@@ -455,29 +461,51 @@ class _AttachmentChipState extends State<_AttachmentChip> {
       await result.fold(
         (failure) async {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Could not open: ${failure.message}')),
+            SnackBar(content: Text('Could not download: ${failure.message}')),
           );
         },
-        (bytes) async {
-          final dir = await getTemporaryDirectory();
-          final file = File('${dir.path}/${widget.attachment.name}');
-          await file.writeAsBytes(bytes);
-          await OpenFile.open(file.path);
-        },
+        action,
       );
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
+  Future<void> _open() => _withBytes((bytes) async {
+        final dir = await getTemporaryDirectory();
+        final file = File('${dir.path}/${widget.attachment.name}');
+        await file.writeAsBytes(bytes);
+        await OpenFile.open(file.path);
+      });
+
+  Future<void> _saveAs() => _withBytes((bytes) async {
+        if (_isMobile) {
+          // Mobile: share sheet lets the user pick Files / Downloads
+          final dir = await getTemporaryDirectory();
+          final tmp = File('${dir.path}/${widget.attachment.name}');
+          await tmp.writeAsBytes(bytes);
+          await Share.shareXFiles(
+            [XFile(tmp.path, mimeType: widget.attachment.contentType)],
+          );
+        } else {
+          // Desktop: native save-as dialog
+          final path = await getSavePath(
+            suggestedName: widget.attachment.name,
+          );
+          if (path != null) {
+            await File(path).writeAsBytes(bytes);
+          }
+        }
+      });
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final isMobile = defaultTargetPlatform == TargetPlatform.android ||
-        defaultTargetPlatform == TargetPlatform.iOS;
     return GestureDetector(
-      onTap: isMobile ? _open : null,
-      onDoubleTap: isMobile ? null : _open,
+      onTap: _isMobile ? _open : null,
+      onDoubleTap: _isMobile ? null : _open,
+      onLongPress: _isMobile ? _saveAs : null,
+      onSecondaryTap: _isMobile ? null : _saveAs,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
         decoration: BoxDecoration(

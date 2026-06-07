@@ -484,16 +484,16 @@ class _AttachmentChipState extends State<_AttachmentChip> {
           final dir = await getTemporaryDirectory();
           final tmp = File('${dir.path}/${widget.attachment.name}');
           await tmp.writeAsBytes(bytes);
-          await Share.shareXFiles(
-            [XFile(tmp.path, mimeType: widget.attachment.contentType)],
-          );
+          await SharePlus.instance.share(ShareParams(
+            files: [XFile(tmp.path, mimeType: widget.attachment.contentType)],
+          ));
         } else {
           // Desktop: native save-as dialog
-          final path = await getSavePath(
+          final location = await getSaveLocation(
             suggestedName: widget.attachment.name,
           );
-          if (path != null) {
-            await File(path).writeAsBytes(bytes);
+          if (location != null) {
+            await File(location.path).writeAsBytes(bytes);
           }
         }
       });

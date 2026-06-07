@@ -314,16 +314,19 @@ class _FieldRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SizedBox(
-          width: 52,
-          child: Text(
-            label,
-            style: TextStyle(
-              color: c.textDimmed,
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: SizedBox(
+            width: 52,
+            child: Text(
+              label,
+              style: TextStyle(
+                color: c.textDimmed,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
         ),
@@ -331,6 +334,7 @@ class _FieldRow extends StatelessWidget {
           child: TextField(
             controller: controller,
             enabled: enabled,
+            maxLines: null,
             style: TextStyle(
               color: enabled ? c.textPrimary : c.textTertiary,
               fontSize: 13,

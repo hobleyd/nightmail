@@ -131,4 +131,95 @@ class MockEmailRepository extends _i1.Mock implements _i2.EmailRepository {
                 ),
           )
           as _i3.Future<_i4.Either<_i5.Failure, List<_i8.EmailFolder>>>);
+
+  @override
+  _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>> sendEmail({
+    required List<String>? toAddresses,
+    List<String>? ccAddresses = const [],
+    required String? subject,
+    required String? body,
+  }) =>
+      (super.noSuchMethod(
+            Invocation.method(#sendEmail, [], {
+              #toAddresses: toAddresses,
+              #ccAddresses: ccAddresses,
+              #subject: subject,
+              #body: body,
+            }),
+            returnValue: _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>>.value(
+              _i7.dummyValue<_i4.Either<_i5.Failure, _i4.Unit>>(
+                this,
+                Invocation.method(#sendEmail, [], {
+                  #toAddresses: toAddresses,
+                  #ccAddresses: ccAddresses,
+                  #subject: subject,
+                  #body: body,
+                }),
+              ),
+            ),
+          )
+          as _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>>);
+
+  @override
+  _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>> replyToEmail({
+    required String? messageId,
+    required String? comment,
+    bool? replyAll = false,
+  }) =>
+      (super.noSuchMethod(
+            Invocation.method(#replyToEmail, [], {
+              #messageId: messageId,
+              #comment: comment,
+              #replyAll: replyAll,
+            }),
+            returnValue: _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>>.value(
+              _i7.dummyValue<_i4.Either<_i5.Failure, _i4.Unit>>(
+                this,
+                Invocation.method(#replyToEmail, [], {
+                  #messageId: messageId,
+                  #comment: comment,
+                  #replyAll: replyAll,
+                }),
+              ),
+            ),
+          )
+          as _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>>);
+
+  @override
+  _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>> forwardEmail({
+    required String? messageId,
+    required List<String>? toAddresses,
+    required String? comment,
+  }) =>
+      (super.noSuchMethod(
+            Invocation.method(#forwardEmail, [], {
+              #messageId: messageId,
+              #toAddresses: toAddresses,
+              #comment: comment,
+            }),
+            returnValue: _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>>.value(
+              _i7.dummyValue<_i4.Either<_i5.Failure, _i4.Unit>>(
+                this,
+                Invocation.method(#forwardEmail, [], {
+                  #messageId: messageId,
+                  #toAddresses: toAddresses,
+                  #comment: comment,
+                }),
+              ),
+            ),
+          )
+          as _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>>);
+
+  @override
+  _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>> deleteEmail(String? id) =>
+      (super.noSuchMethod(
+            Invocation.method(#deleteEmail, [id]),
+            returnValue: _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>>.value(
+              _i7.dummyValue<_i4.Either<_i5.Failure, _i4.Unit>>(
+                this,
+                Invocation.method(#deleteEmail, [id]),
+              ),
+            ),
+          )
+          as _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>>);
 }

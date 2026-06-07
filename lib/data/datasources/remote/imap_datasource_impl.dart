@@ -219,12 +219,14 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
 
       final sequence = MessageSequence.fromIds(page, isUid: true);
       // Multiple fetch items must be wrapped in parentheses per RFC 3501.
-      // Note: partial fetch (e.g. BODY.PEEK[TEXT]<0.500>) causes the server to
-      // respond with BODY[TEXT]<0>, which enough_mail's parser does not handle.
-      // Fetch the full TEXT part and truncate client-side in _parseToModel.
+      // BODY.PEEK[HEADER.FIELDS (...)] gives enough_mail the Content-Type header
+      // so decodeTextPlainPart() returns null (not raw MIME garbage) for
+      // multipart messages, while still returning real text for text/plain emails.
       final fetchResult = await client.uidFetchMessages(
         sequence,
-        '(FLAGS INTERNALDATE ENVELOPE BODY.PEEK[TEXT])',
+        '(FLAGS INTERNALDATE ENVELOPE'
+        ' BODY.PEEK[HEADER.FIELDS (CONTENT-TYPE CONTENT-TRANSFER-ENCODING MIME-VERSION)]'
+        ' BODY.PEEK[TEXT])',
       );
 
       return fetchResult.messages

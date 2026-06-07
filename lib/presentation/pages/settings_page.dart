@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
+import '../../injection_container.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/mail_poller/mail_poller_cubit.dart';
@@ -150,6 +152,8 @@ class _AppearanceSection extends StatelessWidget {
     return Column(
       children: [
         _ThemeSetting(),
+        const SizedBox(height: 12),
+        const _DeleteConfirmSetting(),
       ],
     );
   }
@@ -278,6 +282,47 @@ class _ThemeSetting extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+class _DeleteConfirmSetting extends StatefulWidget {
+  const _DeleteConfirmSetting();
+
+  @override
+  State<_DeleteConfirmSetting> createState() => _DeleteConfirmSettingState();
+}
+
+class _DeleteConfirmSettingState extends State<_DeleteConfirmSetting> {
+  bool _value = AppSettings.defaultConfirmDeleteEmail;
+
+  @override
+  void initState() {
+    super.initState();
+    sl<AppSettings>().loadConfirmDeleteEmail().then((v) {
+      if (mounted) setState(() => _value = v);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Row(
+      children: [
+        Text(
+          'Ask every time before deleting',
+          style: TextStyle(color: c.textSecondary, fontSize: 13),
+        ),
+        const Spacer(),
+        Checkbox(
+          value: _value,
+          onChanged: (val) {
+            if (val == null) return;
+            setState(() => _value = val);
+            sl<AppSettings>().saveConfirmDeleteEmail(val);
+          },
+        ),
+      ],
     );
   }
 }

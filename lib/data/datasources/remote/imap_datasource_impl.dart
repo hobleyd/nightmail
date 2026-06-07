@@ -488,8 +488,77 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
   }
 
   @override
-  Future<void> deleteEmail(String id) {
-    throw UnimplementedError('deleteEmail not yet supported for IMAP');
+  Future<void> deleteEmail(String id) async {
+    final separatorIdx = id.lastIndexOf(':');
+    final mailboxPath =
+        separatorIdx > 0 ? id.substring(0, separatorIdx) : 'INBOX';
+    final uid = int.tryParse(id.substring(separatorIdx + 1)) ?? 0;
+
+    try {
+      final client = await _getConnectedClient();
+      await _selectMailboxPath(client, mailboxPath);
+
+      final sequence = MessageSequence.fromId(uid, isUid: true);
+
+      final trashPath = await _findTrashPath(client, currentPath: mailboxPath);
+      if (trashPath != null) {
+        // Move to Trash: copy to the Trash folder first.
+        await client.uidCopy(sequence, targetMailboxPath: trashPath);
+      }
+
+      // Mark \Deleted and expunge to remove from the source mailbox.
+      await client.uidStore(
+        sequence,
+        [MessageFlags.deleted],
+        action: StoreAction.add,
+      );
+      await client.expunge();
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    }
+  }
+
+  /// Returns the path of the Trash mailbox, or null if the message is already
+  /// in Trash or no Trash folder can be located on this server.
+  Future<String?> _findTrashPath(
+    ImapClient client, {
+    required String currentPath,
+  }) async {
+    try {
+      final mailboxes = await client.listMailboxes(recursive: true);
+
+      // Prefer \Trash special-use attribute (RFC 6154); fall back to names.
+      final trashMailbox =
+          mailboxes.where((mb) => mb.isTrash).firstOrNull ??
+              _wellKnownTrashMailbox(mailboxes);
+
+      if (trashMailbox == null) return null;
+
+      // Already in Trash — skip the copy and just expunge permanently.
+      if (trashMailbox.path.toLowerCase() == currentPath.toLowerCase()) {
+        return null;
+      }
+      return trashMailbox.path;
+    } on ImapException {
+      return null;
+    }
+  }
+
+  Mailbox? _wellKnownTrashMailbox(List<Mailbox> mailboxes) {
+    const wellKnown = ['Trash', 'Deleted Items', 'Deleted Messages'];
+    for (final name in wellKnown) {
+      final fullName =
+          _inboxFolderPrefix.isNotEmpty ? '$_inboxFolderPrefix$name' : name;
+      final match = mailboxes
+          .where(
+            (mb) =>
+                mb.path.toLowerCase() == fullName.toLowerCase() ||
+                mb.path.toLowerCase() == name.toLowerCase(),
+          )
+          .firstOrNull;
+      if (match != null) return match;
+    }
+    return null;
   }
 
   @override

@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_attachment.dart';
@@ -18,6 +19,8 @@ import '../../domain/entities/inline_attachment.dart';
 import '../../domain/usecases/delete_email.dart';
 import '../../domain/usecases/download_attachment.dart';
 import '../../domain/usecases/send_email.dart';
+import '../../infrastructure/accounts/account.dart';
+import '../../infrastructure/accounts/account_manager.dart';
 import '../../injection_container.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
 import '../blocs/email_detail/email_detail_event.dart';
@@ -129,29 +132,75 @@ class _ReadingPaneToolbar extends StatelessWidget {
   final Email email;
 
   Future<void> _confirmAndDelete(BuildContext context) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete email', style: TextStyle(fontSize: 15)),
-        content: const Text(
-          'Move this email to Deleted Items?',
-          style: TextStyle(fontSize: 13),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Delete',
-                style: TextStyle(color: Colors.redAccent)),
-          ),
-        ],
-      ),
-    );
+    final settings = sl<AppSettings>();
+    final confirm = await settings.loadConfirmDeleteEmail();
+    if (!context.mounted) return;
 
-    if (confirmed != true || !context.mounted) return;
+    if (confirm) {
+      final account = sl<AccountManager>().activeAccount;
+      final targetFolder =
+          account is ImapAccount ? 'Trash' : 'Deleted Items';
+
+      bool dontAskAgain = false;
+
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx, setDialogState) => AlertDialog(
+            title: const Text('Delete email', style: TextStyle(fontSize: 15)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Move this email to $targetFolder?',
+                  style: const TextStyle(fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: Checkbox(
+                        value: dontAskAgain,
+                        onChanged: (val) => setDialogState(
+                          () => dontAskAgain = val ?? false,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Text(
+                      "Don't ask again",
+                      style: TextStyle(fontSize: 12),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Delete',
+                    style: TextStyle(color: Colors.redAccent)),
+              ),
+            ],
+          ),
+        ),
+      );
+
+      if (dontAskAgain) {
+        await settings.saveConfirmDeleteEmail(false);
+      }
+
+      if (confirmed != true || !context.mounted) return;
+    }
+
+    if (!context.mounted) return;
 
     final result =
         await sl<DeleteEmail>()(DeleteEmailParams(id: email.id));

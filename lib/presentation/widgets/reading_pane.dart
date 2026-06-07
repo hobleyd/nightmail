@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -13,6 +14,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_attachment.dart';
+import '../../domain/entities/inline_attachment.dart';
 import '../../domain/usecases/delete_email.dart';
 import '../../domain/usecases/download_attachment.dart';
 import '../../domain/usecases/send_email.dart';
@@ -439,6 +441,9 @@ class _SaveAllButton extends StatefulWidget {
 
 class _SaveAllButtonState extends State<_SaveAllButton> {
   bool _isLoading = false;
+  bool _isPressed = false;
+  int _completed = 0;
+  int _total = 0;
 
   bool get _isMobile =>
       defaultTargetPlatform == TargetPlatform.android ||
@@ -446,7 +451,11 @@ class _SaveAllButtonState extends State<_SaveAllButton> {
 
   Future<void> _saveAll() async {
     if (_isLoading) return;
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _completed = 0;
+      _total = widget.attachments.length;
+    });
     try {
       if (_isMobile) {
         await _saveAllMobile();
@@ -454,7 +463,13 @@ class _SaveAllButtonState extends State<_SaveAllButton> {
         await _saveAllDesktop();
       }
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _completed = 0;
+          _total = 0;
+        });
+      }
     }
   }
 
@@ -479,6 +494,7 @@ class _SaveAllButtonState extends State<_SaveAllButton> {
           }
         },
       );
+      if (mounted) setState(() => _completed++);
     }
 
     if (!mounted) return;
@@ -508,12 +524,14 @@ class _SaveAllButtonState extends State<_SaveAllButton> {
           xFiles.add(XFile(path, mimeType: attachment.contentType));
         },
       );
+      if (mounted) setState(() => _completed++);
     }
 
     if (!mounted) return;
     if (xFiles.isNotEmpty) {
       await SharePlus.instance.share(ShareParams(files: xFiles));
     }
+    if (!mounted) return;
     if (errors.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to download: ${errors.join(', ')}')),
@@ -524,30 +542,64 @@ class _SaveAllButtonState extends State<_SaveAllButton> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final isMultipleFiles = _total > 1;
+    final progress = _total > 0 ? _completed / _total : 0.0;
+
+    final BoxDecoration decoration;
+    if (_isLoading && isMultipleFiles) {
+      decoration = BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            AppColors.accent.withAlpha(90),
+            AppColors.accent.withAlpha(90),
+            c.badgeBg,
+            c.badgeBg,
+          ],
+          stops: [0.0, progress, progress, 1.0],
+        ),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: AppColors.accent.withAlpha(80), width: 0.5),
+      );
+    } else {
+      decoration = BoxDecoration(
+        color: _isPressed ? AppColors.accent.withAlpha(70) : c.badgeBg,
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: AppColors.accent.withAlpha(80), width: 0.5),
+      );
+    }
+
     return GestureDetector(
       onTap: _saveAll,
-      child: Padding(
-        padding: const EdgeInsets.only(top: 5),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (_isLoading)
-              SizedBox(
-                width: 11,
-                height: 11,
-                child: CircularProgressIndicator(
-                  strokeWidth: 1.5,
-                  color: AppColors.accent,
-                ),
-              )
-            else
-              Icon(Icons.save_alt_rounded, size: 11, color: c.textMuted),
-            const SizedBox(width: 3),
-            Text(
-              'Save all',
-              style: TextStyle(color: c.textMuted, fontSize: 11),
-            ),
-          ],
+      onTapDown: (_) => setState(() => _isPressed = true),
+      onTapUp: (_) => setState(() => _isPressed = false),
+      onTapCancel: () => setState(() => _isPressed = false),
+      child: AnimatedScale(
+        scale: _isPressed ? 0.93 : 1.0,
+        duration: const Duration(milliseconds: 70),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: decoration,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_isLoading)
+                SizedBox(
+                  width: 11,
+                  height: 11,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.5,
+                    color: AppColors.accent,
+                  ),
+                )
+              else
+                Icon(Icons.save_alt_rounded, size: 11, color: c.textTertiary),
+              const SizedBox(width: 4),
+              Text(
+                'Save all',
+                style: TextStyle(color: c.textTertiary, fontSize: 11),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -690,7 +742,10 @@ class _EmailBody extends StatelessWidget {
     final c = context.colors;
 
     if (email.bodyType == EmailBodyType.html) {
-      return _HtmlBodyWebView(html: email.body);
+      return _HtmlBodyWebView(
+        html: email.body,
+        inlineAttachments: email.inlineAttachments,
+      );
     }
 
     return SingleChildScrollView(
@@ -708,8 +763,12 @@ class _EmailBody extends StatelessWidget {
 }
 
 class _HtmlBodyWebView extends StatefulWidget {
-  const _HtmlBodyWebView({required this.html});
+  const _HtmlBodyWebView({
+    required this.html,
+    required this.inlineAttachments,
+  });
   final String html;
+  final List<InlineAttachment> inlineAttachments;
 
   @override
   State<_HtmlBodyWebView> createState() => _HtmlBodyWebViewState();
@@ -734,18 +793,34 @@ class _HtmlBodyWebViewState extends State<_HtmlBodyWebView> {
           return NavigationDecision.navigate;
         },
       ))
-      ..loadHtmlString(_wrapHtml(widget.html));
+      ..loadHtmlString(_wrapHtml(widget.html, widget.inlineAttachments));
   }
 
   @override
   void didUpdateWidget(_HtmlBodyWebView old) {
     super.didUpdateWidget(old);
-    if (old.html != widget.html) {
-      _controller.loadHtmlString(_wrapHtml(widget.html));
+    if (old.html != widget.html ||
+        old.inlineAttachments != widget.inlineAttachments) {
+      _controller
+          .loadHtmlString(_wrapHtml(widget.html, widget.inlineAttachments));
     }
   }
 
-  static String _wrapHtml(String html) {
+  static String _wrapHtml(
+      String html, List<InlineAttachment> inlineAttachments) {
+    // Replace cid: references with data: URLs so inline images render.
+    var resolved = html;
+    for (final attachment in inlineAttachments) {
+      final cid = attachment.contentId;
+      // Strip angle brackets if present (RFC 2392 uses bare CID, MIME uses <CID>).
+      final bare = cid.startsWith('<') && cid.endsWith('>')
+          ? cid.substring(1, cid.length - 1)
+          : cid;
+      final dataUrl =
+          'data:${attachment.contentType};base64,${base64Encode(attachment.contentBytes)}';
+      resolved = resolved.replaceAll('cid:$bare', dataUrl);
+    }
+
     // Inject viewport + minimal responsive overrides before </head>.
     // Using a real WKWebView means !important works and table layout is correct.
     const injected = '''
@@ -756,11 +831,13 @@ body { margin: 0; padding: 20px 28px 40px; }
 img { max-width: 100% !important; height: auto !important; }
 </style>
 ''';
-    final headEnd = html.indexOf('</head>');
+    final headEnd = resolved.indexOf('</head>');
     if (headEnd != -1) {
-      return html.substring(0, headEnd) + injected + html.substring(headEnd);
+      return resolved.substring(0, headEnd) +
+          injected +
+          resolved.substring(headEnd);
     }
-    return '<html><head>$injected</head><body>$html</body></html>';
+    return '<html><head>$injected</head><body>$resolved</body></html>';
   }
 
   @override

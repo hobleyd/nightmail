@@ -88,7 +88,35 @@ class GraphApiDatasourceImpl
             message: 'Empty response for message $id', statusCode: 200);
       }
 
-      return EmailModel.fromJson(response.data!);
+      // contentId and contentBytes are on the fileAttachment subtype and
+      // cannot be requested via $select in $expand (which targets the base
+      // attachment type). Fetch each inline attachment individually to get
+      // those fields, then merge before parsing.
+      final emailData = Map<String, dynamic>.from(response.data!);
+      final rawAttachments = emailData['attachments'] as List<dynamic>?;
+      if (rawAttachments != null) {
+        final enriched = <Map<String, dynamic>>[];
+        for (final a in rawAttachments.cast<Map<String, dynamic>>()) {
+          if (a['isInline'] == true) {
+            final attachId = a['id'] as String?;
+            if (attachId != null) {
+              try {
+                final detail = await _dio.get<Map<String, dynamic>>(
+                  '/me/messages/$id/attachments/$attachId',
+                );
+                if (detail.data != null) {
+                  enriched.add({...a, ...detail.data!});
+                  continue;
+                }
+              } catch (_) {}
+            }
+          }
+          enriched.add(a);
+        }
+        emailData['attachments'] = enriched;
+      }
+
+      return EmailModel.fromJson(emailData);
     } on DioException catch (e) {
       throw _mapDioException(e);
     }

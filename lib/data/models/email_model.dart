@@ -1,5 +1,9 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_attachment.dart';
+import '../../domain/entities/inline_attachment.dart';
 import 'email_address_model.dart';
 
 class EmailModel extends Email {
@@ -19,6 +23,7 @@ class EmailModel extends Email {
     super.conversationId,
     super.hasAttachments,
     super.attachments,
+    super.inlineAttachments,
     super.parentFolderId,
   });
 
@@ -53,6 +58,7 @@ class EmailModel extends Email {
       conversationId: json['conversationId'] as String?,
       hasAttachments: json['hasAttachments'] as bool? ?? false,
       attachments: _parseAttachments(json['attachments']),
+      inlineAttachments: _parseInlineAttachments(json['attachments']),
       parentFolderId: json['parentFolderId'] as String?,
     );
   }
@@ -69,6 +75,30 @@ class EmailModel extends Email {
               size: a['size'] as int? ?? 0,
             ))
         .toList();
+  }
+
+  static List<InlineAttachment> _parseInlineAttachments(dynamic raw) {
+    if (raw is! List) return const [];
+    final result = <InlineAttachment>[];
+    for (final a in raw.cast<Map<String, dynamic>>()) {
+      if (a['isInline'] != true) continue;
+      final contentId = a['contentId'] as String?;
+      final contentBytesStr = a['contentBytes'] as String?;
+      if (contentId == null || contentId.isEmpty) continue;
+      if (contentBytesStr == null || contentBytesStr.isEmpty) continue;
+      final Uint8List bytes;
+      try {
+        bytes = base64Decode(contentBytesStr);
+      } catch (_) {
+        continue;
+      }
+      result.add(InlineAttachment(
+        contentId: contentId,
+        contentType: a['contentType'] as String? ?? 'application/octet-stream',
+        contentBytes: bytes,
+      ));
+    }
+    return result;
   }
 
   static EmailImportance _parseImportance(String? value) {
@@ -100,6 +130,7 @@ class EmailModel extends Email {
       conversationId: entity.conversationId,
       hasAttachments: entity.hasAttachments,
       attachments: entity.attachments,
+      inlineAttachments: entity.inlineAttachments,
       parentFolderId: entity.parentFolderId,
     );
   }

@@ -13,11 +13,17 @@ class EmailListItem extends StatelessWidget {
     required this.onDelete,
     required this.onFlag,
     this.indent = 0.0,
+    this.isMultiSelected = false,
+    this.showCheckbox = false,
+    this.onLongPress,
   });
 
   final Email email;
   final bool isSelected;
+  final bool isMultiSelected;
+  final bool showCheckbox;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
   final VoidCallback onDelete;
   final VoidCallback onFlag;
   final double indent;
@@ -25,22 +31,38 @@ class EmailListItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final highlighted = isSelected || isMultiSelected;
     return GestureDetector(
       onTap: onTap,
+      onLongPress: onLongPress,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 120),
         margin: EdgeInsets.fromLTRB(8 + indent, 1, 8, 1),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: isSelected ? c.selectionEmailBg : Colors.transparent,
+          color: highlighted ? c.selectionEmailBg : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
-          border: isSelected
-              ? Border.all(color: c.selectionBorder)
-              : null,
+          border: isSelected ? Border.all(color: c.selectionBorder) : null,
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            AnimatedSize(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              child: showCheckbox
+                  ? Padding(
+                      padding: const EdgeInsets.only(right: 8, top: 2),
+                      child: Icon(
+                        isMultiSelected
+                            ? Icons.check_circle_rounded
+                            : Icons.radio_button_unchecked_rounded,
+                        size: 18,
+                        color: isMultiSelected ? AppColors.accent : c.textMuted,
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
             // Unread dot
             Padding(
               padding: const EdgeInsets.only(top: 6, right: 8),

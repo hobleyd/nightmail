@@ -1,4 +1,8 @@
+import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/app_colors.dart';
@@ -31,10 +35,24 @@ class EmailListPanel extends StatefulWidget {
 class _EmailListPanelState extends State<EmailListPanel> {
   final _scrollController = ScrollController();
 
+  Set<String> _selectedEmailIds = {};
+  int? _lastSelectedIndex;
+  bool _isMultiSelectMode = false;
+
+  late final bool _isAndroid;
+  late final bool _isDesktop;
+  late final bool _isMac;
+
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
+    final platform = defaultTargetPlatform;
+    _isAndroid = platform == TargetPlatform.android;
+    _isMac = platform == TargetPlatform.macOS;
+    _isDesktop = platform == TargetPlatform.macOS ||
+        platform == TargetPlatform.windows ||
+        platform == TargetPlatform.linux;
   }
 
   @override
@@ -56,66 +74,177 @@ class _EmailListPanelState extends State<EmailListPanel> {
     return current >= max - 300;
   }
 
+  bool get _showCheckboxes => _isAndroid && _isMultiSelectMode;
+
+  bool get _shiftPressed => HardwareKeyboard.instance.logicalKeysPressed
+      .any((k) => k == LogicalKeyboardKey.shiftLeft || k == LogicalKeyboardKey.shiftRight);
+
+  bool get _modifierPressed {
+    final keys = HardwareKeyboard.instance.logicalKeysPressed;
+    if (_isMac) {
+      return keys.any((k) => k == LogicalKeyboardKey.metaLeft || k == LogicalKeyboardKey.metaRight);
+    }
+    return keys.any((k) => k == LogicalKeyboardKey.controlLeft || k == LogicalKeyboardKey.controlRight);
+  }
+
+  List<_ListItem> _currentFlatItems() {
+    final state = context.read<EmailListBloc>().state;
+    if (state is EmailListLoaded) {
+      return _buildListItems(state.emails, state.expandedConversationIds);
+    }
+    return [];
+  }
+
+  void _handleEmailTap(Email email, int index) {
+    // Android multi-select mode: tap toggles selection
+    if (_isAndroid && _isMultiSelectMode) {
+      setState(() {
+        final ids = Set.of(_selectedEmailIds);
+        if (ids.contains(email.id)) {
+          ids.remove(email.id);
+          if (ids.isEmpty) _isMultiSelectMode = false;
+        } else {
+          ids.add(email.id);
+        }
+        _selectedEmailIds = ids;
+        _lastSelectedIndex = index;
+      });
+      return;
+    }
+
+    // Desktop Shift+Click: extend selection to a range
+    if (_isDesktop && _shiftPressed && _lastSelectedIndex != null) {
+      final items = _currentFlatItems();
+      final lo = math.min(_lastSelectedIndex!, index);
+      final hi = math.min(math.max(_lastSelectedIndex!, index), items.length - 1);
+      final ids = Set.of(_selectedEmailIds);
+      for (var i = lo; i <= hi; i++) {
+        final item = items[i];
+        if (item is _SingleEmailItem) ids.add(item.email.id);
+        if (item is _ConversationHeaderItem) ids.add(item.latestEmail.id);
+      }
+      setState(() {
+        _selectedEmailIds = ids;
+        _lastSelectedIndex = index;
+      });
+      return;
+    }
+
+    // Desktop Ctrl/Cmd+Click: toggle individual selection
+    if (_isDesktop && _modifierPressed) {
+      setState(() {
+        final ids = Set.of(_selectedEmailIds);
+        if (ids.contains(email.id)) {
+          ids.remove(email.id);
+        } else {
+          ids.add(email.id);
+        }
+        _selectedEmailIds = ids;
+        _lastSelectedIndex = index;
+      });
+      return;
+    }
+
+    // Normal tap: clear multi-selection and open email in reading pane
+    if (_selectedEmailIds.isNotEmpty || _isMultiSelectMode) {
+      setState(() {
+        _selectedEmailIds = {};
+        _isMultiSelectMode = false;
+      });
+    }
+    _lastSelectedIndex = index;
+    widget.onEmailSelected(email);
+  }
+
+  void _handleEmailLongPress(Email email, int index) {
+    if (!_isAndroid) return;
+    setState(() {
+      _isMultiSelectMode = true;
+      _selectedEmailIds = {email.id};
+      _lastSelectedIndex = index;
+    });
+  }
+
+  void _clearSelection() {
+    setState(() {
+      _selectedEmailIds = {};
+      _isMultiSelectMode = false;
+      _lastSelectedIndex = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     return ColoredBox(
       color: c.surfaceBase,
-      child: Column(
-        children: [
-          BlocSelector<EmailListBloc, EmailListState, bool>(
-            selector: (s) => s is EmailListLoaded && s.isLoadingFresh,
-            builder: (context, isLoadingFresh) => _ListHeader(
-              folderName: widget.folderName,
-              isLoadingFresh: isLoadingFresh,
-              onRefresh: () => context
-                  .read<EmailListBloc>()
-                  .add(const EmailListRefreshRequested()),
+      child: BlocListener<EmailListBloc, EmailListState>(
+        listenWhen: (prev, curr) {
+          // Clear selection when the folder changes
+          final prevId = prev is EmailListLoaded ? prev.currentFolderId : null;
+          final currId = curr is EmailListLoaded ? curr.currentFolderId : null;
+          return currId != null && prevId != currId;
+        },
+        listener: (context, state) => _clearSelection(),
+        child: Column(
+          children: [
+            BlocSelector<EmailListBloc, EmailListState, bool>(
+              selector: (s) => s is EmailListLoaded && s.isLoadingFresh,
+              builder: (context, isLoadingFresh) => _ListHeader(
+                folderName: widget.folderName,
+                isLoadingFresh: isLoadingFresh,
+                onRefresh: () => context
+                    .read<EmailListBloc>()
+                    .add(const EmailListRefreshRequested()),
+              ),
             ),
-          ),
-          Divider(height: 1, color: c.separator),
-          Expanded(
-            child: BlocBuilder<EmailListBloc, EmailListState>(
-              builder: (context, state) {
-                return switch (state) {
-                  EmailListInitial() => const _EmptyStateView(
-                      message: 'Select a folder to view emails',
-                    ),
-                  EmailListLoading() => Center(
-                      child: CircularProgressIndicator(
-                        color: AppColors.accent,
-                        strokeWidth: 2,
-                      ),
-                    ),
-                  EmailListLoaded(
-                    :final emails,
-                    :final isLoadingMore,
-                    :final expandedConversationIds,
-                  ) =>
-                    emails.isEmpty
-                        ? const _EmptyStateView(message: 'No emails here')
-                        : _EmailListView(
-                            emails: emails,
-                            isLoadingMore: isLoadingMore,
-                            selectedEmailId: widget.selectedEmailId,
-                            scrollController: _scrollController,
-                            onEmailSelected: widget.onEmailSelected,
-                            expandedConversationIds: expandedConversationIds,
-                            onToggleConversation: (id) => context
-                                .read<EmailListBloc>()
-                                .add(EmailListToggleConversation(conversationId: id)),
-                          ),
-                  EmailListError(:final message) =>
-                    _ErrorView(message: message),
-                };
-              },
-            ),
-          ),
-          if (widget.folder != null) ...[
             Divider(height: 1, color: c.separator),
-            _FolderCountFooter(folder: widget.folder!),
+            Expanded(
+              child: BlocBuilder<EmailListBloc, EmailListState>(
+                builder: (context, state) {
+                  return switch (state) {
+                    EmailListInitial() => const _EmptyStateView(
+                        message: 'Select a folder to view emails',
+                      ),
+                    EmailListLoading() => Center(
+                        child: CircularProgressIndicator(
+                          color: AppColors.accent,
+                          strokeWidth: 2,
+                        ),
+                      ),
+                    EmailListLoaded(
+                      :final emails,
+                      :final isLoadingMore,
+                      :final expandedConversationIds,
+                    ) =>
+                      emails.isEmpty
+                          ? const _EmptyStateView(message: 'No emails here')
+                          : _EmailListView(
+                              emails: emails,
+                              isLoadingMore: isLoadingMore,
+                              selectedEmailId: widget.selectedEmailId,
+                              selectedEmailIds: _selectedEmailIds,
+                              showCheckboxes: _showCheckboxes,
+                              scrollController: _scrollController,
+                              onEmailTapped: _handleEmailTap,
+                              onEmailLongPressed: _handleEmailLongPress,
+                              expandedConversationIds: expandedConversationIds,
+                              onToggleConversation: (id) => context
+                                  .read<EmailListBloc>()
+                                  .add(EmailListToggleConversation(conversationId: id)),
+                            ),
+                    EmailListError(:final message) =>
+                      _ErrorView(message: message),
+                  };
+                },
+              ),
+            ),
+            if (widget.folder != null) ...[
+              Divider(height: 1, color: c.separator),
+              _FolderCountFooter(folder: widget.folder!),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -268,17 +397,23 @@ class _EmailListView extends StatelessWidget {
     required this.emails,
     required this.isLoadingMore,
     required this.selectedEmailId,
+    required this.selectedEmailIds,
+    required this.showCheckboxes,
     required this.scrollController,
-    required this.onEmailSelected,
+    required this.onEmailTapped,
     required this.expandedConversationIds,
     required this.onToggleConversation,
+    this.onEmailLongPressed,
   });
 
   final List<Email> emails;
   final bool isLoadingMore;
   final String? selectedEmailId;
+  final Set<String> selectedEmailIds;
+  final bool showCheckboxes;
   final ScrollController scrollController;
-  final ValueChanged<Email> onEmailSelected;
+  final void Function(Email email, int index) onEmailTapped;
+  final void Function(Email email, int index)? onEmailLongPressed;
   final Set<String> expandedConversationIds;
   final ValueChanged<String> onToggleConversation;
 
@@ -305,8 +440,11 @@ class _EmailListView extends StatelessWidget {
               key: ValueKey(email.id),
               email: email,
               isSelected: email.id == selectedEmailId,
+              isMultiSelected: selectedEmailIds.contains(email.id),
+              showCheckbox: showCheckboxes,
               indent: isChild ? 20.0 : 0.0,
-              onTap: () => onEmailSelected(email),
+              onTap: () => onEmailTapped(email, i),
+              onLongPress: () => onEmailLongPressed?.call(email, i),
               onDelete: () => context
                   .read<EmailListBloc>()
                   .add(EmailListEmailDeleted(emailId: email.id)),
@@ -319,7 +457,10 @@ class _EmailListView extends StatelessWidget {
               isExpanded: item.isExpanded,
               hasUnread: item.hasUnread,
               isSelected: item.latestEmail.id == selectedEmailId,
-              onTap: () => onEmailSelected(item.latestEmail),
+              isMultiSelected: selectedEmailIds.contains(item.latestEmail.id),
+              showCheckbox: showCheckboxes,
+              onTap: () => onEmailTapped(item.latestEmail, i),
+              onLongPress: () => onEmailLongPressed?.call(item.latestEmail, i),
               onToggleExpand: () => onToggleConversation(item.conversationId),
             ),
         };
@@ -338,6 +479,9 @@ class _ConversationHeader extends StatelessWidget {
     required this.isSelected,
     required this.onTap,
     required this.onToggleExpand,
+    this.isMultiSelected = false,
+    this.showCheckbox = false,
+    this.onLongPress,
   });
 
   final Email latestEmail;
@@ -345,12 +489,16 @@ class _ConversationHeader extends StatelessWidget {
   final bool isExpanded;
   final bool hasUnread;
   final bool isSelected;
+  final bool isMultiSelected;
+  final bool showCheckbox;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
   final VoidCallback onToggleExpand;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final highlighted = isSelected || isMultiSelected;
     // Use a Stack so the chevron floats over the left margin without shifting
     // the email content — conversation rows stay pixel-aligned with single emails.
     return Stack(
@@ -358,18 +506,36 @@ class _ConversationHeader extends StatelessWidget {
         GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: onTap,
+          onLongPress: onLongPress,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 120),
             margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
-              color: isSelected ? c.selectionEmailBg : Colors.transparent,
+              color: highlighted ? c.selectionEmailBg : Colors.transparent,
               borderRadius: BorderRadius.circular(8),
               border: isSelected ? Border.all(color: c.selectionBorder) : null,
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOut,
+                  child: showCheckbox
+                      ? Padding(
+                          padding: const EdgeInsets.only(right: 8, top: 2),
+                          child: Icon(
+                            isMultiSelected
+                                ? Icons.check_circle_rounded
+                                : Icons.radio_button_unchecked_rounded,
+                            size: 18,
+                            color:
+                                isMultiSelected ? AppColors.accent : c.textMuted,
+                          ),
+                        )
+                      : const SizedBox.shrink(),
+                ),
                 // Unread dot
                 Padding(
                   padding: const EdgeInsets.only(top: 6, right: 8),

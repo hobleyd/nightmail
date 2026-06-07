@@ -462,32 +462,26 @@ class _SaveAllButtonState extends State<_SaveAllButton> {
     final directory = await getDirectoryPath();
     if (directory == null || !mounted) return;
 
-    final results = await Future.wait(
-      widget.attachments.map((a) async {
-        final r = await sl<DownloadAttachment>()(DownloadAttachmentParams(
-          messageId: widget.emailId,
-          attachmentId: a.id,
-        ));
-        return (attachment: a, either: r);
-      }),
-    );
-    if (!mounted) return;
-
     final errors = <String>[];
-    final writes = <Future<void>>[];
-    for (final (:attachment, :either) in results) {
-      either.fold(
-        (f) => errors.add('${attachment.name}: ${f.message}'),
-        (bytes) => writes.add(
-          File('$directory/${attachment.name}')
-              .writeAsBytes(bytes)
-              .catchError((Object e) => errors.add('${attachment.name}: $e')),
-        ),
+    for (final attachment in widget.attachments) {
+      final result = await sl<DownloadAttachment>()(DownloadAttachmentParams(
+        messageId: widget.emailId,
+        attachmentId: attachment.id,
+      ));
+      if (!mounted) return;
+      await result.fold(
+        (f) async => errors.add('${attachment.name}: ${f.message}'),
+        (bytes) async {
+          try {
+            await File('$directory/${attachment.name}').writeAsBytes(bytes);
+          } catch (e) {
+            errors.add('${attachment.name}: $e');
+          }
+        },
       );
     }
-    await Future.wait(writes);
-    if (!mounted) return;
 
+    if (!mounted) return;
     if (errors.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to save:\n${errors.join('\n')}')),
@@ -498,33 +492,25 @@ class _SaveAllButtonState extends State<_SaveAllButton> {
   Future<void> _saveAllMobile() async {
     final dir = await getTemporaryDirectory();
 
-    final results = await Future.wait(
-      widget.attachments.map((a) async {
-        final r = await sl<DownloadAttachment>()(DownloadAttachmentParams(
-          messageId: widget.emailId,
-          attachmentId: a.id,
-        ));
-        return (attachment: a, either: r);
-      }),
-    );
-    if (!mounted) return;
-
     final errors = <String>[];
     final xFiles = <XFile>[];
-    final writes = <Future<void>>[];
-    for (final (:attachment, :either) in results) {
-      either.fold(
-        (f) => errors.add(attachment.name),
-        (bytes) {
+    for (final attachment in widget.attachments) {
+      final result = await sl<DownloadAttachment>()(DownloadAttachmentParams(
+        messageId: widget.emailId,
+        attachmentId: attachment.id,
+      ));
+      if (!mounted) return;
+      await result.fold(
+        (f) async => errors.add(attachment.name),
+        (bytes) async {
           final path = '${dir.path}/${attachment.name}';
-          writes.add(File(path).writeAsBytes(bytes));
+          await File(path).writeAsBytes(bytes);
           xFiles.add(XFile(path, mimeType: attachment.contentType));
         },
       );
     }
-    await Future.wait(writes);
-    if (!mounted) return;
 
+    if (!mounted) return;
     if (xFiles.isNotEmpty) {
       await SharePlus.instance.share(ShareParams(files: xFiles));
     }

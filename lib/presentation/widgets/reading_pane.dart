@@ -402,15 +402,166 @@ class _AttachmentsSection extends StatelessWidget {
           ),
         ),
         Expanded(
-          child: Wrap(
-            spacing: 6,
-            runSpacing: 4,
-            children: attachments
-                .map((a) => _AttachmentChip(emailId: emailId, attachment: a))
-                .toList(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: attachments
+                    .map((a) =>
+                        _AttachmentChip(emailId: emailId, attachment: a))
+                    .toList(),
+              ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: _SaveAllButton(
+                  emailId: emailId,
+                  attachments: attachments,
+                ),
+              ),
+            ],
           ),
         ),
       ],
+    );
+  }
+}
+
+class _SaveAllButton extends StatefulWidget {
+  const _SaveAllButton({required this.emailId, required this.attachments});
+  final String emailId;
+  final List<EmailAttachment> attachments;
+
+  @override
+  State<_SaveAllButton> createState() => _SaveAllButtonState();
+}
+
+class _SaveAllButtonState extends State<_SaveAllButton> {
+  bool _isLoading = false;
+
+  bool get _isMobile =>
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+
+  Future<void> _saveAll() async {
+    if (_isLoading) return;
+    setState(() => _isLoading = true);
+    try {
+      if (_isMobile) {
+        await _saveAllMobile();
+      } else {
+        await _saveAllDesktop();
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _saveAllDesktop() async {
+    final directory = await getDirectoryPath();
+    if (directory == null || !mounted) return;
+
+    final results = await Future.wait(
+      widget.attachments.map((a) async {
+        final r = await sl<DownloadAttachment>()(DownloadAttachmentParams(
+          messageId: widget.emailId,
+          attachmentId: a.id,
+        ));
+        return (attachment: a, either: r);
+      }),
+    );
+    if (!mounted) return;
+
+    final errors = <String>[];
+    final writes = <Future<void>>[];
+    for (final (:attachment, :either) in results) {
+      either.fold(
+        (f) => errors.add(attachment.name),
+        (bytes) => writes.add(
+          File('$directory/${attachment.name}').writeAsBytes(bytes),
+        ),
+      );
+    }
+    await Future.wait(writes);
+    if (!mounted) return;
+
+    if (errors.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to save: ${errors.join(', ')}')),
+      );
+    }
+  }
+
+  Future<void> _saveAllMobile() async {
+    final dir = await getTemporaryDirectory();
+
+    final results = await Future.wait(
+      widget.attachments.map((a) async {
+        final r = await sl<DownloadAttachment>()(DownloadAttachmentParams(
+          messageId: widget.emailId,
+          attachmentId: a.id,
+        ));
+        return (attachment: a, either: r);
+      }),
+    );
+    if (!mounted) return;
+
+    final errors = <String>[];
+    final xFiles = <XFile>[];
+    final writes = <Future<void>>[];
+    for (final (:attachment, :either) in results) {
+      either.fold(
+        (f) => errors.add(attachment.name),
+        (bytes) {
+          final path = '${dir.path}/${attachment.name}';
+          writes.add(File(path).writeAsBytes(bytes));
+          xFiles.add(XFile(path, mimeType: attachment.contentType));
+        },
+      );
+    }
+    await Future.wait(writes);
+    if (!mounted) return;
+
+    if (xFiles.isNotEmpty) {
+      await SharePlus.instance.share(ShareParams(files: xFiles));
+    }
+    if (errors.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to download: ${errors.join(', ')}')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return GestureDetector(
+      onTap: _saveAll,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 5),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_isLoading)
+              SizedBox(
+                width: 11,
+                height: 11,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.5,
+                  color: AppColors.accent,
+                ),
+              )
+            else
+              Icon(Icons.save_alt_rounded, size: 11, color: c.textMuted),
+            const SizedBox(width: 3),
+            Text(
+              'Save all',
+              style: TextStyle(color: c.textMuted, fontSize: 11),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

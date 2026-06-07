@@ -7,8 +7,7 @@ import '../../domain/entities/calendar_event.dart';
 import '../../domain/repositories/calendar_repository.dart';
 
 class CalendarRepositoryImpl implements CalendarRepository {
-  const CalendarRepositoryImpl({required AccountManager accountManager})
-      : _accountManager = accountManager;
+  const CalendarRepositoryImpl({required this._accountManager});
 
   final AccountManager _accountManager;
 

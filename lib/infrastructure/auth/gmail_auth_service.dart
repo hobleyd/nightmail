@@ -17,10 +17,9 @@ class GmailAuthService implements AuthService {
   GmailAuthService({
     required this.clientId,
     required this.redirectUri,
-    required TokenStorage tokenStorage,
+    required this._tokenStorage,
     Dio? httpClient,
-  })  : _tokenStorage = tokenStorage,
-        _http = httpClient ?? Dio();
+  })  : _http = httpClient ?? Dio();
 
   final String clientId;
   final String redirectUri;

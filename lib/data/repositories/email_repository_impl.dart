@@ -13,10 +13,9 @@ import '../datasources/local/email_local_datasource.dart';
 
 class EmailRepositoryImpl implements EmailRepository {
   const EmailRepositoryImpl({
-    required AccountManager accountManager,
-    required EmailLocalDatasource localDatasource,
-  })  : _accountManager = accountManager,
-        _localDatasource = localDatasource;
+    required this._accountManager,
+    required this._localDatasource,
+  });
 
   final AccountManager _accountManager;
   final EmailLocalDatasource _localDatasource;

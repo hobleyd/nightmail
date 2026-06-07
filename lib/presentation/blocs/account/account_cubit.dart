@@ -55,11 +55,9 @@ final class AccountError extends AccountState {
 
 class AccountCubit extends Cubit<AccountState> {
   AccountCubit({
-    required AccountManager accountManager,
-    required EmailRepository emailRepository,
-  })  : _accountManager = accountManager,
-        _emailRepository = emailRepository,
-        super(const AccountLoading());
+    required this._accountManager,
+    required this._emailRepository,
+  }) : super(const AccountLoading());
 
   final AccountManager _accountManager;
   final EmailRepository _emailRepository;

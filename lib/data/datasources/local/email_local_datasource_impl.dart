@@ -11,10 +11,9 @@ import 'email_local_datasource.dart';
 
 class EmailLocalDatasourceImpl implements EmailLocalDatasource {
   const EmailLocalDatasourceImpl({
-    required AppDatabase database,
-    required CacheEncryptionService encryption,
-  })  : _database = database,
-        _encryption = encryption;
+    required this._database,
+    required this._encryption,
+  });
 
   final AppDatabase _database;
   final CacheEncryptionService _encryption;

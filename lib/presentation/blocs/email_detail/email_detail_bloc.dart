@@ -5,9 +5,8 @@ import 'email_detail_event.dart';
 import 'email_detail_state.dart';
 
 class EmailDetailBloc extends Bloc<EmailDetailEvent, EmailDetailState> {
-  EmailDetailBloc({required GetEmail getEmail})
-      : _getEmail = getEmail,
-        super(const EmailDetailInitial()) {
+  EmailDetailBloc({required this._getEmail})
+      : super(const EmailDetailInitial()) {
     on<EmailDetailLoadRequested>(_onLoadRequested);
     on<EmailDetailCleared>(_onCleared);
   }

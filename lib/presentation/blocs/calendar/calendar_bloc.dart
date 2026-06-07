@@ -5,9 +5,8 @@ import 'calendar_event.dart';
 import 'calendar_state.dart';
 
 class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
-  CalendarBloc({required GetCalendarEvents getCalendarEvents})
-      : _getCalendarEvents = getCalendarEvents,
-        super(CalendarInitial(weekStart: _mondayOfWeek(DateTime.now()))) {
+  CalendarBloc({required this._getCalendarEvents})
+      : super(CalendarInitial(weekStart: _mondayOfWeek(DateTime.now()))) {
     on<CalendarWeekLoadRequested>(_onLoadRequested);
     on<CalendarWeekNavigated>(_onWeekNavigated);
   }

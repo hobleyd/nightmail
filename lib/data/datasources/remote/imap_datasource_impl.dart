@@ -13,10 +13,9 @@ import 'email_remote_datasource.dart';
 
 class ImapDatasourceImpl implements EmailRemoteDatasource {
   ImapDatasourceImpl({
-    required ImapAccount account,
-    required ImapCredentialStorage credentialStorage,
-  })  : _account = account,
-        _credentialStorage = credentialStorage;
+    required this._account,
+    required this._credentialStorage,
+  });
 
   final ImapAccount _account;
   final ImapCredentialStorage _credentialStorage;

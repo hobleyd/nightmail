@@ -56,7 +56,7 @@ class GraphApiDatasourceImpl
           '\$skip': skip,
           '\$select': _emailListSelect,
           '\$orderby': orderBy,
-          if (filter != null) '\$filter': filter,
+          '\$filter': ?filter,
         },
       );
 

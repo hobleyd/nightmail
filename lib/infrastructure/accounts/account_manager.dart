@@ -22,10 +22,9 @@ import 'account_storage.dart';
 
 class AccountManager {
   AccountManager({
-    required AccountStorage accountStorage,
-    required FlutterSecureStorage secureStorage,
-  })  : _accountStorage = accountStorage,
-        _secureStorage = secureStorage;
+    required this._accountStorage,
+    required this._secureStorage,
+  });
 
   final AccountStorage _accountStorage;
   final FlutterSecureStorage _secureStorage;

@@ -12,15 +12,11 @@ const _defaultFolderKey = '__DEFAULT__';
 
 class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   EmailListBloc({
-    required GetEmails getEmails,
-    required GetCachedEmails getCachedEmails,
-    required MarkEmailAsRead markEmailAsRead,
-    required AccountManager accountManager,
-  })  : _getEmails = getEmails,
-        _getCachedEmails = getCachedEmails,
-        _markEmailAsRead = markEmailAsRead,
-        _accountManager = accountManager,
-        super(const EmailListInitial()) {
+    required this._getEmails,
+    required this._getCachedEmails,
+    required this._markEmailAsRead,
+    required this._accountManager,
+  }) : super(const EmailListInitial()) {
     on<EmailListLoadRequested>(_onLoadRequested);
     on<EmailListLoadMoreRequested>(_onLoadMoreRequested);
     on<EmailListRefreshRequested>(_onRefreshRequested);

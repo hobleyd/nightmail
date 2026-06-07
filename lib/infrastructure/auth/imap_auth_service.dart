@@ -11,8 +11,8 @@ import 'imap_credential_storage.dart';
 class ImapAuthService implements AuthService {
   ImapAuthService({
     required this.accountId,
-    required ImapCredentialStorage credentialStorage,
-  }) : _credentialStorage = credentialStorage;
+    required this._credentialStorage,
+  });
 
   final String accountId;
   final ImapCredentialStorage _credentialStorage;

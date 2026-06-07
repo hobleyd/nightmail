@@ -69,7 +69,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     try {
       final queryParams = <String, dynamic>{
         'maxResults': top,
-        if (folderId != null) 'labelIds': folderId,
+        'labelIds': ?folderId,
       };
 
       final listResp = await _dio.get<Map<String, dynamic>>(

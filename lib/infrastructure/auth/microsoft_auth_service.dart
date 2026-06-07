@@ -24,10 +24,9 @@ class MicrosoftAuthService implements AuthService {
     required this.clientId,
     required this.tenantId,
     required this.redirectUri,
-    required TokenStorage tokenStorage,
+    required this._tokenStorage,
     Dio? httpClient,
-  })  : _tokenStorage = tokenStorage,
-        _http = httpClient ?? Dio();
+  })  : _http = httpClient ?? Dio();
 
   final String clientId;
   final String tenantId;

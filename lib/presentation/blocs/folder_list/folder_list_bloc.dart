@@ -6,9 +6,8 @@ import 'folder_list_event.dart';
 import 'folder_list_state.dart';
 
 class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
-  FolderListBloc({required GetMailFolders getMailFolders})
-      : _getMailFolders = getMailFolders,
-        super(const FolderListInitial()) {
+  FolderListBloc({required this._getMailFolders})
+      : super(const FolderListInitial()) {
     on<FolderListLoadRequested>(_onLoadRequested);
   }
 

@@ -8,11 +8,9 @@ import 'mail_poller_state.dart';
 
 class MailPollerCubit extends Cubit<MailPollerState> {
   MailPollerCubit({
-    required AccountManager accountManager,
-    required AppSettings appSettings,
-  })  : _accountManager = accountManager,
-        _appSettings = appSettings,
-        super(const MailPollerState(
+    required this._accountManager,
+    required this._appSettings,
+  }) : super(const MailPollerState(
           accountsWithNewMail: {},
           pollIntervalSeconds: AppSettings.defaultPollIntervalSeconds,
         ));

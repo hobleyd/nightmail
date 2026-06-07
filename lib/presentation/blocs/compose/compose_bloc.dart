@@ -5,9 +5,8 @@ import 'compose_event.dart';
 import 'compose_state.dart';
 
 class ComposeBloc extends Bloc<ComposeEvent, ComposeState> {
-  ComposeBloc({required SendEmail sendEmail})
-      : _sendEmail = sendEmail,
-        super(const ComposeInitial()) {
+  ComposeBloc({required this._sendEmail})
+      : super(const ComposeInitial()) {
     on<ComposeSubmitted>(_onSubmitted);
   }
 

@@ -4,23 +4,37 @@ import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/error/exceptions.dart';
 import 'package:nightmail/core/error/failures.dart';
-import 'package:nightmail/data/datasources/remote/graph_api_remote_datasource.dart';
+import 'package:nightmail/data/datasources/local/email_local_datasource.dart';
+import 'package:nightmail/data/datasources/remote/email_remote_datasource.dart';
 import 'package:nightmail/data/models/email_address_model.dart';
 import 'package:nightmail/data/models/email_folder_model.dart';
 import 'package:nightmail/data/models/email_model.dart';
 import 'package:nightmail/data/repositories/email_repository_impl.dart';
 import 'package:nightmail/domain/entities/email.dart';
+import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 
 import 'email_repository_impl_test.mocks.dart';
 
-@GenerateMocks([GraphApiRemoteDatasource])
+@GenerateMocks([AccountManager, EmailLocalDatasource, EmailRemoteDatasource])
 void main() {
   late EmailRepositoryImpl repository;
-  late MockGraphApiRemoteDatasource mockDatasource;
+  late MockAccountManager mockAccountManager;
+  late MockEmailLocalDatasource mockLocalDatasource;
+  late MockEmailRemoteDatasource mockRemoteDatasource;
 
   setUp(() {
-    mockDatasource = MockGraphApiRemoteDatasource();
-    repository = EmailRepositoryImpl(remoteDatasource: mockDatasource);
+    mockAccountManager = MockAccountManager();
+    mockLocalDatasource = MockEmailLocalDatasource();
+    mockRemoteDatasource = MockEmailRemoteDatasource();
+
+    when(mockAccountManager.emailDatasource).thenReturn(mockRemoteDatasource);
+    // Return null active account so getEmails() skips cache write by default
+    when(mockAccountManager.activeAccount).thenReturn(null);
+
+    repository = EmailRepositoryImpl(
+      accountManager: mockAccountManager,
+      localDatasource: mockLocalDatasource,
+    );
   });
 
   final tEmailModel = EmailModel(
@@ -46,7 +60,7 @@ void main() {
 
   group('getEmails', () {
     test('returns Right(emails) on datasource success', () async {
-      when(mockDatasource.getEmails(
+      when(mockRemoteDatasource.getEmails(
         top: anyNamed('top'),
         skip: anyNamed('skip'),
         orderBy: anyNamed('orderBy'),
@@ -60,7 +74,7 @@ void main() {
     });
 
     test('returns Left(ServerFailure) on ServerException', () async {
-      when(mockDatasource.getEmails(
+      when(mockRemoteDatasource.getEmails(
         top: anyNamed('top'),
         skip: anyNamed('skip'),
         orderBy: anyNamed('orderBy'),
@@ -75,7 +89,7 @@ void main() {
     });
 
     test('returns Left(AuthFailure) on AuthException', () async {
-      when(mockDatasource.getEmails(
+      when(mockRemoteDatasource.getEmails(
         top: anyNamed('top'),
         skip: anyNamed('skip'),
         orderBy: anyNamed('orderBy'),
@@ -88,7 +102,7 @@ void main() {
     });
 
     test('returns Left(NetworkFailure) on NetworkException', () async {
-      when(mockDatasource.getEmails(
+      when(mockRemoteDatasource.getEmails(
         top: anyNamed('top'),
         skip: anyNamed('skip'),
         orderBy: anyNamed('orderBy'),
@@ -103,8 +117,10 @@ void main() {
 
   group('getMailFolders', () {
     test('returns Right(folders) on datasource success', () async {
-      when(mockDatasource.getMailFolders())
+      when(mockRemoteDatasource.getMailFolders())
           .thenAnswer((_) async => [tFolderModel]);
+      when(mockRemoteDatasource.getChildFolders(any))
+          .thenAnswer((_) async => []);
 
       final result = await repository.getMailFolders();
 
@@ -127,7 +143,7 @@ void main() {
         receivedDateTime: DateTime(2026, 6, 1),
         importance: EmailImportance.normal,
       );
-      when(mockDatasource.updateEmailReadStatus(
+      when(mockRemoteDatasource.updateEmailReadStatus(
         id: anyNamed('id'),
         isRead: anyNamed('isRead'),
       )).thenAnswer((_) async => updated);
@@ -136,6 +152,51 @@ void main() {
 
       expect(result.isRight(), isTrue);
       expect((result as Right).value.isRead, isTrue);
+    });
+  });
+
+  group('getCachedEmails', () {
+    test('returns Right(emails) from local datasource', () async {
+      when(mockLocalDatasource.getCachedEmails(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+      )).thenAnswer((_) async => [tEmailModel]);
+
+      final result = await repository.getCachedEmails(
+        accountId: 'account-1',
+        folderId: '__DEFAULT__',
+      );
+
+      expect(result.isRight(), isTrue);
+      final emails = (result as Right).value as List<Email>;
+      expect(emails.first.id, 'email-1');
+    });
+
+    test('returns Right([]) when cache is empty', () async {
+      when(mockLocalDatasource.getCachedEmails(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+      )).thenAnswer((_) async => []);
+
+      final result = await repository.getCachedEmails(
+        accountId: 'account-1',
+        folderId: '__DEFAULT__',
+      );
+
+      expect(result.isRight(), isTrue);
+      expect((result as Right).value, isEmpty);
+    });
+  });
+
+  group('clearCacheForAccount', () {
+    test('delegates to local datasource', () async {
+      when(mockLocalDatasource.clearCacheForAccount(any))
+          .thenAnswer((_) async {});
+
+      final result = await repository.clearCacheForAccount('account-1');
+
+      expect(result.isRight(), isTrue);
+      verify(mockLocalDatasource.clearCacheForAccount('account-1')).called(1);
     });
   });
 }

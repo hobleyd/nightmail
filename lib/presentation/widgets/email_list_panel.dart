@@ -63,11 +63,15 @@ class _EmailListPanelState extends State<EmailListPanel> {
       color: c.surfaceBase,
       child: Column(
         children: [
-          _ListHeader(
-            folderName: widget.folderName,
-            onRefresh: () => context
-                .read<EmailListBloc>()
-                .add(const EmailListRefreshRequested()),
+          BlocSelector<EmailListBloc, EmailListState, bool>(
+            selector: (s) => s is EmailListLoaded && s.isLoadingFresh,
+            builder: (context, isLoadingFresh) => _ListHeader(
+              folderName: widget.folderName,
+              isLoadingFresh: isLoadingFresh,
+              onRefresh: () => context
+                  .read<EmailListBloc>()
+                  .add(const EmailListRefreshRequested()),
+            ),
           ),
           Divider(height: 1, color: c.separator),
           Expanded(
@@ -209,9 +213,14 @@ List<_ListItem> _buildListItems(
 // ---------------------------------------------------------------------------
 
 class _ListHeader extends StatelessWidget {
-  const _ListHeader({required this.folderName, required this.onRefresh});
+  const _ListHeader({
+    required this.folderName,
+    required this.onRefresh,
+    required this.isLoadingFresh,
+  });
   final String folderName;
   final VoidCallback onRefresh;
+  final bool isLoadingFresh;
 
   @override
   Widget build(BuildContext context) {
@@ -229,6 +238,17 @@ class _ListHeader extends StatelessWidget {
               letterSpacing: -0.3,
             ),
           ),
+          if (isLoadingFresh) ...[
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(
+                strokeWidth: 1.5,
+                color: c.textMuted,
+              ),
+            ),
+          ],
           const Spacer(),
           IconButton(
             icon: Icon(Icons.refresh_rounded, size: 18, color: c.textMuted),

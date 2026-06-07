@@ -1,18 +1,25 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../domain/usecases/get_cached_emails.dart';
 import '../../../domain/usecases/get_emails.dart';
 import '../../../domain/usecases/mark_email_as_read.dart';
+import '../../../infrastructure/accounts/account_manager.dart';
 import 'email_list_event.dart';
 import 'email_list_state.dart';
 
 const _pageSize = 25;
+const _defaultFolderKey = '__DEFAULT__';
 
 class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   EmailListBloc({
     required GetEmails getEmails,
+    required GetCachedEmails getCachedEmails,
     required MarkEmailAsRead markEmailAsRead,
+    required AccountManager accountManager,
   })  : _getEmails = getEmails,
+        _getCachedEmails = getCachedEmails,
         _markEmailAsRead = markEmailAsRead,
+        _accountManager = accountManager,
         super(const EmailListInitial()) {
     on<EmailListLoadRequested>(_onLoadRequested);
     on<EmailListLoadMoreRequested>(_onLoadMoreRequested);
@@ -23,22 +30,64 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   }
 
   final GetEmails _getEmails;
+  final GetCachedEmails _getCachedEmails;
   final MarkEmailAsRead _markEmailAsRead;
+  final AccountManager _accountManager;
 
   Future<void> _onLoadRequested(
     EmailListLoadRequested event,
     Emitter<EmailListState> emit,
   ) async {
-    emit(const EmailListLoading());
+    final accountId = _accountManager.activeAccount?.id;
+    final folderKey = event.folderId ?? _defaultFolderKey;
+    bool hasCachedData = false;
+
+    // Phase 1: serve cache immediately so the UI has content with no spinner
+    if (accountId != null) {
+      final cacheResult = await _getCachedEmails(GetCachedEmailsParams(
+        accountId: accountId,
+        folderId: folderKey,
+      ));
+      cacheResult.fold(
+        (_) => emit(const EmailListLoading()),
+        (cached) {
+          if (cached.isEmpty) {
+            emit(const EmailListLoading());
+          } else {
+            hasCachedData = true;
+            emit(EmailListLoaded(
+              emails: cached,
+              hasMore: true,
+              isLoadingFresh: true,
+              currentFolderId: event.folderId,
+            ));
+          }
+        },
+      );
+    } else {
+      emit(const EmailListLoading());
+    }
+
+    // Phase 2: network fetch — always attempted regardless of cache state
     final result = await _getEmails(GetEmailsParams(
       folderId: event.folderId,
       top: _pageSize,
     ));
+
     result.fold(
-      (failure) => emit(EmailListError(message: failure.message)),
+      (failure) {
+        if (hasCachedData) {
+          // Keep cached emails visible; just clear the refresh indicator
+          final s = state;
+          if (s is EmailListLoaded) emit(s.copyWith(isLoadingFresh: false));
+        } else {
+          emit(EmailListError(message: failure.message));
+        }
+      },
       (emails) => emit(EmailListLoaded(
         emails: emails,
         hasMore: emails.length == _pageSize,
+        isLoadingFresh: false,
         currentFolderId: event.folderId,
       )),
     );

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:fpdart/fpdart.dart';
@@ -8,12 +9,19 @@ import '../../domain/entities/email.dart';
 import '../../domain/entities/email_folder.dart';
 import '../../domain/repositories/email_repository.dart';
 import '../../infrastructure/accounts/account_manager.dart';
+import '../datasources/local/email_local_datasource.dart';
 
 class EmailRepositoryImpl implements EmailRepository {
-  const EmailRepositoryImpl({required AccountManager accountManager})
-      : _accountManager = accountManager;
+  const EmailRepositoryImpl({
+    required AccountManager accountManager,
+    required EmailLocalDatasource localDatasource,
+  })  : _accountManager = accountManager,
+        _localDatasource = localDatasource;
 
   final AccountManager _accountManager;
+  final EmailLocalDatasource _localDatasource;
+
+  static const _defaultFolderKey = '__DEFAULT__';
 
   @override
   Future<Either<Failure, List<Email>>> getEmails({
@@ -23,13 +31,26 @@ class EmailRepositoryImpl implements EmailRepository {
     String? filter,
     String orderBy = 'receivedDateTime desc',
   }) async {
-    return _execute(() => _accountManager.emailDatasource.getEmails(
+    final result = await _execute(() => _accountManager.emailDatasource.getEmails(
           folderId: folderId,
           top: top,
           skip: skip,
           filter: filter,
           orderBy: orderBy,
         ));
+
+    result.fold((_) {}, (emails) {
+      final accountId = _accountManager.activeAccount?.id;
+      if (accountId != null && emails.isNotEmpty) {
+        unawaited(_localDatasource.cacheEmails(
+          accountId: accountId,
+          folderId: folderId ?? _defaultFolderKey,
+          emails: emails,
+        ));
+      }
+    });
+
+    return result;
   }
 
   @override
@@ -153,6 +174,56 @@ class EmailRepositoryImpl implements EmailRepository {
   }) async {
     return _execute(() => _accountManager.emailDatasource
         .downloadAttachment(messageId, attachmentId));
+  }
+
+  @override
+  Future<Either<Failure, List<Email>>> getCachedEmails({
+    required String accountId,
+    required String folderId,
+  }) async {
+    try {
+      final emails = await _localDatasource.getCachedEmails(
+        accountId: accountId,
+        folderId: folderId,
+      );
+      return Right(emails);
+    } on CacheException catch (e) {
+      return Left(CacheFailure(message: e.message));
+    } catch (e) {
+      return Left(CacheFailure(message: e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, Unit>> cacheEmails({
+    required String accountId,
+    required String folderId,
+    required List<Email> emails,
+  }) async {
+    try {
+      await _localDatasource.cacheEmails(
+        accountId: accountId,
+        folderId: folderId,
+        emails: emails,
+      );
+      return const Right(unit);
+    } on CacheException catch (e) {
+      return Left(CacheFailure(message: e.message));
+    } catch (e) {
+      return Left(CacheFailure(message: e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, Unit>> clearCacheForAccount(String accountId) async {
+    try {
+      await _localDatasource.clearCacheForAccount(accountId);
+      return const Right(unit);
+    } on CacheException catch (e) {
+      return Left(CacheFailure(message: e.message));
+    } catch (e) {
+      return Left(CacheFailure(message: e.toString()));
+    }
   }
 
   Future<Either<Failure, T>> _execute<T>(Future<T> Function() fn) async {

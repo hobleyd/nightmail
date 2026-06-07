@@ -15,6 +15,7 @@ import '../blocs/folder_list/folder_list_bloc.dart';
 import '../blocs/folder_list/folder_list_event.dart';
 import '../blocs/folder_list/folder_list_state.dart';
 import '../blocs/home/home_cubit.dart';
+import '../blocs/mail_poller/mail_poller_cubit.dart';
 import '../widgets/email_list_panel.dart';
 import '../widgets/folder_panel.dart';
 import '../widgets/reading_pane.dart';
@@ -29,6 +30,9 @@ class HomePage extends StatelessWidget {
     return MultiBlocProvider(
       providers: [
         BlocProvider.value(value: sl<AccountCubit>()),
+        BlocProvider.value(
+          value: sl<MailPollerCubit>()..initialize(),
+        ),
         BlocProvider(
           create: (_) =>
               sl<FolderListBloc>()..add(const FolderListLoadRequested()),

@@ -4,6 +4,7 @@
 
 // ignore_for_file: no_leading_underscores_for_library_prefixes
 import 'dart:async' as _i3;
+import 'dart:typed_data' as _i9;
 
 import 'package:fpdart/fpdart.dart' as _i4;
 import 'package:mockito/mockito.dart' as _i1;
@@ -218,6 +219,92 @@ class MockEmailRepository extends _i1.Mock implements _i2.EmailRepository {
               _i7.dummyValue<_i4.Either<_i5.Failure, _i4.Unit>>(
                 this,
                 Invocation.method(#deleteEmail, [id]),
+              ),
+            ),
+          )
+          as _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>>);
+
+  @override
+  _i3.Future<_i4.Either<_i5.Failure, _i9.Uint8List>> downloadAttachment({
+    required String? messageId,
+    required String? attachmentId,
+  }) =>
+      (super.noSuchMethod(
+            Invocation.method(#downloadAttachment, [], {
+              #messageId: messageId,
+              #attachmentId: attachmentId,
+            }),
+            returnValue:
+                _i3.Future<_i4.Either<_i5.Failure, _i9.Uint8List>>.value(
+                  _i7.dummyValue<_i4.Either<_i5.Failure, _i9.Uint8List>>(
+                    this,
+                    Invocation.method(#downloadAttachment, [], {
+                      #messageId: messageId,
+                      #attachmentId: attachmentId,
+                    }),
+                  ),
+                ),
+          )
+          as _i3.Future<_i4.Either<_i5.Failure, _i9.Uint8List>>);
+
+  @override
+  _i3.Future<_i4.Either<_i5.Failure, List<_i6.Email>>> getCachedEmails({
+    required String? accountId,
+    required String? folderId,
+  }) =>
+      (super.noSuchMethod(
+            Invocation.method(#getCachedEmails, [], {
+              #accountId: accountId,
+              #folderId: folderId,
+            }),
+            returnValue:
+                _i3.Future<_i4.Either<_i5.Failure, List<_i6.Email>>>.value(
+                  _i7.dummyValue<_i4.Either<_i5.Failure, List<_i6.Email>>>(
+                    this,
+                    Invocation.method(#getCachedEmails, [], {
+                      #accountId: accountId,
+                      #folderId: folderId,
+                    }),
+                  ),
+                ),
+          )
+          as _i3.Future<_i4.Either<_i5.Failure, List<_i6.Email>>>);
+
+  @override
+  _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>> cacheEmails({
+    required String? accountId,
+    required String? folderId,
+    required List<_i6.Email>? emails,
+  }) =>
+      (super.noSuchMethod(
+            Invocation.method(#cacheEmails, [], {
+              #accountId: accountId,
+              #folderId: folderId,
+              #emails: emails,
+            }),
+            returnValue: _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>>.value(
+              _i7.dummyValue<_i4.Either<_i5.Failure, _i4.Unit>>(
+                this,
+                Invocation.method(#cacheEmails, [], {
+                  #accountId: accountId,
+                  #folderId: folderId,
+                  #emails: emails,
+                }),
+              ),
+            ),
+          )
+          as _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>>);
+
+  @override
+  _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>> clearCacheForAccount(
+    String? accountId,
+  ) =>
+      (super.noSuchMethod(
+            Invocation.method(#clearCacheForAccount, [accountId]),
+            returnValue: _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>>.value(
+              _i7.dummyValue<_i4.Either<_i5.Failure, _i4.Unit>>(
+                this,
+                Invocation.method(#clearCacheForAccount, [accountId]),
               ),
             ),
           )

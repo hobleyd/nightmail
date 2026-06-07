@@ -22,6 +22,7 @@ final class EmailListLoaded extends EmailListState {
     required this.emails,
     this.hasMore = true,
     this.isLoadingMore = false,
+    this.isLoadingFresh = false,
     this.currentFolderId,
     this.expandedConversationIds = const {},
   });
@@ -29,6 +30,12 @@ final class EmailListLoaded extends EmailListState {
   final List<Email> emails;
   final bool hasMore;
   final bool isLoadingMore;
+
+  /// True while cached emails are shown and a background network refresh
+  /// is still in-flight. Clears to false once the network call completes
+  /// (successfully or not).
+  final bool isLoadingFresh;
+
   final String? currentFolderId;
   final Set<String> expandedConversationIds;
 
@@ -36,6 +43,7 @@ final class EmailListLoaded extends EmailListState {
     List<Email>? emails,
     bool? hasMore,
     bool? isLoadingMore,
+    bool? isLoadingFresh,
     String? currentFolderId,
     Set<String>? expandedConversationIds,
   }) {
@@ -43,13 +51,21 @@ final class EmailListLoaded extends EmailListState {
       emails: emails ?? this.emails,
       hasMore: hasMore ?? this.hasMore,
       isLoadingMore: isLoadingMore ?? this.isLoadingMore,
+      isLoadingFresh: isLoadingFresh ?? this.isLoadingFresh,
       currentFolderId: currentFolderId ?? this.currentFolderId,
       expandedConversationIds: expandedConversationIds ?? this.expandedConversationIds,
     );
   }
 
   @override
-  List<Object?> get props => [emails, hasMore, isLoadingMore, currentFolderId, expandedConversationIds];
+  List<Object?> get props => [
+        emails,
+        hasMore,
+        isLoadingMore,
+        isLoadingFresh,
+        currentFolderId,
+        expandedConversationIds,
+      ];
 }
 
 final class EmailListError extends EmailListState {

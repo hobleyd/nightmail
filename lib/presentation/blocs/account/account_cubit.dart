@@ -1,6 +1,7 @@
 import 'package:equatable/equatable.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../domain/repositories/email_repository.dart';
 import '../../../infrastructure/accounts/account.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
 
@@ -53,11 +54,15 @@ final class AccountError extends AccountState {
 // ---------------------------------------------------------------------------
 
 class AccountCubit extends Cubit<AccountState> {
-  AccountCubit({required AccountManager accountManager})
-      : _accountManager = accountManager,
+  AccountCubit({
+    required AccountManager accountManager,
+    required EmailRepository emailRepository,
+  })  : _accountManager = accountManager,
+        _emailRepository = emailRepository,
         super(const AccountLoading());
 
   final AccountManager _accountManager;
+  final EmailRepository _emailRepository;
 
   void initialize() {
     if (_accountManager.hasAccounts) {
@@ -106,6 +111,7 @@ class AccountCubit extends Cubit<AccountState> {
 
   Future<void> removeAccount(String accountId) async {
     await _accountManager.removeAccount(accountId);
+    await _emailRepository.clearCacheForAccount(accountId);
     if (_accountManager.hasAccounts) {
       emit(AccountsLoaded(
         accounts: _accountManager.accounts,

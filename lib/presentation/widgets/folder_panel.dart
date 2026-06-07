@@ -12,6 +12,7 @@ import '../blocs/folder_list/folder_list_bloc.dart';
 import '../blocs/folder_list/folder_list_event.dart';
 import '../blocs/folder_list/folder_list_state.dart';
 import '../blocs/home/home_cubit.dart';
+import '../blocs/mail_poller/mail_poller_cubit.dart';
 import '../blocs/theme/theme_cubit.dart';
 import '../pages/settings_page.dart';
 import '../pages/add_account_page.dart';
@@ -341,6 +342,8 @@ class _SettingsFooter extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     final accountState = context.watch<AccountCubit>().state;
+    final pollerState = context.watch<MailPollerCubit>().state;
+    final hasNewMail = pollerState.accountsWithNewMail.isNotEmpty;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -350,8 +353,26 @@ class _SettingsFooter extends StatelessWidget {
             tooltip: 'Accounts',
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            icon: Icon(Icons.manage_accounts_outlined,
-                size: 16, color: c.textMuted),
+            icon: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Icon(Icons.manage_accounts_outlined,
+                    size: 16, color: c.textMuted),
+                if (hasNewMail)
+                  Positioned(
+                    top: -2,
+                    right: -2,
+                    child: Container(
+                      width: 7,
+                      height: 7,
+                      decoration: const BoxDecoration(
+                        color: AppColors.accent,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
             onSelected: (index) async {
               if (index == -1) {
                 _showAddAccountDialog(context);
@@ -360,6 +381,15 @@ class _SettingsFooter extends StatelessWidget {
 
               final accountCubit = context.read<AccountCubit>();
               final homeCubit = context.read<HomeCubit>();
+              final pollerCubit = context.read<MailPollerCubit>();
+
+              // Mark the selected account as viewed to clear its badge.
+              final currentState = accountCubit.state;
+              if (currentState is AccountsLoaded &&
+                  index < currentState.accounts.length) {
+                pollerCubit
+                    .markAccountViewed(currentState.accounts[index].id);
+              }
 
               // Save current folder before switching accounts.
               final prevState = accountCubit.state;
@@ -398,11 +428,15 @@ class _SettingsFooter extends StatelessWidget {
               }
             },
             itemBuilder: (context) {
+              final newMailAccounts =
+                  context.read<MailPollerCubit>().state.accountsWithNewMail;
               final items = <PopupMenuEntry<int>>[];
               if (accountState is AccountsLoaded) {
                 for (int i = 0; i < accountState.accounts.length; i++) {
                   final acc = accountState.accounts[i];
                   final isActive = i == accountState.activeIndex;
+                  final hasNewMailForAccount =
+                      newMailAccounts.contains(acc.id);
                   items.add(
                     PopupMenuItem(
                       value: i,
@@ -413,14 +447,23 @@ class _SettingsFooter extends StatelessWidget {
                               acc.displayName,
                               style: TextStyle(
                                 fontSize: 13,
-                                fontWeight: isActive
+                                fontWeight: isActive || hasNewMailForAccount
                                     ? FontWeight.w600
                                     : FontWeight.normal,
                               ),
                             ),
                           ),
                           if (isActive)
-                            Icon(Icons.check, size: 14, color: AppColors.accent),
+                            Icon(Icons.check, size: 14, color: AppColors.accent)
+                          else if (hasNewMailForAccount)
+                            Container(
+                              width: 7,
+                              height: 7,
+                              decoration: const BoxDecoration(
+                                color: AppColors.accent,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
                         ],
                       ),
                     ),
@@ -453,12 +496,14 @@ class _SettingsFooter extends StatelessWidget {
             onPressed: () {
               final themeCubit = context.read<ThemeCubit>();
               final accountCubit = context.read<AccountCubit>();
+              final pollerCubit = context.read<MailPollerCubit>();
               showDialog<void>(
                 context: context,
                 builder: (ctx) => MultiBlocProvider(
                   providers: [
                     BlocProvider.value(value: themeCubit),
                     BlocProvider.value(value: accountCubit),
+                    BlocProvider.value(value: pollerCubit),
                   ],
                   child: const SettingsDialog(),
                 ),

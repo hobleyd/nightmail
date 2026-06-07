@@ -141,6 +141,45 @@ class AccountManager {
     await _accountStorage.saveActiveIndex(_activeIndex);
   }
 
+  /// Build an [EmailRemoteDatasource] for [account] without changing the active account.
+  EmailRemoteDatasource buildEmailDatasourceForAccount(Account account) {
+    switch (account) {
+      case MicrosoftAccount():
+        final tokenStorage = TokenStorage(
+          _secureStorage,
+          storageKey: 'token_${account.id}',
+        );
+        final authSvc = MicrosoftAuthService(
+          clientId: AppConfig.microsoftClientId,
+          tenantId: account.tenantId,
+          redirectUri: AppConfig.microsoftRedirectUri,
+          tokenStorage: tokenStorage,
+        );
+        return GraphApiDatasourceImpl(
+            client: GraphHttpClient(authService: authSvc));
+
+      case GmailAccount():
+        final tokenStorage = TokenStorage(
+          _secureStorage,
+          storageKey: 'token_${account.id}',
+        );
+        final authSvc = GmailAuthService(
+          clientId: AppConfig.gmailClientId,
+          redirectUri: AppConfig.gmailRedirectUri,
+          tokenStorage: tokenStorage,
+        );
+        return GmailDatasourceImpl(
+            client: GmailHttpClient(authService: authSvc));
+
+      case ImapAccount():
+        final credStorage = ImapCredentialStorage(_secureStorage);
+        return ImapDatasourceImpl(
+          account: account,
+          credentialStorage: credStorage,
+        );
+    }
+  }
+
   void _sortAccounts() {
     if (_accounts.isEmpty) return;
 

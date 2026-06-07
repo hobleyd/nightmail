@@ -4,12 +4,15 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../core/theme/app_colors.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../blocs/account/account_cubit.dart';
+import '../blocs/mail_poller/mail_poller_cubit.dart';
+import '../blocs/mail_poller/mail_poller_state.dart';
 import '../blocs/theme/theme_cubit.dart';
 import '../blocs/theme/theme_state.dart';
 
 enum SettingsSection {
   accounts('Accounts'),
-  appearance('Appearance');
+  appearance('Appearance'),
+  general('General');
 
   const SettingsSection(this.label);
   final String label;
@@ -125,6 +128,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       child: switch (_selectedSection) {
                         SettingsSection.accounts => const _AccountsSection(),
                         SettingsSection.appearance => const _AppearanceSection(),
+                        SettingsSection.general => const _GeneralSection(),
                       },
                     ),
                   ],
@@ -147,6 +151,74 @@ class _AppearanceSection extends StatelessWidget {
       children: [
         _ThemeSetting(),
       ],
+    );
+  }
+}
+
+class _GeneralSection extends StatelessWidget {
+  const _GeneralSection();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        _PollIntervalSetting(),
+      ],
+    );
+  }
+}
+
+class _PollIntervalSetting extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return BlocBuilder<MailPollerCubit, MailPollerState>(
+      builder: (context, state) {
+        return Row(
+          children: [
+            Text(
+              'Check for new mail',
+              style: TextStyle(color: c.textSecondary, fontSize: 13),
+            ),
+            const Spacer(),
+            Flexible(
+              child: Container(
+                height: 32,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: BoxDecoration(
+                  color: c.surfaceBase,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: c.separatorStrong),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<int>(
+                    value: state.pollIntervalSeconds,
+                    isDense: true,
+                    dropdownColor: c.surfacePanel,
+                    style: TextStyle(color: c.textSecondary, fontSize: 13),
+                    items: const [
+                      DropdownMenuItem(value: 0, child: Text('Never')),
+                      DropdownMenuItem(
+                          value: 30, child: Text('Every 30 seconds')),
+                      DropdownMenuItem(
+                          value: 60, child: Text('Every minute')),
+                      DropdownMenuItem(
+                          value: 120, child: Text('Every 2 minutes')),
+                      DropdownMenuItem(
+                          value: 300, child: Text('Every 5 minutes')),
+                    ],
+                    onChanged: (val) {
+                      if (val != null) {
+                        context.read<MailPollerCubit>().updatePollInterval(val);
+                      }
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }

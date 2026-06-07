@@ -62,4 +62,21 @@ abstract interface class EmailRepository {
     required String messageId,
     required String attachmentId,
   });
+
+  /// Returns locally cached emails for [accountId]/[folderId].
+  /// Returns an empty list when no cache exists — never fails on cache absence.
+  Future<Either<Failure, List<Email>>> getCachedEmails({
+    required String accountId,
+    required String folderId,
+  });
+
+  /// Writes [emails] to the local cache for [accountId]/[folderId].
+  Future<Either<Failure, Unit>> cacheEmails({
+    required String accountId,
+    required String folderId,
+    required List<Email> emails,
+  });
+
+  /// Deletes all cached emails belonging to [accountId].
+  Future<Either<Failure, Unit>> clearCacheForAccount(String accountId);
 }

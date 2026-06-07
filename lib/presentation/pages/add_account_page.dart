@@ -235,18 +235,23 @@ class _ImapSetupDialog extends StatefulWidget {
 class _ImapSetupDialogState extends State<_ImapSetupDialog> {
   final _formKey = GlobalKey<FormState>();
   final _emailCtrl = TextEditingController();
-  final _hostCtrl = TextEditingController();
-  final _portCtrl = TextEditingController(text: '993');
+  final _imapHostCtrl = TextEditingController();
+  final _imapPortCtrl = TextEditingController(text: '993');
+  final _smtpHostCtrl = TextEditingController();
+  final _smtpPortCtrl = TextEditingController(text: '587');
   final _passwordCtrl = TextEditingController();
-  bool _useSsl = true;
+  bool _imapUseSsl = true;
+  bool _smtpUseSsl = false;
   bool _isLoading = false;
   String? _error;
 
   @override
   void dispose() {
     _emailCtrl.dispose();
-    _hostCtrl.dispose();
-    _portCtrl.dispose();
+    _imapHostCtrl.dispose();
+    _imapPortCtrl.dispose();
+    _smtpHostCtrl.dispose();
+    _smtpPortCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
   }
@@ -264,17 +269,22 @@ class _ImapSetupDialogState extends State<_ImapSetupDialog> {
       const uuid = Uuid();
       final id = uuid.v4();
       final email = _emailCtrl.text.trim();
-      final host = _hostCtrl.text.trim();
-      final port = int.tryParse(_portCtrl.text.trim()) ?? 993;
+      final imapHost = _imapHostCtrl.text.trim();
+      final imapPort = int.tryParse(_imapPortCtrl.text.trim()) ?? 993;
+      final smtpHost = _smtpHostCtrl.text.trim();
+      final smtpPort = int.tryParse(_smtpPortCtrl.text.trim()) ?? 587;
       final password = _passwordCtrl.text;
 
       final account = ImapAccount(
         id: id,
         displayName: email,
         emailAddress: email,
-        host: host,
-        port: port,
-        useSsl: _useSsl,
+        host: imapHost,
+        port: imapPort,
+        useSsl: _imapUseSsl,
+        smtpHost: smtpHost,
+        smtpPort: smtpPort,
+        smtpUseSsl: _smtpUseSsl,
       );
 
       final credStorage = ImapCredentialStorage(sl<FlutterSecureStorage>());
@@ -291,77 +301,120 @@ class _ImapSetupDialogState extends State<_ImapSetupDialog> {
     }
   }
 
+  Widget _serverRow({
+    required TextEditingController hostCtrl,
+    required TextEditingController portCtrl,
+    required String hostLabel,
+    required String portDefault,
+    required bool useSsl,
+    required ValueChanged<bool> onSslChanged,
+    String? Function(String?)? hostValidator,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextFormField(
+          controller: hostCtrl,
+          decoration: InputDecoration(labelText: hostLabel),
+          validator: hostValidator ??
+              (v) => v == null || v.isEmpty ? 'Enter $hostLabel' : null,
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: TextFormField(
+                controller: portCtrl,
+                decoration: const InputDecoration(labelText: 'Port'),
+                keyboardType: TextInputType.number,
+                validator: (v) =>
+                    int.tryParse(v ?? '') == null ? 'Invalid port' : null,
+              ),
+            ),
+            const SizedBox(width: 16),
+            Column(
+              children: [
+                const Text('SSL', style: TextStyle(fontSize: 12)),
+                Switch(value: useSsl, onChanged: onSslChanged),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Add IMAP Account'),
       content: SizedBox(
-        width: 360,
+        width: 400,
         child: Form(
           key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(
-                controller: _emailCtrl,
-                decoration: const InputDecoration(labelText: 'Email address'),
-                keyboardType: TextInputType.emailAddress,
-                validator: (v) =>
-                    v == null || v.isEmpty ? 'Enter your email' : null,
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _hostCtrl,
-                decoration:
-                    const InputDecoration(labelText: 'IMAP server'),
-                validator: (v) =>
-                    v == null || v.isEmpty ? 'Enter IMAP server' : null,
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      controller: _portCtrl,
-                      decoration:
-                          const InputDecoration(labelText: 'Port'),
-                      keyboardType: TextInputType.number,
-                      validator: (v) =>
-                          int.tryParse(v ?? '') == null
-                              ? 'Invalid port'
-                              : null,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Column(
-                    children: [
-                      const Text('SSL', style: TextStyle(fontSize: 12)),
-                      Switch(
-                        value: _useSsl,
-                        onChanged: (v) => setState(() => _useSsl = v),
-                      ),
-                    ],
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextFormField(
+                  controller: _emailCtrl,
+                  decoration:
+                      const InputDecoration(labelText: 'Email address'),
+                  keyboardType: TextInputType.emailAddress,
+                  validator: (v) =>
+                      v == null || v.isEmpty ? 'Enter your email' : null,
+                ),
+                const SizedBox(height: 16),
+                const Text('Incoming (IMAP)',
+                    style: TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                _serverRow(
+                  hostCtrl: _imapHostCtrl,
+                  portCtrl: _imapPortCtrl,
+                  hostLabel: 'IMAP server',
+                  portDefault: '993',
+                  useSsl: _imapUseSsl,
+                  onSslChanged: (v) => setState(() => _imapUseSsl = v),
+                  hostValidator: (v) =>
+                      v == null || v.isEmpty ? 'Enter IMAP server' : null,
+                ),
+                const SizedBox(height: 16),
+                const Text('Outgoing (SMTP)',
+                    style: TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                _serverRow(
+                  hostCtrl: _smtpHostCtrl,
+                  portCtrl: _smtpPortCtrl,
+                  hostLabel: 'SMTP server',
+                  portDefault: '587',
+                  useSsl: _smtpUseSsl,
+                  onSslChanged: (v) => setState(() => _smtpUseSsl = v),
+                  hostValidator: (v) =>
+                      v == null || v.isEmpty ? 'Enter SMTP server' : null,
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _passwordCtrl,
+                  decoration:
+                      const InputDecoration(labelText: 'App password'),
+                  obscureText: true,
+                  validator: (v) => v == null || v.isEmpty
+                      ? 'Enter your app password'
+                      : null,
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    _error!,
+                    style: const TextStyle(
+                        color: Color(0xFFEF4444), fontSize: 12),
                   ),
                 ],
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _passwordCtrl,
-                decoration:
-                    const InputDecoration(labelText: 'App password'),
-                obscureText: true,
-                validator: (v) =>
-                    v == null || v.isEmpty ? 'Enter your app password' : null,
-              ),
-              if (_error != null) ...[
-                const SizedBox(height: 12),
-                Text(
-                  _error!,
-                  style: const TextStyle(
-                      color: Color(0xFFEF4444), fontSize: 12),
-                ),
               ],
-            ],
+            ),
           ),
         ),
       ),

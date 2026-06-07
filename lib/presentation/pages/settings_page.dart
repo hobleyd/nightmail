@@ -226,7 +226,10 @@ class _AccountsSectionState extends State<_AccountsSection> {
   late TextEditingController _tenantIdController;
   late TextEditingController _hostController;
   late TextEditingController _portController;
+  late TextEditingController _smtpHostController;
+  late TextEditingController _smtpPortController;
   bool _useSsl = true;
+  bool _smtpUseSsl = false;
 
   @override
   void initState() {
@@ -236,6 +239,8 @@ class _AccountsSectionState extends State<_AccountsSection> {
     _tenantIdController = TextEditingController();
     _hostController = TextEditingController();
     _portController = TextEditingController();
+    _smtpHostController = TextEditingController();
+    _smtpPortController = TextEditingController();
   }
 
   @override
@@ -245,6 +250,8 @@ class _AccountsSectionState extends State<_AccountsSection> {
     _tenantIdController.dispose();
     _hostController.dispose();
     _portController.dispose();
+    _smtpHostController.dispose();
+    _smtpPortController.dispose();
     super.dispose();
   }
 
@@ -257,6 +264,9 @@ class _AccountsSectionState extends State<_AccountsSection> {
       _hostController.text = account.host;
       _portController.text = account.port.toString();
       _useSsl = account.useSsl;
+      _smtpHostController.text = account.smtpHost;
+      _smtpPortController.text = account.smtpPort.toString();
+      _smtpUseSsl = account.smtpUseSsl;
     }
   }
 
@@ -279,6 +289,9 @@ class _AccountsSectionState extends State<_AccountsSection> {
           host: _hostController.text,
           port: int.tryParse(_portController.text) ?? a.port,
           useSsl: _useSsl,
+          smtpHost: _smtpHostController.text,
+          smtpPort: int.tryParse(_smtpPortController.text) ?? a.smtpPort,
+          smtpUseSsl: _smtpUseSsl,
         ),
     };
 
@@ -366,83 +379,88 @@ class _AccountsSectionState extends State<_AccountsSection> {
               ],
             ),
             const SizedBox(height: 32),
-            if (_selectedAccount != null) ...[
-              _AccountDetailRow(
-                label: 'Name',
-                value: _selectedAccount!.displayName,
-                isEditing: _isEditing,
-                controller: _nameController,
-              ),
-              _AccountDetailRow(
-                label: 'Email',
-                value: _selectedAccount!.emailAddress,
-                isEditing: _isEditing,
-                controller: _emailController,
-              ),
-              _AccountDetailRow(
-                label: 'Type',
-                value: switch (_selectedAccount!) {
-                  MicrosoftAccount() => 'Microsoft',
-                  GmailAccount() => 'Gmail',
-                  ImapAccount() => 'IMAP',
-                },
-              ),
-              if (_selectedAccount is MicrosoftAccount)
-                _AccountDetailRow(
-                  label: 'Tenant ID',
-                  value: (_selectedAccount as MicrosoftAccount).tenantId,
-                  isEditing: _isEditing,
-                  controller: _tenantIdController,
-                ),
-              if (_selectedAccount is ImapAccount) ...[
-                _AccountDetailRow(
-                  label: 'Host',
-                  value: (_selectedAccount as ImapAccount).host,
-                  isEditing: _isEditing,
-                  controller: _hostController,
-                ),
-                _AccountDetailRow(
-                  label: 'Port',
-                  value: (_selectedAccount as ImapAccount).port.toString(),
-                  isEditing: _isEditing,
-                  controller: _portController,
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Row(
+            if (_selectedAccount != null)
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      SizedBox(
-                        width: 100,
-                        child: Text(
-                          'SSL',
-                          style: TextStyle(
-                            color: c.textMuted,
-                            fontSize: 13,
-                          ),
-                        ),
+                      _AccountDetailRow(
+                        label: 'Name',
+                        value: _selectedAccount!.displayName,
+                        isEditing: _isEditing,
+                        controller: _nameController,
                       ),
-                      if (_isEditing)
-                        Switch(
-                          value: _useSsl,
-                          onChanged: (val) => setState(() => _useSsl = val),
-                          activeThumbColor: Colors.white,
-                          activeTrackColor: AppColors.accent,
-                        )
-                      else
-                        Text(
-                          (_selectedAccount as ImapAccount).useSsl ? 'Yes' : 'No',
-                          style: TextStyle(
-                            color: c.textSecondary,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                          ),
+                      _AccountDetailRow(
+                        label: 'Email',
+                        value: _selectedAccount!.emailAddress,
+                        isEditing: _isEditing,
+                        controller: _emailController,
+                      ),
+                      _AccountDetailRow(
+                        label: 'Type',
+                        value: switch (_selectedAccount!) {
+                          MicrosoftAccount() => 'Microsoft',
+                          GmailAccount() => 'Gmail',
+                          ImapAccount() => 'IMAP',
+                        },
+                      ),
+                      if (_selectedAccount is MicrosoftAccount)
+                        _AccountDetailRow(
+                          label: 'Tenant ID',
+                          value: (_selectedAccount as MicrosoftAccount).tenantId,
+                          isEditing: _isEditing,
+                          controller: _tenantIdController,
                         ),
+                      if (_selectedAccount is ImapAccount) ...[
+                        _SectionSubheader(label: 'Incoming (IMAP)'),
+                        _AccountDetailRow(
+                          label: 'Host',
+                          value: (_selectedAccount as ImapAccount).host,
+                          isEditing: _isEditing,
+                          controller: _hostController,
+                        ),
+                        _AccountDetailRow(
+                          label: 'Port',
+                          value: (_selectedAccount as ImapAccount).port.toString(),
+                          isEditing: _isEditing,
+                          controller: _portController,
+                          keyboardType: TextInputType.number,
+                        ),
+                        _SslRow(
+                          label: 'SSL',
+                          value: (_selectedAccount as ImapAccount).useSsl,
+                          isEditing: _isEditing,
+                          onChanged: (val) => setState(() => _useSsl = val),
+                          editingValue: _useSsl,
+                        ),
+                        _SectionSubheader(label: 'Outgoing (SMTP)'),
+                        _AccountDetailRow(
+                          label: 'Host',
+                          value: (_selectedAccount as ImapAccount).smtpHost,
+                          isEditing: _isEditing,
+                          controller: _smtpHostController,
+                        ),
+                        _AccountDetailRow(
+                          label: 'Port',
+                          value: (_selectedAccount as ImapAccount).smtpPort.toString(),
+                          isEditing: _isEditing,
+                          controller: _smtpPortController,
+                          keyboardType: TextInputType.number,
+                        ),
+                        _SslRow(
+                          label: 'SSL',
+                          value: (_selectedAccount as ImapAccount).smtpUseSsl,
+                          isEditing: _isEditing,
+                          onChanged: (val) => setState(() => _smtpUseSsl = val),
+                          editingValue: _smtpUseSsl,
+                        ),
+                      ],
                     ],
                   ),
                 ),
-              ],
-            ],
-            const Spacer(),
+              ),
+            const SizedBox(height: 16),
             Align(
               alignment: Alignment.bottomRight,
               child: ElevatedButton(
@@ -474,18 +492,94 @@ class _AccountsSectionState extends State<_AccountsSection> {
   }
 }
 
+class _SectionSubheader extends StatelessWidget {
+  const _SectionSubheader({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 8),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: c.textMuted,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+}
+
+class _SslRow extends StatelessWidget {
+  const _SslRow({
+    required this.label,
+    required this.value,
+    required this.isEditing,
+    required this.editingValue,
+    required this.onChanged,
+  });
+
+  final String label;
+  final bool value;
+  final bool isEditing;
+  final bool editingValue;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              label,
+              style: TextStyle(color: c.textMuted, fontSize: 13),
+            ),
+          ),
+          if (isEditing)
+            Switch(
+              value: editingValue,
+              onChanged: onChanged,
+              activeThumbColor: Colors.white,
+              activeTrackColor: AppColors.accent,
+            )
+          else
+            Text(
+              value ? 'Yes' : 'No',
+              style: TextStyle(
+                color: c.textSecondary,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _AccountDetailRow extends StatelessWidget {
   const _AccountDetailRow({
     required this.label,
     required this.value,
     this.isEditing = false,
     this.controller,
+    this.keyboardType,
   });
 
   final String label;
   final String value;
   final bool isEditing;
   final TextEditingController? controller;
+  final TextInputType? keyboardType;
 
   @override
   Widget build(BuildContext context) {
@@ -511,6 +605,7 @@ class _AccountDetailRow extends StatelessWidget {
                     height: 36,
                     child: TextField(
                       controller: controller,
+                      keyboardType: keyboardType,
                       style: TextStyle(
                         color: c.textSecondary,
                         fontSize: 13,

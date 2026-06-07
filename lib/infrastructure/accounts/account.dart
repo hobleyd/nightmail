@@ -121,11 +121,17 @@ final class ImapAccount extends Account {
     required this.host,
     required this.port,
     required this.useSsl,
+    required this.smtpHost,
+    required this.smtpPort,
+    required this.smtpUseSsl,
   });
 
   final String host;
   final int port;
   final bool useSsl;
+  final String smtpHost;
+  final int smtpPort;
+  final bool smtpUseSsl;
 
   @override
   ImapAccount copyWith({
@@ -134,6 +140,9 @@ final class ImapAccount extends Account {
     String? host,
     int? port,
     bool? useSsl,
+    String? smtpHost,
+    int? smtpPort,
+    bool? smtpUseSsl,
   }) {
     return ImapAccount(
       id: id,
@@ -142,17 +151,24 @@ final class ImapAccount extends Account {
       host: host ?? this.host,
       port: port ?? this.port,
       useSsl: useSsl ?? this.useSsl,
+      smtpHost: smtpHost ?? this.smtpHost,
+      smtpPort: smtpPort ?? this.smtpPort,
+      smtpUseSsl: smtpUseSsl ?? this.smtpUseSsl,
     );
   }
 
   factory ImapAccount.fromJson(Map<String, dynamic> json) {
+    final imapHost = json['host'] as String;
     return ImapAccount(
       id: json['id'] as String,
       displayName: json['displayName'] as String,
       emailAddress: json['emailAddress'] as String,
-      host: json['host'] as String,
+      host: imapHost,
       port: json['port'] as int,
       useSsl: json['useSsl'] as bool? ?? true,
+      smtpHost: json['smtpHost'] as String? ?? imapHost,
+      smtpPort: json['smtpPort'] as int? ?? 587,
+      smtpUseSsl: json['smtpUseSsl'] as bool? ?? false,
     );
   }
 
@@ -165,8 +181,21 @@ final class ImapAccount extends Account {
         'host': host,
         'port': port,
         'useSsl': useSsl,
+        'smtpHost': smtpHost,
+        'smtpPort': smtpPort,
+        'smtpUseSsl': smtpUseSsl,
       };
 
   @override
-  List<Object?> get props => [id, displayName, emailAddress, host, port, useSsl];
+  List<Object?> get props => [
+        id,
+        displayName,
+        emailAddress,
+        host,
+        port,
+        useSsl,
+        smtpHost,
+        smtpPort,
+        smtpUseSsl,
+      ];
 }

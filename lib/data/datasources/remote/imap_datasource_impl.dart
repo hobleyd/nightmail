@@ -377,14 +377,82 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     return normalized.isEmpty ? null : normalized;
   }
 
+  Future<SmtpClient> _getSmtpClient() async {
+    final password = await _credentialStorage.loadPassword(_account.id);
+    if (password == null) {
+      throw const AuthException(message: 'No SMTP credentials stored');
+    }
+
+    final client = SmtpClient('nightmail', isLogEnabled: false);
+    await client.connectToServer(
+      _account.smtpHost,
+      _account.smtpPort,
+      isSecure: _account.smtpUseSsl,
+    );
+    await client.ehlo();
+    if (!_account.smtpUseSsl && client.serverInfo.supportsStartTls) {
+      await client.startTls();
+    }
+    await client.authenticate(_account.emailAddress, password);
+    return client;
+  }
+
+  Future<void> _sendMime(MimeMessage message) async {
+    final client = await _getSmtpClient();
+    try {
+      final response = await client.sendMessage(message);
+      if (!response.isOkStatus) {
+        throw ServerException(message: 'SMTP error: ${response.code}');
+      }
+    } on SmtpException catch (e) {
+      throw ServerException(message: e.message ?? 'SMTP error');
+    } finally {
+      await client.quit();
+    }
+  }
+
   @override
   Future<void> sendEmail({
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
-  }) {
-    throw UnimplementedError('sendEmail not yet supported for IMAP');
+  }) async {
+    final builder = MessageBuilder()
+      ..from = [MailAddress(null, _account.emailAddress)]
+      ..to = toAddresses.map((e) => MailAddress(null, e)).toList()
+      ..cc = ccAddresses.map((e) => MailAddress(null, e)).toList()
+      ..subject = subject
+      ..addTextPlain(body);
+    await _sendMime(builder.buildMimeMessage());
+  }
+
+  /// Splits a composite message ID (`folderId:uid`) into its parts.
+  /// Returns null if the ID is malformed.
+  (String folderId, int uid)? _parseMessageId(String messageId) {
+    final sep = messageId.lastIndexOf(':');
+    if (sep <= 0) return null;
+    final uid = int.tryParse(messageId.substring(sep + 1));
+    if (uid == null) return null;
+    return (messageId.substring(0, sep), uid);
+  }
+
+  Future<MimeMessage> _fetchOriginal(String messageId) async {
+    final parsed = _parseMessageId(messageId);
+    if (parsed == null) throw ServerException(message: 'Invalid message ID');
+    final (folderId, uid) = parsed;
+
+    final client = await _getConnectedClient();
+    try {
+      await _selectMailboxPath(client, folderId);
+      final seq = MessageSequence.fromId(uid, isUid: true);
+      final result = await client.uidFetchMessages(seq, 'BODY.PEEK[]');
+      final msg = result.messages.firstOrNull;
+      if (msg == null) throw ServerException(message: 'Message not found');
+      return msg;
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    }
   }
 
   @override
@@ -392,8 +460,14 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     required String messageId,
     required String comment,
     bool replyAll = false,
-  }) {
-    throw UnimplementedError('replyToEmail not yet supported for IMAP');
+  }) async {
+    final original = await _fetchOriginal(messageId);
+    final builder = MessageBuilder.prepareReplyToMessage(
+      original,
+      MailAddress(null, _account.emailAddress),
+      replyAll: replyAll,
+    )..addTextPlain(comment);
+    await _sendMime(builder.buildMimeMessage());
   }
 
   @override
@@ -401,8 +475,16 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     required String messageId,
     required List<String> toAddresses,
     required String comment,
-  }) {
-    throw UnimplementedError('forwardEmail not yet supported for IMAP');
+  }) async {
+    final original = await _fetchOriginal(messageId);
+
+    final builder = MessageBuilder.prepareForwardMessage(
+      original,
+      from: MailAddress(null, _account.emailAddress),
+    )
+      ..to = toAddresses.map((e) => MailAddress(null, e)).toList()
+      ..addTextPlain(comment);
+    await _sendMime(builder.buildMimeMessage());
   }
 
   @override

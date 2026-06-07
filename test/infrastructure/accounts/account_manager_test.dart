@@ -123,6 +123,9 @@ void main() {
           host: 'imap.test.com',
           port: 993,
           useSsl: true,
+          smtpHost: 'smtp.test.com',
+          smtpPort: 587,
+          smtpUseSsl: false,
         ),
         const ImapAccount(
           id: '2',
@@ -131,6 +134,9 @@ void main() {
           host: 'imap.test.com',
           port: 993,
           useSsl: true,
+          smtpHost: 'smtp.test.com',
+          smtpPort: 587,
+          smtpUseSsl: false,
         ),
         const ImapAccount(
           id: '3',
@@ -139,6 +145,9 @@ void main() {
           host: 'imap.test.com',
           port: 993,
           useSsl: true,
+          smtpHost: 'smtp.test.com',
+          smtpPort: 587,
+          smtpUseSsl: false,
         ),
       ];
 

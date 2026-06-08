@@ -12,6 +12,7 @@ import 'presentation/blocs/theme/theme_state.dart';
 import 'presentation/pages/account_selection_page.dart';
 import 'presentation/pages/calendar_window.dart';
 import 'presentation/pages/compose_window.dart';
+import 'presentation/pages/tasks_window.dart';
 import 'presentation/pages/home_page.dart';
 
 void main(List<String> args) async {
@@ -32,6 +33,15 @@ void main(List<String> args) async {
         () async => windowManager.show(),
       );
       runApp(const CalendarWindowApp());
+      return;
+    }
+
+    if (arguments['type'] == 'tasks') {
+      windowManager.waitUntilReadyToShow(
+        const WindowOptions(size: Size(640, 520), center: true, title: 'Tasks'),
+        () async => windowManager.show(),
+      );
+      runApp(const TasksWindowApp());
       return;
     }
 

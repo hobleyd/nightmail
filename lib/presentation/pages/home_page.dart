@@ -97,9 +97,23 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
   Widget build(BuildContext context) {
     return BlocBuilder<HomeCubit, HomeState>(
       builder: (context, homeState) {
-        final selectedFolder = _resolveFolder(context, homeState);
+        return BlocBuilder<FolderListBloc, FolderListState>(
+          builder: (context, folderListState) {
+            return _buildLayout(context, homeState, folderListState);
+          },
+        );
+      },
+    );
+  }
 
-        return LayoutBuilder(
+  Widget _buildLayout(
+    BuildContext context,
+    HomeState homeState,
+    FolderListState folderListState,
+  ) {
+    final selectedFolder = _resolveFolder(homeState, folderListState);
+
+    return LayoutBuilder(
           builder: (context, constraints) {
             final totalWidth = constraints.maxWidth;
             const totalHandleWidth = _handleWidth * 2;
@@ -209,8 +223,6 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
             );
           },
         );
-      },
-    );
   }
 
   static DateTime _mondayOfWeek(DateTime date) {
@@ -218,12 +230,11 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
     return DateTime(date.year, date.month, date.day - daysFromMonday);
   }
 
-  EmailFolder? _resolveFolder(BuildContext context, HomeState homeState) {
+  EmailFolder? _resolveFolder(HomeState homeState, FolderListState folderListState) {
     if (homeState.selectedFolderId == null) return null;
-    final folderState = context.read<FolderListBloc>().state;
-    if (folderState is FolderListLoaded) {
+    if (folderListState is FolderListLoaded) {
       try {
-        return folderState.folders
+        return folderListState.folders
             .firstWhere((f) => f.id == homeState.selectedFolderId);
       } catch (_) {}
     }

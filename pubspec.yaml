@@ -121,3 +121,10 @@ flutter_launcher_icons:
     image_path: "assets/logo.png"
     background_color: "#0a0a2e"
     theme_color: "#0a0a2e"
+
+dependency_overrides:
+  # Local patch: fixes StatusParser regex to handle unquoted atom mailbox names
+  # (e.g. Dovecot returns "STATUS INBOX ..." not "STATUS \"INBOX\" ...").
+  # Remove once upstream enough_mail releases a fix.
+  enough_mail:
+    path: packages/enough_mail

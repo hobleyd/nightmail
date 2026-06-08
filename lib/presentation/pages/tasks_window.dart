@@ -3,8 +3,11 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
+import '../blocs/tasks/tasks_bloc.dart';
+import '../blocs/tasks/tasks_event.dart';
 import '../blocs/theme/theme_cubit.dart';
 import '../blocs/theme/theme_state.dart';
+import 'tasks_page.dart';
 
 class TasksWindowApp extends StatelessWidget {
   const TasksWindowApp({super.key});
@@ -30,6 +33,9 @@ class TasksWindowApp extends StatelessWidget {
       providers: [
         BlocProvider<ThemeCubit>(create: (_) => sl<ThemeCubit>()..load()),
         BlocProvider.value(value: sl<AccountCubit>()..initialize()),
+        BlocProvider(
+          create: (_) => sl<TasksBloc>()..add(const TasksLoadRequested()),
+        ),
       ],
       child: BlocBuilder<ThemeCubit, ThemeState>(
         builder: (context, themeState) {
@@ -57,28 +63,7 @@ class _TasksWindowPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.checklist_rounded,
-              size: 48,
-              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Tasks',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .onSurface
-                        .withValues(alpha: 0.5),
-                  ),
-            ),
-          ],
-        ),
-      ),
+      body: TasksDayPanel(onClose: () {}),
     );
   }
 }

@@ -7,9 +7,12 @@ import 'data/datasources/local/email_local_datasource.dart';
 import 'data/datasources/local/email_local_datasource_impl.dart';
 import 'data/repositories/calendar_repository_impl.dart';
 import 'data/repositories/email_repository_impl.dart';
+import 'data/repositories/tasks_repository_impl.dart';
 import 'domain/repositories/calendar_repository.dart';
 import 'domain/repositories/email_repository.dart';
+import 'domain/repositories/tasks_repository.dart';
 import 'domain/usecases/create_calendar_event.dart';
+import 'domain/usecases/create_task.dart';
 import 'domain/usecases/delete_email.dart';
 import 'domain/usecases/move_email.dart';
 import 'domain/usecases/download_attachment.dart';
@@ -18,9 +21,12 @@ import 'domain/usecases/get_calendar_events.dart';
 import 'domain/usecases/get_email.dart';
 import 'domain/usecases/get_emails.dart';
 import 'domain/usecases/get_mail_folders.dart';
+import 'domain/usecases/get_task_lists.dart';
+import 'domain/usecases/get_tasks.dart';
 import 'domain/usecases/mark_email_as_read.dart';
 import 'domain/usecases/send_email.dart';
 import 'domain/usecases/update_calendar_event.dart';
+import 'domain/usecases/update_task_status.dart';
 import 'domain/usecases/get_cached_emails.dart';
 import 'infrastructure/accounts/account_manager.dart';
 import 'infrastructure/accounts/account_storage.dart';
@@ -34,6 +40,7 @@ import 'presentation/blocs/email_detail/email_detail_bloc.dart';
 import 'presentation/blocs/email_list/email_list_bloc.dart';
 import 'presentation/blocs/folder_list/folder_list_bloc.dart';
 import 'presentation/blocs/mail_poller/mail_poller_cubit.dart';
+import 'presentation/blocs/tasks/tasks_bloc.dart';
 import 'presentation/blocs/theme/theme_cubit.dart';
 
 final sl = GetIt.instance;
@@ -85,6 +92,9 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton<CalendarRepository>(
     () => CalendarRepositoryImpl(accountManager: sl<AccountManager>()),
   );
+  sl.registerLazySingleton<TasksRepository>(
+    () => TasksRepositoryImpl(accountManager: sl<AccountManager>()),
+  );
 
   // Domain — use cases
   sl.registerLazySingleton(() => GetEmails(sl<EmailRepository>()));
@@ -100,6 +110,10 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => GetCalendarEvents(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => CreateCalendarEvent(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => UpdateCalendarEvent(sl<CalendarRepository>()));
+  sl.registerLazySingleton(() => GetTaskLists(sl<TasksRepository>()));
+  sl.registerLazySingleton(() => GetTasks(sl<TasksRepository>()));
+  sl.registerLazySingleton(() => CreateTask(sl<TasksRepository>()));
+  sl.registerLazySingleton(() => UpdateTaskStatus(sl<TasksRepository>()));
 
   // Settings
   sl.registerLazySingleton(() => AppSettings());
@@ -139,6 +153,12 @@ Future<void> configureDependencies() async {
     () => CalendarBloc(getCalendarEvents: sl<GetCalendarEvents>()),
   );
   sl.registerFactory(() => ComposeBloc(sendEmail: sl<SendEmail>()));
+  sl.registerFactory(() => TasksBloc(
+        getTaskLists: sl<GetTaskLists>(),
+        getTasks: sl<GetTasks>(),
+        createTask: sl<CreateTask>(),
+        updateTaskStatus: sl<UpdateTaskStatus>(),
+      ));
   sl.registerFactory(() => EventEditBloc(
         createCalendarEvent: sl<CreateCalendarEvent>(),
         updateCalendarEvent: sl<UpdateCalendarEvent>(),

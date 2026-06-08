@@ -5,14 +5,18 @@ import 'package:dio/dio.dart';
 
 import '../../../core/error/exceptions.dart';
 import '../../../domain/entities/calendar_recurrence.dart';
+import '../../../domain/entities/todo_task.dart';
 import '../../../domain/usecases/create_calendar_event.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
 import '../../../infrastructure/http/graph_http_client.dart';
 import '../../models/calendar_event_model.dart';
 import '../../models/email_folder_model.dart';
 import '../../models/email_model.dart';
+import '../../models/todo_task_list_model.dart';
+import '../../models/todo_task_model.dart';
 import 'calendar_remote_datasource.dart';
 import 'email_remote_datasource.dart';
+import 'tasks_remote_datasource.dart';
 
 final _emailListSelect = [
   'id',
@@ -33,7 +37,7 @@ final _emailListSelect = [
 final _emailDetailSelect = '$_emailListSelect,body';
 
 class GraphApiDatasourceImpl
-    implements EmailRemoteDatasource, CalendarRemoteDatasource {
+    implements EmailRemoteDatasource, CalendarRemoteDatasource, TasksRemoteDatasource {
   GraphApiDatasourceImpl({required GraphHttpClient client})
       : _dio = client.dio;
 
@@ -542,6 +546,117 @@ class GraphApiDatasourceImpl
             message: 'Attachment has no content', statusCode: 200);
       }
       return base64Decode(contentBytes);
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<List<TodoTaskListModel>> getTaskLists() async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/me/todo/lists',
+        queryParameters: {'\$top': 100},
+      );
+      final value = (response.data?['value'] as List<dynamic>?) ?? [];
+      return value
+          .map((e) => TodoTaskListModel.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<List<TodoTaskModel>> getTasks(
+    String listId, {
+    bool includeCompleted = false,
+  }) async {
+    try {
+      final params = <String, dynamic>{
+        '\$top': 200,
+        '\$orderby': 'createdDateTime desc',
+      };
+      if (!includeCompleted) {
+        params['\$filter'] = "status ne 'completed'";
+      }
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/me/todo/lists/$listId/tasks',
+        queryParameters: params,
+      );
+      final value = (response.data?['value'] as List<dynamic>?) ?? [];
+      return value
+          .map((e) => TodoTaskModel.fromJson(
+                e as Map<String, dynamic>,
+                listId: listId,
+              ))
+          .toList();
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<TodoTaskModel> createTask({
+    required String listId,
+    required String title,
+    String? body,
+    DateTime? dueDate,
+    TodoTaskImportance importance = TodoTaskImportance.normal,
+  }) async {
+    try {
+      final data = <String, dynamic>{
+        'title': title,
+        'importance': switch (importance) {
+          TodoTaskImportance.high => 'high',
+          TodoTaskImportance.low => 'low',
+          TodoTaskImportance.normal => 'normal',
+        },
+      };
+      if (body != null && body.isNotEmpty) {
+        data['body'] = {'content': body, 'contentType': 'text'};
+      }
+      if (dueDate != null) {
+        final d = dueDate.toLocal();
+        final dateStr =
+            '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}T00:00:00';
+        data['dueDateTime'] = {'dateTime': dateStr, 'timeZone': 'UTC'};
+      }
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/me/todo/lists/$listId/tasks',
+        data: data,
+      );
+      if (response.data == null) {
+        throw const ServerException(message: 'Empty response from server');
+      }
+      return TodoTaskModel.fromJson(response.data!, listId: listId);
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<TodoTaskModel> updateTaskStatus({
+    required String listId,
+    required String taskId,
+    required TodoTaskStatus status,
+  }) async {
+    try {
+      final statusStr = switch (status) {
+        TodoTaskStatus.completed => 'completed',
+        TodoTaskStatus.inProgress => 'inProgress',
+        TodoTaskStatus.waitingOnOthers => 'waitingOnOthers',
+        TodoTaskStatus.deferred => 'deferred',
+        TodoTaskStatus.notStarted => 'notStarted',
+      };
+      final response = await _dio.patch<Map<String, dynamic>>(
+        '/me/todo/lists/$listId/tasks/$taskId',
+        data: {'status': statusStr},
+      );
+      if (response.data == null) {
+        throw const ServerException(message: 'Empty response from server');
+      }
+      return TodoTaskModel.fromJson(response.data!, listId: listId);
     } on DioException catch (e) {
       throw _mapDioException(e);
     }

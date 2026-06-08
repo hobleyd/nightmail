@@ -54,6 +54,7 @@ class MicrosoftAuthService implements AuthService {
     'https://graph.microsoft.com/Mail.Send',
     'https://graph.microsoft.com/MailboxSettings.Read',
     'https://graph.microsoft.com/Calendars.Read',
+    'https://graph.microsoft.com/Tasks.ReadWrite',
   ];
 
   String get _baseUrl =>

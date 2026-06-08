@@ -7,6 +7,8 @@ import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/calendar/calendar_bloc.dart';
 import '../blocs/calendar/calendar_event.dart';
+import '../blocs/tasks/tasks_bloc.dart';
+import '../blocs/tasks/tasks_event.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
 import '../blocs/email_detail/email_detail_event.dart';
 import '../blocs/email_list/email_list_bloc.dart';
@@ -41,6 +43,10 @@ class HomePage extends StatelessWidget {
         BlocProvider(create: (_) => sl<EmailDetailBloc>()),
         BlocProvider(create: (_) => HomeCubit()),
         BlocProvider(create: (_) => sl<CalendarBloc>()),
+        BlocProvider(
+          create: (_) =>
+              sl<TasksBloc>()..add(const TasksLoadRequested()),
+        ),
       ],
       child: const _HomeView(),
     );

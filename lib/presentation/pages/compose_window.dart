@@ -109,8 +109,9 @@ class _ComposeWindowPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final fromAddress =
-        sl<AccountManager>().activeAccount?.emailAddress ?? '';
+    final account = sl<AccountManager>().activeAccount;
+    final fromAddress = account?.emailAddress ?? '';
+    final accountId = account?.id;
     return BlocProvider(
       create: (_) => ComposeBloc(sendEmail: sl<SendEmail>()),
       child: Scaffold(
@@ -133,6 +134,7 @@ class _ComposeWindowPage extends StatelessWidget {
             originalEmail: _originalEmail(),
             onClose: _close,
             fromAddress: fromAddress,
+            accountId: accountId,
             scrollable: true,
             onTitleChanged: (title) => windowManager.setTitle(title),
           ),

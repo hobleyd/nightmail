@@ -10,11 +10,13 @@ import 'data/datasources/local/sender_local_datasource_impl.dart';
 import 'data/repositories/calendar_repository_impl.dart';
 import 'data/repositories/email_repository_impl.dart';
 import 'data/repositories/sender_repository_impl.dart';
+import 'data/repositories/system_contacts_repository_impl.dart';
 import 'data/repositories/tasks_repository_impl.dart';
 import 'data/services/eml_parser.dart';
 import 'domain/repositories/calendar_repository.dart';
 import 'domain/repositories/email_repository.dart';
 import 'domain/repositories/sender_repository.dart';
+import 'domain/repositories/system_contacts_repository.dart';
 import 'domain/repositories/tasks_repository.dart';
 import 'domain/usecases/attach_email_to_task.dart';
 import 'domain/usecases/check_sender_anomaly.dart';
@@ -34,6 +36,7 @@ import 'domain/usecases/get_task_lists.dart';
 import 'domain/usecases/get_tasks.dart';
 import 'domain/usecases/mark_email_as_read.dart';
 import 'domain/usecases/record_known_senders.dart';
+import 'domain/usecases/search_contacts.dart';
 import 'domain/usecases/send_email.dart';
 import 'domain/usecases/update_calendar_event.dart';
 import 'domain/usecases/update_task_due_date.dart';
@@ -106,6 +109,9 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton<SenderRepository>(
     () => SenderRepositoryImpl(localDatasource: sl<SenderLocalDatasource>()),
   );
+  sl.registerLazySingleton<SystemContactsRepository>(
+    () => SystemContactsRepositoryImpl(),
+  );
   sl.registerLazySingleton<CalendarRepository>(
     () => CalendarRepositoryImpl(accountManager: sl<AccountManager>()),
   );
@@ -126,6 +132,10 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => GetCachedEmails(sl<EmailRepository>()));
   sl.registerLazySingleton(() => RecordKnownSenders(sl<SenderRepository>()));
   sl.registerLazySingleton(() => CheckSenderAnomaly(sl<SenderRepository>()));
+  sl.registerLazySingleton(() => SearchContacts(
+        senderRepository: sl<SenderRepository>(),
+        systemContactsRepository: sl<SystemContactsRepository>(),
+      ));
   sl.registerLazySingleton(() => GetCalendarEvents(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => CreateCalendarEvent(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => UpdateCalendarEvent(sl<CalendarRepository>()));

@@ -28,6 +28,8 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSContactsUsageDescription</key>
+	<string>NightMail uses your contacts to suggest recipients when composing email.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

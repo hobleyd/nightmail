@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../domain/entities/contact_suggestion.dart';
 import '../../domain/entities/email.dart';
+import '../../domain/usecases/search_contacts.dart';
 import '../../domain/usecases/send_email.dart';
 import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
@@ -19,11 +23,13 @@ class ComposeDialog extends StatelessWidget {
     required this.mode,
     this.originalEmail,
     required this.fromAddress,
+    this.accountId,
   });
 
   final ComposeMode mode;
   final Email? originalEmail;
   final String fromAddress;
+  final String? accountId;
 
   static Future<void> show(
     BuildContext context, {
@@ -34,6 +40,8 @@ class ComposeDialog extends StatelessWidget {
     final fromAddress = accountState is AccountsLoaded
         ? accountState.activeAccount.emailAddress
         : '';
+    final accountId =
+        accountState is AccountsLoaded ? accountState.activeAccount.id : null;
     return showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -43,6 +51,7 @@ class ComposeDialog extends StatelessWidget {
           mode: mode,
           originalEmail: originalEmail,
           fromAddress: fromAddress,
+          accountId: accountId,
         ),
       ),
     );
@@ -78,6 +87,7 @@ class ComposeDialog extends StatelessWidget {
           originalEmail: originalEmail,
           onClose: close,
           fromAddress: fromAddress,
+          accountId: accountId,
         ),
       ),
     );
@@ -91,6 +101,7 @@ class ComposeForm extends StatefulWidget {
     this.originalEmail,
     required this.onClose,
     required this.fromAddress,
+    this.accountId,
     this.scrollable = false,
     this.onTitleChanged,
   });
@@ -99,6 +110,7 @@ class ComposeForm extends StatefulWidget {
   final Email? originalEmail;
   final VoidCallback onClose;
   final String fromAddress;
+  final String? accountId;
   final bool scrollable;
   final ValueChanged<String>? onTitleChanged;
 
@@ -261,7 +273,7 @@ class _ComposeFormState extends State<ComposeForm> {
         ));
   }
 
-  List<Widget> _buildFields(AppColors c) => [
+  List<Widget> _buildFields(AppColors c, String? accountId) => [
         _FieldRow(
           label: 'From',
           controller: _fromController,
@@ -278,6 +290,7 @@ class _ComposeFormState extends State<ComposeForm> {
               _handleDrop(address, fromFieldId, 'to'),
           showInput: _toInputEditable,
           hintText: 'recipient@example.com',
+          accountId: accountId,
         ),
         const SizedBox(height: 8),
         _RecipientField(
@@ -289,6 +302,7 @@ class _ComposeFormState extends State<ComposeForm> {
               _handleDrop(address, fromFieldId, 'cc'),
           showInput: _ccInputEditable,
           hintText: 'cc@example.com',
+          accountId: accountId,
         ),
         const SizedBox(height: 8),
         _FieldRow(
@@ -305,6 +319,7 @@ class _ComposeFormState extends State<ComposeForm> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final accountId = widget.accountId;
 
     if (widget.scrollable) {
       return Column(
@@ -318,7 +333,7 @@ class _ComposeFormState extends State<ComposeForm> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  ..._buildFields(c),
+                  ..._buildFields(c, accountId),
                   TextField(
                     controller: _bodyController,
                     focusNode: _bodyFocus,
@@ -361,7 +376,7 @@ class _ComposeFormState extends State<ComposeForm> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                ..._buildFields(c),
+                ..._buildFields(c, accountId),
                 SizedBox(
                   height: 240,
                   child: TextField(
@@ -394,6 +409,10 @@ class _ComposeFormState extends State<ComposeForm> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Recipient field
+// ---------------------------------------------------------------------------
+
 class _RecipientField extends StatefulWidget {
   const _RecipientField({
     required this.label,
@@ -403,6 +422,7 @@ class _RecipientField extends StatefulWidget {
     required this.onDropAccepted,
     this.showInput = false,
     this.hintText,
+    this.accountId,
   });
 
   final String label;
@@ -412,6 +432,7 @@ class _RecipientField extends StatefulWidget {
   final void Function(String address, String fromFieldId) onDropAccepted;
   final bool showInput;
   final String? hintText;
+  final String? accountId;
 
   @override
   State<_RecipientField> createState() => _RecipientFieldState();
@@ -422,6 +443,13 @@ class _RecipientFieldState extends State<_RecipientField> {
   final TextEditingController _inputController = TextEditingController();
   final FocusNode _inputFocus = FocusNode();
   final FocusNode _chipKeyFocus = FocusNode();
+
+  // Typeahead
+  final _layerLink = LayerLink();
+  final _overlayController = OverlayPortalController();
+  List<ContactSuggestion> _suggestions = [];
+  int _suggestionIndex = -1;
+  Timer? _searchDebounce;
 
   @override
   void initState() {
@@ -440,6 +468,7 @@ class _RecipientFieldState extends State<_RecipientField> {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _inputController.dispose();
     _inputFocus.removeListener(_onInputFocusChanged);
     _inputFocus.dispose();
@@ -448,7 +477,10 @@ class _RecipientFieldState extends State<_RecipientField> {
   }
 
   void _onInputFocusChanged() {
-    if (!_inputFocus.hasFocus) _flushInput();
+    if (!_inputFocus.hasFocus) {
+      _flushInput();
+      _clearSuggestions();
+    }
   }
 
   void _flushInput() {
@@ -474,6 +506,67 @@ class _RecipientFieldState extends State<_RecipientField> {
     setState(() => _selectedIndex = null);
     widget.onChanged(newList);
     if (widget.showInput) _inputFocus.requestFocus();
+  }
+
+  void _onTextChanged(String val) {
+    if (val.endsWith(',') || val.endsWith(';')) {
+      _flushInput();
+      _clearSuggestions();
+      return;
+    }
+
+    _searchDebounce?.cancel();
+    final trimmed = val.trim();
+
+    if (trimmed.isEmpty) {
+      _clearSuggestions();
+      return;
+    }
+
+    _searchDebounce = Timer(const Duration(milliseconds: 200), () async {
+      if (!mounted) return;
+      final query = _inputController.text.trim();
+      if (query.isEmpty) return;
+      final accountId = widget.accountId;
+      if (accountId == null) return;
+
+      try {
+        final results = await sl<SearchContacts>().call(
+          query: query,
+          accountId: accountId,
+        );
+        if (mounted) _setSuggestions(results);
+      } catch (_) {}
+    });
+  }
+
+  void _clearSuggestions() {
+    if (!mounted || _suggestions.isEmpty) return;
+    setState(() {
+      _suggestions = [];
+      _suggestionIndex = -1;
+    });
+    if (_overlayController.isShowing) _overlayController.hide();
+  }
+
+  void _setSuggestions(List<ContactSuggestion> suggestions) {
+    setState(() {
+      _suggestions = suggestions;
+      _suggestionIndex = -1;
+    });
+    if (suggestions.isNotEmpty) {
+      if (!_overlayController.isShowing) _overlayController.show();
+    } else {
+      if (_overlayController.isShowing) _overlayController.hide();
+    }
+  }
+
+  void _addSuggestion(ContactSuggestion s) {
+    final newList = List<String>.from(widget.recipients)..add(s.displayText);
+    _inputController.clear();
+    _clearSuggestions();
+    widget.onChanged(newList);
+    _inputFocus.requestFocus();
   }
 
   @override
@@ -552,8 +645,38 @@ class _RecipientFieldState extends State<_RecipientField> {
                           IntrinsicWidth(
                             child: Focus(
                               onKeyEvent: (node, event) {
-                                if (event is KeyDownEvent &&
-                                    event.logicalKey ==
+                                if (event is! KeyDownEvent) {
+                                  return KeyEventResult.ignored;
+                                }
+                                if (_suggestions.isNotEmpty) {
+                                  if (event.logicalKey ==
+                                      LogicalKeyboardKey.arrowDown) {
+                                    setState(() => _suggestionIndex =
+                                        (_suggestionIndex + 1)
+                                            .clamp(0, _suggestions.length - 1));
+                                    return KeyEventResult.handled;
+                                  }
+                                  if (event.logicalKey ==
+                                      LogicalKeyboardKey.arrowUp) {
+                                    setState(() => _suggestionIndex =
+                                        (_suggestionIndex - 1)
+                                            .clamp(-1, _suggestions.length - 1));
+                                    return KeyEventResult.handled;
+                                  }
+                                  if (event.logicalKey ==
+                                      LogicalKeyboardKey.escape) {
+                                    _clearSuggestions();
+                                    return KeyEventResult.handled;
+                                  }
+                                  if (event.logicalKey ==
+                                          LogicalKeyboardKey.enter &&
+                                      _suggestionIndex >= 0) {
+                                    _addSuggestion(
+                                        _suggestions[_suggestionIndex]);
+                                    return KeyEventResult.handled;
+                                  }
+                                }
+                                if (event.logicalKey ==
                                         LogicalKeyboardKey.backspace &&
                                     _inputController.text.isEmpty &&
                                     widget.recipients.isNotEmpty) {
@@ -562,31 +685,46 @@ class _RecipientFieldState extends State<_RecipientField> {
                                 }
                                 return KeyEventResult.ignored;
                               },
-                              child: TextField(
-                                controller: _inputController,
-                                focusNode: _inputFocus,
-                                style: TextStyle(
-                                  color: c.textPrimary,
-                                  fontSize: 13,
-                                ),
-                                onSubmitted: (_) => _flushInput(),
-                                onChanged: (val) {
-                                  if (val.endsWith(',') ||
-                                      val.endsWith(';')) {
-                                    _flushInput();
-                                  }
-                                },
-                                decoration: InputDecoration(
-                                  hintText: widget.recipients.isEmpty
-                                      ? widget.hintText
-                                      : null,
-                                  hintStyle: TextStyle(
-                                    color: c.textMuted,
-                                    fontSize: 13,
+                              child: OverlayPortal(
+                                controller: _overlayController,
+                                overlayChildBuilder: (ctx) => Align(
+                                  alignment: Alignment.topLeft,
+                                  child: CompositedTransformFollower(
+                                    link: _layerLink,
+                                    showWhenUnlinked: false,
+                                    targetAnchor: Alignment.bottomLeft,
+                                    followerAnchor: Alignment.topLeft,
+                                    child: _SuggestionDropdown(
+                                      suggestions: _suggestions,
+                                      selectedIndex: _suggestionIndex,
+                                      onSelect: _addSuggestion,
+                                    ),
                                   ),
-                                  border: InputBorder.none,
-                                  contentPadding: EdgeInsets.zero,
-                                  isDense: true,
+                                ),
+                                child: CompositedTransformTarget(
+                                  link: _layerLink,
+                                  child: TextField(
+                                    controller: _inputController,
+                                    focusNode: _inputFocus,
+                                    style: TextStyle(
+                                      color: c.textPrimary,
+                                      fontSize: 13,
+                                    ),
+                                    onSubmitted: (_) => _flushInput(),
+                                    onChanged: _onTextChanged,
+                                    decoration: InputDecoration(
+                                      hintText: widget.recipients.isEmpty
+                                          ? widget.hintText
+                                          : null,
+                                      hintStyle: TextStyle(
+                                        color: c.textMuted,
+                                        fontSize: 13,
+                                      ),
+                                      border: InputBorder.none,
+                                      contentPadding: EdgeInsets.zero,
+                                      isDense: true,
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),
@@ -630,6 +768,78 @@ class _RecipientFieldState extends State<_RecipientField> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Suggestion dropdown
+// ---------------------------------------------------------------------------
+
+class _SuggestionDropdown extends StatelessWidget {
+  const _SuggestionDropdown({
+    required this.suggestions,
+    required this.selectedIndex,
+    required this.onSelect,
+  });
+
+  final List<ContactSuggestion> suggestions;
+  final int selectedIndex;
+  final ValueChanged<ContactSuggestion> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Material(
+      color: c.surfacePanel,
+      elevation: 8,
+      borderRadius: BorderRadius.circular(6),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 400, maxHeight: 248),
+        child: ListView.separated(
+          shrinkWrap: true,
+          padding: EdgeInsets.zero,
+          itemCount: suggestions.length,
+          separatorBuilder: (_, _) => Divider(height: 1, color: c.border),
+          itemBuilder: (ctx, i) {
+            final s = suggestions[i];
+            final hasName = s.name != null && s.name!.isNotEmpty;
+            return ListTile(
+              dense: true,
+              selected: i == selectedIndex,
+              selectedTileColor: AppColors.accent.withAlpha(40),
+              hoverColor: AppColors.accent.withAlpha(20),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+              visualDensity: VisualDensity.compact,
+              title: Text(
+                hasName ? s.name! : s.address,
+                style: TextStyle(
+                  color: c.textPrimary,
+                  fontSize: 13,
+                  fontWeight:
+                      hasName ? FontWeight.w500 : FontWeight.normal,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: hasName
+                  ? Text(
+                      s.address,
+                      style: TextStyle(color: c.textMuted, fontSize: 11),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    )
+                  : null,
+              onTap: () => onSelect(s),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Recipient chip
+// ---------------------------------------------------------------------------
+
 class _RecipientChip extends StatelessWidget {
   const _RecipientChip({
     required this.address,
@@ -640,6 +850,14 @@ class _RecipientChip extends StatelessWidget {
   final String address;
   final bool isSelected;
   final double opacity;
+
+  // Show just the name portion from "Name <email>" formatted strings.
+  static final _nameRe = RegExp(r'^(.+?)\s*<[^>]+>\s*$');
+
+  String get _label {
+    final m = _nameRe.firstMatch(address);
+    return m != null ? m.group(1)!.trim() : address;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -658,7 +876,7 @@ class _RecipientChip extends StatelessWidget {
           ),
         ),
         child: Text(
-          address,
+          _label,
           style: TextStyle(
             color: isSelected ? AppColors.accent : c.textSecondary,
             fontSize: 12,
@@ -668,6 +886,10 @@ class _RecipientChip extends StatelessWidget {
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// Supporting widgets
+// ---------------------------------------------------------------------------
 
 class _TitleBar extends StatelessWidget {
   const _TitleBar({required this.title, required this.onClose});

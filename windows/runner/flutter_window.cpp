@@ -62,8 +62,8 @@ bool FlutterWindow::OnCreate() {
           int count = 0;
           if (const auto* v = std::get_if<int32_t>(call.arguments())) {
             count = *v;
-          } else if (const auto* v = std::get_if<int64_t>(call.arguments())) {
-            count = static_cast<int>(*v);
+          } else if (const auto* v64 = std::get_if<int64_t>(call.arguments())) {
+            count = static_cast<int>(*v64);
           }
           UpdateBadge(count);
           result->Success();

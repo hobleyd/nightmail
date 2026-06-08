@@ -28,6 +28,7 @@ import '../blocs/email_detail/email_detail_event.dart';
 import '../blocs/email_detail/email_detail_state.dart';
 import '../blocs/email_list/email_list_bloc.dart';
 import '../blocs/email_list/email_list_event.dart';
+import '../blocs/home/home_cubit.dart';
 import 'email_date_formatter.dart';
 
 class ReadingPane extends StatelessWidget {
@@ -234,6 +235,7 @@ class _ReadingPaneToolbar extends StatelessWidget {
       ),
       (_) {
         context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+        context.read<HomeCubit>().clearEmail();
         context.read<EmailListBloc>().add(
               EmailListEmailDeleted(emailId: email.id),
             );

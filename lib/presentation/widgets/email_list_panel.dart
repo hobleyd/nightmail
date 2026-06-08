@@ -8,9 +8,12 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_folder.dart';
+import '../blocs/email_detail/email_detail_bloc.dart';
+import '../blocs/email_detail/email_detail_event.dart';
 import '../blocs/email_list/email_list_bloc.dart';
 import '../blocs/email_list/email_list_event.dart';
 import '../blocs/email_list/email_list_state.dart';
+import '../blocs/home/home_cubit.dart';
 import 'email_date_formatter.dart';
 import 'email_list_item.dart';
 
@@ -175,6 +178,10 @@ class _EmailListPanelState extends State<EmailListPanel> {
 
   void _deleteSelected() {
     final ids = List.of(_selectedEmailIds);
+    if (widget.selectedEmailId != null && ids.contains(widget.selectedEmailId)) {
+      context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+      context.read<HomeCubit>().clearEmail();
+    }
     context.read<EmailListBloc>().add(EmailListEmailsBulkDeleted(emailIds: ids));
     _clearSelection();
   }
@@ -183,6 +190,8 @@ class _EmailListPanelState extends State<EmailListPanel> {
     if (_selectedEmailIds.isNotEmpty) {
       _deleteSelected();
     } else if (widget.selectedEmailId != null) {
+      context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+      context.read<HomeCubit>().clearEmail();
       context
           .read<EmailListBloc>()
           .add(EmailListEmailDeleted(emailId: widget.selectedEmailId!));
@@ -480,9 +489,13 @@ class _EmailListView extends StatelessWidget {
                 indent: isChild ? 20.0 : 0.0,
                 onTap: () => onEmailTapped(email, i),
                 onLongPress: () => onEmailLongPressed?.call(email, i),
-                onDelete: () => context
-                    .read<EmailListBloc>()
-                    .add(EmailListEmailDeleted(emailId: email.id)),
+                onDelete: () {
+                  if (email.id == selectedEmailId) {
+                    context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+                    context.read<HomeCubit>().clearEmail();
+                  }
+                  context.read<EmailListBloc>().add(EmailListEmailDeleted(emailId: email.id));
+                },
                 onFlag: () {},
               ),
             ),
@@ -501,9 +514,13 @@ class _EmailListView extends StatelessWidget {
                 onTap: () => onEmailTapped(item.latestEmail, i),
                 onLongPress: () => onEmailLongPressed?.call(item.latestEmail, i),
                 onToggleExpand: () => onToggleConversation(item.conversationId),
-                onDelete: () => context
-                    .read<EmailListBloc>()
-                    .add(EmailListEmailDeleted(emailId: item.latestEmail.id)),
+                onDelete: () {
+                  if (item.latestEmail.id == selectedEmailId) {
+                    context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+                    context.read<HomeCubit>().clearEmail();
+                  }
+                  context.read<EmailListBloc>().add(EmailListEmailDeleted(emailId: item.latestEmail.id));
+                },
                 onFlag: () {},
               ),
             ),

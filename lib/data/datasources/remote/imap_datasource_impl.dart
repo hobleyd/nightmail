@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:enough_mail/enough_mail.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../../../core/error/exceptions.dart';
 import '../../../domain/entities/email.dart';
@@ -31,6 +32,49 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
   /// Path separator reported by the server (e.g. '/' for Gmail, '.' for Courier).
   /// Set in [getMailFolders] and reused in [getChildFolders].
   String _pathSeparator = '.';
+
+  /// Derives the path separator and inbox folder prefix from [rootMailboxes].
+  ///
+  /// Abbreviated namespace: Courier and some Dovecot configs advertise root
+  /// folders (Sent, Drafts, Trash) that are actually children of INBOX and
+  /// must be accessed as INBOX<sep>Sent, INBOX<sep>Drafts, etc.
+  ///
+  /// Detection strategy:
+  /// - Courier always uses '.'; abbreviated-namespace detection always runs.
+  /// - For '/' (and other separators), run detection only when INBOX reports
+  ///   \HasChildren — real abbreviated-namespace servers have INBOX children,
+  ///   while Gmail labels at root level don't give INBOX any children.
+  @visibleForTesting
+  static ({String pathSeparator, String inboxFolderPrefix})
+      detectNamespaceConvention(List<Mailbox> rootMailboxes) {
+    final sep = rootMailboxes.firstOrNull?.pathSeparator ?? '.';
+    final inboxMailbox = rootMailboxes
+        .where((mb) => mb.path.toUpperCase() == 'INBOX')
+        .firstOrNull;
+
+    String prefix = '';
+    if (inboxMailbox != null) {
+      final hasExplicitInboxChildren = rootMailboxes.any(
+        (mb) => mb.path.toUpperCase().startsWith('INBOX$sep'),
+      );
+      final hasAbbreviatedRoots = rootMailboxes.any(
+        (mb) =>
+            mb.path.toUpperCase() != 'INBOX' &&
+            !mb.path.contains(sep) &&
+            !mb.isNotSelectable,
+      );
+      // For Courier (sep='.'), abbreviated namespace is always used.
+      // For other separators (e.g. '/'), require \HasChildren on INBOX:
+      // Gmail labels appear as root folders but INBOX has no children, whereas
+      // Dovecot abbreviated-namespace servers do report \HasChildren on INBOX.
+      final runDetection = sep == '.' || inboxMailbox.hasChildren;
+      prefix = (!hasExplicitInboxChildren && hasAbbreviatedRoots && runDetection)
+          ? 'INBOX$sep'
+          : '';
+    }
+
+    return (pathSeparator: sep, inboxFolderPrefix: prefix);
+  }
 
   Future<ImapClient> _getConnectedClient() async {
     if (_client != null && _client!.isConnected) return _client!;
@@ -73,7 +117,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       try {
         final sep = _inboxFolderPrefix.isNotEmpty
             ? _inboxFolderPrefix.replaceAll('INBOX', '')
-            : '.';
+            : _pathSeparator;
         final prefixed = 'INBOX$sep$path';
         await client.selectMailboxByPath(prefixed);
         _selectedMailboxPath = prefixed;
@@ -116,48 +160,23 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       // would occur if we returned the full recursive list here while the repo
       // also tries to expand children on top of it.
       final supportsListStatus = client.serverInfo.supports('LIST-STATUS');
+      final supportsChildren = client.serverInfo.supports('CHILDREN');
       final rootMailboxes = await client.listMailboxes(
         recursive: false,
         returnOptions: supportsListStatus
-            ? [ReturnOption.status(['MESSAGES', 'UNSEEN'])]
+            ? [
+                ReturnOption.status(['MESSAGES', 'UNSEEN']),
+                if (supportsChildren) ReturnOption.children(),
+              ]
             : null,
       );
       if (!supportsListStatus) {
         await _fetchStatusForMailboxes(client, rootMailboxes);
       }
 
-      // Detect Courier IMAP / similar abbreviated namespace convention:
-      //   root LIST returns: INBOX, Sent, Drafts, Trash   (no INBOX. prefix)
-      //   SELECT requires: INBOX, INBOX.Sent, INBOX.Drafts, INBOX.Trash
-      //
-      // Detection: INBOX is present, other root-level selectable folders exist
-      // without a separator in their path, and none start with INBOX<sep>.
-      // We do NOT rely on \HasChildren because many servers omit it.
-      //
-      // Courier always uses '.' as the separator; servers using '/' (e.g. Gmail)
-      // never use the abbreviated-namespace convention, so skip detection there.
-      final sep = rootMailboxes.firstOrNull?.pathSeparator ?? '.';
-      _pathSeparator = sep;
-      final inboxExists = rootMailboxes.any(
-        (mb) => mb.path.toUpperCase() == 'INBOX',
-      );
-      if (inboxExists && sep == '.') {
-        final hasExplicitInboxChildren = rootMailboxes.any(
-          (mb) => mb.path.toUpperCase().startsWith('INBOX$sep'),
-        );
-        final hasAbbreviatedRoots = rootMailboxes.any(
-          (mb) =>
-              mb.path.toUpperCase() != 'INBOX' &&
-              !mb.path.contains(sep) &&
-              !mb.isNotSelectable,
-        );
-        _inboxFolderPrefix =
-            (!hasExplicitInboxChildren && hasAbbreviatedRoots)
-                ? 'INBOX$sep'
-                : '';
-      } else {
-        _inboxFolderPrefix = '';
-      }
+      final convention = detectNamespaceConvention(rootMailboxes);
+      _pathSeparator = convention.pathSeparator;
+      _inboxFolderPrefix = convention.inboxFolderPrefix;
 
       return rootMailboxes.map((mb) {
         // Normalise path for servers that use abbreviated naming (Courier IMAP).
@@ -169,9 +188,9 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
 
         // Derive parent from the full path so prefixed folders (e.g. Courier's
         // "Sent" → "INBOX.Sent") get parentFolderId = "INBOX" not null.
-        final parts = fullPath.split(sep);
+        final parts = fullPath.split(_pathSeparator);
         final parentPath =
-            parts.length > 1 ? parts.sublist(0, parts.length - 1).join(sep) : null;
+            parts.length > 1 ? parts.sublist(0, parts.length - 1).join(_pathSeparator) : null;
 
         return EmailFolderModel(
           id: fullPath,
@@ -200,11 +219,15 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       // approach — LIST "INBOX" % returns INBOX itself on many servers.
       final sep = _pathSeparator;
       final supportsListStatus = client.serverInfo.supports('LIST-STATUS');
+      final supportsChildren = client.serverInfo.supports('CHILDREN');
       final mailboxes = await client.listMailboxes(
         path: '"$parentFolderId$sep"',
         recursive: false,
         returnOptions: supportsListStatus
-            ? [ReturnOption.status(['MESSAGES', 'UNSEEN'])]
+            ? [
+                ReturnOption.status(['MESSAGES', 'UNSEEN']),
+                if (supportsChildren) ReturnOption.children(),
+              ]
             : null,
       );
       if (!supportsListStatus) {

@@ -5,6 +5,7 @@ import '../../../domain/usecases/empty_folder.dart';
 import '../../../domain/usecases/get_cached_emails.dart';
 import '../../../domain/usecases/get_emails.dart';
 import '../../../domain/usecases/mark_email_as_read.dart';
+import '../../../domain/usecases/move_email.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
 import 'email_list_event.dart';
 import 'email_list_state.dart';
@@ -17,6 +18,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     required this._getEmails,
     required this._getCachedEmails,
     required this._markEmailAsRead,
+    required this._moveEmail,
     required this._deleteEmail,
     required this._emptyFolder,
     required this._accountManager,
@@ -26,6 +28,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     on<EmailListRefreshRequested>(_onRefreshRequested);
     on<EmailListMarkReadRequested>(_onMarkReadRequested);
     on<EmailListToggleConversation>(_onToggleConversation);
+    on<EmailListEmailsMoved>(_onEmailsMoved);
     on<EmailListEmailDeleted>(_onEmailDeleted);
     on<EmailListEmailsBulkDeleted>(_onEmailsBulkDeleted);
     on<EmailListFolderEmptied>(_onFolderEmptied);
@@ -34,6 +37,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   final GetEmails _getEmails;
   final GetCachedEmails _getCachedEmails;
   final MarkEmailAsRead _markEmailAsRead;
+  final MoveEmail _moveEmail;
   final DeleteEmail _deleteEmail;
   final EmptyFolder _emptyFolder;
   final AccountManager _accountManager;
@@ -185,6 +189,24 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     }
 
     emit(current.copyWith(expandedConversationIds: expanded));
+  }
+
+  Future<void> _onEmailsMoved(
+    EmailListEmailsMoved event,
+    Emitter<EmailListState> emit,
+  ) async {
+    final current = state;
+    if (current is! EmailListLoaded) return;
+    final ids = event.emailIds.toSet();
+    emit(current.copyWith(
+      emails: current.emails.where((e) => !ids.contains(e.id)).toList(),
+    ));
+    await Future.wait(
+      event.emailIds.map((id) => _moveEmail(MoveEmailParams(
+            id: id,
+            destinationFolderId: event.destinationFolderId,
+          ))),
+    );
   }
 
   Future<void> _onEmailDeleted(

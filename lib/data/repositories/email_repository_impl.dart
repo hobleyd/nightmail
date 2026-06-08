@@ -159,6 +159,16 @@ class EmailRepositoryImpl implements EmailRepository {
   }
 
   @override
+  Future<Either<Failure, Unit>> moveEmail(
+      String id, String destinationFolderId) async {
+    return _execute(() async {
+      await _accountManager.emailDatasource
+          .moveEmail(id, destinationFolderId);
+      return unit;
+    });
+  }
+
+  @override
   Future<Either<Failure, Unit>> deleteEmail(String id) async {
     return _execute(() async {
       await _accountManager.emailDatasource.deleteEmail(id);

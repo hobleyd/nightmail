@@ -11,6 +11,7 @@ import 'domain/repositories/calendar_repository.dart';
 import 'domain/repositories/email_repository.dart';
 import 'domain/usecases/create_calendar_event.dart';
 import 'domain/usecases/delete_email.dart';
+import 'domain/usecases/move_email.dart';
 import 'domain/usecases/download_attachment.dart';
 import 'domain/usecases/empty_folder.dart';
 import 'domain/usecases/get_calendar_events.dart';
@@ -91,6 +92,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => GetMailFolders(sl<EmailRepository>()));
   sl.registerLazySingleton(() => MarkEmailAsRead(sl<EmailRepository>()));
   sl.registerLazySingleton(() => SendEmail(sl<EmailRepository>()));
+  sl.registerLazySingleton(() => MoveEmail(sl<EmailRepository>()));
   sl.registerLazySingleton(() => DeleteEmail(sl<EmailRepository>()));
   sl.registerLazySingleton(() => EmptyFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => DownloadAttachment(sl<EmailRepository>()));
@@ -127,6 +129,7 @@ Future<void> configureDependencies() async {
         getEmails: sl<GetEmails>(),
         getCachedEmails: sl<GetCachedEmails>(),
         markEmailAsRead: sl<MarkEmailAsRead>(),
+        moveEmail: sl<MoveEmail>(),
         deleteEmail: sl<DeleteEmail>(),
         emptyFolder: sl<EmptyFolder>(),
         accountManager: sl<AccountManager>(),

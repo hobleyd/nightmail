@@ -530,6 +530,30 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
   }
 
   @override
+  Future<void> moveEmail(String id, String destinationFolderId) async {
+    final separatorIdx = id.lastIndexOf(':');
+    final mailboxPath =
+        separatorIdx > 0 ? id.substring(0, separatorIdx) : 'INBOX';
+    final uid = int.tryParse(id.substring(separatorIdx + 1)) ?? 0;
+
+    try {
+      final client = await _getConnectedClient();
+      await _selectMailboxPath(client, mailboxPath);
+
+      final sequence = MessageSequence.fromId(uid, isUid: true);
+      await client.uidCopy(sequence, targetMailboxPath: destinationFolderId);
+      await client.uidStore(
+        sequence,
+        [MessageFlags.deleted],
+        action: StoreAction.add,
+      );
+      await client.expunge();
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    }
+  }
+
+  @override
   Future<void> deleteEmail(String id) async {
     final separatorIdx = id.lastIndexOf(':');
     final mailboxPath =

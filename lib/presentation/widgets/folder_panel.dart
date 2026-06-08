@@ -29,6 +29,7 @@ class FolderPanel extends StatefulWidget {
     required this.selectedFolderId,
     required this.onFolderSelected,
     required this.onCalendarTapped,
+    required this.onTasksTapped,
     this.initialExpandedIds = const {},
     this.onExpandedIdsChanged,
   });
@@ -36,6 +37,7 @@ class FolderPanel extends StatefulWidget {
   final String? selectedFolderId;
   final ValueChanged<EmailFolder> onFolderSelected;
   final VoidCallback onCalendarTapped;
+  final VoidCallback onTasksTapped;
   final Set<String> initialExpandedIds;
   final ValueChanged<Set<String>>? onExpandedIdsChanged;
 
@@ -81,6 +83,7 @@ class _FolderPanelState extends State<FolderPanel> {
           Divider(height: 1, color: c.separatorStrong),
           _SettingsFooter(
             onCalendarTapped: widget.onCalendarTapped,
+            onTasksTapped: widget.onTasksTapped,
           ),
         ],
       ),
@@ -303,6 +306,20 @@ class _FolderItemState extends State<_FolderItem>
 
   @override
   Widget build(BuildContext context) {
+    return DragTarget<List<String>>(
+      onWillAcceptWithDetails: (_) => true,
+      onAcceptWithDetails: (details) {
+        context.read<EmailListBloc>().add(EmailListEmailsMoved(
+              emailIds: details.data,
+              destinationFolderId: widget.folder.id,
+            ));
+      },
+      builder: (context, candidateData, _) =>
+          _buildContent(context, candidateData.isNotEmpty),
+    );
+  }
+
+  Widget _buildContent(BuildContext context, bool isDragHovering) {
     final c = context.colors;
     final indentWidth = widget.depth * 16.0;
 
@@ -319,7 +336,9 @@ class _FolderItemState extends State<_FolderItem>
                     ? Icons.expand_more_rounded
                     : Icons.chevron_right_rounded,
                 size: 16,
-                color: widget.isSelected ? AppColors.accent : c.textMuted,
+                color: (widget.isSelected || isDragHovering)
+                    ? AppColors.accent
+                    : c.textMuted,
               ),
             ),
           )
@@ -328,17 +347,22 @@ class _FolderItemState extends State<_FolderItem>
         Icon(
           _iconFor(widget.folder.displayName),
           size: 16,
-          color: widget.isSelected ? AppColors.accent : c.textMuted,
+          color: (widget.isSelected || isDragHovering)
+              ? AppColors.accent
+              : c.textMuted,
         ),
         const SizedBox(width: 10),
         Expanded(
           child: Text(
             widget.folder.displayName,
             style: TextStyle(
-              color: widget.isSelected ? c.textSecondary : c.textTertiary,
+              color: (widget.isSelected || isDragHovering)
+                  ? c.textSecondary
+                  : c.textTertiary,
               fontSize: 13,
-              fontWeight:
-                  widget.isSelected ? FontWeight.w500 : FontWeight.w400,
+              fontWeight: (widget.isSelected || isDragHovering)
+                  ? FontWeight.w500
+                  : FontWeight.w400,
             ),
             overflow: TextOverflow.ellipsis,
           ),
@@ -403,8 +427,13 @@ class _FolderItemState extends State<_FolderItem>
         margin: margin,
         padding: padding,
         decoration: BoxDecoration(
-          color: widget.isSelected ? c.selectionBg : Colors.transparent,
+          color: (widget.isSelected || isDragHovering)
+              ? c.selectionBg
+              : Colors.transparent,
           borderRadius: radius,
+          border: isDragHovering
+              ? Border.all(color: AppColors.accent, width: 1.5)
+              : null,
         ),
         child: rowContent,
       );
@@ -514,9 +543,11 @@ class _FolderItemState extends State<_FolderItem>
 class _SettingsFooter extends StatelessWidget {
   const _SettingsFooter({
     required this.onCalendarTapped,
+    required this.onTasksTapped,
   });
 
   final VoidCallback onCalendarTapped;
+  final VoidCallback onTasksTapped;
 
   @override
   Widget build(BuildContext context) {
@@ -670,6 +701,13 @@ class _SettingsFooter extends StatelessWidget {
               constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               onPressed: onCalendarTapped,
             ),
+          ),
+          IconButton(
+            icon: Icon(Icons.checklist_rounded, size: 16, color: c.textMuted),
+            tooltip: 'Tasks',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            onPressed: onTasksTapped,
           ),
           const Spacer(),
           IconButton(

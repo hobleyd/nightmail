@@ -470,6 +470,18 @@ class GraphApiDatasourceImpl
   }
 
   @override
+  Future<void> moveEmail(String id, String destinationFolderId) async {
+    try {
+      await _dio.post<void>(
+        '/me/messages/$id/move',
+        data: {'destinationId': destinationFolderId},
+      );
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
   Future<void> deleteEmail(String id) async {
     try {
       await _dio.post<void>(

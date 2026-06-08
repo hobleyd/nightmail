@@ -179,6 +179,16 @@ class _EmailListPanelState extends State<EmailListPanel> {
     _clearSelection();
   }
 
+  void _deleteSelection() {
+    if (_selectedEmailIds.isNotEmpty) {
+      _deleteSelected();
+    } else if (widget.selectedEmailId != null) {
+      context
+          .read<EmailListBloc>()
+          .add(EmailListEmailDeleted(emailId: widget.selectedEmailId!));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -202,25 +212,12 @@ class _EmailListPanelState extends State<EmailListPanel> {
                 onRefresh: () => context
                     .read<EmailListBloc>()
                     .add(const EmailListRefreshRequested()),
+                onDelete: (_selectedEmailIds.isNotEmpty || widget.selectedEmailId != null)
+                    ? _deleteSelection
+                    : null,
               ),
             ),
             Divider(height: 1, color: c.separator),
-            AnimatedSize(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeOut,
-              child: _selectedEmailIds.isNotEmpty
-                  ? Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _MultiSelectActionBar(
-                          count: _selectedEmailIds.length,
-                          onDelete: _deleteSelected,
-                        ),
-                        Divider(height: 1, color: c.separator),
-                      ],
-                    )
-                  : const SizedBox.shrink(),
-            ),
             Expanded(
               child: BlocBuilder<EmailListBloc, EmailListState>(
                 builder: (context, state) {
@@ -318,12 +315,14 @@ class _ConversationHeaderItem extends _ListItem {
   _ConversationHeaderItem({
     required this.conversationId,
     required this.latestEmail,
+    required this.allEmailIds,
     required this.totalCount,
     required this.isExpanded,
     required this.hasUnread,
   });
   final String conversationId;
   final Email latestEmail;
+  final List<String> allEmailIds;
   final int totalCount;
   final bool isExpanded;
   final bool hasUnread;
@@ -344,6 +343,7 @@ List<_ListItem> _buildListItems(
       items.add(_ConversationHeaderItem(
         conversationId: conv.id,
         latestEmail: conv.latest,
+        allEmailIds: conv.emails.map((e) => e.id).toList(),
         totalCount: conv.emails.length,
         isExpanded: isExpanded,
         hasUnread: conv.hasUnread,
@@ -368,10 +368,12 @@ class _ListHeader extends StatelessWidget {
     required this.folderName,
     required this.onRefresh,
     required this.isLoadingFresh,
+    this.onDelete,
   });
   final String folderName;
   final VoidCallback onRefresh;
   final bool isLoadingFresh;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -401,6 +403,14 @@ class _ListHeader extends StatelessWidget {
             ),
           ],
           const Spacer(),
+          if (onDelete != null)
+            IconButton(
+              icon: Icon(Icons.delete_outline_rounded, size: 18, color: c.textMuted),
+              tooltip: 'Delete selected',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              onPressed: onDelete,
+            ),
           IconButton(
             icon: Icon(Icons.refresh_rounded, size: 18, color: c.textMuted),
             tooltip: 'Refresh',
@@ -458,36 +468,44 @@ class _EmailListView extends StatelessWidget {
         }
         final item = items[i];
         return switch (item) {
-          _SingleEmailItem(:final email, :final isChild) => EmailListItem(
-              key: ValueKey(email.id),
-              email: email,
-              isSelected: email.id == selectedEmailId,
-              isMultiSelected: selectedEmailIds.contains(email.id),
-              showCheckbox: showCheckboxes,
-              indent: isChild ? 20.0 : 0.0,
-              onTap: () => onEmailTapped(email, i),
-              onLongPress: () => onEmailLongPressed?.call(email, i),
-              onDelete: () => context
-                  .read<EmailListBloc>()
-                  .add(EmailListEmailDeleted(emailId: email.id)),
-              onFlag: () {},
+          _SingleEmailItem(:final email, :final isChild) => _DraggableEmailItem(
+              key: ValueKey('drag_${email.id}'),
+              emailIds: [email.id],
+              dragLabel: email.subject.isNotEmpty ? email.subject : email.from.displayName,
+              child: EmailListItem(
+                email: email,
+                isSelected: email.id == selectedEmailId,
+                isMultiSelected: selectedEmailIds.contains(email.id),
+                showCheckbox: showCheckboxes,
+                indent: isChild ? 20.0 : 0.0,
+                onTap: () => onEmailTapped(email, i),
+                onLongPress: () => onEmailLongPressed?.call(email, i),
+                onDelete: () => context
+                    .read<EmailListBloc>()
+                    .add(EmailListEmailDeleted(emailId: email.id)),
+                onFlag: () {},
+              ),
             ),
-          _ConversationHeaderItem() => _ConversationHeader(
-              key: ValueKey('conv_${item.conversationId}'),
-              latestEmail: item.latestEmail,
-              totalCount: item.totalCount,
-              isExpanded: item.isExpanded,
-              hasUnread: item.hasUnread,
-              isSelected: item.latestEmail.id == selectedEmailId,
-              isMultiSelected: selectedEmailIds.contains(item.latestEmail.id),
-              showCheckbox: showCheckboxes,
-              onTap: () => onEmailTapped(item.latestEmail, i),
-              onLongPress: () => onEmailLongPressed?.call(item.latestEmail, i),
-              onToggleExpand: () => onToggleConversation(item.conversationId),
-              onDelete: () => context
-                  .read<EmailListBloc>()
-                  .add(EmailListEmailDeleted(emailId: item.latestEmail.id)),
-              onFlag: () {},
+          _ConversationHeaderItem() => _DraggableEmailItem(
+              key: ValueKey('drag_conv_${item.conversationId}'),
+              emailIds: item.allEmailIds,
+              dragLabel: '${item.totalCount} emails – ${item.latestEmail.subject}',
+              child: _ConversationHeader(
+                latestEmail: item.latestEmail,
+                totalCount: item.totalCount,
+                isExpanded: item.isExpanded,
+                hasUnread: item.hasUnread,
+                isSelected: item.latestEmail.id == selectedEmailId,
+                isMultiSelected: selectedEmailIds.contains(item.latestEmail.id),
+                showCheckbox: showCheckboxes,
+                onTap: () => onEmailTapped(item.latestEmail, i),
+                onLongPress: () => onEmailLongPressed?.call(item.latestEmail, i),
+                onToggleExpand: () => onToggleConversation(item.conversationId),
+                onDelete: () => context
+                    .read<EmailListBloc>()
+                    .add(EmailListEmailDeleted(emailId: item.latestEmail.id)),
+                onFlag: () {},
+              ),
             ),
         };
       },
@@ -497,7 +515,6 @@ class _EmailListView extends StatelessWidget {
 
 class _ConversationHeader extends StatelessWidget {
   const _ConversationHeader({
-    super.key,
     required this.latestEmail,
     required this.totalCount,
     required this.isExpanded,
@@ -713,44 +730,6 @@ class _ConversationHeader extends StatelessWidget {
   }
 }
 
-class _MultiSelectActionBar extends StatelessWidget {
-  const _MultiSelectActionBar({
-    required this.count,
-    required this.onDelete,
-  });
-
-  final int count;
-  final VoidCallback onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Container(
-      color: c.selectionEmailBg,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              '$count selected',
-              style: TextStyle(color: c.textMuted, fontSize: 12),
-            ),
-          ),
-          IconButton(
-            icon: Icon(Icons.delete_outline_rounded, color: c.textTertiary),
-            tooltip: 'Delete selected',
-            iconSize: 20,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-            onPressed: onDelete,
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 class _EmptyStateView extends StatelessWidget {
   const _EmptyStateView({required this.message});
@@ -814,6 +793,70 @@ class _ActionIcon extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(4),
         child: Icon(icon, size: 15, color: color),
+      ),
+    );
+  }
+}
+
+class _DraggableEmailItem extends StatelessWidget {
+  const _DraggableEmailItem({
+    super.key,
+    required this.emailIds,
+    required this.dragLabel,
+    required this.child,
+  });
+
+  final List<String> emailIds;
+  final String dragLabel;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Draggable<List<String>>(
+      data: emailIds,
+      feedback: _DragFeedback(count: emailIds.length),
+      childWhenDragging: Opacity(opacity: 0.4, child: child),
+      child: child,
+    );
+  }
+}
+
+class _DragFeedback extends StatelessWidget {
+  const _DragFeedback({required this.count});
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+          color: AppColors.accent,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.accent.withValues(alpha: 0.4),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.mail_outline_rounded, size: 13, color: Colors.white),
+            const SizedBox(width: 5),
+            Text(
+              count == 1 ? 'Move 1 email' : 'Move $count emails',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

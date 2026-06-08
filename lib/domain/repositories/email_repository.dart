@@ -54,6 +54,10 @@ abstract interface class EmailRepository {
     required String comment,
   });
 
+  /// Moves an email to [destinationFolderId].
+  Future<Either<Failure, Unit>> moveEmail(
+      String id, String destinationFolderId);
+
   /// Deletes (moves to Deleted Items) an email by [id].
   Future<Either<Failure, Unit>> deleteEmail(String id);
 

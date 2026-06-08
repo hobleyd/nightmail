@@ -354,6 +354,11 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   }
 
   @override
+  Future<void> moveEmail(String id, String destinationFolderId) {
+    throw UnimplementedError('moveEmail not yet supported for Gmail');
+  }
+
+  @override
   Future<void> deleteEmail(String id) {
     throw UnimplementedError('deleteEmail not yet supported for Gmail');
   }

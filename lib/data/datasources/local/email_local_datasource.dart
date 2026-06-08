@@ -20,4 +20,10 @@ abstract interface class EmailLocalDatasource {
   /// Deletes all cached emails belonging to [accountId].
   /// Call when an account is removed so no stale data lingers on disk.
   Future<void> clearCacheForAccount(String accountId);
+
+  /// Deletes the cached email with [emailId] for [accountId].
+  Future<void> deleteEmailFromCache({
+    required String accountId,
+    required String emailId,
+  });
 }

@@ -82,6 +82,16 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
         .go();
   }
 
+  @override
+  Future<void> deleteEmailFromCache({
+    required String accountId,
+    required String emailId,
+  }) async {
+    await (_database.delete(_database.cachedEmails)
+          ..where((t) => t.accountId.equals(accountId) & t.emailId.equals(emailId)))
+        .go();
+  }
+
   // ---------------------------------------------------------------------------
   // Serialisation helpers
   // ---------------------------------------------------------------------------

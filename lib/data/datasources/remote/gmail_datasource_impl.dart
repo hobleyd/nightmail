@@ -218,7 +218,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       receivedDateTime: receivedAt,
       importance: EmailImportance.normal,
       parentFolderId: parentFolderId,
-      hasAttachments: false,
+      hasAttachments: _detectAttachments(payload),
     );
   }
 
@@ -266,6 +266,18 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     if (htmlBody != null) return (htmlBody!, EmailBodyType.html);
     if (textBody != null) return (textBody!, EmailBodyType.text);
     return ('', EmailBodyType.text);
+  }
+
+  bool _detectAttachments(Map<String, dynamic> payload) {
+    final filename = payload['filename'] as String? ?? '';
+    if (filename.isNotEmpty) return true;
+
+    final parts = (payload['parts'] as List<dynamic>? ?? [])
+        .cast<Map<String, dynamic>>();
+    for (final part in parts) {
+      if (_detectAttachments(part)) return true;
+    }
+    return false;
   }
 
   String _padBase64(String s) {

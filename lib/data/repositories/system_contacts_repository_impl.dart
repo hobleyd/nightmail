@@ -9,9 +9,14 @@ class SystemContactsRepositoryImpl implements SystemContactsRepository {
   @override
   Future<List<ContactSuggestion>> search(String query) async {
     if (_cache == null) {
-      final granted = await FlutterContacts.requestPermission();
-      if (!granted) return [];
-      _cache = await FlutterContacts.getContacts(withProperties: true);
+      final status = await FlutterContacts.permissions.request(PermissionType.read);
+      if (status != PermissionStatus.granted &&
+          status != PermissionStatus.limited) {
+        return [];
+      }
+      _cache = await FlutterContacts.getAll(
+        properties: {ContactProperty.email, ContactProperty.name},
+      );
     }
 
     final q = query.toLowerCase();
@@ -21,10 +26,12 @@ class SystemContactsRepositoryImpl implements SystemContactsRepository {
       for (final email in contact.emails) {
         if (email.address.isNotEmpty &&
             (email.address.toLowerCase().contains(q) ||
-                contact.displayName.toLowerCase().contains(q))) {
+                (contact.displayName ?? '').toLowerCase().contains(q))) {
           results.add(ContactSuggestion(
             address: email.address,
-            name: contact.displayName.isEmpty ? null : contact.displayName,
+            name: contact.displayName?.isEmpty ?? true
+                ? null
+                : contact.displayName,
           ));
         }
       }

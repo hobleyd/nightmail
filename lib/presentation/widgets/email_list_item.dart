@@ -163,15 +163,15 @@ class EmailListItem extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 _ActionIcon(
-                  icon: Icons.delete_outline_rounded,
-                  color: c.textDimmed,
-                  onTap: onDelete,
-                ),
-                const SizedBox(height: 2),
-                _ActionIcon(
                   icon: Icons.flag_outlined,
                   color: c.textDimmed,
                   onTap: onFlag,
+                ),
+                const SizedBox(height: 2),
+                _ActionIcon(
+                  icon: Icons.delete_outline_rounded,
+                  color: c.textDimmed,
+                  onTap: onDelete,
                 ),
               ],
             ),

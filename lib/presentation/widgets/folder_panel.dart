@@ -556,14 +556,16 @@ class _SettingsFooter extends StatelessWidget {
     final pollerState = context.watch<MailPollerCubit>().state;
     final hasNewMail = pollerState.accountsWithNewMail.isNotEmpty;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      child: Row(
+    return SizedBox(
+      height: 28,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Row(
         children: [
           PopupMenuButton<int>(
             tooltip: 'Accounts',
             padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
             icon: Stack(
               clipBehavior: Clip.none,
               children: [
@@ -698,7 +700,7 @@ class _SettingsFooter extends StatelessWidget {
               icon: Icon(Icons.calendar_month_outlined, size: 16, color: c.textMuted),
               tooltip: 'Calendar',
               padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
               onPressed: onCalendarTapped,
             ),
           ),
@@ -709,7 +711,7 @@ class _SettingsFooter extends StatelessWidget {
               icon: Icon(Icons.checklist_rounded, size: 16, color: c.textMuted),
               tooltip: 'Tasks',
               padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
               onPressed: onTasksTapped,
             ),
           ),
@@ -718,7 +720,7 @@ class _SettingsFooter extends StatelessWidget {
             icon: Icon(Icons.settings_outlined, size: 16, color: c.textMuted),
             tooltip: 'Settings',
             padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
             onPressed: () {
               final themeCubit = context.read<ThemeCubit>();
               final accountCubit = context.read<AccountCubit>();
@@ -740,13 +742,13 @@ class _SettingsFooter extends StatelessWidget {
             icon: Icon(Icons.logout_rounded, size: 16, color: c.textMuted),
             tooltip: 'Sign out',
             padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
             onPressed: () =>
                 context.read<AccountCubit>().signOutActiveAccount(),
           ),
         ],
       ),
-    );
+    ));
   }
 
   Future<void> _showCalendarContextMenu(

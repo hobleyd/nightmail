@@ -889,13 +889,19 @@ class _FolderCountFooter extends StatelessWidget {
     final unread = folder.unreadItemCount;
     final total = folder.totalItemCount;
     final label = unread > 0 ? '$unread unread · $total total' : '$total total';
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: c.textDimmed,
-          fontSize: 11,
+    return SizedBox(
+      height: 28,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            label,
+            style: TextStyle(
+              color: c.textDimmed,
+              fontSize: 11,
+            ),
+          ),
         ),
       ),
     );

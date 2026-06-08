@@ -146,14 +146,22 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                     );
               },
               onCalendarTapped: () {
-                homeCubit.showCalendar();
-                final monday = _mondayOfWeek(DateTime.now());
-                context.read<CalendarBloc>().add(
-                      CalendarWeekLoadRequested(weekStart: monday),
-                    );
+                if (homeState.view == HomeView.calendar) {
+                  homeCubit.showEmail();
+                } else {
+                  homeCubit.showCalendar();
+                  final monday = _mondayOfWeek(DateTime.now());
+                  context.read<CalendarBloc>().add(
+                        CalendarWeekLoadRequested(weekStart: monday),
+                      );
+                }
               },
               onTasksTapped: () {
-                homeCubit.showTasks();
+                if (homeState.view == HomeView.tasks) {
+                  homeCubit.showEmail();
+                } else {
+                  homeCubit.showTasks();
+                }
               },
             );
 

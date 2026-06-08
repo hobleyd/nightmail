@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:equatable/equatable.dart';
 
 import '../../../domain/entities/todo_task.dart';
@@ -23,24 +25,31 @@ final class TasksLoaded extends TasksState {
     required this.lists,
     required this.tasks,
     required this.selectedListId,
+    this.pendingEmailAttachmentBytes,
   });
 
   final List<TodoTaskList> lists;
   final List<TodoTask> tasks;
   final String selectedListId;
+  final Uint8List? pendingEmailAttachmentBytes;
 
   @override
-  List<Object?> get props => [lists, tasks, selectedListId];
+  List<Object?> get props => [lists, tasks, selectedListId, pendingEmailAttachmentBytes];
 
   TasksLoaded copyWith({
     List<TodoTaskList>? lists,
     List<TodoTask>? tasks,
     String? selectedListId,
+    Uint8List? pendingEmailAttachmentBytes,
+    bool clearPendingAttachment = false,
   }) {
     return TasksLoaded(
       lists: lists ?? this.lists,
       tasks: tasks ?? this.tasks,
       selectedListId: selectedListId ?? this.selectedListId,
+      pendingEmailAttachmentBytes: clearPendingAttachment
+          ? null
+          : (pendingEmailAttachmentBytes ?? this.pendingEmailAttachmentBytes),
     );
   }
 }

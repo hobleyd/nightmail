@@ -386,6 +386,11 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     throw UnimplementedError('Attachment download not supported for Gmail');
   }
 
+  @override
+  Future<Uint8List> getRawEmailBytes(String id) {
+    throw UnimplementedError('getRawEmailBytes not yet supported for Gmail');
+  }
+
   Exception _mapException(DioException e) {
     final statusCode = e.response?.statusCode;
     if (e.type == DioExceptionType.connectionError ||

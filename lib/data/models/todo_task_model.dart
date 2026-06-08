@@ -14,6 +14,7 @@ class TodoTaskModel extends TodoTask {
     super.reminderDateTime,
     super.createdDateTime,
     super.lastModifiedDateTime,
+    super.hasAttachments,
   });
 
   factory TodoTaskModel.fromJson(
@@ -35,6 +36,7 @@ class TodoTaskModel extends TodoTask {
           _parseDate(json['reminderDateTime'] as Map<String, dynamic>?),
       createdDateTime: _parseIso(json['createdDateTime'] as String?),
       lastModifiedDateTime: _parseIso(json['lastModifiedDateTime'] as String?),
+      hasAttachments: json['hasAttachments'] as bool? ?? false,
     );
   }
 

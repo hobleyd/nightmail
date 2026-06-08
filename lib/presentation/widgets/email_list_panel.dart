@@ -19,6 +19,7 @@ import '../blocs/tasks/tasks_event.dart';
 import '../blocs/tasks/tasks_state.dart';
 import 'email_date_formatter.dart';
 import 'email_list_item.dart';
+import 'flag_icon_button.dart';
 
 class EmailListPanel extends StatefulWidget {
   const EmailListPanel({
@@ -448,14 +449,16 @@ DateTime _addBusinessDays(DateTime date, int days) {
   return result;
 }
 
-void _createTaskFromEmail(BuildContext context, Email email) {
+void _createTaskFromEmail(BuildContext context, Email email, {DateTime? dueDate}) {
   final tasksState = context.read<TasksBloc>().state;
   if (tasksState is! TasksLoaded) return;
-  final dueDate = _addBusinessDays(DateTime.now(), 3);
+  final title = email.subject.isNotEmpty ? email.subject : email.from.displayName;
   context.read<TasksBloc>().add(TaskCreationRequested(
     listId: tasksState.selectedListId,
-    title: email.subject.isNotEmpty ? email.subject : email.from.displayName,
-    dueDate: dueDate,
+    title: title,
+    dueDate: dueDate ?? _addBusinessDays(DateTime.now(), 3),
+    emailId: email.id,
+    emailSubject: email.subject,
   ));
 }
 
@@ -522,7 +525,7 @@ class _EmailListView extends StatelessWidget {
                   }
                   context.read<EmailListBloc>().add(EmailListEmailDeleted(emailId: email.id));
                 },
-                onFlag: () => _createTaskFromEmail(context, email),
+                onFlag: (date) => _createTaskFromEmail(context, email, dueDate: date),
               ),
             ),
           _ConversationHeaderItem() => _DraggableEmailItem(
@@ -547,7 +550,7 @@ class _EmailListView extends StatelessWidget {
                   }
                   context.read<EmailListBloc>().add(EmailListEmailDeleted(emailId: item.latestEmail.id));
                 },
-                onFlag: () => _createTaskFromEmail(context, item.latestEmail),
+                onFlag: (date) => _createTaskFromEmail(context, item.latestEmail, dueDate: date),
               ),
             ),
         };
@@ -583,7 +586,7 @@ class _ConversationHeader extends StatelessWidget {
   final VoidCallback? onLongPress;
   final VoidCallback onToggleExpand;
   final VoidCallback onDelete;
-  final VoidCallback onFlag;
+  final void Function(DateTime? dueDate) onFlag;
 
   @override
   Widget build(BuildContext context) {
@@ -735,10 +738,10 @@ class _ConversationHeader extends StatelessWidget {
                       onTap: onDelete,
                     ),
                     const SizedBox(height: 2),
-                    _ActionIcon(
-                      icon: Icons.flag_outlined,
+                    FlagIconButton(
                       color: c.textDimmed,
-                      onTap: onFlag,
+                      onTap: () => onFlag(null),
+                      onSchedule: (date) => onFlag(date),
                     ),
                   ],
                 ),

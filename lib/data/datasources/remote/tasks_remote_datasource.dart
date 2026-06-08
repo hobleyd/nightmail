@@ -1,4 +1,7 @@
+import 'dart:typed_data';
+
 import '../../../domain/entities/todo_task.dart';
+import '../../models/todo_task_attachment_model.dart';
 import '../../models/todo_task_list_model.dart';
 import '../../models/todo_task_model.dart';
 
@@ -22,5 +25,29 @@ abstract interface class TasksRemoteDatasource {
     required String listId,
     required String taskId,
     required TodoTaskStatus status,
+  });
+
+  Future<TodoTaskModel> updateTaskDueDate({
+    required String listId,
+    required String taskId,
+    required DateTime? dueDate,
+  });
+
+  Future<TodoTaskAttachmentModel> attachEmailToTask({
+    required String listId,
+    required String taskId,
+    required String fileName,
+    required Uint8List emlBytes,
+  });
+
+  Future<List<TodoTaskAttachmentModel>> getTaskAttachments({
+    required String listId,
+    required String taskId,
+  });
+
+  Future<Uint8List> downloadTaskAttachment({
+    required String listId,
+    required String taskId,
+    required String attachmentId,
   });
 }

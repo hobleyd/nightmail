@@ -6,9 +6,12 @@ import 'package:intl/intl.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/todo_task.dart';
 import '../../domain/entities/todo_task_list.dart';
+import '../blocs/email_detail/email_detail_bloc.dart';
+import '../blocs/email_detail/email_detail_event.dart';
 import '../blocs/tasks/tasks_bloc.dart';
 import '../blocs/tasks/tasks_event.dart';
 import '../blocs/tasks/tasks_state.dart';
+import '../widgets/flag_icon_button.dart';
 
 class TasksDayPanel extends StatelessWidget {
   const TasksDayPanel({super.key, required this.onClose});
@@ -18,35 +21,56 @@ class TasksDayPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return ColoredBox(
-      color: c.surfacePanel,
-      child: Column(
-        children: [
-          _Header(onClose: onClose),
-          Divider(height: 1, color: c.separatorStrong),
-          Expanded(
-            child: BlocBuilder<TasksBloc, TasksState>(
-              builder: (context, state) {
-                return switch (state) {
-                  TasksInitial() => const _EmptyPlaceholder(),
-                  TasksLoading() => Center(
-                      child: CircularProgressIndicator(
-                        color: AppColors.accent,
-                        strokeWidth: 2,
+    return BlocListener<TasksBloc, TasksState>(
+      listenWhen: (prev, curr) =>
+          curr is TasksLoaded &&
+          curr.pendingEmailAttachmentBytes != null &&
+          (prev is! TasksLoaded ||
+              prev.pendingEmailAttachmentBytes !=
+                  curr.pendingEmailAttachmentBytes),
+      listener: (context, state) {
+        if (state is! TasksLoaded) return;
+        final bytes = state.pendingEmailAttachmentBytes;
+        if (bytes == null) return;
+        context.read<EmailDetailBloc>().add(
+              EmailDetailLoadedFromEml(bytes: bytes),
+            );
+        context.read<TasksBloc>().add(const TaskAttachmentHandled());
+      },
+      child: ColoredBox(
+        color: c.surfacePanel,
+        child: Column(
+          children: [
+            _Header(onClose: onClose),
+            Divider(height: 1, color: c.separatorStrong),
+            Expanded(
+              child: BlocBuilder<TasksBloc, TasksState>(
+                builder: (context, state) {
+                  return switch (state) {
+                    TasksInitial() => const _EmptyPlaceholder(),
+                    TasksLoading() => Center(
+                        child: CircularProgressIndicator(
+                          color: AppColors.accent,
+                          strokeWidth: 2,
+                        ),
                       ),
-                    ),
-                  TasksLoaded(:final lists, :final tasks, :final selectedListId) =>
-                    _LoadedBody(
-                      lists: lists,
-                      tasks: tasks,
-                      selectedListId: selectedListId,
-                    ),
-                  TasksError(:final message) => _ErrorView(message: message),
-                };
-              },
+                    TasksLoaded(
+                      :final lists,
+                      :final tasks,
+                      :final selectedListId,
+                    ) =>
+                      _LoadedBody(
+                        lists: lists,
+                        tasks: tasks,
+                        selectedListId: selectedListId,
+                      ),
+                    TasksError(:final message) => _ErrorView(message: message),
+                  };
+                },
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -210,7 +234,7 @@ class _TaskTile extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             SizedBox(
               width: 20,
@@ -263,8 +287,40 @@ class _TaskTile extends StatelessWidget {
                 ],
               ),
             ),
-            if (task.importance == TodoTaskImportance.high)
+            if (task.hasAttachments) ...[
+              GestureDetector(
+                onTap: () => context.read<TasksBloc>().add(
+                      TaskEmailAttachmentTapped(
+                        listId: task.listId,
+                        taskId: task.id,
+                      ),
+                    ),
+                child: Tooltip(
+                  message: 'View source email',
+                  child: Icon(
+                    Icons.email_outlined,
+                    size: 14,
+                    color: AppColors.accent,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 2),
+            ],
+            FlagIconButton(
+              size: 14,
+              onTap: () {},
+              onSchedule: (date) => context.read<TasksBloc>().add(
+                    TaskDueDateUpdateRequested(
+                      listId: task.listId,
+                      taskId: task.id,
+                      dueDate: date,
+                    ),
+                  ),
+            ),
+            if (task.importance == TodoTaskImportance.high) ...[
+              const SizedBox(width: 2),
               Icon(Icons.flag_rounded, size: 14, color: Colors.redAccent),
+            ],
           ],
         ),
       ),

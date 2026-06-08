@@ -358,6 +358,37 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     }
   }
 
+  @override
+  Future<Uint8List> getRawEmailBytes(String id) async {
+    final separatorIdx = id.lastIndexOf(':');
+    final mailboxPath =
+        separatorIdx > 0 ? id.substring(0, separatorIdx) : 'INBOX';
+    final uid = int.tryParse(id.substring(separatorIdx + 1)) ?? 0;
+
+    try {
+      final client = await _getConnectedClient();
+      await _selectMailboxPath(client, mailboxPath);
+
+      final sequence = MessageSequence.fromId(uid, isUid: true);
+      final fetchResult = await client.uidFetchMessages(
+        sequence,
+        'BODY.PEEK[]',
+      );
+
+      if (fetchResult.messages.isEmpty) {
+        throw ServerException(message: 'Message not found: $id');
+      }
+
+      final buffer = StringBuffer();
+      fetchResult.messages.first.render(buffer);
+      return Uint8List.fromList(buffer.toString().codeUnits);
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    } on AuthException {
+      rethrow;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Parsing
   // ---------------------------------------------------------------------------

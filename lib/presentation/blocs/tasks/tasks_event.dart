@@ -41,12 +41,48 @@ final class TaskCreationRequested extends TasksBlocEvent {
     required this.listId,
     required this.title,
     this.dueDate,
+    this.emailId,
+    this.emailSubject,
   });
 
   final String listId;
   final String title;
   final DateTime? dueDate;
+  final String? emailId;
+  final String? emailSubject;
 
   @override
-  List<Object?> get props => [listId, title, dueDate];
+  List<Object?> get props => [listId, title, dueDate, emailId];
+}
+
+final class TaskEmailAttachmentTapped extends TasksBlocEvent {
+  const TaskEmailAttachmentTapped({
+    required this.listId,
+    required this.taskId,
+  });
+
+  final String listId;
+  final String taskId;
+
+  @override
+  List<Object?> get props => [listId, taskId];
+}
+
+final class TaskAttachmentHandled extends TasksBlocEvent {
+  const TaskAttachmentHandled();
+}
+
+final class TaskDueDateUpdateRequested extends TasksBlocEvent {
+  const TaskDueDateUpdateRequested({
+    required this.listId,
+    required this.taskId,
+    required this.dueDate,
+  });
+
+  final String listId;
+  final String taskId;
+  final DateTime? dueDate;
+
+  @override
+  List<Object?> get props => [listId, taskId, dueDate];
 }

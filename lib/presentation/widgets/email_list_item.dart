@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import 'email_date_formatter.dart';
+import 'flag_icon_button.dart';
 
 class EmailListItem extends StatelessWidget {
   const EmailListItem({
@@ -25,7 +26,7 @@ class EmailListItem extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
   final VoidCallback onDelete;
-  final VoidCallback onFlag;
+  final void Function(DateTime? dueDate) onFlag;
   final double indent;
 
   @override
@@ -162,10 +163,10 @@ class EmailListItem extends StatelessWidget {
             Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _ActionIcon(
-                  icon: Icons.flag_outlined,
+                FlagIconButton(
                   color: c.textDimmed,
-                  onTap: onFlag,
+                  onTap: () => onFlag(null),
+                  onSchedule: (date) => onFlag(date),
                 ),
                 const SizedBox(height: 2),
                 _ActionIcon(

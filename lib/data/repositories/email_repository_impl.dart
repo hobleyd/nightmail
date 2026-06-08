@@ -247,6 +247,11 @@ class EmailRepositoryImpl implements EmailRepository {
     }
   }
 
+  @override
+  Future<Either<Failure, Uint8List>> getRawEmailBytes(String id) async {
+    return _execute(() => _accountManager.emailDatasource.getRawEmailBytes(id));
+  }
+
   Future<Either<Failure, T>> _execute<T>(Future<T> Function() fn) async {
     try {
       return Right(await fn());

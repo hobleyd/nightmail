@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:equatable/equatable.dart';
 
 sealed class EmailDetailEvent extends Equatable {
@@ -13,6 +15,15 @@ final class EmailDetailLoadRequested extends EmailDetailEvent {
 
   @override
   List<Object?> get props => [emailId];
+}
+
+final class EmailDetailLoadedFromEml extends EmailDetailEvent {
+  const EmailDetailLoadedFromEml({required this.bytes, this.sourceId});
+  final Uint8List bytes;
+  final String? sourceId;
+
+  @override
+  List<Object?> get props => [bytes, sourceId];
 }
 
 final class EmailDetailCleared extends EmailDetailEvent {

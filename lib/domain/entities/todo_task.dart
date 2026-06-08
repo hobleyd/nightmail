@@ -18,6 +18,7 @@ class TodoTask extends Equatable {
     this.reminderDateTime,
     this.createdDateTime,
     this.lastModifiedDateTime,
+    this.hasAttachments = false,
   });
 
   final String id;
@@ -32,9 +33,10 @@ class TodoTask extends Equatable {
   final DateTime? reminderDateTime;
   final DateTime? createdDateTime;
   final DateTime? lastModifiedDateTime;
+  final bool hasAttachments;
 
   bool get isCompleted => status == TodoTaskStatus.completed;
 
   @override
-  List<Object?> get props => [id];
+  List<Object?> get props => [id, hasAttachments];
 }

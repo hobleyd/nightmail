@@ -12,6 +12,7 @@ import '../../../infrastructure/http/graph_http_client.dart';
 import '../../models/calendar_event_model.dart';
 import '../../models/email_folder_model.dart';
 import '../../models/email_model.dart';
+import '../../models/todo_task_attachment_model.dart';
 import '../../models/todo_task_list_model.dart';
 import '../../models/todo_task_model.dart';
 import 'calendar_remote_datasource.dart';
@@ -657,6 +658,192 @@ class GraphApiDatasourceImpl
         throw const ServerException(message: 'Empty response from server');
       }
       return TodoTaskModel.fromJson(response.data!, listId: listId);
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<TodoTaskModel> updateTaskDueDate({
+    required String listId,
+    required String taskId,
+    required DateTime? dueDate,
+  }) async {
+    try {
+      final data = <String, dynamic>{};
+      if (dueDate == null) {
+        data['dueDateTime'] = null;
+      } else {
+        final d = dueDate.toLocal();
+        final dateStr =
+            '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}T00:00:00';
+        data['dueDateTime'] = {'dateTime': dateStr, 'timeZone': 'UTC'};
+      }
+      final response = await _dio.patch<Map<String, dynamic>>(
+        '/me/todo/lists/$listId/tasks/$taskId',
+        data: data,
+      );
+      if (response.data == null) {
+        throw const ServerException(message: 'Empty response from server');
+      }
+      return TodoTaskModel.fromJson(response.data!, listId: listId);
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Email raw bytes
+  // ---------------------------------------------------------------------------
+
+  @override
+  Future<Uint8List> getRawEmailBytes(String id) async {
+    try {
+      final response = await _dio.get<List<int>>(
+        '/me/messages/$id/\$value',
+        options: Options(responseType: ResponseType.bytes),
+      );
+      return Uint8List.fromList(response.data ?? []);
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Task attachments
+  // ---------------------------------------------------------------------------
+
+  static const int _inlineAttachmentLimit = 3 * 1024 * 1024; // 3 MB
+
+  @override
+  Future<TodoTaskAttachmentModel> attachEmailToTask({
+    required String listId,
+    required String taskId,
+    required String fileName,
+    required Uint8List emlBytes,
+  }) async {
+    try {
+      if (emlBytes.length <= _inlineAttachmentLimit) {
+        return _attachInline(
+          listId: listId,
+          taskId: taskId,
+          fileName: fileName,
+          emlBytes: emlBytes,
+        );
+      } else {
+        return _attachViaUploadSession(
+          listId: listId,
+          taskId: taskId,
+          fileName: fileName,
+          emlBytes: emlBytes,
+        );
+      }
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  Future<TodoTaskAttachmentModel> _attachInline({
+    required String listId,
+    required String taskId,
+    required String fileName,
+    required Uint8List emlBytes,
+  }) async {
+    final response = await _dio.post<Map<String, dynamic>>(
+      '/me/todo/lists/$listId/tasks/$taskId/attachments',
+      data: {
+        '@odata.type': '#microsoft.graph.taskFileAttachment',
+        'name': fileName,
+        'contentType': 'message/rfc822',
+        'contentBytes': base64Encode(emlBytes),
+        'size': emlBytes.length,
+      },
+    );
+    if (response.data == null) {
+      throw const ServerException(message: 'Empty response from server');
+    }
+    return TodoTaskAttachmentModel.fromJson(response.data!);
+  }
+
+  Future<TodoTaskAttachmentModel> _attachViaUploadSession({
+    required String listId,
+    required String taskId,
+    required String fileName,
+    required Uint8List emlBytes,
+  }) async {
+    final sessionResponse = await _dio.post<Map<String, dynamic>>(
+      '/me/todo/lists/$listId/tasks/$taskId/attachments/createUploadSession',
+      data: {
+        'attachmentItem': {
+          '@odata.type': '#microsoft.graph.fileAttachmentUploadProperties',
+          'attachmentType': 'file',
+          'contentType': 'message/rfc822',
+          'name': fileName,
+          'size': emlBytes.length,
+        },
+      },
+    );
+    final uploadUrl = sessionResponse.data?['uploadUrl'] as String?;
+    if (uploadUrl == null) {
+      throw const ServerException(message: 'No upload URL returned');
+    }
+
+    // Upload using a plain Dio instance — the session URL is pre-authorized.
+    final uploadDio = Dio(BaseOptions(
+      connectTimeout: const Duration(seconds: 60),
+      receiveTimeout: const Duration(seconds: 60),
+    ));
+    final size = emlBytes.length;
+    final uploadResponse = await uploadDio.put<Map<String, dynamic>>(
+      uploadUrl,
+      data: Stream.fromIterable([emlBytes]),
+      options: Options(
+        headers: {
+          'Content-Range': 'bytes 0-${size - 1}/$size',
+          'Content-Length': size,
+          'Content-Type': 'message/rfc822',
+        },
+        responseType: ResponseType.json,
+      ),
+    );
+
+    if (uploadResponse.data == null) {
+      throw const ServerException(message: 'Empty upload response');
+    }
+    return TodoTaskAttachmentModel.fromJson(uploadResponse.data!);
+  }
+
+  @override
+  Future<List<TodoTaskAttachmentModel>> getTaskAttachments({
+    required String listId,
+    required String taskId,
+  }) async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/me/todo/lists/$listId/tasks/$taskId/attachments',
+      );
+      final value = (response.data?['value'] as List<dynamic>?) ?? [];
+      return value
+          .map((e) =>
+              TodoTaskAttachmentModel.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<Uint8List> downloadTaskAttachment({
+    required String listId,
+    required String taskId,
+    required String attachmentId,
+  }) async {
+    try {
+      final response = await _dio.get<List<int>>(
+        '/me/todo/lists/$listId/tasks/$taskId/attachments/$attachmentId/\$value',
+        options: Options(responseType: ResponseType.bytes),
+      );
+      return Uint8List.fromList(response.data ?? []);
     } on DioException catch (e) {
       throw _mapDioException(e);
     }

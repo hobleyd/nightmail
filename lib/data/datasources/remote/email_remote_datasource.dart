@@ -52,4 +52,7 @@ abstract interface class EmailRemoteDatasource {
   Future<void> emptyFolder(String folderId, {bool permanentDelete = false});
 
   Future<Uint8List> downloadAttachment(String messageId, String attachmentId);
+
+  /// Returns the raw RFC 822 MIME bytes for [id].
+  Future<Uint8List> getRawEmailBytes(String id);
 }

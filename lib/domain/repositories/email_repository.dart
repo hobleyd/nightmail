@@ -91,4 +91,7 @@ abstract interface class EmailRepository {
 
   /// Deletes all cached emails belonging to [accountId].
   Future<Either<Failure, Unit>> clearCacheForAccount(String accountId);
+
+  /// Returns the raw RFC 822 MIME bytes for the email with [id].
+  Future<Either<Failure, Uint8List>> getRawEmailBytes(String id);
 }

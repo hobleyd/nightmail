@@ -574,6 +574,9 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
         trashPath = await _findTrashPath(client, currentPath: mailboxPath);
       }
 
+      // All subsequent IMAP commands (SEARCH, UID COPY, UID STORE, EXPUNGE)
+      // are scoped to the selected mailbox only — subfolders are separate
+      // mailboxes and are completely unaffected by these operations.
       await _selectMailboxPath(client, mailboxPath);
 
       final searchResult =

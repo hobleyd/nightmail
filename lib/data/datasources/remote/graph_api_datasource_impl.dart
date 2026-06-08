@@ -487,6 +487,8 @@ class GraphApiDatasourceImpl
     try {
       const pageSize = 100;
       while (true) {
+        // /mailFolders/{id}/messages returns only messages directly in this
+        // folder — child folders and their contents are never included.
         final response = await _dio.get<Map<String, dynamic>>(
           '/me/mailFolders/$folderId/messages',
           queryParameters: {'\$top': pageSize, '\$select': 'id'},

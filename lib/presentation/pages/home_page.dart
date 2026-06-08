@@ -91,9 +91,11 @@ class _ThreePanelLayout extends StatefulWidget {
 class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
   double _folderWidth = 220;
   double _emailListWidth = 320;
+  double _calendarPaneWidth = 300;
 
   static const double _minPanelWidth = 120;
   static const double _minReadingPaneWidth = 200;
+  static const double _minCalendarPaneWidth = 200;
   static const double _handleWidth = 8;
 
   @override
@@ -169,14 +171,69 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                     onDrag: (delta) {
                       setState(() {
                         final max = totalWidth -
-                            _handleWidth -
-                            _minReadingPaneWidth;
+                            _handleWidth * 3 -
+                            _emailListWidth -
+                            _minReadingPaneWidth -
+                            _calendarPaneWidth;
                         _folderWidth =
                             (_folderWidth + delta).clamp(_minPanelWidth, max);
                       });
                     },
                   ),
-                  const Expanded(child: CalendarPage()),
+                  SizedBox(
+                    width: _emailListWidth,
+                    child: EmailListPanel(
+                      folderName: selectedFolder?.displayName ?? 'Inbox',
+                      folder: selectedFolder,
+                      selectedEmailId: homeState.selectedEmailId,
+                      onEmailSelected: (email) {
+                        context.read<HomeCubit>().selectEmail(email.id);
+                        context.read<EmailDetailBloc>().add(
+                              EmailDetailLoadRequested(emailId: email.id),
+                            );
+                        if (!email.isRead) {
+                          context.read<EmailListBloc>().add(
+                                EmailListMarkReadRequested(
+                                    emailId: email.id, isRead: true),
+                              );
+                        }
+                      },
+                    ),
+                  ),
+                  _ResizeHandle(
+                    onDrag: (delta) {
+                      setState(() {
+                        final max = totalWidth -
+                            _handleWidth * 3 -
+                            _folderWidth -
+                            _minReadingPaneWidth -
+                            _calendarPaneWidth;
+                        _emailListWidth =
+                            (_emailListWidth + delta).clamp(_minPanelWidth, max);
+                      });
+                    },
+                  ),
+                  const Expanded(child: ReadingPane()),
+                  _ResizeHandle(
+                    onDrag: (delta) {
+                      setState(() {
+                        final max = totalWidth -
+                            _handleWidth * 3 -
+                            _folderWidth -
+                            _emailListWidth -
+                            _minReadingPaneWidth;
+                        _calendarPaneWidth = (_calendarPaneWidth - delta)
+                            .clamp(_minCalendarPaneWidth, max);
+                      });
+                    },
+                  ),
+                  SizedBox(
+                    width: _calendarPaneWidth,
+                    child: CalendarDayPanel(
+                      onClose: () =>
+                          context.read<HomeCubit>().showEmail(),
+                    ),
+                  ),
                 ],
               );
             }

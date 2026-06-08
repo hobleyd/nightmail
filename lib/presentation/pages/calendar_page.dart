@@ -231,6 +231,212 @@ class _NewEventButton extends StatelessWidget {
   }
 }
 
+// ─── Day panel (today only, shown inline in the main window) ─────────────────
+
+class CalendarDayPanel extends StatefulWidget {
+  const CalendarDayPanel({super.key, required this.onClose});
+  final VoidCallback onClose;
+
+  @override
+  State<CalendarDayPanel> createState() => _CalendarDayPanelState();
+}
+
+class _CalendarDayPanelState extends State<CalendarDayPanel> {
+  static const double _hourHeight = 64.0;
+  static const double _timeColumnWidth = 48.0;
+  static const int _totalHours = 24;
+  late final ScrollController _scrollController;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController = ScrollController(initialScrollOffset: 7 * _hourHeight);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  bool _isSameDay(DateTime a, DateTime b) {
+    final la = a.toLocal();
+    final lb = b.toLocal();
+    return la.year == lb.year && la.month == lb.month && la.day == lb.day;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final today = DateTime.now();
+
+    return BlocBuilder<CalendarBloc, CalendarState>(
+      builder: (context, state) {
+        final isLoading = state is CalendarLoading;
+        final allDayEvents = switch (state) {
+          CalendarLoaded(:final events) =>
+            events.where((e) => e.isAllDay && _isSameDay(e.start, today)).toList(),
+          _ => <CalendarEvent>[],
+        };
+        final timedEvents = switch (state) {
+          CalendarLoaded(:final events) =>
+            events.where((e) => !e.isAllDay && _isSameDay(e.start, today)).toList(),
+          _ => <CalendarEvent>[],
+        };
+
+        return ColoredBox(
+          color: c.surfaceBase,
+          child: Column(
+            children: [
+              _DayPanelHeader(today: today, onClose: widget.onClose),
+              Divider(height: 1, color: c.separatorStrong),
+              if (allDayEvents.isNotEmpty) ...[
+                _DayPanelAllDayStrip(events: allDayEvents),
+                Divider(height: 1, color: c.separatorStrong),
+              ],
+              if (isLoading)
+                const Expanded(
+                  child: Center(
+                    child: CircularProgressIndicator(
+                      color: AppColors.accent, strokeWidth: 2),
+                  ),
+                )
+              else
+                Expanded(
+                  child: SingleChildScrollView(
+                    controller: _scrollController,
+                    child: SizedBox(
+                      height: _hourHeight * _totalHours,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _TimeColumn(
+                            hourHeight: _hourHeight,
+                            totalHours: _totalHours,
+                            width: _timeColumnWidth,
+                          ),
+                          VerticalDivider(width: 1, color: c.separatorStrong),
+                          Expanded(
+                            child: Stack(
+                              children: [
+                                ...List.generate(
+                                  _totalHours,
+                                  (h) => Positioned(
+                                    top: h * _hourHeight,
+                                    left: 0,
+                                    right: 0,
+                                    child: Divider(
+                                      height: 0.5,
+                                      color: h == 0
+                                          ? Colors.transparent
+                                          : c.separator,
+                                    ),
+                                  ),
+                                ),
+                                ...timedEvents.map((e) => _PositionedEvent(
+                                      event: e,
+                                      dayStart: DateTime(
+                                          today.year, today.month, today.day),
+                                      hourHeight: _hourHeight,
+                                    )),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _DayPanelHeader extends StatelessWidget {
+  const _DayPanelHeader({required this.today, required this.onClose});
+  final DateTime today;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+      child: Row(
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            decoration: const BoxDecoration(
+              color: AppColors.accent,
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: Text(
+                '${today.day}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                DateFormat('EEEE').format(today),
+                style: TextStyle(
+                  color: c.textPrimary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: -0.2,
+                ),
+              ),
+              Text(
+                DateFormat('MMMM y').format(today),
+                style: TextStyle(color: c.textMuted, fontSize: 10),
+              ),
+            ],
+          ),
+          const Spacer(),
+          InkWell(
+            onTap: onClose,
+            borderRadius: BorderRadius.circular(6),
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: Icon(Icons.close_rounded, size: 16, color: c.textMuted),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DayPanelAllDayStrip extends StatelessWidget {
+  const _DayPanelAllDayStrip({required this.events});
+  final List<CalendarEvent> events;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: context.colors.surfacePanel,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: events.map((e) => _AllDayEventChip(event: e)).toList(),
+      ),
+    );
+  }
+}
+
 // ─── Week view ───────────────────────────────────────────────────────────────
 
 class _WeekView extends StatefulWidget {

@@ -1,7 +1,7 @@
 import 'package:equatable/equatable.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-enum HomeView { email, calendar }
+enum HomeView { email, calendar, tasks }
 
 class HomeCubit extends Cubit<HomeState> {
   HomeCubit() : super(const HomeState());
@@ -44,6 +44,10 @@ class HomeCubit extends Cubit<HomeState> {
 
   void showCalendar() {
     emit(state.copyWith(view: HomeView.calendar));
+  }
+
+  void showTasks() {
+    emit(state.copyWith(view: HomeView.tasks));
   }
 
   void showEmail() {

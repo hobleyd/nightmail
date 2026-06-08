@@ -1,6 +1,3 @@
-import 'dart:convert';
-
-import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -23,6 +20,7 @@ import '../widgets/email_list_panel.dart';
 import '../widgets/folder_panel.dart';
 import '../widgets/reading_pane.dart';
 import 'calendar_page.dart';
+import 'tasks_page.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -154,14 +152,84 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                       CalendarWeekLoadRequested(weekStart: monday),
                     );
               },
-              onTasksTapped: () async {
-                await WindowController.create(
-                  WindowConfiguration(
-                    arguments: jsonEncode({'type': 'tasks'}),
-                  ),
-                );
+              onTasksTapped: () {
+                homeCubit.showTasks();
               },
             );
+
+            if (homeState.view == HomeView.tasks) {
+              return Row(
+                children: [
+                  SizedBox(width: _folderWidth, child: folderPanel),
+                  _ResizeHandle(
+                    onDrag: (delta) {
+                      setState(() {
+                        final max = totalWidth -
+                            _handleWidth * 3 -
+                            _emailListWidth -
+                            _minReadingPaneWidth -
+                            _calendarPaneWidth;
+                        _folderWidth =
+                            (_folderWidth + delta).clamp(_minPanelWidth, max);
+                      });
+                    },
+                  ),
+                  SizedBox(
+                    width: _emailListWidth,
+                    child: EmailListPanel(
+                      folderName: selectedFolder?.displayName ?? 'Inbox',
+                      folder: selectedFolder,
+                      selectedEmailId: homeState.selectedEmailId,
+                      onEmailSelected: (email) {
+                        context.read<HomeCubit>().selectEmail(email.id);
+                        context.read<EmailDetailBloc>().add(
+                              EmailDetailLoadRequested(emailId: email.id),
+                            );
+                        if (!email.isRead) {
+                          context.read<EmailListBloc>().add(
+                                EmailListMarkReadRequested(
+                                    emailId: email.id, isRead: true),
+                              );
+                        }
+                      },
+                    ),
+                  ),
+                  _ResizeHandle(
+                    onDrag: (delta) {
+                      setState(() {
+                        final max = totalWidth -
+                            _handleWidth * 3 -
+                            _folderWidth -
+                            _minReadingPaneWidth -
+                            _calendarPaneWidth;
+                        _emailListWidth =
+                            (_emailListWidth + delta).clamp(_minPanelWidth, max);
+                      });
+                    },
+                  ),
+                  const Expanded(child: ReadingPane()),
+                  _ResizeHandle(
+                    onDrag: (delta) {
+                      setState(() {
+                        final max = totalWidth -
+                            _handleWidth * 3 -
+                            _folderWidth -
+                            _emailListWidth -
+                            _minReadingPaneWidth;
+                        _calendarPaneWidth = (_calendarPaneWidth - delta)
+                            .clamp(_minCalendarPaneWidth, max);
+                      });
+                    },
+                  ),
+                  SizedBox(
+                    width: _calendarPaneWidth,
+                    child: TasksDayPanel(
+                      onClose: () => context.read<HomeCubit>().showEmail(),
+                    ),
+                  ),
+                ],
+              );
+            }
 
             if (homeState.view == HomeView.calendar) {
               return Row(

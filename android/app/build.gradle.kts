@@ -1,3 +1,6 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -16,8 +19,8 @@ android {
 
     val keystorePropertiesFile = rootProject.file("key.properties")
     if (keystorePropertiesFile.exists()) {
-        val keystoreProperties = java.util.Properties()
-        keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile))
+        val keystoreProperties = Properties()
+        keystoreProperties.load(FileInputStream(keystorePropertiesFile))
         signingConfigs {
             create("release") {
                 keyAlias = keystoreProperties["keyAlias"] as String
@@ -34,7 +37,6 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        setProperty("archivesBaseName", "nightmail-$versionName")
     }
 
     buildTypes {
@@ -45,6 +47,10 @@ android {
                 signingConfigs.getByName("debug")
         }
     }
+}
+
+base {
+    archivesName.set("nightmail-${flutter.versionName}")
 }
 
 kotlin {

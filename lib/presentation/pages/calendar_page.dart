@@ -246,6 +246,7 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
   static const double _timeColumnWidth = 48.0;
   static const int _totalHours = 24;
   late final ScrollController _scrollController;
+  Offset? _tapPosition;
 
   @override
   void initState() {
@@ -317,29 +318,56 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
                           ),
                           VerticalDivider(width: 1, color: c.separatorStrong),
                           Expanded(
-                            child: Stack(
-                              children: [
-                                ...List.generate(
-                                  _totalHours,
-                                  (h) => Positioned(
-                                    top: h * _hourHeight,
-                                    left: 0,
-                                    right: 0,
-                                    child: Divider(
-                                      height: 0.5,
-                                      color: h == 0
-                                          ? Colors.transparent
-                                          : c.separator,
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onDoubleTapDown: (d) =>
+                                  _tapPosition = d.localPosition,
+                              onDoubleTap: () {
+                                final pos = _tapPosition;
+                                if (pos == null) return;
+                                final totalMinutes =
+                                    (pos.dy / _hourHeight * 60).round();
+                                final roundedMinutes =
+                                    (totalMinutes / 30).floor() * 30;
+                                final hour =
+                                    (roundedMinutes ~/ 60).clamp(0, 23);
+                                final minute = roundedMinutes % 60;
+                                final start = DateTime(today.year, today.month,
+                                    today.day, hour, minute);
+                                final bloc = context.read<CalendarBloc>();
+                                EventEditDialog.show(context,
+                                        initialStart: start)
+                                    .then((saved) {
+                                  if (saved && context.mounted) {
+                                    bloc.add(CalendarWeekNavigated(
+                                        weekStart: bloc.state.weekStart));
+                                  }
+                                });
+                              },
+                              child: Stack(
+                                children: [
+                                  ...List.generate(
+                                    _totalHours,
+                                    (h) => Positioned(
+                                      top: h * _hourHeight,
+                                      left: 0,
+                                      right: 0,
+                                      child: Divider(
+                                        height: 0.5,
+                                        color: h == 0
+                                            ? Colors.transparent
+                                            : c.separator,
+                                      ),
                                     ),
                                   ),
-                                ),
-                                ...timedEvents.map((e) => _PositionedEvent(
-                                      event: e,
-                                      dayStart: DateTime(
-                                          today.year, today.month, today.day),
-                                      hourHeight: _hourHeight,
-                                    )),
-                              ],
+                                  ...timedEvents.map((e) => _PositionedEvent(
+                                        event: e,
+                                        dayStart: DateTime(today.year,
+                                            today.month, today.day),
+                                        hourHeight: _hourHeight,
+                                      )),
+                                ],
+                              ),
                             ),
                           ),
                         ],
@@ -785,7 +813,6 @@ class _DayColumns extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = context.colors;
     final today = DateTime.now();
 
     return Row(
@@ -794,35 +821,12 @@ class _DayColumns extends StatelessWidget {
         final isToday = _isSameDay(day, today);
         final dayEvents = _eventsForDay(day);
 
-        return Expanded(
-          child: Container(
-            decoration: BoxDecoration(
-              color: isToday ? AppColors.accent.withAlpha(6) : null,
-              border: Border(
-                left: BorderSide(color: c.separator, width: 0.5),
-              ),
-            ),
-            child: Stack(
-              children: [
-                // Hour grid lines
-                ...List.generate(totalHours, (h) => Positioned(
-                  top: h * hourHeight,
-                  left: 0,
-                  right: 0,
-                  child: Divider(
-                    height: 0.5,
-                    color: h == 0 ? Colors.transparent : c.separator,
-                  ),
-                )),
-                // Events
-                ...dayEvents.map((e) => _PositionedEvent(
-                  event: e,
-                  dayStart: DateTime(day.year, day.month, day.day),
-                  hourHeight: hourHeight,
-                )),
-              ],
-            ),
-          ),
+        return _DayColumnCell(
+          day: day,
+          hourHeight: hourHeight,
+          totalHours: totalHours,
+          isToday: isToday,
+          dayEvents: dayEvents,
         );
       }),
     );
@@ -838,6 +842,93 @@ class _DayColumns extends StatelessWidget {
           local.month == day.month &&
           local.day == day.day;
     }).toList();
+  }
+}
+
+class _DayColumnCell extends StatefulWidget {
+  const _DayColumnCell({
+    required this.day,
+    required this.hourHeight,
+    required this.totalHours,
+    required this.isToday,
+    required this.dayEvents,
+  });
+
+  final DateTime day;
+  final double hourHeight;
+  final int totalHours;
+  final bool isToday;
+  final List<CalendarEvent> dayEvents;
+
+  @override
+  State<_DayColumnCell> createState() => _DayColumnCellState();
+}
+
+class _DayColumnCellState extends State<_DayColumnCell> {
+  Offset? _tapPosition;
+
+  void _onDoubleTapDown(TapDownDetails details) {
+    _tapPosition = details.localPosition;
+  }
+
+  void _onDoubleTap() {
+    final pos = _tapPosition;
+    if (pos == null) return;
+
+    final totalMinutes = (pos.dy / widget.hourHeight * 60).round();
+    final roundedMinutes = (totalMinutes / 30).floor() * 30;
+    final hour = (roundedMinutes ~/ 60).clamp(0, 23);
+    final minute = roundedMinutes % 60;
+    final start = DateTime(
+        widget.day.year, widget.day.month, widget.day.day, hour, minute);
+
+    final bloc = context.read<CalendarBloc>();
+    EventEditDialog.show(context, initialStart: start).then((saved) {
+      if (saved && context.mounted) {
+        bloc.add(CalendarWeekNavigated(weekStart: bloc.state.weekStart));
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Expanded(
+      child: GestureDetector(
+        onDoubleTapDown: _onDoubleTapDown,
+        onDoubleTap: _onDoubleTap,
+        child: Container(
+          decoration: BoxDecoration(
+            color: widget.isToday ? AppColors.accent.withAlpha(6) : null,
+            border: Border(
+              left: BorderSide(color: c.separator, width: 0.5),
+            ),
+          ),
+          child: Stack(
+            children: [
+              ...List.generate(
+                  widget.totalHours,
+                  (h) => Positioned(
+                        top: h * widget.hourHeight,
+                        left: 0,
+                        right: 0,
+                        child: Divider(
+                          height: 0.5,
+                          color:
+                              h == 0 ? Colors.transparent : c.separator,
+                        ),
+                      )),
+              ...widget.dayEvents.map((e) => _PositionedEvent(
+                    event: e,
+                    dayStart: DateTime(widget.day.year, widget.day.month,
+                        widget.day.day),
+                    hourHeight: widget.hourHeight,
+                  )),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

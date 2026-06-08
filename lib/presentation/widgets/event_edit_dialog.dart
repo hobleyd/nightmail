@@ -16,12 +16,19 @@ import '../blocs/event_edit/event_edit_state.dart';
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 class EventEditDialog extends StatelessWidget {
-  const EventEditDialog({super.key, this.event});
+  const EventEditDialog({super.key, this.event, this.initialStart});
 
   /// If null, opens in create mode. If provided, opens in edit mode.
   final CalendarEvent? event;
 
-  static Future<bool> show(BuildContext context, {CalendarEvent? event}) async {
+  /// Pre-fills the start time when opening in create mode (event == null).
+  final DateTime? initialStart;
+
+  static Future<bool> show(
+    BuildContext context, {
+    CalendarEvent? event,
+    DateTime? initialStart,
+  }) async {
     final saved = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -30,7 +37,7 @@ class EventEditDialog extends StatelessWidget {
           createCalendarEvent: sl<CreateCalendarEvent>(),
           updateCalendarEvent: sl<UpdateCalendarEvent>(),
         ),
-        child: EventEditDialog(event: event),
+        child: EventEditDialog(event: event, initialStart: initialStart),
       ),
     );
     return saved ?? false;
@@ -58,7 +65,7 @@ class EventEditDialog extends StatelessWidget {
           );
         }
       },
-      child: _EventEditForm(event: event),
+      child: _EventEditForm(event: event, initialStart: initialStart),
     );
   }
 }
@@ -66,8 +73,9 @@ class EventEditDialog extends StatelessWidget {
 // ─── Form ─────────────────────────────────────────────────────────────────────
 
 class _EventEditForm extends StatefulWidget {
-  const _EventEditForm({this.event});
+  const _EventEditForm({this.event, this.initialStart});
   final CalendarEvent? event;
+  final DateTime? initialStart;
 
   @override
   State<_EventEditForm> createState() => _EventEditFormState();
@@ -98,9 +106,13 @@ class _EventEditFormState extends State<_EventEditForm> {
     _locationController = TextEditingController(text: e?.location ?? '');
     _descriptionController = TextEditingController(text: e?.bodyPreview ?? '');
 
-    final startLocal = (e?.start ?? roundedHour).toLocal();
-    final endLocal =
-        (e?.end ?? roundedHour.add(const Duration(hours: 1))).toLocal();
+    final defaultStart = widget.initialStart ?? roundedHour;
+    final defaultEnd = widget.initialStart != null
+        ? widget.initialStart!.add(const Duration(minutes: 30))
+        : roundedHour.add(const Duration(hours: 1));
+
+    final startLocal = (e?.start ?? defaultStart).toLocal();
+    final endLocal = (e?.end ?? defaultEnd).toLocal();
 
     _startDate = DateTime(startLocal.year, startLocal.month, startLocal.day);
     _startTime = TimeOfDay(hour: startLocal.hour, minute: startLocal.minute);

@@ -92,6 +92,7 @@ class ComposeForm extends StatefulWidget {
     required this.onClose,
     required this.fromAddress,
     this.scrollable = false,
+    this.onTitleChanged,
   });
 
   final ComposeMode mode;
@@ -99,6 +100,7 @@ class ComposeForm extends StatefulWidget {
   final VoidCallback onClose;
   final String fromAddress;
   final bool scrollable;
+  final ValueChanged<String>? onTitleChanged;
 
   @override
   State<ComposeForm> createState() => _ComposeFormState();
@@ -120,8 +122,10 @@ class _ComposeFormState extends State<ComposeForm> {
     _fromController = TextEditingController(text: widget.fromAddress);
     _subjectController = TextEditingController(text: _initialSubject());
     _bodyController = TextEditingController();
+    _subjectController.addListener(_onSubjectChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _bodyFocus.requestFocus();
+      widget.onTitleChanged?.call(_title);
     });
   }
 
@@ -154,6 +158,8 @@ class _ComposeFormState extends State<ComposeForm> {
     };
   }
 
+  static final _rePrefix = RegExp(r'^(?:re:\s*)+', caseSensitive: false);
+
   String _initialSubject() {
     final email = widget.originalEmail;
     if (email == null) return '';
@@ -161,7 +167,7 @@ class _ComposeFormState extends State<ComposeForm> {
     return switch (widget.mode) {
       ComposeMode.reply ||
       ComposeMode.replyAll =>
-        subject.startsWith('Re:') ? subject : 'Re: $subject',
+        'Re: ${subject.replaceFirst(_rePrefix, '').trim()}',
       ComposeMode.forward => 'Fwd: $subject',
       ComposeMode.newEmail => '',
     };
@@ -169,6 +175,7 @@ class _ComposeFormState extends State<ComposeForm> {
 
   @override
   void dispose() {
+    _subjectController.removeListener(_onSubjectChanged);
     _fromController.dispose();
     _subjectController.dispose();
     _bodyController.dispose();
@@ -176,12 +183,22 @@ class _ComposeFormState extends State<ComposeForm> {
     super.dispose();
   }
 
-  String get _title => switch (widget.mode) {
+  void _onSubjectChanged() {
+    setState(() {});
+    widget.onTitleChanged?.call(_title);
+  }
+
+  String get _baseTitle => switch (widget.mode) {
         ComposeMode.newEmail => 'New Email',
         ComposeMode.reply => 'Reply',
         ComposeMode.replyAll => 'Reply All',
         ComposeMode.forward => 'Forward',
       };
+
+  String get _title {
+    final subject = _subjectController.text.trim();
+    return subject.isNotEmpty ? subject : _baseTitle;
+  }
 
   bool get _toInputEditable => switch (widget.mode) {
         ComposeMode.newEmail || ComposeMode.forward => true,

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -27,7 +28,6 @@ import '../blocs/email_detail/email_detail_event.dart';
 import '../blocs/email_detail/email_detail_state.dart';
 import '../blocs/email_list/email_list_bloc.dart';
 import '../blocs/email_list/email_list_event.dart';
-import 'compose_dialog.dart';
 import 'email_date_formatter.dart';
 
 class ReadingPane extends StatelessWidget {
@@ -130,6 +130,27 @@ class _EmailView extends StatelessWidget {
 class _ReadingPaneToolbar extends StatelessWidget {
   const _ReadingPaneToolbar({required this.email});
   final Email email;
+
+  Future<void> _openComposeWindow(ComposeMode mode) async {
+    await WindowController.create(
+      WindowConfiguration(
+        arguments: jsonEncode({
+          'mode': mode.name,
+          'originalEmail': {
+            'id': email.id,
+            'subject': email.subject,
+            'from': {'address': email.from.address, 'name': email.from.name},
+            'toRecipients': email.toRecipients
+                .map((r) => {'address': r.address, 'name': r.name})
+                .toList(),
+            'ccRecipients': email.ccRecipients
+                .map((r) => {'address': r.address, 'name': r.name})
+                .toList(),
+          },
+        }),
+      ),
+    );
+  }
 
   Future<void> _confirmAndDelete(BuildContext context) async {
     final settings = sl<AppSettings>();
@@ -243,31 +264,19 @@ class _ReadingPaneToolbar extends StatelessWidget {
             icon: Icons.reply_rounded,
             tooltip: 'Reply',
             color: c.textMuted,
-            onPressed: () => ComposeDialog.show(
-              context,
-              mode: ComposeMode.reply,
-              originalEmail: email,
-            ),
+            onPressed: () => _openComposeWindow(ComposeMode.reply),
           ),
           _ToolbarButton(
             icon: Icons.reply_all_rounded,
             tooltip: 'Reply All',
             color: c.textMuted,
-            onPressed: () => ComposeDialog.show(
-              context,
-              mode: ComposeMode.replyAll,
-              originalEmail: email,
-            ),
+            onPressed: () => _openComposeWindow(ComposeMode.replyAll),
           ),
           _ToolbarButton(
             icon: Icons.forward_to_inbox_rounded,
             tooltip: 'Forward',
             color: c.textMuted,
-            onPressed: () => ComposeDialog.show(
-              context,
-              mode: ComposeMode.forward,
-              originalEmail: email,
-            ),
+            onPressed: () => _openComposeWindow(ComposeMode.forward),
           ),
           const Spacer(),
           _ToolbarButton(

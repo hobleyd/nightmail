@@ -3,6 +3,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../domain/entities/email.dart';
+import '../../domain/entities/email_address.dart';
 import '../../domain/usecases/send_email.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../../injection_container.dart';
@@ -57,6 +59,7 @@ class ComposeWindowApp extends StatelessWidget {
               mode: ComposeMode.values.byName(
                 arguments['mode'] as String? ?? 'newEmail',
               ),
+              arguments: arguments,
             ),
           );
         },
@@ -69,12 +72,39 @@ class _ComposeWindowPage extends StatelessWidget {
   const _ComposeWindowPage({
     required this.windowId,
     required this.mode,
+    required this.arguments,
   });
 
   final String windowId;
   final ComposeMode mode;
+  final Map<String, dynamic> arguments;
 
   void _close() => windowManager.close();
+
+  Email? _originalEmail() {
+    final raw = arguments['originalEmail'];
+    if (raw == null) return null;
+    final map = raw as Map<String, dynamic>;
+    EmailAddress parseAddress(Map<String, dynamic> m) =>
+        EmailAddress(address: m['address'] as String, name: m['name'] as String?);
+    return Email(
+      id: map['id'] as String,
+      subject: map['subject'] as String,
+      from: parseAddress(map['from'] as Map<String, dynamic>),
+      toRecipients: (map['toRecipients'] as List<dynamic>)
+          .map((r) => parseAddress(r as Map<String, dynamic>))
+          .toList(),
+      ccRecipients: (map['ccRecipients'] as List<dynamic>)
+          .map((r) => parseAddress(r as Map<String, dynamic>))
+          .toList(),
+      bodyPreview: '',
+      body: '',
+      bodyType: EmailBodyType.text,
+      isRead: true,
+      receivedDateTime: DateTime.now(),
+      importance: EmailImportance.normal,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -100,9 +130,11 @@ class _ComposeWindowPage extends StatelessWidget {
           },
           child: ComposeForm(
             mode: mode,
+            originalEmail: _originalEmail(),
             onClose: _close,
             fromAddress: fromAddress,
             scrollable: true,
+            onTitleChanged: (title) => windowManager.setTitle(title),
           ),
         ),
       ),

@@ -38,11 +38,19 @@ void main(List<String> args) async {
     final mode = ComposeMode.values.byName(
       arguments['mode'] as String? ?? 'newEmail',
     );
+    final originalSubject =
+        ((arguments['originalEmail'] as Map<String, dynamic>?)?['subject']
+                as String?) ??
+            '';
+    final cleanSubject = originalSubject
+        .replaceFirst(RegExp(r'^(?:re:\s*)+', caseSensitive: false), '')
+        .trim();
     final title = switch (mode) {
       ComposeMode.newEmail => 'New Email',
-      ComposeMode.reply => 'Reply',
-      ComposeMode.replyAll => 'Reply All',
-      ComposeMode.forward => 'Forward',
+      ComposeMode.reply || ComposeMode.replyAll =>
+        cleanSubject.isNotEmpty ? 'Re: $cleanSubject' : 'Reply',
+      ComposeMode.forward =>
+        originalSubject.isNotEmpty ? 'Fwd: $originalSubject' : 'Forward',
     };
 
     windowManager.waitUntilReadyToShow(

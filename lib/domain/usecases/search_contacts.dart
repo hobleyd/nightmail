@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../entities/contact_suggestion.dart';
 import '../repositories/sender_repository.dart';
 import '../repositories/system_contacts_repository.dart';
@@ -35,7 +37,9 @@ class SearchContacts {
           }
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[NightMail] known-senders search error: $e');
+    }
 
     // System contacts
     try {
@@ -45,7 +49,9 @@ class SearchContacts {
           results.add(c);
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[NightMail] system-contacts search error: $e');
+    }
 
     return results.take(8).toList();
   }

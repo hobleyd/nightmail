@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -7,6 +8,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/contact_suggestion.dart';
 import '../../domain/entities/email.dart';
+import '../../domain/repositories/system_contacts_repository.dart';
 import '../../domain/usecases/search_contacts.dart';
 import '../../domain/usecases/send_email.dart';
 import '../../injection_container.dart';
@@ -455,6 +457,13 @@ class _RecipientFieldState extends State<_RecipientField> {
   void initState() {
     super.initState();
     _inputFocus.addListener(_onInputFocusChanged);
+    if (widget.showInput && widget.accountId != null) {
+      // Eagerly request contacts permission and pre-load the cache so the
+      // permission dialog appears as soon as the compose form is shown.
+      sl<SystemContactsRepository>()
+          .warmUp()
+          .catchError((e) => debugPrint('[NightMail] contacts warmUp: $e'));
+    }
   }
 
   @override
@@ -536,7 +545,9 @@ class _RecipientFieldState extends State<_RecipientField> {
           accountId: accountId,
         );
         if (mounted) _setSuggestions(results);
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('[NightMail] recipient search error: $e');
+      }
     });
   }
 

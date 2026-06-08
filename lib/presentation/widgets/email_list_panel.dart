@@ -484,6 +484,10 @@ class _EmailListView extends StatelessWidget {
               onTap: () => onEmailTapped(item.latestEmail, i),
               onLongPress: () => onEmailLongPressed?.call(item.latestEmail, i),
               onToggleExpand: () => onToggleConversation(item.conversationId),
+              onDelete: () => context
+                  .read<EmailListBloc>()
+                  .add(EmailListEmailDeleted(emailId: item.latestEmail.id)),
+              onFlag: () {},
             ),
         };
       },
@@ -501,6 +505,8 @@ class _ConversationHeader extends StatelessWidget {
     required this.isSelected,
     required this.onTap,
     required this.onToggleExpand,
+    required this.onDelete,
+    required this.onFlag,
     this.isMultiSelected = false,
     this.showCheckbox = false,
     this.onLongPress,
@@ -516,6 +522,8 @@ class _ConversationHeader extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
   final VoidCallback onToggleExpand;
+  final VoidCallback onDelete;
+  final VoidCallback onFlag;
 
   @override
   Widget build(BuildContext context) {
@@ -657,6 +665,23 @@ class _ConversationHeader extends StatelessWidget {
                     ],
                   ),
                 ),
+                const SizedBox(width: 4),
+                Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _ActionIcon(
+                      icon: Icons.delete_outline_rounded,
+                      color: c.textDimmed,
+                      onTap: onDelete,
+                    ),
+                    const SizedBox(height: 2),
+                    _ActionIcon(
+                      icon: Icons.flag_outlined,
+                      color: c.textDimmed,
+                      onTap: onFlag,
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
@@ -765,6 +790,30 @@ class _ErrorView extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _ActionIcon extends StatelessWidget {
+  const _ActionIcon({
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: Icon(icon, size: 15, color: color),
       ),
     );
   }

@@ -28,6 +28,10 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
   /// SELECT "INBOX.Sent"). Set once in [getMailFolders] and reused thereafter.
   String _inboxFolderPrefix = '';
 
+  /// Path separator reported by the server (e.g. '/' for Gmail, '.' for Courier).
+  /// Set in [getMailFolders] and reused in [getChildFolders].
+  String _pathSeparator = '.';
+
   Future<ImapClient> _getConnectedClient() async {
     if (_client != null && _client!.isConnected) return _client!;
 
@@ -129,11 +133,15 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       // Detection: INBOX is present, other root-level selectable folders exist
       // without a separator in their path, and none start with INBOX<sep>.
       // We do NOT rely on \HasChildren because many servers omit it.
+      //
+      // Courier always uses '.' as the separator; servers using '/' (e.g. Gmail)
+      // never use the abbreviated-namespace convention, so skip detection there.
       final sep = rootMailboxes.firstOrNull?.pathSeparator ?? '.';
+      _pathSeparator = sep;
       final inboxExists = rootMailboxes.any(
         (mb) => mb.path.toUpperCase() == 'INBOX',
       );
-      if (inboxExists) {
+      if (inboxExists && sep == '.') {
         final hasExplicitInboxChildren = rootMailboxes.any(
           (mb) => mb.path.toUpperCase().startsWith('INBOX$sep'),
         );
@@ -187,12 +195,10 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     try {
       final client = await _getConnectedClient();
 
-      // LIST "parent." % lists direct children.
+      // LIST "parent<sep>" % lists direct children.
       // Using the reference with a trailing separator is the standard portable
       // approach — LIST "INBOX" % returns INBOX itself on many servers.
-      final sep = _inboxFolderPrefix.isNotEmpty
-          ? _inboxFolderPrefix.replaceAll('INBOX', '')
-          : '.';
+      final sep = _pathSeparator;
       final supportsListStatus = client.serverInfo.supports('LIST-STATUS');
       final mailboxes = await client.listMailboxes(
         path: '"$parentFolderId$sep"',

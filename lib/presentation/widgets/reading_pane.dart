@@ -10,6 +10,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:open_file/open_file.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../core/settings/app_settings.dart';
@@ -843,11 +844,13 @@ class _HtmlBodyWebViewState extends State<_HtmlBodyWebView> {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.disabled)
       ..setNavigationDelegate(NavigationDelegate(
-        // Allow the initial HTML load (about:, data:, file:) but block any
-        // outbound http/https navigation triggered by clicking links.
+        // Allow the initial HTML load (about:, data:, file:) but intercept
+        // outbound http/https/mailto navigation to open in the system browser/email client.
         onNavigationRequest: (request) {
-          final scheme = Uri.tryParse(request.url)?.scheme ?? '';
-          if (scheme == 'http' || scheme == 'https') {
+          final uri = Uri.tryParse(request.url);
+          final scheme = uri?.scheme ?? '';
+          if (scheme == 'http' || scheme == 'https' || scheme == 'mailto') {
+            launchUrl(uri!, mode: LaunchMode.externalApplication);
             return NavigationDecision.prevent;
           }
           return NavigationDecision.navigate;

@@ -1,6 +1,6 @@
 {
-    "name": "nightmail",
-    "short_name": "nightmail",
+    "name": "NightMail",
+    "short_name": "NightMail",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0a0a2e",

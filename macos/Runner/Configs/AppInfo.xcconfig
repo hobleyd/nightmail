@@ -5,7 +5,7 @@
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
-PRODUCT_NAME = nightmail
+PRODUCT_NAME = NightMail
 
 // The application's bundle identifier
 PRODUCT_BUNDLE_IDENTIFIER = au.com.sharpblue.nightmail

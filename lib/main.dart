@@ -10,6 +10,7 @@ import 'presentation/blocs/account/account_cubit.dart';
 import 'presentation/blocs/theme/theme_cubit.dart';
 import 'presentation/blocs/theme/theme_state.dart';
 import 'presentation/pages/account_selection_page.dart';
+import 'presentation/pages/calendar_window.dart';
 import 'presentation/pages/compose_window.dart';
 import 'presentation/pages/home_page.dart';
 
@@ -24,6 +25,15 @@ void main(List<String> args) async {
         : jsonDecode(args[2]) as Map<String, dynamic>;
 
     await configureDependencies();
+
+    if (arguments['type'] == 'calendar') {
+      windowManager.waitUntilReadyToShow(
+        const WindowOptions(size: Size(900, 640), center: true, title: 'Calendar'),
+        () async => windowManager.show(),
+      );
+      runApp(const CalendarWindowApp());
+      return;
+    }
 
     final mode = ComposeMode.values.byName(
       arguments['mode'] as String? ?? 'newEmail',

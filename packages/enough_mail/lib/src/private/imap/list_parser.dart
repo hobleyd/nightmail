@@ -82,9 +82,14 @@ class ListParser extends ResponseParser<List<Mailbox>> {
     // Parses extended data
     final boxExtendedData = <String, List<String>>{};
     if (isExtended) {
-      final extraInfoStartIndex = listDetails.indexOf('(');
+      // Only find '(' that is outside a double-quoted string.
+      // Mailbox names may contain parentheses (e.g. "INBOX.Audit(s)") and
+      // those must not be mistaken for extended-data delimiters.
+      final extraInfoStartIndex = _firstUnquotedOpenParen(listDetails);
       final extraInfoEndIndex = listDetails.lastIndexOf(')');
-      if (extraInfoEndIndex != -1 && extraInfoStartIndex < extraInfoEndIndex) {
+      if (extraInfoStartIndex != -1 &&
+          extraInfoEndIndex != -1 &&
+          extraInfoStartIndex < extraInfoEndIndex) {
         final extraInfo =
             listDetails.substring(extraInfoStartIndex + 1, extraInfoEndIndex);
         listDetails = listDetails.substring(0, extraInfoStartIndex - 1);
@@ -140,6 +145,20 @@ class ListParser extends ResponseParser<List<Mailbox>> {
       extendedData: boxExtendedData,
     );
     boxes.add(box);
+  }
+
+  /// Returns the index of the first '(' that is not inside a double-quoted
+  /// string, or -1 if there is none.
+  static int _firstUnquotedOpenParen(String s) {
+    var inQuote = false;
+    for (var i = 0; i < s.length; i++) {
+      if (s[i] == '"') {
+        inQuote = !inQuote;
+      } else if (s[i] == '(' && !inQuote) {
+        return i;
+      }
+    }
+    return -1;
   }
 
   void _addFlags(

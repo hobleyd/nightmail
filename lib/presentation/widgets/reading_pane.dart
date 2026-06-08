@@ -48,7 +48,8 @@ class ReadingPane extends StatelessWidget {
                 child: CircularProgressIndicator(
                     color: AppColors.accent, strokeWidth: 2),
               ),
-            EmailDetailLoaded(:final email) => _EmailView(email: email),
+            EmailDetailLoaded(:final email, :final senderAnomalyScore) =>
+              _EmailView(email: email, senderAnomalyScore: senderAnomalyScore),
             EmailDetailError(:final message) => _ErrorState(message: message),
           };
         },
@@ -108,8 +109,9 @@ class _ErrorState extends StatelessWidget {
 }
 
 class _EmailView extends StatelessWidget {
-  const _EmailView({required this.email});
+  const _EmailView({required this.email, this.senderAnomalyScore});
   final Email email;
+  final double? senderAnomalyScore;
 
   @override
   Widget build(BuildContext context) {
@@ -119,7 +121,7 @@ class _EmailView extends StatelessWidget {
       children: [
         _ReadingPaneToolbar(email: email),
         Divider(height: 1, color: c.border),
-        _EmailHeader(email: email),
+        _EmailHeader(email: email, senderAnomalyScore: senderAnomalyScore),
         Divider(height: 1, color: c.border),
         Expanded(
           child: _EmailBody(email: email),
@@ -326,8 +328,15 @@ class _ToolbarButton extends StatelessWidget {
 }
 
 class _EmailHeader extends StatelessWidget {
-  const _EmailHeader({required this.email});
+  const _EmailHeader({required this.email, this.senderAnomalyScore});
   final Email email;
+  final double? senderAnomalyScore;
+
+  static Color? _anomalyColor(double? score) {
+    if (score == null) return null;
+    final t = ((score - 0.75) / 0.25).clamp(0.0, 1.0);
+    return Color.lerp(Colors.pink.shade100, Colors.red.shade700, t);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -348,10 +357,9 @@ class _EmailHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          _MetaRow(
-            icon: Icons.person_outline_rounded,
-            label: 'From',
-            value: '${email.from.displayName} <${email.from.address}>',
+          _AnomalousFromRow(
+            email: email,
+            highlightColor: _anomalyColor(senderAnomalyScore),
           ),
           if (email.toRecipients.isNotEmpty) ...[
             const SizedBox(height: 6),
@@ -387,6 +395,35 @@ class _EmailHeader extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _AnomalousFromRow extends StatelessWidget {
+  const _AnomalousFromRow({required this.email, this.highlightColor});
+
+  final Email email;
+  final Color? highlightColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final row = _MetaRow(
+      icon: Icons.person_outline_rounded,
+      label: 'From',
+      value: '${email.from.displayName} <${email.from.address}>',
+    );
+
+    if (highlightColor == null) return row;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: highlightColor!.withAlpha(60),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        child: row,
       ),
     );
   }

@@ -20,12 +20,22 @@ class CachedEmails extends Table {
   Set<Column> get primaryKey => {emailId, accountId};
 }
 
-@DriftDatabase(tables: [CachedEmails])
+/// Plaintext sender cache — not encrypted so names can be queried for fuzzy matching.
+class KnownSenders extends Table {
+  TextColumn get accountId => text()();
+  TextColumn get address => text()(); // always lower-cased
+  TextColumn get name => text()();
+
+  @override
+  Set<Column> get primaryKey => {accountId, address};
+}
+
+@DriftDatabase(tables: [CachedEmails, KnownSenders])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -35,6 +45,19 @@ class AppDatabase extends _$AppDatabase {
             'CREATE INDEX idx_cached_emails_account_folder '
             'ON cached_emails(account_id, folder_id, received_date_time_ms DESC)',
           );
+          await customStatement(
+            'CREATE INDEX idx_known_senders_account '
+            'ON known_senders(account_id)',
+          );
+        },
+        onUpgrade: (m, from, to) async {
+          if (from < 2) {
+            await m.createTable(knownSenders);
+            await customStatement(
+              'CREATE INDEX idx_known_senders_account '
+              'ON known_senders(account_id)',
+            );
+          }
         },
       );
 

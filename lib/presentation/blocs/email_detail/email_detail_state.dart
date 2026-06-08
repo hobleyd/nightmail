@@ -18,11 +18,12 @@ final class EmailDetailLoading extends EmailDetailState {
 }
 
 final class EmailDetailLoaded extends EmailDetailState {
-  const EmailDetailLoaded({required this.email});
+  const EmailDetailLoaded({required this.email, this.senderAnomalyScore});
   final Email email;
+  final double? senderAnomalyScore; // null = no anomaly; 0.75–1.0 = anomaly
 
   @override
-  List<Object?> get props => [email];
+  List<Object?> get props => [email, senderAnomalyScore];
 }
 
 final class EmailDetailError extends EmailDetailState {

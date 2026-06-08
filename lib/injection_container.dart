@@ -5,14 +5,19 @@ import 'core/settings/app_settings.dart';
 import 'data/database/app_database.dart';
 import 'data/datasources/local/email_local_datasource.dart';
 import 'data/datasources/local/email_local_datasource_impl.dart';
+import 'data/datasources/local/sender_local_datasource.dart';
+import 'data/datasources/local/sender_local_datasource_impl.dart';
 import 'data/repositories/calendar_repository_impl.dart';
 import 'data/repositories/email_repository_impl.dart';
+import 'data/repositories/sender_repository_impl.dart';
 import 'data/repositories/tasks_repository_impl.dart';
 import 'data/services/eml_parser.dart';
 import 'domain/repositories/calendar_repository.dart';
 import 'domain/repositories/email_repository.dart';
+import 'domain/repositories/sender_repository.dart';
 import 'domain/repositories/tasks_repository.dart';
 import 'domain/usecases/attach_email_to_task.dart';
+import 'domain/usecases/check_sender_anomaly.dart';
 import 'domain/usecases/create_calendar_event.dart';
 import 'domain/usecases/create_task.dart';
 import 'domain/usecases/delete_email.dart';
@@ -28,6 +33,7 @@ import 'domain/usecases/get_task_attachments.dart';
 import 'domain/usecases/get_task_lists.dart';
 import 'domain/usecases/get_tasks.dart';
 import 'domain/usecases/mark_email_as_read.dart';
+import 'domain/usecases/record_known_senders.dart';
 import 'domain/usecases/send_email.dart';
 import 'domain/usecases/update_calendar_event.dart';
 import 'domain/usecases/update_task_due_date.dart';
@@ -86,6 +92,9 @@ Future<void> configureDependencies() async {
       encryption: sl<CacheEncryptionService>(),
     ),
   );
+  sl.registerLazySingleton<SenderLocalDatasource>(
+    () => SenderLocalDatasourceImpl(database: sl<AppDatabase>()),
+  );
 
   // Data — repositories delegate to AccountManager for the live active datasource.
   sl.registerLazySingleton<EmailRepository>(
@@ -93,6 +102,9 @@ Future<void> configureDependencies() async {
       accountManager: sl<AccountManager>(),
       localDatasource: sl<EmailLocalDatasource>(),
     ),
+  );
+  sl.registerLazySingleton<SenderRepository>(
+    () => SenderRepositoryImpl(localDatasource: sl<SenderLocalDatasource>()),
   );
   sl.registerLazySingleton<CalendarRepository>(
     () => CalendarRepositoryImpl(accountManager: sl<AccountManager>()),
@@ -112,6 +124,8 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => EmptyFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => DownloadAttachment(sl<EmailRepository>()));
   sl.registerLazySingleton(() => GetCachedEmails(sl<EmailRepository>()));
+  sl.registerLazySingleton(() => RecordKnownSenders(sl<SenderRepository>()));
+  sl.registerLazySingleton(() => CheckSenderAnomaly(sl<SenderRepository>()));
   sl.registerLazySingleton(() => GetCalendarEvents(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => CreateCalendarEvent(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => UpdateCalendarEvent(sl<CalendarRepository>()));
@@ -159,10 +173,13 @@ Future<void> configureDependencies() async {
         deleteEmail: sl<DeleteEmail>(),
         emptyFolder: sl<EmptyFolder>(),
         accountManager: sl<AccountManager>(),
+        recordKnownSenders: sl<RecordKnownSenders>(),
       ));
   sl.registerFactory(() => EmailDetailBloc(
         getEmail: sl<GetEmail>(),
         emlParser: sl<EmlParser>(),
+        checkSenderAnomaly: sl<CheckSenderAnomaly>(),
+        accountManager: sl<AccountManager>(),
       ));
   sl.registerFactory(
     () => CalendarBloc(getCalendarEvents: sl<GetCalendarEvents>()),

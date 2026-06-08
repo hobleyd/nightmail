@@ -600,15 +600,283 @@ class CachedEmailsCompanion extends UpdateCompanion<CachedEmail> {
   }
 }
 
+class $KnownSendersTable extends KnownSenders
+    with TableInfo<$KnownSendersTable, KnownSender> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $KnownSendersTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _accountIdMeta = const VerificationMeta(
+    'accountId',
+  );
+  @override
+  late final GeneratedColumn<String> accountId = GeneratedColumn<String>(
+    'account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _addressMeta = const VerificationMeta(
+    'address',
+  );
+  @override
+  late final GeneratedColumn<String> address = GeneratedColumn<String>(
+    'address',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _nameMeta = const VerificationMeta('name');
+  @override
+  late final GeneratedColumn<String> name = GeneratedColumn<String>(
+    'name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [accountId, address, name];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'known_senders';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<KnownSender> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('account_id')) {
+      context.handle(
+        _accountIdMeta,
+        accountId.isAcceptableOrUnknown(data['account_id']!, _accountIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_accountIdMeta);
+    }
+    if (data.containsKey('address')) {
+      context.handle(
+        _addressMeta,
+        address.isAcceptableOrUnknown(data['address']!, _addressMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_addressMeta);
+    }
+    if (data.containsKey('name')) {
+      context.handle(
+        _nameMeta,
+        name.isAcceptableOrUnknown(data['name']!, _nameMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_nameMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {accountId, address};
+  @override
+  KnownSender map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return KnownSender(
+      accountId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}account_id'],
+      )!,
+      address: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}address'],
+      )!,
+      name: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}name'],
+      )!,
+    );
+  }
+
+  @override
+  $KnownSendersTable createAlias(String alias) {
+    return $KnownSendersTable(attachedDatabase, alias);
+  }
+}
+
+class KnownSender extends DataClass implements Insertable<KnownSender> {
+  final String accountId;
+  final String address;
+  final String name;
+  const KnownSender({
+    required this.accountId,
+    required this.address,
+    required this.name,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['account_id'] = Variable<String>(accountId);
+    map['address'] = Variable<String>(address);
+    map['name'] = Variable<String>(name);
+    return map;
+  }
+
+  KnownSendersCompanion toCompanion(bool nullToAbsent) {
+    return KnownSendersCompanion(
+      accountId: Value(accountId),
+      address: Value(address),
+      name: Value(name),
+    );
+  }
+
+  factory KnownSender.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return KnownSender(
+      accountId: serializer.fromJson<String>(json['accountId']),
+      address: serializer.fromJson<String>(json['address']),
+      name: serializer.fromJson<String>(json['name']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'accountId': serializer.toJson<String>(accountId),
+      'address': serializer.toJson<String>(address),
+      'name': serializer.toJson<String>(name),
+    };
+  }
+
+  KnownSender copyWith({String? accountId, String? address, String? name}) =>
+      KnownSender(
+        accountId: accountId ?? this.accountId,
+        address: address ?? this.address,
+        name: name ?? this.name,
+      );
+  KnownSender copyWithCompanion(KnownSendersCompanion data) {
+    return KnownSender(
+      accountId: data.accountId.present ? data.accountId.value : this.accountId,
+      address: data.address.present ? data.address.value : this.address,
+      name: data.name.present ? data.name.value : this.name,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('KnownSender(')
+          ..write('accountId: $accountId, ')
+          ..write('address: $address, ')
+          ..write('name: $name')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(accountId, address, name);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is KnownSender &&
+          other.accountId == this.accountId &&
+          other.address == this.address &&
+          other.name == this.name);
+}
+
+class KnownSendersCompanion extends UpdateCompanion<KnownSender> {
+  final Value<String> accountId;
+  final Value<String> address;
+  final Value<String> name;
+  final Value<int> rowid;
+  const KnownSendersCompanion({
+    this.accountId = const Value.absent(),
+    this.address = const Value.absent(),
+    this.name = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  KnownSendersCompanion.insert({
+    required String accountId,
+    required String address,
+    required String name,
+    this.rowid = const Value.absent(),
+  }) : accountId = Value(accountId),
+       address = Value(address),
+       name = Value(name);
+  static Insertable<KnownSender> custom({
+    Expression<String>? accountId,
+    Expression<String>? address,
+    Expression<String>? name,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (accountId != null) 'account_id': accountId,
+      if (address != null) 'address': address,
+      if (name != null) 'name': name,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  KnownSendersCompanion copyWith({
+    Value<String>? accountId,
+    Value<String>? address,
+    Value<String>? name,
+    Value<int>? rowid,
+  }) {
+    return KnownSendersCompanion(
+      accountId: accountId ?? this.accountId,
+      address: address ?? this.address,
+      name: name ?? this.name,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (accountId.present) {
+      map['account_id'] = Variable<String>(accountId.value);
+    }
+    if (address.present) {
+      map['address'] = Variable<String>(address.value);
+    }
+    if (name.present) {
+      map['name'] = Variable<String>(name.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('KnownSendersCompanion(')
+          ..write('accountId: $accountId, ')
+          ..write('address: $address, ')
+          ..write('name: $name, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
   late final $CachedEmailsTable cachedEmails = $CachedEmailsTable(this);
+  late final $KnownSendersTable knownSenders = $KnownSendersTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
   @override
-  List<DatabaseSchemaEntity> get allSchemaEntities => [cachedEmails];
+  List<DatabaseSchemaEntity> get allSchemaEntities => [
+    cachedEmails,
+    knownSenders,
+  ];
 }
 
 typedef $$CachedEmailsTableCreateCompanionBuilder =
@@ -897,10 +1165,174 @@ typedef $$CachedEmailsTableProcessedTableManager =
       CachedEmail,
       PrefetchHooks Function()
     >;
+typedef $$KnownSendersTableCreateCompanionBuilder =
+    KnownSendersCompanion Function({
+      required String accountId,
+      required String address,
+      required String name,
+      Value<int> rowid,
+    });
+typedef $$KnownSendersTableUpdateCompanionBuilder =
+    KnownSendersCompanion Function({
+      Value<String> accountId,
+      Value<String> address,
+      Value<String> name,
+      Value<int> rowid,
+    });
+
+class $$KnownSendersTableFilterComposer
+    extends Composer<_$AppDatabase, $KnownSendersTable> {
+  $$KnownSendersTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get address => $composableBuilder(
+    column: $table.address,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$KnownSendersTableOrderingComposer
+    extends Composer<_$AppDatabase, $KnownSendersTable> {
+  $$KnownSendersTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get address => $composableBuilder(
+    column: $table.address,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$KnownSendersTableAnnotationComposer
+    extends Composer<_$AppDatabase, $KnownSendersTable> {
+  $$KnownSendersTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get accountId =>
+      $composableBuilder(column: $table.accountId, builder: (column) => column);
+
+  GeneratedColumn<String> get address =>
+      $composableBuilder(column: $table.address, builder: (column) => column);
+
+  GeneratedColumn<String> get name =>
+      $composableBuilder(column: $table.name, builder: (column) => column);
+}
+
+class $$KnownSendersTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $KnownSendersTable,
+          KnownSender,
+          $$KnownSendersTableFilterComposer,
+          $$KnownSendersTableOrderingComposer,
+          $$KnownSendersTableAnnotationComposer,
+          $$KnownSendersTableCreateCompanionBuilder,
+          $$KnownSendersTableUpdateCompanionBuilder,
+          (
+            KnownSender,
+            BaseReferences<_$AppDatabase, $KnownSendersTable, KnownSender>,
+          ),
+          KnownSender,
+          PrefetchHooks Function()
+        > {
+  $$KnownSendersTableTableManager(_$AppDatabase db, $KnownSendersTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$KnownSendersTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$KnownSendersTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$KnownSendersTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> accountId = const Value.absent(),
+                Value<String> address = const Value.absent(),
+                Value<String> name = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => KnownSendersCompanion(
+                accountId: accountId,
+                address: address,
+                name: name,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String accountId,
+                required String address,
+                required String name,
+                Value<int> rowid = const Value.absent(),
+              }) => KnownSendersCompanion.insert(
+                accountId: accountId,
+                address: address,
+                name: name,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$KnownSendersTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $KnownSendersTable,
+      KnownSender,
+      $$KnownSendersTableFilterComposer,
+      $$KnownSendersTableOrderingComposer,
+      $$KnownSendersTableAnnotationComposer,
+      $$KnownSendersTableCreateCompanionBuilder,
+      $$KnownSendersTableUpdateCompanionBuilder,
+      (
+        KnownSender,
+        BaseReferences<_$AppDatabase, $KnownSendersTable, KnownSender>,
+      ),
+      KnownSender,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
   $AppDatabaseManager(this._db);
   $$CachedEmailsTableTableManager get cachedEmails =>
       $$CachedEmailsTableTableManager(_db, _db.cachedEmails);
+  $$KnownSendersTableTableManager get knownSenders =>
+      $$KnownSendersTableTableManager(_db, _db.knownSenders);
 }

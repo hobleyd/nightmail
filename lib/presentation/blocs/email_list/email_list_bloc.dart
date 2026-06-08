@@ -1,11 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../domain/entities/email.dart';
 import '../../../domain/usecases/delete_email.dart';
 import '../../../domain/usecases/empty_folder.dart';
 import '../../../domain/usecases/get_cached_emails.dart';
 import '../../../domain/usecases/get_emails.dart';
 import '../../../domain/usecases/mark_email_as_read.dart';
 import '../../../domain/usecases/move_email.dart';
+import '../../../domain/usecases/record_known_senders.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
 import 'email_list_event.dart';
 import 'email_list_state.dart';
@@ -15,14 +19,23 @@ const _defaultFolderKey = '__DEFAULT__';
 
 class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   EmailListBloc({
-    required this._getEmails,
-    required this._getCachedEmails,
-    required this._markEmailAsRead,
-    required this._moveEmail,
-    required this._deleteEmail,
-    required this._emptyFolder,
-    required this._accountManager,
-  }) : super(const EmailListInitial()) {
+    required GetEmails getEmails,
+    required GetCachedEmails getCachedEmails,
+    required MarkEmailAsRead markEmailAsRead,
+    required MoveEmail moveEmail,
+    required DeleteEmail deleteEmail,
+    required EmptyFolder emptyFolder,
+    required AccountManager accountManager,
+    required RecordKnownSenders recordKnownSenders,
+  })  : _getEmails = getEmails,
+        _getCachedEmails = getCachedEmails,
+        _markEmailAsRead = markEmailAsRead,
+        _moveEmail = moveEmail,
+        _deleteEmail = deleteEmail,
+        _emptyFolder = emptyFolder,
+        _accountManager = accountManager,
+        _recordKnownSenders = recordKnownSenders,
+        super(const EmailListInitial()) {
     on<EmailListLoadRequested>(_onLoadRequested);
     on<EmailListLoadMoreRequested>(_onLoadMoreRequested);
     on<EmailListRefreshRequested>(_onRefreshRequested);
@@ -41,6 +54,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   final DeleteEmail _deleteEmail;
   final EmptyFolder _emptyFolder;
   final AccountManager _accountManager;
+  final RecordKnownSenders _recordKnownSenders;
 
   Future<void> _onLoadRequested(
     EmailListLoadRequested event,
@@ -92,12 +106,15 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
           emit(EmailListError(message: failure.message));
         }
       },
-      (emails) => emit(EmailListLoaded(
-        emails: emails,
-        hasMore: emails.length == _pageSize,
-        isLoadingFresh: false,
-        currentFolderId: event.folderId,
-      )),
+      (emails) {
+        emit(EmailListLoaded(
+          emails: emails,
+          hasMore: emails.length == _pageSize,
+          isLoadingFresh: false,
+          currentFolderId: event.folderId,
+        ));
+        _recordSenders(emails);
+      },
     );
   }
 
@@ -120,11 +137,14 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
 
     result.fold(
       (failure) => emit(EmailListError(message: failure.message)),
-      (newEmails) => emit(current.copyWith(
-        emails: [...current.emails, ...newEmails],
-        hasMore: newEmails.length == _pageSize,
-        isLoadingMore: false,
-      )),
+      (newEmails) {
+        emit(current.copyWith(
+          emails: [...current.emails, ...newEmails],
+          hasMore: newEmails.length == _pageSize,
+          isLoadingMore: false,
+        ));
+        _recordSenders(newEmails);
+      },
     );
   }
 
@@ -144,11 +164,14 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
 
     result.fold(
       (failure) => emit(EmailListError(message: failure.message)),
-      (emails) => emit(EmailListLoaded(
-        emails: emails,
-        hasMore: emails.length == _pageSize,
-        currentFolderId: folderId,
-      )),
+      (emails) {
+        emit(EmailListLoaded(
+          emails: emails,
+          hasMore: emails.length == _pageSize,
+          currentFolderId: folderId,
+        ));
+        _recordSenders(emails);
+      },
     );
   }
 
@@ -263,5 +286,14 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         emptyingFolderIds: after.emptyingFolderIds.difference({event.folderId}),
       ));
     }
+  }
+
+  void _recordSenders(List<Email> emails) {
+    final accountId = _accountManager.activeAccount?.id;
+    if (accountId == null) return;
+    unawaited(_recordKnownSenders(RecordKnownSendersParams(
+      accountId: accountId,
+      emails: emails,
+    )));
   }
 }

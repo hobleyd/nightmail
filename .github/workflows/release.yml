@@ -198,7 +198,7 @@ jobs:
       - name: Decode keystore
         env:
           ENCODED_STRING: ${{ secrets.KEY_BASE_64 }}
-        run: echo $ENCODED_STRING | base64 -d > android/app/keystore.jks
+        run: printf '%s' "$ENCODED_STRING" | base64 -di > android/app/keystore.jks
 
       - run: flutter build apk --release --no-tree-shake-icons --build-number ${{ needs.prepare.outputs.build_number }}
 

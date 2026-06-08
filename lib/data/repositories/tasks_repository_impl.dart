@@ -22,7 +22,7 @@ class TasksRepositoryImpl implements TasksRepository {
     }
     try {
       final lists = await ds.getTaskLists();
-      return Right(lists);
+      return Right(List<TodoTaskList>.from(lists));
     } on AuthException catch (e) {
       return Left(AuthFailure(message: e.message));
     } on NetworkException catch (e) {
@@ -48,7 +48,7 @@ class TasksRepositoryImpl implements TasksRepository {
     try {
       final tasks =
           await ds.getTasks(listId, includeCompleted: includeCompleted);
-      return Right(tasks);
+      return Right(List<TodoTask>.from(tasks));
     } on AuthException catch (e) {
       return Left(AuthFailure(message: e.message));
     } on NetworkException catch (e) {

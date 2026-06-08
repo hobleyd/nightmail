@@ -40,11 +40,13 @@ final class TaskCreationRequested extends TasksBlocEvent {
   const TaskCreationRequested({
     required this.listId,
     required this.title,
+    this.dueDate,
   });
 
   final String listId;
   final String title;
+  final DateTime? dueDate;
 
   @override
-  List<Object?> get props => [listId, title];
+  List<Object?> get props => [listId, title, dueDate];
 }

@@ -14,6 +14,9 @@ import '../blocs/email_list/email_list_bloc.dart';
 import '../blocs/email_list/email_list_event.dart';
 import '../blocs/email_list/email_list_state.dart';
 import '../blocs/home/home_cubit.dart';
+import '../blocs/tasks/tasks_bloc.dart';
+import '../blocs/tasks/tasks_event.dart';
+import '../blocs/tasks/tasks_state.dart';
 import 'email_date_formatter.dart';
 import 'email_list_item.dart';
 
@@ -433,6 +436,29 @@ class _ListHeader extends StatelessWidget {
   }
 }
 
+DateTime _addBusinessDays(DateTime date, int days) {
+  var result = date;
+  var added = 0;
+  while (added < days) {
+    result = result.add(const Duration(days: 1));
+    if (result.weekday != DateTime.saturday && result.weekday != DateTime.sunday) {
+      added++;
+    }
+  }
+  return result;
+}
+
+void _createTaskFromEmail(BuildContext context, Email email) {
+  final tasksState = context.read<TasksBloc>().state;
+  if (tasksState is! TasksLoaded) return;
+  final dueDate = _addBusinessDays(DateTime.now(), 3);
+  context.read<TasksBloc>().add(TaskCreationRequested(
+    listId: tasksState.selectedListId,
+    title: email.subject.isNotEmpty ? email.subject : email.from.displayName,
+    dueDate: dueDate,
+  ));
+}
+
 class _EmailListView extends StatelessWidget {
   const _EmailListView({
     required this.emails,
@@ -496,7 +522,7 @@ class _EmailListView extends StatelessWidget {
                   }
                   context.read<EmailListBloc>().add(EmailListEmailDeleted(emailId: email.id));
                 },
-                onFlag: () {},
+                onFlag: () => _createTaskFromEmail(context, email),
               ),
             ),
           _ConversationHeaderItem() => _DraggableEmailItem(
@@ -521,7 +547,7 @@ class _EmailListView extends StatelessWidget {
                   }
                   context.read<EmailListBloc>().add(EmailListEmailDeleted(emailId: item.latestEmail.id));
                 },
-                onFlag: () {},
+                onFlag: () => _createTaskFromEmail(context, item.latestEmail),
               ),
             ),
         };

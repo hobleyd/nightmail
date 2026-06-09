@@ -83,6 +83,16 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
   }
 
   @override
+  Future<void> clearCacheForFolder({
+    required String accountId,
+    required String folderId,
+  }) async {
+    await (_database.delete(_database.cachedEmails)
+          ..where((t) => t.accountId.equals(accountId) & t.folderId.equals(folderId)))
+        .go();
+  }
+
+  @override
   Future<void> deleteEmailFromCache({
     required String accountId,
     required String emailId,

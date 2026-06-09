@@ -41,11 +41,20 @@ class EmailRepositoryImpl implements EmailRepository {
     result.fold((_) {}, (emails) {
       final accountId = _accountManager.activeAccount?.id;
       if (accountId != null && emails.isNotEmpty) {
-        unawaited(_localDatasource.cacheEmails(
-          accountId: accountId,
-          folderId: folderId ?? _defaultFolderKey,
-          emails: emails,
-        ));
+        final effectiveFolderId = folderId ?? _defaultFolderKey;
+        unawaited(() async {
+          if (skip == 0) {
+            await _localDatasource.clearCacheForFolder(
+              accountId: accountId,
+              folderId: effectiveFolderId,
+            );
+          }
+          await _localDatasource.cacheEmails(
+            accountId: accountId,
+            folderId: effectiveFolderId,
+            emails: emails,
+          );
+        }());
       }
     });
 

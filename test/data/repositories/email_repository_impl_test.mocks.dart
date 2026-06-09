@@ -220,6 +220,21 @@ class MockEmailLocalDatasource extends _i1.Mock
           as _i7.Future<void>);
 
   @override
+  _i7.Future<void> clearCacheForFolder({
+    required String? accountId,
+    required String? folderId,
+  }) =>
+      (super.noSuchMethod(
+            Invocation.method(#clearCacheForFolder, [], {
+              #accountId: accountId,
+              #folderId: folderId,
+            }),
+            returnValue: _i7.Future<void>.value(),
+            returnValueForMissingStub: _i7.Future<void>.value(),
+          )
+          as _i7.Future<void>);
+
+  @override
   _i7.Future<void> deleteEmailFromCache({
     required String? accountId,
     required String? emailId,

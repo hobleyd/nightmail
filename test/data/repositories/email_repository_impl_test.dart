@@ -38,6 +38,13 @@ void main() {
     );
   });
 
+  const tAccount = MicrosoftAccount(
+    id: 'account-1',
+    displayName: 'Test',
+    emailAddress: 'test@example.com',
+    tenantId: 'common',
+  );
+
   final tEmailModel = EmailModel(
     id: 'email-1',
     subject: 'Test',
@@ -72,6 +79,65 @@ void main() {
       expect(result, isA<Right<Failure, List<Email>>>());
       final emails = (result as Right).value as List<Email>;
       expect(emails.first.id, 'email-1');
+    });
+
+    test('clears folder cache before caching on first page (skip=0)', () async {
+      when(mockRemoteDatasource.getEmails(
+        folderId: anyNamed('folderId'),
+        top: anyNamed('top'),
+        skip: anyNamed('skip'),
+        filter: anyNamed('filter'),
+        orderBy: anyNamed('orderBy'),
+      )).thenAnswer((_) async => [tEmailModel]);
+      when(mockLocalDatasource.clearCacheForFolder(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+      )).thenAnswer((_) async {});
+      when(mockLocalDatasource.cacheEmails(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+        emails: anyNamed('emails'),
+      )).thenAnswer((_) async {});
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+
+      await repository.getEmails(folderId: 'folder-1', skip: 0);
+      // Two ticks: one for clearCacheForFolder, one for cacheEmails
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+
+      verify(mockLocalDatasource.clearCacheForFolder(
+        accountId: 'account-1',
+        folderId: 'folder-1',
+      )).called(1);
+      verify(mockLocalDatasource.cacheEmails(
+        accountId: 'account-1',
+        folderId: 'folder-1',
+        emails: anyNamed('emails'),
+      )).called(1);
+    });
+
+    test('does not clear folder cache on subsequent pages (skip>0)', () async {
+      when(mockRemoteDatasource.getEmails(
+        folderId: anyNamed('folderId'),
+        top: anyNamed('top'),
+        skip: anyNamed('skip'),
+        filter: anyNamed('filter'),
+        orderBy: anyNamed('orderBy'),
+      )).thenAnswer((_) async => [tEmailModel]);
+      when(mockLocalDatasource.cacheEmails(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+        emails: anyNamed('emails'),
+      )).thenAnswer((_) async {});
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+
+      await repository.getEmails(folderId: 'folder-1', skip: 25);
+      await Future.delayed(Duration.zero);
+
+      verifyNever(mockLocalDatasource.clearCacheForFolder(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+      ));
     });
 
     test('returns Left(ServerFailure) on ServerException', () async {
@@ -200,13 +266,6 @@ void main() {
       verify(mockLocalDatasource.clearCacheForAccount('account-1')).called(1);
     });
   });
-
-  const tAccount = MicrosoftAccount(
-    id: 'account-1',
-    displayName: 'Test',
-    emailAddress: 'test@example.com',
-    tenantId: 'common',
-  );
 
   group('markAsRead', () {
     test('updates isRead in cache after successful remote call', () async {

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:get_it/get_it.dart';
 
@@ -62,8 +63,12 @@ final sl = GetIt.instance;
 Future<void> configureDependencies() async {
   // Infrastructure — storage
   sl.registerLazySingleton<FlutterSecureStorage>(
-    () => const FlutterSecureStorage(
-      aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    () => FlutterSecureStorage(
+      aOptions: const AndroidOptions(encryptedSharedPreferences: true),
+      // Debug/profile builds are non-sandboxed and have no provisioning profile,
+      // so kSecUseDataProtectionKeychain would fail with -34018. Release builds
+      // have the sandbox + keychain-access-groups entitlement so can use it.
+      mOptions: MacOsOptions(useDataProtectionKeyChain: kReleaseMode),
     ),
   );
 
@@ -78,14 +83,11 @@ Future<void> configureDependencies() async {
     ),
   );
 
-  // Initialize AccountManager — loads persisted accounts and runs legacy migration.
-  await sl<AccountManager>().initialize();
-
-  // Infrastructure — cache encryption key (generated once, stored in secure storage)
+  // Infrastructure — cache encryption key (generated once, stored in secure storage).
+  // Initialization is deferred — CacheEncryptionService self-initializes on first use.
   sl.registerLazySingleton<CacheEncryptionService>(
     () => CacheEncryptionService(sl<FlutterSecureStorage>()),
   );
-  await sl<CacheEncryptionService>().initialize();
 
   // Data — local cache (drift opens the SQLite file lazily on first query)
   sl.registerLazySingleton<AppDatabase>(() => AppDatabase());

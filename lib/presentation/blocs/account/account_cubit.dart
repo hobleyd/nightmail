@@ -62,7 +62,8 @@ class AccountCubit extends Cubit<AccountState> {
   final AccountManager _accountManager;
   final EmailRepository _emailRepository;
 
-  void initialize() {
+  Future<void> initialize() async {
+    await _accountManager.initialize();
     if (_accountManager.hasAccounts) {
       emit(AccountsLoaded(
         accounts: _accountManager.accounts,

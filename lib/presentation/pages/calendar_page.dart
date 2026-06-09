@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/calendar_event.dart';
+import '../blocs/account/account_cubit.dart';
 import '../blocs/calendar/calendar_bloc.dart';
 import '../blocs/calendar/calendar_event.dart';
 import '../blocs/calendar/calendar_state.dart';
@@ -187,6 +188,12 @@ class _IconNavButton extends StatelessWidget {
   }
 }
 
+String? _accountId(BuildContext context) {
+  final state = context.read<AccountCubit>().state;
+  if (state is AccountsLoaded) return state.activeAccount.id;
+  return null;
+}
+
 class _NewEventButton extends StatelessWidget {
   const _NewEventButton({required this.calendarBloc});
   final CalendarBloc calendarBloc;
@@ -196,7 +203,10 @@ class _NewEventButton extends StatelessWidget {
     return Tooltip(
       message: 'New event',
       child: InkWell(
-        onTap: () => EventEditDialog.show(context),
+        onTap: () => EventEditDialog.show(
+          context,
+          accountId: _accountId(context),
+        ),
         borderRadius: BorderRadius.circular(6),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -327,8 +337,11 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
                                 final minute = roundedMinutes % 60;
                                 final start = DateTime(today.year, today.month,
                                     today.day, hour, minute);
-                                EventEditDialog.show(context,
-                                    initialStart: start);
+                                EventEditDialog.show(
+                                  context,
+                                  initialStart: start,
+                                  accountId: _accountId(context),
+                                );
                               },
                               child: Stack(
                                 children: [
@@ -716,7 +729,11 @@ class _AllDayEventChip extends StatelessWidget {
   }
 
   void _openEdit(BuildContext context) {
-    EventEditDialog.show(context, event: event);
+    EventEditDialog.show(
+      context,
+      event: event,
+      accountId: _accountId(context),
+    );
   }
 }
 
@@ -863,7 +880,11 @@ class _DayColumnCellState extends State<_DayColumnCell> {
     final start = DateTime(
         widget.day.year, widget.day.month, widget.day.day, hour, minute);
 
-    EventEditDialog.show(context, initialStart: start);
+    EventEditDialog.show(
+      context,
+      initialStart: start,
+      accountId: _accountId(context),
+    );
   }
 
   @override
@@ -944,7 +965,11 @@ class _PositionedEvent extends StatelessWidget {
   }
 
   void _openEdit(BuildContext context) {
-    EventEditDialog.show(context, event: event);
+    EventEditDialog.show(
+      context,
+      event: event,
+      accountId: _accountId(context),
+    );
   }
 }
 

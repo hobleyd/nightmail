@@ -23,13 +23,17 @@ class CacheEncryptionService {
   static final _algorithm = AesGcm.with256bits();
 
   SecretKey? _secretKey;
+  Future<void>? _initFuture;
 
   Future<void> initialize() async {
-    final keyBytes = await _loadOrGenerateKeyBytes();
-    _secretKey = SecretKey(keyBytes);
+    _initFuture ??= _loadOrGenerateKeyBytes().then((bytes) {
+      _secretKey = SecretKey(bytes);
+    });
+    await _initFuture;
   }
 
   Future<String> encrypt(String plaintext) async {
+    await initialize();
     final plaintextBytes = utf8.encode(plaintext);
     final secretBox = await _algorithm.encrypt(
       plaintextBytes,
@@ -40,6 +44,7 @@ class CacheEncryptionService {
   }
 
   Future<String> decrypt(String stored) async {
+    await initialize();
     final bytes = base64Decode(stored);
     final secretBox = SecretBox.fromConcatenation(
       bytes,

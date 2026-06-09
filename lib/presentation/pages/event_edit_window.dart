@@ -49,6 +49,7 @@ class EventEditWindowApp extends StatelessWidget {
     final initialStartStr = arguments['initialStart'] as String?;
     final initialStart =
         initialStartStr != null ? DateTime.parse(initialStartStr).toLocal() : null;
+    final accountId = arguments['accountId'] as String?;
 
     return BlocProvider<ThemeCubit>(
       create: (_) => sl<ThemeCubit>()..load(),
@@ -63,7 +64,11 @@ class EventEditWindowApp extends StatelessWidget {
               AppThemeMode.dark => ThemeMode.dark,
               AppThemeMode.system => ThemeMode.system,
             },
-            home: _EventEditWindowPage(event: event, initialStart: initialStart),
+            home: _EventEditWindowPage(
+              event: event,
+              initialStart: initialStart,
+              accountId: accountId,
+            ),
           );
         },
       ),
@@ -125,10 +130,11 @@ class EventEditWindowApp extends StatelessWidget {
 }
 
 class _EventEditWindowPage extends StatelessWidget {
-  const _EventEditWindowPage({this.event, this.initialStart});
+  const _EventEditWindowPage({this.event, this.initialStart, this.accountId});
 
   final CalendarEvent? event;
   final DateTime? initialStart;
+  final String? accountId;
 
   void _close() => windowManager.close();
 
@@ -155,6 +161,7 @@ class _EventEditWindowPage extends StatelessWidget {
           child: EventEditForm(
             event: event,
             initialStart: initialStart,
+            accountId: accountId,
             onClose: _close,
           ),
         ),

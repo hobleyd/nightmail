@@ -8,27 +8,31 @@ import 'package:intl/intl.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/calendar_event.dart';
-import '../../domain/entities/calendar_event_attendee.dart';
 import '../../domain/entities/calendar_recurrence.dart';
-import '../../domain/usecases/create_calendar_event.dart';
-import '../../domain/usecases/update_calendar_event.dart';
-import '../../injection_container.dart';
 import '../blocs/event_edit/event_edit_bloc.dart';
 import '../blocs/event_edit/event_edit_event.dart';
 import '../blocs/event_edit/event_edit_state.dart';
+import 'recipient_input_field.dart';
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 class EventEditDialog extends StatelessWidget {
-  const EventEditDialog({super.key, this.event, this.initialStart});
+  const EventEditDialog({
+    super.key,
+    this.event,
+    this.initialStart,
+    this.accountId,
+  });
 
   final CalendarEvent? event;
   final DateTime? initialStart;
+  final String? accountId;
 
   static Future<void> show(
     BuildContext context, {
     CalendarEvent? event,
     DateTime? initialStart,
+    String? accountId,
   }) async {
     await WindowController.create(
       WindowConfiguration(
@@ -36,6 +40,7 @@ class EventEditDialog extends StatelessWidget {
           'type': 'eventEdit',
           if (event != null) 'event': _eventToArgs(event),
           if (initialStart != null) 'initialStart': initialStart.toIso8601String(),
+          if (accountId != null) 'accountId': accountId,
         }),
       ),
     );
@@ -99,6 +104,7 @@ class EventEditDialog extends StatelessWidget {
           child: EventEditForm(
             event: event,
             initialStart: initialStart,
+            accountId: accountId,
             onClose: () => Navigator.of(context).pop(false),
           ),
         ),
@@ -114,10 +120,12 @@ class EventEditForm extends StatefulWidget {
     super.key,
     this.event,
     this.initialStart,
+    this.accountId,
     required this.onClose,
   });
   final CalendarEvent? event;
   final DateTime? initialStart;
+  final String? accountId;
   final VoidCallback onClose;
 
   @override
@@ -190,6 +198,13 @@ class _EventEditFormState extends State<EventEditForm> {
     return 'UTC';
   }
 
+  static final _emailInAngle = RegExp(r'<([^>]+)>');
+
+  static String _extractEmail(String address) {
+    final m = _emailInAngle.firstMatch(address);
+    return m != null ? m.group(1)! : address;
+  }
+
   void _submit() {
     final title = _titleController.text.trim();
     if (title.isEmpty) {
@@ -230,7 +245,7 @@ class _EventEditFormState extends State<EventEditForm> {
           description: _descriptionController.text.trim().isNotEmpty
               ? _descriptionController.text.trim()
               : null,
-          attendeeEmails: _attendees,
+          attendeeEmails: _attendees.map(_extractEmail).toList(),
           recurrence: _recurrence,
         ));
   }
@@ -323,9 +338,13 @@ class _EventEditFormState extends State<EventEditForm> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                _AttendeesField(
-                  attendees: _attendees,
+                RecipientInputField(
+                  label: 'Guests',
+                  labelWidth: 68,
+                  recipients: _attendees,
                   onChanged: (a) => setState(() => _attendees = a),
+                  hintText: 'Add guests by email',
+                  accountId: widget.accountId,
                 ),
                 const SizedBox(height: 10),
                 Divider(height: 1, color: c.separator),
@@ -758,199 +777,6 @@ class _TimezonePickerDialogState extends State<_TimezonePickerDialog> {
   }
 }
 
-// ─── Attendees field ──────────────────────────────────────────────────────────
-
-class _AttendeesField extends StatefulWidget {
-  const _AttendeesField({
-    required this.attendees,
-    required this.onChanged,
-  });
-
-  final List<String> attendees;
-  final ValueChanged<List<String>> onChanged;
-
-  @override
-  State<_AttendeesField> createState() => _AttendeesFieldState();
-}
-
-class _AttendeesFieldState extends State<_AttendeesField> {
-  int? _selectedIndex;
-  final _inputController = TextEditingController();
-  final _inputFocus = FocusNode();
-  final _chipFocus = FocusNode();
-
-  @override
-  void initState() {
-    super.initState();
-    _inputFocus.addListener(_onFocusChanged);
-  }
-
-  @override
-  void didUpdateWidget(_AttendeesField old) {
-    super.didUpdateWidget(old);
-    if (_selectedIndex != null &&
-        _selectedIndex! >= widget.attendees.length) {
-      _selectedIndex = null;
-    }
-  }
-
-  @override
-  void dispose() {
-    _inputController.dispose();
-    _inputFocus.removeListener(_onFocusChanged);
-    _inputFocus.dispose();
-    _chipFocus.dispose();
-    super.dispose();
-  }
-
-  void _onFocusChanged() {
-    if (!_inputFocus.hasFocus) _flush();
-  }
-
-  void _flush() {
-    final text = _inputController.text
-        .trim()
-        .replaceAll(',', '')
-        .replaceAll(';', '');
-    if (text.isEmpty) return;
-    final list = List<String>.from(widget.attendees)..add(text);
-    _inputController.clear();
-    widget.onChanged(list);
-  }
-
-  void _selectChip(int index) {
-    setState(() => _selectedIndex = index);
-    _chipFocus.requestFocus();
-  }
-
-  void _deleteSelected() {
-    final idx = _selectedIndex;
-    if (idx == null) return;
-    final list = List<String>.from(widget.attendees)..removeAt(idx);
-    setState(() => _selectedIndex = null);
-    widget.onChanged(list);
-    _inputFocus.requestFocus();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 6),
-          child: SizedBox(
-            width: 68,
-            child: Text(
-              'Guests',
-              style: TextStyle(
-                color: c.textDimmed,
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-        ),
-        Expanded(
-          child: Focus(
-            focusNode: _chipFocus,
-            onKeyEvent: (_, event) {
-              if (event is! KeyDownEvent || _selectedIndex == null) {
-                return KeyEventResult.ignored;
-              }
-              if (event.logicalKey == LogicalKeyboardKey.backspace ||
-                  event.logicalKey == LogicalKeyboardKey.delete) {
-                _deleteSelected();
-                return KeyEventResult.handled;
-              }
-              if (event.logicalKey == LogicalKeyboardKey.escape) {
-                setState(() => _selectedIndex = null);
-                _inputFocus.requestFocus();
-                return KeyEventResult.handled;
-              }
-              return KeyEventResult.ignored;
-            },
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onTap: () {
-                setState(() => _selectedIndex = null);
-                _inputFocus.requestFocus();
-              },
-              child: Wrap(
-                spacing: 4,
-                runSpacing: 4,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  for (int i = 0; i < widget.attendees.length; i++)
-                    _buildChip(i, c),
-                  IntrinsicWidth(
-                    child: Focus(
-                      onKeyEvent: (_, event) {
-                        if (event is KeyDownEvent &&
-                            event.logicalKey == LogicalKeyboardKey.backspace &&
-                            _inputController.text.isEmpty &&
-                            widget.attendees.isNotEmpty) {
-                          _selectChip(widget.attendees.length - 1);
-                          return KeyEventResult.handled;
-                        }
-                        return KeyEventResult.ignored;
-                      },
-                      child: TextField(
-                        controller: _inputController,
-                        focusNode: _inputFocus,
-                        style: TextStyle(color: c.textPrimary, fontSize: 13),
-                        onSubmitted: (_) => _flush(),
-                        onChanged: (v) {
-                          if (v.endsWith(',') || v.endsWith(';')) _flush();
-                        },
-                        decoration: InputDecoration(
-                          hintText: widget.attendees.isEmpty
-                              ? 'Add guests by email'
-                              : null,
-                          hintStyle:
-                              TextStyle(color: c.textMuted, fontSize: 13),
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.zero,
-                          isDense: true,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildChip(int index, AppColors c) {
-    final email = widget.attendees[index];
-    final isSelected = _selectedIndex == index;
-    return GestureDetector(
-      onTap: () => _selectChip(index),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: isSelected ? AppColors.accent.withAlpha(30) : c.separator,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isSelected ? AppColors.accent : c.separatorStrong,
-          ),
-        ),
-        child: Text(
-          email,
-          style: TextStyle(
-            color: isSelected ? AppColors.accent : c.textSecondary,
-            fontSize: 12,
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 // ─── Recurrence section ───────────────────────────────────────────────────────
 

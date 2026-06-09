@@ -3,8 +3,8 @@
 <plist version="1.0">
 <dict>
 	<!-- Sandbox is disabled for debug/profile builds so the Keychain
-	     (flutter_secure_storage) works without a Team ID. Release builds
-	     re-enable the sandbox and require proper Xcode signing. -->
+	     (flutter_secure_storage) works without a provisioning profile.
+	     Release builds re-enable the sandbox and have keychain-access-groups. -->
 	<key>com.apple.security.cs.allow-jit</key>
 	<true/>
 	<key>com.apple.security.network.client</key>

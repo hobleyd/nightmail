@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email_folder.dart';
+import '../../domain/entities/email.dart';
 import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/calendar/calendar_bloc.dart';
@@ -122,6 +123,26 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
   ) {
     final selectedFolder = _resolveFolder(homeState, folderListState);
 
+    void onEmailSelected(Email email) {
+      context.read<HomeCubit>().selectEmail(email.id);
+      context.read<EmailDetailBloc>().add(
+            EmailDetailLoadRequested(emailId: email.id),
+          );
+      if (!email.isRead) {
+        context.read<EmailListBloc>().add(
+              EmailListMarkReadRequested(emailId: email.id, isRead: true),
+            );
+        if (selectedFolder != null) {
+          context.read<FolderListBloc>().add(
+                FolderListUnreadCountChanged(
+                  folderId: selectedFolder.id,
+                  unreadCountDelta: -1,
+                ),
+              );
+        }
+      }
+    }
+
     return LayoutBuilder(
           builder: (context, constraints) {
             final totalWidth = constraints.maxWidth;
@@ -194,18 +215,7 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                       folderName: selectedFolder?.displayName ?? 'Inbox',
                       folder: selectedFolder,
                       selectedEmailId: homeState.selectedEmailId,
-                      onEmailSelected: (email) {
-                        context.read<HomeCubit>().selectEmail(email.id);
-                        context.read<EmailDetailBloc>().add(
-                              EmailDetailLoadRequested(emailId: email.id),
-                            );
-                        if (!email.isRead) {
-                          context.read<EmailListBloc>().add(
-                                EmailListMarkReadRequested(
-                                    emailId: email.id, isRead: true),
-                              );
-                        }
-                      },
+                      onEmailSelected: onEmailSelected,
                     ),
                   ),
                   _ResizeHandle(
@@ -268,18 +278,7 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                       folderName: selectedFolder?.displayName ?? 'Inbox',
                       folder: selectedFolder,
                       selectedEmailId: homeState.selectedEmailId,
-                      onEmailSelected: (email) {
-                        context.read<HomeCubit>().selectEmail(email.id);
-                        context.read<EmailDetailBloc>().add(
-                              EmailDetailLoadRequested(emailId: email.id),
-                            );
-                        if (!email.isRead) {
-                          context.read<EmailListBloc>().add(
-                                EmailListMarkReadRequested(
-                                    emailId: email.id, isRead: true),
-                              );
-                        }
-                      },
+                      onEmailSelected: onEmailSelected,
                     ),
                   ),
                   _ResizeHandle(
@@ -341,18 +340,7 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                     folderName: selectedFolder?.displayName ?? 'Inbox',
                     folder: selectedFolder,
                     selectedEmailId: homeState.selectedEmailId,
-                    onEmailSelected: (email) {
-                      context.read<HomeCubit>().selectEmail(email.id);
-                      context.read<EmailDetailBloc>().add(
-                            EmailDetailLoadRequested(emailId: email.id),
-                          );
-                      if (!email.isRead) {
-                        context.read<EmailListBloc>().add(
-                              EmailListMarkReadRequested(
-                                  emailId: email.id, isRead: true),
-                            );
-                      }
-                    },
+                    onEmailSelected: onEmailSelected,
                   ),
                 ),
                 _ResizeHandle(

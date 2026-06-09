@@ -24,17 +24,17 @@ class FlagIconButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap,
       onSecondaryTapUp: (details) =>
           _showMenu(context, details.globalPosition),
-      behavior: HitTestBehavior.opaque,
-      child: Padding(
-        padding: const EdgeInsets.all(4),
-        child: Icon(
+      child: IconButton(
+        icon: Icon(
           Icons.flag_outlined,
           size: size,
           color: color ?? AppColors.accent.withValues(alpha: 0.7),
         ),
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+        onPressed: onTap,
       ),
     );
   }

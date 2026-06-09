@@ -18,3 +18,17 @@ final class FolderListFolderEmptied extends FolderListEvent {
   @override
   List<Object?> get props => [folderId];
 }
+
+final class FolderListUnreadCountChanged extends FolderListEvent {
+  const FolderListUnreadCountChanged({
+    required this.folderId,
+    required this.unreadCountDelta,
+    this.totalCountDelta = 0,
+  });
+  final String folderId;
+  final int unreadCountDelta;
+  final int totalCountDelta;
+
+  @override
+  List<Object?> get props => [folderId, unreadCountDelta, totalCountDelta];
+}

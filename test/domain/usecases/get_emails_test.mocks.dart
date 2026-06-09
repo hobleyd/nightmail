@@ -212,6 +212,22 @@ class MockEmailRepository extends _i1.Mock implements _i2.EmailRepository {
           as _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>>);
 
   @override
+  _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>> moveEmail(
+    String? id,
+    String? destinationFolderId,
+  ) =>
+      (super.noSuchMethod(
+            Invocation.method(#moveEmail, [id, destinationFolderId]),
+            returnValue: _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>>.value(
+              _i7.dummyValue<_i4.Either<_i5.Failure, _i4.Unit>>(
+                this,
+                Invocation.method(#moveEmail, [id, destinationFolderId]),
+              ),
+            ),
+          )
+          as _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>>);
+
+  @override
   _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>> deleteEmail(String? id) =>
       (super.noSuchMethod(
             Invocation.method(#deleteEmail, [id]),
@@ -219,6 +235,30 @@ class MockEmailRepository extends _i1.Mock implements _i2.EmailRepository {
               _i7.dummyValue<_i4.Either<_i5.Failure, _i4.Unit>>(
                 this,
                 Invocation.method(#deleteEmail, [id]),
+              ),
+            ),
+          )
+          as _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>>);
+
+  @override
+  _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>> emptyFolder(
+    String? folderId, {
+    bool? permanentDelete = false,
+  }) =>
+      (super.noSuchMethod(
+            Invocation.method(
+              #emptyFolder,
+              [folderId],
+              {#permanentDelete: permanentDelete},
+            ),
+            returnValue: _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>>.value(
+              _i7.dummyValue<_i4.Either<_i5.Failure, _i4.Unit>>(
+                this,
+                Invocation.method(
+                  #emptyFolder,
+                  [folderId],
+                  {#permanentDelete: permanentDelete},
+                ),
               ),
             ),
           )
@@ -309,4 +349,20 @@ class MockEmailRepository extends _i1.Mock implements _i2.EmailRepository {
             ),
           )
           as _i3.Future<_i4.Either<_i5.Failure, _i4.Unit>>);
+
+  @override
+  _i3.Future<_i4.Either<_i5.Failure, _i9.Uint8List>> getRawEmailBytes(
+    String? id,
+  ) =>
+      (super.noSuchMethod(
+            Invocation.method(#getRawEmailBytes, [id]),
+            returnValue:
+                _i3.Future<_i4.Either<_i5.Failure, _i9.Uint8List>>.value(
+                  _i7.dummyValue<_i4.Either<_i5.Failure, _i9.Uint8List>>(
+                    this,
+                    Invocation.method(#getRawEmailBytes, [id]),
+                  ),
+                ),
+          )
+          as _i3.Future<_i4.Either<_i5.Failure, _i9.Uint8List>>);
 }

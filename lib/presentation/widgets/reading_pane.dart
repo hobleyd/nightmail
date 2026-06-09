@@ -29,6 +29,8 @@ import '../blocs/email_detail/email_detail_event.dart';
 import '../blocs/email_detail/email_detail_state.dart';
 import '../blocs/email_list/email_list_bloc.dart';
 import '../blocs/email_list/email_list_event.dart';
+import '../blocs/folder_list/folder_list_bloc.dart';
+import '../blocs/folder_list/folder_list_event.dart';
 import '../blocs/home/home_cubit.dart';
 import 'email_date_formatter.dart';
 
@@ -242,6 +244,23 @@ class _ReadingPaneToolbar extends StatelessWidget {
         context.read<EmailListBloc>().add(
               EmailListEmailDeleted(emailId: email.id),
             );
+        if (!email.isRead && email.parentFolderId != null) {
+          context.read<FolderListBloc>().add(
+                FolderListUnreadCountChanged(
+                  folderId: email.parentFolderId!,
+                  unreadCountDelta: -1,
+                  totalCountDelta: -1,
+                ),
+              );
+        } else if (email.parentFolderId != null) {
+          context.read<FolderListBloc>().add(
+                FolderListUnreadCountChanged(
+                  folderId: email.parentFolderId!,
+                  unreadCountDelta: 0,
+                  totalCountDelta: -1,
+                ),
+              );
+        }
       },
     );
   }

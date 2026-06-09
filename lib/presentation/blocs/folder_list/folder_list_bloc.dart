@@ -10,6 +10,7 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
       : super(const FolderListInitial()) {
     on<FolderListLoadRequested>(_onLoadRequested);
     on<FolderListFolderEmptied>(_onFolderEmptied);
+    on<FolderListUnreadCountChanged>(_onUnreadCountChanged);
   }
 
   final GetMailFolders _getMailFolders;
@@ -45,6 +46,23 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
       folders: current.folders.map((f) {
         if (f.id != event.folderId) return f;
         return f.copyWith(totalItemCount: 0, unreadItemCount: 0);
+      }).toList(),
+    ));
+  }
+
+  void _onUnreadCountChanged(
+    FolderListUnreadCountChanged event,
+    Emitter<FolderListState> emit,
+  ) {
+    final current = state;
+    if (current is! FolderListLoaded) return;
+    emit(current.copyWith(
+      folders: current.folders.map((f) {
+        if (f.id != event.folderId) return f;
+        return f.copyWith(
+          unreadItemCount: f.unreadItemCount + event.unreadCountDelta,
+          totalItemCount: f.totalItemCount + event.totalCountDelta,
+        );
       }).toList(),
     ));
   }

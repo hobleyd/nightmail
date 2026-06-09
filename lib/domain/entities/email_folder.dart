@@ -37,5 +37,5 @@ class EmailFolder extends Equatable {
   }
 
   @override
-  List<Object?> get props => [id];
+  List<Object?> get props => [id, displayName, unreadItemCount, totalItemCount];
 }

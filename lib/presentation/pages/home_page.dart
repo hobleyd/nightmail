@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/app_colors.dart';
@@ -74,7 +75,10 @@ class _HomeView extends StatelessWidget {
 
           homeCubit.selectFolder(inbox.id);
           context.read<EmailListBloc>().add(
-                EmailListLoadRequested(folderId: inbox.id),
+                EmailListLoadRequested(
+                  folderId: inbox.id,
+                  folderDisplayName: inbox.displayName,
+                ),
               );
         }
       },
@@ -102,6 +106,25 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
   static const double _minReadingPaneWidth = 200;
   static const double _minCalendarPaneWidth = 200;
   static const double _handleWidth = 8;
+  static const _calendarRefreshChannel =
+      MethodChannel('au.com.sharpblue.nightmail/calendar_refresh');
+
+  @override
+  void initState() {
+    super.initState();
+    _calendarRefreshChannel.setMethodCallHandler((call) async {
+      if (call.method == 'eventSaved' && mounted) {
+        final bloc = context.read<CalendarBloc>();
+        bloc.add(CalendarWeekNavigated(weekStart: bloc.state.weekStart));
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _calendarRefreshChannel.setMethodCallHandler(null);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -169,7 +192,10 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                 homeCubit.selectFolder(folder.id);
                 context.read<EmailDetailBloc>().add(const EmailDetailCleared());
                 context.read<EmailListBloc>().add(
-                      EmailListLoadRequested(folderId: folder.id),
+                      EmailListLoadRequested(
+                        folderId: folder.id,
+                        folderDisplayName: folder.displayName,
+                      ),
                     );
               },
               onCalendarTapped: () {

@@ -82,6 +82,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
               hasMore: true,
               isLoadingFresh: true,
               currentFolderId: event.folderId,
+              currentFolderName: event.folderDisplayName,
             ));
           }
         },
@@ -112,8 +113,9 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
           hasMore: emails.length == _pageSize,
           isLoadingFresh: false,
           currentFolderId: event.folderId,
+          currentFolderName: event.folderDisplayName,
         ));
-        _recordSenders(emails);
+        _recordSenders(emails, event.folderDisplayName);
       },
     );
   }
@@ -143,7 +145,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
           hasMore: newEmails.length == _pageSize,
           isLoadingMore: false,
         ));
-        _recordSenders(newEmails);
+        _recordSenders(newEmails, current.currentFolderName);
       },
     );
   }
@@ -152,10 +154,9 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     EmailListRefreshRequested event,
     Emitter<EmailListState> emit,
   ) async {
-    final folderId = event.folderId ??
-        (state is EmailListLoaded
-            ? (state as EmailListLoaded).currentFolderId
-            : null);
+    final prior = state is EmailListLoaded ? state as EmailListLoaded : null;
+    final folderId = event.folderId ?? prior?.currentFolderId;
+    final folderName = prior?.currentFolderName;
 
     final result = await _getEmails(GetEmailsParams(
       folderId: folderId,
@@ -169,8 +170,9 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
           emails: emails,
           hasMore: emails.length == _pageSize,
           currentFolderId: folderId,
+          currentFolderName: folderName,
         ));
-        _recordSenders(emails);
+        _recordSenders(emails, folderName);
       },
     );
   }
@@ -288,12 +290,21 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     }
   }
 
-  void _recordSenders(List<Email> emails) {
+  void _recordSenders(List<Email> emails, String? folderName) {
+    if (_isJunkFolder(folderName)) return;
     final accountId = _accountManager.activeAccount?.id;
     if (accountId == null) return;
     unawaited(_recordKnownSenders(RecordKnownSendersParams(
       accountId: accountId,
       emails: emails,
     )));
+  }
+
+  static bool _isJunkFolder(String? name) {
+    if (name == null) return false;
+    return switch (name.toLowerCase()) {
+      'junk' || 'junk email' || 'spam' => true,
+      _ => false,
+    };
   }
 }

@@ -8,11 +8,12 @@ sealed class EmailListEvent extends Equatable {
 }
 
 final class EmailListLoadRequested extends EmailListEvent {
-  const EmailListLoadRequested({this.folderId});
+  const EmailListLoadRequested({this.folderId, this.folderDisplayName});
   final String? folderId;
+  final String? folderDisplayName;
 
   @override
-  List<Object?> get props => [folderId];
+  List<Object?> get props => [folderId, folderDisplayName];
 }
 
 final class EmailListLoadMoreRequested extends EmailListEvent {

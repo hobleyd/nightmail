@@ -24,6 +24,7 @@ final class EmailListLoaded extends EmailListState {
     this.isLoadingMore = false,
     this.isLoadingFresh = false,
     this.currentFolderId,
+    this.currentFolderName,
     this.expandedConversationIds = const {},
     this.emptyingFolderIds = const {},
   });
@@ -38,6 +39,7 @@ final class EmailListLoaded extends EmailListState {
   final bool isLoadingFresh;
 
   final String? currentFolderId;
+  final String? currentFolderName;
   final Set<String> expandedConversationIds;
 
   /// Folder IDs for which a Delete All operation is currently in flight.
@@ -58,6 +60,7 @@ final class EmailListLoaded extends EmailListState {
       isLoadingMore: isLoadingMore ?? this.isLoadingMore,
       isLoadingFresh: isLoadingFresh ?? this.isLoadingFresh,
       currentFolderId: currentFolderId ?? this.currentFolderId,
+      currentFolderName: currentFolderName,
       expandedConversationIds: expandedConversationIds ?? this.expandedConversationIds,
       emptyingFolderIds: emptyingFolderIds ?? this.emptyingFolderIds,
     );
@@ -70,6 +73,7 @@ final class EmailListLoaded extends EmailListState {
         isLoadingMore,
         isLoadingFresh,
         currentFolderId,
+        currentFolderName,
         expandedConversationIds,
         emptyingFolderIds,
       ];

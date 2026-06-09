@@ -35,7 +35,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -57,6 +57,11 @@ class AppDatabase extends _$AppDatabase {
               'CREATE INDEX idx_known_senders_account '
               'ON known_senders(account_id)',
             );
+          }
+          if (from < 3) {
+            // Clear sender cache so any junk/spam senders recorded before
+            // this fix are removed.
+            await customStatement('DELETE FROM known_senders');
           }
         },
       );

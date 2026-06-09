@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -5,6 +8,7 @@ import 'package:intl/intl.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/calendar_event.dart';
+import '../../domain/entities/calendar_event_attendee.dart';
 import '../../domain/entities/calendar_recurrence.dart';
 import '../../domain/usecases/create_calendar_event.dart';
 import '../../domain/usecases/update_calendar_event.dart';
@@ -18,33 +22,55 @@ import '../blocs/event_edit/event_edit_state.dart';
 class EventEditDialog extends StatelessWidget {
   const EventEditDialog({super.key, this.event, this.initialStart});
 
-  /// If null, opens in create mode. If provided, opens in edit mode.
   final CalendarEvent? event;
-
-  /// Pre-fills the start time when opening in create mode (event == null).
   final DateTime? initialStart;
 
-  static Future<bool> show(
+  static Future<void> show(
     BuildContext context, {
     CalendarEvent? event,
     DateTime? initialStart,
   }) async {
-    final saved = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => BlocProvider(
-        create: (_) => EventEditBloc(
-          createCalendarEvent: sl<CreateCalendarEvent>(),
-          updateCalendarEvent: sl<UpdateCalendarEvent>(),
-        ),
-        child: EventEditDialog(event: event, initialStart: initialStart),
+    await WindowController.create(
+      WindowConfiguration(
+        arguments: jsonEncode({
+          'type': 'eventEdit',
+          if (event != null) 'event': _eventToArgs(event),
+          if (initialStart != null) 'initialStart': initialStart.toIso8601String(),
+        }),
       ),
     );
-    return saved ?? false;
   }
+
+  static Map<String, dynamic> _eventToArgs(CalendarEvent e) => {
+        'id': e.id,
+        'subject': e.subject,
+        'start': e.start.toUtc().toIso8601String(),
+        'end': e.end.toUtc().toIso8601String(),
+        'isAllDay': e.isAllDay,
+        if (e.location != null) 'location': e.location,
+        if (e.bodyPreview != null) 'bodyPreview': e.bodyPreview,
+        if (e.timezone != null) 'timezone': e.timezone,
+        'attendees': e.attendees
+            .map((a) => {
+                  'email': a.email,
+                  if (a.displayName != null) 'displayName': a.displayName,
+                  'responseStatus': a.responseStatus.name,
+                })
+            .toList(),
+        if (e.recurrence != null) 'recurrence': _recurrenceToArgs(e.recurrence!),
+      };
+
+  static Map<String, dynamic> _recurrenceToArgs(CalendarRecurrence r) => {
+        'frequency': r.frequency.name,
+        'interval': r.interval,
+        if (r.daysOfWeek != null) 'daysOfWeek': r.daysOfWeek,
+        if (r.endDate != null) 'endDate': r.endDate!.toIso8601String(),
+        if (r.count != null) 'count': r.count,
+      };
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return BlocListener<EventEditBloc, EventEditState>(
       listener: (context, state) {
         if (state is EventEditSaved) {
@@ -65,23 +91,40 @@ class EventEditDialog extends StatelessWidget {
           );
         }
       },
-      child: _EventEditForm(event: event, initialStart: initialStart),
+      child: Dialog(
+        backgroundColor: c.surfacePanel,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        child: SizedBox(
+          width: 560,
+          child: EventEditForm(
+            event: event,
+            initialStart: initialStart,
+            onClose: () => Navigator.of(context).pop(false),
+          ),
+        ),
+      ),
     );
   }
 }
 
 // ─── Form ─────────────────────────────────────────────────────────────────────
 
-class _EventEditForm extends StatefulWidget {
-  const _EventEditForm({this.event, this.initialStart});
+class EventEditForm extends StatefulWidget {
+  const EventEditForm({
+    super.key,
+    this.event,
+    this.initialStart,
+    required this.onClose,
+  });
   final CalendarEvent? event;
   final DateTime? initialStart;
+  final VoidCallback onClose;
 
   @override
-  State<_EventEditForm> createState() => _EventEditFormState();
+  State<EventEditForm> createState() => _EventEditFormState();
 }
 
-class _EventEditFormState extends State<_EventEditForm> {
+class _EventEditFormState extends State<EventEditForm> {
   late final TextEditingController _titleController;
   late final TextEditingController _locationController;
   late final TextEditingController _descriptionController;
@@ -198,136 +241,129 @@ class _EventEditFormState extends State<_EventEditForm> {
     final title =
         widget.event == null ? 'New Event' : 'Edit Event';
 
-    return Dialog(
-      backgroundColor: c.surfacePanel,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      child: SizedBox(
-        width: 560,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _TitleBar(title: title),
-            Divider(height: 1, color: c.border),
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _TitleBar(title: title, onClose: widget.onClose),
+        Divider(height: 1, color: c.border),
+        Flexible(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _LabeledField(
+                  label: 'Title',
+                  child: TextField(
+                    controller: _titleController,
+                    autofocus: true,
+                    style: TextStyle(color: c.textPrimary, fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'Event title',
+                      hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.zero,
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Divider(height: 1, color: c.separator),
+                const SizedBox(height: 10),
+                Row(
                   children: [
-                    _LabeledField(
-                      label: 'Title',
-                      child: TextField(
-                        controller: _titleController,
-                        autofocus: true,
-                        style: TextStyle(color: c.textPrimary, fontSize: 13),
-                        decoration: InputDecoration(
-                          hintText: 'Event title',
-                          hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.zero,
-                          isDense: true,
-                        ),
+                    Expanded(
+                      child: _DateTimeSection(
+                        startDate: _startDate,
+                        startTime: _startTime,
+                        endDate: _endDate,
+                        endTime: _endTime,
+                        isAllDay: _isAllDay,
+                        onStartDateChanged: (d) =>
+                            setState(() => _startDate = d),
+                        onStartTimeChanged: (t) =>
+                            setState(() => _startTime = t),
+                        onEndDateChanged: (d) =>
+                            setState(() => _endDate = d),
+                        onEndTimeChanged: (t) =>
+                            setState(() => _endTime = t),
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    Divider(height: 1, color: c.separator),
-                    const SizedBox(height: 10),
-                    // All-day toggle + date/time rows
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _DateTimeSection(
-                            startDate: _startDate,
-                            startTime: _startTime,
-                            endDate: _endDate,
-                            endTime: _endTime,
-                            isAllDay: _isAllDay,
-                            onStartDateChanged: (d) =>
-                                setState(() => _startDate = d),
-                            onStartTimeChanged: (t) =>
-                                setState(() => _startTime = t),
-                            onEndDateChanged: (d) =>
-                                setState(() => _endDate = d),
-                            onEndTimeChanged: (t) =>
-                                setState(() => _endTime = t),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        _AllDayToggle(
-                          value: _isAllDay,
-                          onChanged: (v) => setState(() => _isAllDay = v),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    _LabeledField(
-                      label: 'Timezone',
-                      child: _TimezoneSelector(
-                        value: _timezone,
-                        onChanged: (tz) => setState(() => _timezone = tz),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Divider(height: 1, color: c.separator),
-                    const SizedBox(height: 10),
-                    _LabeledField(
-                      label: 'Location',
-                      child: TextField(
-                        controller: _locationController,
-                        style: TextStyle(color: c.textPrimary, fontSize: 13),
-                        decoration: InputDecoration(
-                          hintText: 'Add location',
-                          hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.zero,
-                          isDense: true,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    _AttendeesField(
-                      attendees: _attendees,
-                      onChanged: (a) => setState(() => _attendees = a),
-                    ),
-                    const SizedBox(height: 10),
-                    Divider(height: 1, color: c.separator),
-                    const SizedBox(height: 10),
-                    _RecurrenceSection(
-                      recurrence: _recurrence,
-                      startDate: _startDate,
-                      onChanged: (r) => setState(() => _recurrence = r),
-                    ),
-                    const SizedBox(height: 10),
-                    Divider(height: 1, color: c.separator),
-                    const SizedBox(height: 10),
-                    _LabeledField(
-                      label: 'Notes',
-                      child: TextField(
-                        controller: _descriptionController,
-                        maxLines: 4,
-                        style: TextStyle(color: c.textPrimary, fontSize: 13),
-                        decoration: InputDecoration(
-                          hintText: 'Add notes',
-                          hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.zero,
-                          isDense: true,
-                        ),
-                      ),
+                    const SizedBox(width: 12),
+                    _AllDayToggle(
+                      value: _isAllDay,
+                      onChanged: (v) => setState(() => _isAllDay = v),
                     ),
                   ],
                 ),
-              ),
+                const SizedBox(height: 10),
+                _LabeledField(
+                  label: 'Timezone',
+                  child: _TimezoneSelector(
+                    value: _timezone,
+                    onChanged: (tz) => setState(() => _timezone = tz),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Divider(height: 1, color: c.separator),
+                const SizedBox(height: 10),
+                _LabeledField(
+                  label: 'Location',
+                  child: TextField(
+                    controller: _locationController,
+                    style: TextStyle(color: c.textPrimary, fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'Add location',
+                      hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.zero,
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                _AttendeesField(
+                  attendees: _attendees,
+                  onChanged: (a) => setState(() => _attendees = a),
+                ),
+                const SizedBox(height: 10),
+                Divider(height: 1, color: c.separator),
+                const SizedBox(height: 10),
+                _RecurrenceSection(
+                  recurrence: _recurrence,
+                  startDate: _startDate,
+                  onChanged: (r) => setState(() => _recurrence = r),
+                ),
+                const SizedBox(height: 10),
+                Divider(height: 1, color: c.separator),
+                const SizedBox(height: 10),
+                _LabeledField(
+                  label: 'Notes',
+                  child: TextField(
+                    controller: _descriptionController,
+                    maxLines: 4,
+                    style: TextStyle(color: c.textPrimary, fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'Add notes',
+                      hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.zero,
+                      isDense: true,
+                    ),
+                  ),
+                ),
+              ],
             ),
-            Divider(height: 1, color: c.border),
-            _Footer(
-              isEditing: widget.event != null,
-              onSave: _submit,
-            ),
-          ],
+          ),
         ),
-      ),
+        Divider(height: 1, color: c.border),
+        _Footer(
+          isEditing: widget.event != null,
+          onSave: _submit,
+          onClose: widget.onClose,
+        ),
+      ],
     );
   }
 }
@@ -1331,8 +1367,9 @@ class _LabeledField extends StatelessWidget {
 }
 
 class _TitleBar extends StatelessWidget {
-  const _TitleBar({required this.title});
+  const _TitleBar({required this.title, required this.onClose});
   final String title;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -1354,7 +1391,7 @@ class _TitleBar extends StatelessWidget {
             icon: Icon(Icons.close, size: 16, color: c.textMuted),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: onClose,
           ),
         ],
       ),
@@ -1363,9 +1400,14 @@ class _TitleBar extends StatelessWidget {
 }
 
 class _Footer extends StatelessWidget {
-  const _Footer({required this.isEditing, required this.onSave});
+  const _Footer({
+    required this.isEditing,
+    required this.onSave,
+    required this.onClose,
+  });
   final bool isEditing;
   final VoidCallback onSave;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -1379,8 +1421,7 @@ class _Footer extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
               TextButton(
-                onPressed:
-                    isSaving ? null : () => Navigator.of(context).pop(false),
+                onPressed: isSaving ? null : onClose,
                 child: Text(
                   'Cancel',
                   style: TextStyle(color: c.textMuted, fontSize: 13),

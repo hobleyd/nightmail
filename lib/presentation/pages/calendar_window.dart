@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../injection_container.dart';
@@ -58,8 +59,33 @@ DateTime _mondayOfWeek(DateTime date) {
   return date.subtract(Duration(days: date.weekday - 1));
 }
 
-class _CalendarWindowPage extends StatelessWidget {
+class _CalendarWindowPage extends StatefulWidget {
   const _CalendarWindowPage();
+
+  @override
+  State<_CalendarWindowPage> createState() => _CalendarWindowPageState();
+}
+
+class _CalendarWindowPageState extends State<_CalendarWindowPage> {
+  static const _calendarRefreshChannel =
+      MethodChannel('au.com.sharpblue.nightmail/calendar_refresh');
+
+  @override
+  void initState() {
+    super.initState();
+    _calendarRefreshChannel.setMethodCallHandler((call) async {
+      if (call.method == 'eventSaved' && mounted) {
+        final bloc = context.read<CalendarBloc>();
+        bloc.add(CalendarWeekNavigated(weekStart: bloc.state.weekStart));
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _calendarRefreshChannel.setMethodCallHandler(null);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {

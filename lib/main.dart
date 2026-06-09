@@ -12,6 +12,7 @@ import 'presentation/blocs/theme/theme_state.dart';
 import 'presentation/pages/account_selection_page.dart';
 import 'presentation/pages/calendar_window.dart';
 import 'presentation/pages/compose_window.dart';
+import 'presentation/pages/event_edit_window.dart';
 import 'presentation/pages/tasks_window.dart';
 import 'presentation/pages/home_page.dart';
 
@@ -42,6 +43,20 @@ void main(List<String> args) async {
         () async => windowManager.show(),
       );
       runApp(const TasksWindowApp());
+      return;
+    }
+
+    if (arguments['type'] == 'eventEdit') {
+      final rawEvent = arguments['event'] as Map<String, dynamic>?;
+      final subject = rawEvent?['subject'] as String?;
+      final title = rawEvent != null
+          ? (subject?.isNotEmpty == true ? subject! : 'Edit Event')
+          : 'New Event';
+      windowManager.waitUntilReadyToShow(
+        WindowOptions(size: const Size(600, 580), center: true, title: title),
+        () async => windowManager.show(),
+      );
+      runApp(EventEditWindowApp(windowId: windowId, arguments: arguments));
       return;
     }
 

@@ -196,14 +196,7 @@ class _NewEventButton extends StatelessWidget {
     return Tooltip(
       message: 'New event',
       child: InkWell(
-        onTap: () async {
-          final saved =
-              await EventEditDialog.show(context);
-          if (saved && context.mounted) {
-            calendarBloc.add(CalendarWeekNavigated(
-                weekStart: calendarBloc.state.weekStart));
-          }
-        },
+        onTap: () => EventEditDialog.show(context),
         borderRadius: BorderRadius.circular(6),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -334,15 +327,8 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
                                 final minute = roundedMinutes % 60;
                                 final start = DateTime(today.year, today.month,
                                     today.day, hour, minute);
-                                final bloc = context.read<CalendarBloc>();
                                 EventEditDialog.show(context,
-                                        initialStart: start)
-                                    .then((saved) {
-                                  if (saved && context.mounted) {
-                                    bloc.add(CalendarWeekNavigated(
-                                        weekStart: bloc.state.weekStart));
-                                  }
-                                });
+                                    initialStart: start);
                               },
                               child: Stack(
                                 children: [
@@ -730,12 +716,7 @@ class _AllDayEventChip extends StatelessWidget {
   }
 
   void _openEdit(BuildContext context) {
-    final bloc = context.read<CalendarBloc>();
-    EventEditDialog.show(context, event: event).then((saved) {
-      if (saved && context.mounted) {
-        bloc.add(CalendarWeekNavigated(weekStart: bloc.state.weekStart));
-      }
-    });
+    EventEditDialog.show(context, event: event);
   }
 }
 
@@ -882,12 +863,7 @@ class _DayColumnCellState extends State<_DayColumnCell> {
     final start = DateTime(
         widget.day.year, widget.day.month, widget.day.day, hour, minute);
 
-    final bloc = context.read<CalendarBloc>();
-    EventEditDialog.show(context, initialStart: start).then((saved) {
-      if (saved && context.mounted) {
-        bloc.add(CalendarWeekNavigated(weekStart: bloc.state.weekStart));
-      }
-    });
+    EventEditDialog.show(context, initialStart: start);
   }
 
   @override
@@ -968,12 +944,7 @@ class _PositionedEvent extends StatelessWidget {
   }
 
   void _openEdit(BuildContext context) {
-    final bloc = context.read<CalendarBloc>();
-    EventEditDialog.show(context, event: event).then((saved) {
-      if (saved && context.mounted) {
-        bloc.add(CalendarWeekNavigated(weekStart: bloc.state.weekStart));
-      }
-    });
+    EventEditDialog.show(context, event: event);
   }
 }
 

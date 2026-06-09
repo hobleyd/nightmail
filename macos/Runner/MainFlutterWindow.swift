@@ -10,6 +10,7 @@ class MainFlutterWindow: NSWindow {
   // unregisters its handler in dealloc, so letting one go out of scope silently
   // removes the handler and causes MissingPluginException.
   private var allChannels: [FlutterMethodChannel] = []
+  private var calendarNotifyChannels: [FlutterMethodChannel] = []
   private var badgeChannel: FlutterMethodChannel?
 
   override func awakeFromNib() {
@@ -21,10 +22,19 @@ class MainFlutterWindow: NSWindow {
     RegisterGeneratedPlugins(registry: flutterViewController)
     registerContactsChannel(messenger: flutterViewController.engine.binaryMessenger)
 
+    // Register the main window's calendar refresh channel for broadcasting eventSaved into Flutter.
+    let mainCalendarChannel = FlutterMethodChannel(
+      name: "au.com.sharpblue.nightmail/calendar_refresh",
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
+    calendarNotifyChannels.append(mainCalendarChannel)
+    allChannels.append(mainCalendarChannel)
+
     // Register contacts + plugins for every secondary window too.
     FlutterMultiWindowPlugin.setOnWindowCreatedCallback { [weak self] controller in
       RegisterGeneratedPlugins(registry: controller)
       self?.registerContactsChannel(messenger: controller.engine.binaryMessenger)
+      self?.registerCalendarRefreshRelay(messenger: controller.engine.binaryMessenger)
     }
 
     badgeChannel = FlutterMethodChannel(
@@ -42,6 +52,26 @@ class MainFlutterWindow: NSWindow {
     }
 
     super.awakeFromNib()
+  }
+
+  // MARK: - Calendar refresh relay
+
+  private func registerCalendarRefreshRelay(messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(
+      name: "au.com.sharpblue.nightmail/calendar_refresh",
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { [weak self] call, result in
+      if call.method == "notifyEventSaved" {
+        // Broadcast eventSaved to all registered Flutter engines.
+        self?.calendarNotifyChannels.forEach { $0.invokeMethod("eventSaved", arguments: nil) }
+        result(nil)
+      } else {
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    calendarNotifyChannels.append(channel)
+    allChannels.append(channel)
   }
 
   // MARK: - Contacts channel

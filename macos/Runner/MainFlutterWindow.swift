@@ -69,20 +69,44 @@ class MainFlutterWindow: NSWindow {
   private func handleRequestPermission(result: @escaping FlutterResult) {
     let store = CNContactStore()
     let current = CNContactStore.authorizationStatus(for: .contacts)
+    NSLog("[NightMail] CNContactStore status raw=%d name=%@",
+          current.rawValue, statusName(current))
     switch current {
     case .authorized:
       result("granted")
-    case .denied, .restricted:
-      // Already denied — requestAccess won't show a dialog.
-      // Return a distinct value so Dart can surface a "go to Settings" message.
+    case .denied:
       result("permanentlyDenied")
+    case .restricted:
+      // .restricted = system-level block (Screen Time, MDM, or macOS refusing
+      // to prompt for this process).  Try requestAccess anyway — on some macOS
+      // versions it can still show a dialog even when the status reads restricted.
+      store.requestAccess(for: .contacts) { _, _ in
+        DispatchQueue.main.async {
+          let after = CNContactStore.authorizationStatus(for: .contacts)
+          NSLog("[NightMail] CNContactStore after requestAccess: raw=%d name=%@",
+                after.rawValue, self.statusName(after))
+          result(after == .authorized ? "granted" : "permanentlyDenied")
+        }
+      }
     default:
       store.requestAccess(for: .contacts) { _, _ in
         DispatchQueue.main.async {
-          let status = CNContactStore.authorizationStatus(for: .contacts)
-          result(status == .authorized ? "granted" : "denied")
+          let after = CNContactStore.authorizationStatus(for: .contacts)
+          NSLog("[NightMail] CNContactStore after requestAccess: raw=%d name=%@",
+                after.rawValue, self.statusName(after))
+          result(after == .authorized ? "granted" : "denied")
         }
       }
+    }
+  }
+
+  private func statusName(_ s: CNAuthorizationStatus) -> String {
+    switch s {
+    case .notDetermined: return "notDetermined"
+    case .restricted:    return "restricted"
+    case .denied:        return "denied"
+    case .authorized:    return "authorized"
+    @unknown default:    return "unknown(\(s.rawValue))"
     }
   }
 

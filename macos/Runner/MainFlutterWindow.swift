@@ -69,14 +69,19 @@ class MainFlutterWindow: NSWindow {
   private func handleRequestPermission(result: @escaping FlutterResult) {
     let store = CNContactStore()
     let current = CNContactStore.authorizationStatus(for: .contacts)
-    if current == .authorized {
+    switch current {
+    case .authorized:
       result("granted")
-      return
-    }
-    store.requestAccess(for: .contacts) { _, _ in
-      DispatchQueue.main.async {
-        let status = CNContactStore.authorizationStatus(for: .contacts)
-        result(status == .authorized ? "granted" : "denied")
+    case .denied, .restricted:
+      // Already denied — requestAccess won't show a dialog.
+      // Return a distinct value so Dart can surface a "go to Settings" message.
+      result("permanentlyDenied")
+    default:
+      store.requestAccess(for: .contacts) { _, _ in
+        DispatchQueue.main.async {
+          let status = CNContactStore.authorizationStatus(for: .contacts)
+          result(status == .authorized ? "granted" : "denied")
+        }
       }
     }
   }

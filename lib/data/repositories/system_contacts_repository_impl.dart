@@ -13,8 +13,13 @@ class SystemContactsRepositoryImpl implements SystemContactsRepository {
   Future<List<Map<String, String>>> _loadContacts() async {
     final status = await _channel.invokeMethod<String>('requestPermission');
     debugPrint('[NightMail] contacts permission: $status');
+    if (status == 'permanentlyDenied') {
+      debugPrint(
+        '[NightMail] Contacts access was denied. '
+        'To enable: System Settings → Privacy & Security → Contacts → NightMail → Allow',
+      );
+    }
     if (status != 'granted') return [];
-    // Permission granted; actual searching is done per-query below.
     return [];
   }
 

@@ -7,11 +7,6 @@ import 'package:path_provider/path_provider.dart';
 
 import 'account.dart';
 
-/// Persists the list of configured accounts and the active account index.
-///
-/// Storage strategy mirrors [TokenStorage]:
-/// - Mobile/Web: [FlutterSecureStorage]
-/// - Desktop: JSON files in app support directory
 class AccountStorage {
   AccountStorage(this._storage);
 
@@ -22,28 +17,15 @@ class AccountStorage {
   static const _accountsFileName = '.nightmail_accounts';
   static const _activeIndexFileName = '.nightmail_active_index';
 
-  static bool get _useFile =>
-      !kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
-
   Future<void> saveAccounts(List<Account> accounts) async {
     final json = jsonEncode(accounts.map((a) => a.toJson()).toList());
-    if (_useFile) {
-      await (await _accountsFile).writeAsString(json);
-    } else {
-      await _storage.write(key: _accountsKey, value: json);
-    }
+    await _storage.write(key: _accountsKey, value: json);
   }
 
   Future<List<Account>> loadAccounts() async {
+    await _migrateLegacyFiles();
     try {
-      final String? json;
-      if (_useFile) {
-        final file = await _accountsFile;
-        if (!file.existsSync()) return [];
-        json = await file.readAsString();
-      } else {
-        json = await _storage.read(key: _accountsKey);
-      }
+      final json = await _storage.read(key: _accountsKey);
       if (json == null) return [];
       final list = jsonDecode(json) as List<dynamic>;
       return list
@@ -55,24 +37,12 @@ class AccountStorage {
   }
 
   Future<void> saveActiveIndex(int index) async {
-    final value = index.toString();
-    if (_useFile) {
-      await (await _activeIndexFile).writeAsString(value);
-    } else {
-      await _storage.write(key: _activeIndexKey, value: value);
-    }
+    await _storage.write(key: _activeIndexKey, value: index.toString());
   }
 
   Future<int> loadActiveIndex() async {
     try {
-      final String? value;
-      if (_useFile) {
-        final file = await _activeIndexFile;
-        if (!file.existsSync()) return 0;
-        value = await file.readAsString();
-      } else {
-        value = await _storage.read(key: _activeIndexKey);
-      }
+      final value = await _storage.read(key: _activeIndexKey);
       return int.tryParse(value ?? '0') ?? 0;
     } catch (_) {
       return 0;
@@ -80,24 +50,47 @@ class AccountStorage {
   }
 
   Future<void> clear() async {
-    if (_useFile) {
-      final af = await _accountsFile;
-      final ai = await _activeIndexFile;
-      if (af.existsSync()) await af.delete();
-      if (ai.existsSync()) await ai.delete();
-    } else {
-      await _storage.delete(key: _accountsKey);
-      await _storage.delete(key: _activeIndexKey);
+    await _storage.delete(key: _accountsKey);
+    await _storage.delete(key: _activeIndexKey);
+    await _deleteLegacyFiles();
+  }
+
+  // One-time migration: move account data from plain files to Keychain then delete files.
+  Future<void> _migrateLegacyFiles() async {
+    if (kIsWeb || (!Platform.isMacOS && !Platform.isWindows && !Platform.isLinux)) return;
+    final dir = await getApplicationSupportDirectory();
+
+    final accountsFile = File('${dir.path}/$_accountsFileName');
+    if (accountsFile.existsSync()) {
+      try {
+        final json = await accountsFile.readAsString();
+        final existing = await _storage.read(key: _accountsKey);
+        if (existing == null) {
+          await _storage.write(key: _accountsKey, value: json);
+        }
+        await accountsFile.delete();
+      } catch (_) {}
+    }
+
+    final activeIndexFile = File('${dir.path}/$_activeIndexFileName');
+    if (activeIndexFile.existsSync()) {
+      try {
+        final value = await activeIndexFile.readAsString();
+        final existing = await _storage.read(key: _activeIndexKey);
+        if (existing == null) {
+          await _storage.write(key: _activeIndexKey, value: value.trim());
+        }
+        await activeIndexFile.delete();
+      } catch (_) {}
     }
   }
 
-  Future<File> get _accountsFile async {
+  Future<void> _deleteLegacyFiles() async {
+    if (kIsWeb || (!Platform.isMacOS && !Platform.isWindows && !Platform.isLinux)) return;
     final dir = await getApplicationSupportDirectory();
-    return File('${dir.path}/$_accountsFileName');
-  }
-
-  Future<File> get _activeIndexFile async {
-    final dir = await getApplicationSupportDirectory();
-    return File('${dir.path}/$_activeIndexFileName');
+    final accountsFile = File('${dir.path}/$_accountsFileName');
+    final activeIndexFile = File('${dir.path}/$_activeIndexFileName');
+    if (accountsFile.existsSync()) await accountsFile.delete();
+    if (activeIndexFile.existsSync()) await activeIndexFile.delete();
   }
 }

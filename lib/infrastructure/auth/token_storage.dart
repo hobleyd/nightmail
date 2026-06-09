@@ -7,67 +7,64 @@ import 'package:path_provider/path_provider.dart';
 
 import 'auth_token.dart';
 
-/// Persists [AuthToken] using the most appropriate mechanism per platform:
-///
-/// - **iOS / Android / Web**: [FlutterSecureStorage] (Keychain / Keystore).
-/// - **macOS / Windows / Linux**: JSON file in the app support directory.
-///   The macOS Keychain requires a developer-signed binary; using a file
-///   avoids the -34018 entitlement error during development with ad-hoc signing.
 class TokenStorage {
   TokenStorage(
     this._storage, {
     String storageKey = 'nightmail_auth_token',
   })  : _tokenKey = storageKey,
-        _fileName = '.$storageKey';
+        _legacyFileName = '.$storageKey';
 
   final FlutterSecureStorage _storage;
-
   final String _tokenKey;
-  final String _fileName;
-
-  // Use file storage on desktop (non-web, non-mobile) platforms.
-  static bool get _useFile =>
-      !kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
+  final String _legacyFileName;
 
   Future<void> saveToken(AuthToken token) async {
     final json = jsonEncode(token.toJson());
-    if (_useFile) {
-      await (await _tokenFile).writeAsString(json);
-    } else {
-      await _storage.write(key: _tokenKey, value: json);
-    }
+    await _storage.write(key: _tokenKey, value: json);
   }
 
   Future<AuthToken?> loadToken() async {
-    if (_useFile) {
-      final file = await _tokenFile;
-      if (!file.existsSync()) return null;
-      try {
-        final json = await file.readAsString();
-        final map = jsonDecode(json) as Map<String, dynamic>;
-        return AuthToken.fromStorageJson(map);
-      } catch (_) {
-        return null;
-      }
-    } else {
-      final json = await _storage.read(key: _tokenKey);
-      if (json == null) return null;
+    await _migrateLegacyFile();
+    final json = await _storage.read(key: _tokenKey);
+    if (json == null) return null;
+    try {
       final map = jsonDecode(json) as Map<String, dynamic>;
       return AuthToken.fromStorageJson(map);
+    } catch (_) {
+      return null;
     }
   }
 
   Future<void> clearToken() async {
-    if (_useFile) {
-      final file = await _tokenFile;
-      if (file.existsSync()) await file.delete();
-    } else {
-      await _storage.delete(key: _tokenKey);
+    await _storage.delete(key: _tokenKey);
+    await _deleteLegacyFile();
+  }
+
+  // One-time migration: move token from plain file to Keychain then delete file.
+  Future<void> _migrateLegacyFile() async {
+    if (kIsWeb || (!Platform.isMacOS && !Platform.isWindows && !Platform.isLinux)) return;
+    final file = await _legacyFile;
+    if (!file.existsSync()) return;
+    try {
+      final json = await file.readAsString();
+      final existing = await _storage.read(key: _tokenKey);
+      if (existing == null) {
+        await _storage.write(key: _tokenKey, value: json);
+      }
+      await file.delete();
+    } catch (_) {
+      // Best-effort; leave file if something goes wrong.
     }
   }
 
-  Future<File> get _tokenFile async {
+  Future<void> _deleteLegacyFile() async {
+    if (kIsWeb || (!Platform.isMacOS && !Platform.isWindows && !Platform.isLinux)) return;
+    final file = await _legacyFile;
+    if (file.existsSync()) await file.delete();
+  }
+
+  Future<File> get _legacyFile async {
     final dir = await getApplicationSupportDirectory();
-    return File('${dir.path}/$_fileName');
+    return File('${dir.path}/$_legacyFileName');
   }
 }

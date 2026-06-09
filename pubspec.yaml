@@ -51,7 +51,6 @@ dependencies:
   desktop_multi_window: ^0.3.0
   window_manager: ^0.5.1
   url_launcher: ^6.3.2
-  flutter_contacts: ^2.2.0
 
 dev_dependencies:
   flutter_test:

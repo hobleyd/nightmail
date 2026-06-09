@@ -1,23 +1,21 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter_contacts/flutter_contacts.dart';
+import 'package:flutter/services.dart';
 
 import '../../domain/entities/contact_suggestion.dart';
 import '../../domain/repositories/system_contacts_repository.dart';
 
 class SystemContactsRepositoryImpl implements SystemContactsRepository {
-  // Shared future so concurrent callers don't race on the permission request.
-  Future<List<Contact>>? _loadFuture;
+  static const _channel =
+      MethodChannel('au.com.sharpblue.nightmail/contacts');
 
-  Future<List<Contact>> _loadContacts() async {
-    final status =
-        await FlutterContacts.permissions.request(PermissionType.read);
-    if (status != PermissionStatus.granted &&
-        status != PermissionStatus.limited) {
-      return [];
-    }
-    return FlutterContacts.getAll(
-      properties: {ContactProperty.email, ContactProperty.name},
-    );
+  Future<List<Map<String, String>>>? _loadFuture;
+
+  Future<List<Map<String, String>>> _loadContacts() async {
+    final status = await _channel.invokeMethod<String>('requestPermission');
+    debugPrint('[NightMail] contacts permission: $status');
+    if (status != 'granted') return [];
+    // Permission granted; actual searching is done per-query below.
+    return [];
   }
 
   @override
@@ -28,27 +26,28 @@ class SystemContactsRepositoryImpl implements SystemContactsRepository {
 
   @override
   Future<List<ContactSuggestion>> search(String query) async {
+    // Ensure permission has been requested.
     _loadFuture ??= _loadContacts();
-    final contacts = await _loadFuture!;
+    await _loadFuture;
 
-    final q = query.trim().toLowerCase();
+    final q = query.trim();
     if (q.isEmpty) return [];
 
-    final results = <ContactSuggestion>[];
-    for (final contact in contacts) {
-      for (final email in contact.emails) {
-        if (email.address.isNotEmpty &&
-            (email.address.toLowerCase().contains(q) ||
-                (contact.displayName ?? '').toLowerCase().contains(q))) {
-          results.add(ContactSuggestion(
-            address: email.address,
-            name: (contact.displayName?.isEmpty ?? true)
-                ? null
-                : contact.displayName,
-          ));
-        }
-      }
+    try {
+      final raw = await _channel.invokeMethod<List>('search', {'query': q});
+      if (raw == null) return [];
+      return raw
+          .cast<Map>()
+          .map((m) => ContactSuggestion(
+                address: m['address'] as String,
+                name: (m['name'] as String?)?.isEmpty ?? true
+                    ? null
+                    : m['name'] as String?,
+              ))
+          .toList();
+    } catch (e) {
+      debugPrint('[NightMail] contacts search error: $e');
+      return [];
     }
-    return results;
   }
 }

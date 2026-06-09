@@ -4,6 +4,12 @@ import FlutterMacOS
 import desktop_multi_window
 
 class MainFlutterWindow: NSWindow {
+  // Channels must be stored as properties — FlutterMethodChannel unregisters
+  // its handler in dealloc, so a local variable would drop the handler as
+  // soon as awakeFromNib() returns.
+  private var contactsChannel: FlutterMethodChannel?
+  private var badgeChannel: FlutterMethodChannel?
+
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
     let windowFrame = self.frame
@@ -17,13 +23,30 @@ class MainFlutterWindow: NSWindow {
       RegisterGeneratedPlugins(registry: controller)
     }
 
-    registerContactsChannel(messenger: flutterViewController.engine.binaryMessenger)
+    let messenger = flutterViewController.engine.binaryMessenger
 
-    let badgeChannel = FlutterMethodChannel(
-      name: "au.com.sharpblue.nightmail/badge",
-      binaryMessenger: flutterViewController.engine.binaryMessenger
+    contactsChannel = FlutterMethodChannel(
+      name: "au.com.sharpblue.nightmail/contacts",
+      binaryMessenger: messenger
     )
-    badgeChannel.setMethodCallHandler { call, result in
+    contactsChannel?.setMethodCallHandler { [weak self] call, result in
+      guard let self else { result(FlutterMethodNotImplemented); return }
+      switch call.method {
+      case "requestPermission":
+        self.handleRequestPermission(result: result)
+      case "search":
+        let query = (call.arguments as? [String: Any])?["query"] as? String ?? ""
+        self.handleSearch(query: query, result: result)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+
+    badgeChannel = FlutterMethodChannel(
+      name: "au.com.sharpblue.nightmail/badge",
+      binaryMessenger: messenger
+    )
+    badgeChannel?.setMethodCallHandler { call, result in
       if call.method == "setBadgeCount" {
         let count = call.arguments as? Int ?? 0
         NSApp.dockTile.badgeLabel = count > 0 ? "\(count)" : nil
@@ -36,25 +59,7 @@ class MainFlutterWindow: NSWindow {
     super.awakeFromNib()
   }
 
-  // MARK: - Contacts channel
-
-  private func registerContactsChannel(messenger: FlutterBinaryMessenger) {
-    let channel = FlutterMethodChannel(
-      name: "au.com.sharpblue.nightmail/contacts",
-      binaryMessenger: messenger
-    )
-    channel.setMethodCallHandler { call, result in
-      switch call.method {
-      case "requestPermission":
-        self.handleRequestPermission(result: result)
-      case "search":
-        let query = (call.arguments as? [String: Any])?["query"] as? String ?? ""
-        self.handleSearch(query: query, result: result)
-      default:
-        result(FlutterMethodNotImplemented)
-      }
-    }
-  }
+  // MARK: - Contacts
 
   private func handleRequestPermission(result: @escaping FlutterResult) {
     let store = CNContactStore()

@@ -62,8 +62,19 @@ class EmailRepositoryImpl implements EmailRepository {
     required String id,
     required bool isRead,
   }) async {
-    return _execute(() => _accountManager.emailDatasource
+    final result = await _execute(() => _accountManager.emailDatasource
         .updateEmailReadStatus(id: id, isRead: isRead));
+    result.fold((_) {}, (_) {
+      final accountId = _accountManager.activeAccount?.id;
+      if (accountId != null) {
+        unawaited(_localDatasource.updateEmailReadStatusInCache(
+          accountId: accountId,
+          emailId: id,
+          isRead: isRead,
+        ));
+      }
+    });
+    return result;
   }
 
   @override

@@ -92,6 +92,30 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
         .go();
   }
 
+  @override
+  Future<void> updateEmailReadStatusInCache({
+    required String accountId,
+    required String emailId,
+    required bool isRead,
+  }) async {
+    final rows = await (_database.select(_database.cachedEmails)
+          ..where((t) => t.accountId.equals(accountId) & t.emailId.equals(emailId)))
+        .get();
+    if (rows.isEmpty) return;
+
+    final plaintext = await _encryption.decrypt(rows.first.encryptedData);
+    final json = jsonDecode(plaintext) as Map<String, dynamic>;
+    json['isRead'] = isRead;
+    final encryptedData = await _encryption.encrypt(jsonEncode(json));
+
+    await (_database.update(_database.cachedEmails)
+          ..where((t) => t.accountId.equals(accountId) & t.emailId.equals(emailId)))
+        .write(CachedEmailsCompanion(
+          isRead: Value(isRead),
+          encryptedData: Value(encryptedData),
+        ));
+  }
+
   // ---------------------------------------------------------------------------
   // Serialisation helpers
   // ---------------------------------------------------------------------------

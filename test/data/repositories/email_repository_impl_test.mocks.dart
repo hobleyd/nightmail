@@ -218,6 +218,38 @@ class MockEmailLocalDatasource extends _i1.Mock
             returnValueForMissingStub: _i7.Future<void>.value(),
           )
           as _i7.Future<void>);
+
+  @override
+  _i7.Future<void> deleteEmailFromCache({
+    required String? accountId,
+    required String? emailId,
+  }) =>
+      (super.noSuchMethod(
+            Invocation.method(#deleteEmailFromCache, [], {
+              #accountId: accountId,
+              #emailId: emailId,
+            }),
+            returnValue: _i7.Future<void>.value(),
+            returnValueForMissingStub: _i7.Future<void>.value(),
+          )
+          as _i7.Future<void>);
+
+  @override
+  _i7.Future<void> updateEmailReadStatusInCache({
+    required String? accountId,
+    required String? emailId,
+    required bool? isRead,
+  }) =>
+      (super.noSuchMethod(
+            Invocation.method(#updateEmailReadStatusInCache, [], {
+              #accountId: accountId,
+              #emailId: emailId,
+              #isRead: isRead,
+            }),
+            returnValue: _i7.Future<void>.value(),
+            returnValueForMissingStub: _i7.Future<void>.value(),
+          )
+          as _i7.Future<void>);
 }
 
 /// A class which mocks [EmailRemoteDatasource].
@@ -359,9 +391,34 @@ class MockEmailRemoteDatasource extends _i1.Mock
           as _i7.Future<void>);
 
   @override
+  _i7.Future<void> moveEmail(String? id, String? destinationFolderId) =>
+      (super.noSuchMethod(
+            Invocation.method(#moveEmail, [id, destinationFolderId]),
+            returnValue: _i7.Future<void>.value(),
+            returnValueForMissingStub: _i7.Future<void>.value(),
+          )
+          as _i7.Future<void>);
+
+  @override
   _i7.Future<void> deleteEmail(String? id) =>
       (super.noSuchMethod(
             Invocation.method(#deleteEmail, [id]),
+            returnValue: _i7.Future<void>.value(),
+            returnValueForMissingStub: _i7.Future<void>.value(),
+          )
+          as _i7.Future<void>);
+
+  @override
+  _i7.Future<void> emptyFolder(
+    String? folderId, {
+    bool? permanentDelete = false,
+  }) =>
+      (super.noSuchMethod(
+            Invocation.method(
+              #emptyFolder,
+              [folderId],
+              {#permanentDelete: permanentDelete},
+            ),
             returnValue: _i7.Future<void>.value(),
             returnValueForMissingStub: _i7.Future<void>.value(),
           )
@@ -374,6 +431,14 @@ class MockEmailRemoteDatasource extends _i1.Mock
   ) =>
       (super.noSuchMethod(
             Invocation.method(#downloadAttachment, [messageId, attachmentId]),
+            returnValue: _i7.Future<_i12.Uint8List>.value(_i12.Uint8List(0)),
+          )
+          as _i7.Future<_i12.Uint8List>);
+
+  @override
+  _i7.Future<_i12.Uint8List> getRawEmailBytes(String? id) =>
+      (super.noSuchMethod(
+            Invocation.method(#getRawEmailBytes, [id]),
             returnValue: _i7.Future<_i12.Uint8List>.value(_i12.Uint8List(0)),
           )
           as _i7.Future<_i12.Uint8List>);

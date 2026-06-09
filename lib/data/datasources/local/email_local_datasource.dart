@@ -26,4 +26,12 @@ abstract interface class EmailLocalDatasource {
     required String accountId,
     required String emailId,
   });
+
+  /// Updates the isRead flag on the cached email with [emailId] for [accountId].
+  /// No-ops silently when the email is not in the cache.
+  Future<void> updateEmailReadStatusInCache({
+    required String accountId,
+    required String emailId,
+    required bool isRead,
+  });
 }

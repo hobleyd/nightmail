@@ -208,6 +208,46 @@ void main() {
     tenantId: 'common',
   );
 
+  group('markAsRead', () {
+    test('updates isRead in cache after successful remote call', () async {
+      when(mockRemoteDatasource.updateEmailReadStatus(
+        id: anyNamed('id'),
+        isRead: anyNamed('isRead'),
+      )).thenAnswer((_) async => tEmailModel);
+      when(mockLocalDatasource.updateEmailReadStatusInCache(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+        isRead: anyNamed('isRead'),
+      )).thenAnswer((_) async {});
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+
+      final result = await repository.markAsRead(id: 'email-1', isRead: true);
+
+      expect(result.isRight(), isTrue);
+      await Future.delayed(Duration.zero);
+      verify(mockLocalDatasource.updateEmailReadStatusInCache(
+        accountId: 'account-1',
+        emailId: 'email-1',
+        isRead: true,
+      )).called(1);
+    });
+
+    test('does not touch cache when no active account', () async {
+      when(mockRemoteDatasource.updateEmailReadStatus(
+        id: anyNamed('id'),
+        isRead: anyNamed('isRead'),
+      )).thenAnswer((_) async => tEmailModel);
+
+      await repository.markAsRead(id: 'email-1', isRead: true);
+
+      verifyNever(mockLocalDatasource.updateEmailReadStatusInCache(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+        isRead: anyNamed('isRead'),
+      ));
+    });
+  });
+
   group('deleteEmail', () {
     test('removes email from cache after successful remote delete', () async {
       when(mockRemoteDatasource.deleteEmail(any)).thenAnswer((_) async {});

@@ -11,6 +11,7 @@ import 'package:nightmail/data/models/email_folder_model.dart';
 import 'package:nightmail/data/models/email_model.dart';
 import 'package:nightmail/data/repositories/email_repository_impl.dart';
 import 'package:nightmail/domain/entities/email.dart';
+import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 
 import 'email_repository_impl_test.mocks.dart';
@@ -197,6 +198,79 @@ void main() {
 
       expect(result.isRight(), isTrue);
       verify(mockLocalDatasource.clearCacheForAccount('account-1')).called(1);
+    });
+  });
+
+  const tAccount = MicrosoftAccount(
+    id: 'account-1',
+    displayName: 'Test',
+    emailAddress: 'test@example.com',
+    tenantId: 'common',
+  );
+
+  group('deleteEmail', () {
+    test('removes email from cache after successful remote delete', () async {
+      when(mockRemoteDatasource.deleteEmail(any)).thenAnswer((_) async {});
+      when(mockLocalDatasource.deleteEmailFromCache(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async {});
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+
+      final result = await repository.deleteEmail('email-1');
+
+      expect(result.isRight(), isTrue);
+      await Future.delayed(Duration.zero);
+      verify(mockLocalDatasource.deleteEmailFromCache(
+        accountId: 'account-1',
+        emailId: 'email-1',
+      )).called(1);
+    });
+
+    test('does not touch cache when no active account', () async {
+      when(mockRemoteDatasource.deleteEmail(any)).thenAnswer((_) async {});
+
+      final result = await repository.deleteEmail('email-1');
+
+      expect(result.isRight(), isTrue);
+      verifyNever(mockLocalDatasource.deleteEmailFromCache(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      ));
+    });
+  });
+
+  group('moveEmail', () {
+    test('removes email from cache after successful remote move', () async {
+      when(mockRemoteDatasource.moveEmail(any, any))
+          .thenAnswer((_) async => 'new-id');
+      when(mockLocalDatasource.deleteEmailFromCache(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async {});
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+
+      final result = await repository.moveEmail('email-1', 'folder-2');
+
+      expect(result.isRight(), isTrue);
+      await Future.delayed(Duration.zero);
+      verify(mockLocalDatasource.deleteEmailFromCache(
+        accountId: 'account-1',
+        emailId: 'email-1',
+      )).called(1);
+    });
+
+    test('does not touch cache when no active account', () async {
+      when(mockRemoteDatasource.moveEmail(any, any))
+          .thenAnswer((_) async => 'new-id');
+
+      final result = await repository.moveEmail('email-1', 'folder-2');
+
+      expect(result.isRight(), isTrue);
+      verifyNever(mockLocalDatasource.deleteEmailFromCache(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      ));
     });
   });
 }

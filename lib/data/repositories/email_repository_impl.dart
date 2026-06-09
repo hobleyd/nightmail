@@ -164,6 +164,13 @@ class EmailRepositoryImpl implements EmailRepository {
     return _execute(() async {
       await _accountManager.emailDatasource
           .moveEmail(id, destinationFolderId);
+      final accountId = _accountManager.activeAccount?.id;
+      if (accountId != null) {
+        unawaited(_localDatasource.deleteEmailFromCache(
+          accountId: accountId,
+          emailId: id,
+        ));
+      }
       return unit;
     });
   }
@@ -172,6 +179,13 @@ class EmailRepositoryImpl implements EmailRepository {
   Future<Either<Failure, Unit>> deleteEmail(String id) async {
     return _execute(() async {
       await _accountManager.emailDatasource.deleteEmail(id);
+      final accountId = _accountManager.activeAccount?.id;
+      if (accountId != null) {
+        unawaited(_localDatasource.deleteEmailFromCache(
+          accountId: accountId,
+          emailId: id,
+        ));
+      }
       return unit;
     });
   }

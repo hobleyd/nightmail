@@ -68,7 +68,37 @@ class AccountManager {
     _activeIndex = await _accountStorage.loadActiveIndex();
     if (_activeIndex >= _accounts.length) _activeIndex = 0;
     _sortAccounts();
-    if (_accounts.isNotEmpty) _buildDatasourcesForActiveAccount();
+    if (_accounts.isNotEmpty) {
+      _buildDatasourcesForActiveAccount();
+      await _migrateLegacyTokenIfNeeded();
+    }
+  }
+
+  /// One-time migration for the case where accounts were loaded from the legacy
+  /// file but the token was stored under the old single-account key
+  /// ('nightmail_auth_token') rather than the per-account key ('token_{id}').
+  ///
+  /// This happens when:
+  ///  1. The accounts file survived (keychain writes were failing) so
+  ///     _migrateLegacyAccount() was never called.
+  ///  2. The token was in the legacy plain file (.nightmail_auth_token) which
+  ///     TokenStorage.loadToken() can still pick up via _migrateLegacyFile().
+  Future<void> _migrateLegacyTokenIfNeeded() async {
+    final account = activeAccount;
+    if (account is! MicrosoftAccount) return;
+    try {
+      final perAccount =
+          TokenStorage(_secureStorage, storageKey: 'token_${account.id}');
+      if (await perAccount.loadToken() != null) return;
+
+      // Per-account token missing — try the old single-account key.
+      final legacy = TokenStorage(_secureStorage);
+      final token = await legacy.loadToken();
+      if (token == null) return;
+
+      await perAccount.saveToken(token);
+      await legacy.clearToken();
+    } catch (_) {}
   }
 
   /// Add a new account and make it the active account.

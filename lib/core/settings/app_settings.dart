@@ -73,4 +73,13 @@ class AppSettings {
       await file.writeAsString(domains.join('\n'));
     } catch (_) {}
   }
+
+  Future<void> removeExternalImageDomains(Set<String> toRemove) async {
+    try {
+      final domains = await loadExternalImageDomains();
+      domains.removeAll(toRemove);
+      final file = await _file(_externalImageDomainsFile);
+      await file.writeAsString(domains.join('\n'));
+    } catch (_) {}
+  }
 }

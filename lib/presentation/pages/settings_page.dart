@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/settings/app_settings.dart';
@@ -14,7 +15,8 @@ import '../blocs/theme/theme_state.dart';
 enum SettingsSection {
   accounts('Accounts'),
   appearance('Appearance'),
-  general('General');
+  general('General'),
+  security('Security');
 
   const SettingsSection(this.label);
   final String label;
@@ -131,6 +133,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         SettingsSection.accounts => const _AccountsSection(),
                         SettingsSection.appearance => const _AppearanceSection(),
                         SettingsSection.general => const _GeneralSection(),
+                        SettingsSection.security => const _SecuritySection(),
                       },
                     ),
                   ],
@@ -679,6 +682,155 @@ class _SslRow extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+class _SecuritySection extends StatefulWidget {
+  const _SecuritySection();
+
+  @override
+  State<_SecuritySection> createState() => _SecuritySectionState();
+}
+
+class _SecuritySectionState extends State<_SecuritySection> {
+  List<String> _domains = [];
+  Set<String> _selectedDomains = {};
+  int? _lastSelectedIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDomains();
+  }
+
+  Future<void> _loadDomains() async {
+    final domains = await sl<AppSettings>().loadExternalImageDomains();
+    if (mounted) {
+      setState(() => _domains = domains.toList()..sort());
+    }
+  }
+
+  void _handleTap(int index) {
+    final domain = _domains[index];
+    final isShift = HardwareKeyboard.instance.isShiftPressed;
+    final isMeta = HardwareKeyboard.instance.isMetaPressed ||
+        HardwareKeyboard.instance.isControlPressed;
+
+    setState(() {
+      if (isShift && _lastSelectedIndex != null) {
+        final lo = _lastSelectedIndex! < index ? _lastSelectedIndex! : index;
+        final hi = _lastSelectedIndex! > index ? _lastSelectedIndex! : index;
+        _selectedDomains = {for (int i = lo; i <= hi; i++) _domains[i]};
+      } else if (isMeta) {
+        final next = Set<String>.from(_selectedDomains);
+        if (next.contains(domain)) {
+          next.remove(domain);
+        } else {
+          next.add(domain);
+          _lastSelectedIndex = index;
+        }
+        _selectedDomains = next;
+      } else {
+        _selectedDomains = {domain};
+        _lastSelectedIndex = index;
+      }
+    });
+  }
+
+  Future<void> _removeSelected() async {
+    await sl<AppSettings>().removeExternalImageDomains(_selectedDomains);
+    if (!mounted) return;
+    setState(() {
+      _selectedDomains = {};
+      _lastSelectedIndex = null;
+    });
+    await _loadDomains();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Approved Image Domains',
+          style: TextStyle(
+            color: c.textSecondary,
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'External images are automatically loaded from these domains.',
+          style: TextStyle(color: c.textMuted, fontSize: 12),
+        ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: c.separatorStrong),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: _domains.isEmpty
+                ? Center(
+                    child: Text(
+                      'No approved domains',
+                      style: TextStyle(color: c.textMuted, fontSize: 13),
+                    ),
+                  )
+                : ListView.separated(
+                    itemCount: _domains.length,
+                    separatorBuilder: (_, _) =>
+                        Divider(height: 1, thickness: 1, color: c.separator),
+                    itemBuilder: (context, index) {
+                      final domain = _domains[index];
+                      final isSelected = _selectedDomains.contains(domain);
+                      return GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => _handleTap(index),
+                        child: Container(
+                          color: isSelected ? c.selectionBg : null,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 9),
+                          child: Text(
+                            domain,
+                            style: TextStyle(
+                              color: isSelected
+                                  ? AppColors.accent
+                                  : c.textSecondary,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.bottomRight,
+          child: ElevatedButton(
+            onPressed: _selectedDomains.isEmpty ? null : _removeSelected,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red.shade700,
+              disabledBackgroundColor: c.surfaceBase,
+              foregroundColor: Colors.white,
+              disabledForegroundColor: c.textMuted,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: const Text('Remove'),
+          ),
+        ),
+      ],
     );
   }
 }

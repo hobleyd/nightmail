@@ -864,11 +864,283 @@ class KnownSendersCompanion extends UpdateCompanion<KnownSender> {
   }
 }
 
+class $DeltaSyncTokensTable extends DeltaSyncTokens
+    with TableInfo<$DeltaSyncTokensTable, DeltaSyncToken> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $DeltaSyncTokensTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _accountIdMeta = const VerificationMeta(
+    'accountId',
+  );
+  @override
+  late final GeneratedColumn<String> accountId = GeneratedColumn<String>(
+    'account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _folderIdMeta = const VerificationMeta(
+    'folderId',
+  );
+  @override
+  late final GeneratedColumn<String> folderId = GeneratedColumn<String>(
+    'folder_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _deltaLinkMeta = const VerificationMeta(
+    'deltaLink',
+  );
+  @override
+  late final GeneratedColumn<String> deltaLink = GeneratedColumn<String>(
+    'delta_link',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [accountId, folderId, deltaLink];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'delta_sync_tokens';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<DeltaSyncToken> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('account_id')) {
+      context.handle(
+        _accountIdMeta,
+        accountId.isAcceptableOrUnknown(data['account_id']!, _accountIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_accountIdMeta);
+    }
+    if (data.containsKey('folder_id')) {
+      context.handle(
+        _folderIdMeta,
+        folderId.isAcceptableOrUnknown(data['folder_id']!, _folderIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_folderIdMeta);
+    }
+    if (data.containsKey('delta_link')) {
+      context.handle(
+        _deltaLinkMeta,
+        deltaLink.isAcceptableOrUnknown(data['delta_link']!, _deltaLinkMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_deltaLinkMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {accountId, folderId};
+  @override
+  DeltaSyncToken map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return DeltaSyncToken(
+      accountId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}account_id'],
+      )!,
+      folderId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}folder_id'],
+      )!,
+      deltaLink: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}delta_link'],
+      )!,
+    );
+  }
+
+  @override
+  $DeltaSyncTokensTable createAlias(String alias) {
+    return $DeltaSyncTokensTable(attachedDatabase, alias);
+  }
+}
+
+class DeltaSyncToken extends DataClass implements Insertable<DeltaSyncToken> {
+  final String accountId;
+  final String folderId;
+  final String deltaLink;
+  const DeltaSyncToken({
+    required this.accountId,
+    required this.folderId,
+    required this.deltaLink,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['account_id'] = Variable<String>(accountId);
+    map['folder_id'] = Variable<String>(folderId);
+    map['delta_link'] = Variable<String>(deltaLink);
+    return map;
+  }
+
+  DeltaSyncTokensCompanion toCompanion(bool nullToAbsent) {
+    return DeltaSyncTokensCompanion(
+      accountId: Value(accountId),
+      folderId: Value(folderId),
+      deltaLink: Value(deltaLink),
+    );
+  }
+
+  factory DeltaSyncToken.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return DeltaSyncToken(
+      accountId: serializer.fromJson<String>(json['accountId']),
+      folderId: serializer.fromJson<String>(json['folderId']),
+      deltaLink: serializer.fromJson<String>(json['deltaLink']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'accountId': serializer.toJson<String>(accountId),
+      'folderId': serializer.toJson<String>(folderId),
+      'deltaLink': serializer.toJson<String>(deltaLink),
+    };
+  }
+
+  DeltaSyncToken copyWith({
+    String? accountId,
+    String? folderId,
+    String? deltaLink,
+  }) => DeltaSyncToken(
+    accountId: accountId ?? this.accountId,
+    folderId: folderId ?? this.folderId,
+    deltaLink: deltaLink ?? this.deltaLink,
+  );
+  DeltaSyncToken copyWithCompanion(DeltaSyncTokensCompanion data) {
+    return DeltaSyncToken(
+      accountId: data.accountId.present ? data.accountId.value : this.accountId,
+      folderId: data.folderId.present ? data.folderId.value : this.folderId,
+      deltaLink: data.deltaLink.present ? data.deltaLink.value : this.deltaLink,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DeltaSyncToken(')
+          ..write('accountId: $accountId, ')
+          ..write('folderId: $folderId, ')
+          ..write('deltaLink: $deltaLink')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(accountId, folderId, deltaLink);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is DeltaSyncToken &&
+          other.accountId == this.accountId &&
+          other.folderId == this.folderId &&
+          other.deltaLink == this.deltaLink);
+}
+
+class DeltaSyncTokensCompanion extends UpdateCompanion<DeltaSyncToken> {
+  final Value<String> accountId;
+  final Value<String> folderId;
+  final Value<String> deltaLink;
+  final Value<int> rowid;
+  const DeltaSyncTokensCompanion({
+    this.accountId = const Value.absent(),
+    this.folderId = const Value.absent(),
+    this.deltaLink = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  DeltaSyncTokensCompanion.insert({
+    required String accountId,
+    required String folderId,
+    required String deltaLink,
+    this.rowid = const Value.absent(),
+  }) : accountId = Value(accountId),
+       folderId = Value(folderId),
+       deltaLink = Value(deltaLink);
+  static Insertable<DeltaSyncToken> custom({
+    Expression<String>? accountId,
+    Expression<String>? folderId,
+    Expression<String>? deltaLink,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (accountId != null) 'account_id': accountId,
+      if (folderId != null) 'folder_id': folderId,
+      if (deltaLink != null) 'delta_link': deltaLink,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  DeltaSyncTokensCompanion copyWith({
+    Value<String>? accountId,
+    Value<String>? folderId,
+    Value<String>? deltaLink,
+    Value<int>? rowid,
+  }) {
+    return DeltaSyncTokensCompanion(
+      accountId: accountId ?? this.accountId,
+      folderId: folderId ?? this.folderId,
+      deltaLink: deltaLink ?? this.deltaLink,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (accountId.present) {
+      map['account_id'] = Variable<String>(accountId.value);
+    }
+    if (folderId.present) {
+      map['folder_id'] = Variable<String>(folderId.value);
+    }
+    if (deltaLink.present) {
+      map['delta_link'] = Variable<String>(deltaLink.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('DeltaSyncTokensCompanion(')
+          ..write('accountId: $accountId, ')
+          ..write('folderId: $folderId, ')
+          ..write('deltaLink: $deltaLink, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
   late final $CachedEmailsTable cachedEmails = $CachedEmailsTable(this);
   late final $KnownSendersTable knownSenders = $KnownSendersTable(this);
+  late final $DeltaSyncTokensTable deltaSyncTokens = $DeltaSyncTokensTable(
+    this,
+  );
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -876,6 +1148,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   List<DatabaseSchemaEntity> get allSchemaEntities => [
     cachedEmails,
     knownSenders,
+    deltaSyncTokens,
   ];
 }
 
@@ -1327,6 +1600,174 @@ typedef $$KnownSendersTableProcessedTableManager =
       KnownSender,
       PrefetchHooks Function()
     >;
+typedef $$DeltaSyncTokensTableCreateCompanionBuilder =
+    DeltaSyncTokensCompanion Function({
+      required String accountId,
+      required String folderId,
+      required String deltaLink,
+      Value<int> rowid,
+    });
+typedef $$DeltaSyncTokensTableUpdateCompanionBuilder =
+    DeltaSyncTokensCompanion Function({
+      Value<String> accountId,
+      Value<String> folderId,
+      Value<String> deltaLink,
+      Value<int> rowid,
+    });
+
+class $$DeltaSyncTokensTableFilterComposer
+    extends Composer<_$AppDatabase, $DeltaSyncTokensTable> {
+  $$DeltaSyncTokensTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get folderId => $composableBuilder(
+    column: $table.folderId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get deltaLink => $composableBuilder(
+    column: $table.deltaLink,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$DeltaSyncTokensTableOrderingComposer
+    extends Composer<_$AppDatabase, $DeltaSyncTokensTable> {
+  $$DeltaSyncTokensTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get folderId => $composableBuilder(
+    column: $table.folderId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get deltaLink => $composableBuilder(
+    column: $table.deltaLink,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$DeltaSyncTokensTableAnnotationComposer
+    extends Composer<_$AppDatabase, $DeltaSyncTokensTable> {
+  $$DeltaSyncTokensTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get accountId =>
+      $composableBuilder(column: $table.accountId, builder: (column) => column);
+
+  GeneratedColumn<String> get folderId =>
+      $composableBuilder(column: $table.folderId, builder: (column) => column);
+
+  GeneratedColumn<String> get deltaLink =>
+      $composableBuilder(column: $table.deltaLink, builder: (column) => column);
+}
+
+class $$DeltaSyncTokensTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $DeltaSyncTokensTable,
+          DeltaSyncToken,
+          $$DeltaSyncTokensTableFilterComposer,
+          $$DeltaSyncTokensTableOrderingComposer,
+          $$DeltaSyncTokensTableAnnotationComposer,
+          $$DeltaSyncTokensTableCreateCompanionBuilder,
+          $$DeltaSyncTokensTableUpdateCompanionBuilder,
+          (
+            DeltaSyncToken,
+            BaseReferences<
+              _$AppDatabase,
+              $DeltaSyncTokensTable,
+              DeltaSyncToken
+            >,
+          ),
+          DeltaSyncToken,
+          PrefetchHooks Function()
+        > {
+  $$DeltaSyncTokensTableTableManager(
+    _$AppDatabase db,
+    $DeltaSyncTokensTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$DeltaSyncTokensTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$DeltaSyncTokensTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$DeltaSyncTokensTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> accountId = const Value.absent(),
+                Value<String> folderId = const Value.absent(),
+                Value<String> deltaLink = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => DeltaSyncTokensCompanion(
+                accountId: accountId,
+                folderId: folderId,
+                deltaLink: deltaLink,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String accountId,
+                required String folderId,
+                required String deltaLink,
+                Value<int> rowid = const Value.absent(),
+              }) => DeltaSyncTokensCompanion.insert(
+                accountId: accountId,
+                folderId: folderId,
+                deltaLink: deltaLink,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$DeltaSyncTokensTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $DeltaSyncTokensTable,
+      DeltaSyncToken,
+      $$DeltaSyncTokensTableFilterComposer,
+      $$DeltaSyncTokensTableOrderingComposer,
+      $$DeltaSyncTokensTableAnnotationComposer,
+      $$DeltaSyncTokensTableCreateCompanionBuilder,
+      $$DeltaSyncTokensTableUpdateCompanionBuilder,
+      (
+        DeltaSyncToken,
+        BaseReferences<_$AppDatabase, $DeltaSyncTokensTable, DeltaSyncToken>,
+      ),
+      DeltaSyncToken,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -1335,4 +1776,6 @@ class $AppDatabaseManager {
       $$CachedEmailsTableTableManager(_db, _db.cachedEmails);
   $$KnownSendersTableTableManager get knownSenders =>
       $$KnownSendersTableTableManager(_db, _db.knownSenders);
+  $$DeltaSyncTokensTableTableManager get deltaSyncTokens =>
+      $$DeltaSyncTokensTableTableManager(_db, _db.deltaSyncTokens);
 }

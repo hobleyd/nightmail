@@ -13,11 +13,13 @@ import '../../../infrastructure/http/graph_http_client.dart';
 import '../../models/calendar_event_model.dart';
 import '../../models/email_folder_model.dart';
 import '../../models/email_model.dart';
+import '../../models/mail_delta_result.dart';
 import '../../models/todo_task_attachment_model.dart';
 import '../../models/todo_task_list_model.dart';
 import '../../models/todo_task_model.dart';
 import 'calendar_remote_datasource.dart';
 import 'email_remote_datasource.dart';
+import 'graph_delta_datasource.dart';
 import 'tasks_remote_datasource.dart';
 
 final _emailListSelect = [
@@ -39,7 +41,11 @@ final _emailListSelect = [
 final _emailDetailSelect = '$_emailListSelect,body';
 
 class GraphApiDatasourceImpl
-    implements EmailRemoteDatasource, CalendarRemoteDatasource, TasksRemoteDatasource {
+    implements
+        EmailRemoteDatasource,
+        CalendarRemoteDatasource,
+        TasksRemoteDatasource,
+        GraphDeltaDatasource {
   GraphApiDatasourceImpl({required GraphHttpClient client})
       : _dio = client.dio;
 
@@ -850,6 +856,82 @@ class GraphApiDatasourceImpl
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Graph delta sync
+  // ---------------------------------------------------------------------------
+
+  @override
+  Future<MailDeltaResult> syncMailDelta(
+    String folderId, {
+    String? deltaLink,
+  }) async {
+    final upserted = <EmailModel>[];
+    final removedIds = <String>[];
+
+    // For the initial sync (no saved token), restrict to the last 30 days so
+    // the first pass is fast. The returned delta link tracks ALL future changes
+    // regardless of this filter.
+    final cutoff = DateTime.now().subtract(const Duration(days: 30)).toUtc();
+    final cutoffStr =
+        '${cutoff.year.toString().padLeft(4, '0')}-'
+        '${cutoff.month.toString().padLeft(2, '0')}-'
+        '${cutoff.day.toString().padLeft(2, '0')}T00:00:00Z';
+
+    String? nextUrl = deltaLink;
+    bool isInitial = deltaLink == null;
+
+    try {
+      while (true) {
+        final Response<Map<String, dynamic>> response;
+
+        if (isInitial) {
+          isInitial = false;
+          response = await _dio.get<Map<String, dynamic>>(
+            '/me/mailFolders/$folderId/messages/delta',
+            queryParameters: {
+              '\$select': _emailListSelect,
+              '\$filter': 'receivedDateTime ge $cutoffStr',
+              '\$top': 50,
+            },
+          );
+        } else {
+          // nextLink / deltaLink are full absolute URLs — Dio uses them as-is.
+          response = await _dio.get<Map<String, dynamic>>(nextUrl!);
+        }
+
+        final data = response.data ?? <String, dynamic>{};
+
+        for (final item
+            in (data['value'] as List<dynamic>? ?? [])
+                .cast<Map<String, dynamic>>()) {
+          if (item.containsKey('@removed')) {
+            final id = item['id'] as String?;
+            if (id != null) removedIds.add(id);
+          } else {
+            upserted.add(EmailModel.fromJson(item));
+          }
+        }
+
+        final dl = data['@odata.deltaLink'] as String?;
+        if (dl != null) {
+          return MailDeltaResult(
+            upserted: upserted,
+            removedIds: removedIds,
+            deltaLink: dl,
+          );
+        }
+
+        nextUrl = data['@odata.nextLink'] as String?;
+        if (nextUrl == null) break;
+      }
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+
+    throw const ServerException(
+        message: 'Delta query completed without returning a delta link');
   }
 
   Exception _mapDioException(DioException e) {

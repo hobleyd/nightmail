@@ -157,6 +157,47 @@ class MockAccountManager extends _i1.Mock implements _i5.AccountManager {
           as _i7.Future<void>);
 
   @override
+  _i7.Future<Set<String>> getUnauthenticatedAccountIds() =>
+      (super.noSuchMethod(
+            Invocation.method(#getUnauthenticatedAccountIds, []),
+            returnValue: _i7.Future<Set<String>>.value(<String>{}),
+          )
+          as _i7.Future<Set<String>>);
+
+  @override
+  _i7.Future<void> signOutAccount(String? accountId) =>
+      (super.noSuchMethod(
+            Invocation.method(#signOutAccount, [accountId]),
+            returnValue: _i7.Future<void>.value(),
+            returnValueForMissingStub: _i7.Future<void>.value(),
+          )
+          as _i7.Future<void>);
+
+  @override
+  _i7.Future<void> reauthenticateActiveOAuth() =>
+      (super.noSuchMethod(
+            Invocation.method(#reauthenticateActiveOAuth, []),
+            returnValue: _i7.Future<void>.value(),
+            returnValueForMissingStub: _i7.Future<void>.value(),
+          )
+          as _i7.Future<void>);
+
+  @override
+  _i7.Future<void> reauthenticateImapAccount(
+    String? accountId,
+    String? password,
+  ) =>
+      (super.noSuchMethod(
+            Invocation.method(#reauthenticateImapAccount, [
+              accountId,
+              password,
+            ]),
+            returnValue: _i7.Future<void>.value(),
+            returnValueForMissingStub: _i7.Future<void>.value(),
+          )
+          as _i7.Future<void>);
+
+  @override
   _i2.EmailRemoteDatasource buildEmailDatasourceForAccount(
     _i6.Account? account,
   ) =>

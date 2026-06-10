@@ -4,6 +4,7 @@ import 'package:get_it/get_it.dart';
 
 import 'core/settings/app_settings.dart';
 import 'data/database/app_database.dart';
+import 'data/datasources/local/delta_token_datasource.dart';
 import 'data/datasources/local/email_local_datasource.dart';
 import 'data/datasources/local/email_local_datasource_impl.dart';
 import 'data/datasources/local/sender_local_datasource.dart';
@@ -91,6 +92,7 @@ Future<void> configureDependencies() async {
 
   // Data — local cache (drift opens the SQLite file lazily on first query)
   sl.registerLazySingleton<AppDatabase>(() => AppDatabase());
+  sl.registerLazySingleton<DeltaTokenDatasource>(() => sl<AppDatabase>());
   sl.registerLazySingleton<EmailLocalDatasource>(
     () => EmailLocalDatasourceImpl(
       database: sl<AppDatabase>(),
@@ -170,6 +172,7 @@ Future<void> configureDependencies() async {
       accountManager: sl<AccountManager>(),
       appSettings: sl<AppSettings>(),
       badgeService: sl<BadgeService>(),
+      database: sl<DeltaTokenDatasource>(),
     ),
   );
 

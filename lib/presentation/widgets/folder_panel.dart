@@ -7,6 +7,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email_folder.dart';
+import '../../infrastructure/accounts/account.dart';
 import '../../domain/usecases/send_email.dart'; // for ComposeMode
 import '../blocs/account/account_cubit.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
@@ -64,19 +65,59 @@ class _FolderPanelState extends State<FolderPanel> {
           _PanelHeader(),
           Divider(height: 1, color: c.separatorStrong),
           Expanded(
-            child: BlocBuilder<FolderListBloc, FolderListState>(
-              builder: (context, state) {
-                return switch (state) {
-                  FolderListInitial() || FolderListLoading() =>
-                    Center(
-                      child: CircularProgressIndicator(
-                        color: AppColors.accent,
-                        strokeWidth: 2,
-                      ),
-                    ),
-                  FolderListLoaded(:final folders) => _buildTree(folders),
-                  FolderListError(:final message) => _ErrorView(message: message),
-                };
+            child: BlocConsumer<AccountCubit, AccountState>(
+              listenWhen: (prev, curr) {
+                // Reload folders when the active account transitions from
+                // needing reauth to being authenticated.
+                if (prev is AccountsLoaded && curr is AccountsLoaded) {
+                  final wasUnauth =
+                      prev.unauthenticatedAccountIds.contains(prev.activeAccount.id);
+                  final isAuth = !curr.unauthenticatedAccountIds
+                      .contains(curr.activeAccount.id);
+                  return wasUnauth && isAuth;
+                }
+                return false;
+              },
+              listener: (context, state) {
+                context
+                    .read<FolderListBloc>()
+                    .add(const FolderListLoadRequested());
+              },
+              builder: (context, accountState) {
+                final needsReauth = accountState is AccountsLoaded &&
+                    accountState.activeAccountNeedsReauth;
+
+                final folderArea = BlocBuilder<FolderListBloc, FolderListState>(
+                  builder: (context, state) {
+                    if (needsReauth) {
+                      return const _SignInPrompt();
+                    }
+                    return switch (state) {
+                      FolderListInitial() || FolderListLoading() => Center(
+                          child: CircularProgressIndicator(
+                            color: AppColors.accent,
+                            strokeWidth: 2,
+                          ),
+                        ),
+                      FolderListLoaded(:final folders) => _buildTree(folders),
+                      FolderListError(:final message) =>
+                        _ErrorView(message: message),
+                    };
+                  },
+                );
+
+                if (!needsReauth) return folderArea;
+
+                final account = accountState.activeAccount;
+                return ColoredBox(
+                  color: const Color(0xFFFFEBEE),
+                  child: Column(
+                    children: [
+                      _LoginBanner(account: account),
+                      Expanded(child: folderArea),
+                    ],
+                  ),
+                );
               },
             ),
           ),
@@ -537,6 +578,176 @@ class _FolderItemState extends State<_FolderItem>
       'outbox' => Icons.outbox_rounded,
       _ => Icons.folder_outlined,
     };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Login banner — shown when the active account needs re-authentication.
+// ---------------------------------------------------------------------------
+
+class _LoginBanner extends StatefulWidget {
+  const _LoginBanner({required this.account});
+  final Account account;
+
+  @override
+  State<_LoginBanner> createState() => _LoginBannerState();
+}
+
+class _LoginBannerState extends State<_LoginBanner> {
+  bool _loading = false;
+  String? _error;
+
+  Future<void> _reAuthenticate() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      if (widget.account is ImapAccount) {
+        await _showImapDialog();
+      } else {
+        await context.read<AccountCubit>().reauthenticateActiveOAuth();
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _showImapDialog() async {
+    final accountCubit = context.read<AccountCubit>();
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => _ImapReauthDialog(accountCubit: accountCubit),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: _loading ? null : _reAuthenticate,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            if (_loading)
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Color(0xFFE57373),
+                ),
+              )
+            else
+              const Icon(Icons.login_rounded,
+                  size: 16, color: Color(0xFFE57373)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _error ?? 'Sign in to view your mail',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Color(0xFFE57373),
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SignInPrompt extends StatelessWidget {
+  const _SignInPrompt();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Text(
+        'Sign in to load your folders',
+        style: TextStyle(fontSize: 12, color: Color(0xFFE57373)),
+      ),
+    );
+  }
+}
+
+class _ImapReauthDialog extends StatefulWidget {
+  const _ImapReauthDialog({required this.accountCubit});
+  final AccountCubit accountCubit;
+
+  @override
+  State<_ImapReauthDialog> createState() => _ImapReauthDialogState();
+}
+
+class _ImapReauthDialogState extends State<_ImapReauthDialog> {
+  final _controller = TextEditingController();
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_controller.text.isEmpty) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      await widget.accountCubit.reauthenticateActiveImap(_controller.text);
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Sign In'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('Enter your account password to reconnect.'),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _controller,
+            obscureText: true,
+            autofocus: true,
+            decoration: InputDecoration(
+              labelText: 'Password',
+              errorText: _error,
+            ),
+            onSubmitted: (_) => _submit(),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _loading ? null : _submit,
+          child: _loading
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Sign In'),
+        ),
+      ],
+    );
   }
 }
 

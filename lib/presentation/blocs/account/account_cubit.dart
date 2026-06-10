@@ -29,15 +29,24 @@ final class AccountsLoaded extends AccountState {
   const AccountsLoaded({
     required this.accounts,
     required this.activeIndex,
+    this.unauthenticatedAccountIds = const {},
   });
 
   final List<Account> accounts;
   final int activeIndex;
+  final Set<String> unauthenticatedAccountIds;
 
   Account get activeAccount => accounts[activeIndex];
 
+  bool get activeAccountNeedsReauth =>
+      unauthenticatedAccountIds.contains(accounts[activeIndex].id);
+
   @override
-  List<Object?> get props => [accounts, activeIndex];
+  List<Object?> get props => [
+        accounts,
+        activeIndex,
+        (List.from(unauthenticatedAccountIds)..sort()),
+      ];
 }
 
 final class AccountError extends AccountState {
@@ -62,13 +71,19 @@ class AccountCubit extends Cubit<AccountState> {
   final AccountManager _accountManager;
   final EmailRepository _emailRepository;
 
+  Future<void> _emitLoaded() async {
+    final unauthIds = await _accountManager.getUnauthenticatedAccountIds();
+    emit(AccountsLoaded(
+      accounts: _accountManager.accounts,
+      activeIndex: _accountManager.activeIndex,
+      unauthenticatedAccountIds: unauthIds,
+    ));
+  }
+
   Future<void> initialize() async {
     await _accountManager.initialize();
     if (_accountManager.hasAccounts) {
-      emit(AccountsLoaded(
-        accounts: _accountManager.accounts,
-        activeIndex: _accountManager.activeIndex,
-      ));
+      await _emitLoaded();
     } else {
       emit(const AccountNoAccounts());
     }
@@ -76,58 +91,56 @@ class AccountCubit extends Cubit<AccountState> {
 
   Future<void> addAccount(Account account) async {
     await _accountManager.addAccount(account);
-    emit(AccountsLoaded(
-      accounts: _accountManager.accounts,
-      activeIndex: _accountManager.activeIndex,
-    ));
+    await _emitLoaded();
   }
 
   Future<void> updateAccount(Account account) async {
     await _accountManager.updateAccount(account);
-    emit(AccountsLoaded(
-      accounts: _accountManager.accounts,
-      activeIndex: _accountManager.activeIndex,
-    ));
+    await _emitLoaded();
   }
 
   /// Cycle to the next account and return it.
   Future<Account> cycleAccount() async {
     final next = await _accountManager.cycleToNextAccount();
-    emit(AccountsLoaded(
-      accounts: _accountManager.accounts,
-      activeIndex: _accountManager.activeIndex,
-    ));
+    await _emitLoaded();
     return next;
   }
 
   Future<void> switchToAccount(int index) async {
     await _accountManager.switchToAccount(index);
-    emit(AccountsLoaded(
-      accounts: _accountManager.accounts,
-      activeIndex: _accountManager.activeIndex,
-    ));
+    await _emitLoaded();
   }
 
   Future<void> removeAccount(String accountId) async {
     await _accountManager.removeAccount(accountId);
     await _emailRepository.clearCacheForAccount(accountId);
     if (_accountManager.hasAccounts) {
-      emit(AccountsLoaded(
-        accounts: _accountManager.accounts,
-        activeIndex: _accountManager.activeIndex,
-      ));
+      await _emitLoaded();
     } else {
       emit(const AccountNoAccounts());
     }
   }
 
-  /// Sign out of the active account and remove it.
+  /// Sign out of the active account, clearing credentials but keeping the
+  /// account configured. The account will show a re-authentication prompt.
   Future<void> signOutActiveAccount() async {
     final account = _accountManager.activeAccount;
     if (account == null) return;
-    try {
-      await _accountManager.activeAuthService.signOut();
-    } catch (_) {}
-    await removeAccount(account.id);
+    await _accountManager.signOutAccount(account.id);
+    await _emitLoaded();
+  }
+
+  /// Re-authenticate the active Microsoft or Gmail account via OAuth.
+  Future<void> reauthenticateActiveOAuth() async {
+    await _accountManager.reauthenticateActiveOAuth();
+    await _emitLoaded();
+  }
+
+  /// Re-authenticate the active IMAP account with the supplied password.
+  Future<void> reauthenticateActiveImap(String password) async {
+    final account = _accountManager.activeAccount;
+    if (account == null) return;
+    await _accountManager.reauthenticateImapAccount(account.id, password);
+    await _emitLoaded();
   }
 }

@@ -173,6 +173,41 @@ class AccountManager {
     await _accountStorage.saveActiveIndex(_activeIndex);
   }
 
+  /// Returns the set of account IDs that have no stored credentials.
+  Future<Set<String>> getUnauthenticatedAccountIds() async {
+    final result = <String>{};
+    for (final account in _accounts) {
+      if (!await _hasCredentials(account)) {
+        result.add(account.id);
+      }
+    }
+    return result;
+  }
+
+  /// Sign out of an account without removing it. Clears stored credentials so
+  /// the account will require re-authentication on next use.
+  Future<void> signOutAccount(String accountId) async {
+    final idx = _accounts.indexWhere((a) => a.id == accountId);
+    if (idx == -1) return;
+    await _clearCredentials(_accounts[idx]);
+  }
+
+  /// Re-authenticate the active Microsoft or Gmail account via OAuth.
+  Future<void> reauthenticateActiveOAuth() async {
+    if (_authService == null) throw StateError('No active account');
+    await _authService!.signIn();
+  }
+
+  /// Re-authenticate an IMAP account by saving the supplied password.
+  Future<void> reauthenticateImapAccount(
+      String accountId, String password) async {
+    final credStorage = ImapCredentialStorage(_secureStorage);
+    await credStorage.savePassword(accountId, password);
+    if (activeAccount?.id == accountId) {
+      _buildDatasourcesForActiveAccount();
+    }
+  }
+
   /// Build an [EmailRemoteDatasource] for [account] without changing the active account.
   EmailRemoteDatasource buildEmailDatasourceForAccount(Account account) {
     switch (account) {
@@ -283,6 +318,18 @@ class AccountManager {
         );
         _calendarDatasource = null;
         _tasksDatasource = null;
+    }
+  }
+
+  Future<bool> _hasCredentials(Account account) async {
+    switch (account) {
+      case MicrosoftAccount() || GmailAccount():
+        final ts = TokenStorage(_secureStorage,
+            storageKey: 'token_${account.id}');
+        return await ts.loadToken() != null;
+      case ImapAccount():
+        final cs = ImapCredentialStorage(_secureStorage);
+        return await cs.loadPassword(account.id) != null;
     }
   }
 

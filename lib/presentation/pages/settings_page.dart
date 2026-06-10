@@ -390,6 +390,41 @@ class _AccountsSectionState extends State<_AccountsSection> {
     }
   }
 
+  void _confirmDeleteAccount(BuildContext context) {
+    if (_selectedAccount == null) return;
+    final account = _selectedAccount!;
+    final name = account.displayName.isEmpty
+        ? account.emailAddress
+        : account.displayName;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Account'),
+        content: Text(
+          'Remove "$name" and all its cached data? This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              context.read<AccountCubit>().removeAccount(account.id);
+              setState(() {
+                _selectedAccount = null;
+                _isEditing = false;
+              });
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _saveChanges() {
     if (_selectedAccount == null) return;
 
@@ -581,29 +616,40 @@ class _AccountsSectionState extends State<_AccountsSection> {
                 ),
               ),
             const SizedBox(height: 16),
-            Align(
-              alignment: Alignment.bottomRight,
-              child: ElevatedButton(
-                onPressed: () {
-                  if (_isEditing) {
-                    _saveChanges();
-                  } else {
-                    setState(() {
-                      _isEditing = true;
-                      _syncControllers(_selectedAccount!);
-                    });
-                  }
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.accent,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => _confirmDeleteAccount(context),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.red,
+                    textStyle: const TextStyle(fontSize: 13),
                   ),
+                  child: const Text('Delete Account'),
                 ),
-                child: Text(_isEditing ? 'Save' : 'Edit'),
-              ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: () {
+                    if (_isEditing) {
+                      _saveChanges();
+                    } else {
+                      setState(() {
+                        _isEditing = true;
+                        _syncControllers(_selectedAccount!);
+                      });
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.accent,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: Text(_isEditing ? 'Save' : 'Edit'),
+                ),
+              ],
             ),
           ],
         );

@@ -6,6 +6,7 @@ import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/calendar/calendar_bloc.dart';
 import '../blocs/calendar/calendar_event.dart';
+import '../blocs/calendar/calendar_state.dart';
 import '../blocs/theme/theme_cubit.dart';
 import '../blocs/theme/theme_state.dart';
 import 'calendar_page.dart';
@@ -90,13 +91,28 @@ class _CalendarWindowPageState extends State<_CalendarWindowPage> {
   @override
   Widget build(BuildContext context) {
     return BlocProvider(
-      create: (_) {
-        final monday = _mondayOfWeek(DateTime.now());
-        return sl<CalendarBloc>()
-          ..add(CalendarWeekLoadRequested(weekStart: monday));
+      create: (ctx) {
+        final bloc = sl<CalendarBloc>();
+        // AccountManager is initialised asynchronously. Only dispatch the
+        // first load once AccountsLoaded is emitted; if it's already in that
+        // state (e.g. re-entrant build) kick off immediately.
+        if (ctx.read<AccountCubit>().state is AccountsLoaded) {
+          bloc.add(CalendarWeekLoadRequested(
+              weekStart: _mondayOfWeek(DateTime.now())));
+        }
+        return bloc;
       },
-      child: const Scaffold(
-        body: CalendarPage(),
+      child: BlocListener<AccountCubit, AccountState>(
+        listenWhen: (_, curr) => curr is AccountsLoaded,
+        listener: (context, _) {
+          final bloc = context.read<CalendarBloc>();
+          if (bloc.state is CalendarInitial) {
+            bloc.add(CalendarWeekLoadRequested(weekStart: bloc.state.weekStart));
+          }
+        },
+        child: const Scaffold(
+          body: CalendarPage(),
+        ),
       ),
     );
   }

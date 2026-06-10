@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../../core/error/exceptions.dart';
 import '../../../domain/entities/calendar_recurrence.dart';
@@ -41,6 +42,9 @@ class GraphApiDatasourceImpl
     implements EmailRemoteDatasource, CalendarRemoteDatasource, TasksRemoteDatasource {
   GraphApiDatasourceImpl({required GraphHttpClient client})
       : _dio = client.dio;
+
+  @visibleForTesting
+  GraphApiDatasourceImpl.withDio(this._dio);
 
   final Dio _dio;
 
@@ -214,7 +218,6 @@ class GraphApiDatasourceImpl
           'endDateTime': endDateTime.toUtc().toIso8601String(),
           '\$select':
               'id,subject,start,end,isAllDay,location,bodyPreview,showAs,isOrganizer,attendees,recurrence',
-          '\$orderby': 'start/dateTime asc',
           '\$top': 100,
         },
         options: Options(

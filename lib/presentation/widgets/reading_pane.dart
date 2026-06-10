@@ -948,6 +948,24 @@ class _HtmlBodyWebViewState extends State<_HtmlBodyWebView> {
 * { box-sizing: border-box !important; }
 body { margin: 0; padding: 20px 28px 40px; }
 img { max-width: 100% !important; height: auto !important; }
+a[href]:hover::after {
+  content: attr(href);
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  height: 28px;
+  line-height: 28px;
+  padding: 0 16px;
+  background: rgba(245,245,245,0.95);
+  border-top: 1px solid #ddd;
+  font-size: 11px;
+  font-family: -apple-system, sans-serif;
+  color: #555;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 9999;
+  pointer-events: none;
+}
 </style>
 ''';
     final headEnd = resolved.indexOf('</head>');

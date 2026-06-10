@@ -854,6 +854,12 @@ class _EmailBody extends StatelessWidget {
   const _EmailBody({required this.email});
   final Email email;
 
+  static String _senderDomain(String address) {
+    final at = address.lastIndexOf('@');
+    if (at == -1 || at == address.length - 1) return address.toLowerCase();
+    return address.substring(at + 1).toLowerCase();
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -862,6 +868,7 @@ class _EmailBody extends StatelessWidget {
       return _HtmlBodyWebView(
         html: email.body,
         inlineAttachments: email.inlineAttachments,
+        senderDomain: _senderDomain(email.from.address),
       );
     }
 
@@ -883,9 +890,11 @@ class _HtmlBodyWebView extends StatefulWidget {
   const _HtmlBodyWebView({
     required this.html,
     required this.inlineAttachments,
+    required this.senderDomain,
   });
   final String html;
   final List<InlineAttachment> inlineAttachments;
+  final String senderDomain;
 
   @override
   State<_HtmlBodyWebView> createState() => _HtmlBodyWebViewState();
@@ -893,10 +902,14 @@ class _HtmlBodyWebView extends StatefulWidget {
 
 class _HtmlBodyWebViewState extends State<_HtmlBodyWebView> {
   late final WebViewController _controller;
+  bool _allowExternalImages = false;
+  bool _hasBlockedImages = false;
 
   @override
   void initState() {
     super.initState();
+    final (html, blocked) = _buildHtml(allowExternal: false);
+    _hasBlockedImages = blocked;
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.disabled)
       ..setNavigationDelegate(NavigationDelegate(
@@ -912,24 +925,48 @@ class _HtmlBodyWebViewState extends State<_HtmlBodyWebView> {
           return NavigationDecision.navigate;
         },
       ))
-      ..loadHtmlString(_wrapHtml(widget.html, widget.inlineAttachments));
+      ..loadHtmlString(html);
+    _loadAlwaysAllowSetting();
+  }
+
+  Future<void> _loadAlwaysAllowSetting() async {
+    final domains = await sl<AppSettings>().loadExternalImageDomains();
+    if (!mounted || !domains.contains(widget.senderDomain)) return;
+    _reloadWith(allowExternal: true);
   }
 
   @override
   void didUpdateWidget(_HtmlBodyWebView old) {
     super.didUpdateWidget(old);
-    if (old.html != widget.html ||
-        old.inlineAttachments != widget.inlineAttachments) {
-      _controller
-          .loadHtmlString(_wrapHtml(widget.html, widget.inlineAttachments));
+    final emailChanged = old.html != widget.html ||
+        old.inlineAttachments != widget.inlineAttachments;
+    final senderChanged = old.senderDomain != widget.senderDomain;
+    if (emailChanged || senderChanged) {
+      _reloadWith(allowExternal: false);
+      _loadAlwaysAllowSetting();
     }
   }
 
-  static String _wrapHtml(
-      String html, List<InlineAttachment> inlineAttachments) {
+  void _reloadWith({required bool allowExternal}) {
+    final (html, blocked) = _buildHtml(allowExternal: allowExternal);
+    setState(() {
+      _allowExternalImages = allowExternal;
+      _hasBlockedImages = blocked;
+    });
+    _controller.loadHtmlString(html);
+  }
+
+  void _downloadOnce() => _reloadWith(allowExternal: true);
+
+  Future<void> _alwaysDownload() async {
+    await sl<AppSettings>().saveExternalImageDomain(widget.senderDomain);
+    if (mounted) _reloadWith(allowExternal: true);
+  }
+
+  (String, bool) _buildHtml({required bool allowExternal}) {
     // Replace cid: references with data: URLs so inline images render.
-    var resolved = html;
-    for (final attachment in inlineAttachments) {
+    var resolved = widget.html;
+    for (final attachment in widget.inlineAttachments) {
       final cid = attachment.contentId;
       // Strip angle brackets if present (RFC 2392 uses bare CID, MIME uses <CID>).
       final bare = cid.startsWith('<') && cid.endsWith('>')
@@ -940,6 +977,26 @@ class _HtmlBodyWebViewState extends State<_HtmlBodyWebView> {
       resolved = resolved.replaceAll('cid:$bare', dataUrl);
     }
 
+    bool hasBlockedImages = false;
+    if (!allowExternal) {
+      // Replace external src attributes in <img> tags with data-blocked-src so
+      // images don't load. The CSS rule below hides them entirely.
+      resolved = resolved.replaceAllMapped(
+        RegExp(r'<img\b([^>]*)>', caseSensitive: false),
+        (imgMatch) {
+          final attrs = imgMatch.group(1)!;
+          final newAttrs = attrs.replaceFirstMapped(
+            RegExp(r'''src=(["'])(https?://[^"']+)\1''', caseSensitive: false),
+            (sm) {
+              hasBlockedImages = true;
+              return 'data-blocked-src=${sm.group(1)}${sm.group(2)}${sm.group(1)}';
+            },
+          );
+          return '<img$newAttrs>';
+        },
+      );
+    }
+
     // Inject viewport + minimal responsive overrides before </head>.
     // Using a real WKWebView means !important works and table layout is correct.
     const injected = '''
@@ -948,6 +1005,7 @@ class _HtmlBodyWebViewState extends State<_HtmlBodyWebView> {
 * { box-sizing: border-box !important; }
 body { margin: 0; padding: 20px 28px 40px; }
 img { max-width: 100% !important; height: auto !important; }
+img[data-blocked-src] { display: none !important; }
 a[href]:hover::after {
   content: attr(href);
   position: fixed;
@@ -970,15 +1028,116 @@ a[href]:hover::after {
 ''';
     final headEnd = resolved.indexOf('</head>');
     if (headEnd != -1) {
-      return resolved.substring(0, headEnd) +
+      resolved = resolved.substring(0, headEnd) +
           injected +
           resolved.substring(headEnd);
+    } else {
+      resolved = '<html><head>$injected</head><body>$resolved</body></html>';
     }
-    return '<html><head>$injected</head><body>$resolved</body></html>';
+
+    return (resolved, hasBlockedImages);
   }
 
   @override
   Widget build(BuildContext context) {
-    return WebViewWidget(controller: _controller);
+    return Column(
+      children: [
+        Expanded(child: WebViewWidget(controller: _controller)),
+        if (_hasBlockedImages && !_allowExternalImages)
+          _ImageBlockedBar(
+            onDownloadOnce: _downloadOnce,
+            onAlwaysDownload: _alwaysDownload,
+          ),
+      ],
+    );
+  }
+}
+
+class _ImageBlockedBar extends StatelessWidget {
+  const _ImageBlockedBar({
+    required this.onDownloadOnce,
+    required this.onAlwaysDownload,
+  });
+
+  final VoidCallback onDownloadOnce;
+  final VoidCallback onAlwaysDownload;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      height: 32,
+      decoration: BoxDecoration(
+        color: c.surfacePanel,
+        border: Border(top: BorderSide(color: c.border, width: 1)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Row(
+        children: [
+          Icon(Icons.hide_image_outlined, size: 13, color: c.textMuted),
+          const SizedBox(width: 6),
+          Text(
+            'External images blocked',
+            style: TextStyle(color: c.textMuted, fontSize: 11),
+          ),
+          const Spacer(),
+          _StatusBarButton(
+            label: 'Download once',
+            onPressed: onDownloadOnce,
+          ),
+          const SizedBox(width: 4),
+          _StatusBarButton(
+            label: 'Always download',
+            onPressed: onAlwaysDownload,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusBarButton extends StatefulWidget {
+  const _StatusBarButton({required this.label, required this.onPressed});
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  State<_StatusBarButton> createState() => _StatusBarButtonState();
+}
+
+class _StatusBarButtonState extends State<_StatusBarButton> {
+  bool _isPressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return GestureDetector(
+      onTap: widget.onPressed,
+      onTapDown: (_) => setState(() => _isPressed = true),
+      onTapUp: (_) => setState(() => _isPressed = false),
+      onTapCancel: () => setState(() => _isPressed = false),
+      child: AnimatedScale(
+        scale: _isPressed ? 0.93 : 1.0,
+        duration: const Duration(milliseconds: 70),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: _isPressed
+                ? AppColors.accent.withAlpha(70)
+                : AppColors.accent.withAlpha(30),
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(
+                color: AppColors.accent.withAlpha(80), width: 0.5),
+          ),
+          child: Text(
+            widget.label,
+            style: TextStyle(
+              color: c.textTertiary,
+              fontSize: 11,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

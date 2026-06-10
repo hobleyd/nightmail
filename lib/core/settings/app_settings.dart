@@ -9,6 +9,8 @@ class AppSettings {
   static const bool defaultConfirmDeleteEmail = true;
   static const String _confirmDeleteEmailFile = 'confirm_delete_email';
 
+  static const String _externalImageDomainsFile = 'external_image_domains';
+
   Future<File> _file(String name) async {
     final dir = await getApplicationSupportDirectory();
     return File('${dir.path}/$name');
@@ -46,6 +48,29 @@ class AppSettings {
     try {
       final file = await _file(_confirmDeleteEmailFile);
       await file.writeAsString('$value');
+    } catch (_) {}
+  }
+
+  Future<Set<String>> loadExternalImageDomains() async {
+    try {
+      final file = await _file(_externalImageDomainsFile);
+      if (await file.exists()) {
+        return (await file.readAsString())
+            .split('\n')
+            .map((d) => d.trim().toLowerCase())
+            .where((d) => d.isNotEmpty)
+            .toSet();
+      }
+    } catch (_) {}
+    return {};
+  }
+
+  Future<void> saveExternalImageDomain(String domain) async {
+    try {
+      final domains = await loadExternalImageDomains();
+      domains.add(domain.toLowerCase());
+      final file = await _file(_externalImageDomainsFile);
+      await file.writeAsString(domains.join('\n'));
     } catch (_) {}
   }
 }

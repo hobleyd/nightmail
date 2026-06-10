@@ -9,6 +9,7 @@ import '../../domain/entities/calendar_recurrence.dart';
 import '../../domain/usecases/create_calendar_event.dart';
 import '../../domain/usecases/update_calendar_event.dart';
 import '../../injection_container.dart';
+import '../blocs/account/account_cubit.dart';
 import '../blocs/event_edit/event_edit_bloc.dart';
 import '../blocs/event_edit/event_edit_state.dart';
 import '../blocs/theme/theme_cubit.dart';
@@ -51,8 +52,11 @@ class EventEditWindowApp extends StatelessWidget {
         initialStartStr != null ? DateTime.parse(initialStartStr).toLocal() : null;
     final accountId = arguments['accountId'] as String?;
 
-    return BlocProvider<ThemeCubit>(
-      create: (_) => sl<ThemeCubit>()..load(),
+    return MultiBlocProvider(
+      providers: [
+        BlocProvider<ThemeCubit>(create: (_) => sl<ThemeCubit>()..load()),
+        BlocProvider.value(value: sl<AccountCubit>()..initialize()),
+      ],
       child: BlocBuilder<ThemeCubit, ThemeState>(
         builder: (context, themeState) {
           return MaterialApp(

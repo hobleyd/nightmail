@@ -163,6 +163,7 @@ class _EventEditWindowPage extends StatelessWidget {
             initialStart: initialStart,
             accountId: accountId,
             onClose: _close,
+            onTitleChanged: (title) => windowManager.setTitle(title),
           ),
         ),
       ),

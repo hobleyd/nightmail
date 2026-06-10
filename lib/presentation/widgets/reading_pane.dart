@@ -1066,7 +1066,7 @@ class _ImageBlockedBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     return Container(
-      height: 32,
+      height: 29,
       decoration: BoxDecoration(
         color: c.surfacePanel,
         border: Border(top: BorderSide(color: c.border, width: 1)),

@@ -122,11 +122,13 @@ class EventEditForm extends StatefulWidget {
     this.initialStart,
     this.accountId,
     required this.onClose,
+    this.onTitleChanged,
   });
   final CalendarEvent? event;
   final DateTime? initialStart;
   final String? accountId;
   final VoidCallback onClose;
+  final ValueChanged<String>? onTitleChanged;
 
   @override
   State<EventEditForm> createState() => _EventEditFormState();
@@ -157,6 +159,9 @@ class _EventEditFormState extends State<EventEditForm> {
     _locationController = TextEditingController(text: e?.location ?? '');
     _descriptionController = TextEditingController(text: e?.bodyPreview ?? '');
 
+    _titleController.addListener(_onTitleChanged);
+    widget.onTitleChanged?.call(_windowTitle);
+
     final defaultStart = widget.initialStart ?? roundedHour;
     final defaultEnd = widget.initialStart != null
         ? widget.initialStart!.add(const Duration(minutes: 30))
@@ -178,10 +183,23 @@ class _EventEditFormState extends State<EventEditForm> {
 
   @override
   void dispose() {
+    _titleController.removeListener(_onTitleChanged);
     _titleController.dispose();
     _locationController.dispose();
     _descriptionController.dispose();
     super.dispose();
+  }
+
+  String get _baseTitle => widget.event == null ? 'New Event' : 'Edit Event';
+
+  String get _windowTitle {
+    final subject = _titleController.text.trim();
+    return subject.isNotEmpty ? subject : _baseTitle;
+  }
+
+  void _onTitleChanged() {
+    setState(() {});
+    widget.onTitleChanged?.call(_windowTitle);
   }
 
   String _localIanaTimezone() {
@@ -253,14 +271,12 @@ class _EventEditFormState extends State<EventEditForm> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final title =
-        widget.event == null ? 'New Event' : 'Edit Event';
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _TitleBar(title: title, onClose: widget.onClose),
+        _TitleBar(title: _windowTitle, onClose: widget.onClose),
         Divider(height: 1, color: c.border),
         Flexible(
           child: SingleChildScrollView(

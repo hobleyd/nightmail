@@ -89,9 +89,6 @@ class _FolderPanelState extends State<FolderPanel> {
 
                 final folderArea = BlocBuilder<FolderListBloc, FolderListState>(
                   builder: (context, state) {
-                    if (needsReauth) {
-                      return const _SignInPrompt();
-                    }
                     return switch (state) {
                       FolderListInitial() || FolderListLoading() => Center(
                           child: CircularProgressIndicator(
@@ -111,12 +108,7 @@ class _FolderPanelState extends State<FolderPanel> {
                 final account = accountState.activeAccount;
                 return ColoredBox(
                   color: const Color(0xFFFFEBEE),
-                  child: Column(
-                    children: [
-                      _LoginBanner(account: account),
-                      Expanded(child: folderArea),
-                    ],
-                  ),
+                  child: _SignInPrompt(account: account),
                 );
               },
             ),
@@ -582,18 +574,18 @@ class _FolderItemState extends State<_FolderItem>
 }
 
 // ---------------------------------------------------------------------------
-// Login banner — shown when the active account needs re-authentication.
+// Sign-in prompt — shown centred when the active account needs re-auth.
 // ---------------------------------------------------------------------------
 
-class _LoginBanner extends StatefulWidget {
-  const _LoginBanner({required this.account});
+class _SignInPrompt extends StatefulWidget {
+  const _SignInPrompt({required this.account});
   final Account account;
 
   @override
-  State<_LoginBanner> createState() => _LoginBannerState();
+  State<_SignInPrompt> createState() => _SignInPromptState();
 }
 
-class _LoginBannerState extends State<_LoginBanner> {
+class _SignInPromptState extends State<_SignInPrompt> {
   bool _loading = false;
   String? _error;
 
@@ -604,7 +596,11 @@ class _LoginBannerState extends State<_LoginBanner> {
     });
     try {
       if (widget.account is ImapAccount) {
-        await _showImapDialog();
+        final accountCubit = context.read<AccountCubit>();
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => _ImapReauthDialog(accountCubit: accountCubit),
+        );
       } else {
         await context.read<AccountCubit>().reauthenticateActiveOAuth();
       }
@@ -615,61 +611,35 @@ class _LoginBannerState extends State<_LoginBanner> {
     }
   }
 
-  Future<void> _showImapDialog() async {
-    final accountCubit = context.read<AccountCubit>();
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => _ImapReauthDialog(accountCubit: accountCubit),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: _loading ? null : _reAuthenticate,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          children: [
-            if (_loading)
-              const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Color(0xFFE57373),
-                ),
-              )
-            else
-              const Icon(Icons.login_rounded,
-                  size: 16, color: Color(0xFFE57373)),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                _error ?? 'Sign in to view your mail',
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: Color(0xFFE57373),
-                ),
-                overflow: TextOverflow.ellipsis,
-              ),
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_error != null) ...[
+            Text(
+              _error!,
+              style: const TextStyle(fontSize: 12, color: Color(0xFFE57373)),
+              textAlign: TextAlign.center,
             ),
+            const SizedBox(height: 12),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _SignInPrompt extends StatelessWidget {
-  const _SignInPrompt();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Text(
-        'Sign in to load your folders',
-        style: TextStyle(fontSize: 12, color: Color(0xFFE57373)),
+          FilledButton.icon(
+            onPressed: _loading ? null : _reAuthenticate,
+            icon: _loading
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.login_rounded, size: 16),
+            label: const Text('Sign in'),
+          ),
+        ],
       ),
     );
   }

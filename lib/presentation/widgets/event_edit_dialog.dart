@@ -592,7 +592,8 @@ class _AllDayToggle extends StatelessWidget {
 
 typedef _TzEntry = ({String iana, String label, String abbreviation, int offsetHours});
 
-const List<_TzEntry> _kTimezones = [
+final List<_TzEntry> _kTimezones = List.unmodifiable(
+  <_TzEntry>[
   (iana: 'UTC', label: 'UTC', abbreviation: 'UTC', offsetHours: 0),
   (iana: 'America/New_York', label: 'Eastern (ET)', abbreviation: 'EST', offsetHours: -5),
   (iana: 'America/Chicago', label: 'Central (CT)', abbreviation: 'CST', offsetHours: -6),
@@ -636,7 +637,8 @@ const List<_TzEntry> _kTimezones = [
   (iana: 'Africa/Johannesburg', label: 'Johannesburg (SAST)', abbreviation: 'SAST', offsetHours: 2),
   (iana: 'Africa/Cairo', label: 'Cairo (EET)', abbreviation: 'EET', offsetHours: 2),
   (iana: 'Africa/Lagos', label: 'Lagos (WAT)', abbreviation: 'WAT', offsetHours: 1),
-];
+  ]..sort((a, b) => a.offsetHours.compareTo(b.offsetHours)),
+);
 
 class _TimezoneSelector extends StatefulWidget {
   const _TimezoneSelector({required this.value, required this.onChanged});
@@ -697,17 +699,30 @@ class _TimezonePickerDialog extends StatefulWidget {
 class _TimezonePickerDialogState extends State<_TimezonePickerDialog> {
   late List<_TzEntry> _filtered;
   final _search = TextEditingController();
+  final _scroll = ScrollController();
+
+  static const _itemHeight = 56.0; // dense ListTile with subtitle
 
   @override
   void initState() {
     super.initState();
     _filtered = _kTimezones;
     _search.addListener(_onSearch);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToSelected());
+  }
+
+  void _scrollToSelected() {
+    final idx = _filtered.indexWhere((t) => t.iana == widget.current);
+    if (idx < 0 || !_scroll.hasClients) return;
+    final maxExtent = _scroll.position.maxScrollExtent;
+    final target = (idx * _itemHeight - _itemHeight * 2).clamp(0.0, maxExtent);
+    _scroll.jumpTo(target);
   }
 
   @override
   void dispose() {
     _search.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -760,10 +775,16 @@ class _TimezonePickerDialogState extends State<_TimezonePickerDialog> {
             Divider(height: 1, color: c.border),
             Expanded(
               child: ListView.builder(
+                controller: _scroll,
                 itemCount: _filtered.length,
                 itemBuilder: (_, i) {
                   final tz = _filtered[i];
                   final isSelected = tz.iana == widget.current;
+                  final offsetLabel = tz.offsetHours == 0
+                      ? 'UTC'
+                      : tz.offsetHours > 0
+                          ? 'UTC+${tz.offsetHours}'
+                          : 'UTC${tz.offsetHours}';
                   return ListTile(
                     dense: true,
                     selected: isSelected,
@@ -780,6 +801,10 @@ class _TimezonePickerDialogState extends State<_TimezonePickerDialog> {
                     subtitle: Text(
                       tz.iana,
                       style: TextStyle(color: c.textMuted, fontSize: 11),
+                    ),
+                    trailing: Text(
+                      offsetLabel,
+                      style: TextStyle(color: c.textMuted, fontSize: 12),
                     ),
                     onTap: () => Navigator.of(context).pop(tz.iana),
                   );

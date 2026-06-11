@@ -97,6 +97,15 @@ class _FolderPanelState extends State<FolderPanel> {
                           ),
                         ),
                       FolderListLoaded(:final folders) => _buildTree(folders),
+                      // Auth failures (expired/revoked token) show the sign-in
+                      // prompt so the user can re-authenticate in one tap.
+                      FolderListError(isAuthFailure: true)
+                          when accountState is AccountsLoaded =>
+                        ColoredBox(
+                          color: const Color(0xFFFFEBEE),
+                          child: _SignInPrompt(
+                              account: accountState.activeAccount),
+                        ),
                       FolderListError(:final message) =>
                         _ErrorView(message: message),
                     };

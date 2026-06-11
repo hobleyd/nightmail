@@ -326,7 +326,12 @@ class AccountManager {
       case MicrosoftAccount() || GmailAccount():
         final ts = TokenStorage(_secureStorage,
             storageKey: 'token_${account.id}');
-        return await ts.loadToken() != null;
+        final token = await ts.loadToken();
+        if (token == null) return false;
+        // An expired token with no refresh token cannot be renewed silently;
+        // treat it as unauthenticated so the sign-in prompt appears immediately
+        // instead of a dead-end folder-list error.
+        return !token.isExpired || token.refreshToken != null;
       case ImapAccount():
         final cs = ImapCredentialStorage(_secureStorage);
         return await cs.loadPassword(account.id) != null;

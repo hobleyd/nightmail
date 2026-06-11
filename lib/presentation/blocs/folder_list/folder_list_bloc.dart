@@ -1,5 +1,6 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../core/error/failures.dart';
 import '../../../core/usecases/usecase.dart';
 import '../../../domain/usecases/get_mail_folders.dart';
 import 'folder_list_event.dart';
@@ -22,7 +23,10 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
     emit(const FolderListLoading());
     final result = await _getMailFolders(const NoParams());
     result.fold(
-      (failure) => emit(FolderListError(message: failure.message)),
+      (failure) => emit(FolderListError(
+        message: failure.message,
+        isAuthFailure: failure is AuthFailure,
+      )),
       (folders) {
         // Sort: well-known system folders first, then alphabetically.
         final sorted = [...folders]..sort((a, b) {

@@ -29,9 +29,10 @@ final class FolderListLoaded extends FolderListState {
 }
 
 final class FolderListError extends FolderListState {
-  const FolderListError({required this.message});
+  const FolderListError({required this.message, this.isAuthFailure = false});
   final String message;
+  final bool isAuthFailure;
 
   @override
-  List<Object?> get props => [message];
+  List<Object?> get props => [message, isAuthFailure];
 }

@@ -473,6 +473,19 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     return normalized.isEmpty ? null : normalized;
   }
 
+  Future<void> disconnect() async {
+    final client = _client;
+    _client = null;
+    _selectedMailboxPath = null;
+    if (client == null || !client.isConnected) return;
+    try {
+      await client.logout();
+    } catch (_) {}
+    try {
+      await client.disconnect();
+    } catch (_) {}
+  }
+
   Future<SmtpClient> _getSmtpClient() async {
     final password = await _credentialStorage.loadPassword(_account.id);
     if (password == null) {

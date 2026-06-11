@@ -269,6 +269,9 @@ class AccountManager {
     final account = activeAccount;
     if (account == null) return;
 
+    final old = _emailDatasource;
+    if (old is ImapDatasourceImpl) old.disconnect();
+
     switch (account) {
       case MicrosoftAccount():
         final tokenStorage = TokenStorage(

@@ -1,3 +1,4 @@
+import '../../../domain/entities/meeting_invite.dart';
 import '../../../domain/usecases/create_calendar_event.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
 import '../../models/calendar_event_model.dart';
@@ -14,5 +15,12 @@ abstract interface class CalendarRemoteDatasource {
 
   Future<CalendarEventModel> updateCalendarEvent({
     required UpdateCalendarEventParams params,
+  });
+
+  Future<void> respondToMeetingInvite({
+    required String emailId,
+    required MeetingInviteResponseType response,
+    String? icsData,
+    String? userEmail,
   });
 }

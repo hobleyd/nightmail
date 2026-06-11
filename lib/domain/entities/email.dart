@@ -2,6 +2,7 @@ import 'package:equatable/equatable.dart';
 import 'email_address.dart';
 import 'email_attachment.dart';
 import 'inline_attachment.dart';
+import 'meeting_invite.dart';
 
 enum EmailBodyType { text, html }
 
@@ -26,6 +27,7 @@ class Email extends Equatable {
     this.attachments = const [],
     this.inlineAttachments = const [],
     this.parentFolderId,
+    this.meetingInvite,
   });
 
   final String id;
@@ -45,6 +47,7 @@ class Email extends Equatable {
   final List<EmailAttachment> attachments;
   final List<InlineAttachment> inlineAttachments;
   final String? parentFolderId;
+  final MeetingInvite? meetingInvite;
 
   Email copyWith({bool? isRead}) {
     return Email(
@@ -65,6 +68,7 @@ class Email extends Equatable {
       attachments: attachments,
       inlineAttachments: inlineAttachments,
       parentFolderId: parentFolderId,
+      meetingInvite: meetingInvite,
     );
   }
 

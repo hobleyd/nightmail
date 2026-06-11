@@ -9,6 +9,7 @@ import '../../../infrastructure/http/gmail_http_client.dart';
 import '../../models/email_address_model.dart';
 import '../../models/email_folder_model.dart';
 import '../../models/email_model.dart';
+import '../../../domain/entities/meeting_invite.dart';
 import 'email_remote_datasource.dart';
 
 class GmailDatasourceImpl implements EmailRemoteDatasource {
@@ -195,10 +196,15 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     String body = '';
     EmailBodyType bodyType = EmailBodyType.text;
 
+    MeetingInvite? meetingInvite;
     if (fullBody) {
       final (extractedBody, extractedType) = _extractBody(payload);
       body = extractedBody;
       bodyType = extractedType;
+      final icsData = _extractIcsData(payload);
+      if (icsData != null) {
+        meetingInvite = MeetingInvite(icsData: icsData);
+      }
     }
 
     final parentFolderId = labelIds.contains('INBOX')
@@ -219,6 +225,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       importance: EmailImportance.normal,
       parentFolderId: parentFolderId,
       hasAttachments: _detectAttachments(payload),
+      meetingInvite: meetingInvite,
     );
   }
 
@@ -266,6 +273,25 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     if (htmlBody != null) return (htmlBody!, EmailBodyType.html);
     if (textBody != null) return (textBody!, EmailBodyType.text);
     return ('', EmailBodyType.text);
+  }
+
+  /// Recursively scan MIME parts for a text/calendar part and return its decoded
+  /// content. Returns null if no calendar part is found.
+  String? _extractIcsData(Map<String, dynamic> payload) {
+    final mimeType = (payload['mimeType'] as String? ?? '').toLowerCase();
+    if (mimeType == 'text/calendar' || mimeType == 'application/ics') {
+      final data = (payload['body'] as Map<String, dynamic>?)?['data'] as String?;
+      if (data != null) {
+        return utf8.decode(base64Url.decode(_padBase64(data)));
+      }
+    }
+    final parts = (payload['parts'] as List<dynamic>? ?? [])
+        .cast<Map<String, dynamic>>();
+    for (final part in parts) {
+      final result = _extractIcsData(part);
+      if (result != null) return result;
+    }
+    return null;
   }
 
   bool _detectAttachments(Map<String, dynamic> payload) {

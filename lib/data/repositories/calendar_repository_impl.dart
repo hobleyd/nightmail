@@ -3,6 +3,7 @@ import 'package:fpdart/fpdart.dart';
 import '../../core/error/exceptions.dart';
 import '../../core/error/failures.dart';
 import '../../domain/entities/calendar_event.dart';
+import '../../domain/entities/meeting_invite.dart';
 import '../../domain/repositories/calendar_repository.dart';
 import '../../domain/usecases/create_calendar_event.dart';
 import '../../domain/usecases/update_calendar_event.dart';
@@ -84,6 +85,41 @@ class CalendarRepositoryImpl implements CalendarRepository {
     try {
       final event = await ds.updateCalendarEvent(params: params);
       return Right(event);
+    } on AuthException catch (e) {
+      return Left(AuthFailure(message: e.message));
+    } on NetworkException catch (e) {
+      return Left(NetworkFailure(message: e.message));
+    } on ServerException catch (e) {
+      return Left(ServerFailure(message: e.message, statusCode: e.statusCode));
+    } catch (e) {
+      return Left(ServerFailure(message: e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, void>> respondToMeetingInvite({
+    required String emailId,
+    required MeetingInviteResponseType response,
+    String? icsData,
+  }) async {
+    final ds = _accountManager.calendarDatasource;
+    if (ds == null) {
+      return const Left(
+        ServerFailure(
+            message: 'Calendar is not available for this account type'),
+      );
+    }
+
+    final userEmail = _accountManager.activeAccount?.emailAddress;
+
+    try {
+      await ds.respondToMeetingInvite(
+        emailId: emailId,
+        response: response,
+        icsData: icsData,
+        userEmail: userEmail,
+      );
+      return const Right(null);
     } on AuthException catch (e) {
       return Left(AuthFailure(message: e.message));
     } on NetworkException catch (e) {

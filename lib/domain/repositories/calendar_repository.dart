@@ -2,6 +2,7 @@ import 'package:fpdart/fpdart.dart';
 
 import '../../core/error/failures.dart';
 import '../entities/calendar_event.dart';
+import '../entities/meeting_invite.dart';
 import '../usecases/create_calendar_event.dart';
 import '../usecases/update_calendar_event.dart';
 
@@ -17,5 +18,11 @@ abstract interface class CalendarRepository {
 
   Future<Either<Failure, CalendarEvent>> updateCalendarEvent({
     required UpdateCalendarEventParams params,
+  });
+
+  Future<Either<Failure, void>> respondToMeetingInvite({
+    required String emailId,
+    required MeetingInviteResponseType response,
+    String? icsData,
   });
 }

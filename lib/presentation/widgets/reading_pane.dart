@@ -18,8 +18,10 @@ import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_attachment.dart';
 import '../../domain/entities/inline_attachment.dart';
+import '../../domain/entities/meeting_invite.dart';
 import '../../domain/usecases/delete_email.dart';
 import '../../domain/usecases/download_attachment.dart';
+import '../../domain/usecases/respond_to_meeting_invite.dart';
 import '../../domain/usecases/send_email.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/accounts/account_manager.dart';
@@ -118,6 +120,10 @@ class _EmailView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final calendarAvailable =
+        sl<AccountManager>().calendarDatasource != null;
+    final showInviteBanner =
+        email.meetingInvite != null && calendarAvailable;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -125,6 +131,10 @@ class _EmailView extends StatelessWidget {
         Divider(height: 1, color: c.border),
         _EmailHeader(email: email, senderAnomalyScore: senderAnomalyScore),
         Divider(height: 1, color: c.border),
+        if (showInviteBanner) ...[
+          _MeetingInviteBanner(email: email),
+          Divider(height: 1, color: c.border),
+        ],
         Expanded(
           child: _EmailBody(email: email),
         ),
@@ -316,6 +326,195 @@ class _ReadingPaneToolbar extends StatelessWidget {
             onPressed: () => _confirmAndDelete(context),
           ),
         ],
+      ),
+    );
+  }
+}
+
+enum _InviteState { idle, loading, done, error }
+
+class _MeetingInviteBanner extends StatefulWidget {
+  const _MeetingInviteBanner({required this.email});
+  final Email email;
+
+  @override
+  State<_MeetingInviteBanner> createState() => _MeetingInviteBannerState();
+}
+
+class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
+  _InviteState _state = _InviteState.idle;
+  String? _errorMessage;
+  MeetingInviteResponseType? _responded;
+
+  Future<void> _respond(MeetingInviteResponseType response) async {
+    if (_state == _InviteState.loading) return;
+    setState(() {
+      _state = _InviteState.loading;
+      _errorMessage = null;
+    });
+
+    final result = await sl<RespondToMeetingInvite>()(
+      RespondToMeetingInviteParams(
+        emailId: widget.email.id,
+        response: response,
+        icsData: widget.email.meetingInvite?.icsData,
+      ),
+    );
+
+    if (!mounted) return;
+    result.fold(
+      (failure) => setState(() {
+        _state = _InviteState.error;
+        _errorMessage = failure.message;
+      }),
+      (_) => setState(() {
+        _state = _InviteState.done;
+        _responded = response;
+      }),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 10),
+      color: c.surfacePanel,
+      child: switch (_state) {
+        _InviteState.loading => Row(
+            children: [
+              Icon(Icons.calendar_today_rounded, size: 14, color: c.textDimmed),
+              const SizedBox(width: 8),
+              Text(
+                'Meeting invitation',
+                style: TextStyle(color: c.textTertiary, fontSize: 12),
+              ),
+              const SizedBox(width: 12),
+              SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                    strokeWidth: 1.5, color: AppColors.accent),
+              ),
+            ],
+          ),
+        _InviteState.done => Row(
+            children: [
+              Icon(Icons.check_circle_outline_rounded,
+                  size: 14, color: AppColors.accent),
+              const SizedBox(width: 8),
+              Text(
+                switch (_responded!) {
+                  MeetingInviteResponseType.accept => 'Accepted',
+                  MeetingInviteResponseType.tentative => 'Tentatively accepted',
+                  MeetingInviteResponseType.decline => 'Declined',
+                },
+                style: TextStyle(color: c.textTertiary, fontSize: 12),
+              ),
+            ],
+          ),
+        _InviteState.error => Row(
+            children: [
+              Icon(Icons.error_outline_rounded, size: 14, color: Colors.redAccent),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _errorMessage ?? 'Something went wrong',
+                  style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              _InviteResponseButton(
+                label: 'Retry',
+                icon: Icons.refresh_rounded,
+                onPressed: () => setState(() => _state = _InviteState.idle),
+              ),
+            ],
+          ),
+        _InviteState.idle => Row(
+            children: [
+              Icon(Icons.calendar_today_rounded, size: 14, color: c.textDimmed),
+              const SizedBox(width: 8),
+              Text(
+                'Meeting invitation',
+                style: TextStyle(color: c.textTertiary, fontSize: 12),
+              ),
+              const Spacer(),
+              _InviteResponseButton(
+                label: 'Accept',
+                icon: Icons.check_rounded,
+                onPressed: () => _respond(MeetingInviteResponseType.accept),
+              ),
+              const SizedBox(width: 6),
+              _InviteResponseButton(
+                label: 'Maybe',
+                icon: Icons.help_outline_rounded,
+                onPressed: () => _respond(MeetingInviteResponseType.tentative),
+              ),
+              const SizedBox(width: 6),
+              _InviteResponseButton(
+                label: 'Decline',
+                icon: Icons.close_rounded,
+                onPressed: () => _respond(MeetingInviteResponseType.decline),
+              ),
+            ],
+          ),
+      },
+    );
+  }
+}
+
+class _InviteResponseButton extends StatefulWidget {
+  const _InviteResponseButton({
+    required this.label,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  State<_InviteResponseButton> createState() => _InviteResponseButtonState();
+}
+
+class _InviteResponseButtonState extends State<_InviteResponseButton> {
+  bool _isPressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return GestureDetector(
+      onTap: widget.onPressed,
+      onTapDown: (_) => setState(() => _isPressed = true),
+      onTapUp: (_) => setState(() => _isPressed = false),
+      onTapCancel: () => setState(() => _isPressed = false),
+      child: AnimatedScale(
+        scale: _isPressed ? 0.93 : 1.0,
+        duration: const Duration(milliseconds: 70),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: _isPressed
+                ? AppColors.accent.withAlpha(70)
+                : AppColors.accent.withAlpha(30),
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(
+                color: AppColors.accent.withAlpha(80), width: 0.5),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(widget.icon, size: 11, color: c.textTertiary),
+              const SizedBox(width: 4),
+              Text(
+                widget.label,
+                style: TextStyle(color: c.textTertiary, fontSize: 11),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

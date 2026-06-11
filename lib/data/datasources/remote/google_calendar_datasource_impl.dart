@@ -4,6 +4,7 @@ import '../../../core/error/exceptions.dart';
 import '../../../domain/entities/calendar_event.dart';
 import '../../../domain/entities/calendar_event_attendee.dart';
 import '../../../domain/entities/calendar_recurrence.dart';
+import '../../../domain/entities/meeting_invite.dart';
 import '../../../domain/usecases/create_calendar_event.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
 import '../../../infrastructure/http/google_calendar_http_client.dart';
@@ -107,6 +108,154 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     } on DioException catch (e) {
       throw _mapException(e);
     }
+  }
+
+  @override
+  Future<void> respondToMeetingInvite({
+    required String emailId,
+    required MeetingInviteResponseType response,
+    String? icsData,
+    String? userEmail,
+  }) async {
+    if (icsData == null) {
+      throw const ServerException(
+          message: 'Cannot accept meeting invite: no iCalendar data');
+    }
+
+    final event = _parseIcs(icsData);
+    final responseStatus = switch (response) {
+      MeetingInviteResponseType.accept => 'accepted',
+      MeetingInviteResponseType.tentative => 'tentative',
+      MeetingInviteResponseType.decline => 'declined',
+    };
+
+    // Build attendee list: include ICS attendees plus self with the chosen status.
+    final attendees = <Map<String, dynamic>>[
+      ...event.attendees.where((a) => a != userEmail).map((a) => {'email': a}),
+      if (userEmail != null) {'email': userEmail, 'responseStatus': responseStatus},
+    ];
+
+    final body = <String, dynamic>{
+      'summary': event.summary,
+      'start': event.isAllDay
+          ? {'date': _formatDate(event.start)}
+          : {'dateTime': event.start.toUtc().toIso8601String(), 'timeZone': 'UTC'},
+      'end': event.isAllDay
+          ? {'date': _formatDate(event.end)}
+          : {'dateTime': event.end.toUtc().toIso8601String(), 'timeZone': 'UTC'},
+      if (event.location != null) 'location': event.location,
+      if (attendees.isNotEmpty) 'attendees': attendees,
+    };
+
+    try {
+      await _dio.post<void>(
+        '/calendars/primary/events',
+        data: body,
+        queryParameters: {'sendUpdates': 'all'},
+      );
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  /// Minimal iCalendar parser — extracts the first VEVENT's key properties.
+  _IcsEvent _parseIcs(String icsData) {
+    // Unfold continuation lines (RFC 5545: CRLF followed by whitespace).
+    final unfolded =
+        icsData.replaceAll(RegExp(r'\r?\n[ \t]'), '');
+
+    String? summary;
+    DateTime? start;
+    DateTime? end;
+    bool isAllDay = false;
+    String? location;
+    final attendees = <String>[];
+
+    bool inVEvent = false;
+    for (final rawLine in unfolded.split(RegExp(r'\r?\n'))) {
+      final line = rawLine.trim();
+      if (line.isEmpty) continue;
+
+      if (line.toUpperCase() == 'BEGIN:VEVENT') {
+        inVEvent = true;
+        continue;
+      }
+      if (line.toUpperCase() == 'END:VEVENT') break;
+      if (!inVEvent) continue;
+
+      final colonIdx = line.indexOf(':');
+      if (colonIdx == -1) continue;
+
+      final namePart = line.substring(0, colonIdx).toUpperCase();
+      final value = line.substring(colonIdx + 1);
+
+      if (namePart == 'SUMMARY') {
+        summary = value;
+      } else if (namePart.startsWith('DTSTART')) {
+        final (dt, allDay) = _parseIcsDateTime(namePart, value);
+        if (dt != null) {
+          start = dt;
+          isAllDay = allDay;
+        }
+      } else if (namePart.startsWith('DTEND')) {
+        final (dt, _) = _parseIcsDateTime(namePart, value);
+        if (dt != null) end = dt;
+      } else if (namePart == 'LOCATION') {
+        location = value.isNotEmpty ? value : null;
+      } else if (namePart.startsWith('ATTENDEE')) {
+        // Value format: mailto:email@example.com
+        final mailto = value.toLowerCase().startsWith('mailto:')
+            ? value.substring('mailto:'.length)
+            : value;
+        if (mailto.contains('@')) attendees.add(mailto);
+      }
+    }
+
+    return _IcsEvent(
+      summary: summary ?? '(No title)',
+      start: start ?? DateTime.now().toUtc(),
+      end: end ?? (start ?? DateTime.now().toUtc()).add(const Duration(hours: 1)),
+      isAllDay: isAllDay,
+      location: location,
+      attendees: attendees,
+    );
+  }
+
+  (DateTime?, bool) _parseIcsDateTime(String namePart, String value) {
+    // All-day: VALUE=DATE or name contains ;VALUE=DATE
+    final isDate = namePart.contains('VALUE=DATE') && !namePart.contains('DATE-TIME');
+    if (isDate) {
+      // Format: YYYYMMDD
+      if (value.length >= 8) {
+        final y = int.tryParse(value.substring(0, 4));
+        final m = int.tryParse(value.substring(4, 6));
+        final d = int.tryParse(value.substring(6, 8));
+        if (y != null && m != null && d != null) {
+          return (DateTime.utc(y, m, d), true);
+        }
+      }
+      return (null, true);
+    }
+
+    // UTC datetime: 20260615T100000Z
+    // Local datetime with TZID: DTSTART;TZID=America/New_York:20260615T100000
+    final isUtc = value.endsWith('Z');
+    final digits = value.replaceAll(RegExp(r'[TZ]'), '');
+    if (digits.length >= 14) {
+      final y = int.tryParse(digits.substring(0, 4));
+      final mo = int.tryParse(digits.substring(4, 6));
+      final d = int.tryParse(digits.substring(6, 8));
+      final h = int.tryParse(digits.substring(8, 10));
+      final mi = int.tryParse(digits.substring(10, 12));
+      final s = int.tryParse(digits.substring(12, 14));
+      if (y != null && mo != null && d != null && h != null && mi != null && s != null) {
+        final dt = isUtc
+            ? DateTime.utc(y, mo, d, h, mi, s)
+            : DateTime(y, mo, d, h, mi, s).toUtc();
+        return (dt, false);
+      }
+    }
+    return (null, false);
   }
 
   Map<String, dynamic> _buildEventBody({
@@ -298,4 +447,22 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
         message: e.message ?? 'Server error ($statusCode)',
         statusCode: statusCode);
   }
+}
+
+class _IcsEvent {
+  const _IcsEvent({
+    required this.summary,
+    required this.start,
+    required this.end,
+    required this.isAllDay,
+    this.location,
+    this.attendees = const [],
+  });
+
+  final String summary;
+  final DateTime start;
+  final DateTime end;
+  final bool isAllDay;
+  final String? location;
+  final List<String> attendees;
 }

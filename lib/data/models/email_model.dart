@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_attachment.dart';
 import '../../domain/entities/inline_attachment.dart';
+import '../../domain/entities/meeting_invite.dart';
 import 'email_address_model.dart';
 
 class EmailModel extends Email {
@@ -25,6 +26,7 @@ class EmailModel extends Email {
     super.attachments,
     super.inlineAttachments,
     super.parentFolderId,
+    super.meetingInvite,
   });
 
   factory EmailModel.fromJson(Map<String, dynamic> json) {
@@ -60,6 +62,7 @@ class EmailModel extends Email {
       attachments: _parseAttachments(json['attachments']),
       inlineAttachments: _parseInlineAttachments(json['attachments']),
       parentFolderId: json['parentFolderId'] as String?,
+      meetingInvite: _parseMeetingInvite(json['@odata.type'] as String?),
     );
   }
 
@@ -101,6 +104,13 @@ class EmailModel extends Email {
     return result;
   }
 
+  static MeetingInvite? _parseMeetingInvite(String? odataType) {
+    // Graph API returns @odata.type = '#microsoft.graph.eventMessage' for
+    // meeting-related messages automatically, without needing $select.
+    if (odataType == '#microsoft.graph.eventMessage') return const MeetingInvite();
+    return null;
+  }
+
   static EmailImportance _parseImportance(String? value) {
     return switch (value?.toLowerCase()) {
       'low' => EmailImportance.low,
@@ -132,6 +142,7 @@ class EmailModel extends Email {
       attachments: entity.attachments,
       inlineAttachments: entity.inlineAttachments,
       parentFolderId: entity.parentFolderId,
+      meetingInvite: entity.meetingInvite,
     );
   }
 }

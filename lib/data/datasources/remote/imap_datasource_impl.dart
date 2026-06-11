@@ -515,7 +515,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     required String body,
   }) async {
     final builder = MessageBuilder()
-      ..from = [MailAddress(null, _account.emailAddress)]
+      ..from = [MailAddress(_account.displayName, _account.emailAddress)]
       ..to = toAddresses.map((e) => MailAddress(null, e)).toList()
       ..cc = ccAddresses.map((e) => MailAddress(null, e)).toList()
       ..subject = subject
@@ -560,7 +560,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     final original = await _fetchOriginal(messageId);
     final builder = MessageBuilder.prepareReplyToMessage(
       original,
-      MailAddress(null, _account.emailAddress),
+      MailAddress(_account.displayName, _account.emailAddress),
       replyAll: replyAll,
     )..addTextPlain(comment);
     await _sendMime(builder.buildMimeMessage());
@@ -576,7 +576,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
 
     final builder = MessageBuilder.prepareForwardMessage(
       original,
-      from: MailAddress(null, _account.emailAddress),
+      from: MailAddress(_account.displayName, _account.emailAddress),
     )
       ..to = toAddresses.map((e) => MailAddress(null, e)).toList()
       ..addTextPlain(comment);

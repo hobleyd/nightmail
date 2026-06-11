@@ -110,7 +110,11 @@ class _ComposeWindowPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     final account = sl<AccountManager>().activeAccount;
-    final fromAddress = account?.emailAddress ?? '';
+    final fromAddress = account == null
+        ? ''
+        : account.displayName.isNotEmpty
+            ? '${account.displayName} <${account.emailAddress}>'
+            : account.emailAddress;
     final accountId = account?.id;
     return BlocProvider(
       create: (_) => ComposeBloc(sendEmail: sl<SendEmail>()),

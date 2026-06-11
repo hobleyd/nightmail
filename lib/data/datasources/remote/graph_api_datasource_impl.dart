@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../core/error/exceptions.dart';
 import '../../../domain/entities/calendar_recurrence.dart';
+import '../../../domain/entities/meeting_invite.dart';
 import '../../../domain/entities/todo_task.dart';
 import '../../../domain/usecases/create_calendar_event.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
@@ -305,6 +306,28 @@ class GraphApiDatasourceImpl
     }
   }
 
+  @override
+  Future<void> respondToMeetingInvite({
+    required String emailId,
+    required MeetingInviteResponseType response,
+    String? icsData,
+    String? userEmail,
+  }) async {
+    final endpoint = switch (response) {
+      MeetingInviteResponseType.accept => 'accept',
+      MeetingInviteResponseType.tentative => 'tentativelyAccept',
+      MeetingInviteResponseType.decline => 'decline',
+    };
+    try {
+      await _dio.post<void>(
+        '/me/messages/$emailId/$endpoint',
+        data: {'sendResponse': true, 'comment': ''},
+      );
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
   Map<String, dynamic> _buildGraphEventBody({
     required String subject,
     required DateTime start,
@@ -414,6 +437,24 @@ class GraphApiDatasourceImpl
     final mi = local.minute.toString().padLeft(2, '0');
     final s = local.second.toString().padLeft(2, '0');
     return '$y-$mo-${d}T$h:$mi:$s';
+  }
+
+  Future<({String displayName, String email})> fetchUserProfile() async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/me',
+        queryParameters: {'\$select': 'displayName,mail,userPrincipalName'},
+      );
+      final data = response.data;
+      if (data == null) throw const ServerException(message: 'Empty response');
+      final email = data['mail'] as String? ??
+          data['userPrincipalName'] as String? ??
+          '';
+      final displayName = data['displayName'] as String? ?? '';
+      return (displayName: displayName, email: email);
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
   }
 
   @override

@@ -32,7 +32,12 @@ class ComposeDialog extends StatelessWidget {
   }) {
     final accountState = context.read<AccountCubit>().state;
     final fromAddress = accountState is AccountsLoaded
-        ? accountState.activeAccount.emailAddress
+        ? () {
+            final account = accountState.activeAccount;
+            final name = account.displayName;
+            final email = account.emailAddress;
+            return name.isNotEmpty ? '$name <$email>' : email;
+          }()
         : '';
     final accountId =
         accountState is AccountsLoaded ? accountState.activeAccount.id : null;

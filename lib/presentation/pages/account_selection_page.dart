@@ -6,11 +6,13 @@ import 'package:uuid/uuid.dart';
 import '../../core/config/app_config.dart';
 import '../../core/error/exceptions.dart';
 import '../../core/theme/app_colors.dart';
+import '../../data/datasources/remote/graph_api_datasource_impl.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/auth/gmail_auth_service.dart';
 import '../../infrastructure/auth/imap_credential_storage.dart';
 import '../../infrastructure/auth/microsoft_auth_service.dart';
 import '../../infrastructure/auth/token_storage.dart';
+import '../../infrastructure/http/graph_http_client.dart';
 import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
 
@@ -58,10 +60,14 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
 
       await authService.signIn();
 
+      final ds = GraphApiDatasourceImpl(
+          client: GraphHttpClient(authService: authService));
+      final profile = await ds.fetchUserProfile();
+
       final account = MicrosoftAccount(
         id: id,
-        displayName: 'Microsoft Account',
-        emailAddress: '',
+        displayName: profile.displayName,
+        emailAddress: profile.email,
         tenantId: AppConfig.microsoftTenantId,
       );
 

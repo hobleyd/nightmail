@@ -1,10 +1,12 @@
 import 'dart:convert';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/calendar_event.dart';
@@ -190,7 +192,9 @@ class _EventEditFormState extends State<EventEditForm> {
     super.dispose();
   }
 
-  String get _baseTitle => widget.event == null ? 'New Event' : 'Edit Event';
+  bool get _readOnly => widget.event != null;
+
+  String get _baseTitle => widget.event == null ? 'New Event' : 'View Event';
 
   String get _windowTitle {
     final subject = _titleController.text.trim();
@@ -288,7 +292,8 @@ class _EventEditFormState extends State<EventEditForm> {
                   label: 'Title',
                   child: TextField(
                     controller: _titleController,
-                    autofocus: true,
+                    autofocus: !_readOnly,
+                    readOnly: _readOnly,
                     style: TextStyle(color: c.textPrimary, fontSize: 13),
                     decoration: InputDecoration(
                       hintText: 'Event title',
@@ -302,38 +307,44 @@ class _EventEditFormState extends State<EventEditForm> {
                 const SizedBox(height: 10),
                 Divider(height: 1, color: c.separator),
                 const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _DateTimeSection(
-                        startDate: _startDate,
-                        startTime: _startTime,
-                        endDate: _endDate,
-                        endTime: _endTime,
-                        isAllDay: _isAllDay,
-                        onStartDateChanged: (d) =>
-                            setState(() => _startDate = d),
-                        onStartTimeChanged: (t) =>
-                            setState(() => _startTime = t),
-                        onEndDateChanged: (d) =>
-                            setState(() => _endDate = d),
-                        onEndTimeChanged: (t) =>
-                            setState(() => _endTime = t),
+                AbsorbPointer(
+                  absorbing: _readOnly,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _DateTimeSection(
+                          startDate: _startDate,
+                          startTime: _startTime,
+                          endDate: _endDate,
+                          endTime: _endTime,
+                          isAllDay: _isAllDay,
+                          onStartDateChanged: (d) =>
+                              setState(() => _startDate = d),
+                          onStartTimeChanged: (t) =>
+                              setState(() => _startTime = t),
+                          onEndDateChanged: (d) =>
+                              setState(() => _endDate = d),
+                          onEndTimeChanged: (t) =>
+                              setState(() => _endTime = t),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    _AllDayToggle(
-                      value: _isAllDay,
-                      onChanged: (v) => setState(() => _isAllDay = v),
-                    ),
-                  ],
+                      const SizedBox(width: 12),
+                      _AllDayToggle(
+                        value: _isAllDay,
+                        onChanged: (v) => setState(() => _isAllDay = v),
+                      ),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 10),
-                _LabeledField(
-                  label: 'Timezone',
-                  child: _TimezoneSelector(
-                    value: _timezone,
-                    onChanged: (tz) => setState(() => _timezone = tz),
+                AbsorbPointer(
+                  absorbing: _readOnly,
+                  child: _LabeledField(
+                    label: 'Timezone',
+                    child: _TimezoneSelector(
+                      value: _timezone,
+                      onChanged: (tz) => setState(() => _timezone = tz),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -341,52 +352,70 @@ class _EventEditFormState extends State<EventEditForm> {
                 const SizedBox(height: 10),
                 _LabeledField(
                   label: 'Location',
-                  child: TextField(
-                    controller: _locationController,
-                    style: TextStyle(color: c.textPrimary, fontSize: 13),
-                    decoration: InputDecoration(
-                      hintText: 'Add location',
-                      hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.zero,
-                      isDense: true,
-                    ),
-                  ),
+                  child: _readOnly
+                      ? _LinkifiedText(
+                          text: _locationController.text,
+                          style: TextStyle(color: c.textPrimary, fontSize: 13),
+                        )
+                      : TextField(
+                          controller: _locationController,
+                          style: TextStyle(color: c.textPrimary, fontSize: 13),
+                          decoration: InputDecoration(
+                            hintText: 'Add location',
+                            hintStyle:
+                                TextStyle(color: c.textMuted, fontSize: 13),
+                            border: InputBorder.none,
+                            contentPadding: EdgeInsets.zero,
+                            isDense: true,
+                          ),
+                        ),
                 ),
                 const SizedBox(height: 10),
-                RecipientInputField(
-                  label: 'Guests',
-                  labelWidth: 68,
-                  recipients: _attendees,
-                  onChanged: (a) => setState(() => _attendees = a),
-                  hintText: 'Add guests by email',
-                  accountId: widget.accountId,
+                AbsorbPointer(
+                  absorbing: _readOnly,
+                  child: RecipientInputField(
+                    label: 'Guests',
+                    labelWidth: 68,
+                    recipients: _attendees,
+                    onChanged: (a) => setState(() => _attendees = a),
+                    hintText: 'Add guests by email',
+                    accountId: widget.accountId,
+                  ),
                 ),
                 const SizedBox(height: 10),
                 Divider(height: 1, color: c.separator),
                 const SizedBox(height: 10),
-                _RecurrenceSection(
-                  recurrence: _recurrence,
-                  startDate: _startDate,
-                  onChanged: (r) => setState(() => _recurrence = r),
+                AbsorbPointer(
+                  absorbing: _readOnly,
+                  child: _RecurrenceSection(
+                    recurrence: _recurrence,
+                    startDate: _startDate,
+                    onChanged: (r) => setState(() => _recurrence = r),
+                  ),
                 ),
                 const SizedBox(height: 10),
                 Divider(height: 1, color: c.separator),
                 const SizedBox(height: 10),
                 _LabeledField(
                   label: 'Notes',
-                  child: TextField(
-                    controller: _descriptionController,
-                    maxLines: 4,
-                    style: TextStyle(color: c.textPrimary, fontSize: 13),
-                    decoration: InputDecoration(
-                      hintText: 'Add notes',
-                      hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.zero,
-                      isDense: true,
-                    ),
-                  ),
+                  child: _readOnly
+                      ? _LinkifiedText(
+                          text: _descriptionController.text,
+                          style: TextStyle(color: c.textPrimary, fontSize: 13),
+                        )
+                      : TextField(
+                          controller: _descriptionController,
+                          maxLines: 4,
+                          style: TextStyle(color: c.textPrimary, fontSize: 13),
+                          decoration: InputDecoration(
+                            hintText: 'Add notes',
+                            hintStyle:
+                                TextStyle(color: c.textMuted, fontSize: 13),
+                            border: InputBorder.none,
+                            contentPadding: EdgeInsets.zero,
+                            isDense: true,
+                          ),
+                        ),
                 ),
               ],
             ),
@@ -395,6 +424,7 @@ class _EventEditFormState extends State<EventEditForm> {
         Divider(height: 1, color: c.border),
         _Footer(
           isEditing: widget.event != null,
+          readOnly: _readOnly,
           onSave: _submit,
           onClose: widget.onClose,
         ),
@@ -1202,6 +1232,81 @@ class _EndTypeDropdown extends StatelessWidget {
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
+class _LinkifiedText extends StatefulWidget {
+  const _LinkifiedText({required this.text, required this.style});
+  final String text;
+  final TextStyle style;
+
+  @override
+  State<_LinkifiedText> createState() => _LinkifiedTextState();
+}
+
+class _LinkifiedTextState extends State<_LinkifiedText> {
+  static final _urlPattern = RegExp(r'https?://[^\s<>"{}|\\^`\[\]]+');
+
+  final List<TapGestureRecognizer> _recognizers = [];
+
+  @override
+  void dispose() {
+    for (final r in _recognizers) {
+      r.dispose();
+    }
+    super.dispose();
+  }
+
+  List<InlineSpan> _buildSpans() {
+    for (final r in _recognizers) {
+      r.dispose();
+    }
+    _recognizers.clear();
+
+    final text = widget.text;
+    final spans = <InlineSpan>[];
+    int last = 0;
+
+    for (final match in _urlPattern.allMatches(text)) {
+      if (match.start > last) {
+        spans.add(TextSpan(
+          text: text.substring(last, match.start),
+          style: widget.style,
+        ));
+      }
+      final url = match.group(0)!;
+      final recognizer = TapGestureRecognizer()
+        ..onTap = () => launchUrl(
+              Uri.parse(url),
+              mode: LaunchMode.externalApplication,
+            );
+      _recognizers.add(recognizer);
+      spans.add(TextSpan(
+        text: url,
+        style: widget.style.copyWith(
+          color: AppColors.accent,
+          decoration: TextDecoration.underline,
+          decorationColor: AppColors.accent,
+        ),
+        recognizer: recognizer,
+      ));
+      last = match.end;
+    }
+
+    if (last < text.length) {
+      spans.add(TextSpan(
+        text: text.substring(last),
+        style: widget.style,
+      ));
+    }
+
+    return spans;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.text.isEmpty) return const SizedBox.shrink();
+    return SelectableText.rich(TextSpan(children: _buildSpans()));
+  }
+}
+
 class _LabeledField extends StatelessWidget {
   const _LabeledField({required this.label, required this.child});
   final String label;
@@ -1271,14 +1376,30 @@ class _Footer extends StatelessWidget {
     required this.isEditing,
     required this.onSave,
     required this.onClose,
+    this.readOnly = false,
   });
   final bool isEditing;
   final VoidCallback onSave;
   final VoidCallback onClose;
+  final bool readOnly;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    if (readOnly) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            TextButton(
+              onPressed: onClose,
+              child: Text('Close', style: TextStyle(color: c.textMuted, fontSize: 13)),
+            ),
+          ],
+        ),
+      );
+    }
     return BlocBuilder<EventEditBloc, EventEditState>(
       builder: (context, state) {
         final isSaving = state is EventEditSaving;

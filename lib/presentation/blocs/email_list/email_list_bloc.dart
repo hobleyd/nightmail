@@ -158,13 +158,24 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     final folderId = event.folderId ?? prior?.currentFolderId;
     final folderName = prior?.currentFolderName;
 
+    if (prior != null) {
+      emit(prior.copyWith(isLoadingFresh: true));
+    }
+
     final result = await _getEmails(GetEmailsParams(
       folderId: folderId,
       top: _pageSize,
     ));
 
     result.fold(
-      (failure) => emit(EmailListError(message: failure.message)),
+      (failure) {
+        final s = state;
+        if (s is EmailListLoaded) {
+          emit(s.copyWith(isLoadingFresh: false));
+        } else {
+          emit(EmailListError(message: failure.message));
+        }
+      },
       (emails) {
         emit(EmailListLoaded(
           emails: emails,

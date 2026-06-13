@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../../../core/error/exceptions.dart';
 import '../../../domain/entities/email.dart';
+import '../../../domain/entities/email_attachment.dart';
+import '../../../domain/entities/inline_attachment.dart';
 import '../../../infrastructure/accounts/account.dart';
 import '../../../infrastructure/auth/imap_credential_storage.dart';
 import '../../models/email_address_model.dart';
@@ -406,6 +408,9 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     String body = '';
     EmailBodyType bodyType = EmailBodyType.text;
 
+    List<EmailAttachment> attachments = const [];
+    List<InlineAttachment> inlineAttachments = const [];
+
     if (fullBody) {
       final html = msg.decodeTextHtmlPart();
       if (html != null && html.isNotEmpty) {
@@ -414,6 +419,34 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       } else {
         body = msg.decodeTextPlainPart() ?? '';
       }
+
+      attachments = msg
+          .findContentInfo(disposition: ContentDisposition.attachment)
+          .map((info) => EmailAttachment(
+                id: info.fetchId,
+                name: info.fileName ?? 'Attachment',
+                contentType:
+                    info.contentType?.mediaType.text ?? 'application/octet-stream',
+                size: info.size ?? 0,
+              ))
+          .toList();
+
+      final inlineResult = <InlineAttachment>[];
+      for (final info
+          in msg.findContentInfo(disposition: ContentDisposition.inline)) {
+        if (info.isText) continue;
+        final cid = info.cid;
+        if (cid == null || cid.isEmpty) continue;
+        final bytes = msg.getPart(info.fetchId)?.decodeContentBinary();
+        if (bytes == null) continue;
+        inlineResult.add(InlineAttachment(
+          contentId: cid,
+          contentType:
+              info.contentType?.mediaType.text ?? 'application/octet-stream',
+          contentBytes: bytes,
+        ));
+      }
+      inlineAttachments = inlineResult;
     }
 
     final fromAddresses = msg.from;
@@ -453,6 +486,8 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       conversationId: _normalizeSubject(msg.decodeSubject() ?? ''),
       parentFolderId: folderId,
       hasAttachments: msg.hasAttachments(),
+      attachments: attachments,
+      inlineAttachments: inlineAttachments,
     );
   }
 
@@ -743,7 +778,41 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
 
   @override
   Future<Uint8List> downloadAttachment(
-      String messageId, String attachmentId) {
-    throw UnimplementedError('Attachment download not supported for IMAP');
+      String messageId, String attachmentId) async {
+    final separatorIdx = messageId.lastIndexOf(':');
+    final mailboxPath =
+        separatorIdx > 0 ? messageId.substring(0, separatorIdx) : 'INBOX';
+    final uid = int.tryParse(messageId.substring(separatorIdx + 1)) ?? 0;
+
+    try {
+      final client = await _getConnectedClient();
+      await _selectMailboxPath(client, mailboxPath);
+
+      final sequence = MessageSequence.fromId(uid, isUid: true);
+      final fetchResult = await client.uidFetchMessages(
+        sequence,
+        'BODY.PEEK[]',
+      );
+
+      if (fetchResult.messages.isEmpty) {
+        throw ServerException(message: 'Message not found: $messageId');
+      }
+
+      final part = fetchResult.messages.first.getPart(attachmentId);
+      if (part == null) {
+        throw ServerException(message: 'Attachment not found: $attachmentId');
+      }
+
+      final bytes = part.decodeContentBinary();
+      if (bytes == null) {
+        throw ServerException(
+            message: 'Could not decode attachment: $attachmentId');
+      }
+      return bytes;
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    } on AuthException {
+      rethrow;
+    }
   }
 }

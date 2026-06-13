@@ -26,6 +26,8 @@ import '../../domain/usecases/send_email.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../../injection_container.dart';
+import '../blocs/calendar/calendar_bloc.dart';
+import '../blocs/calendar/calendar_event.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
 import '../blocs/email_detail/email_detail_event.dart';
 import '../blocs/email_detail/email_detail_state.dart';
@@ -373,6 +375,37 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
         _responded = response;
       }),
     );
+
+    if (result.isRight() && mounted) {
+      final calendarState = context.read<CalendarBloc>().state;
+      context.read<CalendarBloc>().add(
+            CalendarWeekLoadRequested(weekStart: calendarState.weekStart),
+          );
+
+      final email = widget.email;
+      final deleteResult =
+          await sl<DeleteEmail>()(DeleteEmailParams(id: email.id));
+      if (!mounted) return;
+      deleteResult.fold(
+        (_) {},
+        (_) {
+          context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+          context.read<HomeCubit>().clearEmail();
+          context
+              .read<EmailListBloc>()
+              .add(EmailListEmailDeleted(emailId: email.id));
+          if (email.parentFolderId != null) {
+            context.read<FolderListBloc>().add(
+                  FolderListUnreadCountChanged(
+                    folderId: email.parentFolderId!,
+                    unreadCountDelta: email.isRead ? 0 : -1,
+                    totalCountDelta: -1,
+                  ),
+                );
+          }
+        },
+      );
+    }
   }
 
   @override

@@ -5,6 +5,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/config/app_config.dart';
+import '../../core/config/oauth_credentials.dart';
+import '../../core/config/oauth_credentials_storage.dart';
 import '../../data/datasources/remote/caldav_calendar_datasource_impl.dart';
 import '../../data/datasources/remote/calendar_remote_datasource.dart';
 import '../../data/datasources/remote/email_remote_datasource.dart';
@@ -29,12 +31,17 @@ import 'account_storage.dart';
 
 class AccountManager {
   AccountManager({
-    required this._accountStorage,
-    required this._secureStorage,
-  });
+    required AccountStorage accountStorage,
+    required FlutterSecureStorage secureStorage,
+    required OAuthCredentialsStorage credentialsStorage,
+  })  : _accountStorage = accountStorage,
+        _secureStorage = secureStorage,
+        _credentialsStorage = credentialsStorage;
 
   final AccountStorage _accountStorage;
   final FlutterSecureStorage _secureStorage;
+  final OAuthCredentialsStorage _credentialsStorage;
+  OAuthCredentials? _oauthCredentials;
 
   List<Account> _accounts = [];
   int _activeIndex = 0;
@@ -66,6 +73,7 @@ class AccountManager {
 
   /// Load persisted accounts and run legacy token migration if needed.
   Future<void> initialize() async {
+    _oauthCredentials = await _credentialsStorage.load();
     _accounts = await _accountStorage.loadAccounts();
     if (_accounts.isEmpty) {
       await _migrateLegacyAccount();
@@ -223,9 +231,9 @@ class AccountManager {
           storageKey: 'token_${account.id}',
         );
         final authSvc = MicrosoftAuthService(
-          clientId: AppConfig.microsoftClientId,
+          clientId: _oauthCredentials?.microsoftClientId ?? AppConfig.microsoftClientId,
           tenantId: account.tenantId,
-          redirectUri: AppConfig.microsoftRedirectUri,
+          redirectUri: _oauthCredentials?.microsoftRedirectUri ?? AppConfig.microsoftRedirectUri,
           tokenStorage: tokenStorage,
         );
         return GraphApiDatasourceImpl(
@@ -237,8 +245,8 @@ class AccountManager {
           storageKey: 'token_${account.id}',
         );
         final authSvc = GmailAuthService(
-          clientId: AppConfig.gmailClientId,
-          redirectUri: AppConfig.gmailRedirectUri,
+          clientId: _oauthCredentials?.googleClientId ?? AppConfig.gmailClientId,
+          redirectUri: _oauthCredentials?.googleRedirectUri ?? AppConfig.gmailRedirectUri,
           tokenStorage: tokenStorage,
         );
         return GmailDatasourceImpl(
@@ -285,9 +293,9 @@ class AccountManager {
           storageKey: 'token_${account.id}',
         );
         final authSvc = MicrosoftAuthService(
-          clientId: AppConfig.microsoftClientId,
+          clientId: _oauthCredentials?.microsoftClientId ?? AppConfig.microsoftClientId,
           tenantId: account.tenantId,
-          redirectUri: AppConfig.microsoftRedirectUri,
+          redirectUri: _oauthCredentials?.microsoftRedirectUri ?? AppConfig.microsoftRedirectUri,
           tokenStorage: tokenStorage,
         );
         final httpClient = GraphHttpClient(authService: authSvc);
@@ -303,8 +311,8 @@ class AccountManager {
           storageKey: 'token_${account.id}',
         );
         final authSvc = GmailAuthService(
-          clientId: AppConfig.gmailClientId,
-          redirectUri: AppConfig.gmailRedirectUri,
+          clientId: _oauthCredentials?.googleClientId ?? AppConfig.gmailClientId,
+          redirectUri: _oauthCredentials?.googleRedirectUri ?? AppConfig.gmailRedirectUri,
           tokenStorage: tokenStorage,
         );
         final gmailClient = GmailHttpClient(authService: authSvc);

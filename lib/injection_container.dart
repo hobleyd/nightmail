@@ -8,6 +8,7 @@ import 'data/database/app_database.dart';
 import 'data/datasources/local/delta_token_datasource.dart';
 import 'data/datasources/local/email_local_datasource.dart';
 import 'data/datasources/local/email_local_datasource_impl.dart';
+import 'data/datasources/local/folder_local_datasource.dart';
 import 'data/datasources/local/sender_local_datasource.dart';
 import 'data/datasources/local/sender_local_datasource_impl.dart';
 import 'data/repositories/calendar_repository_impl.dart';
@@ -49,6 +50,7 @@ import 'domain/usecases/update_calendar_event.dart';
 import 'domain/usecases/update_task_due_date.dart';
 import 'domain/usecases/update_task_status.dart';
 import 'domain/usecases/get_cached_emails.dart';
+import 'domain/usecases/get_cached_folders.dart';
 import 'infrastructure/accounts/account_manager.dart';
 import 'infrastructure/accounts/account_storage.dart';
 import 'infrastructure/badge/badge_service.dart';
@@ -86,6 +88,7 @@ Future<void> configureDependencies() async {
     () => AccountManager(
       accountStorage: sl<AccountStorage>(),
       secureStorage: sl<FlutterSecureStorage>(),
+      credentialsStorage: sl<OAuthCredentialsStorage>(),
     ),
   );
 
@@ -98,6 +101,7 @@ Future<void> configureDependencies() async {
   // Data — local cache (drift opens the SQLite file lazily on first query)
   sl.registerLazySingleton<AppDatabase>(() => AppDatabase());
   sl.registerLazySingleton<DeltaTokenDatasource>(() => sl<AppDatabase>());
+  sl.registerLazySingleton<FolderLocalDatasource>(() => sl<AppDatabase>());
   sl.registerLazySingleton<EmailLocalDatasource>(
     () => EmailLocalDatasourceImpl(
       database: sl<AppDatabase>(),
@@ -113,6 +117,7 @@ Future<void> configureDependencies() async {
     () => EmailRepositoryImpl(
       accountManager: sl<AccountManager>(),
       localDatasource: sl<EmailLocalDatasource>(),
+      folderLocalDatasource: sl<FolderLocalDatasource>(),
     ),
   );
   sl.registerLazySingleton<SenderRepository>(
@@ -139,6 +144,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => EmptyFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => DownloadAttachment(sl<EmailRepository>()));
   sl.registerLazySingleton(() => GetCachedEmails(sl<EmailRepository>()));
+  sl.registerLazySingleton(() => GetCachedFolders(sl<EmailRepository>()));
   sl.registerLazySingleton(() => RecordKnownSenders(sl<SenderRepository>()));
   sl.registerLazySingleton(() => CheckSenderAnomaly(sl<SenderRepository>()));
   sl.registerLazySingleton(() => SearchContacts(
@@ -190,7 +196,11 @@ Future<void> configureDependencies() async {
 
   // Presentation — BLoC factories
   sl.registerFactory(
-    () => FolderListBloc(getMailFolders: sl<GetMailFolders>()),
+    () => FolderListBloc(
+      getMailFolders: sl<GetMailFolders>(),
+      getCachedFolders: sl<GetCachedFolders>(),
+      accountManager: sl<AccountManager>(),
+    ),
   );
   sl.registerFactory(() => EmailListBloc(
         getEmails: sl<GetEmails>(),

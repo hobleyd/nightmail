@@ -1,3 +1,6 @@
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -6,11 +9,14 @@ import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
 import '../../injection_container.dart';
 import '../../infrastructure/accounts/account.dart';
+import '../../infrastructure/accounts/account_manager.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/mail_poller/mail_poller_cubit.dart';
 import '../blocs/mail_poller/mail_poller_state.dart';
 import '../blocs/theme/theme_cubit.dart';
 import '../blocs/theme/theme_state.dart';
+
+bool get _isApplePlatform => !kIsWeb && (Platform.isMacOS || Platform.isIOS);
 
 enum SettingsSection {
   accounts('Accounts'),
@@ -351,6 +357,12 @@ class _AccountsSectionState extends State<_AccountsSection> {
   bool _useSsl = true;
   bool _smtpUseSsl = false;
 
+  // Nextcloud calendar (non-Apple platforms only)
+  late TextEditingController _caldavUrlController;
+  late TextEditingController _caldavUsernameController;
+  late TextEditingController _caldavPasswordController;
+  bool _nextcloudEnabled = false;
+
   @override
   void initState() {
     super.initState();
@@ -361,6 +373,9 @@ class _AccountsSectionState extends State<_AccountsSection> {
     _portController = TextEditingController();
     _smtpHostController = TextEditingController();
     _smtpPortController = TextEditingController();
+    _caldavUrlController = TextEditingController();
+    _caldavUsernameController = TextEditingController();
+    _caldavPasswordController = TextEditingController();
   }
 
   @override
@@ -372,6 +387,9 @@ class _AccountsSectionState extends State<_AccountsSection> {
     _portController.dispose();
     _smtpHostController.dispose();
     _smtpPortController.dispose();
+    _caldavUrlController.dispose();
+    _caldavUsernameController.dispose();
+    _caldavPasswordController.dispose();
     super.dispose();
   }
 
@@ -387,7 +405,18 @@ class _AccountsSectionState extends State<_AccountsSection> {
       _smtpHostController.text = account.smtpHost;
       _smtpPortController.text = account.smtpPort.toString();
       _smtpUseSsl = account.smtpUseSsl;
+      final caldav = account.nextcloudCalendarConfig;
+      _nextcloudEnabled = caldav != null;
+      _caldavUrlController.text = caldav?.serverUrl ?? '';
+      _caldavUsernameController.text = caldav?.username ?? '';
+      _caldavPasswordController.text = '';
     }
+  }
+
+  void _loadCalDavPassword(String accountId) {
+    sl<AccountManager>().loadCalDavPassword(accountId).then((p) {
+      if (mounted) setState(() => _caldavPasswordController.text = p ?? '');
+    });
   }
 
   void _confirmDeleteAccount(BuildContext context) {
@@ -428,6 +457,15 @@ class _AccountsSectionState extends State<_AccountsSection> {
   void _saveChanges() {
     if (_selectedAccount == null) return;
 
+    NextcloudCalendarConfig? caldavConfig;
+    if (_selectedAccount is ImapAccount && !_isApplePlatform && _nextcloudEnabled) {
+      final url = _caldavUrlController.text.trim();
+      final user = _caldavUsernameController.text.trim();
+      if (url.isNotEmpty && user.isNotEmpty) {
+        caldavConfig = NextcloudCalendarConfig(serverUrl: url, username: user);
+      }
+    }
+
     final updated = switch (_selectedAccount!) {
       MicrosoftAccount a => a.copyWith(
           displayName: _nameController.text,
@@ -447,8 +485,20 @@ class _AccountsSectionState extends State<_AccountsSection> {
           smtpHost: _smtpHostController.text,
           smtpPort: int.tryParse(_smtpPortController.text) ?? a.smtpPort,
           smtpUseSsl: _smtpUseSsl,
+          nextcloudCalendarConfig: _isApplePlatform ? a.nextcloudCalendarConfig : caldavConfig,
         ),
     };
+
+    // Persist CalDAV password if provided
+    if (updated is ImapAccount && !_isApplePlatform) {
+      final pw = _caldavPasswordController.text;
+      if (pw.isNotEmpty) {
+        sl<AccountManager>().saveCalDavPassword(updated.id, pw);
+      } else if (!_nextcloudEnabled) {
+        // Cleared — remove stored password
+        sl<AccountManager>().saveCalDavPassword(updated.id, '');
+      }
+    }
 
     context.read<AccountCubit>().updateAccount(updated);
     setState(() {
@@ -610,6 +660,56 @@ class _AccountsSectionState extends State<_AccountsSection> {
                           onChanged: (val) => setState(() => _smtpUseSsl = val),
                           editingValue: _smtpUseSsl,
                         ),
+                        _SectionSubheader(label: 'Calendar'),
+                        if (_isApplePlatform)
+                          _AccountDetailRow(
+                            label: 'Source',
+                            value: 'System Calendar (EventKit)',
+                          )
+                        else ...[
+                          _SslRow(
+                            label: 'Nextcloud',
+                            value: (_selectedAccount as ImapAccount)
+                                    .nextcloudCalendarConfig !=
+                                null,
+                            isEditing: _isEditing,
+                            editingValue: _nextcloudEnabled,
+                            onChanged: (val) =>
+                                setState(() => _nextcloudEnabled = val),
+                          ),
+                          if (_isEditing && _nextcloudEnabled ||
+                              !_isEditing &&
+                                  (_selectedAccount as ImapAccount)
+                                          .nextcloudCalendarConfig !=
+                                      null) ...[
+                            _AccountDetailRow(
+                              label: 'Server URL',
+                              value: (_selectedAccount as ImapAccount)
+                                      .nextcloudCalendarConfig
+                                      ?.serverUrl ??
+                                  '',
+                              isEditing: _isEditing,
+                              controller: _caldavUrlController,
+                            ),
+                            _AccountDetailRow(
+                              label: 'Username',
+                              value: (_selectedAccount as ImapAccount)
+                                      .nextcloudCalendarConfig
+                                      ?.username ??
+                                  '',
+                              isEditing: _isEditing,
+                              controller: _caldavUsernameController,
+                            ),
+                            if (_isEditing)
+                              _AccountDetailRow(
+                                label: 'Password',
+                                value: '',
+                                isEditing: true,
+                                controller: _caldavPasswordController,
+                                obscureText: true,
+                              ),
+                          ],
+                        ],
                       ],
                     ],
                   ),
@@ -637,6 +737,9 @@ class _AccountsSectionState extends State<_AccountsSection> {
                         _isEditing = true;
                         _syncControllers(_selectedAccount!);
                       });
+                      if (_selectedAccount is ImapAccount && !_isApplePlatform) {
+                        _loadCalDavPassword(_selectedAccount!.id);
+                      }
                     }
                   },
                   style: ElevatedButton.styleFrom(
@@ -888,6 +991,7 @@ class _AccountDetailRow extends StatelessWidget {
     this.isEditing = false,
     this.controller,
     this.keyboardType,
+    this.obscureText = false,
   });
 
   final String label;
@@ -895,6 +999,7 @@ class _AccountDetailRow extends StatelessWidget {
   final bool isEditing;
   final TextEditingController? controller;
   final TextInputType? keyboardType;
+  final bool obscureText;
 
   @override
   Widget build(BuildContext context) {
@@ -921,6 +1026,7 @@ class _AccountDetailRow extends StatelessWidget {
                     child: TextField(
                       controller: controller,
                       keyboardType: keyboardType,
+                      obscureText: obscureText,
                       style: TextStyle(
                         color: c.textSecondary,
                         fontSize: 13,

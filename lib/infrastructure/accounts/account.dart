@@ -1,5 +1,37 @@
 import 'package:equatable/equatable.dart';
 
+class NextcloudCalendarConfig extends Equatable {
+  const NextcloudCalendarConfig({
+    required this.serverUrl,
+    required this.username,
+  });
+
+  final String serverUrl;
+  final String username;
+
+  NextcloudCalendarConfig copyWith({String? serverUrl, String? username}) {
+    return NextcloudCalendarConfig(
+      serverUrl: serverUrl ?? this.serverUrl,
+      username: username ?? this.username,
+    );
+  }
+
+  factory NextcloudCalendarConfig.fromJson(Map<String, dynamic> json) {
+    return NextcloudCalendarConfig(
+      serverUrl: json['serverUrl'] as String,
+      username: json['username'] as String,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'serverUrl': serverUrl,
+        'username': username,
+      };
+
+  @override
+  List<Object?> get props => [serverUrl, username];
+}
+
 sealed class Account extends Equatable {
   const Account({
     required this.id,
@@ -124,6 +156,7 @@ final class ImapAccount extends Account {
     required this.smtpHost,
     required this.smtpPort,
     required this.smtpUseSsl,
+    this.nextcloudCalendarConfig,
   });
 
   final String host;
@@ -132,6 +165,7 @@ final class ImapAccount extends Account {
   final String smtpHost;
   final int smtpPort;
   final bool smtpUseSsl;
+  final NextcloudCalendarConfig? nextcloudCalendarConfig;
 
   @override
   ImapAccount copyWith({
@@ -143,6 +177,7 @@ final class ImapAccount extends Account {
     String? smtpHost,
     int? smtpPort,
     bool? smtpUseSsl,
+    Object? nextcloudCalendarConfig = _sentinel,
   }) {
     return ImapAccount(
       id: id,
@@ -154,11 +189,16 @@ final class ImapAccount extends Account {
       smtpHost: smtpHost ?? this.smtpHost,
       smtpPort: smtpPort ?? this.smtpPort,
       smtpUseSsl: smtpUseSsl ?? this.smtpUseSsl,
+      nextcloudCalendarConfig: nextcloudCalendarConfig == _sentinel
+          ? this.nextcloudCalendarConfig
+          : nextcloudCalendarConfig as NextcloudCalendarConfig?,
     );
   }
 
   factory ImapAccount.fromJson(Map<String, dynamic> json) {
     final imapHost = json['host'] as String;
+    final calendarJson =
+        json['nextcloudCalendarConfig'] as Map<String, dynamic>?;
     return ImapAccount(
       id: json['id'] as String,
       displayName: json['displayName'] as String,
@@ -169,6 +209,9 @@ final class ImapAccount extends Account {
       smtpHost: json['smtpHost'] as String? ?? imapHost,
       smtpPort: json['smtpPort'] as int? ?? 587,
       smtpUseSsl: json['smtpUseSsl'] as bool? ?? false,
+      nextcloudCalendarConfig: calendarJson != null
+          ? NextcloudCalendarConfig.fromJson(calendarJson)
+          : null,
     );
   }
 
@@ -184,6 +227,8 @@ final class ImapAccount extends Account {
         'smtpHost': smtpHost,
         'smtpPort': smtpPort,
         'smtpUseSsl': smtpUseSsl,
+        if (nextcloudCalendarConfig != null)
+          'nextcloudCalendarConfig': nextcloudCalendarConfig!.toJson(),
       };
 
   @override
@@ -197,5 +242,9 @@ final class ImapAccount extends Account {
         smtpHost,
         smtpPort,
         smtpUseSsl,
+        nextcloudCalendarConfig,
       ];
 }
+
+// Sentinel for distinguishing "not passed" from "explicitly null" in copyWith.
+const _sentinel = Object();

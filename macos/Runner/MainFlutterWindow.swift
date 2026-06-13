@@ -1,5 +1,6 @@
 import Cocoa
 import Contacts
+import EventKit
 import FlutterMacOS
 import desktop_multi_window
 
@@ -12,6 +13,7 @@ class MainFlutterWindow: NSWindow {
   private var allChannels: [FlutterMethodChannel] = []
   private var calendarNotifyChannels: [FlutterMethodChannel] = []
   private var badgeChannel: FlutterMethodChannel?
+  private let eventStore = EKEventStore()
 
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
@@ -21,6 +23,7 @@ class MainFlutterWindow: NSWindow {
 
     RegisterGeneratedPlugins(registry: flutterViewController)
     registerContactsChannel(messenger: flutterViewController.engine.binaryMessenger)
+    registerEventKitChannel(messenger: flutterViewController.engine.binaryMessenger)
 
     // Register the main window's calendar refresh channel for broadcasting eventSaved into Flutter.
     let mainCalendarChannel = FlutterMethodChannel(
@@ -34,6 +37,7 @@ class MainFlutterWindow: NSWindow {
     FlutterMultiWindowPlugin.setOnWindowCreatedCallback { [weak self] controller in
       RegisterGeneratedPlugins(registry: controller)
       self?.registerContactsChannel(messenger: controller.engine.binaryMessenger)
+      self?.registerEventKitChannel(messenger: controller.engine.binaryMessenger)
       self?.registerCalendarRefreshRelay(messenger: controller.engine.binaryMessenger)
     }
 
@@ -72,6 +76,173 @@ class MainFlutterWindow: NSWindow {
     }
     calendarNotifyChannels.append(channel)
     allChannels.append(channel)
+  }
+
+  // MARK: - EventKit channel
+
+  private func registerEventKitChannel(messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(
+      name: "au.com.sharpblue.nightmail/eventkit",
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { [weak self] call, result in
+      guard let self else { result(FlutterMethodNotImplemented); return }
+      switch call.method {
+      case "requestPermission":
+        self.handleEventKitRequestPermission(result: result)
+      case "getEvents":
+        let args = call.arguments as? [String: Any] ?? [:]
+        let startMs = (args["startMs"] as? NSNumber)?.int64Value ?? 0
+        let endMs = (args["endMs"] as? NSNumber)?.int64Value ?? 0
+        self.handleGetEvents(startMs: startMs, endMs: endMs, result: result)
+      case "createEvent":
+        let args = call.arguments as? [String: Any] ?? [:]
+        self.handleCreateEvent(args: args, result: result)
+      case "updateEvent":
+        let args = call.arguments as? [String: Any] ?? [:]
+        self.handleUpdateEvent(args: args, result: result)
+      case "deleteEvent":
+        let id = (call.arguments as? [String: Any])?["id"] as? String ?? ""
+        self.handleDeleteEvent(id: id, result: result)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    allChannels.append(channel)
+  }
+
+  private func handleEventKitRequestPermission(result: @escaping FlutterResult) {
+    let status = EKEventStore.authorizationStatus(for: .event)
+    switch status {
+    case .authorized:
+      result("granted")
+      return
+    case .denied, .restricted:
+      result("permanentlyDenied")
+      return
+    default:
+      break
+    }
+
+    NSApp.activate(ignoringOtherApps: true)
+
+    if #available(macOS 14.0, *) {
+      eventStore.requestFullAccessToEvents { granted, _ in
+        DispatchQueue.main.async { result(granted ? "granted" : "denied") }
+      }
+    } else {
+      eventStore.requestAccess(to: .event) { granted, _ in
+        DispatchQueue.main.async { result(granted ? "granted" : "denied") }
+      }
+    }
+  }
+
+  private func handleGetEvents(startMs: Int64, endMs: Int64, result: @escaping FlutterResult) {
+    guard EKEventStore.authorizationStatus(for: .event) == .authorized else {
+      result([])
+      return
+    }
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      guard let self else { result([]); return }
+      let start = Date(timeIntervalSince1970: Double(startMs) / 1000.0)
+      let end   = Date(timeIntervalSince1970: Double(endMs)   / 1000.0)
+      let predicate = self.eventStore.predicateForEvents(
+        withStart: start, end: end,
+        calendars: self.eventStore.calendars(for: .event)
+      )
+      let events = self.eventStore.events(matching: predicate)
+      let maps: [[String: Any]] = events.compactMap { e in
+        guard let eid = e.eventIdentifier else { return nil }
+        var m: [String: Any] = [
+          "id":      eid,
+          "title":   e.title ?? "",
+          "startMs": Int64(e.startDate.timeIntervalSince1970 * 1000),
+          "endMs":   Int64(e.endDate.timeIntervalSince1970   * 1000),
+          "isAllDay": e.isAllDay,
+        ]
+        if let loc = e.location, !loc.isEmpty  { m["location"] = loc }
+        if let notes = e.notes, !notes.isEmpty { m["notes"]    = notes }
+        return m
+      }
+      DispatchQueue.main.async { result(maps) }
+    }
+  }
+
+  private func handleCreateEvent(args: [String: Any], result: @escaping FlutterResult) {
+    guard EKEventStore.authorizationStatus(for: .event) == .authorized else {
+      result(FlutterError(code: "PERMISSION_DENIED", message: "Calendar access not granted", details: nil))
+      return
+    }
+    guard let defaultCalendar = eventStore.defaultCalendarForNewEvents else {
+      result(FlutterError(code: "NO_CALENDAR", message: "No default calendar found", details: nil))
+      return
+    }
+    let event = EKEvent(eventStore: eventStore)
+    event.title    = args["title"]    as? String ?? ""
+    event.isAllDay = args["isAllDay"] as? Bool   ?? false
+    event.location = args["location"] as? String
+    event.notes    = args["notes"]    as? String
+    let startMs = (args["startMs"] as? NSNumber)?.int64Value ?? 0
+    let endMs   = (args["endMs"]   as? NSNumber)?.int64Value ?? 0
+    event.startDate = Date(timeIntervalSince1970: Double(startMs) / 1000.0)
+    event.endDate   = Date(timeIntervalSince1970: Double(endMs)   / 1000.0)
+    event.calendar  = defaultCalendar
+    do {
+      try eventStore.save(event, span: .thisEvent)
+      result(self.eventMap(event))
+    } catch {
+      result(FlutterError(code: "SAVE_ERROR", message: error.localizedDescription, details: nil))
+    }
+  }
+
+  private func handleUpdateEvent(args: [String: Any], result: @escaping FlutterResult) {
+    let id = args["id"] as? String ?? ""
+    guard let event = eventStore.event(withIdentifier: id) else {
+      result(FlutterError(code: "NOT_FOUND", message: "Event not found: \(id)", details: nil))
+      return
+    }
+    event.title    = args["title"]    as? String ?? event.title
+    event.isAllDay = args["isAllDay"] as? Bool   ?? event.isAllDay
+    event.location = args["location"] as? String
+    event.notes    = args["notes"]    as? String
+    if let startMs = (args["startMs"] as? NSNumber)?.int64Value {
+      event.startDate = Date(timeIntervalSince1970: Double(startMs) / 1000.0)
+    }
+    if let endMs = (args["endMs"] as? NSNumber)?.int64Value {
+      event.endDate = Date(timeIntervalSince1970: Double(endMs) / 1000.0)
+    }
+    do {
+      try eventStore.save(event, span: .thisEvent)
+      result(self.eventMap(event))
+    } catch {
+      result(FlutterError(code: "SAVE_ERROR", message: error.localizedDescription, details: nil))
+    }
+  }
+
+  private func handleDeleteEvent(id: String, result: @escaping FlutterResult) {
+    guard let event = eventStore.event(withIdentifier: id) else {
+      result(nil)  // already gone
+      return
+    }
+    do {
+      try eventStore.remove(event, span: .thisEvent)
+      result(nil)
+    } catch {
+      result(FlutterError(code: "DELETE_ERROR", message: error.localizedDescription, details: nil))
+    }
+  }
+
+  private func eventMap(_ e: EKEvent) -> [String: Any] {
+    var m: [String: Any] = [
+      "id":       e.eventIdentifier as Any,
+      "title":    e.title           as Any,
+      "startMs":  Int64(e.startDate.timeIntervalSince1970 * 1000),
+      "endMs":    Int64(e.endDate.timeIntervalSince1970   * 1000),
+      "isAllDay": e.isAllDay,
+    ]
+    if let loc   = e.location, !loc.isEmpty   { m["location"] = loc }
+    if let notes = e.notes,    !notes.isEmpty { m["notes"]    = notes }
+    return m
   }
 
   // MARK: - Contacts channel

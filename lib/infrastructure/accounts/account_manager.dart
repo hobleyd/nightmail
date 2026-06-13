@@ -1,15 +1,21 @@
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/config/app_config.dart';
+import '../../data/datasources/remote/caldav_calendar_datasource_impl.dart';
 import '../../data/datasources/remote/calendar_remote_datasource.dart';
 import '../../data/datasources/remote/email_remote_datasource.dart';
+import '../../data/datasources/remote/eventkit_calendar_datasource_impl.dart';
 import '../../data/datasources/remote/gmail_datasource_impl.dart';
 import '../../data/datasources/remote/google_calendar_datasource_impl.dart';
 import '../../data/datasources/remote/graph_api_datasource_impl.dart';
 import '../../data/datasources/remote/imap_datasource_impl.dart';
 import '../../data/datasources/remote/tasks_remote_datasource.dart';
 import '../auth/auth_service.dart';
+import '../auth/caldav_credential_storage.dart';
 import '../auth/gmail_auth_service.dart';
 import '../auth/imap_auth_service.dart';
 import '../auth/imap_credential_storage.dart';
@@ -319,8 +325,35 @@ class AccountManager {
           account: account,
           credentialStorage: credStorage,
         );
-        _calendarDatasource = null;
         _tasksDatasource = null;
+        _calendarDatasource = _buildImapCalendarDatasource(account);
+    }
+  }
+
+  CalendarRemoteDatasource? _buildImapCalendarDatasource(ImapAccount account) {
+    if (!kIsWeb && (Platform.isMacOS || Platform.isIOS)) {
+      return EventKitCalendarDatasourceImpl();
+    }
+    final config = account.nextcloudCalendarConfig;
+    if (config == null) return null;
+    final caldavCreds = CalDavCredentialStorage(_secureStorage);
+    return CalDavCalendarDatasourceImpl(
+      serverUrl: config.serverUrl,
+      username: config.username,
+      passwordProvider: () => caldavCreds.loadPassword(account.id),
+    );
+  }
+
+  Future<String?> loadCalDavPassword(String accountId) async {
+    final credStorage = CalDavCredentialStorage(_secureStorage);
+    return credStorage.loadPassword(accountId);
+  }
+
+  Future<void> saveCalDavPassword(String accountId, String password) async {
+    final credStorage = CalDavCredentialStorage(_secureStorage);
+    await credStorage.savePassword(accountId, password);
+    if (activeAccount?.id == accountId) {
+      _buildDatasourcesForActiveAccount();
     }
   }
 
@@ -352,6 +385,8 @@ class AccountManager {
       case ImapAccount():
         final credStorage = ImapCredentialStorage(_secureStorage);
         await credStorage.deletePassword(account.id);
+        final caldavCreds = CalDavCredentialStorage(_secureStorage);
+        await caldavCreds.deletePassword(account.id);
     }
   }
 

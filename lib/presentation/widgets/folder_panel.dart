@@ -815,6 +815,10 @@ class _SettingsFooter extends StatelessWidget {
                 if (newState is AccountsLoaded) {
                   homeCubit.setAccountLabel(newState.activeAccount.displayName);
 
+                  emailListBloc.add(const EmailListCleared());
+                  emailDetailBloc.add(const EmailDetailCleared());
+                  homeCubit.clearEmail();
+
                   final savedFolder = homeCubit
                       .savedFolderForAccount(newState.activeAccount.id);
                   if (savedFolder != null) {
@@ -826,7 +830,6 @@ class _SettingsFooter extends StatelessWidget {
                   }
 
                   folderBloc.add(const FolderListLoadRequested());
-                  emailDetailBloc.add(const EmailDetailCleared());
                 }
               }
             },

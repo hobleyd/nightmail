@@ -45,6 +45,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     on<EmailListEmailDeleted>(_onEmailDeleted);
     on<EmailListEmailsBulkDeleted>(_onEmailsBulkDeleted);
     on<EmailListFolderEmptied>(_onFolderEmptied);
+    on<EmailListCleared>(_onCleared);
   }
 
   final GetEmails _getEmails;
@@ -299,6 +300,13 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         emptyingFolderIds: after.emptyingFolderIds.difference({event.folderId}),
       ));
     }
+  }
+
+  void _onCleared(
+    EmailListCleared event,
+    Emitter<EmailListState> emit,
+  ) {
+    emit(const EmailListInitial());
   }
 
   void _recordSenders(List<Email> emails, String? folderName) {

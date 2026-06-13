@@ -75,6 +75,10 @@ abstract interface class EmailRepository {
     required String attachmentId,
   });
 
+  /// Returns locally cached folder list for [accountId].
+  /// Returns an empty list when no cache exists — never fails on cache absence.
+  Future<Either<Failure, List<EmailFolder>>> getCachedFolders(String accountId);
+
   /// Returns locally cached emails for [accountId]/[folderId].
   /// Returns an empty list when no cache exists — never fails on cache absence.
   Future<Either<Failure, List<Email>>> getCachedEmails({

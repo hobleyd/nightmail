@@ -1133,6 +1133,554 @@ class DeltaSyncTokensCompanion extends UpdateCompanion<DeltaSyncToken> {
   }
 }
 
+class $CachedFoldersTable extends CachedFolders
+    with TableInfo<$CachedFoldersTable, CachedFolder> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $CachedFoldersTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _accountIdMeta = const VerificationMeta(
+    'accountId',
+  );
+  @override
+  late final GeneratedColumn<String> accountId = GeneratedColumn<String>(
+    'account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _folderIdMeta = const VerificationMeta(
+    'folderId',
+  );
+  @override
+  late final GeneratedColumn<String> folderId = GeneratedColumn<String>(
+    'folder_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _displayNameMeta = const VerificationMeta(
+    'displayName',
+  );
+  @override
+  late final GeneratedColumn<String> displayName = GeneratedColumn<String>(
+    'display_name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _totalItemCountMeta = const VerificationMeta(
+    'totalItemCount',
+  );
+  @override
+  late final GeneratedColumn<int> totalItemCount = GeneratedColumn<int>(
+    'total_item_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _unreadItemCountMeta = const VerificationMeta(
+    'unreadItemCount',
+  );
+  @override
+  late final GeneratedColumn<int> unreadItemCount = GeneratedColumn<int>(
+    'unread_item_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _parentFolderIdMeta = const VerificationMeta(
+    'parentFolderId',
+  );
+  @override
+  late final GeneratedColumn<String> parentFolderId = GeneratedColumn<String>(
+    'parent_folder_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _isHiddenMeta = const VerificationMeta(
+    'isHidden',
+  );
+  @override
+  late final GeneratedColumn<bool> isHidden = GeneratedColumn<bool>(
+    'is_hidden',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_hidden" IN (0, 1))',
+    ),
+  );
+  static const VerificationMeta _childFolderCountMeta = const VerificationMeta(
+    'childFolderCount',
+  );
+  @override
+  late final GeneratedColumn<int> childFolderCount = GeneratedColumn<int>(
+    'child_folder_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    accountId,
+    folderId,
+    displayName,
+    totalItemCount,
+    unreadItemCount,
+    parentFolderId,
+    isHidden,
+    childFolderCount,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'cached_folders';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<CachedFolder> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('account_id')) {
+      context.handle(
+        _accountIdMeta,
+        accountId.isAcceptableOrUnknown(data['account_id']!, _accountIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_accountIdMeta);
+    }
+    if (data.containsKey('folder_id')) {
+      context.handle(
+        _folderIdMeta,
+        folderId.isAcceptableOrUnknown(data['folder_id']!, _folderIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_folderIdMeta);
+    }
+    if (data.containsKey('display_name')) {
+      context.handle(
+        _displayNameMeta,
+        displayName.isAcceptableOrUnknown(
+          data['display_name']!,
+          _displayNameMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_displayNameMeta);
+    }
+    if (data.containsKey('total_item_count')) {
+      context.handle(
+        _totalItemCountMeta,
+        totalItemCount.isAcceptableOrUnknown(
+          data['total_item_count']!,
+          _totalItemCountMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_totalItemCountMeta);
+    }
+    if (data.containsKey('unread_item_count')) {
+      context.handle(
+        _unreadItemCountMeta,
+        unreadItemCount.isAcceptableOrUnknown(
+          data['unread_item_count']!,
+          _unreadItemCountMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_unreadItemCountMeta);
+    }
+    if (data.containsKey('parent_folder_id')) {
+      context.handle(
+        _parentFolderIdMeta,
+        parentFolderId.isAcceptableOrUnknown(
+          data['parent_folder_id']!,
+          _parentFolderIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('is_hidden')) {
+      context.handle(
+        _isHiddenMeta,
+        isHidden.isAcceptableOrUnknown(data['is_hidden']!, _isHiddenMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_isHiddenMeta);
+    }
+    if (data.containsKey('child_folder_count')) {
+      context.handle(
+        _childFolderCountMeta,
+        childFolderCount.isAcceptableOrUnknown(
+          data['child_folder_count']!,
+          _childFolderCountMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_childFolderCountMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {accountId, folderId};
+  @override
+  CachedFolder map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return CachedFolder(
+      accountId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}account_id'],
+      )!,
+      folderId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}folder_id'],
+      )!,
+      displayName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}display_name'],
+      )!,
+      totalItemCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}total_item_count'],
+      )!,
+      unreadItemCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}unread_item_count'],
+      )!,
+      parentFolderId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}parent_folder_id'],
+      ),
+      isHidden: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_hidden'],
+      )!,
+      childFolderCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}child_folder_count'],
+      )!,
+    );
+  }
+
+  @override
+  $CachedFoldersTable createAlias(String alias) {
+    return $CachedFoldersTable(attachedDatabase, alias);
+  }
+}
+
+class CachedFolder extends DataClass implements Insertable<CachedFolder> {
+  final String accountId;
+  final String folderId;
+  final String displayName;
+  final int totalItemCount;
+  final int unreadItemCount;
+  final String? parentFolderId;
+  final bool isHidden;
+  final int childFolderCount;
+  const CachedFolder({
+    required this.accountId,
+    required this.folderId,
+    required this.displayName,
+    required this.totalItemCount,
+    required this.unreadItemCount,
+    this.parentFolderId,
+    required this.isHidden,
+    required this.childFolderCount,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['account_id'] = Variable<String>(accountId);
+    map['folder_id'] = Variable<String>(folderId);
+    map['display_name'] = Variable<String>(displayName);
+    map['total_item_count'] = Variable<int>(totalItemCount);
+    map['unread_item_count'] = Variable<int>(unreadItemCount);
+    if (!nullToAbsent || parentFolderId != null) {
+      map['parent_folder_id'] = Variable<String>(parentFolderId);
+    }
+    map['is_hidden'] = Variable<bool>(isHidden);
+    map['child_folder_count'] = Variable<int>(childFolderCount);
+    return map;
+  }
+
+  CachedFoldersCompanion toCompanion(bool nullToAbsent) {
+    return CachedFoldersCompanion(
+      accountId: Value(accountId),
+      folderId: Value(folderId),
+      displayName: Value(displayName),
+      totalItemCount: Value(totalItemCount),
+      unreadItemCount: Value(unreadItemCount),
+      parentFolderId: parentFolderId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(parentFolderId),
+      isHidden: Value(isHidden),
+      childFolderCount: Value(childFolderCount),
+    );
+  }
+
+  factory CachedFolder.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return CachedFolder(
+      accountId: serializer.fromJson<String>(json['accountId']),
+      folderId: serializer.fromJson<String>(json['folderId']),
+      displayName: serializer.fromJson<String>(json['displayName']),
+      totalItemCount: serializer.fromJson<int>(json['totalItemCount']),
+      unreadItemCount: serializer.fromJson<int>(json['unreadItemCount']),
+      parentFolderId: serializer.fromJson<String?>(json['parentFolderId']),
+      isHidden: serializer.fromJson<bool>(json['isHidden']),
+      childFolderCount: serializer.fromJson<int>(json['childFolderCount']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'accountId': serializer.toJson<String>(accountId),
+      'folderId': serializer.toJson<String>(folderId),
+      'displayName': serializer.toJson<String>(displayName),
+      'totalItemCount': serializer.toJson<int>(totalItemCount),
+      'unreadItemCount': serializer.toJson<int>(unreadItemCount),
+      'parentFolderId': serializer.toJson<String?>(parentFolderId),
+      'isHidden': serializer.toJson<bool>(isHidden),
+      'childFolderCount': serializer.toJson<int>(childFolderCount),
+    };
+  }
+
+  CachedFolder copyWith({
+    String? accountId,
+    String? folderId,
+    String? displayName,
+    int? totalItemCount,
+    int? unreadItemCount,
+    Value<String?> parentFolderId = const Value.absent(),
+    bool? isHidden,
+    int? childFolderCount,
+  }) => CachedFolder(
+    accountId: accountId ?? this.accountId,
+    folderId: folderId ?? this.folderId,
+    displayName: displayName ?? this.displayName,
+    totalItemCount: totalItemCount ?? this.totalItemCount,
+    unreadItemCount: unreadItemCount ?? this.unreadItemCount,
+    parentFolderId: parentFolderId.present
+        ? parentFolderId.value
+        : this.parentFolderId,
+    isHidden: isHidden ?? this.isHidden,
+    childFolderCount: childFolderCount ?? this.childFolderCount,
+  );
+  CachedFolder copyWithCompanion(CachedFoldersCompanion data) {
+    return CachedFolder(
+      accountId: data.accountId.present ? data.accountId.value : this.accountId,
+      folderId: data.folderId.present ? data.folderId.value : this.folderId,
+      displayName: data.displayName.present
+          ? data.displayName.value
+          : this.displayName,
+      totalItemCount: data.totalItemCount.present
+          ? data.totalItemCount.value
+          : this.totalItemCount,
+      unreadItemCount: data.unreadItemCount.present
+          ? data.unreadItemCount.value
+          : this.unreadItemCount,
+      parentFolderId: data.parentFolderId.present
+          ? data.parentFolderId.value
+          : this.parentFolderId,
+      isHidden: data.isHidden.present ? data.isHidden.value : this.isHidden,
+      childFolderCount: data.childFolderCount.present
+          ? data.childFolderCount.value
+          : this.childFolderCount,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CachedFolder(')
+          ..write('accountId: $accountId, ')
+          ..write('folderId: $folderId, ')
+          ..write('displayName: $displayName, ')
+          ..write('totalItemCount: $totalItemCount, ')
+          ..write('unreadItemCount: $unreadItemCount, ')
+          ..write('parentFolderId: $parentFolderId, ')
+          ..write('isHidden: $isHidden, ')
+          ..write('childFolderCount: $childFolderCount')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    accountId,
+    folderId,
+    displayName,
+    totalItemCount,
+    unreadItemCount,
+    parentFolderId,
+    isHidden,
+    childFolderCount,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is CachedFolder &&
+          other.accountId == this.accountId &&
+          other.folderId == this.folderId &&
+          other.displayName == this.displayName &&
+          other.totalItemCount == this.totalItemCount &&
+          other.unreadItemCount == this.unreadItemCount &&
+          other.parentFolderId == this.parentFolderId &&
+          other.isHidden == this.isHidden &&
+          other.childFolderCount == this.childFolderCount);
+}
+
+class CachedFoldersCompanion extends UpdateCompanion<CachedFolder> {
+  final Value<String> accountId;
+  final Value<String> folderId;
+  final Value<String> displayName;
+  final Value<int> totalItemCount;
+  final Value<int> unreadItemCount;
+  final Value<String?> parentFolderId;
+  final Value<bool> isHidden;
+  final Value<int> childFolderCount;
+  final Value<int> rowid;
+  const CachedFoldersCompanion({
+    this.accountId = const Value.absent(),
+    this.folderId = const Value.absent(),
+    this.displayName = const Value.absent(),
+    this.totalItemCount = const Value.absent(),
+    this.unreadItemCount = const Value.absent(),
+    this.parentFolderId = const Value.absent(),
+    this.isHidden = const Value.absent(),
+    this.childFolderCount = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  CachedFoldersCompanion.insert({
+    required String accountId,
+    required String folderId,
+    required String displayName,
+    required int totalItemCount,
+    required int unreadItemCount,
+    this.parentFolderId = const Value.absent(),
+    required bool isHidden,
+    required int childFolderCount,
+    this.rowid = const Value.absent(),
+  }) : accountId = Value(accountId),
+       folderId = Value(folderId),
+       displayName = Value(displayName),
+       totalItemCount = Value(totalItemCount),
+       unreadItemCount = Value(unreadItemCount),
+       isHidden = Value(isHidden),
+       childFolderCount = Value(childFolderCount);
+  static Insertable<CachedFolder> custom({
+    Expression<String>? accountId,
+    Expression<String>? folderId,
+    Expression<String>? displayName,
+    Expression<int>? totalItemCount,
+    Expression<int>? unreadItemCount,
+    Expression<String>? parentFolderId,
+    Expression<bool>? isHidden,
+    Expression<int>? childFolderCount,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (accountId != null) 'account_id': accountId,
+      if (folderId != null) 'folder_id': folderId,
+      if (displayName != null) 'display_name': displayName,
+      if (totalItemCount != null) 'total_item_count': totalItemCount,
+      if (unreadItemCount != null) 'unread_item_count': unreadItemCount,
+      if (parentFolderId != null) 'parent_folder_id': parentFolderId,
+      if (isHidden != null) 'is_hidden': isHidden,
+      if (childFolderCount != null) 'child_folder_count': childFolderCount,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  CachedFoldersCompanion copyWith({
+    Value<String>? accountId,
+    Value<String>? folderId,
+    Value<String>? displayName,
+    Value<int>? totalItemCount,
+    Value<int>? unreadItemCount,
+    Value<String?>? parentFolderId,
+    Value<bool>? isHidden,
+    Value<int>? childFolderCount,
+    Value<int>? rowid,
+  }) {
+    return CachedFoldersCompanion(
+      accountId: accountId ?? this.accountId,
+      folderId: folderId ?? this.folderId,
+      displayName: displayName ?? this.displayName,
+      totalItemCount: totalItemCount ?? this.totalItemCount,
+      unreadItemCount: unreadItemCount ?? this.unreadItemCount,
+      parentFolderId: parentFolderId ?? this.parentFolderId,
+      isHidden: isHidden ?? this.isHidden,
+      childFolderCount: childFolderCount ?? this.childFolderCount,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (accountId.present) {
+      map['account_id'] = Variable<String>(accountId.value);
+    }
+    if (folderId.present) {
+      map['folder_id'] = Variable<String>(folderId.value);
+    }
+    if (displayName.present) {
+      map['display_name'] = Variable<String>(displayName.value);
+    }
+    if (totalItemCount.present) {
+      map['total_item_count'] = Variable<int>(totalItemCount.value);
+    }
+    if (unreadItemCount.present) {
+      map['unread_item_count'] = Variable<int>(unreadItemCount.value);
+    }
+    if (parentFolderId.present) {
+      map['parent_folder_id'] = Variable<String>(parentFolderId.value);
+    }
+    if (isHidden.present) {
+      map['is_hidden'] = Variable<bool>(isHidden.value);
+    }
+    if (childFolderCount.present) {
+      map['child_folder_count'] = Variable<int>(childFolderCount.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CachedFoldersCompanion(')
+          ..write('accountId: $accountId, ')
+          ..write('folderId: $folderId, ')
+          ..write('displayName: $displayName, ')
+          ..write('totalItemCount: $totalItemCount, ')
+          ..write('unreadItemCount: $unreadItemCount, ')
+          ..write('parentFolderId: $parentFolderId, ')
+          ..write('isHidden: $isHidden, ')
+          ..write('childFolderCount: $childFolderCount, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -1141,6 +1689,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $DeltaSyncTokensTable deltaSyncTokens = $DeltaSyncTokensTable(
     this,
   );
+  late final $CachedFoldersTable cachedFolders = $CachedFoldersTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -1149,6 +1698,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     cachedEmails,
     knownSenders,
     deltaSyncTokens,
+    cachedFolders,
   ];
 }
 
@@ -1768,6 +2318,273 @@ typedef $$DeltaSyncTokensTableProcessedTableManager =
       DeltaSyncToken,
       PrefetchHooks Function()
     >;
+typedef $$CachedFoldersTableCreateCompanionBuilder =
+    CachedFoldersCompanion Function({
+      required String accountId,
+      required String folderId,
+      required String displayName,
+      required int totalItemCount,
+      required int unreadItemCount,
+      Value<String?> parentFolderId,
+      required bool isHidden,
+      required int childFolderCount,
+      Value<int> rowid,
+    });
+typedef $$CachedFoldersTableUpdateCompanionBuilder =
+    CachedFoldersCompanion Function({
+      Value<String> accountId,
+      Value<String> folderId,
+      Value<String> displayName,
+      Value<int> totalItemCount,
+      Value<int> unreadItemCount,
+      Value<String?> parentFolderId,
+      Value<bool> isHidden,
+      Value<int> childFolderCount,
+      Value<int> rowid,
+    });
+
+class $$CachedFoldersTableFilterComposer
+    extends Composer<_$AppDatabase, $CachedFoldersTable> {
+  $$CachedFoldersTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get folderId => $composableBuilder(
+    column: $table.folderId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get displayName => $composableBuilder(
+    column: $table.displayName,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get totalItemCount => $composableBuilder(
+    column: $table.totalItemCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get unreadItemCount => $composableBuilder(
+    column: $table.unreadItemCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get parentFolderId => $composableBuilder(
+    column: $table.parentFolderId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isHidden => $composableBuilder(
+    column: $table.isHidden,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get childFolderCount => $composableBuilder(
+    column: $table.childFolderCount,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$CachedFoldersTableOrderingComposer
+    extends Composer<_$AppDatabase, $CachedFoldersTable> {
+  $$CachedFoldersTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get accountId => $composableBuilder(
+    column: $table.accountId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get folderId => $composableBuilder(
+    column: $table.folderId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get displayName => $composableBuilder(
+    column: $table.displayName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get totalItemCount => $composableBuilder(
+    column: $table.totalItemCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get unreadItemCount => $composableBuilder(
+    column: $table.unreadItemCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get parentFolderId => $composableBuilder(
+    column: $table.parentFolderId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get isHidden => $composableBuilder(
+    column: $table.isHidden,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get childFolderCount => $composableBuilder(
+    column: $table.childFolderCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$CachedFoldersTableAnnotationComposer
+    extends Composer<_$AppDatabase, $CachedFoldersTable> {
+  $$CachedFoldersTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get accountId =>
+      $composableBuilder(column: $table.accountId, builder: (column) => column);
+
+  GeneratedColumn<String> get folderId =>
+      $composableBuilder(column: $table.folderId, builder: (column) => column);
+
+  GeneratedColumn<String> get displayName => $composableBuilder(
+    column: $table.displayName,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get totalItemCount => $composableBuilder(
+    column: $table.totalItemCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get unreadItemCount => $composableBuilder(
+    column: $table.unreadItemCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get parentFolderId => $composableBuilder(
+    column: $table.parentFolderId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get isHidden =>
+      $composableBuilder(column: $table.isHidden, builder: (column) => column);
+
+  GeneratedColumn<int> get childFolderCount => $composableBuilder(
+    column: $table.childFolderCount,
+    builder: (column) => column,
+  );
+}
+
+class $$CachedFoldersTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $CachedFoldersTable,
+          CachedFolder,
+          $$CachedFoldersTableFilterComposer,
+          $$CachedFoldersTableOrderingComposer,
+          $$CachedFoldersTableAnnotationComposer,
+          $$CachedFoldersTableCreateCompanionBuilder,
+          $$CachedFoldersTableUpdateCompanionBuilder,
+          (
+            CachedFolder,
+            BaseReferences<_$AppDatabase, $CachedFoldersTable, CachedFolder>,
+          ),
+          CachedFolder,
+          PrefetchHooks Function()
+        > {
+  $$CachedFoldersTableTableManager(_$AppDatabase db, $CachedFoldersTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$CachedFoldersTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$CachedFoldersTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$CachedFoldersTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> accountId = const Value.absent(),
+                Value<String> folderId = const Value.absent(),
+                Value<String> displayName = const Value.absent(),
+                Value<int> totalItemCount = const Value.absent(),
+                Value<int> unreadItemCount = const Value.absent(),
+                Value<String?> parentFolderId = const Value.absent(),
+                Value<bool> isHidden = const Value.absent(),
+                Value<int> childFolderCount = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => CachedFoldersCompanion(
+                accountId: accountId,
+                folderId: folderId,
+                displayName: displayName,
+                totalItemCount: totalItemCount,
+                unreadItemCount: unreadItemCount,
+                parentFolderId: parentFolderId,
+                isHidden: isHidden,
+                childFolderCount: childFolderCount,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String accountId,
+                required String folderId,
+                required String displayName,
+                required int totalItemCount,
+                required int unreadItemCount,
+                Value<String?> parentFolderId = const Value.absent(),
+                required bool isHidden,
+                required int childFolderCount,
+                Value<int> rowid = const Value.absent(),
+              }) => CachedFoldersCompanion.insert(
+                accountId: accountId,
+                folderId: folderId,
+                displayName: displayName,
+                totalItemCount: totalItemCount,
+                unreadItemCount: unreadItemCount,
+                parentFolderId: parentFolderId,
+                isHidden: isHidden,
+                childFolderCount: childFolderCount,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$CachedFoldersTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $CachedFoldersTable,
+      CachedFolder,
+      $$CachedFoldersTableFilterComposer,
+      $$CachedFoldersTableOrderingComposer,
+      $$CachedFoldersTableAnnotationComposer,
+      $$CachedFoldersTableCreateCompanionBuilder,
+      $$CachedFoldersTableUpdateCompanionBuilder,
+      (
+        CachedFolder,
+        BaseReferences<_$AppDatabase, $CachedFoldersTable, CachedFolder>,
+      ),
+      CachedFolder,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -1778,4 +2595,6 @@ class $AppDatabaseManager {
       $$KnownSendersTableTableManager(_db, _db.knownSenders);
   $$DeltaSyncTokensTableTableManager get deltaSyncTokens =>
       $$DeltaSyncTokensTableTableManager(_db, _db.deltaSyncTokens);
+  $$CachedFoldersTableTableManager get cachedFolders =>
+      $$CachedFoldersTableTableManager(_db, _db.cachedFolders);
 }

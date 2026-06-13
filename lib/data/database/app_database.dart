@@ -1,7 +1,9 @@
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 
+import '../../domain/entities/email_folder.dart';
 import '../datasources/local/delta_token_datasource.dart';
+import '../datasources/local/folder_local_datasource.dart';
 
 part 'app_database.g.dart';
 
@@ -32,6 +34,22 @@ class KnownSenders extends Table {
   Set<Column> get primaryKey => {accountId, address};
 }
 
+/// Cached mail folder metadata for offline-first startup.
+/// Not encrypted — contains only IDs, names, and counts.
+class CachedFolders extends Table {
+  TextColumn get accountId => text()();
+  TextColumn get folderId => text()();
+  TextColumn get displayName => text()();
+  IntColumn get totalItemCount => integer()();
+  IntColumn get unreadItemCount => integer()();
+  TextColumn get parentFolderId => text().nullable()();
+  BoolColumn get isHidden => boolean()();
+  IntColumn get childFolderCount => integer()();
+
+  @override
+  Set<Column> get primaryKey => {accountId, folderId};
+}
+
 /// Stores Microsoft Graph delta sync tokens per account and folder.
 /// A delta link lets the poller fetch only changes since the last sync
 /// rather than refetching the full folder.
@@ -44,12 +62,13 @@ class DeltaSyncTokens extends Table {
   Set<Column> get primaryKey => {accountId, folderId};
 }
 
-@DriftDatabase(tables: [CachedEmails, KnownSenders, DeltaSyncTokens])
-class AppDatabase extends _$AppDatabase implements DeltaTokenDatasource {
+@DriftDatabase(tables: [CachedEmails, KnownSenders, DeltaSyncTokens, CachedFolders])
+class AppDatabase extends _$AppDatabase
+    implements DeltaTokenDatasource, FolderLocalDatasource {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 4;
+  int get schemaVersion => 5;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -80,6 +99,9 @@ class AppDatabase extends _$AppDatabase implements DeltaTokenDatasource {
           if (from < 4) {
             await m.createTable(deltaSyncTokens);
           }
+          if (from < 5) {
+            await m.createTable(cachedFolders);
+          }
         },
       );
 
@@ -106,6 +128,55 @@ class AppDatabase extends _$AppDatabase implements DeltaTokenDatasource {
 
   Future<void> clearDeltaTokensForAccount(String accountId) =>
       (delete(deltaSyncTokens)
+            ..where((t) => t.accountId.equals(accountId)))
+          .go();
+
+  // FolderLocalDatasource implementation
+
+  @override
+  Future<List<EmailFolder>> getCachedFolders(String accountId) async {
+    final rows = await (select(cachedFolders)
+          ..where((t) => t.accountId.equals(accountId)))
+        .get();
+    return rows
+        .map((r) => EmailFolder(
+              id: r.folderId,
+              displayName: r.displayName,
+              totalItemCount: r.totalItemCount,
+              unreadItemCount: r.unreadItemCount,
+              parentFolderId: r.parentFolderId,
+              isHidden: r.isHidden,
+              childFolderCount: r.childFolderCount,
+            ))
+        .toList();
+  }
+
+  @override
+  Future<void> cacheFolders({
+    required String accountId,
+    required List<EmailFolder> folders,
+  }) =>
+      batch((b) {
+        b.insertAllOnConflictUpdate(
+          cachedFolders,
+          folders
+              .map((f) => CachedFoldersCompanion.insert(
+                    accountId: accountId,
+                    folderId: f.id,
+                    displayName: f.displayName,
+                    totalItemCount: f.totalItemCount,
+                    unreadItemCount: f.unreadItemCount,
+                    parentFolderId: Value(f.parentFolderId),
+                    isHidden: f.isHidden,
+                    childFolderCount: f.childFolderCount,
+                  ))
+              .toList(),
+        );
+      });
+
+  @override
+  Future<void> clearFoldersForAccount(String accountId) =>
+      (delete(cachedFolders)
             ..where((t) => t.accountId.equals(accountId)))
           .go();
 

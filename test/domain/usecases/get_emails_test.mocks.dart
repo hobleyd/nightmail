@@ -288,6 +288,23 @@ class MockEmailRepository extends _i1.Mock implements _i2.EmailRepository {
           as _i3.Future<_i4.Either<_i5.Failure, _i9.Uint8List>>);
 
   @override
+  _i3.Future<_i4.Either<_i5.Failure, List<_i8.EmailFolder>>> getCachedFolders(
+    String? accountId,
+  ) =>
+      (super.noSuchMethod(
+            Invocation.method(#getCachedFolders, [accountId]),
+            returnValue:
+                _i3.Future<
+                  _i4.Either<_i5.Failure, List<_i8.EmailFolder>>
+                >.value(
+                  _i7.dummyValue<
+                    _i4.Either<_i5.Failure, List<_i8.EmailFolder>>
+                  >(this, Invocation.method(#getCachedFolders, [accountId])),
+                ),
+          )
+          as _i3.Future<_i4.Either<_i5.Failure, List<_i8.EmailFolder>>>);
+
+  @override
   _i3.Future<_i4.Either<_i5.Failure, List<_i6.Email>>> getCachedEmails({
     required String? accountId,
     required String? folderId,

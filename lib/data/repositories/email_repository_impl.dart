@@ -10,15 +10,18 @@ import '../../domain/entities/email_folder.dart';
 import '../../domain/repositories/email_repository.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../datasources/local/email_local_datasource.dart';
+import '../datasources/local/folder_local_datasource.dart';
 
 class EmailRepositoryImpl implements EmailRepository {
   const EmailRepositoryImpl({
     required this._accountManager,
     required this._localDatasource,
+    required this._folderLocalDatasource,
   });
 
   final AccountManager _accountManager;
   final EmailLocalDatasource _localDatasource;
+  final FolderLocalDatasource _folderLocalDatasource;
 
   static const _defaultFolderKey = '__DEFAULT__';
 
@@ -107,6 +110,17 @@ class EmailRepositoryImpl implements EmailRepository {
         toExpand = nextLevel;
       }
 
+      final accountId = _accountManager.activeAccount?.id;
+      if (accountId != null) {
+        unawaited(() async {
+          await _folderLocalDatasource.clearFoldersForAccount(accountId);
+          await _folderLocalDatasource.cacheFolders(
+            accountId: accountId,
+            folders: all,
+          );
+        }());
+      }
+
       return Right(all);
     } on AuthException catch (e) {
       return Left(AuthFailure(message: e.message));
@@ -118,6 +132,20 @@ class EmailRepositoryImpl implements EmailRepository {
       return Left(CacheFailure(message: e.message));
     } catch (e) {
       return Left(ServerFailure(message: e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, List<EmailFolder>>> getCachedFolders(
+      String accountId) async {
+    try {
+      final folders =
+          await _folderLocalDatasource.getCachedFolders(accountId);
+      return Right(folders);
+    } on CacheException catch (e) {
+      return Left(CacheFailure(message: e.message));
+    } catch (e) {
+      return Left(CacheFailure(message: e.toString()));
     }
   }
 

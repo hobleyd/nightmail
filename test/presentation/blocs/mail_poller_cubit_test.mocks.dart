@@ -244,6 +244,23 @@ class MockAccountManager extends _i1.Mock implements _i9.AccountManager {
             ),
           )
           as _i2.EmailRemoteDatasource);
+
+  @override
+  _i11.Future<String?> loadCalDavPassword(String? accountId) =>
+      (super.noSuchMethod(
+            Invocation.method(#loadCalDavPassword, [accountId]),
+            returnValue: _i11.Future<String?>.value(),
+          )
+          as _i11.Future<String?>);
+
+  @override
+  _i11.Future<void> saveCalDavPassword(String? accountId, String? password) =>
+      (super.noSuchMethod(
+            Invocation.method(#saveCalDavPassword, [accountId, password]),
+            returnValue: _i11.Future<void>.value(),
+            returnValueForMissingStub: _i11.Future<void>.value(),
+          )
+          as _i11.Future<void>);
 }
 
 /// A class which mocks [AppSettings].
@@ -513,6 +530,7 @@ class MockGraphApiDatasourceImpl extends _i1.Mock
     required String? emailId,
     required _i20.MeetingInviteResponseType? response,
     String? icsData,
+    DateTime? meetingStart,
     String? userEmail,
   }) =>
       (super.noSuchMethod(
@@ -520,6 +538,7 @@ class MockGraphApiDatasourceImpl extends _i1.Mock
               #emailId: emailId,
               #response: response,
               #icsData: icsData,
+              #meetingStart: meetingStart,
               #userEmail: userEmail,
             }),
             returnValue: _i11.Future<void>.value(),

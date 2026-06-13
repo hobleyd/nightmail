@@ -210,6 +210,23 @@ class MockAccountManager extends _i1.Mock implements _i5.AccountManager {
             ),
           )
           as _i2.EmailRemoteDatasource);
+
+  @override
+  _i7.Future<String?> loadCalDavPassword(String? accountId) =>
+      (super.noSuchMethod(
+            Invocation.method(#loadCalDavPassword, [accountId]),
+            returnValue: _i7.Future<String?>.value(),
+          )
+          as _i7.Future<String?>);
+
+  @override
+  _i7.Future<void> saveCalDavPassword(String? accountId, String? password) =>
+      (super.noSuchMethod(
+            Invocation.method(#saveCalDavPassword, [accountId, password]),
+            returnValue: _i7.Future<void>.value(),
+            returnValueForMissingStub: _i7.Future<void>.value(),
+          )
+          as _i7.Future<void>);
 }
 
 /// A class which mocks [CalendarRemoteDatasource].
@@ -272,6 +289,7 @@ class MockCalendarRemoteDatasource extends _i1.Mock
     required String? emailId,
     required _i12.MeetingInviteResponseType? response,
     String? icsData,
+    DateTime? meetingStart,
     String? userEmail,
   }) =>
       (super.noSuchMethod(
@@ -279,6 +297,7 @@ class MockCalendarRemoteDatasource extends _i1.Mock
               #emailId: emailId,
               #response: response,
               #icsData: icsData,
+              #meetingStart: meetingStart,
               #userEmail: userEmail,
             }),
             returnValue: _i7.Future<void>.value(),

@@ -18,14 +18,18 @@ final class FolderListLoading extends FolderListState {
 }
 
 final class FolderListLoaded extends FolderListState {
-  const FolderListLoaded({required this.folders});
+  const FolderListLoaded({required this.folders, this.isRefreshing = false});
   final List<EmailFolder> folders;
+  final bool isRefreshing;
 
-  FolderListLoaded copyWith({List<EmailFolder>? folders}) =>
-      FolderListLoaded(folders: folders ?? this.folders);
+  FolderListLoaded copyWith({List<EmailFolder>? folders, bool? isRefreshing}) =>
+      FolderListLoaded(
+        folders: folders ?? this.folders,
+        isRefreshing: isRefreshing ?? this.isRefreshing,
+      );
 
   @override
-  List<Object?> get props => [folders];
+  List<Object?> get props => [folders, isRefreshing];
 }
 
 final class FolderListError extends FolderListState {

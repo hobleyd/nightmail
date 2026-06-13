@@ -458,7 +458,7 @@ class _AccountsSectionState extends State<_AccountsSection> {
     if (_selectedAccount == null) return;
 
     NextcloudCalendarConfig? caldavConfig;
-    if (_selectedAccount is ImapAccount && !_isApplePlatform && _nextcloudEnabled) {
+    if (_selectedAccount is ImapAccount && _nextcloudEnabled) {
       final url = _caldavUrlController.text.trim();
       final user = _caldavUsernameController.text.trim();
       if (url.isNotEmpty && user.isNotEmpty) {
@@ -485,12 +485,12 @@ class _AccountsSectionState extends State<_AccountsSection> {
           smtpHost: _smtpHostController.text,
           smtpPort: int.tryParse(_smtpPortController.text) ?? a.smtpPort,
           smtpUseSsl: _smtpUseSsl,
-          nextcloudCalendarConfig: _isApplePlatform ? a.nextcloudCalendarConfig : caldavConfig,
+          nextcloudCalendarConfig: caldavConfig,
         ),
     };
 
     // Persist CalDAV password if provided
-    if (updated is ImapAccount && !_isApplePlatform) {
+    if (updated is ImapAccount) {
       final pw = _caldavPasswordController.text;
       if (pw.isNotEmpty) {
         sl<AccountManager>().saveCalDavPassword(updated.id, pw);
@@ -661,54 +661,57 @@ class _AccountsSectionState extends State<_AccountsSection> {
                           editingValue: _smtpUseSsl,
                         ),
                         _SectionSubheader(label: 'Calendar'),
-                        if (_isApplePlatform)
-                          _AccountDetailRow(
+                        if (_isApplePlatform &&
+                            !(_isEditing
+                                ? _nextcloudEnabled
+                                : (_selectedAccount as ImapAccount)
+                                        .nextcloudCalendarConfig !=
+                                    null))
+                          const _AccountDetailRow(
                             label: 'Source',
                             value: 'System Calendar (EventKit)',
-                          )
-                        else ...[
-                          _SslRow(
-                            label: 'Nextcloud',
-                            value: (_selectedAccount as ImapAccount)
-                                    .nextcloudCalendarConfig !=
-                                null,
-                            isEditing: _isEditing,
-                            editingValue: _nextcloudEnabled,
-                            onChanged: (val) =>
-                                setState(() => _nextcloudEnabled = val),
                           ),
-                          if (_isEditing && _nextcloudEnabled ||
-                              !_isEditing &&
-                                  (_selectedAccount as ImapAccount)
-                                          .nextcloudCalendarConfig !=
-                                      null) ...[
+                        _SslRow(
+                          label: 'Nextcloud',
+                          value: (_selectedAccount as ImapAccount)
+                                  .nextcloudCalendarConfig !=
+                              null,
+                          isEditing: _isEditing,
+                          editingValue: _nextcloudEnabled,
+                          onChanged: (val) =>
+                              setState(() => _nextcloudEnabled = val),
+                        ),
+                        if (_isEditing && _nextcloudEnabled ||
+                            !_isEditing &&
+                                (_selectedAccount as ImapAccount)
+                                        .nextcloudCalendarConfig !=
+                                    null) ...[
+                          _AccountDetailRow(
+                            label: 'Server URL',
+                            value: (_selectedAccount as ImapAccount)
+                                    .nextcloudCalendarConfig
+                                    ?.serverUrl ??
+                                '',
+                            isEditing: _isEditing,
+                            controller: _caldavUrlController,
+                          ),
+                          _AccountDetailRow(
+                            label: 'Username',
+                            value: (_selectedAccount as ImapAccount)
+                                    .nextcloudCalendarConfig
+                                    ?.username ??
+                                '',
+                            isEditing: _isEditing,
+                            controller: _caldavUsernameController,
+                          ),
+                          if (_isEditing)
                             _AccountDetailRow(
-                              label: 'Server URL',
-                              value: (_selectedAccount as ImapAccount)
-                                      .nextcloudCalendarConfig
-                                      ?.serverUrl ??
-                                  '',
-                              isEditing: _isEditing,
-                              controller: _caldavUrlController,
+                              label: 'Password',
+                              value: '',
+                              isEditing: true,
+                              controller: _caldavPasswordController,
+                              obscureText: true,
                             ),
-                            _AccountDetailRow(
-                              label: 'Username',
-                              value: (_selectedAccount as ImapAccount)
-                                      .nextcloudCalendarConfig
-                                      ?.username ??
-                                  '',
-                              isEditing: _isEditing,
-                              controller: _caldavUsernameController,
-                            ),
-                            if (_isEditing)
-                              _AccountDetailRow(
-                                label: 'Password',
-                                value: '',
-                                isEditing: true,
-                                controller: _caldavPasswordController,
-                                obscureText: true,
-                              ),
-                          ],
                         ],
                       ],
                     ],
@@ -737,7 +740,7 @@ class _AccountsSectionState extends State<_AccountsSection> {
                         _isEditing = true;
                         _syncControllers(_selectedAccount!);
                       });
-                      if (_selectedAccount is ImapAccount && !_isApplePlatform) {
+                      if (_selectedAccount is ImapAccount) {
                         _loadCalDavPassword(_selectedAccount!.id);
                       }
                     }

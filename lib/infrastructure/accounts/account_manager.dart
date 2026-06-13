@@ -331,17 +331,19 @@ class AccountManager {
   }
 
   CalendarRemoteDatasource? _buildImapCalendarDatasource(ImapAccount account) {
+    final config = account.nextcloudCalendarConfig;
+    if (config != null) {
+      final caldavCreds = CalDavCredentialStorage(_secureStorage);
+      return CalDavCalendarDatasourceImpl(
+        serverUrl: config.serverUrl,
+        username: config.username,
+        passwordProvider: () => caldavCreds.loadPassword(account.id),
+      );
+    }
     if (!kIsWeb && (Platform.isMacOS || Platform.isIOS)) {
       return EventKitCalendarDatasourceImpl();
     }
-    final config = account.nextcloudCalendarConfig;
-    if (config == null) return null;
-    final caldavCreds = CalDavCredentialStorage(_secureStorage);
-    return CalDavCalendarDatasourceImpl(
-      serverUrl: config.serverUrl,
-      username: config.username,
-      passwordProvider: () => caldavCreds.loadPassword(account.id),
-    );
+    return null;
   }
 
   Future<String?> loadCalDavPassword(String accountId) async {

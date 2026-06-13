@@ -884,8 +884,11 @@ class _SettingsFooter extends StatelessWidget {
             },
           ),
           GestureDetector(
-            onSecondaryTapUp: (details) =>
-                _showCalendarContextMenu(context, details.globalPosition),
+            onDoubleTap: () => WindowController.create(
+              WindowConfiguration(
+                arguments: jsonEncode({'type': 'calendar'}),
+              ),
+            ),
             child: IconButton(
               icon: Icon(Icons.calendar_month_outlined, size: 16, color: c.textMuted),
               tooltip: 'Calendar',
@@ -895,8 +898,11 @@ class _SettingsFooter extends StatelessWidget {
             ),
           ),
           GestureDetector(
-            onSecondaryTapUp: (details) =>
-                _showTasksContextMenu(context, details.globalPosition),
+            onDoubleTap: () => WindowController.create(
+              WindowConfiguration(
+                arguments: jsonEncode({'type': 'tasks'}),
+              ),
+            ),
             child: IconButton(
               icon: Icon(Icons.checklist_rounded, size: 16, color: c.textMuted),
               tooltip: 'Tasks',
@@ -939,50 +945,6 @@ class _SettingsFooter extends StatelessWidget {
         ],
       ),
     ));
-  }
-
-  Future<void> _showCalendarContextMenu(
-      BuildContext context, Offset position) async {
-    final result = await showMenu<String>(
-      context: context,
-      position: RelativeRect.fromLTRB(
-          position.dx, position.dy, position.dx, position.dy),
-      items: const [
-        PopupMenuItem(
-          value: 'new_window',
-          child: Text('Open in New Window', style: TextStyle(fontSize: 13)),
-        ),
-      ],
-    );
-    if (result == 'new_window') {
-      await WindowController.create(
-        WindowConfiguration(
-          arguments: jsonEncode({'type': 'calendar'}),
-        ),
-      );
-    }
-  }
-
-  Future<void> _showTasksContextMenu(
-      BuildContext context, Offset position) async {
-    final result = await showMenu<String>(
-      context: context,
-      position: RelativeRect.fromLTRB(
-          position.dx, position.dy, position.dx, position.dy),
-      items: const [
-        PopupMenuItem(
-          value: 'new_window',
-          child: Text('Open in New Window', style: TextStyle(fontSize: 13)),
-        ),
-      ],
-    );
-    if (result == 'new_window') {
-      await WindowController.create(
-        WindowConfiguration(
-          arguments: jsonEncode({'type': 'tasks'}),
-        ),
-      );
-    }
   }
 
   void _showAddAccountDialog(BuildContext context) {

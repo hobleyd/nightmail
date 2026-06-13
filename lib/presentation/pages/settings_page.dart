@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../core/config/oauth_credentials.dart';
+import '../../core/config/oauth_credentials_storage.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
 import '../../injection_container.dart';
@@ -20,6 +22,7 @@ bool get _isApplePlatform => !kIsWeb && (Platform.isMacOS || Platform.isIOS);
 
 enum SettingsSection {
   accounts('Accounts'),
+  advanced('Advanced'),
   appearance('Appearance'),
   general('General'),
   security('Security');
@@ -137,6 +140,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     Expanded(
                       child: switch (_selectedSection) {
                         SettingsSection.accounts => const _AccountsSection(),
+                        SettingsSection.advanced => const _AdvancedSection(),
                         SettingsSection.appearance => const _AppearanceSection(),
                         SettingsSection.general => const _GeneralSection(),
                         SettingsSection.security => const _SecuritySection(),
@@ -764,6 +768,19 @@ class _AccountsSectionState extends State<_AccountsSection> {
   }
 }
 
+class _HelpText extends StatelessWidget {
+  const _HelpText(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: TextStyle(color: context.colors.textMuted, fontSize: 12, height: 1.5),
+    );
+  }
+}
+
 class _SectionSubheader extends StatelessWidget {
   const _SectionSubheader({required this.label});
 
@@ -981,6 +998,190 @@ class _SecuritySectionState extends State<_SecuritySection> {
             ),
             child: const Text('Remove'),
           ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AdvancedSection extends StatefulWidget {
+  const _AdvancedSection();
+
+  @override
+  State<_AdvancedSection> createState() => _AdvancedSectionState();
+}
+
+class _AdvancedSectionState extends State<_AdvancedSection> {
+  bool _isLoading = true;
+  bool _isEditing = false;
+  OAuthCredentials? _credentials;
+
+  late TextEditingController _msClientIdCtrl;
+  late TextEditingController _msTenantIdCtrl;
+  late TextEditingController _msRedirectUriCtrl;
+  late TextEditingController _googleClientIdCtrl;
+  late TextEditingController _googleRedirectUriCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _msClientIdCtrl = TextEditingController();
+    _msTenantIdCtrl = TextEditingController();
+    _msRedirectUriCtrl = TextEditingController();
+    _googleClientIdCtrl = TextEditingController();
+    _googleRedirectUriCtrl = TextEditingController();
+    sl<OAuthCredentialsStorage>().load().then((creds) {
+      if (!mounted) return;
+      setState(() {
+        _credentials = creds;
+        _isLoading = false;
+        _syncControllers(creds);
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _msClientIdCtrl.dispose();
+    _msTenantIdCtrl.dispose();
+    _msRedirectUriCtrl.dispose();
+    _googleClientIdCtrl.dispose();
+    _googleRedirectUriCtrl.dispose();
+    super.dispose();
+  }
+
+  void _syncControllers(OAuthCredentials creds) {
+    _msClientIdCtrl.text = creds.microsoftClientId;
+    _msTenantIdCtrl.text = creds.microsoftTenantId;
+    _msRedirectUriCtrl.text = creds.microsoftRedirectUri;
+    _googleClientIdCtrl.text = creds.googleClientId;
+    _googleRedirectUriCtrl.text = creds.googleRedirectUri;
+  }
+
+  Future<void> _save() async {
+    final updated = OAuthCredentials(
+      microsoftClientId: _msClientIdCtrl.text.trim(),
+      microsoftTenantId: _msTenantIdCtrl.text.trim(),
+      microsoftRedirectUri: _msRedirectUriCtrl.text.trim(),
+      googleClientId: _googleClientIdCtrl.text.trim(),
+      googleRedirectUri: _googleRedirectUriCtrl.text.trim(),
+    );
+    await sl<OAuthCredentialsStorage>().save(updated);
+    if (!mounted) return;
+    setState(() {
+      _credentials = updated;
+      _isEditing = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final creds = _credentials!;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _SectionSubheader(label: 'Microsoft OAuth'),
+                _HelpText(
+                  'Register an app in the '
+                  'Azure portal (portal.azure.com) under '
+                  'Azure Active Directory → App registrations. '
+                  'Set the platform to "Mobile and desktop applications" and add '
+                  'the redirect URI below. '
+                  'Grant the following API permissions under Microsoft Graph: '
+                  'Mail.Read, Mail.ReadWrite, Mail.Send, MailboxSettings.Read, '
+                  'Calendars.ReadWrite, Tasks.ReadWrite, offline_access. '
+                  'Use your directory\'s Tenant ID, or "common" to allow any '
+                  'Microsoft account to sign in.',
+                ),
+                const SizedBox(height: 12),
+                _AccountDetailRow(
+                  label: 'Client ID',
+                  value: creds.microsoftClientId,
+                  isEditing: _isEditing,
+                  controller: _msClientIdCtrl,
+                ),
+                _AccountDetailRow(
+                  label: 'Tenant ID',
+                  value: creds.microsoftTenantId,
+                  isEditing: _isEditing,
+                  controller: _msTenantIdCtrl,
+                ),
+                _AccountDetailRow(
+                  label: 'Redirect URI',
+                  value: creds.microsoftRedirectUri,
+                  isEditing: _isEditing,
+                  controller: _msRedirectUriCtrl,
+                ),
+                _SectionSubheader(label: 'Google OAuth'),
+                _HelpText(
+                  'Create a project in the Google Cloud Console '
+                  '(console.cloud.google.com). Enable the Gmail API and, if '
+                  'needed, the Google Calendar API. Under APIs & Services → '
+                  'Credentials, create an OAuth 2.0 Client ID with application '
+                  'type "iOS" (for macOS/iOS native apps) and add the redirect '
+                  'URI below as an allowed scheme. '
+                  'The Client ID will end in .apps.googleusercontent.com.',
+                ),
+                const SizedBox(height: 12),
+                _AccountDetailRow(
+                  label: 'Client ID',
+                  value: creds.googleClientId,
+                  isEditing: _isEditing,
+                  controller: _googleClientIdCtrl,
+                ),
+                _AccountDetailRow(
+                  label: 'Redirect URI',
+                  value: creds.googleRedirectUri,
+                  isEditing: _isEditing,
+                  controller: _googleRedirectUriCtrl,
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            if (_isEditing) ...[
+              TextButton(
+                onPressed: () => setState(() {
+                  _isEditing = false;
+                  _syncControllers(_credentials!);
+                }),
+                style: TextButton.styleFrom(
+                  textStyle: const TextStyle(fontSize: 13),
+                ),
+                child: const Text('Cancel'),
+              ),
+              const SizedBox(width: 8),
+            ],
+            ElevatedButton(
+              onPressed: _isEditing ? _save : () {
+                setState(() {
+                  _isEditing = true;
+                  _syncControllers(_credentials!);
+                });
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.accent,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: Text(_isEditing ? 'Save' : 'Edit'),
+            ),
+          ],
         ),
       ],
     );

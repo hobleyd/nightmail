@@ -63,6 +63,7 @@ class MailPollerCubit extends Cubit<MailPollerState> {
 
       final activeId = _accountManager.activeAccount?.id;
       bool changed = false;
+      bool activeInboxChanged = false;
 
       for (final account in accounts) {
         try {
@@ -121,6 +122,7 @@ class MailPollerCubit extends Cubit<MailPollerState> {
                 if (account.id == activeId) {
                   _baselineUnread[account.id] = unreadCount;
                   if (_newMailAccounts.remove(account.id)) changed = true;
+                  activeInboxChanged = true;
                 } else if (hasNewUnread) {
                   if (_newMailAccounts.add(account.id)) changed = true;
                 } else if (unreadCount == 0) {
@@ -170,8 +172,13 @@ class MailPollerCubit extends Cubit<MailPollerState> {
       final totalUnread =
           _latestPolledUnread.values.fold(0, (sum, n) => sum + n);
       await _badgeService.setBadgeCount(totalUnread);
-      if (changed && !isClosed) {
-        emit(state.copyWith(accountsWithNewMail: Set.of(_newMailAccounts)));
+      if ((changed || activeInboxChanged) && !isClosed) {
+        emit(state.copyWith(
+          accountsWithNewMail: Set.of(_newMailAccounts),
+          pollGeneration: activeInboxChanged
+              ? state.pollGeneration + 1
+              : state.pollGeneration,
+        ));
       }
     } finally {
       _polling = false;

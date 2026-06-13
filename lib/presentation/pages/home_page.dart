@@ -20,6 +20,7 @@ import '../blocs/folder_list/folder_list_event.dart';
 import '../blocs/folder_list/folder_list_state.dart';
 import '../blocs/home/home_cubit.dart';
 import '../blocs/mail_poller/mail_poller_cubit.dart';
+import '../blocs/mail_poller/mail_poller_state.dart';
 import '../widgets/email_list_panel.dart';
 import '../widgets/folder_panel.dart';
 import '../widgets/reading_pane.dart';
@@ -60,28 +61,41 @@ class _HomeView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocListener<FolderListBloc, FolderListState>(
-      listenWhen: (prev, curr) =>
-          prev is! FolderListLoaded && curr is FolderListLoaded,
-      listener: (context, state) {
-        if (state is FolderListLoaded) {
-          final homeCubit = context.read<HomeCubit>();
-          if (homeCubit.state.selectedFolderId != null) return;
+    return MultiBlocListener(
+      listeners: [
+        BlocListener<FolderListBloc, FolderListState>(
+          listenWhen: (prev, curr) =>
+              prev is! FolderListLoaded && curr is FolderListLoaded,
+          listener: (context, state) {
+            if (state is FolderListLoaded) {
+              final homeCubit = context.read<HomeCubit>();
+              if (homeCubit.state.selectedFolderId != null) return;
 
-          final inbox = state.folders.firstWhere(
-            (f) => f.displayName.toLowerCase() == 'inbox',
-            orElse: () => state.folders.first,
-          );
-
-          homeCubit.selectFolder(inbox.id);
-          context.read<EmailListBloc>().add(
-                EmailListLoadRequested(
-                  folderId: inbox.id,
-                  folderDisplayName: inbox.displayName,
-                ),
+              final inbox = state.folders.firstWhere(
+                (f) => f.displayName.toLowerCase() == 'inbox',
+                orElse: () => state.folders.first,
               );
-        }
-      },
+
+              homeCubit.selectFolder(inbox.id);
+              context.read<EmailListBloc>().add(
+                    EmailListLoadRequested(
+                      folderId: inbox.id,
+                      folderDisplayName: inbox.displayName,
+                    ),
+                  );
+            }
+          },
+        ),
+        BlocListener<MailPollerCubit, MailPollerState>(
+          listenWhen: (prev, curr) =>
+              prev.pollGeneration != curr.pollGeneration,
+          listener: (context, _) {
+            context
+                .read<EmailListBloc>()
+                .add(const EmailListRefreshRequested());
+          },
+        ),
+      ],
       child: Scaffold(
         backgroundColor: context.colors.surfaceBase,
         body: const _ThreePanelLayout(),

@@ -706,6 +706,8 @@ class _AllDayEventChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: () => _openEdit(context),
+      onSecondaryTapUp: (details) =>
+          _showEventContextMenu(context, event, details.globalPosition),
       child: Container(
         width: double.infinity,
         margin: const EdgeInsets.only(bottom: 1),
@@ -959,6 +961,8 @@ class _PositionedEvent extends StatelessWidget {
       height: height,
       child: GestureDetector(
         onTap: () => _openEdit(context),
+        onSecondaryTapUp: (details) =>
+            _showContextMenu(context, details.globalPosition),
         child: _EventTile(event: event, compact: height < 36),
       ),
     );
@@ -970,6 +974,10 @@ class _PositionedEvent extends StatelessWidget {
       event: event,
       accountId: _accountId(context),
     );
+  }
+
+  void _showContextMenu(BuildContext context, Offset position) {
+    _showEventContextMenu(context, event, position);
   }
 }
 
@@ -1032,5 +1040,262 @@ class _EventTile extends StatelessWidget {
       CalendarEventStatus.workingElsewhere => const Color(0xFF9E9E9E),
       CalendarEventStatus.busy => AppColors.accent,
     };
+  }
+}
+
+// ─── Context menu ─────────────────────────────────────────────────────────────
+
+void _showEventContextMenu(
+  BuildContext context,
+  CalendarEvent event,
+  Offset position,
+) {
+  final rect = RelativeRect.fromLTRB(
+    position.dx,
+    position.dy,
+    position.dx,
+    position.dy,
+  );
+
+  if (event.isOrganizer) {
+    showMenu<_EventMenuAction>(
+      context: context,
+      position: rect,
+      items: const [
+        PopupMenuItem(
+          value: _EventMenuAction.cancel,
+          height: 36,
+          child: Text('Cancel Meeting', style: TextStyle(fontSize: 13)),
+        ),
+      ],
+    ).then((action) async {
+      if (action == null || !context.mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Cancel Meeting'),
+          content: Text(
+            'Cancel "${event.subject}" and send cancellation notices to all attendees?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Keep'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Cancel Meeting',
+                  style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !context.mounted) return;
+      context
+          .read<CalendarBloc>()
+          .add(CalendarEventCancelRequested(eventId: event.id));
+    });
+    return;
+  }
+
+  showMenu<_EventMenuAction>(
+    context: context,
+    position: rect,
+    items: const [
+      PopupMenuItem(
+        value: _EventMenuAction.decline,
+        height: 36,
+        child: Text('Decline', style: TextStyle(fontSize: 13)),
+      ),
+      PopupMenuItem(
+        value: _EventMenuAction.proposeNewTime,
+        height: 36,
+        child: Text('Propose New Time…', style: TextStyle(fontSize: 13)),
+      ),
+    ],
+  ).then((action) async {
+    if (action == null || !context.mounted) return;
+    switch (action) {
+      case _EventMenuAction.cancel:
+        break;
+      case _EventMenuAction.decline:
+        context
+            .read<CalendarBloc>()
+            .add(CalendarEventDeclineRequested(eventId: event.id));
+      case _EventMenuAction.proposeNewTime:
+        final proposed = await _ProposeNewTimeDialog.show(context, event);
+        if (proposed == null || !context.mounted) return;
+        context.read<CalendarBloc>().add(CalendarEventNewTimeProposed(
+              eventId: event.id,
+              newStart: proposed.newStart,
+              newEnd: proposed.newEnd,
+              timezone: event.timezone,
+            ));
+    }
+  });
+}
+
+enum _EventMenuAction { cancel, decline, proposeNewTime }
+
+// ─── Propose New Time dialog ──────────────────────────────────────────────────
+
+typedef _ProposedTime = ({DateTime newStart, DateTime newEnd});
+
+class _ProposeNewTimeDialog extends StatefulWidget {
+  const _ProposeNewTimeDialog({required this.event});
+
+  final CalendarEvent event;
+
+  static Future<_ProposedTime?> show(
+    BuildContext context,
+    CalendarEvent event,
+  ) {
+    return showDialog<_ProposedTime>(
+      context: context,
+      builder: (_) => _ProposeNewTimeDialog(event: event),
+    );
+  }
+
+  @override
+  State<_ProposeNewTimeDialog> createState() => _ProposeNewTimeDialogState();
+}
+
+class _ProposeNewTimeDialogState extends State<_ProposeNewTimeDialog> {
+  late DateTime _date;
+  late TimeOfDay _startTime;
+  late TimeOfDay _endTime;
+
+  @override
+  void initState() {
+    super.initState();
+    final localStart = widget.event.start.toLocal();
+    final localEnd = widget.event.end.toLocal();
+    _date = DateTime(localStart.year, localStart.month, localStart.day);
+    _startTime = TimeOfDay.fromDateTime(localStart);
+    _endTime = TimeOfDay.fromDateTime(localEnd);
+  }
+
+  DateTime _combine(DateTime date, TimeOfDay time) =>
+      DateTime(date.year, date.month, date.day, time.hour, time.minute);
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final fmt = DateFormat('EEE, d MMM yyyy');
+
+    return AlertDialog(
+      backgroundColor: c.surfacePanel,
+      title: Text(
+        'Propose New Time',
+        style: TextStyle(color: c.textPrimary, fontSize: 15, fontWeight: FontWeight.w600),
+      ),
+      content: SizedBox(
+        width: 320,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.event.subject,
+              style: TextStyle(color: c.textMuted, fontSize: 12),
+            ),
+            const SizedBox(height: 16),
+            _PickerRow(
+              label: 'Date',
+              value: fmt.format(_date),
+              onTap: () async {
+                final picked = await showDatePicker(
+                  context: context,
+                  initialDate: _date,
+                  firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                  lastDate: DateTime.now().add(const Duration(days: 365 * 2)),
+                );
+                if (picked != null) setState(() => _date = picked);
+              },
+            ),
+            const SizedBox(height: 8),
+            _PickerRow(
+              label: 'Start',
+              value: _startTime.format(context),
+              onTap: () async {
+                final picked = await showTimePicker(
+                  context: context,
+                  initialTime: _startTime,
+                );
+                if (picked != null) setState(() => _startTime = picked);
+              },
+            ),
+            const SizedBox(height: 8),
+            _PickerRow(
+              label: 'End',
+              value: _endTime.format(context),
+              onTap: () async {
+                final picked = await showTimePicker(
+                  context: context,
+                  initialTime: _endTime,
+                );
+                if (picked != null) setState(() => _endTime = picked);
+              },
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text('Cancel', style: TextStyle(color: c.textMuted)),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: AppColors.accent),
+          onPressed: () {
+            Navigator.of(context).pop<_ProposedTime>((
+              newStart: _combine(_date, _startTime),
+              newEnd: _combine(_date, _endTime),
+            ));
+          },
+          child: const Text('Propose', style: TextStyle(color: Colors.white)),
+        ),
+      ],
+    );
+  }
+}
+
+class _PickerRow extends StatelessWidget {
+  const _PickerRow({required this.label, required this.value, required this.onTap});
+
+  final String label;
+  final String value;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Row(
+      children: [
+        SizedBox(
+          width: 48,
+          child: Text(
+            label,
+            style: TextStyle(color: c.textMuted, fontSize: 12),
+          ),
+        ),
+        InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(4),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              border: Border.all(color: c.separator),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              value,
+              style: TextStyle(color: c.textPrimary, fontSize: 13),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }

@@ -12,6 +12,7 @@ import 'package:nightmail/data/datasources/remote/calendar_remote_datasource.dar
 import 'package:nightmail/data/datasources/remote/email_remote_datasource.dart'
     as _i2;
 import 'package:nightmail/data/models/calendar_event_model.dart' as _i4;
+import 'package:nightmail/domain/entities/meeting_invite.dart' as _i12;
 import 'package:nightmail/domain/usecases/create_calendar_event.dart' as _i10;
 import 'package:nightmail/domain/usecases/update_calendar_event.dart' as _i11;
 import 'package:nightmail/infrastructure/accounts/account.dart' as _i6;
@@ -265,4 +266,68 @@ class MockCalendarRemoteDatasource extends _i1.Mock
             ),
           )
           as _i7.Future<_i4.CalendarEventModel>);
+
+  @override
+  _i7.Future<void> respondToMeetingInvite({
+    required String? emailId,
+    required _i12.MeetingInviteResponseType? response,
+    String? icsData,
+    String? userEmail,
+  }) =>
+      (super.noSuchMethod(
+            Invocation.method(#respondToMeetingInvite, [], {
+              #emailId: emailId,
+              #response: response,
+              #icsData: icsData,
+              #userEmail: userEmail,
+            }),
+            returnValue: _i7.Future<void>.value(),
+            returnValueForMissingStub: _i7.Future<void>.value(),
+          )
+          as _i7.Future<void>);
+
+  @override
+  _i7.Future<void> cancelCalendarEvent({required String? eventId}) =>
+      (super.noSuchMethod(
+            Invocation.method(#cancelCalendarEvent, [], {#eventId: eventId}),
+            returnValue: _i7.Future<void>.value(),
+            returnValueForMissingStub: _i7.Future<void>.value(),
+          )
+          as _i7.Future<void>);
+
+  @override
+  _i7.Future<void> declineCalendarEvent({
+    required String? eventId,
+    String? userEmail,
+  }) =>
+      (super.noSuchMethod(
+            Invocation.method(#declineCalendarEvent, [], {
+              #eventId: eventId,
+              #userEmail: userEmail,
+            }),
+            returnValue: _i7.Future<void>.value(),
+            returnValueForMissingStub: _i7.Future<void>.value(),
+          )
+          as _i7.Future<void>);
+
+  @override
+  _i7.Future<void> proposeNewTime({
+    required String? eventId,
+    required DateTime? newStart,
+    required DateTime? newEnd,
+    String? timezone,
+    String? userEmail,
+  }) =>
+      (super.noSuchMethod(
+            Invocation.method(#proposeNewTime, [], {
+              #eventId: eventId,
+              #newStart: newStart,
+              #newEnd: newEnd,
+              #timezone: timezone,
+              #userEmail: userEmail,
+            }),
+            returnValue: _i7.Future<void>.value(),
+            returnValueForMissingStub: _i7.Future<void>.value(),
+          )
+          as _i7.Future<void>);
 }

@@ -101,6 +101,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
     required String emailId,
     required MeetingInviteResponseType response,
     String? icsData,
+    DateTime? meetingStart,
   }) async {
     final ds = _accountManager.calendarDatasource;
     if (ds == null) {
@@ -117,6 +118,95 @@ class CalendarRepositoryImpl implements CalendarRepository {
         emailId: emailId,
         response: response,
         icsData: icsData,
+        meetingStart: meetingStart,
+        userEmail: userEmail,
+      );
+      return const Right(null);
+    } on AuthException catch (e) {
+      return Left(AuthFailure(message: e.message));
+    } on NetworkException catch (e) {
+      return Left(NetworkFailure(message: e.message));
+    } on ServerException catch (e) {
+      return Left(ServerFailure(message: e.message, statusCode: e.statusCode));
+    } catch (e) {
+      return Left(ServerFailure(message: e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, void>> cancelCalendarEvent({
+    required String eventId,
+  }) async {
+    final ds = _accountManager.calendarDatasource;
+    if (ds == null) {
+      return const Left(
+        ServerFailure(message: 'Calendar is not available for this account type'),
+      );
+    }
+
+    try {
+      await ds.cancelCalendarEvent(eventId: eventId);
+      return const Right(null);
+    } on AuthException catch (e) {
+      return Left(AuthFailure(message: e.message));
+    } on NetworkException catch (e) {
+      return Left(NetworkFailure(message: e.message));
+    } on ServerException catch (e) {
+      return Left(ServerFailure(message: e.message, statusCode: e.statusCode));
+    } catch (e) {
+      return Left(ServerFailure(message: e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, void>> declineCalendarEvent({
+    required String eventId,
+  }) async {
+    final ds = _accountManager.calendarDatasource;
+    if (ds == null) {
+      return const Left(
+        ServerFailure(message: 'Calendar is not available for this account type'),
+      );
+    }
+
+    final userEmail = _accountManager.activeAccount?.emailAddress;
+
+    try {
+      await ds.declineCalendarEvent(eventId: eventId, userEmail: userEmail);
+      return const Right(null);
+    } on AuthException catch (e) {
+      return Left(AuthFailure(message: e.message));
+    } on NetworkException catch (e) {
+      return Left(NetworkFailure(message: e.message));
+    } on ServerException catch (e) {
+      return Left(ServerFailure(message: e.message, statusCode: e.statusCode));
+    } catch (e) {
+      return Left(ServerFailure(message: e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, void>> proposeNewTime({
+    required String eventId,
+    required DateTime newStart,
+    required DateTime newEnd,
+    String? timezone,
+  }) async {
+    final ds = _accountManager.calendarDatasource;
+    if (ds == null) {
+      return const Left(
+        ServerFailure(message: 'Calendar is not available for this account type'),
+      );
+    }
+
+    final userEmail = _accountManager.activeAccount?.emailAddress;
+
+    try {
+      await ds.proposeNewTime(
+        eventId: eventId,
+        newStart: newStart,
+        newEnd: newEnd,
+        timezone: timezone,
         userEmail: userEmail,
       );
       return const Right(null);

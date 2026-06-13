@@ -62,7 +62,11 @@ class EmailModel extends Email {
       attachments: _parseAttachments(json['attachments']),
       inlineAttachments: _parseInlineAttachments(json['attachments']),
       parentFolderId: json['parentFolderId'] as String?,
-      meetingInvite: _parseMeetingInvite(json['@odata.type'] as String?),
+      meetingInvite: _parseMeetingInvite(
+        json['@odata.type'] as String?,
+        json['meetingMessageType'] as String?,
+        json,
+      ),
     );
   }
 
@@ -104,11 +108,23 @@ class EmailModel extends Email {
     return result;
   }
 
-  static MeetingInvite? _parseMeetingInvite(String? odataType) {
-    // Graph API returns @odata.type = '#microsoft.graph.eventMessage' for
-    // meeting-related messages automatically, without needing $select.
-    if (odataType == '#microsoft.graph.eventMessage') return const MeetingInvite();
-    return null;
+  static MeetingInvite? _parseMeetingInvite(
+      String? odataType, String? meetingMessageType, Map<String, dynamic> json) {
+    final isEventMessage = odataType == '#microsoft.graph.eventMessage' ||
+        (meetingMessageType != null && meetingMessageType != 'none');
+    if (!isEventMessage) return null;
+
+    // Parse startDateTime (DateTimeTimeZone: {dateTime, timeZone}) for use as a
+    // calendar-search fallback when the message→event navigation fails.
+    DateTime? meetingStart;
+    final startMap = json['startDateTime'] as Map<String, dynamic>?;
+    final dtStr = startMap?['dateTime'] as String?;
+    if (dtStr != null) {
+      try {
+        meetingStart = DateTime.parse(dtStr).toUtc();
+      } catch (_) {}
+    }
+    return MeetingInvite(meetingStart: meetingStart);
   }
 
   static EmailImportance _parseImportance(String? value) {

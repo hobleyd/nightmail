@@ -358,6 +358,7 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
         emailId: widget.email.id,
         response: response,
         icsData: widget.email.meetingInvite?.icsData,
+        meetingStart: widget.email.meetingInvite?.meetingStart,
       ),
     );
 

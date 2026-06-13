@@ -115,6 +115,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     required String emailId,
     required MeetingInviteResponseType response,
     String? icsData,
+    DateTime? meetingStart,
     String? userEmail,
   }) async {
     if (icsData == null) {
@@ -156,6 +157,49 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     } on DioException catch (e) {
       throw _mapException(e);
     }
+  }
+
+  @override
+  Future<void> cancelCalendarEvent({required String eventId}) async {
+    try {
+      await _dio.delete<void>(
+        '/calendars/primary/events/$eventId',
+        queryParameters: {'sendUpdates': 'all'},
+      );
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  @override
+  Future<void> declineCalendarEvent({
+    required String eventId,
+    String? userEmail,
+  }) async {
+    final attendees = <Map<String, dynamic>>[
+      if (userEmail != null) {'email': userEmail, 'responseStatus': 'declined'},
+    ];
+    try {
+      await _dio.patch<void>(
+        '/calendars/primary/events/$eventId',
+        data: {if (attendees.isNotEmpty) 'attendees': attendees},
+        queryParameters: {'sendUpdates': 'all'},
+      );
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  @override
+  Future<void> proposeNewTime({
+    required String eventId,
+    required DateTime newStart,
+    required DateTime newEnd,
+    String? timezone,
+    String? userEmail,
+  }) async {
+    // Google Calendar has no native propose-new-time API; decline the original.
+    await declineCalendarEvent(eventId: eventId, userEmail: userEmail);
   }
 
   /// Minimal iCalendar parser — extracts the first VEVENT's key properties.

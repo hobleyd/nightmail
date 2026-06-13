@@ -10,7 +10,10 @@ import 'package:mockito/mockito.dart' as _i1;
 import 'package:mockito/src/dummies.dart' as _i7;
 import 'package:nightmail/core/error/failures.dart' as _i5;
 import 'package:nightmail/domain/entities/calendar_event.dart' as _i6;
+import 'package:nightmail/domain/usecases/cancel_calendar_event.dart' as _i8;
+import 'package:nightmail/domain/usecases/decline_calendar_event.dart' as _i9;
 import 'package:nightmail/domain/usecases/get_calendar_events.dart' as _i2;
+import 'package:nightmail/domain/usecases/propose_new_time.dart' as _i10;
 
 // ignore_for_file: type=lint
 // ignore_for_file: avoid_redundant_argument_values
@@ -51,4 +54,78 @@ class MockGetCalendarEvents extends _i1.Mock implements _i2.GetCalendarEvents {
                 ),
           )
           as _i3.Future<_i4.Either<_i5.Failure, List<_i6.CalendarEvent>>>);
+}
+
+/// A class which mocks [CancelCalendarEvent].
+///
+/// See the documentation for Mockito's code generation for more information.
+class MockCancelCalendarEvent extends _i1.Mock
+    implements _i8.CancelCalendarEvent {
+  MockCancelCalendarEvent() {
+    _i1.throwOnMissingStub(this);
+  }
+
+  @override
+  _i3.Future<_i4.Either<_i5.Failure, void>> call(
+    _i8.CancelCalendarEventParams? params,
+  ) =>
+      (super.noSuchMethod(
+            Invocation.method(#call, [params]),
+            returnValue: _i3.Future<_i4.Either<_i5.Failure, void>>.value(
+              _i7.dummyValue<_i4.Either<_i5.Failure, void>>(
+                this,
+                Invocation.method(#call, [params]),
+              ),
+            ),
+          )
+          as _i3.Future<_i4.Either<_i5.Failure, void>>);
+}
+
+/// A class which mocks [DeclineCalendarEvent].
+///
+/// See the documentation for Mockito's code generation for more information.
+class MockDeclineCalendarEvent extends _i1.Mock
+    implements _i9.DeclineCalendarEvent {
+  MockDeclineCalendarEvent() {
+    _i1.throwOnMissingStub(this);
+  }
+
+  @override
+  _i3.Future<_i4.Either<_i5.Failure, void>> call(
+    _i9.DeclineCalendarEventParams? params,
+  ) =>
+      (super.noSuchMethod(
+            Invocation.method(#call, [params]),
+            returnValue: _i3.Future<_i4.Either<_i5.Failure, void>>.value(
+              _i7.dummyValue<_i4.Either<_i5.Failure, void>>(
+                this,
+                Invocation.method(#call, [params]),
+              ),
+            ),
+          )
+          as _i3.Future<_i4.Either<_i5.Failure, void>>);
+}
+
+/// A class which mocks [ProposeNewTime].
+///
+/// See the documentation for Mockito's code generation for more information.
+class MockProposeNewTime extends _i1.Mock implements _i10.ProposeNewTime {
+  MockProposeNewTime() {
+    _i1.throwOnMissingStub(this);
+  }
+
+  @override
+  _i3.Future<_i4.Either<_i5.Failure, void>> call(
+    _i10.ProposeNewTimeParams? params,
+  ) =>
+      (super.noSuchMethod(
+            Invocation.method(#call, [params]),
+            returnValue: _i3.Future<_i4.Either<_i5.Failure, void>>.value(
+              _i7.dummyValue<_i4.Either<_i5.Failure, void>>(
+                this,
+                Invocation.method(#call, [params]),
+              ),
+            ),
+          )
+          as _i3.Future<_i4.Either<_i5.Failure, void>>);
 }

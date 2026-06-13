@@ -21,6 +21,22 @@ abstract interface class CalendarRemoteDatasource {
     required String emailId,
     required MeetingInviteResponseType response,
     String? icsData,
+    DateTime? meetingStart,
+    String? userEmail,
+  });
+
+  Future<void> cancelCalendarEvent({required String eventId});
+
+  Future<void> declineCalendarEvent({
+    required String eventId,
+    String? userEmail,
+  });
+
+  Future<void> proposeNewTime({
+    required String eventId,
+    required DateTime newStart,
+    required DateTime newEnd,
+    String? timezone,
     String? userEmail,
   });
 }

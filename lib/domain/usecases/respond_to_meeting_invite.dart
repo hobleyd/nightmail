@@ -18,6 +18,7 @@ class RespondToMeetingInvite
       emailId: params.emailId,
       response: params.response,
       icsData: params.icsData,
+      meetingStart: params.meetingStart,
     );
   }
 }
@@ -27,12 +28,14 @@ class RespondToMeetingInviteParams extends Equatable {
     required this.emailId,
     required this.response,
     this.icsData,
+    this.meetingStart,
   });
 
   final String emailId;
   final MeetingInviteResponseType response;
   final String? icsData;
+  final DateTime? meetingStart;
 
   @override
-  List<Object?> get props => [emailId, response, icsData];
+  List<Object?> get props => [emailId, response, icsData, meetingStart];
 }

@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -39,7 +38,6 @@ final _emailListSelect = [
   'parentFolderId',
 ].join(',');
 
-final _emailDetailSelect = '$_emailListSelect,body';
 
 class GraphApiDatasourceImpl
     implements
@@ -97,7 +95,9 @@ class GraphApiDatasourceImpl
       final response = await _dio.get<Map<String, dynamic>>(
         '/me/messages/$id',
         queryParameters: {
-          '\$select': _emailDetailSelect,
+          // No $select here: Graph omits @odata.type for derived types
+          // (eventMessage) on single-resource GETs when $select is present.
+          // Returning all default fields ensures the type annotation is present.
           '\$expand': r'attachments($select=id,name,contentType,size,isInline)',
         },
       );
@@ -311,6 +311,7 @@ class GraphApiDatasourceImpl
     required String emailId,
     required MeetingInviteResponseType response,
     String? icsData,
+    DateTime? meetingStart,
     String? userEmail,
   }) async {
     final endpoint = switch (response) {
@@ -318,10 +319,141 @@ class GraphApiDatasourceImpl
       MeetingInviteResponseType.tentative => 'tentativelyAccept',
       MeetingInviteResponseType.decline => 'decline',
     };
+    final body = {'sendResponse': true, 'comment': ''};
+
+    // 1. Try the message-level action (works for unprocessed eventMessages).
+    try {
+      await _dio.post<void>('/me/messages/$emailId/$endpoint', data: body);
+      return;
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      if (status == 401 || status == 403) throw _mapDioException(e);
+      // 400/404 means action unavailable on this message type — fall through.
+    }
+
+    // 2. Navigate from message to its linked calendar event.
+    String? eventId;
+    try {
+      final eventResp = await _dio.get<Map<String, dynamic>>(
+        '/me/messages/$emailId/event',
+        queryParameters: {'\$select': 'id,isOrganizer'},
+      );
+      final isOrganizer = eventResp.data?['isOrganizer'] as bool? ?? false;
+      if (isOrganizer) return; // Organiser has no response to send.
+      eventId = eventResp.data?['id'] as String?;
+    } on DioException {
+      // Navigation unavailable (cross-tenant invite, or already processed).
+      // Fall through to the calendar-search approach below.
+    }
+
+    if (eventId != null) {
+      try {
+        await _dio.post<void>('/me/events/$eventId/$endpoint', data: body);
+        return;
+      } on DioException catch (e) {
+        final status = e.response?.statusCode;
+        if (status == 401 || status == 403) throw _mapDioException(e);
+        // Event action also failed — fall through to calendar search.
+      }
+    }
+
+    // 3. Last resort: search the calendar by the meeting's start time and
+    //    accept whichever event in that window is still pending a response.
+    if (meetingStart == null) {
+      throw const ServerException(
+          message: 'Could not locate the calendar event for this invite');
+    }
+    try {
+      final windowStart = meetingStart.subtract(const Duration(minutes: 30));
+      final windowEnd = meetingStart.add(const Duration(hours: 4));
+      String fmt(DateTime d) => d.toUtc().toIso8601String();
+      final calResp = await _dio.get<Map<String, dynamic>>(
+        '/me/calendarView',
+        queryParameters: {
+          'startDateTime': fmt(windowStart),
+          'endDateTime': fmt(windowEnd),
+          '\$select': 'id,isOrganizer,responseStatus',
+          '\$top': 25,
+        },
+        options: Options(headers: {'Prefer': 'outlook.timezone="UTC"'}),
+      );
+      final events = (calResp.data?['value'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      final pending = events.where((e) {
+        if (e['isOrganizer'] == true) return false;
+        final rs = (e['responseStatus'] as Map?)?.cast<String, dynamic>();
+        final r = rs?['response'] as String? ?? '';
+        // 'none' means no response sent yet; 'tentativelyAccepted' means
+        // Exchange auto-processed it — both need an explicit response.
+        return r == 'none' || r == 'tentativelyAccepted';
+      }).toList();
+
+      if (pending.isEmpty) {
+        throw const ServerException(
+            message: 'No pending meeting found in your calendar at that time');
+      }
+      // If there's exactly one pending event in the window use it; if there
+      // are multiple accept the first (Exchange auto-matched this invite).
+      final targetId = pending.first['id'] as String;
+      await _dio.post<void>('/me/events/$targetId/$endpoint', data: body);
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<void> cancelCalendarEvent({required String eventId}) async {
     try {
       await _dio.post<void>(
-        '/me/messages/$emailId/$endpoint',
+        '/me/events/$eventId/cancel',
+        data: {'comment': ''},
+      );
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<void> declineCalendarEvent({
+    required String eventId,
+    String? userEmail,
+  }) async {
+    try {
+      await _dio.post<void>(
+        '/me/events/$eventId/decline',
         data: {'sendResponse': true, 'comment': ''},
+      );
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<void> proposeNewTime({
+    required String eventId,
+    required DateTime newStart,
+    required DateTime newEnd,
+    String? timezone,
+    String? userEmail,
+  }) async {
+    final tz = timezone ?? 'UTC';
+    try {
+      await _dio.post<void>(
+        '/me/events/$eventId/decline',
+        data: {
+          'sendResponse': true,
+          'comment': '',
+          'proposedNewTime': {
+            'start': {
+              'dateTime': _formatLocalDateTime(newStart),
+              'timeZone': tz,
+            },
+            'end': {
+              'dateTime': _formatLocalDateTime(newEnd),
+              'timeZone': tz,
+            },
+          },
+        },
       );
     } on DioException catch (e) {
       throw _mapDioException(e);

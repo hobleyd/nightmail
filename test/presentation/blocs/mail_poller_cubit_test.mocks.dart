@@ -4,7 +4,7 @@
 
 // ignore_for_file: no_leading_underscores_for_library_prefixes
 import 'dart:async' as _i11;
-import 'dart:typed_data' as _i20;
+import 'dart:typed_data' as _i21;
 
 import 'package:mockito/mockito.dart' as _i1;
 import 'package:mockito/src/dummies.dart' as _i12;
@@ -20,9 +20,10 @@ import 'package:nightmail/data/models/email_folder_model.dart' as _i17;
 import 'package:nightmail/data/models/email_model.dart' as _i4;
 import 'package:nightmail/data/models/mail_delta_result.dart' as _i8;
 import 'package:nightmail/data/models/todo_task_attachment_model.dart' as _i7;
-import 'package:nightmail/data/models/todo_task_list_model.dart' as _i21;
+import 'package:nightmail/data/models/todo_task_list_model.dart' as _i22;
 import 'package:nightmail/data/models/todo_task_model.dart' as _i6;
-import 'package:nightmail/domain/entities/todo_task.dart' as _i22;
+import 'package:nightmail/domain/entities/meeting_invite.dart' as _i20;
+import 'package:nightmail/domain/entities/todo_task.dart' as _i23;
 import 'package:nightmail/domain/usecases/create_calendar_event.dart' as _i18;
 import 'package:nightmail/domain/usecases/update_calendar_event.dart' as _i19;
 import 'package:nightmail/infrastructure/accounts/account.dart' as _i10;
@@ -508,6 +509,88 @@ class MockGraphApiDatasourceImpl extends _i1.Mock
           as _i11.Future<_i5.CalendarEventModel>);
 
   @override
+  _i11.Future<void> respondToMeetingInvite({
+    required String? emailId,
+    required _i20.MeetingInviteResponseType? response,
+    String? icsData,
+    String? userEmail,
+  }) =>
+      (super.noSuchMethod(
+            Invocation.method(#respondToMeetingInvite, [], {
+              #emailId: emailId,
+              #response: response,
+              #icsData: icsData,
+              #userEmail: userEmail,
+            }),
+            returnValue: _i11.Future<void>.value(),
+            returnValueForMissingStub: _i11.Future<void>.value(),
+          )
+          as _i11.Future<void>);
+
+  @override
+  _i11.Future<void> cancelCalendarEvent({required String? eventId}) =>
+      (super.noSuchMethod(
+            Invocation.method(#cancelCalendarEvent, [], {#eventId: eventId}),
+            returnValue: _i11.Future<void>.value(),
+            returnValueForMissingStub: _i11.Future<void>.value(),
+          )
+          as _i11.Future<void>);
+
+  @override
+  _i11.Future<void> declineCalendarEvent({
+    required String? eventId,
+    String? userEmail,
+  }) =>
+      (super.noSuchMethod(
+            Invocation.method(#declineCalendarEvent, [], {
+              #eventId: eventId,
+              #userEmail: userEmail,
+            }),
+            returnValue: _i11.Future<void>.value(),
+            returnValueForMissingStub: _i11.Future<void>.value(),
+          )
+          as _i11.Future<void>);
+
+  @override
+  _i11.Future<void> proposeNewTime({
+    required String? eventId,
+    required DateTime? newStart,
+    required DateTime? newEnd,
+    String? timezone,
+    String? userEmail,
+  }) =>
+      (super.noSuchMethod(
+            Invocation.method(#proposeNewTime, [], {
+              #eventId: eventId,
+              #newStart: newStart,
+              #newEnd: newEnd,
+              #timezone: timezone,
+              #userEmail: userEmail,
+            }),
+            returnValue: _i11.Future<void>.value(),
+            returnValueForMissingStub: _i11.Future<void>.value(),
+          )
+          as _i11.Future<void>);
+
+  @override
+  _i11.Future<({String displayName, String email})> fetchUserProfile() =>
+      (super.noSuchMethod(
+            Invocation.method(#fetchUserProfile, []),
+            returnValue:
+                _i11.Future<({String displayName, String email})>.value((
+                  displayName: _i12.dummyValue<String>(
+                    this,
+                    Invocation.method(#fetchUserProfile, []),
+                  ),
+                  email: _i12.dummyValue<String>(
+                    this,
+                    Invocation.method(#fetchUserProfile, []),
+                  ),
+                )),
+          )
+          as _i11.Future<({String displayName, String email})>);
+
+  @override
   _i11.Future<void> sendEmail({
     required List<String>? toAddresses,
     List<String>? ccAddresses = const [],
@@ -595,25 +678,25 @@ class MockGraphApiDatasourceImpl extends _i1.Mock
           as _i11.Future<void>);
 
   @override
-  _i11.Future<_i20.Uint8List> downloadAttachment(
+  _i11.Future<_i21.Uint8List> downloadAttachment(
     String? messageId,
     String? attachmentId,
   ) =>
       (super.noSuchMethod(
             Invocation.method(#downloadAttachment, [messageId, attachmentId]),
-            returnValue: _i11.Future<_i20.Uint8List>.value(_i20.Uint8List(0)),
+            returnValue: _i11.Future<_i21.Uint8List>.value(_i21.Uint8List(0)),
           )
-          as _i11.Future<_i20.Uint8List>);
+          as _i11.Future<_i21.Uint8List>);
 
   @override
-  _i11.Future<List<_i21.TodoTaskListModel>> getTaskLists() =>
+  _i11.Future<List<_i22.TodoTaskListModel>> getTaskLists() =>
       (super.noSuchMethod(
             Invocation.method(#getTaskLists, []),
-            returnValue: _i11.Future<List<_i21.TodoTaskListModel>>.value(
-              <_i21.TodoTaskListModel>[],
+            returnValue: _i11.Future<List<_i22.TodoTaskListModel>>.value(
+              <_i22.TodoTaskListModel>[],
             ),
           )
-          as _i11.Future<List<_i21.TodoTaskListModel>>);
+          as _i11.Future<List<_i22.TodoTaskListModel>>);
 
   @override
   _i11.Future<List<_i6.TodoTaskModel>> getTasks(
@@ -638,7 +721,7 @@ class MockGraphApiDatasourceImpl extends _i1.Mock
     required String? title,
     String? body,
     DateTime? dueDate,
-    _i22.TodoTaskImportance? importance = _i22.TodoTaskImportance.normal,
+    _i23.TodoTaskImportance? importance = _i23.TodoTaskImportance.normal,
   }) =>
       (super.noSuchMethod(
             Invocation.method(#createTask, [], {
@@ -667,7 +750,7 @@ class MockGraphApiDatasourceImpl extends _i1.Mock
   _i11.Future<_i6.TodoTaskModel> updateTaskStatus({
     required String? listId,
     required String? taskId,
-    required _i22.TodoTaskStatus? status,
+    required _i23.TodoTaskStatus? status,
   }) =>
       (super.noSuchMethod(
             Invocation.method(#updateTaskStatus, [], {
@@ -714,19 +797,19 @@ class MockGraphApiDatasourceImpl extends _i1.Mock
           as _i11.Future<_i6.TodoTaskModel>);
 
   @override
-  _i11.Future<_i20.Uint8List> getRawEmailBytes(String? id) =>
+  _i11.Future<_i21.Uint8List> getRawEmailBytes(String? id) =>
       (super.noSuchMethod(
             Invocation.method(#getRawEmailBytes, [id]),
-            returnValue: _i11.Future<_i20.Uint8List>.value(_i20.Uint8List(0)),
+            returnValue: _i11.Future<_i21.Uint8List>.value(_i21.Uint8List(0)),
           )
-          as _i11.Future<_i20.Uint8List>);
+          as _i11.Future<_i21.Uint8List>);
 
   @override
   _i11.Future<_i7.TodoTaskAttachmentModel> attachEmailToTask({
     required String? listId,
     required String? taskId,
     required String? fileName,
-    required _i20.Uint8List? emlBytes,
+    required _i21.Uint8List? emlBytes,
   }) =>
       (super.noSuchMethod(
             Invocation.method(#attachEmailToTask, [], {
@@ -766,7 +849,7 @@ class MockGraphApiDatasourceImpl extends _i1.Mock
           as _i11.Future<List<_i7.TodoTaskAttachmentModel>>);
 
   @override
-  _i11.Future<_i20.Uint8List> downloadTaskAttachment({
+  _i11.Future<_i21.Uint8List> downloadTaskAttachment({
     required String? listId,
     required String? taskId,
     required String? attachmentId,
@@ -777,9 +860,9 @@ class MockGraphApiDatasourceImpl extends _i1.Mock
               #taskId: taskId,
               #attachmentId: attachmentId,
             }),
-            returnValue: _i11.Future<_i20.Uint8List>.value(_i20.Uint8List(0)),
+            returnValue: _i11.Future<_i21.Uint8List>.value(_i21.Uint8List(0)),
           )
-          as _i11.Future<_i20.Uint8List>);
+          as _i11.Future<_i21.Uint8List>);
 
   @override
   _i11.Future<_i8.MailDeltaResult> syncMailDelta(
@@ -979,21 +1062,21 @@ class MockEmailRemoteDatasource extends _i1.Mock
           as _i11.Future<void>);
 
   @override
-  _i11.Future<_i20.Uint8List> downloadAttachment(
+  _i11.Future<_i21.Uint8List> downloadAttachment(
     String? messageId,
     String? attachmentId,
   ) =>
       (super.noSuchMethod(
             Invocation.method(#downloadAttachment, [messageId, attachmentId]),
-            returnValue: _i11.Future<_i20.Uint8List>.value(_i20.Uint8List(0)),
+            returnValue: _i11.Future<_i21.Uint8List>.value(_i21.Uint8List(0)),
           )
-          as _i11.Future<_i20.Uint8List>);
+          as _i11.Future<_i21.Uint8List>);
 
   @override
-  _i11.Future<_i20.Uint8List> getRawEmailBytes(String? id) =>
+  _i11.Future<_i21.Uint8List> getRawEmailBytes(String? id) =>
       (super.noSuchMethod(
             Invocation.method(#getRawEmailBytes, [id]),
-            returnValue: _i11.Future<_i20.Uint8List>.value(_i20.Uint8List(0)),
+            returnValue: _i11.Future<_i21.Uint8List>.value(_i21.Uint8List(0)),
           )
-          as _i11.Future<_i20.Uint8List>);
+          as _i11.Future<_i21.Uint8List>);
 }

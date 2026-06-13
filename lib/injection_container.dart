@@ -22,7 +22,9 @@ import 'domain/repositories/system_contacts_repository.dart';
 import 'domain/repositories/tasks_repository.dart';
 import 'domain/usecases/attach_email_to_task.dart';
 import 'domain/usecases/check_sender_anomaly.dart';
+import 'domain/usecases/cancel_calendar_event.dart';
 import 'domain/usecases/create_calendar_event.dart';
+import 'domain/usecases/decline_calendar_event.dart';
 import 'domain/usecases/create_task.dart';
 import 'domain/usecases/delete_email.dart';
 import 'domain/usecases/download_task_attachment.dart';
@@ -40,6 +42,7 @@ import 'domain/usecases/mark_email_as_read.dart';
 import 'domain/usecases/record_known_senders.dart';
 import 'domain/usecases/search_contacts.dart';
 import 'domain/usecases/send_email.dart';
+import 'domain/usecases/propose_new_time.dart';
 import 'domain/usecases/respond_to_meeting_invite.dart';
 import 'domain/usecases/update_calendar_event.dart';
 import 'domain/usecases/update_task_due_date.dart';
@@ -145,6 +148,9 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => CreateCalendarEvent(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => UpdateCalendarEvent(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => RespondToMeetingInvite(sl<CalendarRepository>()));
+  sl.registerLazySingleton(() => CancelCalendarEvent(sl<CalendarRepository>()));
+  sl.registerLazySingleton(() => DeclineCalendarEvent(sl<CalendarRepository>()));
+  sl.registerLazySingleton(() => ProposeNewTime(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => EmlParser());
   sl.registerLazySingleton(() => GetTaskLists(sl<TasksRepository>()));
   sl.registerLazySingleton(() => GetTasks(sl<TasksRepository>()));
@@ -199,7 +205,12 @@ Future<void> configureDependencies() async {
         accountManager: sl<AccountManager>(),
       ));
   sl.registerFactory(
-    () => CalendarBloc(getCalendarEvents: sl<GetCalendarEvents>()),
+    () => CalendarBloc(
+          getCalendarEvents: sl<GetCalendarEvents>(),
+          cancelCalendarEvent: sl<CancelCalendarEvent>(),
+          declineCalendarEvent: sl<DeclineCalendarEvent>(),
+          proposeNewTime: sl<ProposeNewTime>(),
+        ),
   );
   sl.registerFactory(() => ComposeBloc(sendEmail: sl<SendEmail>()));
   sl.registerFactory(() => TasksBloc(

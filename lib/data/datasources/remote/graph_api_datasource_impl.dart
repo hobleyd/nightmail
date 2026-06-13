@@ -437,6 +437,10 @@ class GraphApiDatasourceImpl
     String? timezone,
     String? userEmail,
   }) async {
+    // Send the proposed time as the attendee's local wall-clock time paired with
+    // their IANA timezone. This avoids Exchange doing a UTC→local conversion on
+    // its end (which can apply the wrong DST offset) and lets Exchange store the
+    // time directly as specified.
     final tz = timezone ?? 'UTC';
     try {
       await _dio.post<void>(

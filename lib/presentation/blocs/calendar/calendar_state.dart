@@ -22,12 +22,20 @@ final class CalendarLoaded extends CalendarState {
   const CalendarLoaded({
     required super.weekStart,
     required this.events,
+    this.selectedEventIds = const {},
   });
 
   final List<CalendarEvent> events;
+  final Set<String> selectedEventIds;
+
+  CalendarLoaded copyWithSelection(Set<String> ids) => CalendarLoaded(
+        weekStart: weekStart,
+        events: events,
+        selectedEventIds: ids,
+      );
 
   @override
-  List<Object?> get props => [weekStart, events];
+  List<Object?> get props => [weekStart, events, selectedEventIds];
 }
 
 final class CalendarError extends CalendarState {

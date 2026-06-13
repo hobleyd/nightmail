@@ -1,5 +1,7 @@
 import 'package:equatable/equatable.dart';
 
+import '../../../domain/entities/calendar_event.dart';
+
 sealed class CalendarBlocEvent extends Equatable {
   const CalendarBlocEvent();
 
@@ -54,4 +56,40 @@ final class CalendarEventNewTimeProposed extends CalendarBlocEvent {
 
   @override
   List<Object?> get props => [eventId, newStart, newEnd, timezone];
+}
+
+final class CalendarEventRescheduleRequested extends CalendarBlocEvent {
+  const CalendarEventRescheduleRequested({
+    required this.event,
+    required this.newStart,
+    required this.newEnd,
+  });
+
+  final CalendarEvent event;
+  final DateTime newStart;
+  final DateTime newEnd;
+
+  @override
+  List<Object?> get props => [event, newStart, newEnd];
+}
+
+final class CalendarEventSelectionToggled extends CalendarBlocEvent {
+  const CalendarEventSelectionToggled({
+    required this.eventId,
+    this.addToSelection = false,
+  });
+
+  final String eventId;
+  final bool addToSelection;
+
+  @override
+  List<Object?> get props => [eventId, addToSelection];
+}
+
+final class CalendarSelectionCleared extends CalendarBlocEvent {
+  const CalendarSelectionCleared();
+}
+
+final class CalendarSelectedEventsDeleteRequested extends CalendarBlocEvent {
+  const CalendarSelectedEventsDeleteRequested();
 }

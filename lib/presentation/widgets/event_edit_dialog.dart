@@ -9,6 +9,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/timezone_utils.dart';
 import '../../domain/entities/calendar_event.dart';
 import '../../domain/entities/calendar_recurrence.dart';
 import '../blocs/event_edit/event_edit_bloc.dart';
@@ -206,19 +207,7 @@ class _EventEditFormState extends State<EventEditForm> {
     widget.onTitleChanged?.call(_windowTitle);
   }
 
-  String _localIanaTimezone() {
-    final offset = DateTime.now().timeZoneOffset;
-    final name = DateTime.now().timeZoneName;
-    // Try to match by abbreviated name in our list first.
-    for (final tz in _kTimezones) {
-      if (tz.abbreviation == name) return tz.iana;
-    }
-    // Fall back to offset matching.
-    for (final tz in _kTimezones) {
-      if (tz.offsetHours == offset.inHours) return tz.iana;
-    }
-    return 'UTC';
-  }
+  String _localIanaTimezone() => localIanaTimezone();
 
   static final _emailInAngle = RegExp(r'<([^>]+)>');
 
@@ -620,55 +609,7 @@ class _AllDayToggle extends StatelessWidget {
 
 // ─── Timezone selector ────────────────────────────────────────────────────────
 
-typedef _TzEntry = ({String iana, String label, String abbreviation, int offsetHours});
-
-final List<_TzEntry> _kTimezones = List.unmodifiable(
-  <_TzEntry>[
-  (iana: 'UTC', label: 'UTC', abbreviation: 'UTC', offsetHours: 0),
-  (iana: 'America/New_York', label: 'Eastern (ET)', abbreviation: 'EST', offsetHours: -5),
-  (iana: 'America/Chicago', label: 'Central (CT)', abbreviation: 'CST', offsetHours: -6),
-  (iana: 'America/Denver', label: 'Mountain (MT)', abbreviation: 'MST', offsetHours: -7),
-  (iana: 'America/Los_Angeles', label: 'Pacific (PT)', abbreviation: 'PST', offsetHours: -8),
-  (iana: 'America/Anchorage', label: 'Alaska (AKT)', abbreviation: 'AKST', offsetHours: -9),
-  (iana: 'Pacific/Honolulu', label: 'Hawaii (HT)', abbreviation: 'HST', offsetHours: -10),
-  (iana: 'America/Toronto', label: 'Toronto', abbreviation: 'EST', offsetHours: -5),
-  (iana: 'America/Vancouver', label: 'Vancouver', abbreviation: 'PST', offsetHours: -8),
-  (iana: 'America/Sao_Paulo', label: 'São Paulo (BRT)', abbreviation: 'BRT', offsetHours: -3),
-  (iana: 'America/Mexico_City', label: 'Mexico City', abbreviation: 'CST', offsetHours: -6),
-  (iana: 'America/Buenos_Aires', label: 'Buenos Aires', abbreviation: 'ART', offsetHours: -3),
-  (iana: 'Europe/London', label: 'London (GMT/BST)', abbreviation: 'GMT', offsetHours: 0),
-  (iana: 'Europe/Paris', label: 'Paris (CET)', abbreviation: 'CET', offsetHours: 1),
-  (iana: 'Europe/Berlin', label: 'Berlin (CET)', abbreviation: 'CET', offsetHours: 1),
-  (iana: 'Europe/Rome', label: 'Rome (CET)', abbreviation: 'CET', offsetHours: 1),
-  (iana: 'Europe/Madrid', label: 'Madrid (CET)', abbreviation: 'CET', offsetHours: 1),
-  (iana: 'Europe/Amsterdam', label: 'Amsterdam (CET)', abbreviation: 'CET', offsetHours: 1),
-  (iana: 'Europe/Warsaw', label: 'Warsaw (CET)', abbreviation: 'CET', offsetHours: 1),
-  (iana: 'Europe/Stockholm', label: 'Stockholm (CET)', abbreviation: 'CET', offsetHours: 1),
-  (iana: 'Europe/Helsinki', label: 'Helsinki (EET)', abbreviation: 'EET', offsetHours: 2),
-  (iana: 'Europe/Athens', label: 'Athens (EET)', abbreviation: 'EET', offsetHours: 2),
-  (iana: 'Europe/Istanbul', label: 'Istanbul (TRT)', abbreviation: 'TRT', offsetHours: 3),
-  (iana: 'Europe/Moscow', label: 'Moscow (MSK)', abbreviation: 'MSK', offsetHours: 3),
-  (iana: 'Asia/Dubai', label: 'Dubai (GST)', abbreviation: 'GST', offsetHours: 4),
-  (iana: 'Asia/Kolkata', label: 'India (IST)', abbreviation: 'IST', offsetHours: 5),
-  (iana: 'Asia/Dhaka', label: 'Dhaka (BST)', abbreviation: 'BST', offsetHours: 6),
-  (iana: 'Asia/Bangkok', label: 'Bangkok (ICT)', abbreviation: 'ICT', offsetHours: 7),
-  (iana: 'Asia/Shanghai', label: 'Beijing/Shanghai (CST)', abbreviation: 'CST', offsetHours: 8),
-  (iana: 'Asia/Hong_Kong', label: 'Hong Kong (HKT)', abbreviation: 'HKT', offsetHours: 8),
-  (iana: 'Asia/Singapore', label: 'Singapore (SGT)', abbreviation: 'SGT', offsetHours: 8),
-  (iana: 'Asia/Taipei', label: 'Taipei (CST)', abbreviation: 'CST', offsetHours: 8),
-  (iana: 'Asia/Seoul', label: 'Seoul (KST)', abbreviation: 'KST', offsetHours: 9),
-  (iana: 'Asia/Tokyo', label: 'Tokyo (JST)', abbreviation: 'JST', offsetHours: 9),
-  (iana: 'Australia/Perth', label: 'Perth (AWST)', abbreviation: 'AWST', offsetHours: 8),
-  (iana: 'Australia/Adelaide', label: 'Adelaide (ACST)', abbreviation: 'ACST', offsetHours: 9),
-  (iana: 'Australia/Brisbane', label: 'Brisbane (AEST)', abbreviation: 'AEST', offsetHours: 10),
-  (iana: 'Australia/Sydney', label: 'Sydney (AEST)', abbreviation: 'AEST', offsetHours: 10),
-  (iana: 'Australia/Melbourne', label: 'Melbourne (AEST)', abbreviation: 'AEST', offsetHours: 10),
-  (iana: 'Pacific/Auckland', label: 'Auckland (NZST)', abbreviation: 'NZST', offsetHours: 12),
-  (iana: 'Africa/Johannesburg', label: 'Johannesburg (SAST)', abbreviation: 'SAST', offsetHours: 2),
-  (iana: 'Africa/Cairo', label: 'Cairo (EET)', abbreviation: 'EET', offsetHours: 2),
-  (iana: 'Africa/Lagos', label: 'Lagos (WAT)', abbreviation: 'WAT', offsetHours: 1),
-  ]..sort((a, b) => a.offsetHours.compareTo(b.offsetHours)),
-);
+// kTimezones and TzEntry are defined in core/utils/timezone_utils.dart
 
 class _TimezoneSelector extends StatefulWidget {
   const _TimezoneSelector({required this.value, required this.onChanged});
@@ -689,7 +630,7 @@ class _TimezoneSelectorState extends State<_TimezoneSelector> {
   }
 
   String get _label {
-    final match = _kTimezones.where((t) => t.iana == widget.value).firstOrNull;
+    final match = kTimezones.where((t) => t.iana == widget.value).firstOrNull;
     return match?.label ?? widget.value;
   }
 
@@ -727,7 +668,7 @@ class _TimezonePickerDialog extends StatefulWidget {
 }
 
 class _TimezonePickerDialogState extends State<_TimezonePickerDialog> {
-  late List<_TzEntry> _filtered;
+  late List<TzEntry> _filtered;
   final _search = TextEditingController();
   final _scroll = ScrollController();
 
@@ -736,7 +677,7 @@ class _TimezonePickerDialogState extends State<_TimezonePickerDialog> {
   @override
   void initState() {
     super.initState();
-    _filtered = _kTimezones;
+    _filtered = kTimezones;
     _search.addListener(_onSearch);
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToSelected());
   }
@@ -760,8 +701,8 @@ class _TimezonePickerDialogState extends State<_TimezonePickerDialog> {
     final q = _search.text.toLowerCase();
     setState(() {
       _filtered = q.isEmpty
-          ? _kTimezones
-          : _kTimezones
+          ? kTimezones
+          : kTimezones
               .where((t) =>
                   t.label.toLowerCase().contains(q) ||
                   t.iana.toLowerCase().contains(q))

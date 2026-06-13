@@ -210,6 +210,7 @@ Future<void> configureDependencies() async {
           cancelCalendarEvent: sl<CancelCalendarEvent>(),
           declineCalendarEvent: sl<DeclineCalendarEvent>(),
           proposeNewTime: sl<ProposeNewTime>(),
+          updateCalendarEvent: sl<UpdateCalendarEvent>(),
         ),
   );
   sl.registerFactory(() => ComposeBloc(sendEmail: sl<SendEmail>()));

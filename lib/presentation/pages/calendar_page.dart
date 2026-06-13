@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/timezone_utils.dart';
 import '../../domain/entities/calendar_event.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/calendar/calendar_bloc.dart';
@@ -80,6 +82,20 @@ class _WeekNavBar extends StatelessWidget {
               onTap: () => _goToToday(context),
             ),
           const Spacer(),
+          if (state case final CalendarLoaded loaded when loaded.selectedEventIds.isNotEmpty) ...[
+            Tooltip(
+              message: 'Remove selected event${loaded.selectedEventIds.length > 1 ? 's' : ''}',
+              child: InkWell(
+                onTap: () => _confirmAndDeleteSelected(context, loaded),
+                borderRadius: BorderRadius.circular(6),
+                child: Padding(
+                  padding: const EdgeInsets.all(4),
+                  child: Icon(Icons.delete_outline_rounded, size: 18, color: Colors.red.shade400),
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+          ],
           _IconNavButton(
             icon: Icons.chevron_left_rounded,
             tooltip: 'Previous week',
@@ -368,6 +384,7 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
                           Expanded(
                             child: GestureDetector(
                               behavior: HitTestBehavior.opaque,
+                              onTap: () => context.read<CalendarBloc>().add(const CalendarSelectionCleared()),
                               onDoubleTapDown: (d) =>
                                   _tapPosition = d.localPosition,
                               onDoubleTap: () {
@@ -521,6 +538,35 @@ class _DayPanelHeader extends StatelessWidget {
             onTap: onNext,
           ),
           const SizedBox(width: 4),
+          BlocBuilder<CalendarBloc, CalendarState>(
+            buildWhen: (prev, next) {
+              final prevIds = prev is CalendarLoaded ? prev.selectedEventIds : const <String>{};
+              final nextIds = next is CalendarLoaded ? next.selectedEventIds : const <String>{};
+              return prevIds.isEmpty != nextIds.isEmpty || prevIds.length != nextIds.length;
+            },
+            builder: (context, state) {
+              if (state is! CalendarLoaded || state.selectedEventIds.isEmpty) {
+                return const SizedBox.shrink();
+              }
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Tooltip(
+                    message: 'Remove selected event${state.selectedEventIds.length > 1 ? 's' : ''}',
+                    child: InkWell(
+                      onTap: () => _confirmAndDeleteSelected(context, state),
+                      borderRadius: BorderRadius.circular(6),
+                      child: Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: Icon(Icons.delete_outline_rounded, size: 16, color: Colors.red.shade400),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 2),
+                ],
+              );
+            },
+          ),
           InkWell(
             onTap: onClose,
             borderRadius: BorderRadius.circular(6),
@@ -792,7 +838,19 @@ class _AllDayEventChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final blocState = context.watch<CalendarBloc>().state;
+    final isSelected = blocState is CalendarLoaded &&
+        blocState.selectedEventIds.contains(event.id);
+
     return GestureDetector(
+      onTap: () {
+        final multiSelect = HardwareKeyboard.instance.isMetaPressed ||
+            HardwareKeyboard.instance.isShiftPressed;
+        context.read<CalendarBloc>().add(CalendarEventSelectionToggled(
+              eventId: event.id,
+              addToSelection: multiSelect,
+            ));
+      },
       onDoubleTap: () => _openEdit(context),
       onSecondaryTapUp: (details) =>
           _showEventContextMenu(context, event, details.globalPosition),
@@ -801,9 +859,14 @@ class _AllDayEventChip extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 1),
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
         decoration: BoxDecoration(
-          color: AppColors.accent.withAlpha(40),
+          color: AppColors.accent.withAlpha(isSelected ? 80 : 40),
           borderRadius: BorderRadius.circular(3),
-          border: Border(left: BorderSide(color: AppColors.accent, width: 2)),
+          border: isSelected
+              ? Border.all(color: AppColors.accent, width: 1.5)
+              : Border(left: BorderSide(color: AppColors.accent, width: 2)),
+          boxShadow: isSelected
+              ? [BoxShadow(color: AppColors.accent.withAlpha(50), blurRadius: 4, offset: Offset.zero)]
+              : null,
         ),
         child: Text(
           event.subject,
@@ -982,6 +1045,7 @@ class _DayColumnCellState extends State<_DayColumnCell> {
     final c = context.colors;
     return Expanded(
       child: GestureDetector(
+        onTap: () => context.read<CalendarBloc>().add(const CalendarSelectionCleared()),
         onDoubleTapDown: _onDoubleTapDown,
         onDoubleTap: _onDoubleTap,
         child: Container(
@@ -1019,7 +1083,7 @@ class _DayColumnCellState extends State<_DayColumnCell> {
   }
 }
 
-class _PositionedEvent extends StatelessWidget {
+class _PositionedEvent extends StatefulWidget {
   const _PositionedEvent({
     required this.event,
     required this.dayStart,
@@ -1031,16 +1095,93 @@ class _PositionedEvent extends StatelessWidget {
   final double hourHeight;
 
   @override
+  State<_PositionedEvent> createState() => _PositionedEventState();
+}
+
+class _PositionedEventState extends State<_PositionedEvent> {
+  double _dragDy = 0;
+  bool _isDragging = false;
+
+  double get _minutesPerPixel => widget.hourHeight / 60;
+
+  double get _originalTop {
+    final start = widget.event.start.toLocal();
+    return (start.hour * 60 + start.minute) * _minutesPerPixel;
+  }
+
+  double get _originalHeight {
+    final start = widget.event.start.toLocal();
+    final end = widget.event.end.toLocal();
+    final durationMinutes =
+        end.difference(start).inMinutes.clamp(15, 24 * 60).toDouble();
+    return durationMinutes * _minutesPerPixel;
+  }
+
+  int get _snappedMinutesDelta {
+    final rawMinutes = _dragDy / _minutesPerPixel;
+    return ((rawMinutes / 15).round() * 15).toInt();
+  }
+
+  DateTime get _newStart =>
+      widget.event.start.add(Duration(minutes: _snappedMinutesDelta));
+
+  DateTime get _newEnd =>
+      widget.event.end.add(Duration(minutes: _snappedMinutesDelta));
+
+  void _onPanStart(DragStartDetails _) {
+    setState(() {
+      _isDragging = true;
+      _dragDy = 0;
+    });
+  }
+
+  void _onPanUpdate(DragUpdateDetails details) {
+    setState(() => _dragDy += details.delta.dy);
+  }
+
+  void _onPanEnd(DragEndDetails _) {
+    final newStart = _newStart;
+    final newEnd = _newEnd;
+    setState(() {
+      _isDragging = false;
+      _dragDy = 0;
+    });
+
+    if (newStart == widget.event.start) return;
+
+    final bloc = context.read<CalendarBloc>();
+    if (widget.event.isOrganizer) {
+      bloc.add(CalendarEventRescheduleRequested(
+        event: widget.event,
+        newStart: newStart,
+        newEnd: newEnd,
+      ));
+    } else {
+      bloc.add(CalendarEventNewTimeProposed(
+        eventId: widget.event.id,
+        newStart: newStart,
+        newEnd: newEnd,
+        timezone: localIanaTimezone(),
+      ));
+    }
+  }
+
+  void _onPanCancel() {
+    setState(() {
+      _isDragging = false;
+      _dragDy = 0;
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final start = event.start.toLocal();
-    final end = event.end.toLocal();
-    final minutesPerPixel = hourHeight / 60;
+    final height = _originalHeight;
+    final snappedDeltaPx = _snappedMinutesDelta * _minutesPerPixel;
+    final top = _originalTop + (_isDragging ? snappedDeltaPx : 0);
 
-    final startMinutes = start.hour * 60 + start.minute;
-    final durationMinutes = end.difference(start).inMinutes.clamp(15, 24 * 60).toDouble();
-
-    final top = startMinutes * minutesPerPixel;
-    final height = durationMinutes * minutesPerPixel;
+    final blocState = context.watch<CalendarBloc>().state;
+    final isSelected = blocState is CalendarLoaded &&
+        blocState.selectedEventIds.contains(widget.event.id);
 
     return Positioned(
       top: top,
@@ -1048,10 +1189,30 @@ class _PositionedEvent extends StatelessWidget {
       right: 2,
       height: height,
       child: GestureDetector(
-        onDoubleTap: () => _openEdit(context),
-        onSecondaryTapUp: (details) =>
-            _showContextMenu(context, details.globalPosition),
-        child: _EventTile(event: event, compact: height < 36),
+        onTap: _isDragging
+            ? null
+            : () {
+                final multiSelect = HardwareKeyboard.instance.isMetaPressed ||
+                    HardwareKeyboard.instance.isShiftPressed;
+                context.read<CalendarBloc>().add(CalendarEventSelectionToggled(
+                      eventId: widget.event.id,
+                      addToSelection: multiSelect,
+                    ));
+              },
+        onDoubleTap: _isDragging ? null : () => _openEdit(context),
+        onSecondaryTapUp: _isDragging
+            ? null
+            : (details) => _showContextMenu(context, details.globalPosition),
+        onPanStart: _onPanStart,
+        onPanUpdate: _onPanUpdate,
+        onPanEnd: _onPanEnd,
+        onPanCancel: _onPanCancel,
+        child: _EventTile(
+          event: widget.event,
+          compact: height < 36,
+          isDragging: _isDragging,
+          isSelected: isSelected,
+        ),
       ),
     );
   }
@@ -1059,63 +1220,80 @@ class _PositionedEvent extends StatelessWidget {
   void _openEdit(BuildContext context) {
     EventEditDialog.show(
       context,
-      event: event,
+      event: widget.event,
       accountId: _accountId(context),
     );
   }
 
   void _showContextMenu(BuildContext context, Offset position) {
-    _showEventContextMenu(context, event, position);
+    _showEventContextMenu(context, widget.event, position);
   }
 }
 
 class _EventTile extends StatelessWidget {
-  const _EventTile({required this.event, required this.compact});
+  const _EventTile({
+    required this.event,
+    required this.compact,
+    this.isDragging = false,
+    this.isSelected = false,
+  });
 
   final CalendarEvent event;
   final bool compact;
+  final bool isDragging;
+  final bool isSelected;
 
   @override
   Widget build(BuildContext context) {
     final color = _colorForStatus(event.status);
 
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: 4,
-        vertical: compact ? 1 : 3,
-      ),
-      decoration: BoxDecoration(
-        color: color.withAlpha(40),
-        borderRadius: BorderRadius.circular(3),
-        border: Border(left: BorderSide(color: color, width: 2.5)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            event.subject,
-            style: TextStyle(
-              color: color,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              height: 1.2,
-            ),
-            maxLines: compact ? 1 : 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-          if (!compact && event.location != null) ...[
-            const SizedBox(height: 1),
+    return Opacity(
+      opacity: isDragging ? 0.75 : 1.0,
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: 4,
+          vertical: compact ? 1 : 3,
+        ),
+        decoration: BoxDecoration(
+          color: color.withAlpha(isDragging ? 70 : isSelected ? 70 : 40),
+          borderRadius: BorderRadius.circular(3),
+          border: isSelected
+              ? Border.all(color: color, width: 1.5)
+              : Border(left: BorderSide(color: color, width: 2.5)),
+          boxShadow: isDragging
+              ? [BoxShadow(color: color.withAlpha(60), blurRadius: 6, offset: const Offset(0, 2))]
+              : isSelected
+                  ? [BoxShadow(color: color.withAlpha(50), blurRadius: 4, offset: Offset.zero)]
+                  : null,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
             Text(
-              event.location!,
+              event.subject,
               style: TextStyle(
-                color: color.withAlpha(180),
-                fontSize: 10,
+                color: color,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                height: 1.2,
               ),
-              maxLines: 1,
+              maxLines: compact ? 1 : 2,
               overflow: TextOverflow.ellipsis,
             ),
+            if (!compact && event.location != null) ...[
+              const SizedBox(height: 1),
+              Text(
+                event.location!,
+                style: TextStyle(
+                  color: color.withAlpha(180),
+                  fontSize: 10,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -1129,6 +1307,63 @@ class _EventTile extends StatelessWidget {
       CalendarEventStatus.busy => AppColors.accent,
     };
   }
+}
+
+// ─── Delete selected events ───────────────────────────────────────────────────
+
+Future<void> _confirmAndDeleteSelected(
+  BuildContext context,
+  CalendarLoaded state,
+) async {
+  final selected =
+      state.events.where((e) => state.selectedEventIds.contains(e.id)).toList();
+  if (selected.isEmpty) return;
+
+  final count = selected.length;
+  final hasOrganized = selected.any((e) => e.isOrganizer);
+  final hasAttending = selected.any((e) => !e.isOrganizer);
+
+  final String content;
+  final String actionLabel;
+  if (hasOrganized && hasAttending) {
+    content =
+        'Remove $count event${count > 1 ? 's' : ''}? Meetings you organized will be cancelled; others will be declined.';
+    actionLabel = 'Remove';
+  } else if (hasOrganized) {
+    content = count == 1
+        ? 'Cancel "${selected.first.subject}" and send cancellation notices to all attendees?'
+        : 'Cancel $count meetings and send cancellation notices to all attendees?';
+    actionLabel = count == 1 ? 'Cancel Meeting' : 'Cancel Meetings';
+  } else {
+    content = count == 1
+        ? 'Decline "${selected.first.subject}"?'
+        : 'Decline $count meetings?';
+    actionLabel = count == 1 ? 'Decline' : 'Decline All';
+  }
+
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text(count == 1 ? 'Remove Event' : 'Remove $count Events'),
+      content: Text(content),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: const Text('Keep'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: Colors.red),
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: Text(actionLabel, style: const TextStyle(color: Colors.white)),
+        ),
+      ],
+    ),
+  );
+
+  if (confirmed != true || !context.mounted) return;
+  context
+      .read<CalendarBloc>()
+      .add(const CalendarSelectedEventsDeleteRequested());
 }
 
 // ─── Context menu ─────────────────────────────────────────────────────────────
@@ -1218,7 +1453,7 @@ void _showEventContextMenu(
               eventId: event.id,
               newStart: proposed.newStart,
               newEnd: proposed.newEnd,
-              timezone: event.timezone,
+              timezone: localIanaTimezone(),
             ));
     }
   });

@@ -250,11 +250,14 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
   static const int _totalHours = 24;
   late final ScrollController _scrollController;
   Offset? _tapPosition;
+  late DateTime _selectedDay;
 
   @override
   void initState() {
     super.initState();
     _scrollController = ScrollController(initialScrollOffset: 7 * _hourHeight);
+    final now = DateTime.now();
+    _selectedDay = DateTime(now.year, now.month, now.day);
   }
 
   @override
@@ -269,22 +272,57 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
     return la.year == lb.year && la.month == lb.month && la.day == lb.day;
   }
 
+  DateTime _mondayOfWeek(DateTime date) {
+    final daysFromMonday = (date.weekday - 1) % 7;
+    return DateTime(date.year, date.month, date.day - daysFromMonday);
+  }
+
+  void _navigateDay(BuildContext context, int delta) {
+    final newDay = _selectedDay.add(Duration(days: delta));
+    setState(() => _selectedDay = newDay);
+    final state = context.read<CalendarBloc>().state;
+    final weekStart = state.weekStart;
+    final weekEnd = weekStart.add(const Duration(days: 6));
+    final inRange = !newDay.isBefore(weekStart) && !newDay.isAfter(weekEnd);
+    if (!inRange) {
+      context.read<CalendarBloc>().add(
+            CalendarWeekNavigated(weekStart: _mondayOfWeek(newDay)),
+          );
+    }
+  }
+
+  void _goToToday(BuildContext context) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    setState(() => _selectedDay = today);
+    final state = context.read<CalendarBloc>().state;
+    final weekStart = state.weekStart;
+    final weekEnd = weekStart.add(const Duration(days: 6));
+    final inRange = !today.isBefore(weekStart) && !today.isAfter(weekEnd);
+    if (!inRange) {
+      context.read<CalendarBloc>().add(
+            CalendarWeekNavigated(weekStart: _mondayOfWeek(today)),
+          );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final today = DateTime.now();
+    final now = DateTime.now();
+    final isToday = _isSameDay(_selectedDay, now);
 
     return BlocBuilder<CalendarBloc, CalendarState>(
       builder: (context, state) {
         final isLoading = state is CalendarLoading;
         final allDayEvents = switch (state) {
           CalendarLoaded(:final events) =>
-            events.where((e) => e.isAllDay && _isSameDay(e.start, today)).toList(),
+            events.where((e) => e.isAllDay && _isSameDay(e.start, _selectedDay)).toList(),
           _ => <CalendarEvent>[],
         };
         final timedEvents = switch (state) {
           CalendarLoaded(:final events) =>
-            events.where((e) => !e.isAllDay && _isSameDay(e.start, today)).toList(),
+            events.where((e) => !e.isAllDay && _isSameDay(e.start, _selectedDay)).toList(),
           _ => <CalendarEvent>[],
         };
 
@@ -292,7 +330,14 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
           color: c.surfaceBase,
           child: Column(
             children: [
-              _DayPanelHeader(today: today, onClose: widget.onClose),
+              _DayPanelHeader(
+                selectedDay: _selectedDay,
+                isToday: isToday,
+                onPrev: () => _navigateDay(context, -1),
+                onNext: () => _navigateDay(context, 1),
+                onToday: () => _goToToday(context),
+                onClose: widget.onClose,
+              ),
               Divider(height: 1, color: c.separatorStrong),
               if (allDayEvents.isNotEmpty) ...[
                 _DayPanelAllDayStrip(events: allDayEvents),
@@ -335,8 +380,8 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
                                 final hour =
                                     (roundedMinutes ~/ 60).clamp(0, 23);
                                 final minute = roundedMinutes % 60;
-                                final start = DateTime(today.year, today.month,
-                                    today.day, hour, minute);
+                                final start = DateTime(_selectedDay.year,
+                                    _selectedDay.month, _selectedDay.day, hour, minute);
                                 EventEditDialog.show(
                                   context,
                                   initialStart: start,
@@ -361,8 +406,8 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
                                   ),
                                   ...timedEvents.map((e) => _PositionedEvent(
                                         event: e,
-                                        dayStart: DateTime(today.year,
-                                            today.month, today.day),
+                                        dayStart: DateTime(_selectedDay.year,
+                                            _selectedDay.month, _selectedDay.day),
                                         hourHeight: _hourHeight,
                                       )),
                                 ],
@@ -383,8 +428,19 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
 }
 
 class _DayPanelHeader extends StatelessWidget {
-  const _DayPanelHeader({required this.today, required this.onClose});
-  final DateTime today;
+  const _DayPanelHeader({
+    required this.selectedDay,
+    required this.isToday,
+    required this.onPrev,
+    required this.onNext,
+    required this.onToday,
+    required this.onClose,
+  });
+  final DateTime selectedDay;
+  final bool isToday;
+  final VoidCallback onPrev;
+  final VoidCallback onNext;
+  final VoidCallback onToday;
   final VoidCallback onClose;
 
   @override
@@ -397,15 +453,16 @@ class _DayPanelHeader extends StatelessWidget {
           Container(
             width: 28,
             height: 28,
-            decoration: const BoxDecoration(
-              color: AppColors.accent,
+            decoration: BoxDecoration(
+              color: isToday ? AppColors.accent : c.surfacePanel,
               shape: BoxShape.circle,
+              border: isToday ? null : Border.all(color: c.separator),
             ),
             child: Center(
               child: Text(
-                '${today.day}',
-                style: const TextStyle(
-                  color: Colors.white,
+                '${selectedDay.day}',
+                style: TextStyle(
+                  color: isToday ? Colors.white : c.textPrimary,
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
                 ),
@@ -418,7 +475,7 @@ class _DayPanelHeader extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                DateFormat('EEEE').format(today),
+                DateFormat('EEEE').format(selectedDay),
                 style: TextStyle(
                   color: c.textPrimary,
                   fontSize: 13,
@@ -427,12 +484,43 @@ class _DayPanelHeader extends StatelessWidget {
                 ),
               ),
               Text(
-                DateFormat('MMMM y').format(today),
+                DateFormat('MMMM y').format(selectedDay),
                 style: TextStyle(color: c.textMuted, fontSize: 10),
               ),
             ],
           ),
           const Spacer(),
+          _IconNavButton(
+            icon: Icons.chevron_left_rounded,
+            tooltip: 'Previous day',
+            onTap: onPrev,
+          ),
+          const SizedBox(width: 2),
+          Tooltip(
+            message: 'Go to today',
+            child: InkWell(
+              onTap: isToday ? null : onToday,
+              borderRadius: BorderRadius.circular(4),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                child: Text(
+                  'Today',
+                  style: TextStyle(
+                    color: isToday ? c.textMuted : AppColors.accent,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 2),
+          _IconNavButton(
+            icon: Icons.chevron_right_rounded,
+            tooltip: 'Next day',
+            onTap: onNext,
+          ),
+          const SizedBox(width: 4),
           InkWell(
             onTap: onClose,
             borderRadius: BorderRadius.circular(6),

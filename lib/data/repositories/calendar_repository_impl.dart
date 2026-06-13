@@ -191,6 +191,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
     required DateTime newStart,
     required DateTime newEnd,
     String? timezone,
+    String? message,
   }) async {
     final ds = _accountManager.calendarDatasource;
     if (ds == null) {
@@ -208,6 +209,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
         newEnd: newEnd,
         timezone: timezone,
         userEmail: userEmail,
+        message: message,
       );
       return const Right(null);
     } on AuthException catch (e) {

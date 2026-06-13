@@ -136,6 +136,7 @@ class EventKitCalendarDatasourceImpl implements CalendarRemoteDatasource {
     required DateTime newEnd,
     String? timezone,
     String? userEmail,
+    String? message,
   }) async {
     await cancelCalendarEvent(eventId: eventId);
   }

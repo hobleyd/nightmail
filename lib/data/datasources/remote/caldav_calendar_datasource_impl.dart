@@ -223,6 +223,7 @@ class CalDavCalendarDatasourceImpl implements CalendarRemoteDatasource {
     required DateTime newEnd,
     String? timezone,
     String? userEmail,
+    String? message,
   }) async {
     // CalDAV has no propose-new-time mechanism; remove from local calendar.
     await cancelCalendarEvent(eventId: eventId);

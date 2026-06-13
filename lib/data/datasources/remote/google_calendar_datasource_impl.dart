@@ -197,6 +197,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     required DateTime newEnd,
     String? timezone,
     String? userEmail,
+    String? message,
   }) async {
     // Google Calendar has no native propose-new-time API; decline the original.
     await declineCalendarEvent(eventId: eventId, userEmail: userEmail);

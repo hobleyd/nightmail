@@ -47,15 +47,17 @@ final class CalendarEventNewTimeProposed extends CalendarBlocEvent {
     required this.newStart,
     required this.newEnd,
     this.timezone,
+    this.message,
   });
 
   final String eventId;
   final DateTime newStart;
   final DateTime newEnd;
   final String? timezone;
+  final String? message;
 
   @override
-  List<Object?> get props => [eventId, newStart, newEnd, timezone];
+  List<Object?> get props => [eventId, newStart, newEnd, timezone, message];
 }
 
 final class CalendarEventRescheduleRequested extends CalendarBlocEvent {

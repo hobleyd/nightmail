@@ -436,6 +436,7 @@ class GraphApiDatasourceImpl
     required DateTime newEnd,
     String? timezone,
     String? userEmail,
+    String? message,
   }) async {
     // Send the proposed time as the attendee's local wall-clock time paired with
     // their IANA timezone. This avoids Exchange doing a UTC→local conversion on
@@ -447,7 +448,7 @@ class GraphApiDatasourceImpl
         '/me/events/$eventId/decline',
         data: {
           'sendResponse': true,
-          'comment': '',
+          'comment': message ?? '',
           'proposedNewTime': {
             'start': {
               'dateTime': _formatLocalDateTime(newStart),

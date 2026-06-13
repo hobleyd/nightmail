@@ -95,6 +95,7 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
         newStart: event.newStart,
         newEnd: event.newEnd,
         timezone: event.timezone,
+        message: event.message,
       ),
     );
     result.fold(

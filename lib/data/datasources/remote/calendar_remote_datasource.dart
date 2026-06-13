@@ -38,5 +38,6 @@ abstract interface class CalendarRemoteDatasource {
     required DateTime newEnd,
     String? timezone,
     String? userEmail,
+    String? message,
   });
 }

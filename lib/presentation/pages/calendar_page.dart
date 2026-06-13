@@ -1139,7 +1139,7 @@ class _PositionedEventState extends State<_PositionedEvent> {
     setState(() => _dragDy += details.delta.dy);
   }
 
-  void _onPanEnd(DragEndDetails _) {
+  Future<void> _onPanEnd(DragEndDetails _) async {
     final newStart = _newStart;
     final newEnd = _newEnd;
     setState(() {
@@ -1149,19 +1149,26 @@ class _PositionedEventState extends State<_PositionedEvent> {
 
     if (newStart == widget.event.start) return;
 
-    final bloc = context.read<CalendarBloc>();
     if (widget.event.isOrganizer) {
-      bloc.add(CalendarEventRescheduleRequested(
+      context.read<CalendarBloc>().add(CalendarEventRescheduleRequested(
         event: widget.event,
         newStart: newStart,
         newEnd: newEnd,
       ));
     } else {
-      bloc.add(CalendarEventNewTimeProposed(
+      final result = await _DragProposeConfirmDialog.show(
+        context,
+        event: widget.event,
+        newStart: newStart,
+        newEnd: newEnd,
+      );
+      if (result == null || !mounted) return;
+      context.read<CalendarBloc>().add(CalendarEventNewTimeProposed(
         eventId: widget.event.id,
         newStart: newStart,
         newEnd: newEnd,
         timezone: localIanaTimezone(),
+        message: result.isEmpty ? null : result,
       ));
     }
   }
@@ -1578,6 +1585,137 @@ class _ProposeNewTimeDialogState extends State<_ProposeNewTimeDialog> {
             ));
           },
           child: const Text('Propose', style: TextStyle(color: Colors.white)),
+        ),
+      ],
+    );
+  }
+}
+
+// ─── Drag-to-propose confirm dialog ──────────────────────────────────────────
+
+class _DragProposeConfirmDialog extends StatefulWidget {
+  const _DragProposeConfirmDialog({
+    required this.event,
+    required this.newStart,
+    required this.newEnd,
+  });
+
+  final CalendarEvent event;
+  final DateTime newStart;
+  final DateTime newEnd;
+
+  /// Returns the message string if the user confirms, or null if cancelled.
+  static Future<String?> show(
+    BuildContext context, {
+    required CalendarEvent event,
+    required DateTime newStart,
+    required DateTime newEnd,
+  }) {
+    return showDialog<String>(
+      context: context,
+      builder: (_) => _DragProposeConfirmDialog(
+        event: event,
+        newStart: newStart,
+        newEnd: newEnd,
+      ),
+    );
+  }
+
+  @override
+  State<_DragProposeConfirmDialog> createState() =>
+      _DragProposeConfirmDialogState();
+}
+
+class _DragProposeConfirmDialogState extends State<_DragProposeConfirmDialog> {
+  final _messageController = TextEditingController();
+
+  @override
+  void dispose() {
+    _messageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final localStart = widget.newStart.toLocal();
+    final localEnd = widget.newEnd.toLocal();
+    final dateFmt = DateFormat('EEE, d MMM yyyy');
+    final timeFmt = DateFormat('h:mm a');
+    final timeLabel =
+        '${dateFmt.format(localStart)} · ${timeFmt.format(localStart)} – ${timeFmt.format(localEnd)}';
+
+    return AlertDialog(
+      backgroundColor: c.surfacePanel,
+      title: Text(
+        'Propose New Time',
+        style: TextStyle(
+          color: c.textPrimary,
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              height: 56,
+              child: _EventTile(event: widget.event, compact: false),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Icon(Icons.schedule_outlined, size: 14, color: c.textTertiary),
+                const SizedBox(width: 6),
+                Text(
+                  timeLabel,
+                  style: TextStyle(color: c.textTertiary, fontSize: 12),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _messageController,
+              maxLines: 3,
+              autofocus: true,
+              style: TextStyle(color: c.textPrimary, fontSize: 13),
+              decoration: InputDecoration(
+                hintText: 'Message to organizer (optional)',
+                hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
+                filled: true,
+                fillColor: c.surfaceBase,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: BorderSide(color: c.separator),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: BorderSide(color: c.separator),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: BorderSide(color: AppColors.accent, width: 1.5),
+                ),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text('Cancel', style: TextStyle(color: c.textMuted)),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: AppColors.accent),
+          onPressed: () =>
+              Navigator.of(context).pop(_messageController.text),
+          child: const Text('Send', style: TextStyle(color: Colors.white)),
         ),
       ],
     );

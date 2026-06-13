@@ -40,5 +40,6 @@ abstract interface class CalendarRepository {
     required DateTime newStart,
     required DateTime newEnd,
     String? timezone,
+    String? message,
   });
 }

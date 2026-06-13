@@ -114,14 +114,17 @@ class EmailModel extends Email {
         (meetingMessageType != null && meetingMessageType != 'none');
     if (!isEventMessage) return null;
 
-    // Parse startDateTime (DateTimeTimeZone: {dateTime, timeZone}) for use as a
-    // calendar-search fallback when the message→event navigation fails.
+    // Parse startDateTime (DateTimeTimeZone: {dateTime, timeZone}).
+    // getEmail() sends Prefer: outlook.timezone="UTC" so Graph returns the
+    // dateTime string already in UTC, but without a Z suffix — append it so
+    // DateTime.parse treats it as UTC rather than local time.
     DateTime? meetingStart;
     final startMap = json['startDateTime'] as Map<String, dynamic>?;
     final dtStr = startMap?['dateTime'] as String?;
     if (dtStr != null) {
       try {
-        meetingStart = DateTime.parse(dtStr).toUtc();
+        final utcStr = dtStr.endsWith('Z') ? dtStr : '${dtStr}Z';
+        meetingStart = DateTime.parse(utcStr);
       } catch (_) {}
     }
     return MeetingInvite(meetingStart: meetingStart);

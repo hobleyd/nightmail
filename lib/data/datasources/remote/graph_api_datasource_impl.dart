@@ -100,6 +100,9 @@ class GraphApiDatasourceImpl
           // Returning all default fields ensures the type annotation is present.
           '\$expand': r'attachments($select=id,name,contentType,size,isInline)',
         },
+        // Return eventMessage startDateTime/endDateTime in UTC so we can use
+        // them directly without Windows-timezone-name conversion.
+        options: Options(headers: {'Prefer': 'outlook.timezone="UTC"'}),
       );
 
       if (response.data == null) {
@@ -224,7 +227,7 @@ class GraphApiDatasourceImpl
           'startDateTime': startDateTime.toUtc().toIso8601String(),
           'endDateTime': endDateTime.toUtc().toIso8601String(),
           '\$select':
-              'id,subject,start,end,isAllDay,location,bodyPreview,showAs,isOrganizer,attendees,recurrence',
+              'id,subject,start,end,isAllDay,location,onlineMeeting,bodyPreview,showAs,isOrganizer,attendees,recurrence',
           '\$top': 100,
         },
         options: Options(
@@ -364,8 +367,10 @@ class GraphApiDatasourceImpl
           message: 'Could not locate the calendar event for this invite');
     }
     try {
+      // meetingStart is exact UTC (Graph returned it via Prefer: UTC header).
+      // Use a small window to avoid picking up adjacent meetings.
       final windowStart = meetingStart.subtract(const Duration(minutes: 30));
-      final windowEnd = meetingStart.add(const Duration(hours: 4));
+      final windowEnd = meetingStart.add(const Duration(hours: 2));
       String fmt(DateTime d) => d.toUtc().toIso8601String();
       final calResp = await _dio.get<Map<String, dynamic>>(
         '/me/calendarView',
@@ -373,28 +378,24 @@ class GraphApiDatasourceImpl
           'startDateTime': fmt(windowStart),
           'endDateTime': fmt(windowEnd),
           '\$select': 'id,isOrganizer,responseStatus',
-          '\$top': 25,
+          '\$top': 50,
         },
         options: Options(headers: {'Prefer': 'outlook.timezone="UTC"'}),
       );
       final events = (calResp.data?['value'] as List<dynamic>? ?? [])
           .cast<Map<String, dynamic>>();
-      final pending = events.where((e) {
-        if (e['isOrganizer'] == true) return false;
-        final rs = (e['responseStatus'] as Map?)?.cast<String, dynamic>();
-        final r = rs?['response'] as String? ?? '';
-        // 'none' means no response sent yet; 'tentativelyAccepted' means
-        // Exchange auto-processed it — both need an explicit response.
-        return r == 'none' || r == 'tentativelyAccepted';
-      }).toList();
+      // Exclude events where the user is the organiser — they have no
+      // response to send. Accept any attendee event regardless of current
+      // responseStatus: Exchange may have auto-set it to accepted/tentative,
+      // and the user is explicitly overriding that here.
+      final attendeeEvents =
+          events.where((e) => e['isOrganizer'] != true).toList();
 
-      if (pending.isEmpty) {
+      if (attendeeEvents.isEmpty) {
         throw const ServerException(
-            message: 'No pending meeting found in your calendar at that time');
+            message: 'No meeting found in your calendar at that time');
       }
-      // If there's exactly one pending event in the window use it; if there
-      // are multiple accept the first (Exchange auto-matched this invite).
-      final targetId = pending.first['id'] as String;
+      final targetId = attendeeEvents.first['id'] as String;
       await _dio.post<void>('/me/events/$targetId/$endpoint', data: body);
     } on DioException catch (e) {
       throw _mapDioException(e);

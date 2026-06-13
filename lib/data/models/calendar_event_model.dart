@@ -25,7 +25,10 @@ class CalendarEventModel extends CalendarEvent {
       start: _parseDateTime(json['start'] as Map<String, dynamic>?),
       end: _parseDateTime(json['end'] as Map<String, dynamic>?),
       isAllDay: json['isAllDay'] as bool? ?? false,
-      location: _parseLocation(json['location'] as Map<String, dynamic>?),
+      location: _parseLocation(
+        json['location'] as Map<String, dynamic>?,
+        json['onlineMeeting'] as Map<String, dynamic>?,
+      ),
       bodyPreview: json['bodyPreview'] as String?,
       status: _parseStatus(json['showAs'] as String?),
       isOrganizer: json['isOrganizer'] as bool? ?? false,
@@ -44,9 +47,13 @@ class CalendarEventModel extends CalendarEvent {
     return DateTime.tryParse(normalized)?.toUtc() ?? DateTime.now().toUtc();
   }
 
-  static String? _parseLocation(Map<String, dynamic>? map) {
-    if (map == null) return null;
-    final name = map['displayName'] as String?;
+  static String? _parseLocation(
+    Map<String, dynamic>? locationMap,
+    Map<String, dynamic>? onlineMeetingMap,
+  ) {
+    final joinUrl = onlineMeetingMap?['joinUrl'] as String?;
+    if (joinUrl != null && joinUrl.isNotEmpty) return joinUrl;
+    final name = locationMap?['displayName'] as String?;
     return (name == null || name.isEmpty) ? null : name;
   }
 

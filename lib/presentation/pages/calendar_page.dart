@@ -793,7 +793,7 @@ class _AllDayEventChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => _openEdit(context),
+      onDoubleTap: () => _openEdit(context),
       onSecondaryTapUp: (details) =>
           _showEventContextMenu(context, event, details.globalPosition),
       child: Container(
@@ -1048,7 +1048,7 @@ class _PositionedEvent extends StatelessWidget {
       right: 2,
       height: height,
       child: GestureDetector(
-        onTap: () => _openEdit(context),
+        onDoubleTap: () => _openEdit(context),
         onSecondaryTapUp: (details) =>
             _showContextMenu(context, details.globalPosition),
         child: _EventTile(event: event, compact: height < 36),

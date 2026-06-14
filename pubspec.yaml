@@ -2,7 +2,7 @@ name: nightmail
 description: "A cross-platform email client for Office 365 via Microsoft Graph API."
 publish_to: 'none'
 
-version: 1.1.0+1
+version: 1.2.0+1
 
 environment:
   sdk: ^3.12.1

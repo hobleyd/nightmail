@@ -494,6 +494,7 @@ class _EventEditFormState extends State<EventEditForm> {
                     availabilities: _availabilities,
                     checking: _checkingAvailability,
                     onShowSchedule: _toggleSchedulePane,
+                    organizerEmail: _organizerEmail,
                   ),
                 const SizedBox(height: 10),
                 Divider(height: 1, color: c.separator),
@@ -1338,12 +1339,14 @@ class _AvailabilitySection extends StatelessWidget {
     required this.availabilities,
     required this.checking,
     this.onShowSchedule,
+    this.organizerEmail,
   });
 
   final List<String> attendees;
   final List<AttendeeAvailability>? availabilities;
   final bool checking;
   final VoidCallback? onShowSchedule;
+  final String? organizerEmail;
 
   @override
   Widget build(BuildContext context) {
@@ -1376,7 +1379,9 @@ class _AvailabilitySection extends StatelessWidget {
               : Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: availabilities!
-                      .where((a) => a.status != AttendeeAvailabilityStatus.unknown)
+                      .where((a) =>
+                          a.status != AttendeeAvailabilityStatus.unknown &&
+                          a.email != organizerEmail)
                       .map((a) => _AvailabilityRow(
                             availability: a,
                             onScheduleTap: onShowSchedule,

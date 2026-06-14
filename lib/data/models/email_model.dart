@@ -110,9 +110,9 @@ class EmailModel extends Email {
 
   static MeetingInvite? _parseMeetingInvite(
       String? odataType, String? meetingMessageType, Map<String, dynamic> json) {
-    final isEventMessage = odataType == '#microsoft.graph.eventMessage' ||
-        (meetingMessageType != null && meetingMessageType != 'none');
-    if (!isEventMessage) return null;
+    // Only show accept/decline UI for incoming requests, not for acceptance/
+    // decline/cancellation notifications we receive when others respond to us.
+    if (meetingMessageType != 'meetingRequest') return null;
 
     // Parse startDateTime (DateTimeTimeZone: {dateTime, timeZone}).
     // getEmail() sends Prefer: outlook.timezone="UTC" so Graph returns the

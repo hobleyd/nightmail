@@ -25,6 +25,7 @@ import 'domain/repositories/tasks_repository.dart';
 import 'domain/usecases/attach_email_to_task.dart';
 import 'domain/usecases/check_sender_anomaly.dart';
 import 'domain/usecases/cancel_calendar_event.dart';
+import 'domain/usecases/check_attendees_availability.dart';
 import 'domain/usecases/create_calendar_event.dart';
 import 'domain/usecases/decline_calendar_event.dart';
 import 'domain/usecases/create_task.dart';
@@ -154,6 +155,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => GetCalendarEvents(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => CreateCalendarEvent(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => UpdateCalendarEvent(sl<CalendarRepository>()));
+  sl.registerLazySingleton(() => CheckAttendeesAvailability(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => RespondToMeetingInvite(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => CancelCalendarEvent(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => DeclineCalendarEvent(sl<CalendarRepository>()));

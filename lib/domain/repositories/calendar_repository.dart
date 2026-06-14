@@ -1,6 +1,7 @@
 import 'package:fpdart/fpdart.dart';
 
 import '../../core/error/failures.dart';
+import '../entities/attendee_availability.dart';
 import '../entities/calendar_event.dart';
 import '../entities/meeting_invite.dart';
 import '../usecases/create_calendar_event.dart';
@@ -41,5 +42,11 @@ abstract interface class CalendarRepository {
     required DateTime newEnd,
     String? timezone,
     String? message,
+  });
+
+  Future<Either<Failure, List<AttendeeAvailability>>> checkAttendeesAvailability({
+    required List<String> emails,
+    required DateTime start,
+    required DateTime end,
   });
 }

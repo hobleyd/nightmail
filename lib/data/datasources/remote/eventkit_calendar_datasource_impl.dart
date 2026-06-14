@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 
 import '../../../core/error/exceptions.dart';
+import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/meeting_invite.dart';
 import '../../../domain/usecases/create_calendar_event.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
@@ -139,6 +140,21 @@ class EventKitCalendarDatasourceImpl implements CalendarRemoteDatasource {
     String? message,
   }) async {
     await cancelCalendarEvent(eventId: eventId);
+  }
+
+  @override
+  Future<List<AttendeeAvailability>> getAttendeesSchedule({
+    required List<String> emails,
+    required DateTime start,
+    required DateTime end,
+  }) async {
+    // EventKit does not expose organisation free/busy data; return unknown.
+    return emails
+        .map((e) => AttendeeAvailability(
+              email: e,
+              status: AttendeeAvailabilityStatus.unknown,
+            ))
+        .toList();
   }
 
   // ─── Helpers ────────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@ import 'package:caldav/caldav.dart' as caldav;
 import 'package:uuid/uuid.dart';
 
 import '../../../core/error/exceptions.dart';
+import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/calendar_recurrence.dart';
 import '../../../domain/entities/meeting_invite.dart';
 import '../../../domain/usecases/create_calendar_event.dart';
@@ -227,6 +228,22 @@ class CalDavCalendarDatasourceImpl implements CalendarRemoteDatasource {
   }) async {
     // CalDAV has no propose-new-time mechanism; remove from local calendar.
     await cancelCalendarEvent(eventId: eventId);
+  }
+
+  @override
+  Future<List<AttendeeAvailability>> getAttendeesSchedule({
+    required List<String> emails,
+    required DateTime start,
+    required DateTime end,
+  }) async {
+    // CalDAV free/busy requires CalDAV scheduling extensions (RFC 6638) which
+    // are not universally supported; return unknown.
+    return emails
+        .map((e) => AttendeeAvailability(
+              email: e,
+              status: AttendeeAvailabilityStatus.unknown,
+            ))
+        .toList();
   }
 
   // ─── Helpers ────────────────────────────────────────────────────────────────

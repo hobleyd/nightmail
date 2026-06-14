@@ -1,3 +1,4 @@
+import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/meeting_invite.dart';
 import '../../../domain/usecases/create_calendar_event.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
@@ -39,5 +40,11 @@ abstract interface class CalendarRemoteDatasource {
     String? timezone,
     String? userEmail,
     String? message,
+  });
+
+  Future<List<AttendeeAvailability>> getAttendeesSchedule({
+    required List<String> emails,
+    required DateTime start,
+    required DateTime end,
   });
 }

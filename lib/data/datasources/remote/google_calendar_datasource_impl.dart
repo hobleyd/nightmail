@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 
 import '../../../core/error/exceptions.dart';
+import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/calendar_event.dart';
 import '../../../domain/entities/calendar_event_attendee.dart';
 import '../../../domain/entities/calendar_recurrence.dart';
@@ -201,6 +202,22 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
   }) async {
     // Google Calendar has no native propose-new-time API; decline the original.
     await declineCalendarEvent(eventId: eventId, userEmail: userEmail);
+  }
+
+  @override
+  Future<List<AttendeeAvailability>> getAttendeesSchedule({
+    required List<String> emails,
+    required DateTime start,
+    required DateTime end,
+  }) async {
+    // Google Calendar FreeBusy API requires OAuth scope not currently requested;
+    // return unknown status so the UI omits availability indicators.
+    return emails
+        .map((e) => AttendeeAvailability(
+              email: e,
+              status: AttendeeAvailabilityStatus.unknown,
+            ))
+        .toList();
   }
 
   /// Minimal iCalendar parser — extracts the first VEVENT's key properties.

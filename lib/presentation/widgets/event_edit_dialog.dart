@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
@@ -10,8 +11,11 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/timezone_utils.dart';
+import '../../domain/entities/attendee_availability.dart';
 import '../../domain/entities/calendar_event.dart';
 import '../../domain/entities/calendar_recurrence.dart';
+import '../../domain/usecases/check_attendees_availability.dart';
+import '../../injection_container.dart';
 import '../blocs/event_edit/event_edit_bloc.dart';
 import '../blocs/event_edit/event_edit_event.dart';
 import '../blocs/event_edit/event_edit_state.dart';
@@ -109,6 +113,7 @@ class EventEditDialog extends StatelessWidget {
             initialStart: initialStart,
             accountId: accountId,
             onClose: () => Navigator.of(context).pop(false),
+            checkAttendeesAvailability: sl<CheckAttendeesAvailability>(),
           ),
         ),
       ),
@@ -126,12 +131,14 @@ class EventEditForm extends StatefulWidget {
     this.accountId,
     required this.onClose,
     this.onTitleChanged,
+    this.checkAttendeesAvailability,
   });
   final CalendarEvent? event;
   final DateTime? initialStart;
   final String? accountId;
   final VoidCallback onClose;
   final ValueChanged<String>? onTitleChanged;
+  final CheckAttendeesAvailability? checkAttendeesAvailability;
 
   @override
   State<EventEditForm> createState() => _EventEditFormState();
@@ -150,6 +157,10 @@ class _EventEditFormState extends State<EventEditForm> {
   late String _timezone;
   late List<String> _attendees;
   late CalendarRecurrence? _recurrence;
+
+  List<AttendeeAvailability>? _availabilities;
+  bool _checkingAvailability = false;
+  Timer? _availabilityDebounce;
 
   @override
   void initState() {
@@ -186,6 +197,7 @@ class _EventEditFormState extends State<EventEditForm> {
 
   @override
   void dispose() {
+    _availabilityDebounce?.cancel();
     _titleController.removeListener(_onTitleChanged);
     _titleController.dispose();
     _locationController.dispose();
@@ -208,6 +220,48 @@ class _EventEditFormState extends State<EventEditForm> {
   }
 
   String _localIanaTimezone() => localIanaTimezone();
+
+  void _scheduleAvailabilityCheck() {
+    if (widget.checkAttendeesAvailability == null) return;
+    _availabilityDebounce?.cancel();
+    _availabilityDebounce = Timer(
+      const Duration(milliseconds: 600),
+      _checkAvailability,
+    );
+  }
+
+  Future<void> _checkAvailability() async {
+    final checker = widget.checkAttendeesAvailability;
+    if (checker == null || _attendees.isEmpty || _isAllDay) {
+      if (mounted) setState(() => _availabilities = null);
+      return;
+    }
+
+    final start = DateTime(
+      _startDate.year, _startDate.month, _startDate.day,
+      _startTime.hour, _startTime.minute,
+    );
+    final end = DateTime(
+      _endDate.year, _endDate.month, _endDate.day,
+      _endTime.hour, _endTime.minute,
+    );
+    if (!end.isAfter(start)) return;
+
+    if (mounted) setState(() => _checkingAvailability = true);
+
+    final emails = _attendees.map(_extractEmail).toList();
+    final result = await checker(CheckAttendeesAvailabilityParams(
+      emails: emails,
+      start: start,
+      end: end,
+    ));
+
+    if (!mounted) return;
+    setState(() {
+      _checkingAvailability = false;
+      _availabilities = result.fold((_) => null, (a) => a);
+    });
+  }
 
   static final _emailInAngle = RegExp(r'<([^>]+)>');
 
@@ -307,14 +361,22 @@ class _EventEditFormState extends State<EventEditForm> {
                           endDate: _endDate,
                           endTime: _endTime,
                           isAllDay: _isAllDay,
-                          onStartDateChanged: (d) =>
-                              setState(() => _startDate = d),
-                          onStartTimeChanged: (t) =>
-                              setState(() => _startTime = t),
-                          onEndDateChanged: (d) =>
-                              setState(() => _endDate = d),
-                          onEndTimeChanged: (t) =>
-                              setState(() => _endTime = t),
+                          onStartDateChanged: (d) {
+                            setState(() => _startDate = d);
+                            _scheduleAvailabilityCheck();
+                          },
+                          onStartTimeChanged: (t) {
+                            setState(() => _startTime = t);
+                            _scheduleAvailabilityCheck();
+                          },
+                          onEndDateChanged: (d) {
+                            setState(() => _endDate = d);
+                            _scheduleAvailabilityCheck();
+                          },
+                          onEndTimeChanged: (t) {
+                            setState(() => _endTime = t);
+                            _scheduleAvailabilityCheck();
+                          },
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -366,11 +428,23 @@ class _EventEditFormState extends State<EventEditForm> {
                     label: 'Guests',
                     labelWidth: 68,
                     recipients: _attendees,
-                    onChanged: (a) => setState(() => _attendees = a),
+                    onChanged: (a) {
+                      setState(() {
+                        _attendees = a;
+                        _availabilities = null;
+                      });
+                      _scheduleAvailabilityCheck();
+                    },
                     hintText: 'Add guests by email',
                     accountId: widget.accountId,
                   ),
                 ),
+                if (!_readOnly && widget.checkAttendeesAvailability != null)
+                  _AvailabilitySection(
+                    attendees: _attendees,
+                    availabilities: _availabilities,
+                    checking: _checkingAvailability,
+                  ),
                 const SizedBox(height: 10),
                 Divider(height: 1, color: c.separator),
                 const SizedBox(height: 10),
@@ -1166,6 +1240,113 @@ class _EndTypeDropdown extends StatelessWidget {
             if (v != null) onChanged(v);
           },
         ),
+      ),
+    );
+  }
+}
+
+// ─── Attendee availability ────────────────────────────────────────────────────
+
+class _AvailabilitySection extends StatelessWidget {
+  const _AvailabilitySection({
+    required this.attendees,
+    required this.availabilities,
+    required this.checking,
+  });
+
+  final List<String> attendees;
+  final List<AttendeeAvailability>? availabilities;
+  final bool checking;
+
+  @override
+  Widget build(BuildContext context) {
+    if (attendees.isEmpty) return const SizedBox.shrink();
+
+    final c = context.colors;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, left: 68),
+      child: checking
+          ? Row(
+              children: [
+                SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.5,
+                    color: c.textMuted,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  'Checking availability…',
+                  style: TextStyle(color: c.textMuted, fontSize: 11),
+                ),
+              ],
+            )
+          : availabilities == null
+              ? const SizedBox.shrink()
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: availabilities!
+                      .where((a) => a.status != AttendeeAvailabilityStatus.unknown)
+                      .map((a) => _AvailabilityRow(availability: a))
+                      .toList(),
+                ),
+    );
+  }
+}
+
+class _AvailabilityRow extends StatelessWidget {
+  const _AvailabilityRow({required this.availability});
+  final AttendeeAvailability availability;
+
+  static const _statusLabels = {
+    AttendeeAvailabilityStatus.free: 'Free',
+    AttendeeAvailabilityStatus.tentative: 'Tentative',
+    AttendeeAvailabilityStatus.busy: 'Busy',
+    AttendeeAvailabilityStatus.outOfOffice: 'Out of office',
+    AttendeeAvailabilityStatus.workingElsewhere: 'Working elsewhere',
+    AttendeeAvailabilityStatus.unknown: '',
+  };
+
+  static Color _statusColor(AttendeeAvailabilityStatus s) => switch (s) {
+        AttendeeAvailabilityStatus.free => const Color(0xFF34C759),
+        AttendeeAvailabilityStatus.tentative => const Color(0xFFFF9F0A),
+        AttendeeAvailabilityStatus.busy => const Color(0xFFFF3B30),
+        AttendeeAvailabilityStatus.outOfOffice => const Color(0xFFFF3B30),
+        AttendeeAvailabilityStatus.workingElsewhere => const Color(0xFF5E5CE6),
+        AttendeeAvailabilityStatus.unknown => const Color(0xFF8E8E93),
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final color = _statusColor(availability.status);
+    final label = _statusLabels[availability.status] ?? '';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Row(
+        children: [
+          Container(
+            width: 7,
+            height: 7,
+            decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+          ),
+          const SizedBox(width: 5),
+          Expanded(
+            child: Text(
+              availability.email,
+              style: TextStyle(color: c.textMuted, fontSize: 11),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w500),
+          ),
+        ],
       ),
     );
   }

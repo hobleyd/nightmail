@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../../core/error/exceptions.dart';
+import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/calendar_recurrence.dart';
 import '../../../domain/entities/meeting_invite.dart';
 import '../../../domain/entities/todo_task.dart';
@@ -1111,6 +1112,51 @@ class GraphApiDatasourceImpl
 
     throw const ServerException(
         message: 'Delta query completed without returning a delta link');
+  }
+
+  @override
+  Future<List<AttendeeAvailability>> getAttendeesSchedule({
+    required List<String> emails,
+    required DateTime start,
+    required DateTime end,
+  }) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/me/calendar/getSchedule',
+        data: {
+          'schedules': emails,
+          'startTime': {
+            'dateTime': start.toUtc().toIso8601String().replaceFirst('Z', ''),
+            'timeZone': 'UTC',
+          },
+          'endTime': {
+            'dateTime': end.toUtc().toIso8601String().replaceFirst('Z', ''),
+            'timeZone': 'UTC',
+          },
+        },
+      );
+
+      final value = response.data?['value'] as List<dynamic>? ?? [];
+      return value.cast<Map<String, dynamic>>().map((item) {
+        final scheduleId = item['scheduleId'] as String? ?? '';
+        final availabilityView = item['availabilityView'] as String? ?? '';
+        return AttendeeAvailability(
+          email: scheduleId,
+          status: _worstStatus(availabilityView),
+        );
+      }).toList();
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  AttendeeAvailabilityStatus _worstStatus(String availabilityView) {
+    if (availabilityView.contains('2')) return AttendeeAvailabilityStatus.busy;
+    if (availabilityView.contains('3')) return AttendeeAvailabilityStatus.outOfOffice;
+    if (availabilityView.contains('1')) return AttendeeAvailabilityStatus.tentative;
+    if (availabilityView.contains('4')) return AttendeeAvailabilityStatus.workingElsewhere;
+    if (availabilityView.isNotEmpty) return AttendeeAvailabilityStatus.free;
+    return AttendeeAvailabilityStatus.unknown;
   }
 
   Exception _mapDioException(DioException e) {

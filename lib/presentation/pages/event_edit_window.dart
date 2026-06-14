@@ -6,6 +6,7 @@ import 'package:window_manager/window_manager.dart';
 import '../../domain/entities/calendar_event.dart';
 import '../../domain/entities/calendar_event_attendee.dart';
 import '../../domain/entities/calendar_recurrence.dart';
+import '../../domain/usecases/check_attendees_availability.dart';
 import '../../domain/usecases/create_calendar_event.dart';
 import '../../domain/usecases/update_calendar_event.dart';
 import '../../injection_container.dart';
@@ -168,6 +169,7 @@ class _EventEditWindowPage extends StatelessWidget {
             accountId: accountId,
             onClose: _close,
             onTitleChanged: (title) => windowManager.setTitle(title),
+            checkAttendeesAvailability: sl<CheckAttendeesAvailability>(),
           ),
         ),
       ),

@@ -16,6 +16,7 @@ import '../../domain/entities/calendar_event.dart';
 import '../../domain/entities/calendar_recurrence.dart';
 import '../../domain/usecases/check_attendees_availability.dart';
 import '../../injection_container.dart';
+import '../blocs/account/account_cubit.dart';
 import '../blocs/event_edit/event_edit_bloc.dart';
 import '../blocs/event_edit/event_edit_event.dart';
 import '../blocs/event_edit/event_edit_state.dart';
@@ -171,6 +172,7 @@ class _EventEditFormState extends State<EventEditForm> {
   Timer? _availabilityDebounce;
   bool _isTeamsMeeting = false;
   bool _showSchedulePane = false;
+  String? _organizerEmail;
 
   @override
   void initState() {
@@ -203,6 +205,15 @@ class _EventEditFormState extends State<EventEditForm> {
     _attendees =
         e?.attendees.map((a) => a.email).toList() ?? const [];
     _recurrence = e?.recurrence;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final state = context.read<AccountCubit>().state;
+    if (state is AccountsLoaded) {
+      _organizerEmail = state.activeAccount.emailAddress;
+    }
   }
 
   @override
@@ -280,7 +291,13 @@ class _EventEditFormState extends State<EventEditForm> {
 
     if (mounted) setState(() => _checkingAvailability = true);
 
-    final emails = _attendees.map(_extractEmail).toList();
+    final attendeeEmails = _attendees.map(_extractEmail).toList();
+    final emails = [
+      if (_organizerEmail != null &&
+          !attendeeEmails.contains(_organizerEmail))
+        _organizerEmail!,
+      ...attendeeEmails,
+    ];
     final result = await checker(CheckAttendeesAvailabilityParams(
       emails: emails,
       start: start,
@@ -552,10 +569,18 @@ class _EventEditFormState extends State<EventEditForm> {
             SizedBox(
               width: 380,
               child: _ScheduleGrid(
-                attendees: _attendees.map(_extractEmail).toList(),
+                attendees: [
+                  if (_organizerEmail != null &&
+                      !_attendees
+                          .map(_extractEmail)
+                          .contains(_organizerEmail))
+                    _organizerEmail!,
+                  ..._attendees.map(_extractEmail),
+                ],
                 availabilities: _availabilities ?? [],
                 meetingStart: _computedStart,
                 meetingEnd: _computedEnd,
+                organizerEmail: _organizerEmail,
                 onClose: _toggleSchedulePane,
                 onTimeSelected: _onTimeSelected,
               ),
@@ -1462,6 +1487,7 @@ class _ScheduleGrid extends StatefulWidget {
     required this.meetingEnd,
     required this.onClose,
     required this.onTimeSelected,
+    this.organizerEmail,
   });
 
   final List<String> attendees;
@@ -1470,6 +1496,7 @@ class _ScheduleGrid extends StatefulWidget {
   final DateTime meetingEnd;   // local time
   final VoidCallback onClose;
   final void Function(DateTime start, DateTime end) onTimeSelected;
+  final String? organizerEmail;
 
   @override
   State<_ScheduleGrid> createState() => _ScheduleGridState();
@@ -1636,11 +1663,16 @@ class _ScheduleGridState extends State<_ScheduleGrid> {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 4, vertical: 4),
                     child: Text(
-                      email.split('@').first,
+                      email == widget.organizerEmail
+                          ? 'Me'
+                          : email.split('@').first,
                       style: TextStyle(
-                          color: c.textMuted,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w500),
+                        color: email == widget.organizerEmail
+                            ? AppColors.accent
+                            : c.textMuted,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.center,
                     ),

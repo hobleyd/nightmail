@@ -19,6 +19,7 @@ class CheckAttendeesAvailability
       emails: params.emails,
       start: params.start,
       end: params.end,
+      organizerEmail: params.organizerEmail,
     );
   }
 }
@@ -28,9 +29,11 @@ class CheckAttendeesAvailabilityParams {
     required this.emails,
     required this.start,
     required this.end,
+    this.organizerEmail,
   });
 
   final List<String> emails;
   final DateTime start;
   final DateTime end;
+  final String? organizerEmail;
 }

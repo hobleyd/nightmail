@@ -48,5 +48,6 @@ abstract interface class CalendarRepository {
     required List<String> emails,
     required DateTime start,
     required DateTime end,
+    String? organizerEmail,
   });
 }

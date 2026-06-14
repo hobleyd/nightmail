@@ -229,19 +229,52 @@ class CalendarRepositoryImpl implements CalendarRepository {
     required List<String> emails,
     required DateTime start,
     required DateTime end,
+    String? organizerEmail,
   }) async {
     final ds = _accountManager.calendarDatasource;
-    if (ds == null) {
-      return const Right([]);
-    }
+    if (ds == null) return const Right([]);
 
     try {
-      final result = await ds.getAttendeesSchedule(
-        emails: emails,
-        start: start,
-        end: end,
-      );
-      return Right(result);
+      final results = <AttendeeAvailability>[];
+
+      // Organiser: fetch full calendar events so subjects are included.
+      // getSchedule redacts subjects for most queries; calendarView does not.
+      if (organizerEmail != null) {
+        final dayStart = DateTime(start.year, start.month, start.day, 7);
+        final dayEnd = DateTime(start.year, start.month, start.day, 20);
+        final events = await ds.getCalendarEvents(
+          startDateTime: dayStart,
+          endDateTime: dayEnd,
+        );
+        final items = events
+            .where((e) => !e.isAllDay && e.status != CalendarEventStatus.free)
+            .map((e) => AttendeeScheduleItem(
+                  start: e.start,
+                  end: e.end,
+                  status: _mapStatus(e.status),
+                  subject: e.subject,
+                ))
+            .toList();
+        results.add(AttendeeAvailability(
+          email: organizerEmail,
+          status: _worstOverlap(items, start, end),
+          scheduleItems: items,
+        ));
+      }
+
+      // Attendees: use getSchedule for free/busy (subjects not reliably returned).
+      final attendeeEmails =
+          emails.where((e) => e != organizerEmail).toList();
+      if (attendeeEmails.isNotEmpty) {
+        final schedules = await ds.getAttendeesSchedule(
+          emails: attendeeEmails,
+          start: start,
+          end: end,
+        );
+        results.addAll(schedules);
+      }
+
+      return Right(results);
     } on AuthException catch (e) {
       return Left(AuthFailure(message: e.message));
     } on NetworkException catch (e) {
@@ -251,5 +284,34 @@ class CalendarRepositoryImpl implements CalendarRepository {
     } catch (e) {
       return Left(ServerFailure(message: e.toString()));
     }
+  }
+
+  AttendeeAvailabilityStatus _mapStatus(CalendarEventStatus s) => switch (s) {
+        CalendarEventStatus.free => AttendeeAvailabilityStatus.free,
+        CalendarEventStatus.tentative => AttendeeAvailabilityStatus.tentative,
+        CalendarEventStatus.outOfOffice => AttendeeAvailabilityStatus.outOfOffice,
+        CalendarEventStatus.workingElsewhere =>
+          AttendeeAvailabilityStatus.workingElsewhere,
+        CalendarEventStatus.busy => AttendeeAvailabilityStatus.busy,
+      };
+
+  AttendeeAvailabilityStatus _worstOverlap(
+      List<AttendeeScheduleItem> items, DateTime start, DateTime end) {
+    final overlapping = items.where(
+      (i) => i.start.isBefore(end) && i.end.isAfter(start),
+    );
+    if (overlapping.any((i) =>
+        i.status == AttendeeAvailabilityStatus.busy ||
+        i.status == AttendeeAvailabilityStatus.outOfOffice)) {
+      return AttendeeAvailabilityStatus.busy;
+    }
+    if (overlapping.any((i) => i.status == AttendeeAvailabilityStatus.tentative)) {
+      return AttendeeAvailabilityStatus.tentative;
+    }
+    if (overlapping.any(
+        (i) => i.status == AttendeeAvailabilityStatus.workingElsewhere)) {
+      return AttendeeAvailabilityStatus.workingElsewhere;
+    }
+    return AttendeeAvailabilityStatus.free;
   }
 }

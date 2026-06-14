@@ -284,16 +284,11 @@ class _EventEditFormState extends State<EventEditForm> {
     if (mounted) setState(() => _checkingAvailability = true);
 
     final attendeeEmails = _attendees.map(_extractEmail).toList();
-    final emails = [
-      if (_organizerEmail != null &&
-          !attendeeEmails.contains(_organizerEmail))
-        _organizerEmail!,
-      ...attendeeEmails,
-    ];
     final result = await checker(CheckAttendeesAvailabilityParams(
-      emails: emails,
+      emails: attendeeEmails,
       start: start,
       end: end,
+      organizerEmail: _organizerEmail,
     ));
 
     if (!mounted) return;

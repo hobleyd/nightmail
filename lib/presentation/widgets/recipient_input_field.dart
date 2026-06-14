@@ -59,6 +59,7 @@ class _RecipientInputFieldState extends State<RecipientInputField> {
   List<ContactSuggestion> _suggestions = [];
   int _suggestionIndex = -1;
   Timer? _searchDebounce;
+  bool _suppressNextFocusLoss = false;
 
   @override
   void initState() {
@@ -91,6 +92,10 @@ class _RecipientInputFieldState extends State<RecipientInputField> {
 
   void _onInputFocusChanged() {
     if (!_inputFocus.hasFocus) {
+      if (_suppressNextFocusLoss) {
+        _suppressNextFocusLoss = false;
+        return;
+      }
       _flushInput();
       _clearSuggestions();
     }
@@ -326,10 +331,13 @@ class _RecipientInputFieldState extends State<RecipientInputField> {
                     showWhenUnlinked: false,
                     targetAnchor: Alignment.bottomLeft,
                     followerAnchor: Alignment.topLeft,
-                    child: _SuggestionDropdown(
-                      suggestions: _suggestions,
-                      selectedIndex: _suggestionIndex,
-                      onSelect: _addSuggestion,
+                    child: Listener(
+                      onPointerDown: (_) => _suppressNextFocusLoss = true,
+                      child: _SuggestionDropdown(
+                        suggestions: _suggestions,
+                        selectedIndex: _suggestionIndex,
+                        onSelect: _addSuggestion,
+                      ),
                     ),
                   ),
                 ),

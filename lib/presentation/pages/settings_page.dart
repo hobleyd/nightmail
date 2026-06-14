@@ -20,6 +20,7 @@ import '../blocs/theme/theme_state.dart';
 bool get _isApplePlatform => !kIsWeb && (Platform.isMacOS || Platform.isIOS);
 
 enum SettingsSection {
+  about('About'),
   accounts('Accounts'),
   appearance('Appearance'),
   general('General'),
@@ -137,6 +138,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     const SizedBox(height: 24),
                     Expanded(
                       child: switch (_selectedSection) {
+                        SettingsSection.about => const _AboutSection(),
                         SettingsSection.accounts => const _AccountsSection(),
                         SettingsSection.appearance => const _AppearanceSection(),
                         SettingsSection.general => const _GeneralSection(),
@@ -149,6 +151,68 @@ class _SettingsDialogState extends State<SettingsDialog> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _AboutSection extends StatelessWidget {
+  const _AboutSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const SizedBox(height: 16),
+          Image.asset(
+            'assets/sharpblue.png',
+            width: 80,
+            height: 80,
+          ),
+          const SizedBox(height: 20),
+          Text(
+            'NightMail',
+            style: TextStyle(
+              color: c.textPrimary,
+              fontSize: 22,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.5,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'by SharpBlue',
+            style: TextStyle(
+              color: c.textMuted,
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            'NightMail is a fast, focused email client for Microsoft 365, Gmail, and IMAP accounts. '
+            'It brings together your inbox, calendar, and tasks in a clean, native interface '
+            'designed for professionals who value clarity and keyboard-friendly workflows.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: c.textSecondary,
+              fontSize: 13,
+              height: 1.6,
+            ),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            'Written by Claude with help from David Hobley.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: c.textMuted,
+              fontSize: 12,
+              height: 1.5,
+            ),
+          ),
+        ],
       ),
     );
   }

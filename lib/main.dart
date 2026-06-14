@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'domain/usecases/send_email.dart';
+import 'infrastructure/accounts/account_manager.dart';
 import 'injection_container.dart';
 import 'presentation/blocs/account/account_cubit.dart';
 import 'presentation/blocs/theme/theme_cubit.dart';
@@ -27,6 +28,7 @@ void main(List<String> args) async {
         : jsonDecode(args[2]) as Map<String, dynamic>;
 
     await configureDependencies();
+    await sl<AccountManager>().initialize();
 
     if (arguments['type'] == 'calendar') {
       windowManager.waitUntilReadyToShow(

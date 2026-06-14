@@ -15,8 +15,8 @@ import '../../domain/entities/attendee_availability.dart';
 import '../../domain/entities/calendar_event.dart';
 import '../../domain/entities/calendar_recurrence.dart';
 import '../../domain/usecases/check_attendees_availability.dart';
+import '../../infrastructure/accounts/account_manager.dart';
 import '../../injection_container.dart';
-import '../blocs/account/account_cubit.dart';
 import '../blocs/event_edit/event_edit_bloc.dart';
 import '../blocs/event_edit/event_edit_event.dart';
 import '../blocs/event_edit/event_edit_state.dart';
@@ -205,15 +205,7 @@ class _EventEditFormState extends State<EventEditForm> {
     _attendees =
         e?.attendees.map((a) => a.email).toList() ?? const [];
     _recurrence = e?.recurrence;
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final state = context.read<AccountCubit>().state;
-    if (state is AccountsLoaded) {
-      _organizerEmail = state.activeAccount.emailAddress;
-    }
+    _organizerEmail = sl<AccountManager>().activeAccount?.emailAddress;
   }
 
   @override

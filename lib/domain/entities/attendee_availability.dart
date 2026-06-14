@@ -12,11 +12,15 @@ class AttendeeScheduleItem {
     required this.start,
     required this.end,
     required this.status,
+    this.subject,
+    this.isPrivate = false,
   });
 
   final DateTime start; // UTC
   final DateTime end;   // UTC
   final AttendeeAvailabilityStatus status;
+  final String? subject;
+  final bool isPrivate;
 }
 
 class AttendeeAvailability {

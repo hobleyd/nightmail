@@ -182,7 +182,7 @@ class _EventEditWindowPage extends StatelessWidget {
             onSchedulePaneToggled: (expanded) async {
               final size = await windowManager.getSize();
               await windowManager.setSize(Size(
-                expanded ? size.width + 381 : size.width - 381,
+                expanded ? size.width + 281 : size.width - 281,
                 size.height,
               ));
             },

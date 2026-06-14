@@ -559,7 +559,7 @@ class _EventEditFormState extends State<EventEditForm> {
             SizedBox(width: 560, child: formColumn),
             VerticalDivider(width: 1, thickness: 1, color: c.border),
             SizedBox(
-              width: 380,
+              width: 280,
               child: _ScheduleGrid(
                 attendees: [
                   if (_organizerEmail != null &&
@@ -1789,15 +1789,38 @@ class _ScheduleGridState extends State<_ScheduleGrid> {
           };
           if (color == null) return null;
 
+          final blockHeight = (endY - startY).clamp(1.0, double.infinity);
+          final label = item.isPrivate
+              ? 'Private'
+              : (item.subject?.isNotEmpty == true ? item.subject! : null);
+
           return Positioned(
             left: left + 2,
             top: startY,
             width: colWidth - 4,
-            height: (endY - startY).clamp(1.0, double.infinity),
-            child: Container(
-              decoration: BoxDecoration(
-                color: color,
-                borderRadius: BorderRadius.circular(2),
+            height: blockHeight,
+            child: ClipRect(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+                padding: blockHeight >= 14
+                    ? const EdgeInsets.only(left: 3, top: 1, right: 2)
+                    : null,
+                child: blockHeight >= 14 && label != null
+                    ? Text(
+                        label,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w500,
+                          height: 1.2,
+                        ),
+                        maxLines: (blockHeight / 11).floor().clamp(1, 3),
+                        overflow: TextOverflow.ellipsis,
+                      )
+                    : null,
               ),
             ),
           );

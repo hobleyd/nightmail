@@ -1157,6 +1157,8 @@ class GraphApiDatasourceImpl
                 start: DateTime.parse('${startDt.split('.').first}Z'),
                 end: DateTime.parse('${endDt.split('.').first}Z'),
                 status: status,
+                subject: si['subject'] as String?,
+                isPrivate: si['isPrivate'] as bool? ?? false,
               );
             })
             .whereType<AttendeeScheduleItem>()

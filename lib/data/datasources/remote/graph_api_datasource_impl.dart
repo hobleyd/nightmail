@@ -263,6 +263,7 @@ class GraphApiDatasourceImpl
         description: params.description,
         attendeeEmails: params.attendeeEmails,
         recurrence: params.recurrence,
+        isTeamsMeeting: params.isTeamsMeeting,
       );
 
       final response = await _dio.post<Map<String, dynamic>>(
@@ -477,10 +478,12 @@ class GraphApiDatasourceImpl
     String? description,
     List<String> attendeeEmails = const [],
     CalendarRecurrence? recurrence,
+    bool isTeamsMeeting = false,
   }) {
     final body = <String, dynamic>{
       'subject': subject,
       'isAllDay': isAllDay,
+      if (isTeamsMeeting) 'isOnlineMeeting': true,
     };
 
     if (description != null && description.isNotEmpty) {
@@ -1140,15 +1143,44 @@ class GraphApiDatasourceImpl
       return value.cast<Map<String, dynamic>>().map((item) {
         final scheduleId = item['scheduleId'] as String? ?? '';
         final availabilityView = item['availabilityView'] as String? ?? '';
+        final rawItems = (item['scheduleItems'] as List<dynamic>? ?? [])
+            .cast<Map<String, dynamic>>();
+        final scheduleItems = rawItems
+            .map((si) {
+              final startDt = (si['start'] as Map?)?['dateTime'] as String?;
+              final endDt = (si['end'] as Map?)?['dateTime'] as String?;
+              if (startDt == null || endDt == null) return null;
+              final status = _parseItemStatus(si['status'] as String?);
+              if (status == AttendeeAvailabilityStatus.free ||
+                  status == AttendeeAvailabilityStatus.unknown) return null;
+              return AttendeeScheduleItem(
+                start: DateTime.parse('${startDt.split('.').first}Z'),
+                end: DateTime.parse('${endDt.split('.').first}Z'),
+                status: status,
+              );
+            })
+            .whereType<AttendeeScheduleItem>()
+            .toList();
         return AttendeeAvailability(
           email: scheduleId,
           status: _worstStatus(availabilityView),
+          scheduleItems: scheduleItems,
         );
       }).toList();
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
   }
+
+  AttendeeAvailabilityStatus _parseItemStatus(String? status) =>
+      switch (status?.toLowerCase()) {
+        'busy' => AttendeeAvailabilityStatus.busy,
+        'tentative' => AttendeeAvailabilityStatus.tentative,
+        'oof' => AttendeeAvailabilityStatus.outOfOffice,
+        'workingelsewhere' => AttendeeAvailabilityStatus.workingElsewhere,
+        'free' => AttendeeAvailabilityStatus.free,
+        _ => AttendeeAvailabilityStatus.unknown,
+      };
 
   AttendeeAvailabilityStatus _worstStatus(String availabilityView) {
     if (availabilityView.contains('2')) return AttendeeAvailabilityStatus.busy;

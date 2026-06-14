@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/timezone_utils.dart';
 import '../../domain/entities/calendar_event.dart';
+import '../../infrastructure/accounts/account.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/calendar/calendar_bloc.dart';
 import '../blocs/calendar/calendar_event.dart';
@@ -210,6 +211,12 @@ String? _accountId(BuildContext context) {
   return null;
 }
 
+bool _isO365Account(BuildContext context) {
+  final state = context.read<AccountCubit>().state;
+  if (state is AccountsLoaded) return state.activeAccount is MicrosoftAccount;
+  return false;
+}
+
 class _NewEventButton extends StatelessWidget {
   const _NewEventButton({required this.calendarBloc});
   final CalendarBloc calendarBloc;
@@ -222,6 +229,7 @@ class _NewEventButton extends StatelessWidget {
         onTap: () => EventEditDialog.show(
           context,
           accountId: _accountId(context),
+          isO365Account: _isO365Account(context),
         ),
         borderRadius: BorderRadius.circular(6),
         child: Container(
@@ -403,6 +411,7 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
                                   context,
                                   initialStart: start,
                                   accountId: _accountId(context),
+                                  isO365Account: _isO365Account(context),
                                 );
                               },
                               child: Stack(
@@ -886,6 +895,7 @@ class _AllDayEventChip extends StatelessWidget {
       context,
       event: event,
       accountId: _accountId(context),
+      isO365Account: _isO365Account(context),
     );
   }
 }
@@ -1037,6 +1047,7 @@ class _DayColumnCellState extends State<_DayColumnCell> {
       context,
       initialStart: start,
       accountId: _accountId(context),
+      isO365Account: _isO365Account(context),
     );
   }
 
@@ -1229,6 +1240,7 @@ class _PositionedEventState extends State<_PositionedEvent> {
       context,
       event: widget.event,
       accountId: _accountId(context),
+      isO365Account: _isO365Account(context),
     );
   }
 

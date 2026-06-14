@@ -34,6 +34,7 @@ class EventEditBloc extends Bloc<EventEditBlocEvent, EventEditState> {
           description: event.description,
           attendeeEmails: event.attendeeEmails,
           recurrence: event.recurrence,
+          isTeamsMeeting: event.isTeamsMeeting,
         ),
       );
       result.fold(

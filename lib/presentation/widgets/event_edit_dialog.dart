@@ -29,17 +29,20 @@ class EventEditDialog extends StatelessWidget {
     this.event,
     this.initialStart,
     this.accountId,
+    this.isO365Account = false,
   });
 
   final CalendarEvent? event;
   final DateTime? initialStart;
   final String? accountId;
+  final bool isO365Account;
 
   static Future<void> show(
     BuildContext context, {
     CalendarEvent? event,
     DateTime? initialStart,
     String? accountId,
+    bool isO365Account = false,
   }) async {
     await WindowController.create(
       WindowConfiguration(
@@ -48,6 +51,7 @@ class EventEditDialog extends StatelessWidget {
           if (event != null) 'event': _eventToArgs(event),
           if (initialStart != null) 'initialStart': initialStart.toIso8601String(),
           if (accountId != null) 'accountId': accountId,
+          if (isO365Account) 'isO365Account': true,
         }),
       ),
     );
@@ -129,16 +133,20 @@ class EventEditForm extends StatefulWidget {
     this.event,
     this.initialStart,
     this.accountId,
+    this.isO365Account = false,
     required this.onClose,
     this.onTitleChanged,
     this.checkAttendeesAvailability,
+    this.onSchedulePaneToggled,
   });
   final CalendarEvent? event;
   final DateTime? initialStart;
   final String? accountId;
+  final bool isO365Account;
   final VoidCallback onClose;
   final ValueChanged<String>? onTitleChanged;
   final CheckAttendeesAvailability? checkAttendeesAvailability;
+  final void Function(bool expanded)? onSchedulePaneToggled;
 
   @override
   State<EventEditForm> createState() => _EventEditFormState();
@@ -161,6 +169,8 @@ class _EventEditFormState extends State<EventEditForm> {
   List<AttendeeAvailability>? _availabilities;
   bool _checkingAvailability = false;
   Timer? _availabilityDebounce;
+  bool _isTeamsMeeting = false;
+  bool _showSchedulePane = false;
 
   @override
   void initState() {
@@ -221,6 +231,33 @@ class _EventEditFormState extends State<EventEditForm> {
 
   String _localIanaTimezone() => localIanaTimezone();
 
+  DateTime get _computedStart => DateTime(
+        _startDate.year, _startDate.month, _startDate.day,
+        _startTime.hour, _startTime.minute,
+      );
+
+  DateTime get _computedEnd => DateTime(
+        _endDate.year, _endDate.month, _endDate.day,
+        _endTime.hour, _endTime.minute,
+      );
+
+  void _toggleSchedulePane() {
+    final next = !_showSchedulePane;
+    setState(() => _showSchedulePane = next);
+    widget.onSchedulePaneToggled?.call(next);
+  }
+
+  void _onTimeSelected(DateTime newStart, DateTime newEnd) {
+    setState(() {
+      _startDate = DateTime(newStart.year, newStart.month, newStart.day);
+      _startTime = TimeOfDay(hour: newStart.hour, minute: newStart.minute);
+      _endDate = DateTime(newEnd.year, newEnd.month, newEnd.day);
+      _endTime = TimeOfDay(hour: newEnd.hour, minute: newEnd.minute);
+      _availabilities = null;
+    });
+    _scheduleAvailabilityCheck();
+  }
+
   void _scheduleAvailabilityCheck() {
     if (widget.checkAttendeesAvailability == null) return;
     _availabilityDebounce?.cancel();
@@ -237,14 +274,8 @@ class _EventEditFormState extends State<EventEditForm> {
       return;
     }
 
-    final start = DateTime(
-      _startDate.year, _startDate.month, _startDate.day,
-      _startTime.hour, _startTime.minute,
-    );
-    final end = DateTime(
-      _endDate.year, _endDate.month, _endDate.day,
-      _endTime.hour, _endTime.minute,
-    );
+    final start = _computedStart;
+    final end = _computedEnd;
     if (!end.isAfter(start)) return;
 
     if (mounted) setState(() => _checkingAvailability = true);
@@ -312,6 +343,7 @@ class _EventEditFormState extends State<EventEditForm> {
               : null,
           attendeeEmails: _attendees.map(_extractEmail).toList(),
           recurrence: _recurrence,
+          isTeamsMeeting: _isTeamsMeeting,
         ));
   }
 
@@ -319,8 +351,8 @@ class _EventEditFormState extends State<EventEditForm> {
   Widget build(BuildContext context) {
     final c = context.colors;
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
+    final formColumn = Column(
+      mainAxisSize: _showSchedulePane ? MainAxisSize.max : MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _TitleBar(title: _windowTitle, onClose: widget.onClose),
@@ -408,17 +440,30 @@ class _EventEditFormState extends State<EventEditForm> {
                           text: _locationController.text,
                           style: TextStyle(color: c.textPrimary, fontSize: 13),
                         )
-                      : TextField(
-                          controller: _locationController,
-                          style: TextStyle(color: c.textPrimary, fontSize: 13),
-                          decoration: InputDecoration(
-                            hintText: 'Add location',
-                            hintStyle:
-                                TextStyle(color: c.textMuted, fontSize: 13),
-                            border: InputBorder.none,
-                            contentPadding: EdgeInsets.zero,
-                            isDense: true,
-                          ),
+                      : Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _locationController,
+                                style: TextStyle(color: c.textPrimary, fontSize: 13),
+                                decoration: InputDecoration(
+                                  hintText: 'Add location',
+                                  hintStyle:
+                                      TextStyle(color: c.textMuted, fontSize: 13),
+                                  border: InputBorder.none,
+                                  contentPadding: EdgeInsets.zero,
+                                  isDense: true,
+                                ),
+                              ),
+                            ),
+                            if (widget.isO365Account) ...[
+                              const SizedBox(width: 8),
+                              _TeamsMeetingButton(
+                                active: _isTeamsMeeting,
+                                onToggle: (v) => setState(() => _isTeamsMeeting = v),
+                              ),
+                            ],
+                          ],
                         ),
                 ),
                 const SizedBox(height: 10),
@@ -444,6 +489,7 @@ class _EventEditFormState extends State<EventEditForm> {
                     attendees: _attendees,
                     availabilities: _availabilities,
                     checking: _checkingAvailability,
+                    onShowSchedule: _toggleSchedulePane,
                   ),
                 const SizedBox(height: 10),
                 Divider(height: 1, color: c.separator),
@@ -493,6 +539,33 @@ class _EventEditFormState extends State<EventEditForm> {
         ),
       ],
     );
+
+    if (_showSchedulePane) {
+      return SizedBox(
+        height: 640,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(width: 560, child: formColumn),
+            VerticalDivider(width: 1, thickness: 1, color: c.border),
+            SizedBox(
+              width: 380,
+              child: _ScheduleGrid(
+                attendees: _attendees.map(_extractEmail).toList(),
+                availabilities: _availabilities ?? [],
+                meetingStart: _computedStart,
+                meetingEnd: _computedEnd,
+                onClose: _toggleSchedulePane,
+                onTimeSelected: _onTimeSelected,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return SizedBox(width: 560, child: formColumn);
   }
 }
 
@@ -1252,11 +1325,13 @@ class _AvailabilitySection extends StatelessWidget {
     required this.attendees,
     required this.availabilities,
     required this.checking,
+    this.onShowSchedule,
   });
 
   final List<String> attendees;
   final List<AttendeeAvailability>? availabilities;
   final bool checking;
+  final VoidCallback? onShowSchedule;
 
   @override
   Widget build(BuildContext context) {
@@ -1290,7 +1365,10 @@ class _AvailabilitySection extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: availabilities!
                       .where((a) => a.status != AttendeeAvailabilityStatus.unknown)
-                      .map((a) => _AvailabilityRow(availability: a))
+                      .map((a) => _AvailabilityRow(
+                            availability: a,
+                            onScheduleTap: onShowSchedule,
+                          ))
                       .toList(),
                 ),
     );
@@ -1298,8 +1376,9 @@ class _AvailabilitySection extends StatelessWidget {
 }
 
 class _AvailabilityRow extends StatelessWidget {
-  const _AvailabilityRow({required this.availability});
+  const _AvailabilityRow({required this.availability, this.onScheduleTap});
   final AttendeeAvailability availability;
+  final VoidCallback? onScheduleTap;
 
   static const _statusLabels = {
     AttendeeAvailabilityStatus.free: 'Free',
@@ -1318,6 +1397,11 @@ class _AvailabilityRow extends StatelessWidget {
         AttendeeAvailabilityStatus.workingElsewhere => const Color(0xFF5E5CE6),
         AttendeeAvailabilityStatus.unknown => const Color(0xFF8E8E93),
       };
+
+  bool get _isTappable =>
+      onScheduleTap != null &&
+      availability.status != AttendeeAvailabilityStatus.free &&
+      availability.status != AttendeeAvailabilityStatus.unknown;
 
   @override
   Widget build(BuildContext context) {
@@ -1342,13 +1426,360 @@ class _AvailabilityRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w500),
-          ),
+          if (_isTappable)
+            GestureDetector(
+              onTap: onScheduleTap,
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  decoration: TextDecoration.underline,
+                  decorationColor: color,
+                ),
+              ),
+            )
+          else
+            Text(
+              label,
+              style: TextStyle(
+                  color: color, fontSize: 11, fontWeight: FontWeight.w500),
+            ),
         ],
       ),
     );
+  }
+}
+
+// ─── Schedule grid ────────────────────────────────────────────────────────────
+
+class _ScheduleGrid extends StatefulWidget {
+  const _ScheduleGrid({
+    required this.attendees,
+    required this.availabilities,
+    required this.meetingStart,
+    required this.meetingEnd,
+    required this.onClose,
+    required this.onTimeSelected,
+  });
+
+  final List<String> attendees;
+  final List<AttendeeAvailability> availabilities;
+  final DateTime meetingStart; // local time
+  final DateTime meetingEnd;   // local time
+  final VoidCallback onClose;
+  final void Function(DateTime start, DateTime end) onTimeSelected;
+
+  @override
+  State<_ScheduleGrid> createState() => _ScheduleGridState();
+}
+
+class _ScheduleGridState extends State<_ScheduleGrid> {
+  final _scroll = ScrollController();
+
+  static const _startHour = 7;
+  static const _endHour = 20;
+  static const _hourHeight = 60.0;
+  static const _timeColWidth = 44.0;
+  static const _headerHeight = 38.0;
+  static const _titleHeight = 46.0;
+
+  double get _totalHeight => (_endHour - _startHour) * _hourHeight;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToMeeting());
+  }
+
+  @override
+  void didUpdateWidget(_ScheduleGrid old) {
+    super.didUpdateWidget(old);
+    if (old.meetingStart != widget.meetingStart) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToMeeting());
+    }
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _scrollToMeeting() {
+    if (!_scroll.hasClients) return;
+    final hour = widget.meetingStart.hour + widget.meetingStart.minute / 60.0;
+    final offset = ((hour - _startHour - 1.5) * _hourHeight)
+        .clamp(0.0, _scroll.position.maxScrollExtent);
+    _scroll.animateTo(offset,
+        duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+  }
+
+  double _localTimeToY(int hour, int minute) {
+    final hours = hour + minute / 60.0 - _startHour;
+    return (hours * _hourHeight).clamp(0.0, _totalHeight);
+  }
+
+  void _onTapUp(TapUpDetails details, double colWidth) {
+    final x = details.localPosition.dx;
+    if (x < _timeColWidth) return;
+    final y = details.localPosition.dy;
+    final totalMinutes = (y / _hourHeight * 60 + _startHour * 60).round();
+    final snapped = (totalMinutes ~/ 30) * 30;
+    final hour = snapped ~/ 60;
+    final minute = snapped % 60;
+    if (hour < _startHour || hour >= _endHour) return;
+    final date = widget.meetingStart;
+    final newStart = DateTime(date.year, date.month, date.day, hour, minute);
+    final duration = widget.meetingEnd.difference(widget.meetingStart);
+    widget.onTimeSelected(newStart, newStart.add(duration));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final dateLabel = DateFormat('EEE, MMM d').format(widget.meetingStart);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          height: _titleHeight,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              children: [
+                Text(
+                  'Schedules — $dateLabel',
+                  style: TextStyle(
+                      color: c.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600),
+                ),
+                const Spacer(),
+                IconButton(
+                  onPressed: widget.onClose,
+                  icon: Icon(Icons.close_rounded, size: 16, color: c.textMuted),
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints(minWidth: 28, minHeight: 28),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+          ),
+        ),
+        Divider(height: 1, color: c.border),
+        _buildAttendeeHeader(c),
+        Divider(height: 1, color: c.separator),
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final gridWidth = constraints.maxWidth;
+              final n = widget.attendees.length;
+              final colWidth = n > 0
+                  ? (gridWidth - _timeColWidth) / n
+                  : gridWidth - _timeColWidth;
+
+              return SingleChildScrollView(
+                controller: _scroll,
+                child: GestureDetector(
+                  onTapUp: (d) => _onTapUp(d, colWidth),
+                  behavior: HitTestBehavior.opaque,
+                  child: SizedBox(
+                    height: _totalHeight,
+                    width: gridWidth,
+                    child: Stack(
+                      children: [
+                        ..._buildHourBands(c),
+                        ..._buildGridLines(c),
+                        ..._buildTimeLabels(c),
+                        _buildMeetingHighlight(),
+                        for (int i = 0; i < widget.attendees.length; i++)
+                          ..._buildAttendeeBlocks(i, colWidth),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: Text(
+            'Tap to propose a new time',
+            style: TextStyle(color: c.textDimmed, fontSize: 10),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAttendeeHeader(AppColors c) {
+    return SizedBox(
+      height: _headerHeight,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final n = widget.attendees.length;
+          final colWidth = n > 0
+              ? (constraints.maxWidth - _timeColWidth) / n
+              : constraints.maxWidth - _timeColWidth;
+          return Row(
+            children: [
+              SizedBox(width: _timeColWidth),
+              for (final email in widget.attendees)
+                SizedBox(
+                  width: colWidth,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 4, vertical: 4),
+                    child: Text(
+                      email.split('@').first,
+                      style: TextStyle(
+                          color: c.textMuted,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w500),
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  List<Widget> _buildHourBands(AppColors c) {
+    final total = _endHour - _startHour;
+    return List.generate(
+      total,
+      (i) => Positioned(
+        top: i * _hourHeight,
+        left: 0,
+        right: 0,
+        height: _hourHeight,
+        child: Container(
+          color: i.isEven ? c.surfacePanel : c.separator.withAlpha(60),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildGridLines(AppColors c) {
+    final total = _endHour - _startHour + 1;
+    return List.generate(
+      total,
+      (i) => Positioned(
+        top: i * _hourHeight,
+        left: _timeColWidth,
+        right: 0,
+        height: 1,
+        child: Container(color: c.separator),
+      ),
+    );
+  }
+
+  List<Widget> _buildTimeLabels(AppColors c) {
+    final total = _endHour - _startHour;
+    return List.generate(total, (i) {
+      final hour = _startHour + i;
+      final label = hour == 12
+          ? '12 PM'
+          : hour < 12
+              ? '$hour AM'
+              : '${hour - 12} PM';
+      return Positioned(
+        top: i * _hourHeight + 3,
+        left: 0,
+        width: _timeColWidth - 4,
+        child: Text(
+          label,
+          style: TextStyle(color: c.textDimmed, fontSize: 9),
+          textAlign: TextAlign.right,
+        ),
+      );
+    });
+  }
+
+  Widget _buildMeetingHighlight() {
+    final startY = _localTimeToY(
+        widget.meetingStart.hour, widget.meetingStart.minute);
+    final endY =
+        _localTimeToY(widget.meetingEnd.hour, widget.meetingEnd.minute);
+    if (endY <= startY) return const SizedBox.shrink();
+    return Positioned(
+      left: _timeColWidth,
+      top: startY,
+      right: 0,
+      height: endY - startY,
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.accent.withAlpha(35),
+          border: const Border(
+              left: BorderSide(color: AppColors.accent, width: 2)),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildAttendeeBlocks(int i, double colWidth) {
+    final email = widget.attendees[i];
+    final avail = widget.availabilities.firstWhere(
+      (a) => a.email == email,
+      orElse: () => AttendeeAvailability(
+          email: email, status: AttendeeAvailabilityStatus.unknown),
+    );
+    final left = _timeColWidth + i * colWidth;
+    final dayStart = DateTime(widget.meetingStart.year,
+        widget.meetingStart.month, widget.meetingStart.day);
+    final dayEnd = dayStart.add(const Duration(days: 1));
+
+    return avail.scheduleItems
+        .where((item) {
+          final localStart = item.start.toLocal();
+          final localEnd = item.end.toLocal();
+          return localStart.isBefore(dayEnd) && localEnd.isAfter(dayStart);
+        })
+        .map((item) {
+          final localStart = item.start.toLocal();
+          final localEnd = item.end.toLocal();
+          final startY =
+              _localTimeToY(localStart.hour, localStart.minute);
+          final endY = _localTimeToY(localEnd.hour, localEnd.minute);
+          if (endY <= startY) return null;
+
+          final color = switch (item.status) {
+            AttendeeAvailabilityStatus.busy =>
+              const Color(0xFFFF3B30).withAlpha(140),
+            AttendeeAvailabilityStatus.outOfOffice =>
+              const Color(0xFFFF3B30).withAlpha(100),
+            AttendeeAvailabilityStatus.tentative =>
+              const Color(0xFFFF9F0A).withAlpha(130),
+            AttendeeAvailabilityStatus.workingElsewhere =>
+              const Color(0xFF5E5CE6).withAlpha(100),
+            _ => null,
+          };
+          if (color == null) return null;
+
+          return Positioned(
+            left: left + 2,
+            top: startY,
+            width: colWidth - 4,
+            height: (endY - startY).clamp(1.0, double.infinity),
+            child: Container(
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          );
+        })
+        .whereType<Widget>()
+        .toList();
   }
 }
 
@@ -1426,6 +1857,46 @@ class _LinkifiedTextState extends State<_LinkifiedText> {
   Widget build(BuildContext context) {
     if (widget.text.isEmpty) return const SizedBox.shrink();
     return SelectableText.rich(TextSpan(children: _buildSpans()));
+  }
+}
+
+class _TeamsMeetingButton extends StatelessWidget {
+  const _TeamsMeetingButton({required this.active, required this.onToggle});
+  final bool active;
+  final ValueChanged<bool> onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return GestureDetector(
+      onTap: () => onToggle(!active),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: active ? AppColors.accent : c.separator,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.videocam_outlined,
+              size: 13,
+              color: active ? Colors.white : c.textMuted,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              'Teams',
+              style: TextStyle(
+                color: active ? Colors.white : c.textMuted,
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

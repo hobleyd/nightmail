@@ -31,6 +31,7 @@ class CreateCalendarEventParams extends Equatable {
     this.description,
     this.attendeeEmails = const [],
     this.recurrence,
+    this.isTeamsMeeting = false,
   });
 
   final String subject;
@@ -44,6 +45,7 @@ class CreateCalendarEventParams extends Equatable {
   final String? description;
   final List<String> attendeeEmails;
   final CalendarRecurrence? recurrence;
+  final bool isTeamsMeeting;
 
   @override
   List<Object?> get props => [
@@ -56,5 +58,6 @@ class CreateCalendarEventParams extends Equatable {
         description,
         attendeeEmails,
         recurrence,
+        isTeamsMeeting,
       ];
 }

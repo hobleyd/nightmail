@@ -52,6 +52,7 @@ class EventEditWindowApp extends StatelessWidget {
     final initialStart =
         initialStartStr != null ? DateTime.parse(initialStartStr).toLocal() : null;
     final accountId = arguments['accountId'] as String?;
+    final isO365Account = arguments['isO365Account'] as bool? ?? false;
 
     return MultiBlocProvider(
       providers: [
@@ -73,6 +74,7 @@ class EventEditWindowApp extends StatelessWidget {
               event: event,
               initialStart: initialStart,
               accountId: accountId,
+              isO365Account: isO365Account,
             ),
           );
         },
@@ -135,11 +137,17 @@ class EventEditWindowApp extends StatelessWidget {
 }
 
 class _EventEditWindowPage extends StatelessWidget {
-  const _EventEditWindowPage({this.event, this.initialStart, this.accountId});
+  const _EventEditWindowPage({
+    this.event,
+    this.initialStart,
+    this.accountId,
+    this.isO365Account = false,
+  });
 
   final CalendarEvent? event;
   final DateTime? initialStart;
   final String? accountId;
+  final bool isO365Account;
 
   void _close() => windowManager.close();
 
@@ -167,9 +175,17 @@ class _EventEditWindowPage extends StatelessWidget {
             event: event,
             initialStart: initialStart,
             accountId: accountId,
+            isO365Account: isO365Account,
             onClose: _close,
             onTitleChanged: (title) => windowManager.setTitle(title),
             checkAttendeesAvailability: sl<CheckAttendeesAvailability>(),
+            onSchedulePaneToggled: (expanded) async {
+              final size = await windowManager.getSize();
+              await windowManager.setSize(Size(
+                expanded ? size.width + 381 : size.width - 381,
+                size.height,
+              ));
+            },
           ),
         ),
       ),

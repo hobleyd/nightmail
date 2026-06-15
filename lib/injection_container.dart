@@ -77,7 +77,7 @@ Future<void> configureDependencies() async {
       // Debug/profile builds are non-sandboxed and have no provisioning profile,
       // so kSecUseDataProtectionKeychain would fail with -34018. Release builds
       // have the sandbox + keychain-access-groups entitlement so can use it.
-      mOptions: MacOsOptions(useDataProtectionKeyChain: kReleaseMode),
+      mOptions: MacOsOptions(usesDataProtectionKeychain: kReleaseMode),
     ),
   );
 

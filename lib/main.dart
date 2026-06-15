@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:webview_windows/webview_windows.dart' as wvw;
@@ -22,9 +23,6 @@ import 'presentation/pages/home_page.dart';
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
-  if (Platform.isWindows) {
-    await wvw.WebviewController.initializeEnvironment();
-  }
 
   if (args.firstOrNull == 'multi_window') {
     final windowId = args[1];
@@ -35,19 +33,22 @@ void main(List<String> args) async {
     await configureDependencies();
     await sl<AccountManager>().initialize();
 
+    Future<void> showSubWindow(WindowOptions options) async {
+      await windowManager.waitUntilReadyToShow(options);
+      await (await WindowController.fromCurrentEngine()).show();
+    }
+
     if (arguments['type'] == 'calendar') {
-      windowManager.waitUntilReadyToShow(
+      await showSubWindow(
         const WindowOptions(size: Size(900, 640), center: true, title: 'Calendar'),
-        () async => windowManager.show(),
       );
       runApp(const CalendarWindowApp());
       return;
     }
 
     if (arguments['type'] == 'tasks') {
-      windowManager.waitUntilReadyToShow(
+      await showSubWindow(
         const WindowOptions(size: Size(640, 520), center: true, title: 'Tasks'),
-        () async => windowManager.show(),
       );
       runApp(const TasksWindowApp());
       return;
@@ -59,9 +60,8 @@ void main(List<String> args) async {
       final title = rawEvent != null
           ? (subject?.isNotEmpty == true ? subject! : 'Edit Event')
           : 'New Event';
-      windowManager.waitUntilReadyToShow(
+      await showSubWindow(
         WindowOptions(size: const Size(600, 580), center: true, title: title),
-        () async => windowManager.show(),
       );
       runApp(EventEditWindowApp(windowId: windowId, arguments: arguments));
       return;
@@ -85,15 +85,17 @@ void main(List<String> args) async {
         originalSubject.isNotEmpty ? 'Fwd: $originalSubject' : 'Forward',
     };
 
-    windowManager.waitUntilReadyToShow(
+    await showSubWindow(
       WindowOptions(size: const Size(640, 520), center: true, title: title),
-      () async => windowManager.show(),
     );
 
     runApp(ComposeWindowApp(windowId: windowId, arguments: arguments));
     return;
   }
 
+  if (Platform.isWindows) {
+    await wvw.WebviewController.initializeEnvironment();
+  }
   await configureDependencies();
   runApp(const NightMailApp());
 }

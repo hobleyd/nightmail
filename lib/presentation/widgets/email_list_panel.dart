@@ -397,8 +397,8 @@ class _ListHeader extends StatelessWidget {
         children: [
           Text(
             folderName,
-            style: TextStyle(
-              color: c.textPrimary,
+            style: const TextStyle(
+              color: Colors.black,
               fontSize: 15,
               fontWeight: FontWeight.w600,
               letterSpacing: -0.3,
@@ -655,7 +655,7 @@ class _ConversationHeader extends StatelessWidget {
                             child: Text(
                               latestEmail.from.displayName,
                               style: TextStyle(
-                                color: hasUnread ? c.textSecondary : c.textTertiary,
+                                color: Colors.black,
                                 fontSize: 13,
                                 fontWeight: hasUnread ? FontWeight.w600 : FontWeight.w400,
                               ),
@@ -681,10 +681,10 @@ class _ConversationHeader extends StatelessWidget {
                           const SizedBox(width: 4),
                           Text(
                             formatEmailDate(latestEmail.receivedDateTime),
-                            style: TextStyle(
-                              color: hasUnread ? AppColors.accent : c.textDimmed,
+                            style: const TextStyle(
+                              color: Colors.black,
                               fontSize: 11,
-                              fontWeight: hasUnread ? FontWeight.w500 : FontWeight.w400,
+                              fontWeight: FontWeight.w400,
                             ),
                           ),
                         ],
@@ -696,7 +696,7 @@ class _ConversationHeader extends StatelessWidget {
                             child: Text(
                               latestEmail.subject,
                               style: TextStyle(
-                                color: hasUnread ? c.textBody : c.textMuted,
+                                color: Colors.black,
                                 fontSize: 12,
                                 fontWeight: hasUnread ? FontWeight.w500 : FontWeight.w400,
                               ),
@@ -717,8 +717,8 @@ class _ConversationHeader extends StatelessWidget {
                       const SizedBox(height: 3),
                       Text(
                         latestEmail.bodyPreview,
-                        style: TextStyle(
-                          color: c.textDimmed,
+                        style: const TextStyle(
+                          color: Colors.black,
                           fontSize: 11,
                           height: 1.3,
                         ),
@@ -924,8 +924,8 @@ class _FolderCountFooter extends StatelessWidget {
           alignment: Alignment.centerLeft,
           child: Text(
             label,
-            style: TextStyle(
-              color: c.textDimmed,
+            style: const TextStyle(
+              color: Colors.black,
               fontSize: 11,
             ),
           ),

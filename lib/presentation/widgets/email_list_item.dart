@@ -90,9 +90,7 @@ class EmailListItem extends StatelessWidget {
                         child: Text(
                           email.from.displayName,
                           style: TextStyle(
-                            color: email.isRead
-                                ? c.textTertiary
-                                : c.textSecondary,
+                            color: Colors.black,
                             fontSize: 13,
                             fontWeight: email.isRead
                                 ? FontWeight.w400
@@ -105,9 +103,7 @@ class EmailListItem extends StatelessWidget {
                       Text(
                         formatEmailDate(email.receivedDateTime),
                         style: TextStyle(
-                          color: email.isRead
-                              ? c.textDimmed
-                              : AppColors.accent,
+                          color: Colors.black,
                           fontSize: 11,
                           fontWeight: email.isRead
                               ? FontWeight.w400
@@ -123,9 +119,7 @@ class EmailListItem extends StatelessWidget {
                         child: Text(
                           email.subject,
                           style: TextStyle(
-                            color: email.isRead
-                                ? c.textMuted
-                                : c.textBody,
+                            color: Colors.black,
                             fontSize: 12,
                             fontWeight: email.isRead
                                 ? FontWeight.w400
@@ -148,8 +142,8 @@ class EmailListItem extends StatelessWidget {
                   const SizedBox(height: 3),
                   Text(
                     email.bodyPreview,
-                    style: TextStyle(
-                      color: c.textDimmed,
+                    style: const TextStyle(
+                      color: Colors.black,
                       fontSize: 11,
                       height: 1.3,
                     ),

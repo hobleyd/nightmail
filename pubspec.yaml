@@ -55,7 +55,7 @@ dependencies:
   caldav: ^1.5.0
 
   # Background task scheduling (survives app sleep on mobile)
-  workmanager: ^0.5.7
+  workmanager: ^0.9.0+3
 
 dev_dependencies:
   flutter_test:

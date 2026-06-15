@@ -54,6 +54,9 @@ dependencies:
   url_launcher: ^6.3.2
   caldav: ^1.5.0
 
+  # Background task scheduling (survives app sleep on mobile)
+  workmanager: ^0.5.7
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

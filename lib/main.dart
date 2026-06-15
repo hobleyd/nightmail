@@ -9,6 +9,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'domain/usecases/send_email.dart';
 import 'infrastructure/accounts/account_manager.dart';
+import 'infrastructure/background/background_mail_service.dart';
 import 'injection_container.dart';
 import 'presentation/blocs/account/account_cubit.dart';
 import 'presentation/blocs/theme/theme_cubit.dart';
@@ -97,6 +98,8 @@ void main(List<String> args) async {
     await wvw.WebviewController.initializeEnvironment();
   }
   await configureDependencies();
+  await BackgroundMailService.initialize();
+  await BackgroundMailService.schedulePeriodicCheck();
   runApp(const NightMailApp());
 }
 

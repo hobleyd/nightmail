@@ -91,6 +91,10 @@ class MailPollerCubit extends Cubit<MailPollerState> {
                 }
               } else {
                 if (account.id == activeId) {
+                  final prev = _baselineUnread[account.id];
+                  if (prev != null && unreadCount > prev) {
+                    activeInboxChanged = true;
+                  }
                   _baselineUnread[account.id] = unreadCount;
                   if (_newMailAccounts.remove(account.id)) changed = true;
                 } else if (unreadCount > 0) {
@@ -149,6 +153,8 @@ class MailPollerCubit extends Cubit<MailPollerState> {
             }
 
             if (account.id == activeId) {
+              final prev = _baselineUnread[account.id];
+              if (prev != null && unreadCount > prev) activeInboxChanged = true;
               _baselineUnread[account.id] = unreadCount;
               if (_newMailAccounts.remove(account.id)) changed = true;
             } else if (unreadCount > 0) {

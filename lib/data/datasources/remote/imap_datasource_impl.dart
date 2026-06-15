@@ -86,7 +86,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       throw const AuthException(message: 'No IMAP credentials stored');
     }
 
-    final client = ImapClient(isLogEnabled: false);
+    final client = ImapClient(isLogEnabled: true);
     await client.connectToServer(
       _account.host,
       _account.port,
@@ -412,12 +412,21 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     List<InlineAttachment> inlineAttachments = const [];
 
     if (fullBody) {
+      // ignore: avoid_print
+      print('[IMAP body debug] mimeData=${msg.mimeData?.runtimeType} '
+          'parts=${msg.parts?.length} '
+          'mediaType=${msg.mediaType}');
       final html = msg.decodeTextHtmlPart();
+      // ignore: avoid_print
+      print('[IMAP body debug] html=${html?.length} chars');
       if (html != null && html.isNotEmpty) {
         body = html;
         bodyType = EmailBodyType.html;
       } else {
-        body = msg.decodeTextPlainPart() ?? '';
+        final plain = msg.decodeTextPlainPart();
+        // ignore: avoid_print
+        print('[IMAP body debug] plain=${plain?.length} chars');
+        body = plain ?? '';
       }
 
       attachments = msg

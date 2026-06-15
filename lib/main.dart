@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:webview_windows/webview_windows.dart' as wvw;
 import 'package:window_manager/window_manager.dart';
 
 import 'domain/usecases/send_email.dart';
@@ -20,6 +22,9 @@ import 'presentation/pages/home_page.dart';
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
+  if (Platform.isWindows) {
+    await wvw.WebviewController.initializeEnvironment();
+  }
 
   if (args.firstOrNull == 'multi_window') {
     final windowId = args[1];

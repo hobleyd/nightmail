@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../../codecs/date_codec.dart';
 import '../../codecs/mail_codec.dart';
 import '../../imap/message_sequence.dart';
@@ -229,17 +231,41 @@ class FetchParser extends ResponseParser<FetchImapResult> {
   }
 
   void _parseBodyFull(MimeMessage message, ImapValue bodyValue) {
-    //print("Parsing BODY[]\n[${bodyValue.value}]");
     final data = bodyValue.data;
     final value = bodyValue.value;
+    // ignore: avoid_print
+    print('[fetch_parser] _parseBodyFull: data=${data?.length}b value=${value?.length}c');
     if (data != null) {
-      message.mimeData = BinaryMimeData(data, containsHeader: true);
+      // Normalise line endings to CRLF before parsing. Some IMAP servers
+      // preserve the original message's bare-LF line endings; the MIME parser
+      // only recognises \r\n\r\n as the header/body separator, so without
+      // normalisation the body is silently discarded.
+      final rawText = const Utf8Decoder(allowMalformed: true).convert(data);
+      final hasCrLf = rawText.contains('\r\n');
+      final hasBareLf = rawText.contains('\n') && !rawText.contains('\r\n');
+      final normalised =
+          rawText.replaceAll('\r\n', '\n').replaceAll('\n', '\r\n');
+      final hasSep = normalised.contains('\r\n\r\n');
+      // ignore: avoid_print
+      print('[fetch_parser] hasCrLf=$hasCrLf hasBareLf=$hasBareLf hasSep=$hasSep');
+      // ignore: avoid_print
+      print('[fetch_parser] first 300: ${normalised.substring(0, normalised.length.clamp(0, 300))}');
+      message.mimeData = TextMimeData(normalised, containsHeader: true);
     } else if (value != null) {
+      final hasSep = value.contains('\r\n\r\n');
+      // ignore: avoid_print
+      print('[fetch_parser] value path: hasSep=$hasSep');
+      // ignore: avoid_print
+      print('[fetch_parser] first 300: ${value.substring(0, value.length.clamp(0, 300))}');
       message.mimeData = TextMimeData(value, containsHeader: true);
-      //print("Parsing BODY text \n$bodyText");
+    } else {
+      // ignore: avoid_print
+      print('[fetch_parser] _parseBodyFull: both data and value are null!');
     }
     // ensure all headers are set:
     message.parse();
+    // ignore: avoid_print
+    print('[fetch_parser] after parse: headers=${message.headers?.length} parts=${message.parts?.length} mediaType=${message.mediaType}');
   }
 
   HeaderParseResult _parseBodyHeader(

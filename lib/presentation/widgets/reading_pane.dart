@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:async';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/foundation.dart';
@@ -10,8 +11,10 @@ import 'package:file_selector/file_selector.dart';
 import 'package:open_file/open_file.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_windows/webview_windows.dart' as wvw;
 
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
@@ -1134,20 +1137,38 @@ class _HtmlBodyWebView extends StatefulWidget {
 }
 
 class _HtmlBodyWebViewState extends State<_HtmlBodyWebView> {
-  late final WebViewController _controller;
+  // webview_flutter controller — used on macOS / Android / iOS.
+  WebViewController? _flutterController;
+
+  // webview_windows controller — used on Windows.
+  wvw.WebviewController? _windowsController;
+  StreamSubscription<dynamic>? _webMessageSub;
+  bool _windowsReady = false;
+
   bool _allowExternalImages = false;
   bool _hasBlockedImages = false;
 
   @override
   void initState() {
     super.initState();
+    if (Platform.isWindows) {
+      _initWindows();
+    } else if (Platform.isLinux) {
+      _hasBlockedImages = _hasExternalImages(widget.html);
+    } else {
+      _initFlutter();
+    }
+    _loadAlwaysAllowSetting();
+  }
+
+  // ── webview_flutter (macOS / Android / iOS) ───────────────────────────────
+
+  void _initFlutter() {
     final (html, blocked) = _buildHtml(allowExternal: false);
     _hasBlockedImages = blocked;
-    _controller = WebViewController()
+    _flutterController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.disabled)
       ..setNavigationDelegate(NavigationDelegate(
-        // Allow the initial HTML load (about:, data:, file:) but intercept
-        // outbound http/https/mailto navigation to open in the system browser/email client.
         onNavigationRequest: (request) {
           final uri = Uri.tryParse(request.url);
           final scheme = uri?.scheme ?? '';
@@ -1159,8 +1180,60 @@ class _HtmlBodyWebViewState extends State<_HtmlBodyWebView> {
         },
       ))
       ..loadHtmlString(html);
-    _loadAlwaysAllowSetting();
   }
+
+  // ── webview_windows ───────────────────────────────────────────────────────
+
+  Future<void> _initWindows() async {
+    final controller = wvw.WebviewController();
+    _windowsController = controller;
+    await controller.initialize();
+
+    // Intercept link clicks: inject a capture-phase listener that posts the
+    // href via the WebView2 host-object channel and cancels the navigation.
+    await controller.addScriptToExecuteOnDocumentCreated('''
+      document.addEventListener('click', function(e) {
+        var a = e.target.closest('a[href]');
+        if (a) {
+          var scheme = a.href.split(':')[0].toLowerCase();
+          if (scheme === 'http' || scheme === 'https' || scheme === 'mailto') {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            window.chrome.webview.postMessage(a.href);
+          }
+        }
+      }, true);
+    ''');
+
+    _webMessageSub = controller.webMessage.listen((msg) {
+      final url = msg?.toString() ?? '';
+      final uri = Uri.tryParse(url);
+      if (uri != null) launchUrl(uri, mode: LaunchMode.externalApplication);
+    });
+
+    // Also catch any direct navigation that slips through (e.g. form submit).
+    controller.url.listen((url) {
+      final uri = Uri.tryParse(url);
+      final scheme = uri?.scheme ?? '';
+      if (scheme == 'http' || scheme == 'https') {
+        launchUrl(uri!, mode: LaunchMode.externalApplication);
+        // Reload the last-known content to stay on the email.
+        final (html, _) = _buildHtml(allowExternal: _allowExternalImages);
+        controller.loadStringContent(html);
+      }
+    });
+
+    final (html, blocked) = _buildHtml(allowExternal: false);
+    _hasBlockedImages = blocked;
+    await controller.loadStringContent(html);
+
+    if (mounted) setState(() => _windowsReady = true);
+  }
+
+  // ── shared helpers ────────────────────────────────────────────────────────
+
+  bool _hasExternalImages(String html) =>
+      RegExp(r'''src=(["'])https?://''', caseSensitive: false).hasMatch(html);
 
   Future<void> _loadAlwaysAllowSetting() async {
     final domains = await sl<AppSettings>().loadExternalImageDomains();
@@ -1175,9 +1248,24 @@ class _HtmlBodyWebViewState extends State<_HtmlBodyWebView> {
         old.inlineAttachments != widget.inlineAttachments;
     final senderChanged = old.senderDomain != widget.senderDomain;
     if (emailChanged || senderChanged) {
-      _reloadWith(allowExternal: false);
-      _loadAlwaysAllowSetting();
+      if (Platform.isLinux) {
+        setState(() {
+          _allowExternalImages = false;
+          _hasBlockedImages = _hasExternalImages(widget.html);
+        });
+        _loadAlwaysAllowSetting();
+      } else {
+        _reloadWith(allowExternal: false);
+        _loadAlwaysAllowSetting();
+      }
     }
+  }
+
+  @override
+  void dispose() {
+    _webMessageSub?.cancel();
+    _windowsController?.dispose();
+    super.dispose();
   }
 
   void _reloadWith({required bool allowExternal}) {
@@ -1186,7 +1274,13 @@ class _HtmlBodyWebViewState extends State<_HtmlBodyWebView> {
       _allowExternalImages = allowExternal;
       _hasBlockedImages = blocked;
     });
-    _controller.loadHtmlString(html);
+    if (Platform.isWindows) {
+      _windowsController?.loadStringContent(html);
+    } else if (Platform.isLinux) {
+      // Linux uses flutter_widget_from_html — setState above is sufficient.
+    } else {
+      _flutterController?.loadHtmlString(html);
+    }
   }
 
   void _downloadOnce() => _reloadWith(allowExternal: true);
@@ -1231,7 +1325,6 @@ class _HtmlBodyWebViewState extends State<_HtmlBodyWebView> {
     }
 
     // Inject viewport + minimal responsive overrides before </head>.
-    // Using a real WKWebView means !important works and table layout is correct.
     const injected = '''
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
 <style>
@@ -1239,24 +1332,6 @@ class _HtmlBodyWebViewState extends State<_HtmlBodyWebView> {
 body { margin: 0; padding: 20px 28px 40px; }
 img { max-width: 100% !important; height: auto !important; }
 img[data-blocked-src] { display: none !important; }
-a[href]:hover::after {
-  content: attr(href);
-  position: fixed;
-  bottom: 0; left: 0; right: 0;
-  height: 28px;
-  line-height: 28px;
-  padding: 0 16px;
-  background: rgba(245,245,245,0.95);
-  border-top: 1px solid #ddd;
-  font-size: 11px;
-  font-family: -apple-system, sans-serif;
-  color: #555;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  z-index: 9999;
-  pointer-events: none;
-}
 </style>
 ''';
     final headEnd = resolved.indexOf('</head>');
@@ -1273,9 +1348,43 @@ a[href]:hover::after {
 
   @override
   Widget build(BuildContext context) {
+    final Widget webviewWidget;
+    if (Platform.isWindows) {
+      final ctrl = _windowsController;
+      webviewWidget = _windowsReady && ctrl != null
+          ? wvw.Webview(ctrl)
+          : const SizedBox.shrink();
+    } else if (Platform.isLinux) {
+      final c = context.colors;
+      final (html, _) = _buildHtml(allowExternal: _allowExternalImages);
+      webviewWidget = SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(28, 20, 28, 40),
+        child: HtmlWidget(
+          html,
+          textStyle:
+              TextStyle(color: c.textBody, fontSize: 14, height: 1.6),
+          onTapUrl: (url) async {
+            final uri = Uri.tryParse(url);
+            if (uri != null) {
+              final s = uri.scheme;
+              if (s == 'http' || s == 'https' || s == 'mailto') {
+                await launchUrl(uri, mode: LaunchMode.externalApplication);
+              }
+            }
+            return true;
+          },
+        ),
+      );
+    } else {
+      final ctrl = _flutterController;
+      webviewWidget = ctrl != null
+          ? WebViewWidget(controller: ctrl)
+          : const SizedBox.shrink();
+    }
+
     return Column(
       children: [
-        Expanded(child: WebViewWidget(controller: _controller)),
+        Expanded(child: webviewWidget),
         if (_hasBlockedImages && !_allowExternalImages)
           _ImageBlockedBar(
             onDownloadOnce: _downloadOnce,

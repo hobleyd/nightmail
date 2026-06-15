@@ -33,6 +33,11 @@ migrate_working_dir/
 .pub/
 /build/
 /coverage/
+pubspec.lock
+
+# Generated files
+*.mocks.dart
+*.g.dart
 
 # Symbolication related
 app.*.symbols

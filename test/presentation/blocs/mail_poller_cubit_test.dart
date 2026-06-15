@@ -409,6 +409,186 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
+  // Gmail active account — pollGeneration must increment on unread increase
+  // (regression: was never set in the non-delta path)
+  // ---------------------------------------------------------------------------
+
+  group(
+      'MailPollerCubit — Gmail active account, '
+      'pollGeneration triggered by unread increase',
+      () {
+    late MockEmailRemoteDatasource mockGmailDs;
+
+    setUp(() {
+      mockGmailDs = MockEmailRemoteDatasource();
+      when(mockAccountManager.accounts).thenReturn([_gmailAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(_gmailAccount);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(mockGmailDs);
+    });
+
+    test('pollGeneration increments when unread count rises', () async {
+      var callCount = 0;
+      when(mockGmailDs.getMailFolders()).thenAnswer((_) async {
+        callCount++;
+        return [_inbox(unread: callCount == 1 ? 3 : 6)];
+      });
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      // Poll 1: sets baseline (3 unread) — no increment expected.
+      await cubit.initialize();
+      await pumpEventQueue();
+      expect(cubit.state.pollGeneration, 0);
+
+      // Poll 2: unread jumped to 6 — must increment.
+      await cubit.updatePollInterval(9999);
+      await pumpEventQueue();
+
+      expect(cubit.state.pollGeneration, 1);
+    });
+
+    test('pollGeneration does NOT increment when unread count is unchanged',
+        () async {
+      when(mockGmailDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: 3)]);
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      await cubit.updatePollInterval(9999);
+      await pumpEventQueue();
+
+      expect(cubit.state.pollGeneration, 0);
+    });
+
+    test('pollGeneration does NOT increment when unread count decreases',
+        () async {
+      var callCount = 0;
+      when(mockGmailDs.getMailFolders()).thenAnswer((_) async {
+        callCount++;
+        return [_inbox(unread: callCount == 1 ? 5 : 2)];
+      });
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      await cubit.updatePollInterval(9999);
+      await pumpEventQueue();
+
+      expect(cubit.state.pollGeneration, 0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Microsoft pre-delta active account — pollGeneration must increment on
+  // unread increase (regression: same missing flag before delta token exists)
+  // ---------------------------------------------------------------------------
+
+  group(
+      'MailPollerCubit — Microsoft pre-delta active account, '
+      'pollGeneration triggered by unread increase',
+      () {
+    setUp(() {
+      when(mockAccountManager.accounts).thenReturn([_msAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(_msAccount);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(mockGraphDs);
+      // No delta token saved — stays in folder-polling path across both polls.
+      // saveDeltaToken is stubbed as a no-op so loadDeltaToken keeps returning
+      // null even after the async bootstrap completes.
+      when(mockDatabase.loadDeltaToken(any, any))
+          .thenAnswer((_) async => null);
+      when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
+          .thenAnswer((_) async => _emptyDelta());
+    });
+
+    test('pollGeneration increments when unread count rises', () async {
+      var callCount = 0;
+      when(mockGraphDs.getMailFolders()).thenAnswer((_) async {
+        callCount++;
+        return [_inbox(unread: callCount == 1 ? 2 : 5)];
+      });
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      // Poll 1: sets baseline (2 unread).
+      await cubit.initialize();
+      await pumpEventQueue();
+      expect(cubit.state.pollGeneration, 0);
+
+      // Poll 2: unread jumped to 5 — must increment.
+      await cubit.updatePollInterval(9999);
+      await pumpEventQueue();
+
+      expect(cubit.state.pollGeneration, 1);
+    });
+
+    test('pollGeneration does NOT increment when unread count is unchanged',
+        () async {
+      when(mockGraphDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: 4)]);
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      await cubit.updatePollInterval(9999);
+      await pumpEventQueue();
+
+      expect(cubit.state.pollGeneration, 0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Microsoft delta active account — pollGeneration increments (existing path,
+  // adding explicit coverage)
+  // ---------------------------------------------------------------------------
+
+  group(
+      'MailPollerCubit — Microsoft delta active account, '
+      'pollGeneration increments on new unread',
+      () {
+    setUp(() {
+      when(mockAccountManager.accounts).thenReturn([_msAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(_msAccount);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(mockGraphDs);
+      when(mockDatabase.loadDeltaToken(any, any))
+          .thenAnswer((_) async => _savedToken);
+      when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
+          .thenAnswer((_) async => MailDeltaResult(
+                upserted: [_email('new-msg', isRead: false)],
+                removedIds: [],
+                deltaLink: _newToken,
+              ));
+      when(mockGraphDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: 3)]);
+    });
+
+    test('pollGeneration increments for active account with new unread delta',
+        () async {
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      expect(cubit.state.pollGeneration, greaterThan(0));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // markAccountViewed
   // ---------------------------------------------------------------------------
 

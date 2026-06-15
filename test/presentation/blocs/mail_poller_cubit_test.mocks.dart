@@ -22,6 +22,7 @@ import 'package:nightmail/data/models/mail_delta_result.dart' as _i8;
 import 'package:nightmail/data/models/todo_task_attachment_model.dart' as _i7;
 import 'package:nightmail/data/models/todo_task_list_model.dart' as _i22;
 import 'package:nightmail/data/models/todo_task_model.dart' as _i6;
+import 'package:nightmail/domain/entities/attendee_availability.dart' as _i24;
 import 'package:nightmail/domain/entities/meeting_invite.dart' as _i20;
 import 'package:nightmail/domain/entities/todo_task.dart' as _i23;
 import 'package:nightmail/domain/usecases/create_calendar_event.dart' as _i18;
@@ -577,6 +578,7 @@ class MockGraphApiDatasourceImpl extends _i1.Mock
     required DateTime? newEnd,
     String? timezone,
     String? userEmail,
+    String? message,
   }) =>
       (super.noSuchMethod(
             Invocation.method(#proposeNewTime, [], {
@@ -585,6 +587,7 @@ class MockGraphApiDatasourceImpl extends _i1.Mock
               #newEnd: newEnd,
               #timezone: timezone,
               #userEmail: userEmail,
+              #message: message,
             }),
             returnValue: _i11.Future<void>.value(),
             returnValueForMissingStub: _i11.Future<void>.value(),
@@ -906,6 +909,24 @@ class MockGraphApiDatasourceImpl extends _i1.Mock
             ),
           )
           as _i11.Future<_i8.MailDeltaResult>);
+
+  @override
+  _i11.Future<List<_i24.AttendeeAvailability>> getAttendeesSchedule({
+    required List<String>? emails,
+    required DateTime? start,
+    required DateTime? end,
+  }) =>
+      (super.noSuchMethod(
+            Invocation.method(#getAttendeesSchedule, [], {
+              #emails: emails,
+              #start: start,
+              #end: end,
+            }),
+            returnValue: _i11.Future<List<_i24.AttendeeAvailability>>.value(
+              <_i24.AttendeeAvailability>[],
+            ),
+          )
+          as _i11.Future<List<_i24.AttendeeAvailability>>);
 }
 
 /// A class which mocks [EmailRemoteDatasource].

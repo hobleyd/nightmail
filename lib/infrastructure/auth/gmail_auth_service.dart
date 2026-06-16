@@ -18,11 +18,13 @@ class GmailAuthService implements AuthService {
     required this.clientId,
     required this.redirectUri,
     required this._tokenStorage,
+    this.clientSecret,
     Dio? httpClient,
   })  : _http = httpClient ?? Dio();
 
   final String clientId;
   final String redirectUri;
+  final String? clientSecret;
   final TokenStorage _tokenStorage;
   final Dio _http;
 
@@ -104,6 +106,8 @@ class GmailAuthService implements AuthService {
           'client_id': clientId,
           'grant_type': 'refresh_token',
           'refresh_token': currentToken.refreshToken,
+          if (clientSecret != null && clientSecret!.isNotEmpty)
+            'client_secret': clientSecret!,
         },
         options: Options(contentType: 'application/x-www-form-urlencoded'),
       );
@@ -138,6 +142,8 @@ class GmailAuthService implements AuthService {
           'code': code,
           'redirect_uri': redirectUri,
           'code_verifier': codeVerifier,
+          if (clientSecret != null && clientSecret!.isNotEmpty)
+            'client_secret': clientSecret!,
         },
         options: Options(contentType: 'application/x-www-form-urlencoded'),
       );

@@ -234,6 +234,7 @@ class AccountManager {
           clientId: _oauthCredentials?.microsoftClientId ?? AppConfig.microsoftClientId,
           tenantId: account.tenantId,
           redirectUri: _oauthCredentials?.microsoftRedirectUri ?? AppConfig.microsoftRedirectUri,
+          clientSecret: _oauthCredentials?.microsoftClientSecret,
           tokenStorage: tokenStorage,
         );
         return GraphApiDatasourceImpl(
@@ -247,6 +248,7 @@ class AccountManager {
         final authSvc = GmailAuthService(
           clientId: _oauthCredentials?.googleClientId ?? AppConfig.gmailClientId,
           redirectUri: _oauthCredentials?.googleRedirectUri ?? AppConfig.gmailRedirectUri,
+          clientSecret: _oauthCredentials?.googleClientSecret,
           tokenStorage: tokenStorage,
         );
         return GmailDatasourceImpl(
@@ -296,6 +298,7 @@ class AccountManager {
           clientId: _oauthCredentials?.microsoftClientId ?? AppConfig.microsoftClientId,
           tenantId: account.tenantId,
           redirectUri: _oauthCredentials?.microsoftRedirectUri ?? AppConfig.microsoftRedirectUri,
+          clientSecret: _oauthCredentials?.microsoftClientSecret,
           tokenStorage: tokenStorage,
         );
         final httpClient = GraphHttpClient(authService: authSvc);
@@ -313,6 +316,7 @@ class AccountManager {
         final authSvc = GmailAuthService(
           clientId: _oauthCredentials?.googleClientId ?? AppConfig.gmailClientId,
           redirectUri: _oauthCredentials?.googleRedirectUri ?? AppConfig.gmailRedirectUri,
+          clientSecret: _oauthCredentials?.googleClientSecret,
           tokenStorage: tokenStorage,
         );
         final gmailClient = GmailHttpClient(authService: authSvc);

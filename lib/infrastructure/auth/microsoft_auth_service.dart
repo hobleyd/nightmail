@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
@@ -25,21 +26,40 @@ class MicrosoftAuthService implements AuthService {
     required this.tenantId,
     required this.redirectUri,
     required this._tokenStorage,
+    this.clientSecret,
     Dio? httpClient,
   })  : _http = httpClient ?? Dio();
 
   final String clientId;
   final String tenantId;
   final String redirectUri;
+  final String? clientSecret;
   final TokenStorage _tokenStorage;
   final Dio _http;
 
+  // On Windows, open the system browser with a localhost loopback redirect.
+  // Microsoft Azure AD accepts any http://localhost:{port} for public-client
+  // (Mobile and Desktop) app registrations without needing to pre-register the
+  // specific port — RFC 8252 §7.3 / MSAL loopback support.
+  //
   // On web: serve callback.html from the same origin so the BroadcastChannel
-  // can relay the code back. On native/desktop: use the custom URI scheme that
-  // ASWebAuthenticationSession / Custom Tabs intercept without a web server.
+  // can relay the code back. On other native platforms: use the custom URI
+  // scheme that ASWebAuthenticationSession / Custom Tabs intercept.
+  static const _loopbackPort = 34571;
+
+  // Windows and Linux use the local server approach (same underlying plugin).
+  // macOS/iOS use ASWebAuthenticationSession; Android uses Custom Tabs.
+  // Both handle nightmail:// custom scheme intercepts natively, so they use
+  // the stored redirectUri instead.
+  static bool get _useLoopback =>
+      !kIsWeb && (Platform.isWindows || Platform.isLinux);
+
   String get _effectiveRedirectUri {
     if (kIsWeb) {
       return '${Uri.base.origin}/callback.html';
+    }
+    if (_useLoopback) {
+      return 'http://localhost:$_loopbackPort';
     }
     return redirectUri;
   }
@@ -49,6 +69,7 @@ class MicrosoftAuthService implements AuthService {
     'profile',
     'email',
     'offline_access',
+    'https://graph.microsoft.com/User.Read',
     'https://graph.microsoft.com/Mail.Read',
     'https://graph.microsoft.com/Mail.ReadWrite',
     'https://graph.microsoft.com/Mail.Send',
@@ -84,15 +105,49 @@ class MicrosoftAuthService implements AuthService {
     // preferEphemeral=true: on macOS without a sandbox, ASWebAuthenticationSession
     // would otherwise try to share session cookies via the Keychain (requiring
     // keychain-access-groups entitlement). Ephemeral mode skips that store.
+    assert(() {
+      // ignore: avoid_print
+      print('[MicrosoftAuth] tenantId=$tenantId clientId=$clientId redirectUri=$_effectiveRedirectUri');
+      // ignore: avoid_print
+      print('[MicrosoftAuth] Opening: ${authUri.toString()}');
+      return true;
+    }());
+
     final String resultUrl;
     if (kIsWeb) {
       resultUrl = await authenticateWeb(authUri.toString());
     } else {
-      resultUrl = await FlutterWebAuth2.authenticate(
-        url: authUri.toString(),
-        callbackUrlScheme: 'nightmail',
-        options: const FlutterWebAuth2Options(preferEphemeral: true),
-      );
+      // Windows/Linux: open the system browser + local server instead of
+      // WebView2/WebKitGTK, which don't reliably fire NavigationStarting for
+      // custom URI scheme redirects.
+      // macOS/iOS/Android: ASWebAuthenticationSession / Custom Tabs handle
+      // the nightmail:// intercept natively so WebView is not needed.
+      final String callbackScheme = _useLoopback
+          ? 'http://localhost:$_loopbackPort'
+          : 'nightmail';
+      final FlutterWebAuth2Options authOptions = _useLoopback
+          ? const FlutterWebAuth2Options(useWebview: false)
+          : const FlutterWebAuth2Options(preferEphemeral: true);
+
+      try {
+        resultUrl = await FlutterWebAuth2.authenticate(
+          url: authUri.toString(),
+          callbackUrlScheme: callbackScheme,
+          options: authOptions,
+        );
+        assert(() {
+          // ignore: avoid_print
+          print('[MicrosoftAuth] Callback received: $resultUrl');
+          return true;
+        }());
+      } catch (e) {
+        assert(() {
+          // ignore: avoid_print
+          print('[MicrosoftAuth] Auth failed: $e');
+          return true;
+        }());
+        rethrow;
+      }
     }
 
     final uri = Uri.parse(resultUrl);
@@ -125,7 +180,9 @@ class MicrosoftAuthService implements AuthService {
           'grant_type': 'refresh_token',
           'refresh_token': currentToken.refreshToken,
           'scope': _scopes.join(' '),
-          'redirect_uri': redirectUri,
+          'redirect_uri': _effectiveRedirectUri,
+          if (clientSecret != null && clientSecret!.isNotEmpty)
+            'client_secret': clientSecret!,
         },
         options: Options(
           contentType: 'application/x-www-form-urlencoded',
@@ -162,6 +219,8 @@ class MicrosoftAuthService implements AuthService {
           'code': code,
           'redirect_uri': _effectiveRedirectUri,
           'code_verifier': codeVerifier,
+          if (clientSecret != null && clientSecret!.isNotEmpty)
+            'client_secret': clientSecret!,
         },
         options: Options(
           contentType: 'application/x-www-form-urlencoded',

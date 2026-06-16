@@ -23,7 +23,11 @@ import 'presentation/pages/home_page.dart';
 
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
-  await windowManager.ensureInitialized();
+  try {
+    await windowManager.ensureInitialized();
+  } catch (_) {
+    // window_manager is not available in sub-window processes — safe to ignore.
+  }
 
   if (args.firstOrNull == 'multi_window') {
     final windowId = args[1];
@@ -35,8 +39,13 @@ void main(List<String> args) async {
     await sl<AccountManager>().initialize();
 
     Future<void> showSubWindow(WindowOptions options) async {
-      await windowManager.waitUntilReadyToShow(options);
-      await (await WindowController.fromCurrentEngine()).show();
+      try {
+        await windowManager.waitUntilReadyToShow(options);
+        await (await WindowController.fromCurrentEngine()).show();
+      } catch (_) {
+        // Fallback: window_manager unavailable in this sub-window context.
+        await (await WindowController.fromCurrentEngine()).show();
+      }
     }
 
     if (arguments['type'] == 'calendar') {

@@ -7,6 +7,7 @@ import '../../core/config/oauth_credentials.dart';
 import '../../core/config/oauth_credentials_storage.dart';
 import '../../core/error/exceptions.dart';
 import '../../core/theme/app_colors.dart';
+import '../widgets/client_secret_dialog.dart';
 import '../../data/datasources/remote/graph_api_datasource_impl.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/auth/gmail_auth_service.dart';
@@ -48,11 +49,30 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
   }
 
   Future<void> _signInMicrosoft() async {
+    final accountCubit = context.read<AccountCubit>();
+
+    final input = await showMicrosoftCredentialsDialog(
+      context,
+      currentClientId: _credentials?.microsoftClientId,
+      currentTenantId: _credentials?.microsoftTenantId,
+      currentClientSecret: _credentials?.microsoftClientSecret,
+      currentRedirectUri: _credentials?.microsoftRedirectUri,
+    );
+    if (input == null || !mounted) return;
+
+    final updatedCreds = _credentials!.copyWith(
+      microsoftClientId: input.clientId,
+      microsoftTenantId: input.tenantId,
+      microsoftClientSecret: input.clientSecret,
+      microsoftRedirectUri: input.redirectUri,
+    );
+    await sl<OAuthCredentialsStorage>().save(updatedCreds);
+    if (!mounted) return;
     setState(() {
+      _credentials = updatedCreds;
       _isLoading = true;
       _error = null;
     });
-    final accountCubit = context.read<AccountCubit>();
 
     try {
       const uuid = Uuid();
@@ -62,11 +82,12 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
         secureStorage,
         storageKey: 'token_$id',
       );
-      final creds = _credentials!;
+      final creds = updatedCreds;
       final authService = MicrosoftAuthService(
         clientId: creds.microsoftClientId,
         tenantId: creds.microsoftTenantId,
         redirectUri: creds.microsoftRedirectUri,
+        clientSecret: creds.microsoftClientSecret,
         tokenStorage: tokenStorage,
       );
 
@@ -96,11 +117,26 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
   }
 
   Future<void> _signInGmail() async {
+    final accountCubit = context.read<AccountCubit>();
+
+    final input = await showGoogleCredentialsDialog(
+      context,
+      currentClientId: _credentials?.googleClientId,
+      currentClientSecret: _credentials?.googleClientSecret,
+    );
+    if (input == null || !mounted) return;
+
+    final updatedCreds = _credentials!.copyWith(
+      googleClientId: input.clientId,
+      googleClientSecret: input.clientSecret,
+    );
+    await sl<OAuthCredentialsStorage>().save(updatedCreds);
+    if (!mounted) return;
     setState(() {
+      _credentials = updatedCreds;
       _isLoading = true;
       _error = null;
     });
-    final accountCubit = context.read<AccountCubit>();
 
     try {
       const uuid = Uuid();
@@ -110,10 +146,11 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
         secureStorage,
         storageKey: 'token_$id',
       );
-      final creds = _credentials!;
+      final creds = updatedCreds;
       final authService = GmailAuthService(
         clientId: creds.googleClientId,
         redirectUri: creds.googleRedirectUri,
+        clientSecret: creds.googleClientSecret,
         tokenStorage: tokenStorage,
       );
 

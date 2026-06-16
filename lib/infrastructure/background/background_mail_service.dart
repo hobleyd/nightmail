@@ -49,7 +49,7 @@ class BackgroundMailService {
       _periodicTaskName,
       _periodicTaskTag,
       frequency: Duration(minutes: intervalMinutes),
-      existingWorkPolicy: ExistingWorkPolicy.replace,
+      existingWorkPolicy: ExistingPeriodicWorkPolicy.replace,
       constraints: Constraints(networkType: NetworkType.connected),
       backoffPolicy: BackoffPolicy.linear,
       backoffPolicyDelay: const Duration(minutes: 5),
@@ -100,13 +100,14 @@ Future<void> _runBackgroundPoll() async {
       final ds = accountManager.buildEmailDatasourceForAccount(account);
 
       if (account is MicrosoftAccount && ds is GraphDeltaDatasource) {
+        final deltaDs = ds as GraphDeltaDatasource;
         final savedToken =
             await database.loadDeltaToken(account.id, 'inbox');
         if (savedToken != null) {
           // Incremental delta sync keeps the token fresh and the local cache
           // up-to-date so the foreground app can show changes immediately.
           final result =
-              await ds.syncMailDelta('inbox', deltaLink: savedToken);
+              await deltaDs.syncMailDelta('inbox', deltaLink: savedToken);
           await database.saveDeltaToken(
               account.id, 'inbox', result.deltaLink);
         } else {

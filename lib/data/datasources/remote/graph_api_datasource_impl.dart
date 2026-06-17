@@ -82,11 +82,60 @@ class GraphApiDatasourceImpl
       if (data == null) return [];
 
       final value = data['value'] as List<dynamic>? ?? [];
+      final folderEmails = value
+          .map((e) => EmailModel.fromJson(e as Map<String, dynamic>))
+          .toList();
+
+      if (folderEmails.isEmpty) return [];
+
+      // For each unique conversationId found in this folder, fetch all messages
+      // that share that conversationId across every folder.  This surfaces
+      // cross-folder replies (e.g. emails moved to sub-folders) inside the
+      // same conversation view without changing which conversations appear.
+      final conversationIds = folderEmails
+          .map((e) => e.conversationId)
+          .whereType<String>()
+          .toSet();
+
+      if (conversationIds.isEmpty) return folderEmails;
+
+      final crossFolderFutures = conversationIds.map(_fetchConversationMessages);
+      final crossFolderBatches = await Future.wait(crossFolderFutures);
+
+      // Merge: folder emails + cross-folder emails, de-duplicated by id.
+      final byId = <String, EmailModel>{};
+      for (final e in folderEmails) {
+        byId[e.id] = e;
+      }
+      for (final batch in crossFolderBatches) {
+        for (final e in batch) {
+          byId.putIfAbsent(e.id, () => e);
+        }
+      }
+      return byId.values.toList();
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  Future<List<EmailModel>> _fetchConversationMessages(
+      String conversationId) async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/me/messages',
+        queryParameters: {
+          '\$filter': "conversationId eq '$conversationId'",
+          '\$select': _emailListSelect,
+          '\$top': 50,
+        },
+      );
+      final value =
+          (response.data?['value'] as List<dynamic>? ?? []);
       return value
           .map((e) => EmailModel.fromJson(e as Map<String, dynamic>))
           .toList();
-    } on DioException catch (e) {
-      throw _mapDioException(e);
+    } catch (_) {
+      return [];
     }
   }
 

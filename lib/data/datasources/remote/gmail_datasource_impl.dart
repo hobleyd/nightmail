@@ -167,47 +167,53 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     String orderBy = 'receivedDateTime desc',
   }) async {
     try {
+      // Use the Threads API so that cross-folder messages are included.
+      // labelIds filters *which threads* to show (threads that have at least
+      // one message with that label), but every message in each thread is
+      // returned regardless of which label it carries.
       final queryParams = <String, dynamic>{
         'maxResults': top,
         'labelIds': ?folderId,
       };
 
       final listResp = await _dio.get<Map<String, dynamic>>(
-        '/users/me/messages',
+        '/users/me/threads',
         queryParameters: queryParams,
       );
 
       final data = listResp.data;
       if (data == null) return [];
 
-      final messages = data['messages'] as List<dynamic>? ?? [];
-      if (messages.isEmpty) return [];
+      final threads = data['threads'] as List<dynamic>? ?? [];
+      if (threads.isEmpty) return [];
 
-      // Batch fetch message metadata.
-      final metaFutures = messages.map((m) {
-        final id = (m as Map<String, dynamic>)['id'] as String;
-        return _fetchMessageMetadata(id);
+      // Fetch all messages in each thread in parallel.
+      final threadFutures = threads.map((t) {
+        final id = (t as Map<String, dynamic>)['id'] as String;
+        return _fetchThreadMessages(id);
       });
 
-      return (await Future.wait(metaFutures)).whereType<EmailModel>().toList();
+      return (await Future.wait(threadFutures)).expand((msgs) => msgs).toList();
     } on DioException catch (e) {
       throw _mapException(e);
     }
   }
 
-  Future<EmailModel?> _fetchMessageMetadata(String id) async {
+  Future<List<EmailModel>> _fetchThreadMessages(String threadId) async {
     try {
       final resp = await _dio.get<Map<String, dynamic>>(
-        '/users/me/messages/$id',
+        '/users/me/threads/$threadId',
         queryParameters: {
           'format': 'metadata',
           'metadataHeaders': ['From', 'To', 'Cc', 'Subject', 'Date'],
         },
       );
-      if (resp.data == null) return null;
-      return _parseMessage(resp.data!, fullBody: false);
+      if (resp.data == null) return [];
+      final messages = (resp.data!['messages'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      return messages.map((m) => _parseMessage(m, fullBody: false)).toList();
     } catch (_) {
-      return null;
+      return [];
     }
   }
 

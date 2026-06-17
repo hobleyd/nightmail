@@ -12,6 +12,7 @@ import '../../data/datasources/remote/email_remote_datasource.dart';
 import '../../data/datasources/remote/eventkit_calendar_datasource_impl.dart';
 import '../../data/datasources/remote/gmail_datasource_impl.dart';
 import '../../data/datasources/remote/google_calendar_datasource_impl.dart';
+import '../../data/datasources/remote/google_tasks_datasource_impl.dart';
 import '../../data/datasources/remote/graph_api_datasource_impl.dart';
 import '../../data/datasources/remote/imap_datasource_impl.dart';
 import '../../data/datasources/remote/tasks_remote_datasource.dart';
@@ -24,6 +25,7 @@ import '../auth/microsoft_auth_service.dart';
 import '../auth/token_storage.dart';
 import '../http/gmail_http_client.dart';
 import '../http/google_calendar_http_client.dart';
+import '../http/google_tasks_http_client.dart';
 import '../http/graph_http_client.dart';
 import 'account.dart';
 import 'account_storage.dart';
@@ -347,11 +349,12 @@ class AccountManager {
         );
         final gmailClient = GmailHttpClient(authService: authSvc);
         final calendarClient = GoogleCalendarHttpClient(authService: authSvc);
+        final tasksClient = GoogleTasksHttpClient(authService: authSvc);
         _authService = authSvc;
         _emailDatasource = GmailDatasourceImpl(client: gmailClient);
         _calendarDatasource =
             GoogleCalendarDatasourceImpl(client: calendarClient);
-        _tasksDatasource = null;
+        _tasksDatasource = GoogleTasksDatasourceImpl(client: tasksClient);
 
       case ImapAccount():
         final credStorage = ImapCredentialStorage(_secureStorage);

@@ -39,6 +39,7 @@ class GmailAuthService implements AuthService {
     'email',
     'https://www.googleapis.com/auth/gmail.modify',
     'https://www.googleapis.com/auth/calendar.readonly',
+    'https://www.googleapis.com/auth/tasks',
   ];
 
   static const _authEndpoint = 'https://accounts.google.com/o/oauth2/v2/auth';

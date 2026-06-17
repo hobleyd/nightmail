@@ -1,16 +1,17 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../../core/error/exceptions.dart';
 import '../../../domain/entities/email.dart';
+import '../../../domain/entities/email_attachment.dart';
+import '../../../domain/entities/inline_attachment.dart';
+import '../../../domain/entities/meeting_invite.dart';
 import '../../../infrastructure/http/gmail_http_client.dart';
 import '../../models/email_address_model.dart';
 import '../../models/email_folder_model.dart';
 import '../../models/email_model.dart';
-import '../../../domain/entities/meeting_invite.dart';
 import 'email_remote_datasource.dart';
 
 class GmailDatasourceImpl implements EmailRemoteDatasource {
@@ -197,9 +198,71 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       if (resp.data == null) {
         throw ServerException(message: 'Empty response for message $id');
       }
-      return _parseMessage(resp.data!, fullBody: true);
+
+      final email = _parseMessage(resp.data!, fullBody: true);
+
+      // Large inline attachments (>2 MB) have only an attachmentId — no data
+      // field in the payload. Fetch them concurrently and merge.
+      final payload = resp.data!['payload'] as Map<String, dynamic>? ?? {};
+      final pending = _extractAttachments(payload)
+          .where((a) =>
+              a.isInline &&
+              a.contentId != null &&
+              a.attachmentId.isNotEmpty &&
+              a.inlineData == null)
+          .toList();
+
+      if (pending.isEmpty) return email;
+
+      final fetched = await Future.wait(
+        pending.map((a) => _fetchLargeInlineAttachment(id, a)),
+      );
+
+      final enriched = [
+        ...email.inlineAttachments,
+        ...fetched.whereType<InlineAttachment>(),
+      ];
+
+      return EmailModel(
+        id: email.id,
+        subject: email.subject,
+        from: EmailAddressModel.fromEntity(email.from),
+        toRecipients:
+            email.toRecipients.map(EmailAddressModel.fromEntity).toList(),
+        ccRecipients:
+            email.ccRecipients.map(EmailAddressModel.fromEntity).toList(),
+        bodyPreview: email.bodyPreview,
+        body: email.body,
+        bodyType: email.bodyType,
+        isRead: email.isRead,
+        receivedDateTime: email.receivedDateTime,
+        importance: email.importance,
+        parentFolderId: email.parentFolderId,
+        hasAttachments: email.hasAttachments,
+        attachments: email.attachments,
+        inlineAttachments: enriched,
+        meetingInvite: email.meetingInvite,
+      );
     } on DioException catch (e) {
       throw _mapException(e);
+    }
+  }
+
+  Future<InlineAttachment?> _fetchLargeInlineAttachment(
+      String messageId, _GmailAttachment a) async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/users/me/messages/$messageId/attachments/${a.attachmentId}',
+      );
+      final rawData = response.data?['data'] as String?;
+      if (rawData == null || rawData.isEmpty) return null;
+      return InlineAttachment(
+        contentId: a.contentId!,
+        contentType: a.contentType,
+        contentBytes: base64Url.decode(_padBase64(rawData)),
+      );
+    } catch (_) {
+      return null;
     }
   }
 
@@ -272,6 +335,9 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     EmailBodyType bodyType = EmailBodyType.text;
 
     MeetingInvite? meetingInvite;
+    List<EmailAttachment> attachments = const [];
+    List<InlineAttachment> inlineAttachments = const [];
+
     if (fullBody) {
       final (extractedBody, extractedType) = _extractBody(payload);
       body = extractedBody;
@@ -280,6 +346,32 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       if (icsData != null) {
         meetingInvite = MeetingInvite(icsData: icsData);
       }
+
+      final parsed = _extractAttachments(payload);
+      attachments = parsed
+          .where((a) => !a.isInline)
+          .map((a) => EmailAttachment(
+                id: a.attachmentId,
+                name: a.name,
+                contentType: a.contentType,
+                size: a.size,
+              ))
+          .toList();
+      inlineAttachments = parsed
+          .where((a) => a.isInline && a.contentId != null && a.inlineData != null)
+          .map((a) {
+            try {
+              return InlineAttachment(
+                contentId: a.contentId!,
+                contentType: a.contentType,
+                contentBytes: base64Url.decode(_padBase64(a.inlineData!)),
+              );
+            } catch (_) {
+              return null;
+            }
+          })
+          .whereType<InlineAttachment>()
+          .toList();
     }
 
     final parentFolderId = labelIds.contains('INBOX')
@@ -300,6 +392,8 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       importance: EmailImportance.normal,
       parentFolderId: parentFolderId,
       hasAttachments: _detectAttachments(payload),
+      attachments: attachments,
+      inlineAttachments: inlineAttachments,
       meetingInvite: meetingInvite,
     );
   }
@@ -379,6 +473,56 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       if (_detectAttachments(part)) return true;
     }
     return false;
+  }
+
+  List<_GmailAttachment> _extractAttachments(Map<String, dynamic> payload) {
+    final results = <_GmailAttachment>[];
+    _collectAttachmentParts(payload, results);
+    return results;
+  }
+
+  void _collectAttachmentParts(
+      Map<String, dynamic> part, List<_GmailAttachment> out) {
+    final filename = (part['filename'] as String? ?? '').trim();
+
+    if (filename.isNotEmpty) {
+      final mimeType = part['mimeType'] as String? ?? 'application/octet-stream';
+      final body = part['body'] as Map<String, dynamic>? ?? {};
+      final attachmentId = body['attachmentId'] as String? ?? '';
+      final inlineData = body['data'] as String?;
+      final size = body['size'] as int? ?? 0;
+      final headers = (part['headers'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+
+      String? contentId;
+      bool hasAttachmentDisposition = false;
+      for (final h in headers) {
+        final name = (h['name'] as String? ?? '').toLowerCase();
+        final value = h['value'] as String? ?? '';
+        if (name == 'content-id' && value.isNotEmpty) contentId = value.trim();
+        if (name == 'content-disposition' &&
+            value.toLowerCase().startsWith('attachment')) {
+          hasAttachmentDisposition = true;
+        }
+      }
+
+      final isInline = contentId != null && !hasAttachmentDisposition;
+      out.add(_GmailAttachment(
+        attachmentId: attachmentId,
+        name: filename,
+        contentType: mimeType,
+        size: size,
+        isInline: isInline,
+        contentId: isInline ? contentId : null,
+        inlineData: inlineData,
+      ));
+    }
+
+    final subParts = (part['parts'] as List<dynamic>? ?? [])
+        .cast<Map<String, dynamic>>();
+    for (final sub in subParts) {
+      _collectAttachmentParts(sub, out);
+    }
   }
 
   String _padBase64(String s) {
@@ -483,8 +627,23 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
 
   @override
   Future<Uint8List> downloadAttachment(
-      String messageId, String attachmentId) {
-    throw UnimplementedError('Attachment download not supported for Gmail');
+      String messageId, String attachmentId) async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/users/me/messages/$messageId/attachments/$attachmentId',
+      );
+      final data = response.data;
+      if (data == null) {
+        throw const ServerException(message: 'Empty response from server');
+      }
+      final rawData = data['data'] as String?;
+      if (rawData == null || rawData.isEmpty) {
+        throw const ServerException(message: 'No attachment data in response');
+      }
+      return base64Url.decode(_padBase64(rawData));
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
   }
 
   @override
@@ -506,4 +665,24 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         message: e.message ?? 'Server error ($statusCode)',
         statusCode: statusCode);
   }
+}
+
+class _GmailAttachment {
+  _GmailAttachment({
+    required this.attachmentId,
+    required this.name,
+    required this.contentType,
+    required this.size,
+    required this.isInline,
+    this.contentId,
+    this.inlineData,
+  });
+
+  final String attachmentId;
+  final String name;
+  final String contentType;
+  final int size;
+  final bool isInline;
+  final String? contentId;
+  final String? inlineData;
 }

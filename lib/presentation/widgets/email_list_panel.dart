@@ -541,6 +541,7 @@ class _EmailListView extends StatelessWidget {
           _SingleEmailItem(:final email, :final isChild) => _DraggableEmailItem(
               key: ValueKey('drag_${email.id}'),
               emailIds: [email.id],
+              selectedEmailIds: selectedEmailIds,
               dragLabel: email.subject.isNotEmpty ? email.subject : email.from.displayName,
               child: EmailListItem(
                 email: email,
@@ -564,6 +565,7 @@ class _EmailListView extends StatelessWidget {
           _ConversationHeaderItem() => _DraggableEmailItem(
               key: ValueKey('drag_conv_${item.conversationId}'),
               emailIds: item.allEmailIds,
+              selectedEmailIds: selectedEmailIds,
               dragLabel: '${item.totalCount} emails – ${item.latestEmail.subject}',
               child: _ConversationHeader(
                 latestEmail: item.latestEmail,
@@ -881,17 +883,26 @@ class _DraggableEmailItem extends StatelessWidget {
     required this.emailIds,
     required this.dragLabel,
     required this.child,
+    this.selectedEmailIds = const {},
   });
 
   final List<String> emailIds;
+  final Set<String> selectedEmailIds;
   final String dragLabel;
   final Widget child;
 
+  List<String> get _effectiveDragIds {
+    if (selectedEmailIds.isEmpty) return emailIds;
+    final isInSelection = emailIds.any(selectedEmailIds.contains);
+    return isInSelection ? List.of(selectedEmailIds) : emailIds;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final dragIds = _effectiveDragIds;
     return Draggable<List<String>>(
-      data: emailIds,
-      feedback: _DragFeedback(count: emailIds.length),
+      data: dragIds,
+      feedback: _DragFeedback(count: dragIds.length),
       childWhenDragging: Opacity(opacity: 0.4, child: child),
       child: child,
     );

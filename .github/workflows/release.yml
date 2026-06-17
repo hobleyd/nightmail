@@ -109,7 +109,7 @@ jobs:
 
   build-linux:
     needs: prepare
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -120,7 +120,7 @@ jobs:
           cache: false
 
       - run: sudo apt-get update -y
-      - run: sudo apt-get install -y ninja-build libgtk-3-dev libwebkit2gtk-4.1-dev libsecret-1-dev libjson-glib-dev liblzma-dev libmpv-dev libmpv2 binutils coreutils desktop-file-utils fakeroot libfuse2 libgdk-pixbuf2.0-dev patchelf python3-pip python3-setuptools squashfs-tools strace util-linux zsync flatpak flatpak-builder imagemagick
+      - run: sudo apt-get install -y ninja-build libgtk-3-dev libwebkit2gtk-4.1-dev libsecret-1-dev libjson-glib-dev liblzma-dev binutils coreutils desktop-file-utils fakeroot libgdk-pixbuf2.0-dev patchelf util-linux imagemagick
 
       - run: flutter config --enable-linux-desktop
       - run: flutter create --platforms=linux .
@@ -129,67 +129,47 @@ jobs:
       - run: dart run flutter_launcher_icons
       - run: flutter build linux --release --no-tree-shake-icons
 
-      - name: Resize icon for Flatpak
+      - name: Prepare bundle assets
         run: convert assets/logo.png -resize 512x512 build/linux/x64/release/bundle/nightmail.png
 
-      - name: Configure Flatpak runtime
+      - name: Copy missing libs into bundle
         run: |
-          sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-          sudo flatpak install -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
+          BUNDLE_LIB=build/linux/x64/release/bundle/lib
+          copy_if_missing() {
+            local lib=$1
+            local found=$(find /usr/lib/x86_64-linux-gnu /usr/lib -name "$lib" 2>/dev/null | head -1)
+            if [ -n "$found" ]; then
+              echo "Copying $found"
+              cp "$found" "$BUNDLE_LIB/"
+            else
+              echo "WARNING: $lib not found on host"
+            fi
+          }
+          ldd build/linux/x64/release/bundle/nightmail \
+            | grep "not found" \
+            | awk '{print $1}' \
+            | while read lib; do copy_if_missing "$lib"; done
+          for solib in "$BUNDLE_LIB"/*.so*; do
+            ldd "$solib" 2>/dev/null \
+              | grep "not found" \
+              | awk '{print $1}' \
+              | while read lib; do copy_if_missing "$lib"; done
+          done
 
-      - name: Create Flatpak bundle
+      - name: Install Snapcraft
+        run: sudo snap install snapcraft --classic
+
+      - name: Build Snap package
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
-
-          cat > au.com.sharpblue.nightmail.yaml <<'EOF'
-          app-id: au.com.sharpblue.nightmail
-          runtime: org.freedesktop.Platform
-          runtime-version: '24.08'
-          sdk: org.freedesktop.Sdk
-          command: nightmail
-          finish-args:
-            - --share=ipc
-            - --share=network
-            - --socket=fallback-x11
-            - --socket=wayland
-            - --device=dri
-            - --filesystem=home
-            - --talk-name=org.freedesktop.secrets
-          modules:
-            - name: nightmail
-              buildsystem: simple
-              build-commands:
-                - install -Dm755 nightmail /app/bin/nightmail
-                - cp -r lib /app/lib
-                - cp -r data /app/data
-                - install -Dm644 au.com.sharpblue.nightmail.desktop /app/share/applications/au.com.sharpblue.nightmail.desktop
-                - install -Dm644 nightmail.png /app/share/icons/hicolor/512x512/apps/au.com.sharpblue.nightmail.png
-              sources:
-                - type: dir
-                  path: build/linux/x64/release/bundle
-                - type: file
-                  path: au.com.sharpblue.nightmail.desktop
-          EOF
-
-          cat > au.com.sharpblue.nightmail.desktop <<'EOF'
-          [Desktop Entry]
-          Name=NightMail
-          Exec=nightmail
-          Type=Application
-          Categories=Network;Email;
-          Icon=au.com.sharpblue.nightmail
-          Terminal=false
-          EOF
-
-          flatpak-builder --force-clean --repo=repo build-dir au.com.sharpblue.nightmail.yaml
-          flatpak build-bundle repo "nightmail-${VERSION}-linux-x86_64.flatpak" au.com.sharpblue.nightmail
+          sed -i "s/^version: .*/version: '${{ needs.prepare.outputs.version }}'/" snap/snapcraft.yaml
+          snapcraft --destructive-mode
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v0.1.15
         with:
           name: 'nightmail-${{ needs.prepare.outputs.version }}'
           tag_name: ${{ needs.prepare.outputs.version }}
-          files: 'nightmail-${{ needs.prepare.outputs.version }}-linux-x86_64.flatpak'
+          files: 'nightmail_${{ needs.prepare.outputs.version }}_amd64.snap'
 
   build-android:
     needs: prepare

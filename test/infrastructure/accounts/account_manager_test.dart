@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nightmail/core/config/oauth_client_id_storage.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 import 'package:nightmail/infrastructure/accounts/account_storage.dart';
@@ -31,6 +32,7 @@ void main() {
     accountManager = AccountManager(
       accountStorage: mockAccountStorage,
       secureStorage: mockSecureStorage,
+      clientIdStorage: OAuthClientIdStorage(mockSecureStorage),
     );
   });
 
@@ -170,6 +172,65 @@ void main() {
       // Zebra was at index 2, now it should be at index 1
       expect(accountManager.activeIndex, 1);
       expect(accountManager.activeAccount!.displayName, 'Zebra');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // contactsDatasource lifecycle
+  // ---------------------------------------------------------------------------
+
+  void stubStorageEmpty() {
+    when(mockSecureStorage.read(key: anyNamed('key')))
+        .thenAnswer((_) async => null);
+  }
+
+  void stubSave() {
+    when(mockAccountStorage.saveAccounts(any)).thenAnswer((_) async {});
+    when(mockAccountStorage.saveActiveIndex(any)).thenAnswer((_) async {});
+  }
+
+  group('contactsDatasource lifecycle', () {
+    test('is non-null after a Gmail account is added', () async {
+      when(mockAccountStorage.loadAccounts()).thenAnswer((_) async => []);
+      when(mockAccountStorage.loadActiveIndex()).thenAnswer((_) async => 0);
+      stubStorageEmpty();
+      stubSave();
+
+      await accountManager.initialize();
+      await accountManager.addAccount(
+          const GmailAccount(id: '1', displayName: 'Alice', emailAddress: 'a@gmail.com'));
+
+      expect(accountManager.contactsDatasource, isNotNull);
+    });
+
+    test('is null for a Microsoft account', () async {
+      when(mockAccountStorage.loadAccounts()).thenAnswer((_) async => []);
+      when(mockAccountStorage.loadActiveIndex()).thenAnswer((_) async => 0);
+      stubStorageEmpty();
+      stubSave();
+
+      await accountManager.initialize();
+      await accountManager.addAccount(const MicrosoftAccount(
+          id: '1', displayName: 'Bob', emailAddress: 'b@corp.com', tenantId: 'tid'));
+
+      expect(accountManager.contactsDatasource, isNull);
+    });
+
+    test('is cleared when the last account is removed', () async {
+      when(mockAccountStorage.loadAccounts()).thenAnswer((_) async => [
+            const GmailAccount(id: '1', displayName: 'Alice', emailAddress: 'a@gmail.com'),
+          ]);
+      when(mockAccountStorage.loadActiveIndex()).thenAnswer((_) async => 0);
+      stubStorageEmpty();
+      stubSave();
+      when(mockSecureStorage.delete(key: anyNamed('key')))
+          .thenAnswer((_) async {});
+
+      await accountManager.initialize();
+      expect(accountManager.contactsDatasource, isNotNull);
+
+      await accountManager.removeAccount('1');
+      expect(accountManager.contactsDatasource, isNull);
     });
   });
 }

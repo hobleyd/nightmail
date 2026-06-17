@@ -838,8 +838,34 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   }
 
   @override
-  Future<void> moveEmail(String id, String destinationFolderId) {
-    throw UnimplementedError('moveEmail not yet supported for Gmail');
+  Future<void> moveEmail(String id, String destinationFolderId) async {
+    // Fetch current labels so we know what to remove. Using metadata format
+    // with a field mask avoids downloading the full message body.
+    final metaResp = await _dio.get<Map<String, dynamic>>(
+      '/users/me/messages/$id',
+      queryParameters: {
+        'format': 'metadata',
+        'fields': 'labelIds',
+      },
+    );
+    final currentLabels =
+        (metaResp.data?['labelIds'] as List<dynamic>? ?? []).cast<String>();
+
+    // Labels that act as "folders" — either user-created (Label_xxx) or the
+    // small set of system labels that represent a mailbox location.
+    const folderLike = {'INBOX', 'SENT', 'SPAM', 'TRASH'};
+    final toRemove = currentLabels
+        .where((l) => l != destinationFolderId)
+        .where((l) => folderLike.contains(l) || l.startsWith('Label_'))
+        .toList();
+
+    await _dio.post<void>(
+      '/users/me/messages/$id/modify',
+      data: {
+        'addLabelIds': [destinationFolderId],
+        if (toRemove.isNotEmpty) 'removeLabelIds': toRemove,
+      },
+    );
   }
 
   @override

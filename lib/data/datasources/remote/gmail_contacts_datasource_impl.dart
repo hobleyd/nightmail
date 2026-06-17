@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../../domain/entities/contact_suggestion.dart';
 import '../../../infrastructure/http/google_people_http_client.dart';
@@ -6,6 +7,9 @@ import '../../../infrastructure/http/google_people_http_client.dart';
 class GmailContactsDatasourceImpl {
   GmailContactsDatasourceImpl({required GooglePeopleHttpClient client})
       : _dio = client.dio;
+
+  @visibleForTesting
+  GmailContactsDatasourceImpl.withDio(this._dio);
 
   final Dio _dio;
 

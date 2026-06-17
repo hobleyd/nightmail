@@ -224,4 +224,112 @@ void main() {
       expect(await datasource.getChildFolders('__virtual__HTW'), isEmpty);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // moveEmail — labels modify API
+  // ---------------------------------------------------------------------------
+
+  Response<Map<String, dynamic>> _metaResp(List<String> labelIds) => Response(
+        data: {'labelIds': labelIds},
+        statusCode: 200,
+        requestOptions: RequestOptions(path: ''),
+      );
+
+  Response<void> _modifyResp() => Response(
+        data: null,
+        statusCode: 200,
+        requestOptions: RequestOptions(path: ''),
+      );
+
+  void stubMeta(List<String> labelIds) {
+    when(mockDio.get<Map<String, dynamic>>(
+      any,
+      queryParameters: anyNamed('queryParameters'),
+    )).thenAnswer((_) async => _metaResp(labelIds));
+  }
+
+  void stubModify() {
+    when(mockDio.post<void>(
+      any,
+      data: anyNamed('data'),
+    )).thenAnswer((_) async => _modifyResp());
+  }
+
+  group('moveEmail', () {
+    test('adds destination label and removes INBOX when moving from inbox', () async {
+      stubMeta(['INBOX', 'UNREAD']);
+      stubModify();
+
+      await datasource.moveEmail('msg1', 'Label_dest');
+
+      final captured = verify(mockDio.post<void>(
+        '/users/me/messages/msg1/modify',
+        data: captureAnyNamed('data'),
+      )).captured.single as Map<String, dynamic>;
+
+      expect(captured['addLabelIds'], ['Label_dest']);
+      expect(captured['removeLabelIds'], contains('INBOX'));
+      expect(captured['removeLabelIds'], isNot(contains('UNREAD')));
+    });
+
+    test('removes source user label when moving label to label', () async {
+      stubMeta(['Label_old', 'UNREAD', 'IMPORTANT']);
+      stubModify();
+
+      await datasource.moveEmail('msg1', 'Label_new');
+
+      final captured = verify(mockDio.post<void>(
+        '/users/me/messages/msg1/modify',
+        data: captureAnyNamed('data'),
+      )).captured.single as Map<String, dynamic>;
+
+      expect(captured['addLabelIds'], ['Label_new']);
+      expect(captured['removeLabelIds'], contains('Label_old'));
+      expect(captured['removeLabelIds'], isNot(contains('UNREAD')));
+      expect(captured['removeLabelIds'], isNot(contains('IMPORTANT')));
+    });
+
+    test('does not add removeLabelIds when no folder labels present', () async {
+      stubMeta(['UNREAD', 'STARRED']);
+      stubModify();
+
+      await datasource.moveEmail('msg1', 'INBOX');
+
+      final captured = verify(mockDio.post<void>(
+        '/users/me/messages/msg1/modify',
+        data: captureAnyNamed('data'),
+      )).captured.single as Map<String, dynamic>;
+
+      expect(captured['addLabelIds'], ['INBOX']);
+      expect(captured.containsKey('removeLabelIds'), isFalse);
+    });
+
+    test('does not include destination label in removeLabelIds', () async {
+      stubMeta(['INBOX', 'Label_dest']);
+      stubModify();
+
+      await datasource.moveEmail('msg1', 'Label_dest');
+
+      final captured = verify(mockDio.post<void>(
+        '/users/me/messages/msg1/modify',
+        data: captureAnyNamed('data'),
+      )).captured.single as Map<String, dynamic>;
+
+      final removed = captured['removeLabelIds'] as List?;
+      expect(removed, isNot(contains('Label_dest')));
+      expect(removed, contains('INBOX'));
+    });
+
+    test('fetches message metadata before posting modify', () async {
+      stubMeta(['INBOX']);
+      stubModify();
+
+      await datasource.moveEmail('msg1', 'Label_dest');
+
+      verify(mockDio.get<Map<String, dynamic>>(
+        '/users/me/messages/msg1',
+        queryParameters: anyNamed('queryParameters'),
+      ));
+    });
+  });
 }

@@ -23,7 +23,12 @@ jobs:
           cache: false
 
       - run: flutter pub get
-      - run: dart run build_runner build
+      - run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: Generate code for enough_mail sub-package
+        working-directory: packages/enough_mail
+        run: dart pub get && dart run build_runner build --delete-conflicting-outputs
+
       - run: flutter test
 
   prepare:

@@ -224,9 +224,31 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
 
       final email = _parseMessage(resp.data!, fullBody: true);
 
+      final payload = resp.data!['payload'] as Map<String, dynamic>? ?? {};
+
+      // If no ICS was inlined in the payload, check for a calendar attachment
+      // stored separately — Gmail omits body.data for some parts even when
+      // the content is small, requiring a dedicated attachment fetch.
+      MeetingInvite? meetingInvite = email.meetingInvite;
+      if (meetingInvite == null) {
+        final icsId = _findIcsAttachmentId(payload);
+        if (icsId != null) {
+          try {
+            final ar = await _dio.get<Map<String, dynamic>>(
+              '/users/me/messages/$id/attachments/$icsId',
+            );
+            final raw = ar.data?['data'] as String?;
+            if (raw != null && raw.isNotEmpty) {
+              meetingInvite = MeetingInvite(
+                icsData: utf8.decode(base64Url.decode(_padBase64(raw))),
+              );
+            }
+          } catch (_) {}
+        }
+      }
+
       // Large inline attachments (>2 MB) have only an attachmentId — no data
       // field in the payload. Fetch them concurrently and merge.
-      final payload = resp.data!['payload'] as Map<String, dynamic>? ?? {};
       final pending = _extractAttachments(payload)
           .where((a) =>
               a.isInline &&
@@ -235,16 +257,18 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
               a.inlineData == null)
           .toList();
 
-      if (pending.isEmpty) return email;
+      if (pending.isEmpty && meetingInvite == email.meetingInvite) return email;
 
-      final fetched = await Future.wait(
-        pending.map((a) => _fetchLargeInlineAttachment(id, a)),
-      );
-
-      final enriched = [
-        ...email.inlineAttachments,
-        ...fetched.whereType<InlineAttachment>(),
-      ];
+      List<InlineAttachment> enriched = email.inlineAttachments;
+      if (pending.isNotEmpty) {
+        final fetched = await Future.wait(
+          pending.map((a) => _fetchLargeInlineAttachment(id, a)),
+        );
+        enriched = [
+          ...email.inlineAttachments,
+          ...fetched.whereType<InlineAttachment>(),
+        ];
+      }
 
       return EmailModel(
         id: email.id,
@@ -264,7 +288,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         hasAttachments: email.hasAttachments,
         attachments: email.attachments,
         inlineAttachments: enriched,
-        meetingInvite: email.meetingInvite,
+        meetingInvite: meetingInvite,
       );
     } on DioException catch (e) {
       throw _mapException(e);
@@ -468,12 +492,16 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   }
 
   /// Recursively scan MIME parts for a text/calendar part and return its decoded
-  /// content. Returns null if no calendar part is found.
+  /// content. Returns null if no calendar part is found or if the content is
+  /// stored as a separate attachment (see [_findIcsAttachmentId]).
   String? _extractIcsData(Map<String, dynamic> payload) {
     final mimeType = (payload['mimeType'] as String? ?? '').toLowerCase();
-    if (mimeType == 'text/calendar' || mimeType == 'application/ics') {
+    final filename = (payload['filename'] as String? ?? '').toLowerCase();
+    // Match on MIME type or .ics filename — some senders use application/octet-stream.
+    if (mimeType == 'text/calendar' || mimeType == 'application/ics' ||
+        filename.endsWith('.ics')) {
       final data = (payload['body'] as Map<String, dynamic>?)?['data'] as String?;
-      if (data != null) {
+      if (data != null && data.isNotEmpty) {
         return utf8.decode(base64Url.decode(_padBase64(data)));
       }
     }
@@ -481,6 +509,29 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         .cast<Map<String, dynamic>>();
     for (final part in parts) {
       final result = _extractIcsData(part);
+      if (result != null) return result;
+    }
+    return null;
+  }
+
+  /// Recursively scan MIME parts for a calendar attachment whose content was
+  /// not inlined (body.data is absent). Returns the Gmail attachment ID so the
+  /// caller can fetch it separately. Returns null if the ICS is already inlined.
+  String? _findIcsAttachmentId(Map<String, dynamic> payload) {
+    final mimeType = (payload['mimeType'] as String? ?? '').toLowerCase();
+    final filename = (payload['filename'] as String? ?? '').toLowerCase();
+    if (mimeType == 'text/calendar' || mimeType == 'application/ics' ||
+        filename.endsWith('.ics')) {
+      final body = payload['body'] as Map<String, dynamic>?;
+      final data = body?['data'] as String?;
+      if (data != null && data.isNotEmpty) return null; // already inlined
+      final attachmentId = body?['attachmentId'] as String?;
+      if (attachmentId != null && attachmentId.isNotEmpty) return attachmentId;
+    }
+    final parts = (payload['parts'] as List<dynamic>? ?? [])
+        .cast<Map<String, dynamic>>();
+    for (final part in parts) {
+      final result = _findIcsAttachmentId(part);
       if (result != null) return result;
     }
     return null;

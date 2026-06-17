@@ -341,6 +341,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
 
   EmailModel _parseMessage(Map<String, dynamic> json, {required bool fullBody}) {
     final id = json['id'] as String;
+    final threadId = json['threadId'] as String?;
     final labelIds = (json['labelIds'] as List<dynamic>? ?? []).cast<String>();
     final isRead = !labelIds.contains('UNREAD');
     final snippet = json['snippet'] as String? ?? '';
@@ -427,6 +428,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
 
     return EmailModel(
       id: id,
+      conversationId: threadId,
       subject: subject.isEmpty ? '(No Subject)' : subject,
       from: _parseAddress(fromStr),
       toRecipients: _parseAddressList(toStr),

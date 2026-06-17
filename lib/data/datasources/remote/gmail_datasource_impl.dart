@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../../core/error/exceptions.dart';
 import '../../../domain/entities/email.dart';
@@ -15,6 +16,9 @@ import 'email_remote_datasource.dart';
 class GmailDatasourceImpl implements EmailRemoteDatasource {
   GmailDatasourceImpl({required GmailHttpClient client}) : _dio = client.dio;
 
+  @visibleForTesting
+  GmailDatasourceImpl.withDio(this._dio);
+
   final Dio _dio;
 
   @override
@@ -26,28 +30,99 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       if (data == null) return [];
 
       final labels = data['labels'] as List<dynamic>? ?? [];
-      final folders = <EmailFolderModel>[];
 
+      // First pass: collect raw label data, skipping hidden system labels.
+      final rawLabels = <Map<String, dynamic>>[];
       for (final label in labels) {
         final map = label as Map<String, dynamic>;
         final id = map['id'] as String;
         final type = map['type'] as String? ?? '';
-
-        // Skip hidden system labels that don't correspond to mailboxes.
         if (type == 'system' && _isHiddenSystemLabel(id)) continue;
+        rawLabels.add(map);
+      }
 
-        // Get message counts via a second call (label list doesn't include counts).
+      // Build a map from label name → label id for hierarchy resolution.
+      final nameToId = <String, String>{};
+      for (final map in rawLabels) {
+        final name = map['name'] as String? ?? '';
+        if (name.isNotEmpty) nameToId[name] = map['id'] as String;
+      }
+
+      // Second pass: build folder models, expanding "/" into parent/child links.
+      final folders = <EmailFolderModel>[];
+      final virtualFolderIds = <String>{};
+
+      for (final map in rawLabels) {
+        final id = map['id'] as String;
+        final type = map['type'] as String? ?? '';
+        final rawName = map['name'] as String? ?? id;
+        final parts = rawName.split('/');
+
+        // For each intermediate path segment, create a virtual parent folder
+        // if no real Gmail label exists with that path.
+        for (int i = 1; i < parts.length; i++) {
+          final ancestorPath = parts.sublist(0, i).join('/');
+          if (nameToId.containsKey(ancestorPath)) continue;
+          final virtualId = '__virtual__$ancestorPath';
+          if (virtualFolderIds.contains(virtualId)) continue;
+          virtualFolderIds.add(virtualId);
+          final grandParentPath =
+              i > 1 ? parts.sublist(0, i - 1).join('/') : null;
+          final virtualParentId = grandParentPath == null
+              ? null
+              : nameToId[grandParentPath] ?? '__virtual__$grandParentPath';
+          folders.add(EmailFolderModel(
+            id: virtualId,
+            displayName: parts[i - 1],
+            totalItemCount: 0,
+            unreadItemCount: 0,
+            parentFolderId: virtualParentId,
+            isHidden: false,
+            childFolderCount: 0,
+          ));
+        }
+
+        // Determine the parent id for this label.
+        String? parentFolderId;
+        if (parts.length > 1) {
+          final parentPath = parts.sublist(0, parts.length - 1).join('/');
+          parentFolderId =
+              nameToId[parentPath] ?? '__virtual__$parentPath';
+        }
+
         folders.add(EmailFolderModel(
           id: id,
-          displayName: _labelDisplayName(map['name'] as String? ?? id),
+          displayName: _labelDisplayName(parts.last),
           totalItemCount: 0,
           unreadItemCount: 0,
+          parentFolderId: parentFolderId,
           isHidden: type == 'system' && id.startsWith('CATEGORY_'),
           childFolderCount: 0,
         ));
       }
 
-      return folders;
+      // Fix up childFolderCount based on actual parent references.
+      final childCountByParent = <String, int>{};
+      for (final f in folders) {
+        if (f.parentFolderId != null) {
+          childCountByParent[f.parentFolderId!] =
+              (childCountByParent[f.parentFolderId!] ?? 0) + 1;
+        }
+      }
+
+      return folders.map((f) {
+        final count = childCountByParent[f.id] ?? 0;
+        if (count == 0) return f;
+        return EmailFolderModel(
+          id: f.id,
+          displayName: f.displayName,
+          totalItemCount: f.totalItemCount,
+          unreadItemCount: f.unreadItemCount,
+          parentFolderId: f.parentFolderId,
+          isHidden: f.isHidden,
+          childFolderCount: count,
+        );
+      }).toList();
     } on DioException catch (e) {
       throw _mapException(e);
     }

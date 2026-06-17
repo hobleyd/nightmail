@@ -45,6 +45,8 @@ abstract interface class EmailRemoteDatasource {
 
   Future<void> moveEmail(String id, String destinationFolderId);
 
+  Future<void> reportJunk(String id);
+
   Future<void> deleteEmail(String id);
 
   /// Empties all emails from [folderId].

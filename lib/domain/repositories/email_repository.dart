@@ -59,6 +59,9 @@ abstract interface class EmailRepository {
   Future<Either<Failure, Unit>> moveEmail(
       String id, String destinationFolderId);
 
+  /// Reports [id] as junk/spam.
+  Future<Either<Failure, Unit>> reportJunk(String id);
+
   /// Deletes (moves to Deleted Items) an email by [id].
   Future<Either<Failure, Unit>> deleteEmail(String id);
 

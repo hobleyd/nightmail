@@ -226,6 +226,21 @@ class EmailRepositoryImpl implements EmailRepository {
   }
 
   @override
+  Future<Either<Failure, Unit>> reportJunk(String id) async {
+    return _execute(() async {
+      await _accountManager.emailDatasource.reportJunk(id);
+      final accountId = _accountManager.activeAccount?.id;
+      if (accountId != null) {
+        unawaited(_localDatasource.deleteEmailFromCache(
+          accountId: accountId,
+          emailId: id,
+        ));
+      }
+      return unit;
+    });
+  }
+
+  @override
   Future<Either<Failure, Unit>> deleteEmail(String id) async {
     return _execute(() async {
       await _accountManager.emailDatasource.deleteEmail(id);

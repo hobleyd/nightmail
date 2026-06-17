@@ -680,6 +680,18 @@ class GraphApiDatasourceImpl
   }
 
   @override
+  Future<void> reportJunk(String id) async {
+    try {
+      await _dio.post<void>(
+        '/me/messages/$id/move',
+        data: {'destinationId': 'junkemail'},
+      );
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
   Future<void> deleteEmail(String id) async {
     try {
       await _dio.post<void>(

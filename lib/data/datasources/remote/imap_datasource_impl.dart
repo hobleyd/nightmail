@@ -666,6 +666,11 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
   }
 
   @override
+  Future<void> reportJunk(String id) {
+    throw UnimplementedError('reportJunk not supported for IMAP');
+  }
+
+  @override
   Future<void> deleteEmail(String id) async {
     final separatorIdx = id.lastIndexOf(':');
     final mailboxPath =

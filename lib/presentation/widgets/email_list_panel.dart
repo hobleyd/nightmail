@@ -8,6 +8,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_folder.dart';
+import '../../infrastructure/accounts/account.dart';
+import '../blocs/account/account_cubit.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
 import '../blocs/email_detail/email_detail_event.dart';
 import '../blocs/email_list/email_list_bloc.dart';
@@ -202,6 +204,21 @@ class _EmailListPanelState extends State<EmailListPanel> {
     }
   }
 
+  void _reportJunkSelection() {
+    final ids = _selectedEmailIds.isNotEmpty
+        ? List.of(_selectedEmailIds)
+        : [if (widget.selectedEmailId != null) widget.selectedEmailId!];
+    if (ids.isEmpty) return;
+    if (ids.contains(widget.selectedEmailId)) {
+      context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+      context.read<HomeCubit>().clearEmail();
+    }
+    context
+        .read<EmailListBloc>()
+        .add(EmailListJunkReported(emailIds: ids));
+    _clearSelection();
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -219,16 +236,24 @@ class _EmailListPanelState extends State<EmailListPanel> {
           children: [
             BlocSelector<EmailListBloc, EmailListState, bool>(
               selector: (s) => s is EmailListLoaded && s.isLoadingFresh,
-              builder: (context, isLoadingFresh) => _ListHeader(
-                folderName: widget.folderName,
-                isLoadingFresh: isLoadingFresh,
-                onRefresh: () => context
-                    .read<EmailListBloc>()
-                    .add(const EmailListRefreshRequested()),
-                onDelete: (_selectedEmailIds.isNotEmpty || widget.selectedEmailId != null)
-                    ? _deleteSelection
-                    : null,
-              ),
+              builder: (context, isLoadingFresh) {
+                final hasSelection = _selectedEmailIds.isNotEmpty ||
+                    widget.selectedEmailId != null;
+                final account = context.read<AccountCubit>().state;
+                final supportsJunk = account is AccountsLoaded &&
+                    (account.activeAccount is GmailAccount ||
+                        account.activeAccount is MicrosoftAccount);
+                return _ListHeader(
+                  folderName: widget.folderName,
+                  isLoadingFresh: isLoadingFresh,
+                  onRefresh: () => context
+                      .read<EmailListBloc>()
+                      .add(const EmailListRefreshRequested()),
+                  onDelete: hasSelection ? _deleteSelection : null,
+                  onReportJunk:
+                      hasSelection && supportsJunk ? _reportJunkSelection : null,
+                );
+              },
             ),
             Divider(height: 1, color: c.separator),
             Expanded(
@@ -382,11 +407,13 @@ class _ListHeader extends StatelessWidget {
     required this.onRefresh,
     required this.isLoadingFresh,
     this.onDelete,
+    this.onReportJunk,
   });
   final String folderName;
   final VoidCallback onRefresh;
   final bool isLoadingFresh;
   final VoidCallback? onDelete;
+  final VoidCallback? onReportJunk;
 
   @override
   Widget build(BuildContext context) {
@@ -416,6 +443,14 @@ class _ListHeader extends StatelessWidget {
             ),
           ],
           const Spacer(),
+          if (onReportJunk != null)
+            IconButton(
+              icon: Icon(Icons.report_outlined, size: 18, color: c.textMuted),
+              tooltip: 'Report junk',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              onPressed: onReportJunk,
+            ),
           if (onDelete != null)
             IconButton(
               icon: Icon(Icons.delete_outline_rounded, size: 18, color: c.textMuted),

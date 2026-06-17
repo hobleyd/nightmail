@@ -869,6 +869,17 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   }
 
   @override
+  @override
+  Future<void> reportJunk(String id) async {
+    await _dio.post<void>(
+      '/users/me/messages/$id/modify',
+      data: {
+        'addLabelIds': ['SPAM'],
+        'removeLabelIds': ['INBOX'],
+      },
+    );
+  }
+
   Future<void> deleteEmail(String id) async {
     await _dio.post<void>('/users/me/messages/$id/trash');
   }

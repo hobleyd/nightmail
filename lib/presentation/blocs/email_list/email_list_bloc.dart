@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../domain/entities/email.dart';
 import '../../../domain/usecases/delete_email.dart';
+import '../../../domain/usecases/report_junk.dart';
 import '../../../domain/usecases/empty_folder.dart';
 import '../../../domain/usecases/get_cached_emails.dart';
 import '../../../domain/usecases/get_emails.dart';
@@ -23,6 +24,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     required GetCachedEmails getCachedEmails,
     required MarkEmailAsRead markEmailAsRead,
     required MoveEmail moveEmail,
+    required ReportJunk reportJunk,
     required DeleteEmail deleteEmail,
     required EmptyFolder emptyFolder,
     required AccountManager accountManager,
@@ -31,6 +33,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         _getCachedEmails = getCachedEmails,
         _markEmailAsRead = markEmailAsRead,
         _moveEmail = moveEmail,
+        _reportJunk = reportJunk,
         _deleteEmail = deleteEmail,
         _emptyFolder = emptyFolder,
         _accountManager = accountManager,
@@ -44,6 +47,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     on<EmailListEmailsMoved>(_onEmailsMoved);
     on<EmailListEmailDeleted>(_onEmailDeleted);
     on<EmailListEmailsBulkDeleted>(_onEmailsBulkDeleted);
+    on<EmailListJunkReported>(_onJunkReported);
     on<EmailListFolderEmptied>(_onFolderEmptied);
     on<EmailListCleared>(_onCleared);
   }
@@ -52,6 +56,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   final GetCachedEmails _getCachedEmails;
   final MarkEmailAsRead _markEmailAsRead;
   final MoveEmail _moveEmail;
+  final ReportJunk _reportJunk;
   final DeleteEmail _deleteEmail;
   final EmptyFolder _emptyFolder;
   final AccountManager _accountManager;
@@ -272,6 +277,21 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     ));
     await Future.wait(
       event.emailIds.map((id) => _deleteEmail(DeleteEmailParams(id: id))),
+    );
+  }
+
+  Future<void> _onJunkReported(
+    EmailListJunkReported event,
+    Emitter<EmailListState> emit,
+  ) async {
+    final current = state;
+    if (current is! EmailListLoaded) return;
+    final ids = event.emailIds.toSet();
+    emit(current.copyWith(
+      emails: current.emails.where((e) => !ids.contains(e.id)).toList(),
+    ));
+    await Future.wait(
+      event.emailIds.map((id) => _reportJunk(ReportJunkParams(id: id))),
     );
   }
 

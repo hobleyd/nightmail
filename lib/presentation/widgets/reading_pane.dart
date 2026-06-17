@@ -1187,7 +1187,12 @@ class _HtmlBodyWebViewState extends State<_HtmlBodyWebView> {
   Future<void> _initWindows() async {
     final controller = wvw.WebviewController();
     _windowsController = controller;
-    await controller.initialize();
+    try {
+      await controller.initialize();
+    } catch (e) {
+      debugPrint('[NightMail] WebView2 init failed: $e');
+      return;
+    }
 
     // Intercept link clicks: inject a capture-phase listener that posts the
     // href via the WebView2 host-object channel and cancels the navigation.
@@ -1275,7 +1280,7 @@ class _HtmlBodyWebViewState extends State<_HtmlBodyWebView> {
       _hasBlockedImages = blocked;
     });
     if (Platform.isWindows) {
-      _windowsController?.loadStringContent(html);
+      if (_windowsReady) _windowsController?.loadStringContent(html);
     } else if (Platform.isLinux) {
       // Linux uses flutter_widget_from_html — setState above is sufficient.
     } else {

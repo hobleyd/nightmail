@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -11,6 +13,8 @@ class SystemContactsRepositoryImpl implements SystemContactsRepository {
   Future<List<Map<String, String>>>? _loadFuture;
 
   Future<List<Map<String, String>>> _loadContacts() async {
+    // Channel is only implemented on macOS; skip silently on other platforms.
+    if (!Platform.isMacOS) return [];
     final status = await _channel.invokeMethod<String>('requestPermission');
     debugPrint('[NightMail] contacts permission: $status');
     if (status == 'permanentlyDenied') {

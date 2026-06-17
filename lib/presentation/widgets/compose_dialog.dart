@@ -335,42 +335,64 @@ class _ComposeFormState extends State<ComposeForm> {
         children: [
           _TitleBar(title: _title, onClose: widget.onClose),
           Divider(height: 1, color: c.border),
+          // Fields are fixed-height — kept outside the Expanded area so the
+          // body + quoted-email section can grow freely when the window resizes.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: _buildFields(c, accountId),
+            ),
+          ),
           Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  ..._buildFields(c, accountId),
                   if (forwardEmail != null &&
                       forwardEmail.attachments.isNotEmpty)
                     _ForwardAttachmentChips(
                       attachments: forwardEmail.attachments,
                       excludedIds: _excludedAttachmentIds,
                       onRemove: (id) => setState(
-                          () => _excludedAttachmentIds = [..._excludedAttachmentIds, id]),
+                          () => _excludedAttachmentIds = [
+                                ..._excludedAttachmentIds,
+                                id
+                              ]),
                     ),
-                  TextField(
-                    controller: _bodyController,
-                    focusNode: _bodyFocus,
-                    maxLines: null,
-                    minLines: 6,
-                    textAlignVertical: TextAlignVertical.top,
-                    style: TextStyle(
-                      color: c.textPrimary,
-                      fontSize: 13,
-                      height: 1.5,
-                    ),
-                    decoration: InputDecoration(
-                      hintText: 'Write your message here…',
-                      hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.zero,
+                  Expanded(
+                    flex: 2,
+                    child: TextField(
+                      controller: _bodyController,
+                      focusNode: _bodyFocus,
+                      maxLines: null,
+                      expands: true,
+                      textAlignVertical: TextAlignVertical.top,
+                      style: TextStyle(
+                        color: c.textPrimary,
+                        fontSize: 13,
+                        height: 1.5,
+                      ),
+                      decoration: InputDecoration(
+                        hintText: 'Write your message here…',
+                        hintStyle:
+                            TextStyle(color: c.textMuted, fontSize: 13),
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.zero,
+                      ),
                     ),
                   ),
                   if (quotedEmail != null)
-                    _ForwardedMessagePreview(
-                        email: quotedEmail, colors: c, mode: widget.mode),
+                    Expanded(
+                      flex: 3,
+                      child: _ForwardedMessagePreview(
+                        email: quotedEmail,
+                        colors: c,
+                        mode: widget.mode,
+                        expand: true,
+                      ),
+                    ),
                   const SizedBox(height: 8),
                 ],
               ),
@@ -620,11 +642,15 @@ class _ForwardedMessagePreview extends StatelessWidget {
     required this.email,
     required this.colors,
     required this.mode,
+    this.expand = false,
   });
 
   final Email email;
   final AppColors colors;
   final ComposeMode mode;
+  // When true the text body fills available height (Expanded layout).
+  // When false it is capped at 220px (dialog layout).
+  final bool expand;
 
   static String _stripHtml(String html) {
     return html
@@ -702,16 +728,27 @@ class _ForwardedMessagePreview extends StatelessWidget {
         const SizedBox(height: 12),
         ...headerLines,
         const SizedBox(height: 8),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 220),
-          child: SingleChildScrollView(
-            child: Text(
-              bodyText,
-              style: TextStyle(
-                  color: c.textSecondary, fontSize: 12, height: 1.5),
+        if (expand)
+          Expanded(
+            child: SingleChildScrollView(
+              child: Text(
+                bodyText,
+                style: TextStyle(
+                    color: c.textSecondary, fontSize: 12, height: 1.5),
+              ),
+            ),
+          )
+        else
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 220),
+            child: SingleChildScrollView(
+              child: Text(
+                bodyText,
+                style: TextStyle(
+                    color: c.textSecondary, fontSize: 12, height: 1.5),
+              ),
             ),
           ),
-        ),
         const SizedBox(height: 12),
       ],
     );

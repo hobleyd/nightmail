@@ -628,6 +628,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     required String messageId,
     required List<String> toAddresses,
     required String comment,
+    List<String> excludedAttachmentIds = const [],
   }) async {
     final original = await _fetchOriginal(messageId);
 

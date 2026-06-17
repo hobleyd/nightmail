@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../injection_container.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
+import '../../domain/entities/email_attachment.dart';
 import '../../domain/usecases/send_email.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/compose/compose_bloc.dart';
@@ -124,6 +125,7 @@ class _ComposeFormState extends State<ComposeForm> {
   late final TextEditingController _subjectController;
   late final TextEditingController _bodyController;
   final FocusNode _bodyFocus = FocusNode();
+  List<String> _excludedAttachmentIds = [];
 
   @override
   void initState() {
@@ -269,6 +271,7 @@ class _ComposeFormState extends State<ComposeForm> {
           ccAddresses: cc,
           subject: subject,
           body: body,
+          excludedAttachmentIds: _excludedAttachmentIds,
         ));
   }
 
@@ -321,6 +324,7 @@ class _ComposeFormState extends State<ComposeForm> {
     final accountId = widget.accountId;
 
     if (widget.scrollable) {
+      final forwardEmail = widget.mode == ComposeMode.forward ? widget.originalEmail : null;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -333,11 +337,19 @@ class _ComposeFormState extends State<ComposeForm> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   ..._buildFields(c, accountId),
+                  if (forwardEmail != null &&
+                      forwardEmail.attachments.isNotEmpty)
+                    _ForwardAttachmentChips(
+                      attachments: forwardEmail.attachments,
+                      excludedIds: _excludedAttachmentIds,
+                      onRemove: (id) => setState(
+                          () => _excludedAttachmentIds = [..._excludedAttachmentIds, id]),
+                    ),
                   TextField(
                     controller: _bodyController,
                     focusNode: _bodyFocus,
                     maxLines: null,
-                    minLines: 12,
+                    minLines: 6,
                     textAlignVertical: TextAlignVertical.top,
                     style: TextStyle(
                       color: c.textPrimary,
@@ -351,6 +363,8 @@ class _ComposeFormState extends State<ComposeForm> {
                       contentPadding: EdgeInsets.zero,
                     ),
                   ),
+                  if (forwardEmail != null)
+                    _ForwardedMessagePreview(email: forwardEmail, colors: c),
                   const SizedBox(height: 8),
                 ],
               ),
@@ -362,6 +376,7 @@ class _ComposeFormState extends State<ComposeForm> {
       );
     }
 
+    final forwardEmail = widget.mode == ComposeMode.forward ? widget.originalEmail : null;
     return SizedBox(
       width: 600,
       child: Column(
@@ -376,8 +391,16 @@ class _ComposeFormState extends State<ComposeForm> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 ..._buildFields(c, accountId),
+                if (forwardEmail != null &&
+                    forwardEmail.attachments.isNotEmpty)
+                  _ForwardAttachmentChips(
+                    attachments: forwardEmail.attachments,
+                    excludedIds: _excludedAttachmentIds,
+                    onRemove: (id) => setState(
+                        () => _excludedAttachmentIds = [..._excludedAttachmentIds, id]),
+                  ),
                 SizedBox(
-                  height: 240,
+                  height: forwardEmail != null ? 150 : 240,
                   child: TextField(
                     controller: _bodyController,
                     focusNode: _bodyFocus,
@@ -397,6 +420,8 @@ class _ComposeFormState extends State<ComposeForm> {
                     ),
                   ),
                 ),
+                if (forwardEmail != null)
+                  _ForwardedMessagePreview(email: forwardEmail, colors: c),
               ],
             ),
           ),
@@ -497,6 +522,153 @@ class _FieldRow extends StatelessWidget {
             ),
           ),
         ),
+      ],
+    );
+  }
+}
+
+class _ForwardAttachmentChips extends StatelessWidget {
+  const _ForwardAttachmentChips({
+    required this.attachments,
+    required this.excludedIds,
+    required this.onRemove,
+  });
+
+  final List<EmailAttachment> attachments;
+  final List<String> excludedIds;
+  final ValueChanged<String> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final visible =
+        attachments.where((a) => !excludedIds.contains(a.id)).toList();
+    if (visible.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: visible
+            .map((att) => _AttachmentChip(
+                  attachment: att,
+                  onRemove: () => onRemove(att.id),
+                ))
+            .toList(),
+      ),
+    );
+  }
+}
+
+class _AttachmentChip extends StatelessWidget {
+  const _AttachmentChip({required this.attachment, required this.onRemove});
+
+  final EmailAttachment attachment;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      decoration: BoxDecoration(
+        color: c.surfaceBase,
+        border: Border.all(color: c.border),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      padding: const EdgeInsets.fromLTRB(8, 4, 4, 4),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.attach_file, size: 12, color: c.textMuted),
+          const SizedBox(width: 4),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 180),
+            child: Text(
+              attachment.name,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: c.textPrimary),
+            ),
+          ),
+          const SizedBox(width: 2),
+          InkWell(
+            onTap: onRemove,
+            borderRadius: BorderRadius.circular(10),
+            child: Padding(
+              padding: const EdgeInsets.all(2),
+              child: Icon(Icons.close, size: 12, color: c.textMuted),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ForwardedMessagePreview extends StatelessWidget {
+  const _ForwardedMessagePreview({
+    required this.email,
+    required this.colors,
+  });
+
+  final Email email;
+  final AppColors colors;
+
+  static String _stripHtml(String html) {
+    return html
+        .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+        .replaceAll(RegExp(r'<p[^>]*>', caseSensitive: false), '\n')
+        .replaceAll(RegExp(r'</p>', caseSensitive: false), '\n')
+        .replaceAll(RegExp(r'<div[^>]*>', caseSensitive: false), '\n')
+        .replaceAll(RegExp(r'</div>', caseSensitive: false), '')
+        .replaceAll(RegExp(r'<[^>]+>'), '')
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'")
+        .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+        .trim();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = colors;
+    final bodyText = email.bodyType == EmailBodyType.html
+        ? _stripHtml(email.body)
+        : email.body;
+    final fromName = email.from.name;
+    final from = (fromName != null && fromName.isNotEmpty)
+        ? '$fromName <${email.from.address}>'
+        : email.from.address;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 8),
+        Divider(height: 1, color: c.border),
+        const SizedBox(height: 12),
+        Text(
+          '---------- Forwarded message ---------',
+          style: TextStyle(
+              color: c.textDimmed, fontSize: 12, fontStyle: FontStyle.italic),
+        ),
+        const SizedBox(height: 4),
+        Text('From: $from',
+            style: TextStyle(color: c.textDimmed, fontSize: 12)),
+        Text('Subject: ${email.subject}',
+            style: TextStyle(color: c.textDimmed, fontSize: 12)),
+        const SizedBox(height: 8),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 220),
+          child: SingleChildScrollView(
+            child: Text(
+              bodyText,
+              style: TextStyle(
+                  color: c.textSecondary, fontSize: 12, height: 1.5),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
       ],
     );
   }

@@ -40,6 +40,7 @@ abstract interface class EmailRemoteDatasource {
     required String messageId,
     required List<String> toAddresses,
     required String comment,
+    List<String> excludedAttachmentIds = const [],
   });
 
   Future<void> moveEmail(String id, String destinationFolderId);

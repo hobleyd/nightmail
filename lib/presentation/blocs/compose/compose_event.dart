@@ -17,6 +17,7 @@ final class ComposeSubmitted extends ComposeEvent {
     this.ccAddresses = const [],
     required this.subject,
     required this.body,
+    this.excludedAttachmentIds = const [],
   });
 
   final ComposeMode mode;
@@ -25,8 +26,9 @@ final class ComposeSubmitted extends ComposeEvent {
   final List<String> ccAddresses;
   final String subject;
   final String body;
+  final List<String> excludedAttachmentIds;
 
   @override
   List<Object?> get props =>
-      [mode, originalMessageId, toAddresses, ccAddresses, subject, body];
+      [mode, originalMessageId, toAddresses, ccAddresses, subject, body, excludedAttachmentIds];
 }

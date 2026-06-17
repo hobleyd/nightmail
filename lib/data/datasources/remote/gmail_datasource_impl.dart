@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../../core/error/exceptions.dart';
@@ -21,6 +22,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   GmailDatasourceImpl.withDio(this._dio);
 
   final Dio _dio;
+  String? _cachedUserEmail;
 
   @override
   Future<List<EmailFolderModel>> getMailFolders() async {
@@ -606,8 +608,123 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     required String messageId,
     required List<String> toAddresses,
     required String comment,
-  }) {
-    throw UnimplementedError('forwardEmail not yet supported for Gmail');
+    List<String> excludedAttachmentIds = const [],
+  }) async {
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '/users/me/messages/$messageId',
+        queryParameters: {'format': 'full'},
+      );
+      if (resp.data == null) throw const ServerException(message: 'Message not found');
+
+      final payload = resp.data!['payload'] as Map<String, dynamic>? ?? {};
+      final hdrs = (payload['headers'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      String hdr(String name) => hdrs
+          .firstWhere(
+            (h) => (h['name'] as String).toLowerCase() == name.toLowerCase(),
+            orElse: () => {'value': ''},
+          )['value'] as String;
+
+      final originalSubject = hdr('Subject');
+      final originalFrom = hdr('From');
+      final originalDate = hdr('Date');
+      final originalTo = hdr('To');
+
+      final (rawBodyText, bodyType) = _extractBody(payload);
+      final bodyText = bodyType == EmailBodyType.html
+          ? _stripHtmlForForward(rawBodyText)
+          : rawBodyText;
+
+      final forwardedHeader = [
+        '---------- Forwarded message ---------',
+        'From: $originalFrom',
+        'Date: $originalDate',
+        'Subject: $originalSubject',
+        'To: $originalTo',
+        '',
+      ].join('\n');
+
+      final fullBody = comment.isNotEmpty
+          ? '$comment\n\n$forwardedHeader\n$bodyText'
+          : '$forwardedHeader\n$bodyText';
+
+      final fromEmail = await _getUserEmail();
+      final subject = originalSubject.startsWith('Fwd:')
+          ? originalSubject
+          : 'Fwd: $originalSubject';
+
+      final builder = MessageBuilder()
+        ..to = toAddresses.map((e) => MailAddress(null, e)).toList()
+        ..subject = subject
+        ..addTextPlain(fullBody);
+
+      if (fromEmail.isNotEmpty) {
+        builder.from = [MailAddress(null, fromEmail)];
+      }
+
+      final allAttachments = _extractAttachments(payload);
+      for (final att in allAttachments) {
+        if (att.isInline || att.attachmentId.isEmpty) continue;
+        if (excludedAttachmentIds.contains(att.attachmentId)) continue;
+        try {
+          final bytes = await downloadAttachment(messageId, att.attachmentId);
+          builder.addBinary(
+            bytes,
+            MediaType.fromText(
+              att.contentType.isNotEmpty
+                  ? att.contentType
+                  : 'application/octet-stream',
+            ),
+            filename: att.name,
+          );
+        } catch (_) {
+          // skip attachments that fail to download
+        }
+      }
+
+      final mime = builder.buildMimeMessage();
+      final rawMime = mime.renderMessage();
+      final rawBase64 =
+          base64Url.encode(utf8.encode(rawMime)).replaceAll('=', '');
+
+      await _dio.post<void>(
+        '/users/me/messages/send',
+        data: {'raw': rawBase64},
+      );
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  Future<String> _getUserEmail() async {
+    if (_cachedUserEmail != null) return _cachedUserEmail!;
+    try {
+      final resp =
+          await _dio.get<Map<String, dynamic>>('/users/me/profile');
+      _cachedUserEmail = resp.data?['emailAddress'] as String? ?? '';
+      return _cachedUserEmail!;
+    } catch (_) {
+      return '';
+    }
+  }
+
+  String _stripHtmlForForward(String html) {
+    return html
+        .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+        .replaceAll(RegExp(r'<p[^>]*>', caseSensitive: false), '\n')
+        .replaceAll(RegExp(r'</p>', caseSensitive: false), '\n')
+        .replaceAll(RegExp(r'<div[^>]*>', caseSensitive: false), '\n')
+        .replaceAll(RegExp(r'</div>', caseSensitive: false), '')
+        .replaceAll(RegExp(r'<[^>]+>'), '')
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'")
+        .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+        .trim();
   }
 
   @override

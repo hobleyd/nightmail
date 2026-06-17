@@ -167,6 +167,17 @@ class _ReadingPaneToolbar extends StatelessWidget {
             'ccRecipients': email.ccRecipients
                 .map((r) => {'address': r.address, 'name': r.name})
                 .toList(),
+            'body': email.body,
+            'bodyType': email.bodyType.name,
+            'receivedDateTime': email.receivedDateTime.toIso8601String(),
+            'attachments': email.attachments
+                .map((a) => {
+                      'id': a.id,
+                      'name': a.name,
+                      'contentType': a.contentType,
+                      'size': a.size,
+                    })
+                .toList(),
           },
         }),
       ),

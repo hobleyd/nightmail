@@ -52,6 +52,7 @@ abstract interface class EmailRepository {
     required String messageId,
     required List<String> toAddresses,
     required String comment,
+    List<String> excludedAttachmentIds = const [],
   });
 
   /// Moves an email to [destinationFolderId].

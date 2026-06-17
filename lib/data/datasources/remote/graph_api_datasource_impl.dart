@@ -650,6 +650,7 @@ class GraphApiDatasourceImpl
     required String messageId,
     required List<String> toAddresses,
     required String comment,
+    List<String> excludedAttachmentIds = const [],
   }) async {
     try {
       await _dio.post<void>(

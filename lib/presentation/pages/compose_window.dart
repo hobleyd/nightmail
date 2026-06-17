@@ -5,6 +5,7 @@ import 'package:window_manager/window_manager.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_address.dart';
+import '../../domain/entities/email_attachment.dart';
 import '../../domain/usecases/send_email.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../../injection_container.dart';
@@ -87,6 +88,11 @@ class _ComposeWindowPage extends StatelessWidget {
     final map = raw as Map<String, dynamic>;
     EmailAddress parseAddress(Map<String, dynamic> m) =>
         EmailAddress(address: m['address'] as String, name: m['name'] as String?);
+
+    final bodyTypeStr = map['bodyType'] as String? ?? 'text';
+    final receivedStr = map['receivedDateTime'] as String?;
+    final attachmentsJson = map['attachments'] as List<dynamic>? ?? [];
+
     return Email(
       id: map['id'] as String,
       subject: map['subject'] as String,
@@ -98,11 +104,22 @@ class _ComposeWindowPage extends StatelessWidget {
           .map((r) => parseAddress(r as Map<String, dynamic>))
           .toList(),
       bodyPreview: '',
-      body: '',
-      bodyType: EmailBodyType.text,
+      body: map['body'] as String? ?? '',
+      bodyType: bodyTypeStr == 'html' ? EmailBodyType.html : EmailBodyType.text,
       isRead: true,
-      receivedDateTime: DateTime.now(),
+      receivedDateTime: receivedStr != null
+          ? DateTime.tryParse(receivedStr) ?? DateTime.now()
+          : DateTime.now(),
       importance: EmailImportance.normal,
+      attachments: attachmentsJson.map((a) {
+        final aMap = a as Map<String, dynamic>;
+        return EmailAttachment(
+          id: aMap['id'] as String,
+          name: aMap['name'] as String,
+          contentType: aMap['contentType'] as String,
+          size: (aMap['size'] as num).toInt(),
+        );
+      }).toList(),
     );
   }
 

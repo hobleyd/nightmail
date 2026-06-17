@@ -195,12 +195,14 @@ class EmailRepositoryImpl implements EmailRepository {
     required String messageId,
     required List<String> toAddresses,
     required String comment,
+    List<String> excludedAttachmentIds = const [],
   }) async {
     return _execute(() async {
       await _accountManager.emailDatasource.forwardEmail(
         messageId: messageId,
         toAddresses: toAddresses,
         comment: comment,
+        excludedAttachmentIds: excludedAttachmentIds,
       );
       return unit;
     });

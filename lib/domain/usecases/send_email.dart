@@ -33,6 +33,7 @@ class SendEmail {
           messageId: params.originalMessageId!,
           toAddresses: params.toAddresses,
           comment: params.body,
+          excludedAttachmentIds: params.excludedAttachmentIds,
         ),
     };
   }
@@ -46,6 +47,7 @@ class SendEmailParams extends Equatable {
     this.ccAddresses = const [],
     this.subject = '',
     required this.body,
+    this.excludedAttachmentIds = const [],
   });
 
   final ComposeMode mode;
@@ -54,8 +56,9 @@ class SendEmailParams extends Equatable {
   final List<String> ccAddresses;
   final String subject;
   final String body;
+  final List<String> excludedAttachmentIds;
 
   @override
   List<Object?> get props =>
-      [mode, originalMessageId, toAddresses, ccAddresses, subject, body];
+      [mode, originalMessageId, toAddresses, ccAddresses, subject, body, excludedAttachmentIds];
 }

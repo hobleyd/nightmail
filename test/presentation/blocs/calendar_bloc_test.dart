@@ -8,6 +8,7 @@ import 'package:nightmail/domain/usecases/cancel_calendar_event.dart';
 import 'package:nightmail/domain/usecases/decline_calendar_event.dart';
 import 'package:nightmail/domain/usecases/get_calendar_events.dart';
 import 'package:nightmail/domain/usecases/propose_new_time.dart';
+import 'package:nightmail/domain/usecases/update_calendar_event.dart';
 import 'package:nightmail/presentation/blocs/calendar/calendar_bloc.dart';
 import 'package:nightmail/presentation/blocs/calendar/calendar_event.dart';
 import 'package:nightmail/presentation/blocs/calendar/calendar_state.dart';
@@ -30,18 +31,20 @@ final _tEvents = <CalendarEvent>[
   ),
 ];
 
-@GenerateMocks([GetCalendarEvents, CancelCalendarEvent, DeclineCalendarEvent, ProposeNewTime])
+@GenerateMocks([GetCalendarEvents, CancelCalendarEvent, DeclineCalendarEvent, ProposeNewTime, UpdateCalendarEvent])
 void main() {
   late MockGetCalendarEvents mockGetCalendarEvents;
   late MockCancelCalendarEvent mockCancelCalendarEvent;
   late MockDeclineCalendarEvent mockDeclineCalendarEvent;
   late MockProposeNewTime mockProposeNewTime;
+  late MockUpdateCalendarEvent mockUpdateCalendarEvent;
 
   CalendarBloc makeBloc() => CalendarBloc(
         getCalendarEvents: mockGetCalendarEvents,
         cancelCalendarEvent: mockCancelCalendarEvent,
         declineCalendarEvent: mockDeclineCalendarEvent,
         proposeNewTime: mockProposeNewTime,
+        updateCalendarEvent: mockUpdateCalendarEvent,
       );
 
   setUp(() {
@@ -49,6 +52,7 @@ void main() {
     mockCancelCalendarEvent = MockCancelCalendarEvent();
     mockDeclineCalendarEvent = MockDeclineCalendarEvent();
     mockProposeNewTime = MockProposeNewTime();
+    mockUpdateCalendarEvent = MockUpdateCalendarEvent();
     provideDummy<Either<Failure, List<CalendarEvent>>>(_emptyRight);
     provideDummy<Either<Failure, void>>(_voidRight);
   });

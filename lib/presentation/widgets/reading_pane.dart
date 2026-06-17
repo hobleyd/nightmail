@@ -1248,8 +1248,10 @@ class _HtmlBodyWebViewState extends State<_HtmlBodyWebView> {
 
   // ── shared helpers ────────────────────────────────────────────────────────
 
+  // Detects external images in both quoted (src="https://") and unquoted
+  // (src=https://) forms, since some email senders omit the quotes.
   bool _hasExternalImages(String html) =>
-      RegExp(r'''src=(["'])https?://''', caseSensitive: false).hasMatch(html);
+      RegExp(r'''src\s*=\s*["']?https?://''', caseSensitive: false).hasMatch(html);
 
   Future<void> _loadAlwaysAllowSetting() async {
     final domains = await sl<AppSettings>().loadExternalImageDomains();
@@ -1324,15 +1326,23 @@ class _HtmlBodyWebViewState extends State<_HtmlBodyWebView> {
     if (!allowExternal) {
       // Replace external src attributes in <img> tags with data-blocked-src so
       // images don't load. The CSS rule below hides them entirely.
+      // Handles both quoted (src="url") and unquoted (src=url) forms.
       resolved = resolved.replaceAllMapped(
         RegExp(r'<img\b([^>]*)>', caseSensitive: false),
         (imgMatch) {
           final attrs = imgMatch.group(1)!;
           final newAttrs = attrs.replaceFirstMapped(
-            RegExp(r'''src=(["'])(https?://[^"']+)\1''', caseSensitive: false),
+            RegExp(
+              r'''src=(["'])(https?://[^"']+)\1|src=(https?://[^\s>'"]+)''',
+              caseSensitive: false,
+            ),
             (sm) {
               hasBlockedImages = true;
-              return 'data-blocked-src=${sm.group(1)}${sm.group(2)}${sm.group(1)}';
+              if (sm.group(1) != null) {
+                return 'data-blocked-src=${sm.group(1)}${sm.group(2)}${sm.group(1)}';
+              } else {
+                return 'data-blocked-src=${sm.group(3)}';
+              }
             },
           );
           return '<img$newAttrs>';
@@ -1348,6 +1358,31 @@ class _HtmlBodyWebViewState extends State<_HtmlBodyWebView> {
 body { margin: 0; padding: 20px 28px 40px; }
 img { max-width: 100% !important; height: auto !important; }
 img[data-blocked-src] { display: none !important; }
+a[href]:hover::after {
+  content: attr(href);
+  display: block;
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  height: 20px; line-height: 20px;
+  background: rgba(245,245,245,0.97);
+  border-top: 1px solid #ddd;
+  padding: 0 12px;
+  font-size: 11px;
+  font-family: -apple-system, ui-sans-serif, system-ui, sans-serif;
+  color: #555;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 99999;
+  pointer-events: none;
+}
+@media (prefers-color-scheme: dark) {
+  a[href]:hover::after {
+    background: rgba(38,38,38,0.97);
+    border-top-color: #444;
+    color: #aaa;
+  }
+}
 </style>
 ''';
     final headEnd = resolved.indexOf('</head>');

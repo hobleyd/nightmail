@@ -199,6 +199,14 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
             final totalWidth = constraints.maxWidth;
             const totalHandleWidth = _handleWidth * 2;
 
+            // In 4-panel views (tasks / calendar), clamp the side-panel width so the
+            // fixed children never exceed totalWidth regardless of initial defaults.
+            final calendarWidth = _calendarPaneWidth.clamp(
+              0.0,
+              (totalWidth - _handleWidth * 3 - _folderWidth - _emailListWidth)
+                  .clamp(0.0, double.infinity),
+            );
+
             final accountState = context.read<AccountCubit>().state;
             final accountId = accountState is AccountsLoaded
                 ? accountState.activeAccount.id
@@ -300,7 +308,7 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                     },
                   ),
                   SizedBox(
-                    width: _calendarPaneWidth,
+                    width: calendarWidth,
                     child: TasksDayPanel(
                       onClose: () => context.read<HomeCubit>().showEmail(),
                     ),
@@ -363,7 +371,7 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                     },
                   ),
                   SizedBox(
-                    width: _calendarPaneWidth,
+                    width: calendarWidth,
                     child: CalendarDayPanel(
                       onClose: () =>
                           context.read<HomeCubit>().showEmail(),

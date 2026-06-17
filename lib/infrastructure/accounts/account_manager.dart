@@ -10,6 +10,7 @@ import '../../data/datasources/remote/caldav_calendar_datasource_impl.dart';
 import '../../data/datasources/remote/calendar_remote_datasource.dart';
 import '../../data/datasources/remote/email_remote_datasource.dart';
 import '../../data/datasources/remote/eventkit_calendar_datasource_impl.dart';
+import '../../data/datasources/remote/gmail_contacts_datasource_impl.dart';
 import '../../data/datasources/remote/gmail_datasource_impl.dart';
 import '../../data/datasources/remote/google_calendar_datasource_impl.dart';
 import '../../data/datasources/remote/google_tasks_datasource_impl.dart';
@@ -25,6 +26,7 @@ import '../auth/microsoft_auth_service.dart';
 import '../auth/token_storage.dart';
 import '../http/gmail_http_client.dart';
 import '../http/google_calendar_http_client.dart';
+import '../http/google_people_http_client.dart';
 import '../http/google_tasks_http_client.dart';
 import '../http/graph_http_client.dart';
 import 'account.dart';
@@ -54,6 +56,7 @@ class AccountManager {
   EmailRemoteDatasource? _emailDatasource;
   CalendarRemoteDatasource? _calendarDatasource;
   TasksRemoteDatasource? _tasksDatasource;
+  GmailContactsDatasourceImpl? _contactsDatasource;
   AuthService? _authService;
 
   List<Account> get accounts => List.unmodifiable(_accounts);
@@ -70,6 +73,7 @@ class AccountManager {
 
   CalendarRemoteDatasource? get calendarDatasource => _calendarDatasource;
   TasksRemoteDatasource? get tasksDatasource => _tasksDatasource;
+  GmailContactsDatasourceImpl? get contactsDatasource => _contactsDatasource;
 
   AuthService get activeAuthService {
     if (_authService == null) throw StateError('No active account');
@@ -206,6 +210,7 @@ class AccountManager {
       _activeIndex = 0;
       _emailDatasource = null;
       _calendarDatasource = null;
+      _contactsDatasource = null;
       _authService = null;
     } else {
       _activeIndex = _activeIndex.clamp(0, _accounts.length - 1);
@@ -335,6 +340,7 @@ class AccountManager {
         _emailDatasource = ds;
         _calendarDatasource = ds;
         _tasksDatasource = ds;
+        _contactsDatasource = null;
 
       case GmailAccount():
         final tokenStorage = TokenStorage(
@@ -350,11 +356,14 @@ class AccountManager {
         final gmailClient = GmailHttpClient(authService: authSvc);
         final calendarClient = GoogleCalendarHttpClient(authService: authSvc);
         final tasksClient = GoogleTasksHttpClient(authService: authSvc);
+        final peopleClient = GooglePeopleHttpClient(authService: authSvc);
         _authService = authSvc;
         _emailDatasource = GmailDatasourceImpl(client: gmailClient);
         _calendarDatasource =
             GoogleCalendarDatasourceImpl(client: calendarClient);
         _tasksDatasource = GoogleTasksDatasourceImpl(client: tasksClient);
+        _contactsDatasource =
+            GmailContactsDatasourceImpl(client: peopleClient);
 
       case ImapAccount():
         final credStorage = ImapCredentialStorage(_secureStorage);
@@ -367,6 +376,7 @@ class AccountManager {
           credentialStorage: credStorage,
         );
         _tasksDatasource = null;
+        _contactsDatasource = null;
         _calendarDatasource = _buildImapCalendarDatasource(account);
     }
   }

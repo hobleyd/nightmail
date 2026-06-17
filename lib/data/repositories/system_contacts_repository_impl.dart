@@ -35,6 +35,8 @@ class SystemContactsRepositoryImpl implements SystemContactsRepository {
 
   @override
   Future<List<ContactSuggestion>> search(String query) async {
+    if (!Platform.isMacOS) return [];
+
     // Ensure permission has been requested.
     _loadFuture ??= _loadContacts();
     await _loadFuture;

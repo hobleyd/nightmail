@@ -1,0 +1,90 @@
+import 'package:dio/dio.dart';
+
+import '../../../domain/entities/contact_suggestion.dart';
+import '../../../infrastructure/http/google_people_http_client.dart';
+
+class GmailContactsDatasourceImpl {
+  GmailContactsDatasourceImpl({required GooglePeopleHttpClient client})
+      : _dio = client.dio;
+
+  final Dio _dio;
+
+  Future<List<ContactSuggestion>> searchContacts(String query) async {
+    final seen = <String>{};
+    final results = <ContactSuggestion>[];
+
+    await Future.wait([
+      _searchPersonal(query, seen, results),
+      _searchDirectory(query, seen, results),
+    ]);
+
+    return results;
+  }
+
+  Future<void> _searchPersonal(
+    String query,
+    Set<String> seen,
+    List<ContactSuggestion> results,
+  ) async {
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '/people:searchContacts',
+        queryParameters: {
+          'query': query,
+          'readMask': 'emailAddresses,names',
+          'pageSize': 10,
+        },
+      );
+      _parseResults(resp.data, seen, results);
+    } catch (_) {}
+  }
+
+  Future<void> _searchDirectory(
+    String query,
+    Set<String> seen,
+    List<ContactSuggestion> results,
+  ) async {
+    // Only available for Google Workspace accounts; silently skip for consumers.
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '/people:searchDirectoryPeople',
+        queryParameters: {
+          'query': query,
+          'readMask': 'emailAddresses,names',
+          'sources': 'DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE',
+          'pageSize': 10,
+        },
+      );
+      _parseResults(resp.data, seen, results);
+    } catch (_) {}
+  }
+
+  void _parseResults(
+    Map<String, dynamic>? data,
+    Set<String> seen,
+    List<ContactSuggestion> results,
+  ) {
+    if (data == null) return;
+    final raw =
+        (data['results'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+    for (final r in raw) {
+      final person = r['person'] as Map<String, dynamic>?;
+      if (person == null) continue;
+      final emails = (person['emailAddresses'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      final names = (person['names'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      final name = names.firstOrNull?['displayName'] as String?;
+      for (final e in emails) {
+        final address = e['value'] as String?;
+        if (address == null || address.isEmpty) continue;
+        if (seen.add(address.toLowerCase())) {
+          results.add(ContactSuggestion(
+            address: address,
+            name: (name == null || name.isEmpty) ? null : name,
+          ));
+        }
+      }
+    }
+  }
+}

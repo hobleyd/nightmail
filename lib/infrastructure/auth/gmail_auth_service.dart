@@ -130,7 +130,17 @@ class GmailAuthService implements AuthService {
         options: Options(contentType: 'application/x-www-form-urlencoded'),
       );
 
-      final token = AuthToken.fromJson(response.data as Map<String, dynamic>);
+      final raw = AuthToken.fromJson(response.data as Map<String, dynamic>);
+      // Google omits refresh_token from refresh responses; preserve the existing one.
+      final token = raw.refreshToken != null
+          ? raw
+          : AuthToken(
+              accessToken: raw.accessToken,
+              expiresAt: raw.expiresAt,
+              refreshToken: currentToken.refreshToken,
+              tokenType: raw.tokenType,
+              scope: raw.scope,
+            );
       await _tokenStorage.saveToken(token);
       return token;
     } on DioException catch (e) {

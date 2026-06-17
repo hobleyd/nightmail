@@ -189,7 +189,17 @@ class MicrosoftAuthService implements AuthService {
         ),
       );
 
-      final token = AuthToken.fromJson(response.data as Map<String, dynamic>);
+      final raw = AuthToken.fromJson(response.data as Map<String, dynamic>);
+      // Microsoft may omit refresh_token from refresh responses; preserve the existing one.
+      final token = raw.refreshToken != null
+          ? raw
+          : AuthToken(
+              accessToken: raw.accessToken,
+              expiresAt: raw.expiresAt,
+              refreshToken: currentToken.refreshToken,
+              tokenType: raw.tokenType,
+              scope: raw.scope,
+            );
       await _tokenStorage.saveToken(token);
       return token;
     } on DioException catch (e) {

@@ -88,8 +88,7 @@ class _HomeView extends StatelessWidget {
           },
         ),
         BlocListener<FolderListBloc, FolderListState>(
-          listenWhen: (prev, curr) =>
-              prev is! FolderListLoaded && curr is FolderListLoaded,
+          listenWhen: (prev, curr) => curr is FolderListLoaded,
           listener: (context, state) {
             if (state is FolderListLoaded) {
               final homeCubit = context.read<HomeCubit>();

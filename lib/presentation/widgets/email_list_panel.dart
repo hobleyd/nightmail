@@ -994,6 +994,7 @@ class _FolderCountFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     final unread = folder.unreadItemCount;
     final total = folder.totalItemCount;
     final label = unread > 0 ? '$unread unread · $total total' : '$total total';
@@ -1005,8 +1006,8 @@ class _FolderCountFooter extends StatelessWidget {
           alignment: Alignment.centerLeft,
           child: Text(
             label,
-            style: const TextStyle(
-              color: Colors.black,
+            style: TextStyle(
+              color: c.textBody,
               fontSize: 11,
             ),
           ),

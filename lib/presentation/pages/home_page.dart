@@ -63,6 +63,20 @@ class _HomeView extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiBlocListener(
       listeners: [
+        BlocListener<AccountCubit, AccountState>(
+          listenWhen: (prev, curr) {
+            if (prev is AccountsLoaded && curr is AccountsLoaded) {
+              return prev.activeAccount.id != curr.activeAccount.id;
+            }
+            return false;
+          },
+          listener: (context, _) {
+            context.read<HomeCubit>().clearFolder();
+            context.read<FolderListBloc>().add(const FolderListLoadRequested());
+            context.read<EmailListBloc>().add(const EmailListCleared());
+            context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+          },
+        ),
         BlocListener<FolderListBloc, FolderListState>(
           listenWhen: (prev, curr) =>
               prev is! FolderListLoaded && curr is FolderListLoaded,

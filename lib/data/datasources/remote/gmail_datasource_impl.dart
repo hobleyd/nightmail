@@ -102,7 +102,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         '/users/me/messages/$id',
         queryParameters: {
           'format': 'metadata',
-          'metadataHeaders': ['From', 'To', 'Cc', 'Subject', 'Date'].join(','),
+          'metadataHeaders': ['From', 'To', 'Cc', 'Subject', 'Date'],
         },
       );
       if (resp.data == null) return null;
@@ -313,11 +313,11 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
 
   EmailAddressModel _parseAddress(String raw) {
     if (raw.isEmpty) return const EmailAddressModel(address: '', name: '');
-    // Format: "Display Name <email@example.com>" or just "email@example.com"
-    final match = RegExp(r'^(.+?)\s*<([^>]+)>$').firstMatch(raw.trim());
+    // Handles: "Display Name <email>", "<email>", and bare "email"
+    final match = RegExp(r'^(.*?)\s*<([^>]+)>\s*$').firstMatch(raw.trim());
     if (match != null) {
       return EmailAddressModel(
-        name: match.group(1)?.replaceAll('"', '').trim() ?? '',
+        name: (match.group(1) ?? '').replaceAll('"', '').trim(),
         address: match.group(2)?.trim() ?? '',
       );
     }

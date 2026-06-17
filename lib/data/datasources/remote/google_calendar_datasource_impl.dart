@@ -33,7 +33,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
           'orderBy': 'startTime',
           'maxResults': 250,
           'fields':
-              'items(id,summary,start,end,description,location,status,organizer,attendees,allDayEvent,recurrence)',
+              'items(id,summary,start,end,description,location,status,organizer,attendees)',
         },
       );
 

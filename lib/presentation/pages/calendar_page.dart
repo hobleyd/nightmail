@@ -414,29 +414,43 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
                                   isO365Account: _isO365Account(context),
                                 );
                               },
-                              child: Stack(
-                                children: [
-                                  ...List.generate(
-                                    _totalHours,
-                                    (h) => Positioned(
-                                      top: h * _hourHeight,
-                                      left: 0,
-                                      right: 0,
-                                      child: Divider(
-                                        height: 0.5,
-                                        color: h == 0
-                                            ? Colors.transparent
-                                            : c.separator,
+                              child: LayoutBuilder(
+                                builder: (context, constraints) {
+                                  final layout = _computeOverlapLayout(timedEvents);
+                                  return Stack(
+                                    children: [
+                                      ...List.generate(
+                                        _totalHours,
+                                        (h) => Positioned(
+                                          top: h * _hourHeight,
+                                          left: 0,
+                                          right: 0,
+                                          child: Divider(
+                                            height: 0.5,
+                                            color: h == 0
+                                                ? Colors.transparent
+                                                : c.separator,
+                                          ),
+                                        ),
                                       ),
-                                    ),
-                                  ),
-                                  ...timedEvents.map((e) => _PositionedEvent(
-                                        event: e,
-                                        dayStart: DateTime(_selectedDay.year,
-                                            _selectedDay.month, _selectedDay.day),
-                                        hourHeight: _hourHeight,
-                                      )),
-                                ],
+                                      ...timedEvents.map((e) {
+                                        final span = layout[e.id] ??
+                                            const _ColumnSpan(index: 0, total: 1);
+                                        final colW =
+                                            (constraints.maxWidth - 4) / span.total;
+                                        return _PositionedEvent(
+                                          event: e,
+                                          dayStart: DateTime(_selectedDay.year,
+                                              _selectedDay.month, _selectedDay.day),
+                                          hourHeight: _hourHeight,
+                                          left: 2.0 + span.index * colW,
+                                          width: colW -
+                                              (span.total > 1 ? 1.0 : 0.0),
+                                        );
+                                      }),
+                                    ],
+                                  );
+                                },
                               ),
                             ),
                           ),
@@ -1066,27 +1080,41 @@ class _DayColumnCellState extends State<_DayColumnCell> {
               left: BorderSide(color: c.separator, width: 0.5),
             ),
           ),
-          child: Stack(
-            children: [
-              ...List.generate(
-                  widget.totalHours,
-                  (h) => Positioned(
-                        top: h * widget.hourHeight,
-                        left: 0,
-                        right: 0,
-                        child: Divider(
-                          height: 0.5,
-                          color:
-                              h == 0 ? Colors.transparent : c.separator,
-                        ),
-                      )),
-              ...widget.dayEvents.map((e) => _PositionedEvent(
-                    event: e,
-                    dayStart: DateTime(widget.day.year, widget.day.month,
-                        widget.day.day),
-                    hourHeight: widget.hourHeight,
-                  )),
-            ],
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final layout = _computeOverlapLayout(widget.dayEvents);
+              return Stack(
+                children: [
+                  ...List.generate(
+                      widget.totalHours,
+                      (h) => Positioned(
+                            top: h * widget.hourHeight,
+                            left: 0,
+                            right: 0,
+                            child: Divider(
+                              height: 0.5,
+                              color: h == 0
+                                  ? Colors.transparent
+                                  : c.separator,
+                            ),
+                          )),
+                  ...widget.dayEvents.map((e) {
+                    final span = layout[e.id] ??
+                        const _ColumnSpan(index: 0, total: 1);
+                    final colW =
+                        (constraints.maxWidth - 4) / span.total;
+                    return _PositionedEvent(
+                      event: e,
+                      dayStart: DateTime(widget.day.year,
+                          widget.day.month, widget.day.day),
+                      hourHeight: widget.hourHeight,
+                      left: 2.0 + span.index * colW,
+                      width: colW - (span.total > 1 ? 1.0 : 0.0),
+                    );
+                  }),
+                ],
+              );
+            },
           ),
         ),
       ),
@@ -1094,16 +1122,87 @@ class _DayColumnCellState extends State<_DayColumnCell> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Overlap layout helpers
+// ---------------------------------------------------------------------------
+
+class _ColumnSpan {
+  const _ColumnSpan({required this.index, required this.total});
+  final int index;
+  final int total;
+}
+
+/// Groups [events] into overlap clusters and assigns each a column slot so
+/// that simultaneously-occurring events tile side-by-side instead of stacking.
+Map<String, _ColumnSpan> _computeOverlapLayout(List<CalendarEvent> events) {
+  if (events.isEmpty) return {};
+
+  final sorted = List.of(events)..sort((a, b) => a.start.compareTo(b.start));
+
+  bool overlaps(CalendarEvent a, CalendarEvent b) =>
+      a.start.isBefore(b.end) && b.start.isBefore(a.end);
+
+  // Build connected-component clusters.
+  final clusters = <List<CalendarEvent>>[];
+  for (final e in sorted) {
+    final overlapping =
+        clusters.where((c) => c.any((ce) => overlaps(ce, e))).toList();
+    if (overlapping.isEmpty) {
+      clusters.add([e]);
+    } else {
+      final merged = overlapping.expand((c) => c).toList()..add(e);
+      for (final c in overlapping) clusters.remove(c);
+      clusters.add(merged);
+    }
+  }
+
+  final result = <String, _ColumnSpan>{};
+  for (final cluster in clusters) {
+    final cs = List.of(cluster)..sort((a, b) => a.start.compareTo(b.start));
+
+    // Greedy column assignment: each event goes in the first column whose last
+    // event has already ended.
+    final colEnds = <int>[]; // end-minute of last event in each column
+    final assignments = <String, int>{};
+
+    for (final e in cs) {
+      final startMin =
+          e.start.toLocal().hour * 60 + e.start.toLocal().minute;
+      int col = colEnds.indexWhere((end) => startMin >= end);
+      if (col == -1) {
+        col = colEnds.length;
+        colEnds.add(0);
+      }
+      final endLocal = e.end.toLocal();
+      colEnds[col] = endLocal.hour * 60 + endLocal.minute;
+      assignments[e.id] = col;
+    }
+
+    final total = colEnds.length;
+    for (final e in cluster) {
+      result[e.id] = _ColumnSpan(index: assignments[e.id]!, total: total);
+    }
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+
 class _PositionedEvent extends StatefulWidget {
   const _PositionedEvent({
     required this.event,
     required this.dayStart,
     required this.hourHeight,
+    required this.left,
+    required this.width,
   });
 
   final CalendarEvent event;
   final DateTime dayStart;
   final double hourHeight;
+  final double left;
+  final double width;
 
   @override
   State<_PositionedEvent> createState() => _PositionedEventState();
@@ -1203,8 +1302,8 @@ class _PositionedEventState extends State<_PositionedEvent> {
 
     return Positioned(
       top: top,
-      left: 2,
-      right: 2,
+      left: widget.left,
+      width: widget.width,
       height: height,
       child: GestureDetector(
         onTap: _isDragging

@@ -9,13 +9,19 @@ class OAuthClientIdStorage {
 
   static const _msKey = 'oauth_ms_client_id';
   static const _googleKey = 'oauth_google_client_id';
+  static const _googleSecretKey = 'oauth_google_client_secret';
 
   Future<String?> loadMicrosoftClientId() => _storage.read(key: _msKey);
   Future<String?> loadGoogleClientId() => _storage.read(key: _googleKey);
+  Future<String?> loadGoogleClientSecret() =>
+      _storage.read(key: _googleSecretKey);
 
   Future<void> saveMicrosoftClientId(String id) =>
       _storage.write(key: _msKey, value: id);
 
   Future<void> saveGoogleClientId(String id) =>
       _storage.write(key: _googleKey, value: id);
+
+  Future<void> saveGoogleClientSecret(String secret) =>
+      _storage.write(key: _googleSecretKey, value: secret);
 }

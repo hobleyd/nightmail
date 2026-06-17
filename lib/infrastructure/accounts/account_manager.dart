@@ -41,9 +41,10 @@ class AccountManager {
   final FlutterSecureStorage _secureStorage;
   final OAuthClientIdStorage _clientIdStorage;
 
-  // Cached client IDs loaded (and migrated) in initialize().
+  // Cached client IDs/secrets loaded (and migrated) in initialize().
   String? _microsoftClientId;
   String? _googleClientId;
+  String? _googleClientSecret;
 
   List<Account> _accounts = [];
   int _activeIndex = 0;
@@ -137,6 +138,7 @@ class AccountManager {
         _googleClientId = compiled;
       }
     }
+    _googleClientSecret = await _clientIdStorage.loadGoogleClientSecret();
   }
 
   /// Add a new account and make it the active account.
@@ -272,6 +274,7 @@ class AccountManager {
         );
         final authSvc = GmailAuthService(
           clientId: _googleClientId ?? AppConfig.gmailClientId,
+          clientSecret: _googleClientSecret ?? '',
           redirectUri: AppConfig.gmailRedirectUri,
           tokenStorage: tokenStorage,
         );
@@ -338,6 +341,7 @@ class AccountManager {
         );
         final authSvc = GmailAuthService(
           clientId: _googleClientId ?? AppConfig.gmailClientId,
+          clientSecret: _googleClientSecret ?? '',
           redirectUri: AppConfig.gmailRedirectUri,
           tokenStorage: tokenStorage,
         );

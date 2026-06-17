@@ -49,15 +49,16 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
             : null);
 
     if (!mounted) return;
-    final clientId = await showClientIdDialog(
+    final credentials = await showClientIdDialog(
       context,
       provider: 'Microsoft',
       helpText:
           'Enter the Application (Client) ID from your Azure app registration (portal.azure.com).',
       initialValue: initialId,
     );
-    if (clientId == null || !mounted) return;
+    if (credentials == null || !mounted) return;
 
+    final clientId = credentials.clientId;
     await storage.saveMicrosoftClientId(clientId);
 
     setState(() {
@@ -110,22 +111,26 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
 
     final storage = sl<OAuthClientIdStorage>();
     final storedId = await storage.loadGoogleClientId();
+    final storedSecret = await storage.loadGoogleClientSecret();
     final initialId = storedId ??
         (AppConfig.gmailClientId != 'YOUR_GOOGLE_CLIENT_ID'
             ? AppConfig.gmailClientId
             : null);
 
     if (!mounted) return;
-    final clientId = await showClientIdDialog(
+    final credentials = await showClientIdDialog(
       context,
       provider: 'Gmail',
       helpText:
-          'Enter the Client ID from your Google Cloud Console OAuth 2.0 app (console.cloud.google.com).',
+          'Enter the Client ID and Client Secret from your Google Cloud Console OAuth 2.0 app (console.cloud.google.com).',
       initialValue: initialId,
+      requireSecret: true,
+      initialSecret: storedSecret,
     );
-    if (clientId == null || !mounted) return;
+    if (credentials == null || !mounted) return;
 
-    await storage.saveGoogleClientId(clientId);
+    await storage.saveGoogleClientId(credentials.clientId);
+    await storage.saveGoogleClientSecret(credentials.clientSecret!);
 
     setState(() {
       _isLoading = true;
@@ -141,7 +146,8 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
         storageKey: 'token_$id',
       );
       final authService = GmailAuthService(
-        clientId: clientId,
+        clientId: credentials.clientId,
+        clientSecret: credentials.clientSecret!,
         redirectUri: AppConfig.gmailRedirectUri,
         tokenStorage: tokenStorage,
       );

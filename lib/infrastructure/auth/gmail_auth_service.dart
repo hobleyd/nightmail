@@ -21,12 +21,14 @@ import 'web_auth_stub.dart' if (dart.library.html) 'web_auth_web.dart';
 class GmailAuthService implements AuthService {
   GmailAuthService({
     required this.clientId,
+    required this.clientSecret,
     required this.redirectUri,
     required this._tokenStorage,
     Dio? httpClient,
   }) : _http = httpClient ?? Dio();
 
   final String clientId;
+  final String clientSecret;
   final String redirectUri;
   final TokenStorage _tokenStorage;
   final Dio _http;
@@ -120,6 +122,7 @@ class GmailAuthService implements AuthService {
         _tokenEndpoint,
         data: {
           'client_id': clientId,
+          'client_secret': clientSecret,
           'grant_type': 'refresh_token',
           'refresh_token': currentToken.refreshToken,
         },
@@ -152,6 +155,7 @@ class GmailAuthService implements AuthService {
         _tokenEndpoint,
         data: {
           'client_id': clientId,
+          'client_secret': clientSecret,
           'grant_type': 'authorization_code',
           'code': code,
           'redirect_uri': _effectiveRedirectUri,

@@ -213,14 +213,11 @@ class _ComposeFormState extends State<ComposeForm> {
     return subject.isNotEmpty ? subject : _baseTitle;
   }
 
-  bool get _toInputEditable => switch (widget.mode) {
-        ComposeMode.newEmail || ComposeMode.forward => true,
-        _ => false,
-      };
+  bool get _toInputEditable => true;
 
-  bool get _ccInputEditable => widget.mode == ComposeMode.newEmail;
+  bool get _ccInputEditable => true;
 
-  bool get _subjectEditable => widget.mode == ComposeMode.newEmail;
+  bool get _subjectEditable => true;
 
   void _handleDrop(String address, String fromFieldId, String toFieldId) {
     if (fromFieldId == toFieldId) return;

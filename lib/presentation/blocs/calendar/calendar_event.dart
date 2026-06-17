@@ -95,3 +95,7 @@ final class CalendarSelectionCleared extends CalendarBlocEvent {
 final class CalendarSelectedEventsDeleteRequested extends CalendarBlocEvent {
   const CalendarSelectedEventsDeleteRequested();
 }
+
+final class CalendarCleared extends CalendarBlocEvent {
+  const CalendarCleared();
+}

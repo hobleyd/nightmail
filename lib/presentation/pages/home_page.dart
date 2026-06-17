@@ -75,6 +75,16 @@ class _HomeView extends StatelessWidget {
             context.read<FolderListBloc>().add(const FolderListLoadRequested());
             context.read<EmailListBloc>().add(const EmailListCleared());
             context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+            context.read<CalendarBloc>().add(const CalendarCleared());
+          },
+        ),
+        BlocListener<AccountCubit, AccountState>(
+          listenWhen: (_, curr) => curr is AccountNoAccounts,
+          listener: (context, _) {
+            context.read<HomeCubit>().clearFolder();
+            context.read<EmailListBloc>().add(const EmailListCleared());
+            context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+            context.read<CalendarBloc>().add(const CalendarCleared());
           },
         ),
         BlocListener<FolderListBloc, FolderListState>(

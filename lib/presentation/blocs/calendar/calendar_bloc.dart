@@ -30,6 +30,7 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
     on<CalendarEventSelectionToggled>(_onSelectionToggled);
     on<CalendarSelectionCleared>(_onSelectionCleared);
     on<CalendarSelectedEventsDeleteRequested>(_onSelectedEventsDeleteRequested);
+    on<CalendarCleared>(_onCleared);
   }
 
   final GetCalendarEvents _getCalendarEvents;
@@ -179,6 +180,10 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
       }
     }
     await _fetchWeek(weekStart, emit);
+  }
+
+  void _onCleared(CalendarCleared event, Emitter<CalendarState> emit) {
+    emit(CalendarInitial(weekStart: _mondayOfWeek(DateTime.now())));
   }
 
   Future<void> _fetchWeek(

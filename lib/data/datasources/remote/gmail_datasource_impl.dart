@@ -113,17 +113,38 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         }
       }
 
+      // The labels list endpoint omits message counts. Fetch them in parallel
+      // for all real (non-virtual) labels so the poller and folder list are correct.
+      final realIds = folders
+          .where((f) => !f.id.startsWith('__virtual__'))
+          .map((f) => f.id)
+          .toList();
+      final countMap = <String, (int, int)>{};
+      await Future.wait(realIds.map((id) async {
+        try {
+          final resp =
+              await _dio.get<Map<String, dynamic>>('/users/me/labels/$id');
+          final d = resp.data;
+          if (d == null) return;
+          countMap[id] = (
+            d['messagesUnread'] as int? ?? 0,
+            d['messagesTotal'] as int? ?? 0,
+          );
+        } catch (_) {}
+      }));
+
       return folders.map((f) {
-        final count = childCountByParent[f.id] ?? 0;
-        if (count == 0) return f;
+        final childCount = childCountByParent[f.id] ?? 0;
+        final counts = countMap[f.id];
+        if (childCount == 0 && counts == null) return f;
         return EmailFolderModel(
           id: f.id,
           displayName: f.displayName,
-          totalItemCount: f.totalItemCount,
-          unreadItemCount: f.unreadItemCount,
+          totalItemCount: counts?.$2 ?? f.totalItemCount,
+          unreadItemCount: counts?.$1 ?? f.unreadItemCount,
           parentFolderId: f.parentFolderId,
           isHidden: f.isHidden,
-          childFolderCount: count,
+          childFolderCount: childCount,
         );
       }).toList();
     } on DioException catch (e) {

@@ -869,8 +869,8 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   }
 
   @override
-  Future<void> deleteEmail(String id) {
-    throw UnimplementedError('deleteEmail not yet supported for Gmail');
+  Future<void> deleteEmail(String id) async {
+    await _dio.post<void>('/users/me/messages/$id/trash');
   }
 
   @override

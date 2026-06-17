@@ -332,4 +332,50 @@ void main() {
       ));
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // deleteEmail — trash endpoint
+  // ---------------------------------------------------------------------------
+
+  Response<void> _trashResp() => Response(
+        statusCode: 200,
+        requestOptions: RequestOptions(path: ''),
+      );
+
+  void stubTrash() {
+    when(mockDio.post<void>(any)).thenAnswer((_) async => _trashResp());
+  }
+
+  group('deleteEmail', () {
+    test('calls the Gmail trash endpoint with the correct message id', () async {
+      stubTrash();
+
+      await datasource.deleteEmail('msg42');
+
+      verify(mockDio.post<void>('/users/me/messages/msg42/trash'));
+    });
+
+    test('does not call the metadata endpoint before trashing', () async {
+      stubTrash();
+
+      await datasource.deleteEmail('msg1');
+
+      verifyNever(mockDio.get<Map<String, dynamic>>(
+        any,
+        queryParameters: anyNamed('queryParameters'),
+      ));
+    });
+
+    test('propagates DioException on network failure', () async {
+      when(mockDio.post<void>(any)).thenAnswer((_) async => throw DioException(
+            requestOptions: RequestOptions(path: ''),
+            type: DioExceptionType.connectionError,
+          ));
+
+      await expectLater(
+        datasource.deleteEmail('msg1'),
+        throwsA(isA<DioException>()),
+      );
+    });
+  });
 }

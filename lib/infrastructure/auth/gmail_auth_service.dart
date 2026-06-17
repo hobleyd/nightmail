@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
@@ -13,18 +14,20 @@ import 'token_storage.dart';
 import 'web_auth_stub.dart' if (dart.library.html) 'web_auth_web.dart';
 
 /// Google OAuth2 + PKCE implementation for Gmail and Google Calendar access.
+///
+/// Requires a Google Cloud Console project with:
+///   - Application type: Desktop app (allows loopback redirect on Windows/Linux)
+///   - API permissions: Gmail API, Google Calendar API
 class GmailAuthService implements AuthService {
   GmailAuthService({
     required this.clientId,
     required this.redirectUri,
     required this._tokenStorage,
-    this.clientSecret,
     Dio? httpClient,
-  })  : _http = httpClient ?? Dio();
+  }) : _http = httpClient ?? Dio();
 
   final String clientId;
   final String redirectUri;
-  final String? clientSecret;
   final TokenStorage _tokenStorage;
   final Dio _http;
 
@@ -32,7 +35,6 @@ class GmailAuthService implements AuthService {
     'openid',
     'profile',
     'email',
-    'offline_access',
     'https://www.googleapis.com/auth/gmail.modify',
     'https://www.googleapis.com/auth/calendar.readonly',
   ];
@@ -40,9 +42,19 @@ class GmailAuthService implements AuthService {
   static const _authEndpoint = 'https://accounts.google.com/o/oauth2/v2/auth';
   static const _tokenEndpoint = 'https://oauth2.googleapis.com/token';
 
-  String get _callbackUrlScheme {
-    final uri = Uri.parse(redirectUri);
-    return uri.scheme;
+  // Windows and Linux use the loopback server approach.
+  // Google accepts http://localhost (without port) as a registered redirect
+  // URI for Desktop app registrations, and allows any port at runtime per
+  // RFC 8252 §7.3.
+  static const _loopbackPort = 34572;
+
+  static bool get _useLoopback =>
+      !kIsWeb && (Platform.isWindows || Platform.isLinux);
+
+  String get _effectiveRedirectUri {
+    if (kIsWeb) return '${Uri.base.origin}/callback.html';
+    if (_useLoopback) return 'http://localhost:$_loopbackPort';
+    return redirectUri;
   }
 
   @override
@@ -54,7 +66,7 @@ class GmailAuthService implements AuthService {
       queryParameters: {
         'client_id': clientId,
         'response_type': 'code',
-        'redirect_uri': redirectUri,
+        'redirect_uri': _effectiveRedirectUri,
         'scope': _scopes.join(' '),
         'code_challenge': codeChallenge,
         'code_challenge_method': 'S256',
@@ -63,17 +75,21 @@ class GmailAuthService implements AuthService {
       },
     );
 
-    // preferEphemeral=true: on macOS without a sandbox, ASWebAuthenticationSession
-    // would try to share session cookies via the Keychain (requiring the
-    // keychain-access-groups entitlement). Ephemeral mode skips that store.
     final String resultUrl;
     if (kIsWeb) {
       resultUrl = await authenticateWeb(authUri.toString());
     } else {
+      final String callbackScheme = _useLoopback
+          ? 'http://localhost:$_loopbackPort'
+          : Uri.parse(redirectUri).scheme;
+      final FlutterWebAuth2Options authOptions = _useLoopback
+          ? const FlutterWebAuth2Options(useWebview: false)
+          : const FlutterWebAuth2Options(preferEphemeral: true);
+
       resultUrl = await FlutterWebAuth2.authenticate(
         url: authUri.toString(),
-        callbackUrlScheme: _callbackUrlScheme,
-        options: const FlutterWebAuth2Options(preferEphemeral: true),
+        callbackUrlScheme: callbackScheme,
+        options: authOptions,
       );
     }
 
@@ -106,8 +122,6 @@ class GmailAuthService implements AuthService {
           'client_id': clientId,
           'grant_type': 'refresh_token',
           'refresh_token': currentToken.refreshToken,
-          if (clientSecret != null && clientSecret!.isNotEmpty)
-            'client_secret': clientSecret!,
         },
         options: Options(contentType: 'application/x-www-form-urlencoded'),
       );
@@ -140,10 +154,8 @@ class GmailAuthService implements AuthService {
           'client_id': clientId,
           'grant_type': 'authorization_code',
           'code': code,
-          'redirect_uri': redirectUri,
+          'redirect_uri': _effectiveRedirectUri,
           'code_verifier': codeVerifier,
-          if (clientSecret != null && clientSecret!.isNotEmpty)
-            'client_secret': clientSecret!,
         },
         options: Options(contentType: 'application/x-www-form-urlencoded'),
       );

@@ -5,8 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../../core/config/oauth_credentials.dart';
-import '../../core/config/oauth_credentials_storage.dart';
+import '../../core/config/oauth_client_id_storage.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
 import '../../injection_container.dart';
@@ -351,7 +350,6 @@ class _AccountsSectionState extends State<_AccountsSection> {
 
   late TextEditingController _nameController;
   late TextEditingController _emailController;
-  late TextEditingController _tenantIdController;
   late TextEditingController _hostController;
   late TextEditingController _portController;
   late TextEditingController _smtpHostController;
@@ -365,20 +363,15 @@ class _AccountsSectionState extends State<_AccountsSection> {
   late TextEditingController _caldavPasswordController;
   bool _nextcloudEnabled = false;
 
-  // OAuth app credentials (global, not per-account)
-  OAuthCredentials? _oauthCredentials;
-  late TextEditingController _oauthMsClientIdController;
-  late TextEditingController _oauthMsTenantIdController;
-  late TextEditingController _oauthMsRedirectUriController;
-  late TextEditingController _oauthGoogleClientIdController;
-  late TextEditingController _oauthGoogleRedirectUriController;
+  late TextEditingController _msClientIdController;
+  late TextEditingController _googleClientIdController;
+
 
   @override
   void initState() {
     super.initState();
     _nameController = TextEditingController();
     _emailController = TextEditingController();
-    _tenantIdController = TextEditingController();
     _hostController = TextEditingController();
     _portController = TextEditingController();
     _smtpHostController = TextEditingController();
@@ -386,21 +379,15 @@ class _AccountsSectionState extends State<_AccountsSection> {
     _caldavUrlController = TextEditingController();
     _caldavUsernameController = TextEditingController();
     _caldavPasswordController = TextEditingController();
-    _oauthMsClientIdController = TextEditingController();
-    _oauthMsTenantIdController = TextEditingController();
-    _oauthMsRedirectUriController = TextEditingController();
-    _oauthGoogleClientIdController = TextEditingController();
-    _oauthGoogleRedirectUriController = TextEditingController();
-    sl<OAuthCredentialsStorage>().load().then((creds) {
-      if (mounted) setState(() => _oauthCredentials = creds);
-    });
+    _msClientIdController = TextEditingController();
+    _googleClientIdController = TextEditingController();
+    _loadClientIds();
   }
 
   @override
   void dispose() {
     _nameController.dispose();
     _emailController.dispose();
-    _tenantIdController.dispose();
     _hostController.dispose();
     _portController.dispose();
     _smtpHostController.dispose();
@@ -408,20 +395,15 @@ class _AccountsSectionState extends State<_AccountsSection> {
     _caldavUrlController.dispose();
     _caldavUsernameController.dispose();
     _caldavPasswordController.dispose();
-    _oauthMsClientIdController.dispose();
-    _oauthMsTenantIdController.dispose();
-    _oauthMsRedirectUriController.dispose();
-    _oauthGoogleClientIdController.dispose();
-    _oauthGoogleRedirectUriController.dispose();
+    _msClientIdController.dispose();
+    _googleClientIdController.dispose();
     super.dispose();
   }
 
   void _syncControllers(Account account) {
     _nameController.text = account.displayName;
     _emailController.text = account.emailAddress;
-    if (account is MicrosoftAccount) {
-      _tenantIdController.text = account.tenantId;
-    } else if (account is ImapAccount) {
+    if (account is ImapAccount) {
       _hostController.text = account.host;
       _portController.text = account.port.toString();
       _useSsl = account.useSsl;
@@ -434,19 +416,21 @@ class _AccountsSectionState extends State<_AccountsSection> {
       _caldavUsernameController.text = caldav?.username ?? '';
       _caldavPasswordController.text = '';
     }
-    final oauth = _oauthCredentials;
-    if (oauth != null) {
-      _oauthMsClientIdController.text = oauth.microsoftClientId;
-      _oauthMsTenantIdController.text = oauth.microsoftTenantId;
-      _oauthMsRedirectUriController.text = oauth.microsoftRedirectUri;
-      _oauthGoogleClientIdController.text = oauth.googleClientId;
-      _oauthGoogleRedirectUriController.text = oauth.googleRedirectUri;
-    }
   }
 
   void _loadCalDavPassword(String accountId) {
     sl<AccountManager>().loadCalDavPassword(accountId).then((p) {
       if (mounted) setState(() => _caldavPasswordController.text = p ?? '');
+    });
+  }
+
+  void _loadClientIds() {
+    final storage = sl<OAuthClientIdStorage>();
+    storage.loadMicrosoftClientId().then((id) {
+      if (mounted) setState(() => _msClientIdController.text = id ?? '');
+    });
+    storage.loadGoogleClientId().then((id) {
+      if (mounted) setState(() => _googleClientIdController.text = id ?? '');
     });
   }
 
@@ -501,7 +485,6 @@ class _AccountsSectionState extends State<_AccountsSection> {
       MicrosoftAccount a => a.copyWith(
           displayName: _nameController.text,
           emailAddress: _emailController.text,
-          tenantId: _tenantIdController.text,
         ),
       GmailAccount a => a.copyWith(
           displayName: _nameController.text,
@@ -520,25 +503,14 @@ class _AccountsSectionState extends State<_AccountsSection> {
         ),
     };
 
-    // Persist OAuth app credentials for the relevant provider
-    if (_oauthCredentials != null) {
-      final OAuthCredentials updatedOAuth;
-      if (updated is MicrosoftAccount) {
-        updatedOAuth = _oauthCredentials!.copyWith(
-          microsoftClientId: _oauthMsClientIdController.text.trim(),
-          microsoftTenantId: _oauthMsTenantIdController.text.trim(),
-          microsoftRedirectUri: _oauthMsRedirectUriController.text.trim(),
-        );
-        sl<OAuthCredentialsStorage>().save(updatedOAuth);
-        _oauthCredentials = updatedOAuth;
-      } else if (updated is GmailAccount) {
-        updatedOAuth = _oauthCredentials!.copyWith(
-          googleClientId: _oauthGoogleClientIdController.text.trim(),
-          googleRedirectUri: _oauthGoogleRedirectUriController.text.trim(),
-        );
-        sl<OAuthCredentialsStorage>().save(updatedOAuth);
-        _oauthCredentials = updatedOAuth;
-      }
+    // Persist Client ID changes for OAuth accounts
+    final storage = sl<OAuthClientIdStorage>();
+    if (updated is MicrosoftAccount) {
+      final id = _msClientIdController.text.trim();
+      if (id.isNotEmpty) storage.saveMicrosoftClientId(id);
+    } else if (updated is GmailAccount) {
+      final id = _googleClientIdController.text.trim();
+      if (id.isNotEmpty) storage.saveGoogleClientId(id);
     }
 
     // Persist CalDAV password if provided
@@ -569,7 +541,27 @@ class _AccountsSectionState extends State<_AccountsSection> {
         }
 
         final accounts = state.accounts;
+
+        // After a save/delete the local _selectedAccount reference may no
+        // longer match any item in the new state (different instance). Always
+        // re-anchor it to the matching object from state by ID so the
+        // DropdownButton value is guaranteed to be in its items list.
+        if (_selectedAccount != null) {
+          final fresh = accounts.cast<Account?>().firstWhere(
+            (a) => a!.id == _selectedAccount!.id,
+            orElse: () => null,
+          );
+          if (fresh == null) {
+            _selectedAccount = null; // account was deleted
+          } else if (!identical(fresh, _selectedAccount)) {
+            _selectedAccount = fresh; // account was updated
+          }
+        }
+
         if (_selectedAccount == null) {
+          if (accounts.isEmpty) {
+            return const Center(child: Text('No accounts configured'));
+          }
           _selectedAccount = state.activeAccount;
           _syncControllers(_selectedAccount!);
         }
@@ -662,73 +654,24 @@ class _AccountsSectionState extends State<_AccountsSection> {
                           ImapAccount() => 'IMAP',
                         },
                       ),
-                      if (_selectedAccount is MicrosoftAccount) ...[
-                        _AccountDetailRow(
-                          label: 'Tenant ID',
-                          value: (_selectedAccount as MicrosoftAccount).tenantId,
-                          isEditing: _isEditing,
-                          controller: _tenantIdController,
-                        ),
-                        if (_oauthCredentials != null) ...[
-                          _SectionSubheader(label: 'OAuth App'),
-                          _HelpText(
-                            'Register an app in the Azure portal (portal.azure.com) '
-                            'under Azure Active Directory → App registrations. '
-                            'Set the platform to "Mobile and desktop applications" and '
-                            'add the redirect URI below. '
-                            'Grant the following Microsoft Graph permissions: '
-                            'Mail.Read, Mail.ReadWrite, Mail.Send, MailboxSettings.Read, '
-                            'Calendars.ReadWrite, Tasks.ReadWrite, offline_access. '
-                            'Use your directory\'s Tenant ID, or "common" to allow '
-                            'any Microsoft account to sign in.',
-                          ),
-                          const SizedBox(height: 12),
-                          _AccountDetailRow(
-                            label: 'Client ID',
-                            value: _oauthCredentials!.microsoftClientId,
-                            isEditing: _isEditing,
-                            controller: _oauthMsClientIdController,
-                          ),
-                          _AccountDetailRow(
-                            label: 'Tenant ID',
-                            value: _oauthCredentials!.microsoftTenantId,
-                            isEditing: _isEditing,
-                            controller: _oauthMsTenantIdController,
-                          ),
-                          _AccountDetailRow(
-                            label: 'Redirect URI',
-                            value: _oauthCredentials!.microsoftRedirectUri,
-                            isEditing: _isEditing,
-                            controller: _oauthMsRedirectUriController,
-                          ),
-                        ],
-                      ],
-                      if (_selectedAccount is GmailAccount &&
-                          _oauthCredentials != null) ...[
-                        _SectionSubheader(label: 'OAuth App'),
-                        _HelpText(
-                          'Create a project in the Google Cloud Console '
-                          '(console.cloud.google.com). Enable the Gmail API and, if '
-                          'needed, the Google Calendar API. Under APIs & Services → '
-                          'Credentials, create an OAuth 2.0 Client ID with application '
-                          'type "iOS" (for macOS/iOS native apps) and add the redirect '
-                          'URI below as an allowed scheme. '
-                          'The Client ID will end in .apps.googleusercontent.com.',
-                        ),
-                        const SizedBox(height: 12),
+                      if (_selectedAccount is MicrosoftAccount)
                         _AccountDetailRow(
                           label: 'Client ID',
-                          value: _oauthCredentials!.googleClientId,
+                          value: _msClientIdController.text.isEmpty
+                              ? '—'
+                              : _msClientIdController.text,
                           isEditing: _isEditing,
-                          controller: _oauthGoogleClientIdController,
+                          controller: _msClientIdController,
                         ),
+                      if (_selectedAccount is GmailAccount)
                         _AccountDetailRow(
-                          label: 'Redirect URI',
-                          value: _oauthCredentials!.googleRedirectUri,
+                          label: 'Client ID',
+                          value: _googleClientIdController.text.isEmpty
+                              ? '—'
+                              : _googleClientIdController.text,
                           isEditing: _isEditing,
-                          controller: _oauthGoogleRedirectUriController,
+                          controller: _googleClientIdController,
                         ),
-                      ],
                       if (_selectedAccount is ImapAccount) ...[
                         _SectionSubheader(label: 'Incoming (IMAP)'),
                         _AccountDetailRow(
@@ -872,19 +815,6 @@ class _AccountsSectionState extends State<_AccountsSection> {
           ],
         );
       },
-    );
-  }
-}
-
-class _HelpText extends StatelessWidget {
-  const _HelpText(this.text);
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: TextStyle(color: context.colors.textMuted, fontSize: 12, height: 1.5),
     );
   }
 }

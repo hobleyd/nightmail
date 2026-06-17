@@ -3,11 +3,10 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:uuid/uuid.dart';
 
-import '../../core/config/oauth_credentials.dart';
-import '../../core/config/oauth_credentials_storage.dart';
+import '../../core/config/app_config.dart';
+import '../../core/config/oauth_client_id_storage.dart';
 import '../../core/error/exceptions.dart';
 import '../../core/theme/app_colors.dart';
-import '../widgets/client_secret_dialog.dart';
 import '../../data/datasources/remote/graph_api_datasource_impl.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/auth/gmail_auth_service.dart';
@@ -17,6 +16,7 @@ import '../../infrastructure/auth/token_storage.dart';
 import '../../infrastructure/http/graph_http_client.dart';
 import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
+import '../widgets/client_id_dialog.dart';
 
 /// Pushed from inside [HomePage] when the user wants to add another account.
 class AddAccountPage extends StatefulWidget {
@@ -28,46 +28,32 @@ class AddAccountPage extends StatefulWidget {
 
 class _AddAccountPageState extends State<AddAccountPage> {
   bool _isLoading = false;
-  bool _isLoadingCredentials = true;
   String? _error;
-  OAuthCredentials? _credentials;
-
-  @override
-  void initState() {
-    super.initState();
-    sl<OAuthCredentialsStorage>().load().then((creds) {
-      if (mounted) {
-        setState(() {
-          _credentials = creds;
-          _isLoadingCredentials = false;
-        });
-      }
-    });
-  }
 
   Future<void> _signInMicrosoft() async {
     final accountCubit = context.read<AccountCubit>();
     final nav = Navigator.of(context);
 
-    final input = await showMicrosoftCredentialsDialog(
-      context,
-      currentClientId: _credentials?.microsoftClientId,
-      currentTenantId: _credentials?.microsoftTenantId,
-      currentClientSecret: _credentials?.microsoftClientSecret,
-      currentRedirectUri: _credentials?.microsoftRedirectUri,
-    );
-    if (input == null || !mounted) return;
+    final storage = sl<OAuthClientIdStorage>();
+    final storedId = await storage.loadMicrosoftClientId();
+    final initialId = storedId ??
+        (AppConfig.microsoftClientId != 'YOUR_CLIENT_ID'
+            ? AppConfig.microsoftClientId
+            : null);
 
-    final updatedCreds = _credentials!.copyWith(
-      microsoftClientId: input.clientId,
-      microsoftTenantId: input.tenantId,
-      microsoftClientSecret: input.clientSecret,
-      microsoftRedirectUri: input.redirectUri,
-    );
-    await sl<OAuthCredentialsStorage>().save(updatedCreds);
     if (!mounted) return;
+    final clientId = await showClientIdDialog(
+      context,
+      provider: 'Microsoft',
+      helpText:
+          'Enter the Application (Client) ID from your Azure app registration (portal.azure.com).',
+      initialValue: initialId,
+    );
+    if (clientId == null || !mounted) return;
+
+    await storage.saveMicrosoftClientId(clientId);
+
     setState(() {
-      _credentials = updatedCreds;
       _isLoading = true;
       _error = null;
     });
@@ -78,12 +64,10 @@ class _AddAccountPageState extends State<AddAccountPage> {
       final secureStorage = sl<FlutterSecureStorage>();
       final tokenStorage =
           TokenStorage(secureStorage, storageKey: 'token_$id');
-      final creds = updatedCreds;
       final authService = MicrosoftAuthService(
-        clientId: creds.microsoftClientId,
-        tenantId: creds.microsoftTenantId,
-        redirectUri: creds.microsoftRedirectUri,
-        clientSecret: creds.microsoftClientSecret,
+        clientId: clientId,
+        tenantId: AppConfig.microsoftTenantId,
+        redirectUri: AppConfig.microsoftRedirectUri,
         tokenStorage: tokenStorage,
       );
 
@@ -97,7 +81,7 @@ class _AddAccountPageState extends State<AddAccountPage> {
         id: id,
         displayName: profile.displayName,
         emailAddress: profile.email,
-        tenantId: creds.microsoftTenantId,
+        tenantId: AppConfig.microsoftTenantId,
       );
 
       if (mounted) {
@@ -117,21 +101,26 @@ class _AddAccountPageState extends State<AddAccountPage> {
     final accountCubit = context.read<AccountCubit>();
     final nav = Navigator.of(context);
 
-    final input = await showGoogleCredentialsDialog(
-      context,
-      currentClientId: _credentials?.googleClientId,
-      currentClientSecret: _credentials?.googleClientSecret,
-    );
-    if (input == null || !mounted) return;
+    final storage = sl<OAuthClientIdStorage>();
+    final storedId = await storage.loadGoogleClientId();
+    final initialId = storedId ??
+        (AppConfig.gmailClientId != 'YOUR_GOOGLE_CLIENT_ID'
+            ? AppConfig.gmailClientId
+            : null);
 
-    final updatedCreds = _credentials!.copyWith(
-      googleClientId: input.clientId,
-      googleClientSecret: input.clientSecret,
-    );
-    await sl<OAuthCredentialsStorage>().save(updatedCreds);
     if (!mounted) return;
+    final clientId = await showClientIdDialog(
+      context,
+      provider: 'Gmail',
+      helpText:
+          'Enter the Client ID from your Google Cloud Console OAuth 2.0 app (console.cloud.google.com).',
+      initialValue: initialId,
+    );
+    if (clientId == null || !mounted) return;
+
+    await storage.saveGoogleClientId(clientId);
+
     setState(() {
-      _credentials = updatedCreds;
       _isLoading = true;
       _error = null;
     });
@@ -142,11 +131,9 @@ class _AddAccountPageState extends State<AddAccountPage> {
       final secureStorage = sl<FlutterSecureStorage>();
       final tokenStorage =
           TokenStorage(secureStorage, storageKey: 'token_$id');
-      final creds = updatedCreds;
       final authService = GmailAuthService(
-        clientId: creds.googleClientId,
-        redirectUri: creds.googleRedirectUri,
-        clientSecret: creds.googleClientSecret,
+        clientId: clientId,
+        redirectUri: AppConfig.gmailRedirectUri,
         tokenStorage: tokenStorage,
       );
 
@@ -210,7 +197,7 @@ class _AddAccountPageState extends State<AddAccountPage> {
                     ),
                   ),
                   const SizedBox(height: 24),
-                  if (_isLoading || _isLoadingCredentials)
+                  if (_isLoading)
                     const Center(
                       child: CircularProgressIndicator(
                         color: AppColors.accent,

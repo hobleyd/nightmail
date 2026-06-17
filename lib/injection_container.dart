@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:get_it/get_it.dart';
 
-import 'core/config/oauth_credentials_storage.dart';
+import 'core/config/oauth_client_id_storage.dart';
 import 'core/settings/app_settings.dart';
 import 'data/database/app_database.dart';
 import 'data/datasources/local/delta_token_datasource.dart';
@@ -85,11 +85,15 @@ Future<void> configureDependencies() async {
     () => AccountStorage(sl<FlutterSecureStorage>()),
   );
 
+  sl.registerLazySingleton<OAuthClientIdStorage>(
+    () => OAuthClientIdStorage(sl<FlutterSecureStorage>()),
+  );
+
   sl.registerLazySingleton<AccountManager>(
     () => AccountManager(
       accountStorage: sl<AccountStorage>(),
       secureStorage: sl<FlutterSecureStorage>(),
-      credentialsStorage: sl<OAuthCredentialsStorage>(),
+      clientIdStorage: sl<OAuthClientIdStorage>(),
     ),
   );
 
@@ -174,9 +178,6 @@ Future<void> configureDependencies() async {
 
   // Settings
   sl.registerLazySingleton(() => AppSettings());
-  sl.registerLazySingleton(
-    () => OAuthCredentialsStorage(sl<FlutterSecureStorage>()),
-  );
   sl.registerLazySingleton(() => BadgeService());
 
   // Presentation — singletons

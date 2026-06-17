@@ -3,8 +3,11 @@ import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../domain/entities/email.dart';
+import '../../../domain/usecases/classify_emails.dart';
 import '../../../domain/usecases/delete_email.dart';
 import '../../../domain/usecases/report_junk.dart';
+import '../../../domain/usecases/train_spam_filter.dart';
+import '../../../infrastructure/accounts/account.dart';
 import '../../../domain/usecases/empty_folder.dart';
 import '../../../domain/usecases/get_cached_emails.dart';
 import '../../../domain/usecases/get_emails.dart';
@@ -29,6 +32,8 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     required EmptyFolder emptyFolder,
     required AccountManager accountManager,
     required RecordKnownSenders recordKnownSenders,
+    required ClassifyEmails classifyEmails,
+    required TrainSpamFilter trainSpamFilter,
   })  : _getEmails = getEmails,
         _getCachedEmails = getCachedEmails,
         _markEmailAsRead = markEmailAsRead,
@@ -38,6 +43,8 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         _emptyFolder = emptyFolder,
         _accountManager = accountManager,
         _recordKnownSenders = recordKnownSenders,
+        _classifyEmails = classifyEmails,
+        _trainSpamFilter = trainSpamFilter,
         super(const EmailListInitial()) {
     on<EmailListLoadRequested>(_onLoadRequested);
     on<EmailListLoadMoreRequested>(_onLoadMoreRequested);
@@ -61,6 +68,8 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   final EmptyFolder _emptyFolder;
   final AccountManager _accountManager;
   final RecordKnownSenders _recordKnownSenders;
+  final ClassifyEmails _classifyEmails;
+  final TrainSpamFilter _trainSpamFilter;
 
   Future<void> _onLoadRequested(
     EmailListLoadRequested event,
@@ -103,6 +112,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       top: _pageSize,
     ));
 
+    List<Email>? loaded;
     result.fold(
       (failure) {
         if (hasCachedData) {
@@ -114,6 +124,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         }
       },
       (emails) {
+        loaded = emails;
         emit(EmailListLoaded(
           emails: emails,
           hasMore: emails.length == _pageSize,
@@ -124,6 +135,9 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         _recordSenders(emails, event.folderDisplayName);
       },
     );
+    if (loaded != null) {
+      await _classifyAndTrainIfImap(emit, loaded!);
+    }
   }
 
   Future<void> _onLoadMoreRequested(
@@ -143,9 +157,11 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       skip: current.emails.length,
     ));
 
+    List<Email>? loadedMore;
     result.fold(
       (failure) => emit(EmailListError(message: failure.message)),
       (newEmails) {
+        loadedMore = newEmails;
         emit(current.copyWith(
           emails: [...current.emails, ...newEmails],
           hasMore: newEmails.length == _pageSize,
@@ -154,6 +170,9 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         _recordSenders(newEmails, current.currentFolderName);
       },
     );
+    if (loadedMore != null) {
+      await _classifyAndTrainIfImap(emit, loadedMore!);
+    }
   }
 
   Future<void> _onRefreshRequested(
@@ -173,6 +192,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       top: _pageSize,
     ));
 
+    List<Email>? refreshed;
     result.fold(
       (failure) {
         final s = state;
@@ -183,6 +203,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         }
       },
       (emails) {
+        refreshed = emails;
         emit(EmailListLoaded(
           emails: emails,
           hasMore: emails.length == _pageSize,
@@ -192,6 +213,9 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         _recordSenders(emails, folderName);
       },
     );
+    if (refreshed != null) {
+      await _classifyAndTrainIfImap(emit, refreshed!);
+    }
   }
 
   Future<void> _onMarkReadRequested(
@@ -287,12 +311,23 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     final current = state;
     if (current is! EmailListLoaded) return;
     final ids = event.emailIds.toSet();
+    final junkEmails = current.emails.where((e) => ids.contains(e.id)).toList();
     emit(current.copyWith(
       emails: current.emails.where((e) => !ids.contains(e.id)).toList(),
     ));
     await Future.wait(
       event.emailIds.map((id) => _reportJunk(ReportJunkParams(id: id))),
     );
+    if (_accountManager.activeAccount is ImapAccount) {
+      final accountId = _accountManager.activeAccount?.id;
+      if (accountId != null && junkEmails.isNotEmpty) {
+        unawaited(_trainSpamFilter(TrainSpamFilterParams(
+          accountId: accountId,
+          emails: junkEmails,
+          isSpam: true,
+        )));
+      }
+    }
   }
 
   Future<void> _onFolderEmptied(
@@ -327,6 +362,31 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     Emitter<EmailListState> emit,
   ) {
     emit(const EmailListInitial());
+  }
+
+  Future<void> _classifyAndTrainIfImap(
+    Emitter<EmailListState> emit,
+    List<Email> emails,
+  ) async {
+    if (_accountManager.activeAccount is! ImapAccount) return;
+    final accountId = _accountManager.activeAccount?.id;
+    if (accountId == null || emails.isEmpty) return;
+
+    final spamIds = await _classifyEmails(ClassifyEmailsParams(
+      accountId: accountId,
+      emails: emails,
+    ));
+
+    final current = state;
+    if (current is EmailListLoaded && spamIds.isNotEmpty) {
+      emit(current.copyWith(spamEmailIds: spamIds));
+    }
+
+    unawaited(_trainSpamFilter(TrainSpamFilterParams(
+      accountId: accountId,
+      emails: emails,
+      isSpam: false,
+    )));
   }
 
   void _recordSenders(List<Email> emails, String? folderName) {

@@ -8,8 +8,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_folder.dart';
-import '../../infrastructure/accounts/account.dart';
-import '../blocs/account/account_cubit.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
 import '../blocs/email_detail/email_detail_event.dart';
 import '../blocs/email_list/email_list_bloc.dart';
@@ -239,10 +237,6 @@ class _EmailListPanelState extends State<EmailListPanel> {
               builder: (context, isLoadingFresh) {
                 final hasSelection = _selectedEmailIds.isNotEmpty ||
                     widget.selectedEmailId != null;
-                final account = context.read<AccountCubit>().state;
-                final supportsJunk = account is AccountsLoaded &&
-                    (account.activeAccount is GmailAccount ||
-                        account.activeAccount is MicrosoftAccount);
                 return _ListHeader(
                   folderName: widget.folderName,
                   isLoadingFresh: isLoadingFresh,
@@ -250,8 +244,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
                       .read<EmailListBloc>()
                       .add(const EmailListRefreshRequested()),
                   onDelete: hasSelection ? _deleteSelection : null,
-                  onReportJunk:
-                      hasSelection && supportsJunk ? _reportJunkSelection : null,
+                  onReportJunk: hasSelection ? _reportJunkSelection : null,
                 );
               },
             ),
@@ -273,6 +266,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
                       :final emails,
                       :final isLoadingMore,
                       :final expandedConversationIds,
+                      :final spamEmailIds,
                     ) =>
                       emails.isEmpty
                           ? const _EmptyStateView(message: 'No emails here')
@@ -286,6 +280,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
                               onEmailTapped: _handleEmailTap,
                               onEmailLongPressed: _handleEmailLongPress,
                               expandedConversationIds: expandedConversationIds,
+                              spamEmailIds: spamEmailIds,
                               onToggleConversation: (id) => context
                                   .read<EmailListBloc>()
                                   .add(EmailListToggleConversation(conversationId: id)),
@@ -508,6 +503,7 @@ class _EmailListView extends StatelessWidget {
     required this.onEmailTapped,
     required this.expandedConversationIds,
     required this.onToggleConversation,
+    this.spamEmailIds = const {},
     this.onEmailLongPressed,
   });
 
@@ -520,6 +516,7 @@ class _EmailListView extends StatelessWidget {
   final void Function(Email email, int index) onEmailTapped;
   final void Function(Email email, int index)? onEmailLongPressed;
   final Set<String> expandedConversationIds;
+  final Set<String> spamEmailIds;
   final ValueChanged<String> onToggleConversation;
 
   @override
@@ -551,6 +548,7 @@ class _EmailListView extends StatelessWidget {
                 isMultiSelected: selectedEmailIds.contains(email.id),
                 showCheckbox: showCheckboxes,
                 indent: isChild ? 20.0 : 0.0,
+                isSpam: spamEmailIds.contains(email.id),
                 onTap: () => onEmailTapped(email, i),
                 onLongPress: () => onEmailLongPressed?.call(email, i),
                 onDelete: () {
@@ -947,7 +945,6 @@ class _FolderCountFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = context.colors;
     final unread = folder.unreadItemCount;
     final total = folder.totalItemCount;
     final label = unread > 0 ? '$unread unread · $total total' : '$total total';

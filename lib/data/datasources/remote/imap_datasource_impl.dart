@@ -666,8 +666,58 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
   }
 
   @override
-  Future<void> reportJunk(String id) {
-    throw UnimplementedError('reportJunk not supported for IMAP');
+  @override
+  Future<void> reportJunk(String id) async {
+    final separatorIdx = id.lastIndexOf(':');
+    final mailboxPath =
+        separatorIdx > 0 ? id.substring(0, separatorIdx) : 'INBOX';
+    final uid = int.tryParse(id.substring(separatorIdx + 1)) ?? 0;
+
+    try {
+      final client = await _getConnectedClient();
+      final junkPath = await _findJunkPath(client);
+      await _selectMailboxPath(client, mailboxPath);
+      final sequence = MessageSequence.fromId(uid, isUid: true);
+      if (junkPath != null) {
+        await client.uidCopy(sequence, targetMailboxPath: junkPath);
+      }
+      await client.uidStore(
+        sequence,
+        [MessageFlags.deleted],
+        action: StoreAction.add,
+      );
+      await client.expunge();
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    }
+  }
+
+  Future<String?> _findJunkPath(ImapClient client) async {
+    try {
+      final mailboxes = await client.listMailboxes(recursive: true);
+      final junkMailbox = mailboxes.where((mb) => mb.isJunk).firstOrNull ??
+          _wellKnownJunkMailbox(mailboxes);
+      return junkMailbox?.path;
+    } on ImapException {
+      return null;
+    }
+  }
+
+  Mailbox? _wellKnownJunkMailbox(List<Mailbox> mailboxes) {
+    const wellKnown = ['Junk', 'Junk Email', 'Spam', 'Bulk Mail'];
+    for (final name in wellKnown) {
+      final fullName =
+          _inboxFolderPrefix.isNotEmpty ? '$_inboxFolderPrefix$name' : name;
+      final match = mailboxes
+          .where(
+            (mb) =>
+                mb.path.toLowerCase() == fullName.toLowerCase() ||
+                mb.path.toLowerCase() == name.toLowerCase(),
+          )
+          .firstOrNull;
+      if (match != null) return match;
+    }
+    return null;
   }
 
   @override

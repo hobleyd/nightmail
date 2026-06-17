@@ -16,6 +16,7 @@ class EmailListItem extends StatelessWidget {
     this.indent = 0.0,
     this.isMultiSelected = false,
     this.showCheckbox = false,
+    this.isSpam = false,
     this.onLongPress,
   });
 
@@ -23,6 +24,7 @@ class EmailListItem extends StatelessWidget {
   final bool isSelected;
   final bool isMultiSelected;
   final bool showCheckbox;
+  final bool isSpam;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
   final VoidCallback onDelete;
@@ -41,7 +43,11 @@ class EmailListItem extends StatelessWidget {
         margin: EdgeInsets.fromLTRB(8 + indent, 1, 8, 1),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: highlighted ? c.selectionEmailBg : Colors.transparent,
+          color: highlighted
+              ? c.selectionEmailBg
+              : isSpam
+                  ? Colors.pink.shade100.withAlpha(60)
+                  : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
           border: isSelected ? Border.all(color: c.selectionBorder) : null,
         ),

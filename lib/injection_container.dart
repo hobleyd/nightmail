@@ -15,6 +15,7 @@ import 'data/repositories/calendar_repository_impl.dart';
 import 'data/repositories/directory_contacts_repository_impl.dart';
 import 'data/repositories/email_repository_impl.dart';
 import 'data/repositories/sender_repository_impl.dart';
+import 'data/repositories/spam_filter_repository_impl.dart';
 import 'data/repositories/system_contacts_repository_impl.dart';
 import 'data/repositories/tasks_repository_impl.dart';
 import 'data/services/eml_parser.dart';
@@ -22,6 +23,7 @@ import 'domain/repositories/calendar_repository.dart';
 import 'domain/repositories/directory_contacts_repository.dart';
 import 'domain/repositories/email_repository.dart';
 import 'domain/repositories/sender_repository.dart';
+import 'domain/repositories/spam_filter_repository.dart';
 import 'domain/repositories/system_contacts_repository.dart';
 import 'domain/repositories/tasks_repository.dart';
 import 'domain/usecases/attach_email_to_task.dart';
@@ -33,6 +35,8 @@ import 'domain/usecases/decline_calendar_event.dart';
 import 'domain/usecases/create_task.dart';
 import 'domain/usecases/delete_email.dart';
 import 'domain/usecases/report_junk.dart';
+import 'domain/usecases/classify_emails.dart';
+import 'domain/usecases/train_spam_filter.dart';
 import 'domain/usecases/download_task_attachment.dart';
 import 'domain/usecases/move_email.dart';
 import 'domain/usecases/download_attachment.dart';
@@ -143,6 +147,9 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton<TasksRepository>(
     () => TasksRepositoryImpl(accountManager: sl<AccountManager>()),
   );
+  sl.registerLazySingleton<SpamFilterRepository>(
+    () => SpamFilterRepositoryImpl(),
+  );
 
   // Domain — use cases
   sl.registerLazySingleton(() => GetEmails(sl<EmailRepository>()));
@@ -152,6 +159,8 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => SendEmail(sl<EmailRepository>()));
   sl.registerLazySingleton(() => MoveEmail(sl<EmailRepository>()));
   sl.registerLazySingleton(() => ReportJunk(sl<EmailRepository>()));
+  sl.registerLazySingleton(() => ClassifyEmails(sl<SpamFilterRepository>()));
+  sl.registerLazySingleton(() => TrainSpamFilter(sl<SpamFilterRepository>()));
   sl.registerLazySingleton(() => DeleteEmail(sl<EmailRepository>()));
   sl.registerLazySingleton(() => EmptyFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => DownloadAttachment(sl<EmailRepository>()));
@@ -223,6 +232,8 @@ Future<void> configureDependencies() async {
         emptyFolder: sl<EmptyFolder>(),
         accountManager: sl<AccountManager>(),
         recordKnownSenders: sl<RecordKnownSenders>(),
+        classifyEmails: sl<ClassifyEmails>(),
+        trainSpamFilter: sl<TrainSpamFilter>(),
       ));
   sl.registerFactory(() => EmailDetailBloc(
         getEmail: sl<GetEmail>(),

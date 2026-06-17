@@ -27,6 +27,7 @@ final class EmailListLoaded extends EmailListState {
     this.currentFolderName,
     this.expandedConversationIds = const {},
     this.emptyingFolderIds = const {},
+    this.spamEmailIds = const {},
   });
 
   final List<Email> emails;
@@ -45,6 +46,9 @@ final class EmailListLoaded extends EmailListState {
   /// Folder IDs for which a Delete All operation is currently in flight.
   final Set<String> emptyingFolderIds;
 
+  /// IDs of emails the Bayesian spam filter has classified as spam (IMAP only).
+  final Set<String> spamEmailIds;
+
   EmailListLoaded copyWith({
     List<Email>? emails,
     bool? hasMore,
@@ -53,6 +57,7 @@ final class EmailListLoaded extends EmailListState {
     String? currentFolderId,
     Set<String>? expandedConversationIds,
     Set<String>? emptyingFolderIds,
+    Set<String>? spamEmailIds,
   }) {
     return EmailListLoaded(
       emails: emails ?? this.emails,
@@ -63,6 +68,7 @@ final class EmailListLoaded extends EmailListState {
       currentFolderName: currentFolderName,
       expandedConversationIds: expandedConversationIds ?? this.expandedConversationIds,
       emptyingFolderIds: emptyingFolderIds ?? this.emptyingFolderIds,
+      spamEmailIds: spamEmailIds ?? this.spamEmailIds,
     );
   }
 
@@ -76,6 +82,7 @@ final class EmailListLoaded extends EmailListState {
         currentFolderName,
         expandedConversationIds,
         emptyingFolderIds,
+        spamEmailIds,
       ];
 }
 

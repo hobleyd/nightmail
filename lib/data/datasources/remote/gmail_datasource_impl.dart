@@ -599,8 +599,46 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     required String messageId,
     required String comment,
     bool replyAll = false,
-  }) {
-    throw UnimplementedError('replyToEmail not yet supported for Gmail');
+  }) async {
+    try {
+      final rawResp = await _dio.get<Map<String, dynamic>>(
+        '/users/me/messages/$messageId',
+        queryParameters: {'format': 'raw'},
+      );
+      if (rawResp.data == null) {
+        throw const ServerException(message: 'Message not found');
+      }
+      final rawBase64 = rawResp.data!['raw'] as String?;
+      if (rawBase64 == null) {
+        throw const ServerException(message: 'No raw data in response');
+      }
+      final threadId = rawResp.data!['threadId'] as String?;
+
+      final rawBytes = base64Url.decode(_padBase64(rawBase64));
+      final original = MimeMessage.parseFromData(rawBytes);
+
+      final fromEmail = await _getUserEmail();
+      final builder = MessageBuilder.prepareReplyToMessage(
+        original,
+        MailAddress(null, fromEmail),
+        replyAll: replyAll,
+      )..addTextPlain(comment);
+
+      final mime = builder.buildMimeMessage();
+      final encoded = base64Url
+          .encode(utf8.encode(mime.renderMessage()))
+          .replaceAll('=', '');
+
+      await _dio.post<void>(
+        '/users/me/messages/send',
+        data: {
+          'raw': encoded,
+          if (threadId != null) 'threadId': threadId,
+        },
+      );
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
   }
 
   @override

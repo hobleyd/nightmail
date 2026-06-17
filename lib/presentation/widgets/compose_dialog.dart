@@ -324,7 +324,12 @@ class _ComposeFormState extends State<ComposeForm> {
     final accountId = widget.accountId;
 
     if (widget.scrollable) {
-      final forwardEmail = widget.mode == ComposeMode.forward ? widget.originalEmail : null;
+      final isReplyLike = widget.mode == ComposeMode.reply ||
+          widget.mode == ComposeMode.replyAll ||
+          widget.mode == ComposeMode.forward;
+      final quotedEmail = isReplyLike ? widget.originalEmail : null;
+      final forwardEmail =
+          widget.mode == ComposeMode.forward ? widget.originalEmail : null;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -363,8 +368,9 @@ class _ComposeFormState extends State<ComposeForm> {
                       contentPadding: EdgeInsets.zero,
                     ),
                   ),
-                  if (forwardEmail != null)
-                    _ForwardedMessagePreview(email: forwardEmail, colors: c),
+                  if (quotedEmail != null)
+                    _ForwardedMessagePreview(
+                        email: quotedEmail, colors: c, mode: widget.mode),
                   const SizedBox(height: 8),
                 ],
               ),
@@ -376,7 +382,12 @@ class _ComposeFormState extends State<ComposeForm> {
       );
     }
 
-    final forwardEmail = widget.mode == ComposeMode.forward ? widget.originalEmail : null;
+    final isReplyLike = widget.mode == ComposeMode.reply ||
+        widget.mode == ComposeMode.replyAll ||
+        widget.mode == ComposeMode.forward;
+    final quotedEmail = isReplyLike ? widget.originalEmail : null;
+    final forwardEmail =
+        widget.mode == ComposeMode.forward ? widget.originalEmail : null;
     return SizedBox(
       width: 600,
       child: Column(
@@ -400,7 +411,7 @@ class _ComposeFormState extends State<ComposeForm> {
                         () => _excludedAttachmentIds = [..._excludedAttachmentIds, id]),
                   ),
                 SizedBox(
-                  height: forwardEmail != null ? 150 : 240,
+                  height: quotedEmail != null ? 150 : 240,
                   child: TextField(
                     controller: _bodyController,
                     focusNode: _bodyFocus,
@@ -420,8 +431,9 @@ class _ComposeFormState extends State<ComposeForm> {
                     ),
                   ),
                 ),
-                if (forwardEmail != null)
-                  _ForwardedMessagePreview(email: forwardEmail, colors: c),
+                if (quotedEmail != null)
+                  _ForwardedMessagePreview(
+                      email: quotedEmail, colors: c, mode: widget.mode),
               ],
             ),
           ),
@@ -607,10 +619,12 @@ class _ForwardedMessagePreview extends StatelessWidget {
   const _ForwardedMessagePreview({
     required this.email,
     required this.colors,
+    required this.mode,
   });
 
   final Email email;
   final AppColors colors;
+  final ComposeMode mode;
 
   static String _stripHtml(String html) {
     return html
@@ -630,6 +644,21 @@ class _ForwardedMessagePreview extends StatelessWidget {
         .trim();
   }
 
+  static String _formatDate(DateTime dt) {
+    final local = dt.toLocal();
+    const months = [
+      '', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    const days = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    final h = local.hour;
+    final min = local.minute.toString().padLeft(2, '0');
+    final amPm = h >= 12 ? 'PM' : 'AM';
+    final h12 = h == 0 ? 12 : (h > 12 ? h - 12 : h);
+    return '${days[local.weekday]}, ${months[local.month]} ${local.day}, '
+        '${local.year} at $h12:$min $amPm';
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = colors;
@@ -641,12 +670,9 @@ class _ForwardedMessagePreview extends StatelessWidget {
         ? '$fromName <${email.from.address}>'
         : email.from.address;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const SizedBox(height: 8),
-        Divider(height: 1, color: c.border),
-        const SizedBox(height: 12),
+    final List<Widget> headerLines;
+    if (mode == ComposeMode.forward) {
+      headerLines = [
         Text(
           '---------- Forwarded message ---------',
           style: TextStyle(
@@ -657,6 +683,24 @@ class _ForwardedMessagePreview extends StatelessWidget {
             style: TextStyle(color: c.textDimmed, fontSize: 12)),
         Text('Subject: ${email.subject}',
             style: TextStyle(color: c.textDimmed, fontSize: 12)),
+      ];
+    } else {
+      headerLines = [
+        Text(
+          'On ${_formatDate(email.receivedDateTime)}, $from wrote:',
+          style: TextStyle(
+              color: c.textDimmed, fontSize: 12, fontStyle: FontStyle.italic),
+        ),
+      ];
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 8),
+        Divider(height: 1, color: c.border),
+        const SizedBox(height: 12),
+        ...headerLines,
         const SizedBox(height: 8),
         ConstrainedBox(
           constraints: const BoxConstraints(maxHeight: 220),

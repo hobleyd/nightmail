@@ -5,6 +5,7 @@ import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/error/exceptions.dart';
 import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/data/datasources/local/email_local_datasource.dart';
+import 'package:nightmail/data/datasources/local/folder_local_datasource.dart';
 import 'package:nightmail/data/datasources/remote/email_remote_datasource.dart';
 import 'package:nightmail/data/models/email_address_model.dart';
 import 'package:nightmail/data/models/email_folder_model.dart';
@@ -16,16 +17,18 @@ import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 
 import 'email_repository_impl_test.mocks.dart';
 
-@GenerateMocks([AccountManager, EmailLocalDatasource, EmailRemoteDatasource])
+@GenerateMocks([AccountManager, EmailLocalDatasource, FolderLocalDatasource, EmailRemoteDatasource])
 void main() {
   late EmailRepositoryImpl repository;
   late MockAccountManager mockAccountManager;
   late MockEmailLocalDatasource mockLocalDatasource;
+  late MockFolderLocalDatasource mockFolderLocalDatasource;
   late MockEmailRemoteDatasource mockRemoteDatasource;
 
   setUp(() {
     mockAccountManager = MockAccountManager();
     mockLocalDatasource = MockEmailLocalDatasource();
+    mockFolderLocalDatasource = MockFolderLocalDatasource();
     mockRemoteDatasource = MockEmailRemoteDatasource();
 
     when(mockAccountManager.emailDatasource).thenReturn(mockRemoteDatasource);
@@ -35,6 +38,7 @@ void main() {
     repository = EmailRepositoryImpl(
       accountManager: mockAccountManager,
       localDatasource: mockLocalDatasource,
+      folderLocalDatasource: mockFolderLocalDatasource,
     );
   });
 

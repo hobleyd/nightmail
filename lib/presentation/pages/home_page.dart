@@ -109,6 +109,20 @@ class _HomeView extends StatelessWidget {
             }
           },
         ),
+        BlocListener<FolderListBloc, FolderListState>(
+          listenWhen: (_, curr) =>
+              curr is FolderListLoaded && !curr.isRefreshing,
+          listener: (context, state) {
+            if (state is! FolderListLoaded) return;
+            final inboxes = state.folders.where(
+              (f) => f.displayName.toLowerCase() == 'inbox',
+            );
+            if (inboxes.isEmpty) return;
+            context
+                .read<MailPollerCubit>()
+                .updateBadgeFromFolders(inboxes.first.unreadItemCount);
+          },
+        ),
         BlocListener<MailPollerCubit, MailPollerState>(
           listenWhen: (prev, curr) =>
               prev.pollGeneration != curr.pollGeneration,
@@ -116,6 +130,9 @@ class _HomeView extends StatelessWidget {
             context
                 .read<EmailListBloc>()
                 .add(const EmailListRefreshRequested());
+            context
+                .read<FolderListBloc>()
+                .add(const FolderListLoadRequested());
           },
         ),
       ],

@@ -267,9 +267,14 @@ class _EmailListPanelState extends State<EmailListPanel> {
                 return _ListHeader(
                   folderName: widget.folderName,
                   isLoadingFresh: isLoadingFresh,
-                  onRefresh: () => context
-                      .read<EmailListBloc>()
-                      .add(const EmailListRefreshRequested()),
+                  onRefresh: () {
+                    context
+                        .read<EmailListBloc>()
+                        .add(const EmailListRefreshRequested());
+                    context
+                        .read<FolderListBloc>()
+                        .add(const FolderListLoadRequested());
+                  },
                   onDelete: hasSelection ? _deleteSelection : null,
                   onReportJunk: hasSelection ? _reportJunkSelection : null,
                   onMarkUnread: hasSelection ? _markUnreadSelection : null,

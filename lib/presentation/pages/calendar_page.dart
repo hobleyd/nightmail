@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -275,6 +277,7 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
   late final ScrollController _scrollController;
   Offset? _tapPosition;
   late DateTime _selectedDay;
+  Timer? _timer;
 
   @override
   void initState() {
@@ -282,10 +285,14 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
     _scrollController = ScrollController(initialScrollOffset: 7 * _hourHeight);
     final now = DateTime.now();
     _selectedDay = DateTime(now.year, now.month, now.day);
+    _timer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
+    _timer?.cancel();
     _scrollController.dispose();
     super.dispose();
   }
@@ -448,6 +455,11 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
                                               (span.total > 1 ? 1.0 : 0.0),
                                         );
                                       }),
+                                      if (isToday)
+                                        _CurrentTimeLine(
+                                          now: DateTime.now(),
+                                          hourHeight: _hourHeight,
+                                        ),
                                     ],
                                   );
                                 },
@@ -1041,6 +1053,23 @@ class _DayColumnCell extends StatefulWidget {
 
 class _DayColumnCellState extends State<_DayColumnCell> {
   Offset? _tapPosition;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.isToday) {
+      _timer = Timer.periodic(const Duration(minutes: 1), (_) {
+        if (mounted) setState(() {});
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
 
   void _onDoubleTapDown(TapDownDetails details) {
     _tapPosition = details.localPosition;
@@ -1112,11 +1141,52 @@ class _DayColumnCellState extends State<_DayColumnCell> {
                       width: colW - (span.total > 1 ? 1.0 : 0.0),
                     );
                   }),
+                  if (widget.isToday)
+                    _CurrentTimeLine(
+                      now: DateTime.now(),
+                      hourHeight: widget.hourHeight,
+                    ),
                 ],
               );
             },
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Current time indicator
+// ---------------------------------------------------------------------------
+
+class _CurrentTimeLine extends StatelessWidget {
+  const _CurrentTimeLine({required this.now, required this.hourHeight});
+
+  final DateTime now;
+  final double hourHeight;
+
+  @override
+  Widget build(BuildContext context) {
+    final top = (now.hour + now.minute / 60.0) * hourHeight;
+    return Positioned(
+      top: top - 4,
+      left: 0,
+      right: 0,
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: const BoxDecoration(
+              color: AppColors.accent,
+              shape: BoxShape.circle,
+            ),
+          ),
+          Expanded(
+            child: Container(height: 1.5, color: AppColors.accent),
+          ),
+        ],
       ),
     );
   }

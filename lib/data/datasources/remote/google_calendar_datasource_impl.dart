@@ -137,6 +137,34 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       if (userEmail != null) {'email': userEmail, 'responseStatus': responseStatus},
     ];
 
+    // Google auto-adds invite events to the calendar with needsAction status,
+    // so the event almost always already exists. Look it up by iCalUID and PATCH
+    // the attendee response — POSTing a new event returns 403 if the UID exists.
+    if (event.uid != null) {
+      try {
+        final searchResp = await _dio.get<Map<String, dynamic>>(
+          '/calendars/primary/events',
+          queryParameters: {'iCalUID': event.uid, 'maxResults': 1},
+        );
+        final items = (searchResp.data?['items'] as List<dynamic>? ?? [])
+            .cast<Map<String, dynamic>>();
+        if (items.isNotEmpty) {
+          final eventId = items.first['id'] as String;
+          await _dio.patch<void>(
+            '/calendars/primary/events/$eventId',
+            data: {if (attendees.isNotEmpty) 'attendees': attendees},
+            queryParameters: {'sendUpdates': 'all'},
+          );
+          return;
+        }
+      } on DioException catch (e) {
+        final status = e.response?.statusCode;
+        if (status == 401 || status == 403) throw _mapException(e);
+        // Search failed — fall through to create.
+      }
+    }
+
+    // Fallback: create the event (invite not yet auto-added to calendar).
     final body = <String, dynamic>{
       'summary': event.summary,
       'start': event.isAllDay
@@ -227,6 +255,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
         icsData.replaceAll(RegExp(r'\r?\n[ \t]'), '');
 
     String? summary;
+    String? uid;
     DateTime? start;
     DateTime? end;
     bool isAllDay = false;
@@ -253,6 +282,8 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
 
       if (namePart == 'SUMMARY') {
         summary = value;
+      } else if (namePart == 'UID') {
+        uid = value;
       } else if (namePart.startsWith('DTSTART')) {
         final (dt, allDay) = _parseIcsDateTime(namePart, value);
         if (dt != null) {
@@ -275,6 +306,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
 
     return _IcsEvent(
       summary: summary ?? '(No title)',
+      uid: uid,
       start: start ?? DateTime.now().toUtc(),
       end: end ?? (start ?? DateTime.now().toUtc()).add(const Duration(hours: 1)),
       isAllDay: isAllDay,
@@ -517,6 +549,7 @@ class _IcsEvent {
     required this.start,
     required this.end,
     required this.isAllDay,
+    this.uid,
     this.location,
     this.attendees = const [],
   });
@@ -525,6 +558,7 @@ class _IcsEvent {
   final DateTime start;
   final DateTime end;
   final bool isAllDay;
+  final String? uid;
   final String? location;
   final List<String> attendees;
 }

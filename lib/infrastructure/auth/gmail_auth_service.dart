@@ -38,7 +38,7 @@ class GmailAuthService implements AuthService {
     'profile',
     'email',
     'https://www.googleapis.com/auth/gmail.modify',
-    'https://www.googleapis.com/auth/calendar.readonly',
+    'https://www.googleapis.com/auth/calendar.events',
     'https://www.googleapis.com/auth/tasks',
     'https://www.googleapis.com/auth/contacts.readonly',
     'https://www.googleapis.com/auth/directory.readonly',

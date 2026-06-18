@@ -213,6 +213,7 @@ Future<void> configureDependencies() async {
       appSettings: sl<AppSettings>(),
       badgeService: sl<BadgeService>(),
       database: sl<DeltaTokenDatasource>(),
+      getCachedFolders: sl<GetCachedFolders>(),
     ),
   );
 

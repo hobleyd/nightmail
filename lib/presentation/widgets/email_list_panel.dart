@@ -13,7 +13,10 @@ import '../blocs/email_detail/email_detail_event.dart';
 import '../blocs/email_list/email_list_bloc.dart';
 import '../blocs/email_list/email_list_event.dart';
 import '../blocs/email_list/email_list_state.dart';
+import '../blocs/folder_list/folder_list_bloc.dart';
+import '../blocs/folder_list/folder_list_event.dart';
 import '../blocs/home/home_cubit.dart';
+import '../blocs/mail_poller/mail_poller_cubit.dart';
 import '../blocs/tasks/tasks_bloc.dart';
 import '../blocs/tasks/tasks_event.dart';
 import '../blocs/tasks/tasks_state.dart';
@@ -228,6 +231,15 @@ class _EmailListPanelState extends State<EmailListPanel> {
         : ids.toList();
     for (final id in readIds) {
       context.read<EmailListBloc>().add(EmailListMarkReadRequested(emailId: id, isRead: false));
+    }
+    if (readIds.isNotEmpty && widget.folder != null) {
+      context.read<FolderListBloc>().add(FolderListUnreadCountChanged(
+        folderId: widget.folder!.id,
+        unreadCountDelta: readIds.length,
+      ));
+      for (var i = 0; i < readIds.length; i++) {
+        context.read<MailPollerCubit>().incrementUnreadCount();
+      }
     }
     _clearSelection();
   }

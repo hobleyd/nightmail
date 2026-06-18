@@ -6,6 +6,7 @@ import '../../../core/error/exceptions.dart';
 import '../../../core/settings/app_settings.dart';
 import '../../../data/datasources/local/delta_token_datasource.dart';
 import '../../../data/datasources/remote/graph_delta_datasource.dart';
+import '../../../domain/usecases/get_cached_folders.dart';
 import '../../../infrastructure/accounts/account.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
 import '../../../infrastructure/badge/badge_service.dart';
@@ -17,10 +18,12 @@ class MailPollerCubit extends Cubit<MailPollerState> {
     required AppSettings appSettings,
     required BadgeService badgeService,
     required DeltaTokenDatasource database,
+    required GetCachedFolders getCachedFolders,
   })  : _accountManager = accountManager,
         _appSettings = appSettings,
         _badgeService = badgeService,
         _database = database,
+        _getCachedFolders = getCachedFolders,
         super(const MailPollerState(
           accountsWithNewMail: {},
           pollIntervalSeconds: AppSettings.defaultPollIntervalSeconds,
@@ -30,6 +33,7 @@ class MailPollerCubit extends Cubit<MailPollerState> {
   final AppSettings _appSettings;
   final BadgeService _badgeService;
   final DeltaTokenDatasource _database;
+  final GetCachedFolders _getCachedFolders;
 
   Timer? _timer;
   bool _polling = false;
@@ -42,7 +46,27 @@ class MailPollerCubit extends Cubit<MailPollerState> {
   Future<void> initialize() async {
     final interval = await _appSettings.loadPollIntervalSeconds();
     if (!isClosed) emit(state.copyWith(pollIntervalSeconds: interval));
+    await _primeBadgeFromCache();
     _startTimer(interval);
+  }
+
+  Future<void> _primeBadgeFromCache() async {
+    int total = 0;
+    for (final account in _accountManager.accounts) {
+      final result = await _getCachedFolders(account.id);
+      result.fold((_) {}, (folders) {
+        final inbox = folders.where(
+          (f) => f.displayName.toLowerCase() == 'inbox',
+        );
+        if (inbox.isNotEmpty) {
+          final count = inbox.first.unreadItemCount;
+          _latestPolledUnread[account.id] = count;
+          _baselineUnread[account.id] = count;
+          total += count;
+        }
+      });
+    }
+    if (total > 0) await _badgeService.setBadgeCount(total);
   }
 
   void _startTimer(int seconds) {
@@ -132,8 +156,18 @@ class MailPollerCubit extends Cubit<MailPollerState> {
                 } else if (unreadCount == 0) {
                   if (_newMailAccounts.remove(account.id)) changed = true;
                 }
+              } else if (!_latestPolledUnread.containsKey(account.id)) {
+                // No changes and no cached count yet (first poll after startup).
+                // Fetch folders once to prime the badge count.
+                final folders = await ds.getMailFolders();
+                final inboxes = folders
+                    .where((f) => f.displayName.toLowerCase() == 'inbox');
+                if (inboxes.isEmpty) continue;
+                final unreadCount = inboxes.first.unreadItemCount;
+                _latestPolledUnread[account.id] = unreadCount;
+                _baselineUnread[account.id] = unreadCount;
               }
-              // No changes → skip getMailFolders(); badge count is unchanged.
+              // No changes and count already known → badge count is unchanged.
             }
           } else {
             // Non-delta path: Gmail / IMAP — existing unread-count polling.
@@ -214,6 +248,15 @@ class MailPollerCubit extends Cubit<MailPollerState> {
     if (accountId == null) return;
     final current = _latestPolledUnread[accountId] ?? 0;
     if (current > 0) _latestPolledUnread[accountId] = current - 1;
+    final total = _latestPolledUnread.values.fold(0, (sum, n) => sum + n);
+    unawaited(_badgeService.setBadgeCount(total));
+  }
+
+  void incrementUnreadCount() {
+    final accountId = _accountManager.activeAccount?.id;
+    if (accountId == null) return;
+    final current = _latestPolledUnread[accountId] ?? 0;
+    _latestPolledUnread[accountId] = current + 1;
     final total = _latestPolledUnread.values.fold(0, (sum, n) => sum + n);
     unawaited(_badgeService.setBadgeCount(total));
   }

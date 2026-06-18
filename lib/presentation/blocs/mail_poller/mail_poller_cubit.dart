@@ -209,6 +209,15 @@ class MailPollerCubit extends Cubit<MailPollerState> {
     }
   }
 
+  void decrementUnreadCount() {
+    final accountId = _accountManager.activeAccount?.id;
+    if (accountId == null) return;
+    final current = _latestPolledUnread[accountId] ?? 0;
+    if (current > 0) _latestPolledUnread[accountId] = current - 1;
+    final total = _latestPolledUnread.values.fold(0, (sum, n) => sum + n);
+    unawaited(_badgeService.setBadgeCount(total));
+  }
+
   void markAccountViewed(String accountId) {
     _newMailAccounts.remove(accountId);
     _baselineUnread[accountId] = _latestPolledUnread[accountId] ?? 0;

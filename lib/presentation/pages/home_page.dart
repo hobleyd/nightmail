@@ -201,6 +201,7 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                 ),
               );
         }
+        context.read<MailPollerCubit>().decrementUnreadCount();
       }
     }
 

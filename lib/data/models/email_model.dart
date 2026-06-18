@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import '../../core/utils/html_entities.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_attachment.dart';
 import '../../domain/entities/inline_attachment.dart';
@@ -36,7 +37,7 @@ class EmailModel extends Email {
 
     return EmailModel(
       id: json['id'] as String,
-      subject: json['subject'] as String? ?? '(No Subject)',
+      subject: decodeHtmlEntities(json['subject'] as String? ?? '(No Subject)'),
       from: EmailAddressModel.fromJson(
         json['from'] as Map<String, dynamic>? ?? {},
       ),
@@ -46,7 +47,7 @@ class EmailModel extends Email {
       ccRecipients: (json['ccRecipients'] as List<dynamic>? ?? [])
           .map((r) => EmailAddressModel.fromJson(r as Map<String, dynamic>))
           .toList(),
-      bodyPreview: json['bodyPreview'] as String? ?? '',
+      bodyPreview: decodeHtmlEntities(json['bodyPreview'] as String? ?? ''),
       body: bodyContent,
       bodyType: bodyTypeStr == 'html' ? EmailBodyType.html : EmailBodyType.text,
       isRead: json['isRead'] as bool? ?? false,

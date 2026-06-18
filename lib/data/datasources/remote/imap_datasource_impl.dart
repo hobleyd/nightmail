@@ -4,6 +4,7 @@ import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../../../core/error/exceptions.dart';
+import '../../../core/utils/html_entities.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/email_attachment.dart';
 import '../../../domain/entities/inline_attachment.dart';
@@ -482,7 +483,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
 
     return EmailModel(
       id: id,
-      subject: msg.decodeSubject() ?? '(No Subject)',
+      subject: decodeHtmlEntities(msg.decodeSubject() ?? '(No Subject)'),
       from: fromModel,
       toRecipients: mapAddresses(msg.to),
       ccRecipients: mapAddresses(msg.cc),

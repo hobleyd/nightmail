@@ -5,6 +5,7 @@ import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../../core/error/exceptions.dart';
+import '../../../core/utils/html_entities.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/email_attachment.dart';
 import '../../../domain/entities/inline_attachment.dart';
@@ -350,7 +351,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     final threadId = json['threadId'] as String?;
     final labelIds = (json['labelIds'] as List<dynamic>? ?? []).cast<String>();
     final isRead = !labelIds.contains('UNREAD');
-    final snippet = json['snippet'] as String? ?? '';
+    final snippet = decodeHtmlEntities(json['snippet'] as String? ?? '');
 
     final payload = json['payload'] as Map<String, dynamic>? ?? {};
     final headers = (payload['headers'] as List<dynamic>? ?? [])
@@ -364,7 +365,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
           )['value'] as String;
     }
 
-    final subject = headerValue('Subject');
+    final subject = decodeHtmlEntities(headerValue('Subject'));
     final fromStr = headerValue('From');
     final toStr = headerValue('To');
     final ccStr = headerValue('Cc');

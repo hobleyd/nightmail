@@ -41,7 +41,7 @@ class EmailListItem extends StatelessWidget {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 120),
         margin: EdgeInsets.fromLTRB(8 + indent, 1, 8, 1),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
           color: highlighted
               ? c.selectionEmailBg

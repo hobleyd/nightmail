@@ -227,6 +227,10 @@ class _AppearanceSection extends StatelessWidget {
       children: [
         _ThemeSetting(),
         const SizedBox(height: 12),
+        _FontFamilySetting(),
+        const SizedBox(height: 12),
+        _FontSizeSetting(),
+        const SizedBox(height: 12),
         const _DeleteConfirmSetting(),
       ],
     );
@@ -348,6 +352,119 @@ class _ThemeSetting extends StatelessWidget {
                     ],
                     onChanged: (mode) {
                       if (mode != null) context.read<ThemeCubit>().setMode(mode);
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _FontFamilySetting extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return BlocBuilder<ThemeCubit, ThemeState>(
+      builder: (context, state) {
+        return Row(
+          children: [
+            Text(
+              'Font',
+              style: TextStyle(color: c.textSecondary, fontSize: 13),
+            ),
+            const Spacer(),
+            Flexible(
+              child: Container(
+                height: 32,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: BoxDecoration(
+                  color: c.surfaceBase,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: c.separatorStrong),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String?>(
+                    value: state.fontFamily,
+                    isDense: true,
+                    dropdownColor: c.surfacePanel,
+                    style: TextStyle(color: c.textSecondary, fontSize: 13),
+                    items: [
+                      DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('System Default', style: TextStyle(color: c.textSecondary)),
+                      ),
+                      ...const [
+                        ('Arial', 'Arial'),
+                        ('Georgia', 'Georgia'),
+                        ('Courier New', 'Courier New'),
+                        ('Segoe UI', 'Segoe UI'),
+                        ('Verdana', 'Verdana'),
+                        ('Trebuchet MS', 'Trebuchet MS'),
+                      ].map((entry) {
+                        final (label, family) = entry;
+                        return DropdownMenuItem<String?>(
+                          value: family,
+                          child: Text(
+                            label,
+                            style: TextStyle(fontFamily: family),
+                          ),
+                        );
+                      }),
+                    ],
+                    onChanged: (family) {
+                      context.read<ThemeCubit>().setFontFamily(family);
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _FontSizeSetting extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return BlocBuilder<ThemeCubit, ThemeState>(
+      builder: (context, state) {
+        return Row(
+          children: [
+            Text(
+              'Font Size',
+              style: TextStyle(color: c.textSecondary, fontSize: 13),
+            ),
+            const Spacer(),
+            Flexible(
+              child: Container(
+                height: 32,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: BoxDecoration(
+                  color: c.surfaceBase,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: c.separatorStrong),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<double>(
+                    value: state.fontScale,
+                    isDense: true,
+                    dropdownColor: c.surfacePanel,
+                    style: TextStyle(color: c.textSecondary, fontSize: 13),
+                    items: const [
+                      DropdownMenuItem(value: 0.85, child: Text('Small')),
+                      DropdownMenuItem(value: 1.0, child: Text('Default')),
+                      DropdownMenuItem(value: 1.15, child: Text('Large')),
+                      DropdownMenuItem(value: 1.3, child: Text('Extra Large')),
+                    ],
+                    onChanged: (scale) {
+                      if (scale != null) context.read<ThemeCubit>().setFontScale(scale);
                     },
                   ),
                 ),

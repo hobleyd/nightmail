@@ -120,20 +120,16 @@ class NightMailApp extends StatefulWidget {
 }
 
 class _NightMailAppState extends State<NightMailApp> with WindowListener {
-  static final _darkTheme = ThemeData(
-    colorScheme: ColorScheme.fromSeed(
-      seedColor: const Color(0xFF7C83FD),
-      brightness: Brightness.dark,
-    ),
-    useMaterial3: true,
-  );
-
-  static final _lightTheme = ThemeData(
-    colorScheme: ColorScheme.fromSeed(
-      seedColor: const Color(0xFF7C83FD),
-    ),
-    useMaterial3: true,
-  );
+  static ThemeData _buildTheme({String? fontFamily, bool dark = false}) {
+    return ThemeData(
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: const Color(0xFF7C83FD),
+        brightness: dark ? Brightness.dark : Brightness.light,
+      ),
+      fontFamily: fontFamily,
+      useMaterial3: true,
+    );
+  }
 
   @override
   void initState() {
@@ -161,17 +157,29 @@ class _NightMailAppState extends State<NightMailApp> with WindowListener {
       create: (_) => sl<ThemeCubit>()..load(),
       child: BlocBuilder<ThemeCubit, ThemeState>(
         builder: (context, themeState) {
+          final lightTheme = _buildTheme(fontFamily: themeState.fontFamily);
+          final darkTheme = _buildTheme(fontFamily: themeState.fontFamily, dark: true);
           return BlocProvider<AccountCubit>(
             create: (_) => sl<AccountCubit>()..initialize(),
             child: MaterialApp(
               title: 'NightMail',
               debugShowCheckedModeBanner: false,
-              theme: _lightTheme,
-              darkTheme: _darkTheme,
+              theme: lightTheme,
+              darkTheme: darkTheme,
               themeMode: switch (themeState.mode) {
                 AppThemeMode.light => ThemeMode.light,
                 AppThemeMode.dark => ThemeMode.dark,
                 AppThemeMode.system => ThemeMode.system,
+              },
+              builder: (context, child) {
+                final scale = themeState.fontScale;
+                if (scale == 1.0) return child!;
+                return MediaQuery(
+                  data: MediaQuery.of(context).copyWith(
+                    textScaler: TextScaler.linear(scale),
+                  ),
+                  child: child!,
+                );
               },
               home: const _AccountGate(),
             ),

@@ -217,6 +217,21 @@ class _EmailListPanelState extends State<EmailListPanel> {
     _clearSelection();
   }
 
+  void _markUnreadSelection() {
+    final ids = _selectedEmailIds.isNotEmpty
+        ? Set.of(_selectedEmailIds)
+        : {if (widget.selectedEmailId != null) widget.selectedEmailId!};
+    if (ids.isEmpty) return;
+    final listState = context.read<EmailListBloc>().state;
+    final readIds = listState is EmailListLoaded
+        ? ids.where((id) => listState.emails.any((e) => e.id == id && e.isRead)).toList()
+        : ids.toList();
+    for (final id in readIds) {
+      context.read<EmailListBloc>().add(EmailListMarkReadRequested(emailId: id, isRead: false));
+    }
+    _clearSelection();
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -245,6 +260,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
                       .add(const EmailListRefreshRequested()),
                   onDelete: hasSelection ? _deleteSelection : null,
                   onReportJunk: hasSelection ? _reportJunkSelection : null,
+                  onMarkUnread: hasSelection ? _markUnreadSelection : null,
                 );
               },
             ),
@@ -403,12 +419,14 @@ class _ListHeader extends StatelessWidget {
     required this.isLoadingFresh,
     this.onDelete,
     this.onReportJunk,
+    this.onMarkUnread,
   });
   final String folderName;
   final VoidCallback onRefresh;
   final bool isLoadingFresh;
   final VoidCallback? onDelete;
   final VoidCallback? onReportJunk;
+  final VoidCallback? onMarkUnread;
 
   @override
   Widget build(BuildContext context) {
@@ -426,8 +444,15 @@ class _ListHeader extends StatelessWidget {
               letterSpacing: -0.3,
             ),
           ),
+          IconButton(
+            icon: Icon(Icons.refresh_rounded, size: 18, color: c.textMuted),
+            tooltip: 'Refresh',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            onPressed: onRefresh,
+          ),
           if (isLoadingFresh) ...[
-            const SizedBox(width: 8),
+            const SizedBox(width: 4),
             SizedBox(
               width: 14,
               height: 14,
@@ -438,6 +463,14 @@ class _ListHeader extends StatelessWidget {
             ),
           ],
           const Spacer(),
+          if (onMarkUnread != null)
+            IconButton(
+              icon: Icon(Icons.mark_email_unread_outlined, size: 18, color: c.textMuted),
+              tooltip: 'Mark as unread',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              onPressed: onMarkUnread,
+            ),
           if (onReportJunk != null)
             IconButton(
               icon: Icon(Icons.report_outlined, size: 18, color: c.textMuted),
@@ -454,13 +487,6 @@ class _ListHeader extends StatelessWidget {
               constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               onPressed: onDelete,
             ),
-          IconButton(
-            icon: Icon(Icons.refresh_rounded, size: 18, color: c.textMuted),
-            tooltip: 'Refresh',
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            onPressed: onRefresh,
-          ),
         ],
       ),
     );
@@ -638,7 +664,7 @@ class _ConversationHeader extends StatelessWidget {
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 120),
             margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               color: highlighted ? c.selectionEmailBg : Colors.transparent,
               borderRadius: BorderRadius.circular(8),

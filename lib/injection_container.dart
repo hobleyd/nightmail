@@ -40,6 +40,7 @@ import 'domain/usecases/train_spam_filter.dart';
 import 'domain/usecases/download_task_attachment.dart';
 import 'domain/usecases/move_email.dart';
 import 'domain/usecases/download_attachment.dart';
+import 'domain/usecases/create_folder.dart';
 import 'domain/usecases/empty_folder.dart';
 import 'domain/usecases/get_calendar_events.dart';
 import 'domain/usecases/get_email.dart';
@@ -163,6 +164,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => TrainSpamFilter(sl<SpamFilterRepository>()));
   sl.registerLazySingleton(() => DeleteEmail(sl<EmailRepository>()));
   sl.registerLazySingleton(() => EmptyFolder(sl<EmailRepository>()));
+  sl.registerLazySingleton(() => CreateFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => DownloadAttachment(sl<EmailRepository>()));
   sl.registerLazySingleton(() => GetCachedEmails(sl<EmailRepository>()));
   sl.registerLazySingleton(() => GetCachedFolders(sl<EmailRepository>()));
@@ -219,6 +221,7 @@ Future<void> configureDependencies() async {
     () => FolderListBloc(
       getMailFolders: sl<GetMailFolders>(),
       getCachedFolders: sl<GetCachedFolders>(),
+      createFolder: sl<CreateFolder>(),
       accountManager: sl<AccountManager>(),
     ),
   );

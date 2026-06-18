@@ -798,6 +798,22 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     }
   }
 
+  @override
+  Future<void> createFolder({
+    required String parentFolderId,
+    required String displayName,
+  }) async {
+    try {
+      final client = await _getConnectedClient();
+      // _pathSeparator is set by getMailFolders; folders are always listed before
+      // any create action is triggered from the UI so this will be populated.
+      final newPath = '$parentFolderId$_pathSeparator$displayName';
+      await client.createMailbox(newPath);
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    }
+  }
+
   /// Returns the path of the Trash mailbox, or null if the message is already
   /// in Trash or no Trash folder can be located on this server.
   Future<String?> _findTrashPath(

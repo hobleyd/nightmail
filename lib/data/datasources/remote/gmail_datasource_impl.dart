@@ -915,6 +915,28 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     throw UnimplementedError('getRawEmailBytes not yet supported for Gmail');
   }
 
+  @override
+  Future<void> createFolder({
+    required String parentFolderId,
+    required String displayName,
+  }) async {
+    try {
+      // Fetch the parent label's full name so we can prefix the new label.
+      final parentResp = await _dio.get<Map<String, dynamic>>(
+        '/users/me/labels/$parentFolderId',
+      );
+      final parentName = parentResp.data?['name'] as String? ?? '';
+      final labelName =
+          parentName.isEmpty ? displayName : '$parentName/$displayName';
+      await _dio.post<void>(
+        '/users/me/labels',
+        data: {'name': labelName},
+      );
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
   Exception _mapException(DioException e) {
     final statusCode = e.response?.statusCode;
     if (e.type == DioExceptionType.connectionError ||

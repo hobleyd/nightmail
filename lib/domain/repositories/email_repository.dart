@@ -102,4 +102,10 @@ abstract interface class EmailRepository {
 
   /// Returns the raw RFC 822 MIME bytes for the email with [id].
   Future<Either<Failure, Uint8List>> getRawEmailBytes(String id);
+
+  /// Creates a new child folder under [parentFolderId] with [displayName].
+  Future<Either<Failure, Unit>> createFolder({
+    required String parentFolderId,
+    required String displayName,
+  });
 }

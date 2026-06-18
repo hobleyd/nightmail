@@ -331,6 +331,20 @@ class EmailRepositoryImpl implements EmailRepository {
     return _execute(() => _accountManager.emailDatasource.getRawEmailBytes(id));
   }
 
+  @override
+  Future<Either<Failure, Unit>> createFolder({
+    required String parentFolderId,
+    required String displayName,
+  }) async {
+    return _execute(() async {
+      await _accountManager.emailDatasource.createFolder(
+        parentFolderId: parentFolderId,
+        displayName: displayName,
+      );
+      return unit;
+    });
+  }
+
   Future<Either<Failure, T>> _execute<T>(Future<T> Function() fn) async {
     try {
       return Right(await fn());

@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/app_colors.dart';
@@ -48,6 +49,7 @@ class FolderPanel extends StatefulWidget {
 
 class _FolderPanelState extends State<FolderPanel> {
   late Set<String> _expandedIds;
+  String? _creatingChildOfId;
 
   @override
   void initState() {
@@ -139,6 +141,22 @@ class _FolderPanelState extends State<FolderPanel> {
       itemCount: items.length,
       itemBuilder: (context, i) {
         final item = items[i];
+        if (item.isCreating) {
+          return _FolderCreatingRow(
+            depth: item.depth,
+            onSubmit: (name) {
+              // Fire the event before setState so the context is still mounted.
+              context.read<FolderListBloc>().add(
+                    FolderListCreateFolderRequested(
+                      parentFolderId: item.folder.id,
+                      displayName: name,
+                    ),
+                  );
+              setState(() => _creatingChildOfId = null);
+            },
+            onCancel: () => setState(() => _creatingChildOfId = null),
+          );
+        }
         return _FolderItem(
           folder: item.folder,
           depth: item.depth,
@@ -153,6 +171,13 @@ class _FolderPanelState extends State<FolderPanel> {
               } else {
                 _expandedIds.add(item.folder.id);
               }
+            });
+            widget.onExpandedIdsChanged?.call(_expandedIds);
+          },
+          onAddFolder: () {
+            setState(() {
+              _expandedIds.add(item.folder.id);
+              _creatingChildOfId = item.folder.id;
             });
             widget.onExpandedIdsChanged?.call(_expandedIds);
           },
@@ -186,6 +211,11 @@ class _FolderPanelState extends State<FolderPanel> {
         for (final child in childrenOf[f.id] ?? []) {
           visit(child, depth + 1);
         }
+        // Insert inline editor immediately after the last child (or directly
+        // under the parent if it has no visible children yet).
+        if (_creatingChildOfId == f.id) {
+          result.add(_DisplayItem(folder: f, depth: depth + 1, isCreating: true));
+        }
       }
     }
     for (final root in roots) {
@@ -215,9 +245,14 @@ class _FolderPanelState extends State<FolderPanel> {
 }
 
 class _DisplayItem {
-  const _DisplayItem({required this.folder, required this.depth});
+  const _DisplayItem({
+    required this.folder,
+    required this.depth,
+    this.isCreating = false,
+  });
   final EmailFolder folder;
   final int depth;
+  final bool isCreating;
 }
 
 class _PanelHeader extends StatelessWidget {
@@ -274,7 +309,7 @@ class _PanelHeader extends StatelessWidget {
   }
 }
 
-enum _FolderAction { deleteAll }
+enum _FolderAction { addFolder, deleteAll }
 
 class _FolderItem extends StatefulWidget {
   const _FolderItem({
@@ -285,6 +320,7 @@ class _FolderItem extends StatefulWidget {
     required this.hasChildren,
     required this.onTap,
     required this.onExpandTap,
+    required this.onAddFolder,
   });
 
   final EmailFolder folder;
@@ -294,6 +330,7 @@ class _FolderItem extends StatefulWidget {
   final bool hasChildren;
   final VoidCallback onTap;
   final VoidCallback onExpandTap;
+  final VoidCallback onAddFolder;
 
   @override
   State<_FolderItem> createState() => _FolderItemState();
@@ -506,6 +543,16 @@ class _FolderItemState extends State<_FolderItem>
       ),
       items: [
         PopupMenuItem(
+          value: _FolderAction.addFolder,
+          child: Row(
+            children: const [
+              Icon(Icons.create_new_folder_outlined, size: 16),
+              SizedBox(width: 8),
+              Text('Add Folder', style: TextStyle(fontSize: 13)),
+            ],
+          ),
+        ),
+        PopupMenuItem(
           value: _FolderAction.deleteAll,
           child: Row(
             children: [
@@ -523,7 +570,10 @@ class _FolderItemState extends State<_FolderItem>
       ],
     );
 
-    if (result == _FolderAction.deleteAll && context.mounted) {
+    if (!context.mounted) return;
+    if (result == _FolderAction.addFolder) {
+      widget.onAddFolder();
+    } else if (result == _FolderAction.deleteAll) {
       await _confirmDeleteAll(context);
     }
   }
@@ -961,6 +1011,96 @@ class _SettingsFooter extends StatelessWidget {
           BlocProvider.value(value: accountCubit),
         ],
         child: const AddAccountPage(),
+      ),
+    );
+  }
+}
+
+class _FolderCreatingRow extends StatefulWidget {
+  const _FolderCreatingRow({
+    required this.depth,
+    required this.onSubmit,
+    required this.onCancel,
+  });
+
+  final int depth;
+  final ValueChanged<String> onSubmit;
+  final VoidCallback onCancel;
+
+  @override
+  State<_FolderCreatingRow> createState() => _FolderCreatingRowState();
+}
+
+class _FolderCreatingRowState extends State<_FolderCreatingRow> {
+  final _controller = TextEditingController();
+  final _focusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode.onKeyEvent = (node, event) {
+      if (event is KeyDownEvent &&
+          event.logicalKey == LogicalKeyboardKey.escape) {
+        widget.onCancel();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    };
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final indentWidth = widget.depth * 16.0;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+      padding: EdgeInsets.only(
+        left: 10 + indentWidth,
+        right: 10,
+        top: 4,
+        bottom: 4,
+      ),
+      child: Row(
+        children: [
+          const SizedBox(width: 20),
+          const Icon(Icons.folder_outlined, size: 16, color: AppColors.accent),
+          const SizedBox(width: 10),
+          Expanded(
+            child: TextField(
+              controller: _controller,
+              focusNode: _focusNode,
+              autofocus: true,
+              style: TextStyle(color: c.textSecondary, fontSize: 13),
+              decoration: InputDecoration(
+                isDense: true,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(4),
+                  borderSide: BorderSide(color: AppColors.accent),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(4),
+                  borderSide: BorderSide(color: AppColors.accent, width: 1.5),
+                ),
+                hintText: 'Folder name',
+                hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
+              ),
+              onSubmitted: (value) {
+                final name = value.trim();
+                if (name.isNotEmpty) widget.onSubmit(name);
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -1206,6 +1206,21 @@ class GraphApiDatasourceImpl
     return AttendeeAvailabilityStatus.unknown;
   }
 
+  @override
+  Future<void> createFolder({
+    required String parentFolderId,
+    required String displayName,
+  }) async {
+    try {
+      await _dio.post<void>(
+        '/me/mailFolders/$parentFolderId/childFolders',
+        data: {'displayName': displayName},
+      );
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
   Exception _mapDioException(DioException e) {
     final statusCode = e.response?.statusCode;
 

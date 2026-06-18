@@ -58,4 +58,10 @@ abstract interface class EmailRemoteDatasource {
 
   /// Returns the raw RFC 822 MIME bytes for [id].
   Future<Uint8List> getRawEmailBytes(String id);
+
+  /// Creates a new child folder under [parentFolderId] with [displayName].
+  Future<void> createFolder({
+    required String parentFolderId,
+    required String displayName,
+  });
 }

@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fpdart/fpdart.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/error/exceptions.dart';
@@ -6,7 +7,10 @@ import 'package:nightmail/core/settings/app_settings.dart';
 import 'package:nightmail/data/datasources/local/delta_token_datasource.dart';
 import 'package:nightmail/data/datasources/remote/email_remote_datasource.dart';
 import 'package:nightmail/data/datasources/remote/graph_api_datasource_impl.dart';
+import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/data/models/email_folder_model.dart';
+import 'package:nightmail/domain/entities/email_folder.dart';
+import 'package:nightmail/domain/usecases/get_cached_folders.dart';
 import 'package:nightmail/data/models/email_model.dart';
 import 'package:nightmail/data/models/mail_delta_result.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
@@ -85,6 +89,7 @@ MailDeltaResult _emptyDelta() => MailDeltaResult(
   DeltaTokenDatasource,
   GraphApiDatasourceImpl,
   EmailRemoteDatasource,
+  GetCachedFolders,
 ])
 void main() {
   late MockAccountManager mockAccountManager;
@@ -92,12 +97,14 @@ void main() {
   late MockBadgeService mockBadgeService;
   late MockDeltaTokenDatasource mockDatabase;
   late MockGraphApiDatasourceImpl mockGraphDs;
+  late MockGetCachedFolders mockGetCachedFolders;
 
   MailPollerCubit _makeCubit() => MailPollerCubit(
         accountManager: mockAccountManager,
         appSettings: mockAppSettings,
         badgeService: mockBadgeService,
         database: mockDatabase,
+        getCachedFolders: mockGetCachedFolders,
       );
 
   void _stubInfra() {
@@ -107,6 +114,8 @@ void main() {
     when(mockDatabase.saveDeltaToken(any, any, any)).thenAnswer((_) async {});
     when(mockDatabase.clearDeltaTokensForAccount(any))
         .thenAnswer((_) async {});
+    when(mockGetCachedFolders(any))
+        .thenAnswer((_) async => const Right([]));
   }
 
   setUp(() {
@@ -115,6 +124,8 @@ void main() {
     mockBadgeService = MockBadgeService();
     mockDatabase = MockDeltaTokenDatasource();
     mockGraphDs = MockGraphApiDatasourceImpl();
+    mockGetCachedFolders = MockGetCachedFolders();
+    provideDummy<Either<Failure, List<EmailFolder>>>(const Right([]));
     _stubInfra();
   });
 
@@ -186,6 +197,13 @@ void main() {
       when(mockGraphDs.syncMailDelta(any,
               deltaLink: anyNamed('deltaLink')))
           .thenAnswer((_) async => _emptyDelta());
+      // Prime the cache so _latestPolledUnread is populated before the first
+      // poll. Without this, the "no cached count" branch fires getMailFolders.
+      when(mockGetCachedFolders(any)).thenAnswer((_) async => Right([
+            const EmailFolder(
+                id: 'inbox', displayName: 'Inbox',
+                totalItemCount: 10, unreadItemCount: 2),
+          ]));
     });
 
     test('does NOT call getMailFolders when delta returns no changes',

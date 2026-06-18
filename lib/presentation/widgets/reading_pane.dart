@@ -22,6 +22,7 @@ import '../../domain/entities/email.dart';
 import '../../domain/entities/email_attachment.dart';
 import '../../domain/entities/inline_attachment.dart';
 import '../../domain/entities/meeting_invite.dart';
+import '../../domain/usecases/check_sender_anomaly.dart';
 import '../../domain/usecases/delete_email.dart';
 import '../../domain/usecases/download_attachment.dart';
 import '../../domain/usecases/respond_to_meeting_invite.dart';
@@ -57,8 +58,8 @@ class ReadingPane extends StatelessWidget {
                 child: CircularProgressIndicator(
                     color: AppColors.accent, strokeWidth: 2),
               ),
-            EmailDetailLoaded(:final email, :final senderAnomalyScore) =>
-              _EmailView(email: email, senderAnomalyScore: senderAnomalyScore),
+            EmailDetailLoaded(:final email, :final senderAnomaly) =>
+              _EmailView(email: email, senderAnomaly: senderAnomaly),
             EmailDetailError(:final message) => _ErrorState(message: message),
           };
         },
@@ -118,9 +119,9 @@ class _ErrorState extends StatelessWidget {
 }
 
 class _EmailView extends StatelessWidget {
-  const _EmailView({required this.email, this.senderAnomalyScore});
+  const _EmailView({required this.email, this.senderAnomaly});
   final Email email;
-  final double? senderAnomalyScore;
+  final SenderAnomalyResult? senderAnomaly;
 
   @override
   Widget build(BuildContext context) {
@@ -134,7 +135,7 @@ class _EmailView extends StatelessWidget {
       children: [
         _ReadingPaneToolbar(email: email),
         Divider(height: 1, color: c.border),
-        _EmailHeader(email: email, senderAnomalyScore: senderAnomalyScore),
+        _EmailHeader(email: email, senderAnomaly: senderAnomaly),
         Divider(height: 1, color: c.border),
         if (showInviteBanner) ...[
           _MeetingInviteBanner(email: email),
@@ -594,9 +595,9 @@ class _ToolbarButton extends StatelessWidget {
 }
 
 class _EmailHeader extends StatelessWidget {
-  const _EmailHeader({required this.email, this.senderAnomalyScore});
+  const _EmailHeader({required this.email, this.senderAnomaly});
   final Email email;
-  final double? senderAnomalyScore;
+  final SenderAnomalyResult? senderAnomaly;
 
   static Color? _anomalyColor(double? score) {
     if (score == null) return null;
@@ -625,7 +626,8 @@ class _EmailHeader extends StatelessWidget {
           const SizedBox(height: 16),
           _AnomalousFromRow(
             email: email,
-            highlightColor: _anomalyColor(senderAnomalyScore),
+            highlightColor: _anomalyColor(senderAnomaly?.score),
+            anomalyMatches: senderAnomaly?.matches,
           ),
           if (email.toRecipients.isNotEmpty) ...[
             const SizedBox(height: 6),
@@ -667,10 +669,56 @@ class _EmailHeader extends StatelessWidget {
 }
 
 class _AnomalousFromRow extends StatelessWidget {
-  const _AnomalousFromRow({required this.email, this.highlightColor});
+  const _AnomalousFromRow({
+    required this.email,
+    this.highlightColor,
+    this.anomalyMatches,
+  });
 
   final Email email;
   final Color? highlightColor;
+  final List<({String address, String name})>? anomalyMatches;
+
+  void _showMatchesMenu(BuildContext context, Offset position) {
+    final matches = anomalyMatches;
+    if (matches == null || matches.isEmpty) return;
+    final rect = RelativeRect.fromLTRB(
+      position.dx,
+      position.dy,
+      position.dx,
+      position.dy,
+    );
+    showMenu<void>(
+      context: context,
+      position: rect,
+      items: [
+        const PopupMenuItem<void>(
+          enabled: false,
+          height: 28,
+          child: Text(
+            'Previously seen addresses for this name:',
+            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+          ),
+        ),
+        ...matches.map(
+          (m) => PopupMenuItem<void>(
+            height: 44,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(m.address,
+                    style: const TextStyle(fontSize: 12)),
+                Text(m.name,
+                    style: const TextStyle(
+                        fontSize: 11, color: Colors.grey)),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -682,7 +730,7 @@ class _AnomalousFromRow extends StatelessWidget {
 
     if (highlightColor == null) return row;
 
-    return DecoratedBox(
+    final highlighted = DecoratedBox(
       decoration: BoxDecoration(
         color: highlightColor!.withAlpha(60),
         borderRadius: BorderRadius.circular(4),
@@ -691,6 +739,13 @@ class _AnomalousFromRow extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
         child: row,
       ),
+    );
+
+    if (anomalyMatches == null || anomalyMatches!.isEmpty) return highlighted;
+
+    return GestureDetector(
+      onSecondaryTapUp: (d) => _showMatchesMenu(context, d.globalPosition),
+      child: highlighted,
     );
   }
 }

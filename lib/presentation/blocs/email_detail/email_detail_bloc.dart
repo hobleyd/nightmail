@@ -37,18 +37,16 @@ class EmailDetailBloc extends Bloc<EmailDetailEvent, EmailDetailState> {
     await result.fold(
       (failure) async => emit(EmailDetailError(message: failure.message)),
       (email) async {
-        double? anomalyScore;
         final name = email.from.name;
         final accountId = _accountManager.activeAccount?.id;
-        if (name != null && name.isNotEmpty && accountId != null) {
-          final check = await _checkSenderAnomaly(CheckSenderAnomalyParams(
-            accountId: accountId,
-            fromAddress: email.from.address,
-            fromName: name,
-          ));
-          anomalyScore = check.fold((_) => null, (s) => s);
-        }
-        emit(EmailDetailLoaded(email: email, senderAnomalyScore: anomalyScore));
+        final senderAnomaly = (name != null && name.isNotEmpty && accountId != null)
+            ? await _checkSenderAnomaly(CheckSenderAnomalyParams(
+                accountId: accountId,
+                fromAddress: email.from.address,
+                fromName: name,
+              )).then((r) => r.fold((_) => null, (s) => s))
+            : null;
+        emit(EmailDetailLoaded(email: email, senderAnomaly: senderAnomaly));
       },
     );
   }

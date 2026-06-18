@@ -1,6 +1,7 @@
 import 'package:equatable/equatable.dart';
 
 import '../../../domain/entities/email.dart';
+import '../../../domain/usecases/check_sender_anomaly.dart';
 
 sealed class EmailDetailState extends Equatable {
   const EmailDetailState();
@@ -18,12 +19,12 @@ final class EmailDetailLoading extends EmailDetailState {
 }
 
 final class EmailDetailLoaded extends EmailDetailState {
-  const EmailDetailLoaded({required this.email, this.senderAnomalyScore});
+  const EmailDetailLoaded({required this.email, this.senderAnomaly});
   final Email email;
-  final double? senderAnomalyScore; // null = no anomaly; 0.75–1.0 = anomaly
+  final SenderAnomalyResult? senderAnomaly; // null = no anomaly
 
   @override
-  List<Object?> get props => [email, senderAnomalyScore];
+  List<Object?> get props => [email, senderAnomaly];
 }
 
 final class EmailDetailError extends EmailDetailState {

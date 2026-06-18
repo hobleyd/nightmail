@@ -8,17 +8,30 @@ import '../repositories/sender_repository.dart';
 
 const _anomalyThreshold = 0.75;
 
-class CheckSenderAnomaly implements UseCase<double?, CheckSenderAnomalyParams> {
+class SenderAnomalyResult extends Equatable {
+  const SenderAnomalyResult({required this.score, required this.matches});
+
+  final double score;
+
+  /// Known senders whose display name is similar to the incoming name but
+  /// whose address differs — the addresses the user has actually seen before.
+  final List<({String address, String name})> matches;
+
+  @override
+  List<Object?> get props => [score, matches];
+}
+
+class CheckSenderAnomaly
+    implements UseCase<SenderAnomalyResult?, CheckSenderAnomalyParams> {
   const CheckSenderAnomaly(this._repository);
 
   final SenderRepository _repository;
 
-  /// Returns the highest Jaro-Winkler score among known senders whose name
-  /// matches [fromName] but whose address differs from [fromAddress].
-  /// Returns null when no anomaly is detected (score below threshold or
-  /// address already known for this name).
+  /// Returns all known senders whose display name matches [fromName] above
+  /// [_anomalyThreshold] but whose address differs from [fromAddress].
+  /// Returns null when no anomaly is detected.
   @override
-  Future<Either<Failure, double?>> call(
+  Future<Either<Failure, SenderAnomalyResult?>> call(
       CheckSenderAnomalyParams params) async {
     try {
       final senders = await _repository.getSendersForAccount(params.accountId);
@@ -26,13 +39,22 @@ class CheckSenderAnomaly implements UseCase<double?, CheckSenderAnomalyParams> {
       final incomingName = params.fromName;
 
       var best = 0.0;
+      final seenAddresses = <String>{};
+      final matches = <({String address, String name})>[];
+
       for (final sender in senders) {
         if (sender.address == incomingAddress) continue;
         final score = jaroWinkler(incomingName, sender.name);
-        if (score > best) best = score;
+        if (score >= _anomalyThreshold) {
+          if (seenAddresses.add(sender.address)) {
+            matches.add((address: sender.address, name: sender.name));
+          }
+          if (score > best) best = score;
+        }
       }
 
-      return Right(best >= _anomalyThreshold ? best : null);
+      if (matches.isEmpty) return const Right(null);
+      return Right(SenderAnomalyResult(score: best, matches: matches));
     } catch (e) {
       return Left(CacheFailure(message: e.toString()));
     }

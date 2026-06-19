@@ -8,8 +8,11 @@ class DirectoryContactsRepositoryImpl implements DirectoryContactsRepository {
   final AccountManager accountManager;
 
   @override
-  Future<List<ContactSuggestion>> search(String query) async {
-    final ds = accountManager.contactsDatasource;
+  Future<List<ContactSuggestion>> search(
+    String query, {
+    required String accountId,
+  }) async {
+    final ds = accountManager.contactsDatasourceForAccount(accountId);
     if (ds == null) return [];
     return ds.searchContacts(query);
   }

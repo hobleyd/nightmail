@@ -54,7 +54,7 @@ class SearchContacts {
       }).catchError((Object e) {
         debugPrint('[NightMail] system-contacts search error: $e');
       }),
-      directoryContactsRepository.search(q).then((contacts) {
+      directoryContactsRepository.search(q, accountId: accountId).then((contacts) {
         for (final c in contacts) {
           if (seen.add(c.address.toLowerCase())) results.add(c);
         }

@@ -56,8 +56,11 @@ class AccountManager {
   EmailRemoteDatasource? _emailDatasource;
   CalendarRemoteDatasource? _calendarDatasource;
   TasksRemoteDatasource? _tasksDatasource;
-  GmailContactsDatasourceImpl? _contactsDatasource;
   AuthService? _authService;
+
+  // Lazily built and cached per Gmail account ID so contact search works for
+  // any account regardless of which one is currently active.
+  final Map<String, GmailContactsDatasourceImpl> _contactsDatasourceCache = {};
 
   List<Account> get accounts => List.unmodifiable(_accounts);
   bool get hasAccounts => _accounts.isNotEmpty;
@@ -73,7 +76,32 @@ class AccountManager {
 
   CalendarRemoteDatasource? get calendarDatasource => _calendarDatasource;
   TasksRemoteDatasource? get tasksDatasource => _tasksDatasource;
-  GmailContactsDatasourceImpl? get contactsDatasource => _contactsDatasource;
+
+  GmailContactsDatasourceImpl? contactsDatasourceForAccount(String accountId) {
+    if (_contactsDatasourceCache.containsKey(accountId)) {
+      return _contactsDatasourceCache[accountId];
+    }
+    final account = _accounts.cast<Account?>().firstWhere(
+      (a) => a?.id == accountId,
+      orElse: () => null,
+    );
+    if (account is! GmailAccount) return null;
+    final tokenStorage = TokenStorage(
+      _secureStorage,
+      storageKey: 'token_${account.id}',
+    );
+    final authSvc = GmailAuthService(
+      clientId: _googleClientId ?? AppConfig.gmailClientId,
+      clientSecret: _googleClientSecret ?? '',
+      redirectUri: AppConfig.gmailRedirectUri,
+      tokenStorage: tokenStorage,
+    );
+    final ds = GmailContactsDatasourceImpl(
+      client: GooglePeopleHttpClient(authService: authSvc),
+    );
+    _contactsDatasourceCache[accountId] = ds;
+    return ds;
+  }
 
   AuthService get activeAuthService {
     if (_authService == null) throw StateError('No active account');
@@ -203,6 +231,7 @@ class AccountManager {
     if (idx == -1) return;
 
     await _clearCredentials(_accounts[idx]);
+    _contactsDatasourceCache.remove(accountId);
 
     final updated = [..._accounts]..removeAt(idx);
     _accounts = updated;
@@ -210,7 +239,7 @@ class AccountManager {
       _activeIndex = 0;
       _emailDatasource = null;
       _calendarDatasource = null;
-      _contactsDatasource = null;
+      _contactsDatasourceCache.clear();
       _authService = null;
     } else {
       _activeIndex = _activeIndex.clamp(0, _accounts.length - 1);
@@ -340,8 +369,6 @@ class AccountManager {
         _emailDatasource = ds;
         _calendarDatasource = ds;
         _tasksDatasource = ds;
-        _contactsDatasource = null;
-
       case GmailAccount():
         final tokenStorage = TokenStorage(
           _secureStorage,
@@ -356,15 +383,11 @@ class AccountManager {
         final gmailClient = GmailHttpClient(authService: authSvc);
         final calendarClient = GoogleCalendarHttpClient(authService: authSvc);
         final tasksClient = GoogleTasksHttpClient(authService: authSvc);
-        final peopleClient = GooglePeopleHttpClient(authService: authSvc);
         _authService = authSvc;
         _emailDatasource = GmailDatasourceImpl(client: gmailClient);
         _calendarDatasource =
             GoogleCalendarDatasourceImpl(client: calendarClient);
         _tasksDatasource = GoogleTasksDatasourceImpl(client: tasksClient);
-        _contactsDatasource =
-            GmailContactsDatasourceImpl(client: peopleClient);
-
       case ImapAccount():
         final credStorage = ImapCredentialStorage(_secureStorage);
         _authService = ImapAuthService(
@@ -376,7 +399,6 @@ class AccountManager {
           credentialStorage: credStorage,
         );
         _tasksDatasource = null;
-        _contactsDatasource = null;
         _calendarDatasource = _buildImapCalendarDatasource(account);
     }
   }

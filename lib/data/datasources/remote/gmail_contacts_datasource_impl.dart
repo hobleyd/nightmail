@@ -17,12 +17,15 @@ class GmailContactsDatasourceImpl {
     final seen = <String>{};
     final results = <ContactSuggestion>[];
 
+    debugPrint('[Contacts] searching query="$query"');
+
     await Future.wait([
       _searchPersonal(query, seen, results),
       _searchDirectory(query, seen, results),
       _searchOtherContacts(query, seen, results),
     ]);
 
+    debugPrint('[Contacts] total results: ${results.length}');
     return results;
   }
 
@@ -40,8 +43,12 @@ class GmailContactsDatasourceImpl {
           'pageSize': 10,
         },
       );
+      final before = results.length;
       _parseResults(resp.data, seen, results);
-    } catch (_) {}
+      debugPrint('[Contacts] personal: +${results.length - before} (data keys: ${resp.data?.keys.toList()})');
+    } catch (e) {
+      debugPrint('[Contacts] personal error: $e');
+    }
   }
 
   Future<void> _searchDirectory(
@@ -62,8 +69,12 @@ class GmailContactsDatasourceImpl {
           'pageSize': 10,
         },
       );
+      final before = results.length;
       _parseDirectoryResults(resp.data, seen, results);
-    } catch (_) {}
+      debugPrint('[Contacts] directory: +${results.length - before} (data keys: ${resp.data?.keys.toList()})');
+    } catch (e) {
+      debugPrint('[Contacts] directory error: $e');
+    }
   }
 
   Future<void> _searchOtherContacts(
@@ -82,8 +93,12 @@ class GmailContactsDatasourceImpl {
           'pageSize': 10,
         },
       );
+      final before = results.length;
       _parseResults(resp.data, seen, results);
-    } catch (_) {}
+      debugPrint('[Contacts] otherContacts: +${results.length - before} (data keys: ${resp.data?.keys.toList()})');
+    } catch (e) {
+      debugPrint('[Contacts] otherContacts error: $e');
+    }
   }
 
   // Used by searchContacts and otherContacts:search — both wrap each entry as {"person": {...}}.

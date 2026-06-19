@@ -50,6 +50,8 @@ class GmailContactsDatasourceImpl {
     List<ContactSuggestion> results,
   ) async {
     // Only available for Google Workspace accounts; silently skip for consumers.
+    // Returns SearchDirectoryPeopleResponse: {"people": [...Person...]}
+    // — different shape from searchContacts which wraps each entry in {"person": {...}}.
     try {
       final resp = await _dio.get<Map<String, dynamic>>(
         '/people:searchDirectoryPeople',
@@ -60,7 +62,7 @@ class GmailContactsDatasourceImpl {
           'pageSize': 10,
         },
       );
-      _parseResults(resp.data, seen, results);
+      _parseDirectoryResults(resp.data, seen, results);
     } catch (_) {}
   }
 
@@ -84,6 +86,7 @@ class GmailContactsDatasourceImpl {
     } catch (_) {}
   }
 
+  // Used by searchContacts and otherContacts:search — both wrap each entry as {"person": {...}}.
   void _parseResults(
     Map<String, dynamic>? data,
     Set<String> seen,
@@ -95,20 +98,42 @@ class GmailContactsDatasourceImpl {
     for (final r in raw) {
       final person = r['person'] as Map<String, dynamic>?;
       if (person == null) continue;
-      final emails = (person['emailAddresses'] as List<dynamic>? ?? [])
-          .cast<Map<String, dynamic>>();
-      final names = (person['names'] as List<dynamic>? ?? [])
-          .cast<Map<String, dynamic>>();
-      final name = names.firstOrNull?['displayName'] as String?;
-      for (final e in emails) {
-        final address = e['value'] as String?;
-        if (address == null || address.isEmpty) continue;
-        if (seen.add(address.toLowerCase())) {
-          results.add(ContactSuggestion(
-            address: address,
-            name: (name == null || name.isEmpty) ? null : name,
-          ));
-        }
+      _parsePerson(person, seen, results);
+    }
+  }
+
+  // Used by searchDirectoryPeople — returns {"people": [...Person...]} with no wrapper.
+  void _parseDirectoryResults(
+    Map<String, dynamic>? data,
+    Set<String> seen,
+    List<ContactSuggestion> results,
+  ) {
+    if (data == null) return;
+    final raw =
+        (data['people'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+    for (final person in raw) {
+      _parsePerson(person, seen, results);
+    }
+  }
+
+  void _parsePerson(
+    Map<String, dynamic> person,
+    Set<String> seen,
+    List<ContactSuggestion> results,
+  ) {
+    final emails = (person['emailAddresses'] as List<dynamic>? ?? [])
+        .cast<Map<String, dynamic>>();
+    final names = (person['names'] as List<dynamic>? ?? [])
+        .cast<Map<String, dynamic>>();
+    final name = names.firstOrNull?['displayName'] as String?;
+    for (final e in emails) {
+      final address = e['value'] as String?;
+      if (address == null || address.isEmpty) continue;
+      if (seen.add(address.toLowerCase())) {
+        results.add(ContactSuggestion(
+          address: address,
+          name: (name == null || name.isEmpty) ? null : name,
+        ));
       }
     }
   }

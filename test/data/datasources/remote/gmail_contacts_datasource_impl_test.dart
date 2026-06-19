@@ -29,6 +29,7 @@ void main() {
         requestOptions: RequestOptions(path: ''),
       );
 
+  // For searchContacts / otherContacts:search — each entry is {"person": {...}}
   Map<String, dynamic> _person(String address, {String? name}) => {
         'person': {
           if (name != null) 'names': [
@@ -40,6 +41,24 @@ void main() {
         },
       };
 
+  // For searchDirectoryPeople — each entry is a Person object directly, no wrapper
+  Map<String, dynamic> _directoryPerson(String address, {String? name}) => {
+        if (name != null) 'names': [
+          {'displayName': name}
+        ],
+        'emailAddresses': [
+          {'value': address}
+        ],
+      };
+
+  Response<Map<String, dynamic>> _directoryResp(
+          List<Map<String, dynamic>> people) =>
+      Response(
+        data: {'people': people},
+        statusCode: 200,
+        requestOptions: RequestOptions(path: ''),
+      );
+
   void stubPersonal(List<Map<String, dynamic>> results) {
     when(mockDio.get<Map<String, dynamic>>(
       argThat(contains('searchContacts')),
@@ -47,9 +66,16 @@ void main() {
     )).thenAnswer((_) async => _resp(results));
   }
 
-  void stubDirectory(List<Map<String, dynamic>> results) {
+  void stubDirectory(List<Map<String, dynamic>> people) {
     when(mockDio.get<Map<String, dynamic>>(
       argThat(contains('searchDirectoryPeople')),
+      queryParameters: anyNamed('queryParameters'),
+    )).thenAnswer((_) async => _directoryResp(people));
+  }
+
+  void stubOtherContacts(List<Map<String, dynamic>> results) {
+    when(mockDio.get<Map<String, dynamic>>(
+      argThat(contains('otherContacts')),
       queryParameters: anyNamed('queryParameters'),
     )).thenAnswer((_) async => _resp(results));
   }
@@ -58,6 +84,7 @@ void main() {
     test('returns personal contact results', () async {
       stubPersonal([_person('alice@example.com', name: 'Alice')]);
       stubDirectory([]);
+      stubOtherContacts([]);
 
       final results = await datasource.searchContacts('alice');
 
@@ -68,7 +95,8 @@ void main() {
 
     test('returns directory contact results', () async {
       stubPersonal([]);
-      stubDirectory([_person('bob@corp.com', name: 'Bob')]);
+      stubDirectory([_directoryPerson('bob@corp.com', name: 'Bob')]);
+      stubOtherContacts([]);
 
       final results = await datasource.searchContacts('bob');
 
@@ -76,22 +104,36 @@ void main() {
       expect(results.first.address, 'bob@corp.com');
     });
 
-    test('merges personal and directory results', () async {
+    test('returns other contact results', () async {
+      stubPersonal([]);
+      stubDirectory([]);
+      stubOtherContacts([_person('carol@company.com', name: 'Carol')]);
+
+      final results = await datasource.searchContacts('carol');
+
+      expect(results.length, 1);
+      expect(results.first.address, 'carol@company.com');
+    });
+
+    test('merges results from all three sources', () async {
       stubPersonal([_person('alice@example.com', name: 'Alice')]);
-      stubDirectory([_person('bob@corp.com', name: 'Bob')]);
+      stubDirectory([_directoryPerson('bob@corp.com', name: 'Bob')]);
+      stubOtherContacts([_person('carol@company.com', name: 'Carol')]);
 
       final results = await datasource.searchContacts('query');
       final addresses = results.map((r) => r.address).toSet();
 
-      expect(addresses, containsAll(['alice@example.com', 'bob@corp.com']));
+      expect(addresses,
+          containsAll(['alice@example.com', 'bob@corp.com', 'carol@company.com']));
     });
 
-    test('deduplicates addresses across personal and directory', () async {
+    test('deduplicates addresses across all sources', () async {
       stubPersonal([_person('shared@corp.com', name: 'Alice')]);
       stubDirectory([
-        _person('shared@corp.com', name: 'Alice Duplicate'),
-        _person('unique@corp.com', name: 'Bob'),
+        _directoryPerson('shared@corp.com', name: 'Alice Duplicate'),
+        _directoryPerson('unique@corp.com', name: 'Bob'),
       ]);
+      stubOtherContacts([_person('shared@corp.com', name: 'Alice Other')]);
 
       final results = await datasource.searchContacts('corp');
       final addresses = results.map((r) => r.address).toList();
@@ -103,6 +145,7 @@ void main() {
     test('handles missing name gracefully', () async {
       stubPersonal([_person('noname@example.com')]);
       stubDirectory([]);
+      stubOtherContacts([]);
 
       final results = await datasource.searchContacts('noname');
 
@@ -112,7 +155,15 @@ void main() {
 
     test('returns empty list when API returns null data', () async {
       when(mockDio.get<Map<String, dynamic>>(
-        any,
+        argThat(contains('searchContacts')),
+        queryParameters: anyNamed('queryParameters'),
+      )).thenAnswer((_) async => _emptyResp());
+      when(mockDio.get<Map<String, dynamic>>(
+        argThat(contains('searchDirectoryPeople')),
+        queryParameters: anyNamed('queryParameters'),
+      )).thenAnswer((_) async => _emptyResp());
+      when(mockDio.get<Map<String, dynamic>>(
+        argThat(contains('otherContacts')),
         queryParameters: anyNamed('queryParameters'),
       )).thenAnswer((_) async => _emptyResp());
 
@@ -122,6 +173,7 @@ void main() {
 
     test('returns partial results when directory endpoint fails', () async {
       stubPersonal([_person('alice@example.com', name: 'Alice')]);
+      stubOtherContacts([]);
       when(mockDio.get<Map<String, dynamic>>(
         argThat(contains('searchDirectoryPeople')),
         queryParameters: anyNamed('queryParameters'),
@@ -139,7 +191,7 @@ void main() {
       expect(results.first.address, 'alice@example.com');
     });
 
-    test('returns empty list when both endpoints fail', () async {
+    test('returns empty list when all endpoints fail', () async {
       when(mockDio.get<Map<String, dynamic>>(
         any,
         queryParameters: anyNamed('queryParameters'),

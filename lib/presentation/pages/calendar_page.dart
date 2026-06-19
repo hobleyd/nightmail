@@ -21,7 +21,9 @@ class CalendarPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return ColoredBox(
+    return MediaQuery(
+      data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
+      child: ColoredBox(
       color: c.surfaceBase,
       child: BlocBuilder<CalendarBloc, CalendarState>(
         builder: (context, state) {
@@ -47,6 +49,7 @@ class CalendarPage extends StatelessWidget {
             ],
           );
         },
+      ),
       ),
     );
   }
@@ -343,7 +346,9 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
     final now = DateTime.now();
     final isToday = _isSameDay(_selectedDay, now);
 
-    return BlocBuilder<CalendarBloc, CalendarState>(
+    return MediaQuery(
+      data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
+      child: BlocBuilder<CalendarBloc, CalendarState>(
       builder: (context, state) {
         final isLoading = state is CalendarLoading;
         final allDayEvents = switch (state) {
@@ -475,6 +480,7 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
           ),
         );
       },
+      ),
     );
   }
 }

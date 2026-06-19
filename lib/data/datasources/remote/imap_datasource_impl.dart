@@ -667,7 +667,6 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
   }
 
   @override
-  @override
   Future<void> reportJunk(String id) async {
     final separatorIdx = id.lastIndexOf(':');
     final mailboxPath =
@@ -680,7 +679,13 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       await _selectMailboxPath(client, mailboxPath);
       final sequence = MessageSequence.fromId(uid, isUid: true);
       if (junkPath != null) {
-        await client.uidCopy(sequence, targetMailboxPath: junkPath);
+        try {
+          await client.uidCopy(sequence, targetMailboxPath: junkPath);
+        } on ImapException {
+          // Copy failed (e.g. folder inaccessible or wrong path encoding).
+          // Fall through to delete from source so the message doesn't linger
+          // in the inbox and cause confusing reappearance on folder switch.
+        }
       }
       await client.uidStore(
         sequence,
@@ -698,7 +703,14 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       final mailboxes = await client.listMailboxes(recursive: true);
       final junkMailbox = mailboxes.where((mb) => mb.isJunk).firstOrNull ??
           _wellKnownJunkMailbox(mailboxes);
-      return junkMailbox?.path;
+      if (junkMailbox == null) return null;
+      // Normalize abbreviated path to full path, matching getMailFolders logic.
+      // On INBOX-prefixed servers (Courier/Dovecot), LIST returns 'Junk' but
+      // UID COPY requires the full path 'INBOX.Junk'.
+      return (_inboxFolderPrefix.isNotEmpty &&
+              !junkMailbox.path.toUpperCase().startsWith('INBOX'))
+          ? '$_inboxFolderPrefix${junkMailbox.path}'
+          : junkMailbox.path;
     } on ImapException {
       return null;
     }
@@ -831,11 +843,17 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
 
       if (trashMailbox == null) return null;
 
+      // Normalize abbreviated path to full path, matching getMailFolders logic.
+      final trashPath = (_inboxFolderPrefix.isNotEmpty &&
+              !trashMailbox.path.toUpperCase().startsWith('INBOX'))
+          ? '$_inboxFolderPrefix${trashMailbox.path}'
+          : trashMailbox.path;
+
       // Already in Trash — skip the copy and just expunge permanently.
-      if (trashMailbox.path.toLowerCase() == currentPath.toLowerCase()) {
+      if (trashPath.toLowerCase() == currentPath.toLowerCase()) {
         return null;
       }
-      return trashMailbox.path;
+      return trashPath;
     } on ImapException {
       return null;
     }

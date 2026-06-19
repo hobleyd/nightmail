@@ -47,7 +47,8 @@ class GmailContactsDatasourceImpl {
       _parseResults(resp.data, seen, results);
       debugPrint('[Contacts] personal: +${results.length - before} (data keys: ${resp.data?.keys.toList()})');
     } catch (e) {
-      debugPrint('[Contacts] personal error: $e');
+      final body = e is DioException ? e.response?.data : null;
+      debugPrint('[Contacts] personal error: $e${body != null ? '\n  body: $body' : ''}');
     }
   }
 
@@ -73,7 +74,8 @@ class GmailContactsDatasourceImpl {
       _parseDirectoryResults(resp.data, seen, results);
       debugPrint('[Contacts] directory: +${results.length - before} (data keys: ${resp.data?.keys.toList()})');
     } catch (e) {
-      debugPrint('[Contacts] directory error: $e');
+      final body = e is DioException ? e.response?.data : null;
+      debugPrint('[Contacts] directory error: $e${body != null ? '\n  body: $body' : ''}');
     }
   }
 
@@ -97,7 +99,8 @@ class GmailContactsDatasourceImpl {
       _parseResults(resp.data, seen, results);
       debugPrint('[Contacts] otherContacts: +${results.length - before} (data keys: ${resp.data?.keys.toList()})');
     } catch (e) {
-      debugPrint('[Contacts] otherContacts error: $e');
+      final body = e is DioException ? e.response?.data : null;
+      debugPrint('[Contacts] otherContacts error: $e${body != null ? '\n  body: $body' : ''}');
     }
   }
 

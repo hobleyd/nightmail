@@ -20,6 +20,7 @@ class GmailContactsDatasourceImpl {
     await Future.wait([
       _searchPersonal(query, seen, results),
       _searchDirectory(query, seen, results),
+      _searchOtherContacts(query, seen, results),
     ]);
 
     return results;
@@ -56,6 +57,26 @@ class GmailContactsDatasourceImpl {
           'query': query,
           'readMask': 'emailAddresses,names',
           'sources': 'DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE',
+          'pageSize': 10,
+        },
+      );
+      _parseResults(resp.data, seen, results);
+    } catch (_) {}
+  }
+
+  Future<void> _searchOtherContacts(
+    String query,
+    Set<String> seen,
+    List<ContactSuggestion> results,
+  ) async {
+    // "Other contacts" — addresses auto-saved from email interactions,
+    // which includes contacts from company/domain emails.
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '/otherContacts:search',
+        queryParameters: {
+          'query': query,
+          'readMask': 'emailAddresses,names',
           'pageSize': 10,
         },
       );

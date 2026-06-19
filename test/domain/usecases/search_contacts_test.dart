@@ -30,7 +30,7 @@ void main() {
   void stubEmpty() {
     when(mockSenders.getSendersForAccount(any)).thenAnswer((_) async => []);
     when(mockSystemContacts.search(any)).thenAnswer((_) async => []);
-    when(mockDirectoryContacts.search(any)).thenAnswer((_) async => []);
+    when(mockDirectoryContacts.search(any, accountId: anyNamed('accountId'))).thenAnswer((_) async => []);
   }
 
   group('SearchContacts', () {
@@ -41,7 +41,7 @@ void main() {
 
       verifyNever(mockSenders.getSendersForAccount(any));
       verifyNever(mockSystemContacts.search(any));
-      verifyNever(mockDirectoryContacts.search(any));
+      verifyNever(mockDirectoryContacts.search(any, accountId: anyNamed('accountId')));
     });
 
     test('returns known senders that match query', () async {
@@ -50,7 +50,7 @@ void main() {
             KnownSenderEntry(address: 'bob@example.com', name: 'Bob'),
           ]);
       when(mockSystemContacts.search(any)).thenAnswer((_) async => []);
-      when(mockDirectoryContacts.search(any)).thenAnswer((_) async => []);
+      when(mockDirectoryContacts.search(any, accountId: anyNamed('accountId'))).thenAnswer((_) async => []);
 
       final results = await useCase.call(query: 'alice', accountId: 'acc1');
 
@@ -64,7 +64,7 @@ void main() {
             KnownSenderEntry(address: 'x@example.com', name: 'Alice Smith'),
           ]);
       when(mockSystemContacts.search(any)).thenAnswer((_) async => []);
-      when(mockDirectoryContacts.search(any)).thenAnswer((_) async => []);
+      when(mockDirectoryContacts.search(any, accountId: anyNamed('accountId'))).thenAnswer((_) async => []);
 
       final results = await useCase.call(query: 'smith', accountId: 'acc1');
 
@@ -77,7 +77,7 @@ void main() {
             KnownSenderEntry(address: 'alice@corp.com', name: 'Alice'),
           ]);
       when(mockSystemContacts.search(any)).thenAnswer((_) async => []);
-      when(mockDirectoryContacts.search(any)).thenAnswer((_) async => [
+      when(mockDirectoryContacts.search(any, accountId: anyNamed('accountId'))).thenAnswer((_) async => [
             ContactSuggestion(address: 'bob@corp.com', name: 'Bob'),
           ]);
 
@@ -93,7 +93,7 @@ void main() {
             KnownSenderEntry(address: 'alice@corp.com', name: 'Alice'),
           ]);
       when(mockSystemContacts.search(any)).thenAnswer((_) async => []);
-      when(mockDirectoryContacts.search(any)).thenAnswer((_) async => [
+      when(mockDirectoryContacts.search(any, accountId: anyNamed('accountId'))).thenAnswer((_) async => [
             ContactSuggestion(address: 'alice@corp.com', name: 'Alice (dir)'),
             ContactSuggestion(address: 'carol@corp.com', name: 'Carol'),
           ]);
@@ -113,7 +113,7 @@ void main() {
       when(mockSystemContacts.search(any)).thenAnswer((_) async => []);
       // Use thenAnswer with Future.error so the rejection propagates asynchronously
       // through catchError rather than throwing synchronously before the chain forms.
-      when(mockDirectoryContacts.search(any))
+      when(mockDirectoryContacts.search(any, accountId: anyNamed('accountId')))
           .thenAnswer((_) => Future.error(Exception('network')));
 
       final results = await useCase.call(query: 'alice', accountId: 'acc1');
@@ -126,7 +126,7 @@ void main() {
         () async {
       when(mockSenders.getSendersForAccount(any)).thenThrow(Exception('db'));
       when(mockSystemContacts.search(any)).thenAnswer((_) async => []);
-      when(mockDirectoryContacts.search(any)).thenAnswer((_) async => [
+      when(mockDirectoryContacts.search(any, accountId: anyNamed('accountId'))).thenAnswer((_) async => [
             ContactSuggestion(address: 'bob@corp.com'),
           ]);
 
@@ -143,7 +143,7 @@ void main() {
               (i) => KnownSenderEntry(
                   address: 'sender$i@example.com', name: 'Sender $i')));
       when(mockSystemContacts.search(any)).thenAnswer((_) async => []);
-      when(mockDirectoryContacts.search(any)).thenAnswer((_) async =>
+      when(mockDirectoryContacts.search(any, accountId: anyNamed('accountId'))).thenAnswer((_) async =>
           List.generate(
               6,
               (i) => ContactSuggestion(address: 'dir$i@example.com')));

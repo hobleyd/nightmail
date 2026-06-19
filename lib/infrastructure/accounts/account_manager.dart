@@ -77,6 +77,12 @@ class AccountManager {
   CalendarRemoteDatasource? get calendarDatasource => _calendarDatasource;
   TasksRemoteDatasource? get tasksDatasource => _tasksDatasource;
 
+  GmailContactsDatasourceImpl? get contactsDatasource {
+    final id = activeAccount?.id;
+    if (id == null) return null;
+    return contactsDatasourceForAccount(id);
+  }
+
   GmailContactsDatasourceImpl? contactsDatasourceForAccount(String accountId) {
     if (_contactsDatasourceCache.containsKey(accountId)) {
       return _contactsDatasourceCache[accountId];

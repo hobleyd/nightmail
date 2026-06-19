@@ -20,14 +20,18 @@ void main() {
   });
 
   group('DirectoryContactsRepositoryImpl', () {
-    test('returns empty list when contactsDatasource is null', () async {
-      when(mockAccountManager.contactsDatasource).thenReturn(null);
+    test('returns empty list when contactsDatasourceForAccount returns null',
+        () async {
+      when(mockAccountManager.contactsDatasourceForAccount(any))
+          .thenReturn(null);
 
-      final results = await repository.search('alice');
+      final results =
+          await repository.search('alice', accountId: 'acct-1');
       expect(results, isEmpty);
     });
 
-    test('delegates to contactsDatasource and returns its results', () async {
+    test('delegates to contactsDatasourceForAccount and returns its results',
+        () async {
       final mockDio = MockDio();
 
       when(mockDio.get<Map<String, dynamic>>(
@@ -53,9 +57,10 @@ void main() {
           ));
 
       final datasource = GmailContactsDatasourceImpl.withDio(mockDio);
-      when(mockAccountManager.contactsDatasource).thenReturn(datasource);
+      when(mockAccountManager.contactsDatasourceForAccount(any))
+          .thenReturn(datasource);
 
-      final results = await repository.search('alice');
+      final results = await repository.search('alice', accountId: 'acct-1');
 
       expect(results, hasLength(greaterThan(0)));
       expect(results.any((r) => r.address == 'alice@corp.com'), isTrue);
@@ -73,9 +78,10 @@ void main() {
           ));
 
       final datasource = GmailContactsDatasourceImpl.withDio(mockDio);
-      when(mockAccountManager.contactsDatasource).thenReturn(datasource);
+      when(mockAccountManager.contactsDatasourceForAccount(any))
+          .thenReturn(datasource);
 
-      final results = await repository.search('nobody');
+      final results = await repository.search('nobody', accountId: 'acct-1');
       expect(results, isEmpty);
     });
   });

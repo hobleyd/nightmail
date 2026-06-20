@@ -301,6 +301,69 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
   }
 
   @override
+  Future<List<EmailModel>> searchEmails({
+    String? folderId,
+    required String query,
+    int top = 50,
+  }) async {
+    final mailboxPath = folderId ?? 'INBOX';
+    try {
+      final client = await _getConnectedClient();
+      await _selectMailboxPath(client, mailboxPath);
+
+      final criteria = _buildImapCriteria(query);
+      final searchResult =
+          await client.uidSearchMessages(searchCriteria: criteria);
+      final allUids = searchResult.matchingSequence?.toList() ?? [];
+      if (allUids.isEmpty) return [];
+
+      final page = allUids.reversed.take(top).toList();
+      final sequence = MessageSequence.fromIds(page, isUid: true);
+      final fetchResult = await client.uidFetchMessages(
+        sequence,
+        '(FLAGS INTERNALDATE ENVELOPE)',
+      );
+
+      return fetchResult.messages
+          .map((msg) =>
+              _parseToModel(msg, folderId: _selectedMailboxPath ?? mailboxPath))
+          .toList();
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    } on AuthException {
+      rethrow;
+    }
+  }
+
+  String _buildImapCriteria(String query) {
+    final criteria = <String>[];
+    var remaining = query.trim();
+
+    // Extract field:value tokens.
+    final tokenRe = RegExp(r'(\w+):(\S+)', caseSensitive: false);
+    for (final m in tokenRe.allMatches(query)) {
+      remaining = remaining.replaceFirst(m.group(0)!, '').trim();
+      final field = m.group(1)!.toLowerCase();
+      final value = m.group(2)!;
+      switch (field) {
+        case 'from':
+          criteria.add('FROM "$value"');
+        case 'to':
+          criteria.add('TO "$value"');
+        case 'subject':
+          criteria.add('SUBJECT "$value"');
+        // has:attachment not supported by basic IMAP SEARCH; skip silently.
+      }
+    }
+
+    if (remaining.isNotEmpty) {
+      criteria.add('TEXT "$remaining"');
+    }
+
+    return criteria.isEmpty ? 'ALL' : criteria.join(' ');
+  }
+
+  @override
   Future<EmailModel> getEmail(String id) async {
     // id format: "mailboxPath:uid"
     final separatorIdx = id.lastIndexOf(':');

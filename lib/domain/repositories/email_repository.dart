@@ -108,4 +108,13 @@ abstract interface class EmailRepository {
     required String parentFolderId,
     required String displayName,
   });
+
+  /// Searches [folderId] (and its immediate children where supported) for
+  /// emails matching [query].  Supports `from:`, `to:`, `subject:`, and
+  /// `has:attachment` notation.  Results are NOT cached.
+  Future<Either<Failure, List<Email>>> searchEmails({
+    String? folderId,
+    required String query,
+    int top = 50,
+  });
 }

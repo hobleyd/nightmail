@@ -52,6 +52,7 @@ import 'domain/usecases/get_tasks.dart';
 import 'domain/usecases/mark_email_as_read.dart';
 import 'domain/usecases/record_known_senders.dart';
 import 'domain/usecases/search_contacts.dart';
+import 'domain/usecases/search_emails.dart';
 import 'domain/usecases/send_email.dart';
 import 'domain/usecases/propose_new_time.dart';
 import 'domain/usecases/respond_to_meeting_invite.dart';
@@ -154,6 +155,7 @@ Future<void> configureDependencies() async {
 
   // Domain — use cases
   sl.registerLazySingleton(() => GetEmails(sl<EmailRepository>()));
+  sl.registerLazySingleton(() => SearchEmails(sl<EmailRepository>()));
   sl.registerLazySingleton(() => GetEmail(sl<EmailRepository>()));
   sl.registerLazySingleton(() => GetMailFolders(sl<EmailRepository>()));
   sl.registerLazySingleton(() => MarkEmailAsRead(sl<EmailRepository>()));
@@ -238,6 +240,7 @@ Future<void> configureDependencies() async {
         recordKnownSenders: sl<RecordKnownSenders>(),
         classifyEmails: sl<ClassifyEmails>(),
         trainSpamFilter: sl<TrainSpamFilter>(),
+        searchEmails: sl<SearchEmails>(),
       ));
   sl.registerFactory(() => EmailDetailBloc(
         getEmail: sl<GetEmail>(),

@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +10,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_folder.dart';
+import '../../domain/usecases/send_email.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
 import '../blocs/email_detail/email_detail_event.dart';
 import '../blocs/email_list/email_list_bloc.dart';
@@ -44,6 +47,7 @@ class EmailListPanel extends StatefulWidget {
 
 class _EmailListPanelState extends State<EmailListPanel> {
   final _scrollController = ScrollController();
+  final _searchController = TextEditingController();
 
   Set<String> _selectedEmailIds = {};
   int? _lastSelectedIndex;
@@ -68,7 +72,28 @@ class _EmailListPanelState extends State<EmailListPanel> {
   @override
   void dispose() {
     _scrollController.dispose();
+    _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _openComposeWindow() async {
+    await WindowController.create(
+      WindowConfiguration(
+        arguments: jsonEncode({'mode': ComposeMode.newEmail.name}),
+      ),
+    );
+  }
+
+  void _submitSearch(String query) {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return;
+    context.read<EmailListBloc>().add(EmailListSearchRequested(query: trimmed));
+  }
+
+  void _clearSearch() {
+    _searchController.clear();
+    _clearSelection();
+    context.read<EmailListBloc>().add(const EmailListSearchCleared());
   }
 
   void _onScroll() {
@@ -259,14 +284,30 @@ class _EmailListPanelState extends State<EmailListPanel> {
         listener: (context, state) => _clearSelection(),
         child: Column(
           children: [
-            BlocSelector<EmailListBloc, EmailListState, bool>(
-              selector: (s) => s is EmailListLoaded && s.isLoadingFresh,
-              builder: (context, isLoadingFresh) {
-                final hasSelection = _selectedEmailIds.isNotEmpty ||
-                    widget.selectedEmailId != null;
+            BlocBuilder<EmailListBloc, EmailListState>(
+              buildWhen: (prev, curr) {
+                final p = prev is EmailListLoaded ? prev : null;
+                final c = curr is EmailListLoaded ? curr : null;
+                return p?.isLoadingFresh != c?.isLoadingFresh ||
+                    p?.isSearchMode != c?.isSearchMode ||
+                    p?.activeSearchQuery != c?.activeSearchQuery;
+              },
+              builder: (context, state) {
+                final isLoadingFresh =
+                    state is EmailListLoaded && state.isLoadingFresh;
+                final isSearchMode =
+                    state is EmailListLoaded && state.isSearchMode;
+                final hasSelection = !isSearchMode &&
+                    (_selectedEmailIds.isNotEmpty ||
+                        widget.selectedEmailId != null);
                 return _ListHeader(
                   folderName: widget.folderName,
                   isLoadingFresh: isLoadingFresh,
+                  isSearchMode: isSearchMode,
+                  searchController: _searchController,
+                  onSearchSubmit: _submitSearch,
+                  onSearchClear: _clearSearch,
+                  onCompose: _openComposeWindow,
                   onRefresh: () {
                     context
                         .read<EmailListBloc>()
@@ -300,9 +341,14 @@ class _EmailListPanelState extends State<EmailListPanel> {
                       :final isLoadingMore,
                       :final expandedConversationIds,
                       :final spamEmailIds,
+                      :final activeSearchQuery,
                     ) =>
                       emails.isEmpty
-                          ? const _EmptyStateView(message: 'No emails here')
+                          ? _EmptyStateView(
+                              message: activeSearchQuery != null
+                                  ? 'No results found'
+                                  : 'No emails here',
+                            )
                           : _EmailListView(
                               emails: emails,
                               isLoadingMore: isLoadingMore,
@@ -434,13 +480,24 @@ class _ListHeader extends StatelessWidget {
     required this.folderName,
     required this.onRefresh,
     required this.isLoadingFresh,
+    required this.isSearchMode,
+    required this.searchController,
+    required this.onSearchSubmit,
+    required this.onSearchClear,
+    required this.onCompose,
     this.onDelete,
     this.onReportJunk,
     this.onMarkUnread,
   });
+
   final String folderName;
   final VoidCallback onRefresh;
   final bool isLoadingFresh;
+  final bool isSearchMode;
+  final TextEditingController searchController;
+  final ValueChanged<String> onSearchSubmit;
+  final VoidCallback onSearchClear;
+  final VoidCallback onCompose;
   final VoidCallback? onDelete;
   final VoidCallback? onReportJunk;
   final VoidCallback? onMarkUnread;
@@ -448,6 +505,57 @@ class _ListHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    if (isSearchMode) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+        child: Row(
+          children: [
+            Icon(Icons.search, size: 16, color: c.textMuted),
+            const SizedBox(width: 6),
+            Expanded(
+              child: TextField(
+                controller: searchController,
+                autofocus: true,
+                onSubmitted: onSearchSubmit,
+                style: TextStyle(fontSize: 14, color: c.textPrimary),
+                decoration: InputDecoration(
+                  hintText: 'from: to: subject: has:attachment',
+                  hintStyle: TextStyle(fontSize: 13, color: c.textMuted),
+                  border: InputBorder.none,
+                  isDense: true,
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ),
+            if (isLoadingFresh) ...[
+              const SizedBox(width: 4),
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.5,
+                  color: c.textMuted,
+                ),
+              ),
+              const SizedBox(width: 4),
+            ],
+            TextButton(
+              onPressed: onSearchClear,
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text(
+                'Cancel',
+                style: TextStyle(fontSize: 13, color: c.textMuted),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 14, 8, 12),
       child: Row(
@@ -480,6 +588,13 @@ class _ListHeader extends StatelessWidget {
             ),
           ],
           const Spacer(),
+          IconButton(
+            icon: Icon(Icons.edit_square, size: 18, color: c.textMuted),
+            tooltip: 'Compose',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            onPressed: onCompose,
+          ),
           if (onMarkUnread != null)
             IconButton(
               icon: Icon(Icons.mark_email_unread_outlined, size: 18, color: c.textMuted),

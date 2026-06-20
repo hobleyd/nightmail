@@ -9,7 +9,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email_folder.dart';
 import '../../infrastructure/accounts/account.dart';
-import '../../domain/usecases/send_email.dart'; // for ComposeMode
 import '../blocs/account/account_cubit.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
 import '../blocs/email_detail/email_detail_event.dart';
@@ -256,14 +255,6 @@ class _DisplayItem {
 }
 
 class _PanelHeader extends StatelessWidget {
-  Future<void> _openComposeWindow() async {
-    await WindowController.create(
-      WindowConfiguration(
-        arguments: jsonEncode({'mode': ComposeMode.newEmail.name}),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -297,11 +288,16 @@ class _PanelHeader extends StatelessWidget {
             ),
           ),
           IconButton(
-            icon: Icon(Icons.edit_square, size: 16, color: c.textMuted),
-            tooltip: 'Compose',
+            icon: Icon(Icons.search, size: 16, color: c.textMuted),
+            tooltip: 'Search',
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
-            onPressed: () => _openComposeWindow(),
+            onPressed: () {
+              final bloc = context.read<EmailListBloc>();
+              if (bloc.state is EmailListLoaded) {
+                bloc.add(const EmailListSearchModeActivated());
+              }
+            },
           ),
         ],
       ),

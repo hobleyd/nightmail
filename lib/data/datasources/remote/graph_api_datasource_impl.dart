@@ -140,6 +140,41 @@ class GraphApiDatasourceImpl
   }
 
   @override
+  Future<List<EmailModel>> searchEmails({
+    String? folderId,
+    required String query,
+    int top = 50,
+  }) async {
+    // Convert has:attachment to KQL; other tokens (from:, to:, subject:) pass through.
+    final kql = query.replaceAllMapped(
+      RegExp(r'\bhas:attachment\b', caseSensitive: false),
+      (_) => 'hasAttachments:true',
+    );
+
+    try {
+      // Always search globally across the whole mailbox. Per-folder $search on
+      // /me/mailFolders/{id}/messages silently returns empty on many tenants,
+      // and Graph uses inconsistent ID formats (AQMk vs AAMk) that break
+      // client-side parentFolderId filtering. Global search matches Outlook's
+      // default behaviour.
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/me/messages',
+        queryParameters: {
+          '\$top': top,
+          '\$select': _emailListSelect,
+          '\$search': '"$kql"',
+        },
+      );
+      final value = response.data?['value'] as List<dynamic>? ?? [];
+      return value
+          .map((e) => EmailModel.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
   Future<EmailModel> getEmail(String id) async {
     try {
       final response = await _dio.get<Map<String, dynamic>>(

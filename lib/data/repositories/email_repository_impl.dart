@@ -345,6 +345,19 @@ class EmailRepositoryImpl implements EmailRepository {
     });
   }
 
+  @override
+  Future<Either<Failure, List<Email>>> searchEmails({
+    String? folderId,
+    required String query,
+    int top = 50,
+  }) {
+    return _execute(() => _accountManager.emailDatasource.searchEmails(
+          folderId: folderId,
+          query: query,
+          top: top,
+        ));
+  }
+
   Future<Either<Failure, T>> _execute<T>(Future<T> Function() fn) async {
     try {
       return Right(await fn());

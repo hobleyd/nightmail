@@ -219,6 +219,49 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   }
 
   @override
+  Future<List<EmailModel>> searchEmails({
+    String? folderId,
+    required String query,
+    int top = 50,
+  }) async {
+    // Gmail's q parameter natively supports from:, to:, subject:, has:attachment.
+    try {
+      final listResp = await _dio.get<Map<String, dynamic>>(
+        '/users/me/messages',
+        queryParameters: {'maxResults': top, 'q': query},
+      );
+
+      final data = listResp.data;
+      if (data == null) return [];
+
+      final messages = data['messages'] as List<dynamic>? ?? [];
+      if (messages.isEmpty) return [];
+
+      final futures = messages.map((m) async {
+        final id = (m as Map<String, dynamic>)['id'] as String;
+        try {
+          final resp = await _dio.get<Map<String, dynamic>>(
+            '/users/me/messages/$id',
+            queryParameters: {
+              'format': 'metadata',
+              'metadataHeaders': ['From', 'To', 'Cc', 'Subject', 'Date'],
+            },
+          );
+          if (resp.data == null) return null;
+          return _parseMessage(resp.data!, fullBody: false);
+        } catch (_) {
+          return null;
+        }
+      });
+
+      final results = await Future.wait(futures);
+      return results.whereType<EmailModel>().toList();
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  @override
   Future<EmailModel> getEmail(String id) async {
     try {
       final resp = await _dio.get<Map<String, dynamic>>(

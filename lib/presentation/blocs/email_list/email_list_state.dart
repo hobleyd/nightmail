@@ -28,6 +28,8 @@ final class EmailListLoaded extends EmailListState {
     this.expandedConversationIds = const {},
     this.emptyingFolderIds = const {},
     this.spamEmailIds = const {},
+    this.isSearchMode = false,
+    this.activeSearchQuery,
   });
 
   final List<Email> emails;
@@ -49,6 +51,14 @@ final class EmailListLoaded extends EmailListState {
   /// IDs of emails the Bayesian spam filter has classified as spam (IMAP only).
   final Set<String> spamEmailIds;
 
+  /// True when the search bar is visible (before or after a search is run).
+  final bool isSearchMode;
+
+  /// Non-null while search results are being displayed.
+  final String? activeSearchQuery;
+
+  static const _unset = Object();
+
   EmailListLoaded copyWith({
     List<Email>? emails,
     bool? hasMore,
@@ -58,6 +68,8 @@ final class EmailListLoaded extends EmailListState {
     Set<String>? expandedConversationIds,
     Set<String>? emptyingFolderIds,
     Set<String>? spamEmailIds,
+    bool? isSearchMode,
+    Object? activeSearchQuery = _unset,
   }) {
     return EmailListLoaded(
       emails: emails ?? this.emails,
@@ -69,6 +81,10 @@ final class EmailListLoaded extends EmailListState {
       expandedConversationIds: expandedConversationIds ?? this.expandedConversationIds,
       emptyingFolderIds: emptyingFolderIds ?? this.emptyingFolderIds,
       spamEmailIds: spamEmailIds ?? this.spamEmailIds,
+      isSearchMode: isSearchMode ?? this.isSearchMode,
+      activeSearchQuery: identical(activeSearchQuery, _unset)
+          ? this.activeSearchQuery
+          : activeSearchQuery as String?,
     );
   }
 
@@ -83,6 +99,8 @@ final class EmailListLoaded extends EmailListState {
         expandedConversationIds,
         emptyingFolderIds,
         spamEmailIds,
+        isSearchMode,
+        activeSearchQuery,
       ];
 }
 

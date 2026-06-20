@@ -6,6 +6,7 @@ import '../../../domain/entities/email.dart';
 import '../../../domain/usecases/classify_emails.dart';
 import '../../../domain/usecases/delete_email.dart';
 import '../../../domain/usecases/report_junk.dart';
+import '../../../domain/usecases/search_emails.dart';
 import '../../../domain/usecases/train_spam_filter.dart';
 import '../../../infrastructure/accounts/account.dart';
 import '../../../domain/usecases/empty_folder.dart';
@@ -34,6 +35,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     required RecordKnownSenders recordKnownSenders,
     required ClassifyEmails classifyEmails,
     required TrainSpamFilter trainSpamFilter,
+    required SearchEmails searchEmails,
   })  : _getEmails = getEmails,
         _getCachedEmails = getCachedEmails,
         _markEmailAsRead = markEmailAsRead,
@@ -45,6 +47,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         _recordKnownSenders = recordKnownSenders,
         _classifyEmails = classifyEmails,
         _trainSpamFilter = trainSpamFilter,
+        _searchEmails = searchEmails,
         super(const EmailListInitial()) {
     on<EmailListLoadRequested>(_onLoadRequested);
     on<EmailListLoadMoreRequested>(_onLoadMoreRequested);
@@ -57,6 +60,9 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     on<EmailListJunkReported>(_onJunkReported);
     on<EmailListFolderEmptied>(_onFolderEmptied);
     on<EmailListCleared>(_onCleared);
+    on<EmailListSearchModeActivated>(_onSearchModeActivated);
+    on<EmailListSearchRequested>(_onSearchRequested);
+    on<EmailListSearchCleared>(_onSearchCleared);
   }
 
   final GetEmails _getEmails;
@@ -70,6 +76,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   final RecordKnownSenders _recordKnownSenders;
   final ClassifyEmails _classifyEmails;
   final TrainSpamFilter _trainSpamFilter;
+  final SearchEmails _searchEmails;
 
   Future<void> _onLoadRequested(
     EmailListLoadRequested event,
@@ -387,6 +394,83 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       emails: emails,
       isSpam: false,
     )));
+  }
+
+  void _onSearchModeActivated(
+    EmailListSearchModeActivated event,
+    Emitter<EmailListState> emit,
+  ) {
+    final current = state;
+    if (current is EmailListLoaded) {
+      emit(current.copyWith(isSearchMode: true));
+    }
+  }
+
+  Future<void> _onSearchRequested(
+    EmailListSearchRequested event,
+    Emitter<EmailListState> emit,
+  ) async {
+    final current = state;
+    if (current is! EmailListLoaded) return;
+
+    emit(current.copyWith(isLoadingFresh: true));
+
+    final result = await _searchEmails(SearchEmailsParams(
+      folderId: current.currentFolderId,
+      query: event.query,
+    ));
+
+    result.fold(
+      (failure) {
+        final s = state;
+        if (s is EmailListLoaded) emit(s.copyWith(isLoadingFresh: false));
+      },
+      (emails) => emit(current.copyWith(
+        emails: emails,
+        isLoadingFresh: false,
+        isSearchMode: true,
+        activeSearchQuery: event.query,
+        hasMore: false,
+      )),
+    );
+  }
+
+  Future<void> _onSearchCleared(
+    EmailListSearchCleared event,
+    Emitter<EmailListState> emit,
+  ) async {
+    final current = state;
+    if (current is! EmailListLoaded) return;
+
+    final folderId = current.currentFolderId;
+    final folderName = current.currentFolderName;
+
+    emit(current.copyWith(
+      isSearchMode: false,
+      activeSearchQuery: null,
+      isLoadingFresh: true,
+    ));
+
+    final result = await _getEmails(GetEmailsParams(
+      folderId: folderId,
+      top: _pageSize,
+    ));
+
+    result.fold(
+      (failure) {
+        final s = state;
+        if (s is EmailListLoaded) emit(s.copyWith(isLoadingFresh: false));
+      },
+      (emails) {
+        emit(EmailListLoaded(
+          emails: emails,
+          hasMore: emails.length == _pageSize,
+          currentFolderId: folderId,
+          currentFolderName: folderName,
+        ));
+        _recordSenders(emails, folderName);
+      },
+    );
   }
 
   void _recordSenders(List<Email> emails, String? folderName) {

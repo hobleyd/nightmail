@@ -96,3 +96,19 @@ final class EmailListJunkReported extends EmailListEvent {
 final class EmailListCleared extends EmailListEvent {
   const EmailListCleared();
 }
+
+final class EmailListSearchModeActivated extends EmailListEvent {
+  const EmailListSearchModeActivated();
+}
+
+final class EmailListSearchRequested extends EmailListEvent {
+  const EmailListSearchRequested({required this.query});
+  final String query;
+
+  @override
+  List<Object?> get props => [query];
+}
+
+final class EmailListSearchCleared extends EmailListEvent {
+  const EmailListSearchCleared();
+}

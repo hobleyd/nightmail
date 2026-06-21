@@ -181,20 +181,34 @@ class _ComposeFormState extends State<ComposeForm> {
     });
   }
 
+  static const _forwardSeparator = '---------- Forwarded message ---------';
+
   String _initialBody() {
     if (widget.draftEmail != null) return widget.draftEmail!.body;
     final email = widget.originalEmail;
     if (email == null) return '';
-    final isReplyLike = widget.mode == ComposeMode.reply ||
-        widget.mode == ComposeMode.replyAll;
-    if (!isReplyLike) return '';
 
     final fromName = email.from.name;
     final from = (fromName != null && fromName.isNotEmpty)
         ? '$fromName <${email.from.address}>'
         : email.from.address;
-    final header = 'On ${_formatDate(email.receivedDateTime)}, $from wrote:';
 
+    if (widget.mode == ComposeMode.forward) {
+      final bodyText = email.bodyType == EmailBodyType.html
+          ? _stripHtml(email.body)
+          : email.body;
+      return '\n\n$_forwardSeparator\n'
+          'From: $from\n'
+          'Date: ${_formatDate(email.receivedDateTime)}\n'
+          'Subject: ${email.subject}\n\n'
+          '$bodyText';
+    }
+
+    if (widget.mode != ComposeMode.reply && widget.mode != ComposeMode.replyAll) {
+      return '';
+    }
+
+    final header = 'On ${_formatDate(email.receivedDateTime)}, $from wrote:';
     if (email.bodyType == EmailBodyType.html) {
       final bodyText = _stripHtml(email.body);
       return '\n\n---\n\n$header\n\n$bodyText';
@@ -579,11 +593,18 @@ class _ComposeFormState extends State<ComposeForm> {
     final isReplyLike = widget.mode == ComposeMode.reply ||
         widget.mode == ComposeMode.replyAll;
 
-    // For HTML originals, convert the plain-text body field to HTML so the
-    // sent message matches the original email's content type.
-    final effectiveBody = (isReplyLike && originalBodyType == EmailBodyType.html)
-        ? const HtmlEscape().convert(body).replaceAll('\n', '<br>')
-        : body;
+    final String effectiveBody;
+    if (widget.mode == ComposeMode.forward) {
+      // Strip the quoted section — each backend appends the original automatically.
+      final sepIdx = body.indexOf(_forwardSeparator);
+      effectiveBody = sepIdx >= 0 ? body.substring(0, sepIdx).trim() : body;
+    } else if (isReplyLike && originalBodyType == EmailBodyType.html) {
+      // For HTML originals, convert the plain-text body field to HTML so the
+      // sent message matches the original email's content type.
+      effectiveBody = const HtmlEscape().convert(body).replaceAll('\n', '<br>');
+    } else {
+      effectiveBody = body;
+    }
 
     context.read<ComposeBloc>().add(ComposeSubmitted(
           mode: widget.mode,
@@ -668,10 +689,6 @@ class _ComposeFormState extends State<ComposeForm> {
 
   Widget _buildContent(BuildContext context, AppColors c, String? accountId) {
     if (widget.scrollable) {
-      final isReplyLike = widget.mode == ComposeMode.reply ||
-          widget.mode == ComposeMode.replyAll ||
-          widget.mode == ComposeMode.forward;
-      final quotedEmail = isReplyLike ? widget.originalEmail : null;
       final forwardEmail =
           widget.mode == ComposeMode.forward ? widget.originalEmail : null;
       return Column(
@@ -735,16 +752,6 @@ class _ComposeFormState extends State<ComposeForm> {
                           ),
                         ),
                       ),
-                      if (quotedEmail != null)
-                        Expanded(
-                          flex: 3,
-                          child: _ForwardedMessagePreview(
-                            email: quotedEmail,
-                            colors: c,
-                            mode: widget.mode,
-                            expand: true,
-                          ),
-                        ),
                       const SizedBox(height: 8),
                     ],
                   ),
@@ -759,10 +766,6 @@ class _ComposeFormState extends State<ComposeForm> {
       );
     }
 
-    final isReplyLike = widget.mode == ComposeMode.reply ||
-        widget.mode == ComposeMode.replyAll ||
-        widget.mode == ComposeMode.forward;
-    final quotedEmail = isReplyLike ? widget.originalEmail : null;
     final forwardEmail =
         widget.mode == ComposeMode.forward ? widget.originalEmail : null;
     return SizedBox(
@@ -819,9 +822,6 @@ class _ComposeFormState extends State<ComposeForm> {
                     if (_isDragOver) const Positioned.fill(child: _DropOverlay()),
                   ],
                 ),
-                if (quotedEmail != null && widget.mode == ComposeMode.forward)
-                  _ForwardedMessagePreview(
-                      email: quotedEmail, colors: c, mode: widget.mode),
               ],
             ),
           ),
@@ -1040,90 +1040,6 @@ class _AttachmentChip extends StatelessWidget {
   }
 }
 
-class _ForwardedMessagePreview extends StatelessWidget {
-  const _ForwardedMessagePreview({
-    required this.email,
-    required this.colors,
-    required this.mode,
-    this.expand = false,
-  });
-
-  final Email email;
-  final AppColors colors;
-  final ComposeMode mode;
-  // When true the text body fills available height (Expanded layout).
-  // When false it is capped at 220px (dialog layout).
-  final bool expand;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = colors;
-    final bodyText = email.bodyType == EmailBodyType.html
-        ? _stripHtml(email.body)
-        : email.body;
-    final fromName = email.from.name;
-    final from = (fromName != null && fromName.isNotEmpty)
-        ? '$fromName <${email.from.address}>'
-        : email.from.address;
-
-    final List<Widget> headerLines;
-    if (mode == ComposeMode.forward) {
-      headerLines = [
-        Text(
-          '---------- Forwarded message ---------',
-          style: TextStyle(
-              color: c.textDimmed, fontSize: 12, fontStyle: FontStyle.italic),
-        ),
-        const SizedBox(height: 4),
-        Text('From: $from',
-            style: TextStyle(color: c.textDimmed, fontSize: 12)),
-        Text('Subject: ${email.subject}',
-            style: TextStyle(color: c.textDimmed, fontSize: 12)),
-      ];
-    } else {
-      headerLines = [
-        Text(
-          'On ${_formatDate(email.receivedDateTime)}, $from wrote:',
-          style: TextStyle(
-              color: c.textDimmed, fontSize: 12, fontStyle: FontStyle.italic),
-        ),
-      ];
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const SizedBox(height: 8),
-        Divider(height: 1, color: c.border),
-        const SizedBox(height: 12),
-        ...headerLines,
-        const SizedBox(height: 8),
-        if (expand)
-          Expanded(
-            child: SingleChildScrollView(
-              child: Text(
-                bodyText,
-                style: TextStyle(
-                    color: c.textSecondary, fontSize: 12, height: 1.5),
-              ),
-            ),
-          )
-        else
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 220),
-            child: SingleChildScrollView(
-              child: Text(
-                bodyText,
-                style: TextStyle(
-                    color: c.textSecondary, fontSize: 12, height: 1.5),
-              ),
-            ),
-          ),
-        const SizedBox(height: 12),
-      ],
-    );
-  }
-}
 
 enum _CloseAction { saveToDrafts, delete }
 

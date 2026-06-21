@@ -697,7 +697,12 @@ class GraphApiDatasourceImpl
         data: {
           'message': {
             'subject': subject,
-            'body': {'contentType': 'Text', 'content': body},
+            'body': {
+              'contentType': 'html',
+              'content': const HtmlEscape()
+                  .convert(body)
+                  .replaceAll('\n', '<br>'),
+            },
             'toRecipients': toAddresses
                 .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
                 .toList(),

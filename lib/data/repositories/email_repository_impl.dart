@@ -179,12 +179,14 @@ class EmailRepositoryImpl implements EmailRepository {
     required String messageId,
     required String comment,
     bool replyAll = false,
+    EmailBodyType bodyType = EmailBodyType.text,
   }) async {
     return _execute(() async {
       await _accountManager.emailDatasource.replyToEmail(
         messageId: messageId,
         comment: comment,
         replyAll: replyAll,
+        bodyType: bodyType,
       );
       return unit;
     });
@@ -196,6 +198,7 @@ class EmailRepositoryImpl implements EmailRepository {
     required List<String> toAddresses,
     required String comment,
     List<String> excludedAttachmentIds = const [],
+    EmailBodyType bodyType = EmailBodyType.text,
   }) async {
     return _execute(() async {
       await _accountManager.emailDatasource.forwardEmail(
@@ -203,6 +206,7 @@ class EmailRepositoryImpl implements EmailRepository {
         toAddresses: toAddresses,
         comment: comment,
         excludedAttachmentIds: excludedAttachmentIds,
+        bodyType: bodyType,
       );
       return unit;
     });

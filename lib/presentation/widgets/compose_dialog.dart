@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -134,12 +136,38 @@ class _ComposeFormState extends State<ComposeForm> {
     _ccRecipients = _parseAddresses(_initialCc());
     _fromController = TextEditingController(text: widget.fromAddress);
     _subjectController = TextEditingController(text: _initialSubject());
-    _bodyController = TextEditingController();
+    _bodyController = TextEditingController(text: _initialBody());
     _subjectController.addListener(_onSubjectChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _bodyFocus.requestFocus();
+      _bodyController.selection = const TextSelection.collapsed(offset: 0);
       widget.onTitleChanged?.call(_title);
     });
+  }
+
+  String _initialBody() {
+    final email = widget.originalEmail;
+    if (email == null) return '';
+    final isReplyLike = widget.mode == ComposeMode.reply ||
+        widget.mode == ComposeMode.replyAll;
+    if (!isReplyLike) return '';
+
+    final fromName = email.from.name;
+    final from = (fromName != null && fromName.isNotEmpty)
+        ? '$fromName <${email.from.address}>'
+        : email.from.address;
+    final header = 'On ${_formatDate(email.receivedDateTime)}, $from wrote:';
+
+    if (email.bodyType == EmailBodyType.html) {
+      final bodyText = _stripHtml(email.body);
+      return '\n\n---\n\n$header\n\n$bodyText';
+    } else {
+      final quoted = email.body
+          .split('\n')
+          .map((line) => '> $line')
+          .join('\n');
+      return '\n\n$header\n$quoted';
+    }
   }
 
   List<String> _parseAddresses(String text) {
@@ -261,14 +289,26 @@ class _ComposeFormState extends State<ComposeForm> {
       return;
     }
 
+    final originalBodyType =
+        widget.originalEmail?.bodyType ?? EmailBodyType.text;
+    final isReplyLike = widget.mode == ComposeMode.reply ||
+        widget.mode == ComposeMode.replyAll;
+
+    // For HTML originals, convert the plain-text body field to HTML so the
+    // sent message matches the original email's content type.
+    final effectiveBody = (isReplyLike && originalBodyType == EmailBodyType.html)
+        ? const HtmlEscape().convert(body).replaceAll('\n', '<br>')
+        : body;
+
     context.read<ComposeBloc>().add(ComposeSubmitted(
           mode: widget.mode,
           originalMessageId: widget.originalEmail?.id,
           toAddresses: to,
           ccAddresses: cc,
           subject: subject,
-          body: body,
+          body: effectiveBody,
           excludedAttachmentIds: _excludedAttachmentIds,
+          bodyType: originalBodyType,
         ));
   }
 
@@ -359,7 +399,6 @@ class _ComposeFormState extends State<ComposeForm> {
                               ]),
                     ),
                   Expanded(
-                    flex: 2,
                     child: TextField(
                       controller: _bodyController,
                       focusNode: _bodyFocus,
@@ -380,15 +419,12 @@ class _ComposeFormState extends State<ComposeForm> {
                       ),
                     ),
                   ),
-                  if (quotedEmail != null)
-                    Expanded(
-                      flex: 3,
-                      child: _ForwardedMessagePreview(
-                        email: quotedEmail,
-                        colors: c,
-                        mode: widget.mode,
-                        expand: true,
-                      ),
+                  if (quotedEmail != null && widget.mode == ComposeMode.forward)
+                    _ForwardedMessagePreview(
+                      email: quotedEmail,
+                      colors: c,
+                      mode: widget.mode,
+                      expand: true,
                     ),
                   const SizedBox(height: 8),
                 ],
@@ -430,7 +466,7 @@ class _ComposeFormState extends State<ComposeForm> {
                         () => _excludedAttachmentIds = [..._excludedAttachmentIds, id]),
                   ),
                 SizedBox(
-                  height: quotedEmail != null ? 150 : 240,
+                  height: 300,
                   child: TextField(
                     controller: _bodyController,
                     focusNode: _bodyFocus,
@@ -450,7 +486,7 @@ class _ComposeFormState extends State<ComposeForm> {
                     ),
                   ),
                 ),
-                if (quotedEmail != null)
+                if (quotedEmail != null && widget.mode == ComposeMode.forward)
                   _ForwardedMessagePreview(
                       email: quotedEmail, colors: c, mode: widget.mode),
               ],
@@ -464,6 +500,43 @@ class _ComposeFormState extends State<ComposeForm> {
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+String _stripHtml(String html) {
+  return html
+      .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+      .replaceAll(RegExp(r'<p[^>]*>', caseSensitive: false), '\n')
+      .replaceAll(RegExp(r'</p>', caseSensitive: false), '\n')
+      .replaceAll(RegExp(r'<div[^>]*>', caseSensitive: false), '\n')
+      .replaceAll(RegExp(r'</div>', caseSensitive: false), '')
+      .replaceAll(RegExp(r'<[^>]+>'), '')
+      .replaceAll('&nbsp;', ' ')
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&amp;', '&')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#39;', "'")
+      .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+      .trim();
+}
+
+String _formatDate(DateTime dt) {
+  final local = dt.toLocal();
+  const months = [
+    '', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  ];
+  const days = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  final h = local.hour;
+  final min = local.minute.toString().padLeft(2, '0');
+  final amPm = h >= 12 ? 'PM' : 'AM';
+  final h12 = h == 0 ? 12 : (h > 12 ? h - 12 : h);
+  return '${days[local.weekday]}, ${months[local.month]} ${local.day}, '
+      '${local.year} at $h12:$min $amPm';
+}
 
 // ---------------------------------------------------------------------------
 // Supporting widgets
@@ -648,39 +721,6 @@ class _ForwardedMessagePreview extends StatelessWidget {
   // When true the text body fills available height (Expanded layout).
   // When false it is capped at 220px (dialog layout).
   final bool expand;
-
-  static String _stripHtml(String html) {
-    return html
-        .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
-        .replaceAll(RegExp(r'<p[^>]*>', caseSensitive: false), '\n')
-        .replaceAll(RegExp(r'</p>', caseSensitive: false), '\n')
-        .replaceAll(RegExp(r'<div[^>]*>', caseSensitive: false), '\n')
-        .replaceAll(RegExp(r'</div>', caseSensitive: false), '')
-        .replaceAll(RegExp(r'<[^>]+>'), '')
-        .replaceAll('&nbsp;', ' ')
-        .replaceAll('&lt;', '<')
-        .replaceAll('&gt;', '>')
-        .replaceAll('&amp;', '&')
-        .replaceAll('&quot;', '"')
-        .replaceAll('&#39;', "'")
-        .replaceAll(RegExp(r'\n{3,}'), '\n\n')
-        .trim();
-  }
-
-  static String _formatDate(DateTime dt) {
-    final local = dt.toLocal();
-    const months = [
-      '', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-    ];
-    const days = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    final h = local.hour;
-    final min = local.minute.toString().padLeft(2, '0');
-    final amPm = h >= 12 ? 'PM' : 'AM';
-    final h12 = h == 0 ? 12 : (h > 12 ? h - 12 : h);
-    return '${days[local.weekday]}, ${months[local.month]} ${local.day}, '
-        '${local.year} at $h12:$min $amPm';
-  }
 
   @override
   Widget build(BuildContext context) {

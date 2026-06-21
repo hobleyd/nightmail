@@ -2,6 +2,7 @@ import 'package:equatable/equatable.dart';
 import 'package:fpdart/fpdart.dart';
 
 import '../../core/error/failures.dart';
+import '../entities/email.dart';
 import '../repositories/email_repository.dart';
 
 enum ComposeMode { newEmail, reply, replyAll, forward }
@@ -23,17 +24,20 @@ class SendEmail {
           messageId: params.originalMessageId!,
           comment: params.body,
           replyAll: false,
+          bodyType: params.bodyType,
         ),
       ComposeMode.replyAll => _repository.replyToEmail(
           messageId: params.originalMessageId!,
           comment: params.body,
           replyAll: true,
+          bodyType: params.bodyType,
         ),
       ComposeMode.forward => _repository.forwardEmail(
           messageId: params.originalMessageId!,
           toAddresses: params.toAddresses,
           comment: params.body,
           excludedAttachmentIds: params.excludedAttachmentIds,
+          bodyType: params.bodyType,
         ),
     };
   }
@@ -48,6 +52,7 @@ class SendEmailParams extends Equatable {
     this.subject = '',
     required this.body,
     this.excludedAttachmentIds = const [],
+    this.bodyType = EmailBodyType.text,
   });
 
   final ComposeMode mode;
@@ -57,8 +62,9 @@ class SendEmailParams extends Equatable {
   final String subject;
   final String body;
   final List<String> excludedAttachmentIds;
+  final EmailBodyType bodyType;
 
   @override
   List<Object?> get props =>
-      [mode, originalMessageId, toAddresses, ccAddresses, subject, body, excludedAttachmentIds];
+      [mode, originalMessageId, toAddresses, ccAddresses, subject, body, excludedAttachmentIds, bodyType];
 }

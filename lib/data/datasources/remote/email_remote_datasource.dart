@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../../../domain/entities/email.dart';
 import '../../models/email_folder_model.dart';
 import '../../models/email_model.dart';
 
@@ -34,6 +35,7 @@ abstract interface class EmailRemoteDatasource {
     required String messageId,
     required String comment,
     bool replyAll = false,
+    EmailBodyType bodyType = EmailBodyType.text,
   });
 
   Future<void> forwardEmail({
@@ -41,6 +43,7 @@ abstract interface class EmailRemoteDatasource {
     required List<String> toAddresses,
     required String comment,
     List<String> excludedAttachmentIds = const [],
+    EmailBodyType bodyType = EmailBodyType.text,
   });
 
   Future<void> moveEmail(String id, String destinationFolderId);

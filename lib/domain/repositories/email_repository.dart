@@ -45,6 +45,7 @@ abstract interface class EmailRepository {
     required String messageId,
     required String comment,
     bool replyAll = false,
+    EmailBodyType bodyType = EmailBodyType.text,
   });
 
   /// Forwards an existing email.
@@ -53,6 +54,7 @@ abstract interface class EmailRepository {
     required List<String> toAddresses,
     required String comment,
     List<String> excludedAttachmentIds = const [],
+    EmailBodyType bodyType = EmailBodyType.text,
   });
 
   /// Moves an email to [destinationFolderId].

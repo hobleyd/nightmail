@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../core/error/exceptions.dart';
 import '../../../domain/entities/attendee_availability.dart';
+import '../../../domain/entities/email.dart';
 import '../../../domain/entities/calendar_recurrence.dart';
 import '../../../domain/entities/meeting_invite.dart';
 import '../../../domain/entities/todo_task.dart';
@@ -718,12 +719,22 @@ class GraphApiDatasourceImpl
     required String messageId,
     required String comment,
     bool replyAll = false,
+    EmailBodyType bodyType = EmailBodyType.text,
   }) async {
     final path = replyAll
         ? '/me/messages/$messageId/replyAll'
         : '/me/messages/$messageId/reply';
     try {
-      await _dio.post<void>(path, data: {'comment': comment});
+      // Use message.body instead of comment so Graph doesn't auto-append the
+      // original (which would double-quote since we've already embedded it).
+      await _dio.post<void>(path, data: {
+        'message': {
+          'body': {
+            'contentType': bodyType == EmailBodyType.html ? 'html' : 'text',
+            'content': comment,
+          },
+        },
+      });
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
@@ -735,6 +746,7 @@ class GraphApiDatasourceImpl
     required List<String> toAddresses,
     required String comment,
     List<String> excludedAttachmentIds = const [],
+    EmailBodyType bodyType = EmailBodyType.text,
   }) async {
     try {
       await _dio.post<void>(

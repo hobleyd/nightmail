@@ -677,13 +677,19 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     required String messageId,
     required String comment,
     bool replyAll = false,
+    EmailBodyType bodyType = EmailBodyType.text,
   }) async {
     final original = await _fetchOriginal(messageId);
     final builder = MessageBuilder.prepareReplyToMessage(
       original,
       MailAddress(_account.displayName, _account.emailAddress),
       replyAll: replyAll,
-    )..addTextPlain(comment);
+    );
+    if (bodyType == EmailBodyType.html) {
+      builder.addTextHtml(comment);
+    } else {
+      builder.addTextPlain(comment);
+    }
     await _sendMime(builder.buildMimeMessage());
   }
 
@@ -693,15 +699,19 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     required List<String> toAddresses,
     required String comment,
     List<String> excludedAttachmentIds = const [],
+    EmailBodyType bodyType = EmailBodyType.text,
   }) async {
     final original = await _fetchOriginal(messageId);
 
     final builder = MessageBuilder.prepareForwardMessage(
       original,
       from: MailAddress(_account.displayName, _account.emailAddress),
-    )
-      ..to = toAddresses.map((e) => MailAddress(null, e)).toList()
-      ..addTextPlain(comment);
+    )..to = toAddresses.map((e) => MailAddress(null, e)).toList();
+    if (bodyType == EmailBodyType.html) {
+      builder.addTextHtml(comment);
+    } else {
+      builder.addTextPlain(comment);
+    }
     await _sendMime(builder.buildMimeMessage());
   }
 

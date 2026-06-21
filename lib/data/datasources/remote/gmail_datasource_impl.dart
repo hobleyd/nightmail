@@ -723,6 +723,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     required String messageId,
     required String comment,
     bool replyAll = false,
+    EmailBodyType bodyType = EmailBodyType.text,
   }) async {
     try {
       final rawResp = await _dio.get<Map<String, dynamic>>(
@@ -746,7 +747,12 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         original,
         MailAddress(null, fromEmail),
         replyAll: replyAll,
-      )..addTextPlain(comment);
+      );
+      if (bodyType == EmailBodyType.html) {
+        builder.addTextHtml(comment);
+      } else {
+        builder.addTextPlain(comment);
+      }
 
       final mime = builder.buildMimeMessage();
       final encoded = base64Url
@@ -771,6 +777,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     required List<String> toAddresses,
     required String comment,
     List<String> excludedAttachmentIds = const [],
+    EmailBodyType bodyType = EmailBodyType.text,
   }) async {
     try {
       final resp = await _dio.get<Map<String, dynamic>>(
@@ -793,23 +800,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       final originalDate = hdr('Date');
       final originalTo = hdr('To');
 
-      final (rawBodyText, bodyType) = _extractBody(payload);
-      final bodyText = bodyType == EmailBodyType.html
-          ? _stripHtmlForForward(rawBodyText)
-          : rawBodyText;
-
-      final forwardedHeader = [
-        '---------- Forwarded message ---------',
-        'From: $originalFrom',
-        'Date: $originalDate',
-        'Subject: $originalSubject',
-        'To: $originalTo',
-        '',
-      ].join('\n');
-
-      final fullBody = comment.isNotEmpty
-          ? '$comment\n\n$forwardedHeader\n$bodyText'
-          : '$forwardedHeader\n$bodyText';
+      final (rawBodyText, originalBodyType) = _extractBody(payload);
 
       final fromEmail = await _getUserEmail();
       final subject = originalSubject.startsWith('Fwd:')
@@ -818,11 +809,39 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
 
       final builder = MessageBuilder()
         ..to = toAddresses.map((e) => MailAddress(null, e)).toList()
-        ..subject = subject
-        ..addTextPlain(fullBody);
+        ..subject = subject;
 
       if (fromEmail.isNotEmpty) {
         builder.from = [MailAddress(null, fromEmail)];
+      }
+
+      if (originalBodyType == EmailBodyType.html) {
+        final htmlComment = comment.isNotEmpty
+            ? '<p>${const HtmlEscape().convert(comment).replaceAll('\n', '<br>')}</p>'
+            : '';
+        final htmlHeader = '<div style="border-left:1px solid #ccc;padding-left:8px;margin-top:8px">'
+            '<b>---------- Forwarded message ---------</b><br>'
+            '<b>From:</b> ${const HtmlEscape().convert(originalFrom)}<br>'
+            '<b>Date:</b> ${const HtmlEscape().convert(originalDate)}<br>'
+            '<b>Subject:</b> ${const HtmlEscape().convert(originalSubject)}<br>'
+            '<b>To:</b> ${const HtmlEscape().convert(originalTo)}<br><br>'
+            '$rawBodyText'
+            '</div>';
+        builder.addTextHtml('$htmlComment$htmlHeader');
+      } else {
+        final forwardedHeader = [
+          '---------- Forwarded message ---------',
+          'From: $originalFrom',
+          'Date: $originalDate',
+          'Subject: $originalSubject',
+          'To: $originalTo',
+          '',
+        ].join('\n');
+        final bodyText = rawBodyText;
+        final fullBody = comment.isNotEmpty
+            ? '$comment\n\n$forwardedHeader\n$bodyText'
+            : '$forwardedHeader\n$bodyText';
+        builder.addTextPlain(fullBody);
       }
 
       final allAttachments = _extractAttachments(payload);
@@ -871,23 +890,6 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     }
   }
 
-  String _stripHtmlForForward(String html) {
-    return html
-        .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
-        .replaceAll(RegExp(r'<p[^>]*>', caseSensitive: false), '\n')
-        .replaceAll(RegExp(r'</p>', caseSensitive: false), '\n')
-        .replaceAll(RegExp(r'<div[^>]*>', caseSensitive: false), '\n')
-        .replaceAll(RegExp(r'</div>', caseSensitive: false), '')
-        .replaceAll(RegExp(r'<[^>]+>'), '')
-        .replaceAll('&nbsp;', ' ')
-        .replaceAll('&lt;', '<')
-        .replaceAll('&gt;', '>')
-        .replaceAll('&amp;', '&')
-        .replaceAll('&quot;', '"')
-        .replaceAll('&#39;', "'")
-        .replaceAll(RegExp(r'\n{3,}'), '\n\n')
-        .trim();
-  }
 
   @override
   Future<void> moveEmail(String id, String destinationFolderId) async {

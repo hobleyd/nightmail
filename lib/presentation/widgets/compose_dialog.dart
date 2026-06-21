@@ -273,13 +273,6 @@ class _ComposeFormState extends State<ComposeForm> {
     final subject = _subjectController.text.trim();
     final body = _bodyController.text.trim();
 
-    if (body.isEmpty && widget.mode != ComposeMode.forward) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Message body cannot be empty')),
-      );
-      return;
-    }
-
     if ((widget.mode == ComposeMode.newEmail ||
             widget.mode == ComposeMode.forward) &&
         to.isEmpty) {

@@ -128,6 +128,7 @@ class AccountManager {
     if (_accounts.isNotEmpty) {
       _buildDatasourcesForActiveAccount();
       await _migrateLegacyTokenIfNeeded();
+      await _backfillActiveAccountEmailIfNeeded();
     }
   }
 
@@ -330,6 +331,20 @@ class AccountManager {
           credentialStorage: credStorage,
         );
     }
+  }
+
+  /// If the active Microsoft account has no stored email address, fetch it from
+  /// the Graph API profile endpoint and persist it. Fails silently.
+  Future<void> _backfillActiveAccountEmailIfNeeded() async {
+    final account = activeAccount;
+    if (account is! MicrosoftAccount || account.emailAddress.isNotEmpty) return;
+    try {
+      final ds = _emailDatasource;
+      if (ds is! GraphApiDatasourceImpl) return;
+      final profile = await ds.fetchUserProfile();
+      if (profile.email.isEmpty) return;
+      await updateAccount(account.copyWith(emailAddress: profile.email));
+    } catch (_) {}
   }
 
   void _sortAccounts() {

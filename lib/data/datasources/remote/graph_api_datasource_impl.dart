@@ -699,11 +699,11 @@ class GraphApiDatasourceImpl
             'subject': subject,
             'body': {'contentType': 'Text', 'content': body},
             'toRecipients': toAddresses
-                .map((a) => {'emailAddress': {'address': a}})
+                .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
                 .toList(),
             if (ccAddresses.isNotEmpty)
               'ccRecipients': ccAddresses
-                  .map((a) => {'emailAddress': {'address': a}})
+                  .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
                   .toList(),
           },
           'saveToSentItems': true,
@@ -754,7 +754,7 @@ class GraphApiDatasourceImpl
         data: {
           'comment': comment,
           'toRecipients': toAddresses
-              .map((a) => {'emailAddress': {'address': a}})
+              .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
               .toList(),
         },
       );
@@ -1315,6 +1315,15 @@ class GraphApiDatasourceImpl
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
+  }
+
+  static final _angleEmail = RegExp(r'<([^>]+)>\s*$');
+
+  /// Extracts a bare email address from an optionally formatted string like
+  /// "Display Name <email@example.com>" — Graph API rejects the full format.
+  static String _bareEmail(String address) {
+    final m = _angleEmail.firstMatch(address);
+    return m != null ? m.group(1)!.trim() : address.trim();
   }
 
   Exception _mapDioException(DioException e) {

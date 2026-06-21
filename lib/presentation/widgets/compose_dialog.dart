@@ -123,6 +123,8 @@ class ComposeForm extends StatefulWidget {
 class _ComposeFormState extends State<ComposeForm> {
   late List<String> _toRecipients;
   late List<String> _ccRecipients;
+  final _toFieldKey = GlobalKey<RecipientInputFieldState>();
+  final _ccFieldKey = GlobalKey<RecipientInputFieldState>();
   late final TextEditingController _fromController;
   late final TextEditingController _subjectController;
   late final TextEditingController _bodyController;
@@ -268,6 +270,8 @@ class _ComposeFormState extends State<ComposeForm> {
   }
 
   void _submit(BuildContext context) {
+    _toFieldKey.currentState?.flush();
+    _ccFieldKey.currentState?.flush();
     final to = _toRecipients;
     final cc = _ccRecipients;
     final subject = _subjectController.text.trim();
@@ -314,6 +318,7 @@ class _ComposeFormState extends State<ComposeForm> {
         ),
         const SizedBox(height: 8),
         RecipientInputField(
+          key: _toFieldKey,
           label: 'To',
           fieldId: 'to',
           recipients: _toRecipients,
@@ -326,6 +331,7 @@ class _ComposeFormState extends State<ComposeForm> {
         ),
         const SizedBox(height: 8),
         RecipientInputField(
+          key: _ccFieldKey,
           label: 'Cc',
           fieldId: 'cc',
           recipients: _ccRecipients,

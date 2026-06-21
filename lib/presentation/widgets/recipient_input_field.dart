@@ -45,10 +45,10 @@ class RecipientInputField extends StatefulWidget {
   final RecipientDropAccepted? onDropAccepted;
 
   @override
-  State<RecipientInputField> createState() => _RecipientInputFieldState();
+  State<RecipientInputField> createState() => RecipientInputFieldState();
 }
 
-class _RecipientInputFieldState extends State<RecipientInputField> {
+class RecipientInputFieldState extends State<RecipientInputField> {
   int? _selectedIndex;
   final _inputController = TextEditingController();
   final _inputFocus = FocusNode();
@@ -100,6 +100,8 @@ class _RecipientInputFieldState extends State<RecipientInputField> {
       _clearSuggestions();
     }
   }
+
+  void flush() => _flushInput();
 
   void _flushInput() {
     final text = _inputController.text

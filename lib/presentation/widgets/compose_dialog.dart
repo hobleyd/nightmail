@@ -413,11 +413,14 @@ class _ComposeFormState extends State<ComposeForm> {
                     ),
                   ),
                   if (quotedEmail != null && widget.mode == ComposeMode.forward)
-                    _ForwardedMessagePreview(
-                      email: quotedEmail,
-                      colors: c,
-                      mode: widget.mode,
-                      expand: true,
+                    Expanded(
+                      flex: 2,
+                      child: _ForwardedMessagePreview(
+                        email: quotedEmail,
+                        colors: c,
+                        mode: widget.mode,
+                        expand: true,
+                      ),
                     ),
                   const SizedBox(height: 8),
                 ],

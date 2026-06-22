@@ -50,6 +50,21 @@ class CachedFolders extends Table {
   Set<Column> get primaryKey => {accountId, folderId};
 }
 
+/// Local draft emails saved automatically while composing.
+/// Drafts are stored per account and cleaned up when sent.
+class LocalDrafts extends Table {
+  TextColumn get draftId => text()();
+  TextColumn get accountId => text()();
+  TextColumn get toAddresses => text()();
+  TextColumn get ccAddresses => text()();
+  TextColumn get subject => text()();
+  TextColumn get body => text()();
+  IntColumn get savedAtMs => integer()();
+
+  @override
+  Set<Column> get primaryKey => {draftId};
+}
+
 /// Stores Microsoft Graph delta sync tokens per account and folder.
 /// A delta link lets the poller fetch only changes since the last sync
 /// rather than refetching the full folder.
@@ -62,13 +77,13 @@ class DeltaSyncTokens extends Table {
   Set<Column> get primaryKey => {accountId, folderId};
 }
 
-@DriftDatabase(tables: [CachedEmails, KnownSenders, DeltaSyncTokens, CachedFolders])
+@DriftDatabase(tables: [CachedEmails, KnownSenders, DeltaSyncTokens, CachedFolders, LocalDrafts])
 class AppDatabase extends _$AppDatabase
     implements DeltaTokenDatasource, FolderLocalDatasource {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -101,6 +116,9 @@ class AppDatabase extends _$AppDatabase
           }
           if (from < 5) {
             await m.createTable(cachedFolders);
+          }
+          if (from < 6) {
+            await m.createTable(localDrafts);
           }
         },
       );
@@ -179,6 +197,29 @@ class AppDatabase extends _$AppDatabase
       (delete(cachedFolders)
             ..where((t) => t.accountId.equals(accountId)))
           .go();
+
+  Future<void> saveDraft({
+    required String draftId,
+    required String accountId,
+    required String toAddresses,
+    required String ccAddresses,
+    required String subject,
+    required String body,
+  }) =>
+      into(localDrafts).insertOnConflictUpdate(
+        LocalDraftsCompanion(
+          draftId: Value(draftId),
+          accountId: Value(accountId),
+          toAddresses: Value(toAddresses),
+          ccAddresses: Value(ccAddresses),
+          subject: Value(subject),
+          body: Value(body),
+          savedAtMs: Value(DateTime.now().millisecondsSinceEpoch),
+        ),
+      );
+
+  Future<void> deleteDraft(String draftId) =>
+      (delete(localDrafts)..where((t) => t.draftId.equals(draftId))).go();
 
   static QueryExecutor _openConnection() {
     return driftDatabase(name: 'nightmail_cache');

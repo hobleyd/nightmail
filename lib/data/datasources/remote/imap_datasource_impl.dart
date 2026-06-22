@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../../../core/error/exceptions.dart';
 import '../../../core/utils/html_entities.dart';
 import '../../../domain/entities/email.dart';
+import '../../../domain/entities/local_attachment.dart';
 import '../../../domain/entities/email_attachment.dart';
 import '../../../domain/entities/inline_attachment.dart';
 import '../../../infrastructure/accounts/account.dart';
@@ -626,6 +627,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    List<LocalAttachment> newAttachments = const [],
   }) async {
     final builder = MessageBuilder()
       ..from = [MailAddress(_account.displayName, _account.emailAddress)]
@@ -633,6 +635,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       ..cc = ccAddresses.map((e) => MailAddress(null, e)).toList()
       ..subject = subject
       ..addTextPlain(body);
+    await _addAttachmentsToBuilder(builder, newAttachments);
     await _sendMime(builder.buildMimeMessage());
   }
 
@@ -670,6 +673,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     required String comment,
     bool replyAll = false,
     EmailBodyType bodyType = EmailBodyType.text,
+    List<LocalAttachment> newAttachments = const [],
   }) async {
     final original = await _fetchOriginal(messageId);
     final builder = MessageBuilder.prepareReplyToMessage(
@@ -682,6 +686,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     } else {
       builder.addTextPlain(comment);
     }
+    await _addAttachmentsToBuilder(builder, newAttachments);
     await _sendMime(builder.buildMimeMessage());
   }
 
@@ -692,6 +697,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     required String comment,
     List<String> excludedAttachmentIds = const [],
     EmailBodyType bodyType = EmailBodyType.text,
+    List<LocalAttachment> newAttachments = const [],
   }) async {
     final original = await _fetchOriginal(messageId);
 
@@ -704,7 +710,19 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     } else {
       builder.addTextPlain(comment);
     }
+    await _addAttachmentsToBuilder(builder, newAttachments);
     await _sendMime(builder.buildMimeMessage());
+  }
+
+  Future<void> _addAttachmentsToBuilder(
+      MessageBuilder builder, List<LocalAttachment> attachments) async {
+    for (final att in attachments) {
+      builder.addBinary(
+        att.bytes,
+        MediaType.fromText(att.mimeType),
+        filename: att.name,
+      );
+    }
   }
 
   @override
@@ -761,6 +779,38 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     } on ImapException catch (e) {
       throw ServerException(message: e.message ?? 'IMAP error');
     }
+  }
+
+  Future<String?> _findDraftsPath(ImapClient client) async {
+    try {
+      final mailboxes = await client.listMailboxes(recursive: true);
+      final draftsMailbox = mailboxes.where((mb) => mb.isDrafts).firstOrNull ??
+          _wellKnownDraftsMailbox(mailboxes);
+      if (draftsMailbox == null) return null;
+      return (_inboxFolderPrefix.isNotEmpty &&
+              !draftsMailbox.path.toUpperCase().startsWith('INBOX'))
+          ? '$_inboxFolderPrefix${draftsMailbox.path}'
+          : draftsMailbox.path;
+    } on ImapException {
+      return null;
+    }
+  }
+
+  Mailbox? _wellKnownDraftsMailbox(List<Mailbox> mailboxes) {
+    const wellKnown = ['Drafts', 'Draft', 'Draft Items'];
+    for (final name in wellKnown) {
+      final fullName =
+          _inboxFolderPrefix.isNotEmpty ? '$_inboxFolderPrefix$name' : name;
+      final match = mailboxes
+          .where(
+            (mb) =>
+                mb.path.toLowerCase() == fullName.toLowerCase() ||
+                mb.path.toLowerCase() == name.toLowerCase(),
+          )
+          .firstOrNull;
+      if (match != null) return match;
+    }
+    return null;
   }
 
   Future<String?> _findJunkPath(ImapClient client) async {
@@ -865,6 +915,119 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
         await client.uidCopy(sequence, targetMailboxPath: trashPath);
       }
 
+      await client.uidStore(
+        sequence,
+        [MessageFlags.deleted],
+        action: StoreAction.add,
+      );
+      await client.expunge();
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    }
+  }
+
+  @override
+  Future<String> createServerDraft({
+    required List<String> toAddresses,
+    List<String> ccAddresses = const [],
+    required String subject,
+    required String body,
+    List<LocalAttachment> newAttachments = const [],
+  }) async {
+    try {
+      final client = await _getConnectedClient();
+      final draftsPath = await _findDraftsPath(client);
+      if (draftsPath == null) {
+        throw const ServerException(message: 'Drafts mailbox not found');
+      }
+      final builder = MessageBuilder()
+        ..from = [MailAddress(_account.displayName, _account.emailAddress)]
+        ..to = toAddresses.map((a) => MailAddress(null, a)).toList()
+        ..cc = ccAddresses.map((a) => MailAddress(null, a)).toList()
+        ..subject = subject
+        ..addTextPlain(body);
+      await _addAttachmentsToBuilder(builder, newAttachments);
+      final message = builder.buildMimeMessage();
+      final msgId = message.getHeaderValue('message-id') ?? '';
+      await client.appendMessage(
+        message,
+        targetMailboxPath: draftsPath,
+        flags: [MessageFlags.draft],
+      );
+      await _selectMailboxPath(client, draftsPath);
+      final searchResult = await client.uidSearchMessages(
+        searchCriteria: 'HEADER Message-Id "$msgId"',
+      );
+      final uid = searchResult.matchingSequence?.toList().firstOrNull;
+      if (uid == null) {
+        throw const ServerException(message: 'Draft not found after append');
+      }
+      return '$draftsPath:$uid';
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    }
+  }
+
+  @override
+  Future<String> updateServerDraft({
+    required String draftId,
+    required List<String> toAddresses,
+    List<String> ccAddresses = const [],
+    required String subject,
+    required String body,
+    List<LocalAttachment> newAttachments = const [],
+  }) async {
+    final separatorIdx = draftId.lastIndexOf(':');
+    final draftsPath =
+        separatorIdx > 0 ? draftId.substring(0, separatorIdx) : 'Drafts';
+    final oldUid = int.tryParse(draftId.substring(separatorIdx + 1)) ?? 0;
+    try {
+      final client = await _getConnectedClient();
+      final builder = MessageBuilder()
+        ..from = [MailAddress(_account.displayName, _account.emailAddress)]
+        ..to = toAddresses.map((a) => MailAddress(null, a)).toList()
+        ..cc = ccAddresses.map((a) => MailAddress(null, a)).toList()
+        ..subject = subject
+        ..addTextPlain(body);
+      await _addAttachmentsToBuilder(builder, newAttachments);
+      final message = builder.buildMimeMessage();
+      final msgId = message.getHeaderValue('message-id') ?? '';
+      await client.appendMessage(
+        message,
+        targetMailboxPath: draftsPath,
+        flags: [MessageFlags.draft],
+      );
+      await _selectMailboxPath(client, draftsPath);
+      final searchResult = await client.uidSearchMessages(
+        searchCriteria: 'HEADER Message-Id "$msgId"',
+      );
+      final newUid = searchResult.matchingSequence?.toList().firstOrNull;
+      if (oldUid > 0) {
+        final oldSeq = MessageSequence.fromId(oldUid, isUid: true);
+        await client.uidStore(
+          oldSeq,
+          [MessageFlags.deleted],
+          action: StoreAction.add,
+        );
+        await client.expunge();
+      }
+      return newUid != null ? '$draftsPath:$newUid' : draftId;
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    }
+  }
+
+  @override
+  Future<void> deleteServerDraft({required String draftId}) async {
+    final separatorIdx = draftId.lastIndexOf(':');
+    final mailboxPath =
+        separatorIdx > 0 ? draftId.substring(0, separatorIdx) : 'Drafts';
+    final uid = int.tryParse(draftId.substring(separatorIdx + 1)) ?? 0;
+    if (uid == 0) return;
+    try {
+      final client = await _getConnectedClient();
+      await _selectMailboxPath(client, mailboxPath);
+      final sequence = MessageSequence.fromId(uid, isUid: true);
       await client.uidStore(
         sequence,
         [MessageFlags.deleted],

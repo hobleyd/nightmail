@@ -5,6 +5,7 @@ import 'package:fpdart/fpdart.dart';
 import '../../core/error/failures.dart';
 import '../entities/email.dart';
 import '../entities/email_folder.dart';
+import '../entities/local_attachment.dart';
 
 abstract interface class EmailRepository {
   /// Fetches a page of emails from [folderId] (defaults to inbox).
@@ -38,6 +39,7 @@ abstract interface class EmailRepository {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    List<LocalAttachment> newAttachments = const [],
   });
 
   /// Replies to an existing email. Set [replyAll] to reply to all recipients.
@@ -46,6 +48,7 @@ abstract interface class EmailRepository {
     required String comment,
     bool replyAll = false,
     EmailBodyType bodyType = EmailBodyType.text,
+    List<LocalAttachment> newAttachments = const [],
   });
 
   /// Forwards an existing email.
@@ -55,6 +58,7 @@ abstract interface class EmailRepository {
     required String comment,
     List<String> excludedAttachmentIds = const [],
     EmailBodyType bodyType = EmailBodyType.text,
+    List<LocalAttachment> newAttachments = const [],
   });
 
   /// Moves an email to [destinationFolderId].
@@ -119,4 +123,26 @@ abstract interface class EmailRepository {
     required String query,
     int top = 50,
   });
+
+  /// Creates a server-side draft and returns its server-assigned ID.
+  Future<Either<Failure, String>> createServerDraft({
+    required List<String> toAddresses,
+    List<String> ccAddresses = const [],
+    required String subject,
+    required String body,
+    List<LocalAttachment> newAttachments = const [],
+  });
+
+  /// Updates an existing server draft. Returns the (possibly new) draft ID.
+  Future<Either<Failure, String>> updateServerDraft({
+    required String draftId,
+    required List<String> toAddresses,
+    List<String> ccAddresses = const [],
+    required String subject,
+    required String body,
+    List<LocalAttachment> newAttachments = const [],
+  });
+
+  /// Permanently deletes a server draft by [draftId].
+  Future<Either<Failure, Unit>> deleteServerDraft({required String draftId});
 }

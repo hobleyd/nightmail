@@ -34,12 +34,14 @@ class EmailListPanel extends StatefulWidget {
     required this.selectedEmailId,
     required this.onEmailSelected,
     this.folder,
+    this.onEmailDoubleTapped,
   });
 
   final String folderName;
   final EmailFolder? folder;
   final String? selectedEmailId;
   final ValueChanged<Email> onEmailSelected;
+  final ValueChanged<Email>? onEmailDoubleTapped;
 
   @override
   State<EmailListPanel> createState() => _EmailListPanelState();
@@ -358,6 +360,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
                               scrollController: _scrollController,
                               onEmailTapped: _handleEmailTap,
                               onEmailLongPressed: _handleEmailLongPress,
+                              onEmailDoubleTapped: widget.onEmailDoubleTapped,
                               expandedConversationIds: expandedConversationIds,
                               spamEmailIds: spamEmailIds,
                               onToggleConversation: (id) => context
@@ -663,6 +666,7 @@ class _EmailListView extends StatelessWidget {
     required this.onToggleConversation,
     this.spamEmailIds = const {},
     this.onEmailLongPressed,
+    this.onEmailDoubleTapped,
   });
 
   final List<Email> emails;
@@ -673,6 +677,7 @@ class _EmailListView extends StatelessWidget {
   final ScrollController scrollController;
   final void Function(Email email, int index) onEmailTapped;
   final void Function(Email email, int index)? onEmailLongPressed;
+  final ValueChanged<Email>? onEmailDoubleTapped;
   final Set<String> expandedConversationIds;
   final Set<String> spamEmailIds;
   final ValueChanged<String> onToggleConversation;
@@ -709,6 +714,7 @@ class _EmailListView extends StatelessWidget {
                 indent: isChild ? 20.0 : 0.0,
                 isSpam: spamEmailIds.contains(email.id),
                 onTap: () => onEmailTapped(email, i),
+                onDoubleTap: onEmailDoubleTapped != null ? () => onEmailDoubleTapped!(email) : null,
                 onLongPress: () => onEmailLongPressed?.call(email, i),
                 onDelete: () {
                   if (email.id == selectedEmailId) {

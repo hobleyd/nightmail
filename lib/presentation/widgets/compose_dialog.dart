@@ -1,5 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -7,6 +11,9 @@ import '../../injection_container.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_attachment.dart';
+import '../../domain/entities/local_attachment.dart';
+import '../../domain/usecases/delete_server_draft.dart';
+import '../../domain/usecases/save_server_draft.dart';
 import '../../domain/usecases/send_email.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/compose/compose_bloc.dart';
@@ -19,12 +26,14 @@ class ComposeDialog extends StatelessWidget {
     super.key,
     required this.mode,
     this.originalEmail,
+    this.draftEmail,
     required this.fromAddress,
     this.accountId,
   });
 
   final ComposeMode mode;
   final Email? originalEmail;
+  final Email? draftEmail;
   final String fromAddress;
   final String? accountId;
 
@@ -32,6 +41,7 @@ class ComposeDialog extends StatelessWidget {
     BuildContext context, {
     required ComposeMode mode,
     Email? originalEmail,
+    Email? draftEmail,
   }) {
     final accountState = context.read<AccountCubit>().state;
     final fromAddress = accountState is AccountsLoaded
@@ -52,6 +62,7 @@ class ComposeDialog extends StatelessWidget {
         child: ComposeDialog(
           mode: mode,
           originalEmail: originalEmail,
+          draftEmail: draftEmail,
           fromAddress: fromAddress,
           accountId: accountId,
         ),
@@ -87,6 +98,7 @@ class ComposeDialog extends StatelessWidget {
         child: ComposeForm(
           mode: mode,
           originalEmail: originalEmail,
+          draftEmail: draftEmail,
           onClose: close,
           fromAddress: fromAddress,
           accountId: accountId,
@@ -101,19 +113,27 @@ class ComposeForm extends StatefulWidget {
     super.key,
     required this.mode,
     this.originalEmail,
+    this.draftEmail,
     required this.onClose,
     required this.fromAddress,
     this.accountId,
     this.scrollable = false,
+    this.existingDraftId,
     this.onTitleChanged,
   });
 
   final ComposeMode mode;
   final Email? originalEmail;
+  // When set, pre-populates all fields from a saved draft (server-side or local).
+  final Email? draftEmail;
   final VoidCallback onClose;
   final String fromAddress;
   final String? accountId;
   final bool scrollable;
+  // Server-side ID of the draft being edited. When provided, the first
+  // successful auto-save updates this draft (Graph/IMAP) then deletes it,
+  // replacing it with a fresh one so the ID stays current.
+  final String? existingDraftId;
   final ValueChanged<String>? onTitleChanged;
 
   @override
@@ -130,6 +150,15 @@ class _ComposeFormState extends State<ComposeForm> {
   late final TextEditingController _bodyController;
   final FocusNode _bodyFocus = FocusNode();
   List<String> _excludedAttachmentIds = [];
+  List<LocalAttachment> _localAttachments = [];
+  bool _isDragOver = false;
+
+  String? _serverDraftId;
+  // Set when opened from an existing server draft. After the first successful
+  // save the old draft is deleted and this is cleared.
+  String? _pendingOldDraftId;
+  Timer? _draftTimer;
+  DateTime? _lastDraftSavedAt;
 
   @override
   void initState() {
@@ -140,6 +169,11 @@ class _ComposeFormState extends State<ComposeForm> {
     _subjectController = TextEditingController(text: _initialSubject());
     _bodyController = TextEditingController(text: _initialBody());
     _subjectController.addListener(_onSubjectChanged);
+    _bodyController.addListener(_scheduleDraftSave);
+    // When opening an existing server draft, seed the ID so the first
+    // auto-save updates it rather than creating a duplicate.
+    _serverDraftId = widget.existingDraftId;
+    _pendingOldDraftId = widget.existingDraftId;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _bodyFocus.requestFocus();
       _bodyController.selection = const TextSelection.collapsed(offset: 0);
@@ -148,6 +182,7 @@ class _ComposeFormState extends State<ComposeForm> {
   }
 
   String _initialBody() {
+    if (widget.draftEmail != null) return widget.draftEmail!.body;
     final email = widget.originalEmail;
     if (email == null) return '';
     final isReplyLike = widget.mode == ComposeMode.reply ||
@@ -178,6 +213,9 @@ class _ComposeFormState extends State<ComposeForm> {
   }
 
   String _initialTo() {
+    if (widget.draftEmail != null) {
+      return widget.draftEmail!.toRecipients.map((r) => r.address).join(', ');
+    }
     final email = widget.originalEmail;
     if (email == null) return '';
     return switch (widget.mode) {
@@ -192,6 +230,9 @@ class _ComposeFormState extends State<ComposeForm> {
   }
 
   String _initialCc() {
+    if (widget.draftEmail != null) {
+      return widget.draftEmail!.ccRecipients.map((r) => r.address).join(', ');
+    }
     final email = widget.originalEmail;
     if (email == null) return '';
     return switch (widget.mode) {
@@ -204,6 +245,7 @@ class _ComposeFormState extends State<ComposeForm> {
   static final _rePrefix = RegExp(r'^(?:re:\s*)+', caseSensitive: false);
 
   String _initialSubject() {
+    if (widget.draftEmail != null) return widget.draftEmail!.subject;
     final email = widget.originalEmail;
     if (email == null) return '';
     final subject = email.subject;
@@ -218,17 +260,214 @@ class _ComposeFormState extends State<ComposeForm> {
 
   @override
   void dispose() {
+    // Capture values before controllers are torn down.
+    final hasPendingSave = _draftTimer?.isActive == true;
+    final draftId = _serverDraftId;
+    final oldDraftId = _pendingOldDraftId;
+    final to = List<String>.from(_toRecipients);
+    final cc = List<String>.from(_ccRecipients);
+    final subject = _subjectController.text;
+    final body = _bodyController.text;
+    final attachments = List<LocalAttachment>.from(_localAttachments);
+
+    _draftTimer?.cancel();
     _subjectController.removeListener(_onSubjectChanged);
+    _bodyController.removeListener(_scheduleDraftSave);
     _fromController.dispose();
     _subjectController.dispose();
     _bodyController.dispose();
     _bodyFocus.dispose();
     super.dispose();
+
+    // If a debounced save was queued when the window closed, flush it now.
+    if (hasPendingSave) {
+      sl<SaveServerDraft>()(SaveServerDraftParams(
+        existingDraftId: draftId,
+        toAddresses: to,
+        ccAddresses: cc,
+        subject: subject,
+        body: body,
+        newAttachments: attachments,
+      )).then((result) {
+        result.fold((_) {}, (newId) {
+          if (oldDraftId != null && newId != oldDraftId) {
+            sl<DeleteServerDraft>()(oldDraftId).ignore();
+          }
+        });
+      }).ignore();
+    }
   }
 
   void _onSubjectChanged() {
     setState(() {});
     widget.onTitleChanged?.call(_title);
+    _scheduleDraftSave();
+  }
+
+  void _scheduleDraftSave() {
+    _draftTimer?.cancel();
+    _draftTimer = Timer(const Duration(milliseconds: 1500), _saveDraft);
+  }
+
+  // Returns null on success, or an error message string on failure.
+  Future<String?> _saveDraft() async {
+    final oldDraftId = _pendingOldDraftId;
+    final result = await sl<SaveServerDraft>()(SaveServerDraftParams(
+      existingDraftId: _serverDraftId,
+      toAddresses: _toRecipients,
+      ccAddresses: _ccRecipients,
+      subject: _subjectController.text,
+      body: _bodyController.text,
+      newAttachments: _localAttachments,
+    ));
+    return result.fold(
+      (failure) => failure.message,
+      (newId) {
+        _serverDraftId = newId;
+        if (mounted) setState(() => _lastDraftSavedAt = DateTime.now());
+        if (oldDraftId != null) {
+          _pendingOldDraftId = null;
+          if (newId != oldDraftId) {
+            sl<DeleteServerDraft>()(oldDraftId).ignore();
+          }
+        }
+        return null;
+      },
+    );
+  }
+
+  Future<void> _deleteDraft() async {
+    if (_serverDraftId == null) return;
+    await sl<DeleteServerDraft>()(_serverDraftId!);
+    _serverDraftId = null;
+  }
+
+  bool get _hasContent =>
+      _serverDraftId != null ||
+      _toRecipients.isNotEmpty ||
+      _ccRecipients.isNotEmpty ||
+      _subjectController.text.isNotEmpty ||
+      _bodyController.text.isNotEmpty ||
+      _localAttachments.isNotEmpty;
+
+  Future<void> _requestClose(BuildContext context) async {
+    if (!_hasContent) {
+      widget.onClose();
+      return;
+    }
+
+    final action = await showDialog<_CloseAction>(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => const _CloseDraftDialog(),
+    );
+
+    if (!mounted) return;
+    switch (action) {
+      case _CloseAction.saveToDrafts:
+        _draftTimer?.cancel();
+        final error = await _saveDraft();
+        if (!mounted) return;
+        if (error == null) {
+          widget.onClose();
+        } else {
+          ScaffoldMessenger.of(this.context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to save draft: $error'),
+              backgroundColor: Colors.red.shade700,
+              duration: const Duration(seconds: 8),
+            ),
+          );
+        }
+      case _CloseAction.delete:
+        await _deleteDraft();
+        if (mounted) widget.onClose();
+      case null:
+        // dismissed — keep editing
+        break;
+    }
+  }
+
+  void _addDroppedFiles(DropDoneDetails details) {
+    Future.wait(details.files.map((f) async {
+      try {
+        return LocalAttachment(
+          path: f.path,
+          name: f.name,
+          mimeType: LocalAttachment.mimeTypeFromName(f.name),
+          bytes: await _readDroppedFileBytes(f.path),
+        );
+      } catch (e, st) {
+        debugPrint('Could not read dropped file "${f.name}": $e\n$st');
+        return null;
+      }
+    })).then((results) {
+      final added = results.whereType<LocalAttachment>().toList();
+      final failCount = results.length - added.length;
+      if (!mounted) return;
+      if (failCount > 0) {
+        ScaffoldMessenger.of(this.context).showSnackBar(SnackBar(
+          content: Text(failCount == 1
+              ? 'Could not attach file: Windows denied access. Try copying it to your Desktop first.'
+              : '$failCount files could not be attached: Windows denied access.'),
+          backgroundColor: Colors.red.shade700,
+          duration: const Duration(seconds: 8),
+        ));
+      }
+      if (added.isNotEmpty) {
+        setState(() => _localAttachments = [..._localAttachments, ...added]);
+        _scheduleDraftSave();
+      }
+    });
+  }
+
+  Future<Uint8List> _readDroppedFileBytes(String path) async {
+    // Fast path: standard Dart read (works for normal filenames).
+    try {
+      return await File(path).readAsBytes();
+    } catch (_) {}
+
+    if (!Platform.isWindows) return File(path).readAsBytes();
+
+    final winPath = r'\\?\' + path.replaceAll('/', r'\');
+    final extEscaped = winPath.replaceAll("'", "''");
+
+    // .NET's managed IO honours \\?\ without path normalisation, so ReadAllBytes
+    // can open files whose names contain trailing spaces before the extension.
+    // If the path resolves to a directory rather than a file (which happens when
+    // Win32 previously normalised the name and created a directory at the plain
+    // path), we look inside the directory for the actual file, then fall back to
+    // extracting from a companion .zip file of the same base name.
+    final psResult = await Process.run('powershell', [
+      '-NoProfile', '-NonInteractive', '-Command',
+      "\$p = '$extEscaped';"
+          r" if ([IO.File]::Exists($p)) {"
+          r"   [Convert]::ToBase64String([IO.File]::ReadAllBytes($p))"
+          r" } elseif ([IO.Directory]::Exists($p)) {"
+          r"   $f = @([IO.DirectoryInfo]::new($p).GetFiles('*',[IO.SearchOption]::AllDirectories))|"
+          r"        Sort-Object Length -Descending|Select-Object -First 1;"
+          r"   if ($f -and $f.Length -gt 0) {"
+          r"     [Convert]::ToBase64String([IO.File]::ReadAllBytes($f.FullName))"
+          r"   } else {"
+          r"     $zip = $p.TrimEnd('\') + '.zip';"
+          r"     if ([IO.File]::Exists($zip)) {"
+          r"       Add-Type -AssemblyName System.IO.Compression.FileSystem;"
+          r"       $arc = [IO.Compression.ZipFile]::OpenRead($zip);"
+          r"       $entry = $arc.Entries|Sort-Object Length -Descending|Select-Object -First 1;"
+          r"       if ($entry) {"
+          r"         $ms = New-Object IO.MemoryStream; $s = $entry.Open(); $s.CopyTo($ms); $s.Close(); $arc.Dispose();"
+          r"         [Convert]::ToBase64String($ms.ToArray())"
+          r"       } else { $arc.Dispose() }"
+          r"     }"
+          r"   }"
+          r" }",
+    ]);
+    if (psResult.exitCode == 0) {
+      final out = (psResult.stdout as String).trim();
+      if (out.isNotEmpty) return base64Decode(out);
+    }
+
+    return File(path).readAsBytes();
   }
 
   String get _baseTitle => switch (widget.mode) {
@@ -306,6 +545,7 @@ class _ComposeFormState extends State<ComposeForm> {
           body: effectiveBody,
           excludedAttachmentIds: _excludedAttachmentIds,
           bodyType: originalBodyType,
+          newAttachments: _localAttachments,
         ));
   }
 
@@ -322,7 +562,10 @@ class _ComposeFormState extends State<ComposeForm> {
           label: 'To',
           fieldId: 'to',
           recipients: _toRecipients,
-          onChanged: (r) => setState(() => _toRecipients = r),
+          onChanged: (r) {
+            setState(() => _toRecipients = r);
+            _scheduleDraftSave();
+          },
           onDropAccepted: (address, fromFieldId) =>
               _handleDrop(address, fromFieldId, 'to'),
           showInput: _toInputEditable,
@@ -335,7 +578,10 @@ class _ComposeFormState extends State<ComposeForm> {
           label: 'Cc',
           fieldId: 'cc',
           recipients: _ccRecipients,
-          onChanged: (r) => setState(() => _ccRecipients = r),
+          onChanged: (r) {
+            setState(() => _ccRecipients = r);
+            _scheduleDraftSave();
+          },
           onDropAccepted: (address, fromFieldId) =>
               _handleDrop(address, fromFieldId, 'cc'),
           showInput: _ccInputEditable,
@@ -359,6 +605,19 @@ class _ComposeFormState extends State<ComposeForm> {
     final c = context.colors;
     final accountId = widget.accountId;
 
+    return BlocListener<ComposeBloc, ComposeState>(
+      listenWhen: (_, curr) => curr is ComposeSent,
+      listener: (_, _) { _deleteDraft(); },
+      child: DropTarget(
+        onDragDone: _addDroppedFiles,
+        onDragEntered: (_) => setState(() => _isDragOver = true),
+        onDragExited: (_) => setState(() => _isDragOver = false),
+        child: _buildContent(context, c, accountId),
+      ),
+    );
+  }
+
+  Widget _buildContent(BuildContext context, AppColors c, String? accountId) {
     if (widget.scrollable) {
       final isReplyLike = widget.mode == ComposeMode.reply ||
           widget.mode == ComposeMode.replyAll ||
@@ -369,7 +628,7 @@ class _ComposeFormState extends State<ComposeForm> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _TitleBar(title: _title, onClose: widget.onClose),
+          _TitleBar(title: _title, onClose: () => _requestClose(context)),
           Divider(height: 1, color: c.border),
           // Fields are fixed-height — kept outside the Expanded area so the
           // body + quoted-email section can grow freely when the window resizes.
@@ -381,60 +640,72 @@ class _ComposeFormState extends State<ComposeForm> {
             ),
           ),
           Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (forwardEmail != null &&
-                      forwardEmail.attachments.isNotEmpty)
-                    _ForwardAttachmentChips(
-                      attachments: forwardEmail.attachments,
-                      excludedIds: _excludedAttachmentIds,
-                      onRemove: (id) => setState(
-                          () => _excludedAttachmentIds = [
-                                ..._excludedAttachmentIds,
-                                id
-                              ]),
-                    ),
-                  Expanded(
-                    child: TextField(
-                      controller: _bodyController,
-                      focusNode: _bodyFocus,
-                      maxLines: null,
-                      expands: true,
-                      textAlignVertical: TextAlignVertical.top,
-                      style: TextStyle(
-                        color: c.textPrimary,
-                        fontSize: 13,
-                        height: 1.5,
+            child: Stack(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (forwardEmail != null &&
+                          forwardEmail.attachments.isNotEmpty)
+                        _ForwardAttachmentChips(
+                          attachments: forwardEmail.attachments,
+                          excludedIds: _excludedAttachmentIds,
+                          onRemove: (id) => setState(
+                              () => _excludedAttachmentIds = [
+                                    ..._excludedAttachmentIds,
+                                    id
+                                  ]),
+                        ),
+                      if (_localAttachments.isNotEmpty)
+                        _LocalAttachmentChips(
+                          attachments: _localAttachments,
+                          onRemove: (att) => setState(() => _localAttachments =
+                              _localAttachments.where((a) => a != att).toList()),
+                        ),
+                      Expanded(
+                        flex: 2,
+                        child: TextField(
+                          controller: _bodyController,
+                          focusNode: _bodyFocus,
+                          maxLines: null,
+                          expands: true,
+                          textAlignVertical: TextAlignVertical.top,
+                          style: TextStyle(
+                            color: c.textPrimary,
+                            fontSize: 13,
+                            height: 1.5,
+                          ),
+                          decoration: InputDecoration(
+                            hintText: 'Write your message here…',
+                            hintStyle:
+                                TextStyle(color: c.textMuted, fontSize: 13),
+                            border: InputBorder.none,
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
                       ),
-                      decoration: InputDecoration(
-                        hintText: 'Write your message here…',
-                        hintStyle:
-                            TextStyle(color: c.textMuted, fontSize: 13),
-                        border: InputBorder.none,
-                        contentPadding: EdgeInsets.zero,
-                      ),
-                    ),
+                      if (quotedEmail != null)
+                        Expanded(
+                          flex: 3,
+                          child: _ForwardedMessagePreview(
+                            email: quotedEmail,
+                            colors: c,
+                            mode: widget.mode,
+                            expand: true,
+                          ),
+                        ),
+                      const SizedBox(height: 8),
+                    ],
                   ),
-                  if (quotedEmail != null && widget.mode == ComposeMode.forward)
-                    Expanded(
-                      flex: 2,
-                      child: _ForwardedMessagePreview(
-                        email: quotedEmail,
-                        colors: c,
-                        mode: widget.mode,
-                        expand: true,
-                      ),
-                    ),
-                  const SizedBox(height: 8),
-                ],
-              ),
+                ),
+                if (_isDragOver) const Positioned.fill(child: _DropOverlay()),
+              ],
             ),
           ),
           Divider(height: 1, color: c.border),
-          _Footer(onSend: () => _submit(context), onClose: widget.onClose),
+          _Footer(onSend: () => _submit(context), onClose: () => _requestClose(context), draftSavedAt: _lastDraftSavedAt),
         ],
       );
     }
@@ -451,7 +722,7 @@ class _ComposeFormState extends State<ComposeForm> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _TitleBar(title: _title, onClose: widget.onClose),
+          _TitleBar(title: _title, onClose: () => _requestClose(context)),
           Divider(height: 1, color: c.border),
           Padding(
             padding: const EdgeInsets.all(16),
@@ -467,26 +738,37 @@ class _ComposeFormState extends State<ComposeForm> {
                     onRemove: (id) => setState(
                         () => _excludedAttachmentIds = [..._excludedAttachmentIds, id]),
                   ),
-                SizedBox(
-                  height: 300,
-                  child: TextField(
-                    controller: _bodyController,
-                    focusNode: _bodyFocus,
-                    maxLines: null,
-                    expands: true,
-                    textAlignVertical: TextAlignVertical.top,
-                    style: TextStyle(
-                      color: c.textPrimary,
-                      fontSize: 13,
-                      height: 1.5,
-                    ),
-                    decoration: InputDecoration(
-                      hintText: 'Write your message here…',
-                      hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.zero,
-                    ),
+                if (_localAttachments.isNotEmpty)
+                  _LocalAttachmentChips(
+                    attachments: _localAttachments,
+                    onRemove: (att) => setState(() => _localAttachments =
+                        _localAttachments.where((a) => a != att).toList()),
                   ),
+                Stack(
+                  children: [
+                    SizedBox(
+                      height: quotedEmail != null ? 150 : 240,
+                      child: TextField(
+                        controller: _bodyController,
+                        focusNode: _bodyFocus,
+                        maxLines: null,
+                        expands: true,
+                        textAlignVertical: TextAlignVertical.top,
+                        style: TextStyle(
+                          color: c.textPrimary,
+                          fontSize: 13,
+                          height: 1.5,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: 'Write your message here…',
+                          hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                      ),
+                    ),
+                    if (_isDragOver) const Positioned.fill(child: _DropOverlay()),
+                  ],
                 ),
                 if (quotedEmail != null && widget.mode == ComposeMode.forward)
                   _ForwardedMessagePreview(
@@ -495,7 +777,7 @@ class _ComposeFormState extends State<ComposeForm> {
             ),
           ),
           Divider(height: 1, color: c.border),
-          _Footer(onSend: () => _submit(context), onClose: widget.onClose),
+          _Footer(onSend: () => _submit(context), onClose: () => _requestClose(context), draftSavedAt: _lastDraftSavedAt),
         ],
       ),
     );
@@ -794,10 +1076,155 @@ class _ForwardedMessagePreview extends StatelessWidget {
   }
 }
 
+enum _CloseAction { saveToDrafts, delete }
+
+class _CloseDraftDialog extends StatelessWidget {
+  const _CloseDraftDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return AlertDialog(
+      backgroundColor: c.surfacePanel,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      title: Text(
+        'Save draft?',
+        style: TextStyle(
+          color: c.textPrimary,
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      content: Text(
+        'Would you like to save this email as a draft or discard it?',
+        style: TextStyle(color: c.textSecondary, fontSize: 13),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(_CloseAction.delete),
+          child: Text(
+            'Delete',
+            style: TextStyle(color: Colors.red.shade400, fontSize: 13),
+          ),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(
+            'Keep editing',
+            style: TextStyle(color: c.textMuted, fontSize: 13),
+          ),
+        ),
+        FilledButton(
+          onPressed: () =>
+              Navigator.of(context).pop(_CloseAction.saveToDrafts),
+          style: FilledButton.styleFrom(
+            backgroundColor: AppColors.accent,
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            minimumSize: Size.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          child: const Text('Save to Drafts', style: TextStyle(fontSize: 13)),
+        ),
+      ],
+    );
+  }
+}
+
+class _LocalAttachmentChips extends StatelessWidget {
+  const _LocalAttachmentChips({
+    required this.attachments,
+    required this.onRemove,
+  });
+
+  final List<LocalAttachment> attachments;
+  final ValueChanged<LocalAttachment> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: attachments
+            .map((att) => Container(
+                  decoration: BoxDecoration(
+                    color: c.surfaceBase,
+                    border: Border.all(color: c.border),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  padding: const EdgeInsets.fromLTRB(8, 4, 4, 4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.attach_file, size: 12, color: c.textMuted),
+                      const SizedBox(width: 4),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 200),
+                        child: Text(
+                          att.name,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 12, color: c.textPrimary),
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      InkWell(
+                        onTap: () => onRemove(att),
+                        borderRadius: BorderRadius.circular(10),
+                        child: Padding(
+                          padding: const EdgeInsets.all(2),
+                          child:
+                              Icon(Icons.close, size: 12, color: c.textMuted),
+                        ),
+                      ),
+                    ],
+                  ),
+                ))
+            .toList(),
+      ),
+    );
+  }
+}
+
+class _DropOverlay extends StatelessWidget {
+  const _DropOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.accent.withValues(alpha: 0.08),
+        border: Border.all(color: AppColors.accent, width: 2),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.attach_file_rounded, size: 40, color: AppColors.accent),
+            SizedBox(height: 8),
+            Text(
+              'Drop files to attach',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: AppColors.accent,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _Footer extends StatelessWidget {
-  const _Footer({required this.onSend, required this.onClose});
+  const _Footer({required this.onSend, required this.onClose, this.draftSavedAt});
   final VoidCallback onSend;
   final VoidCallback onClose;
+  final DateTime? draftSavedAt;
 
   @override
   Widget build(BuildContext context) {
@@ -808,8 +1235,13 @@ class _Footer extends StatelessWidget {
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
             children: [
+              if (draftSavedAt != null)
+                Text(
+                  'Draft saved',
+                  style: TextStyle(color: c.textMuted, fontSize: 11),
+                ),
+              const Spacer(),
               TextButton(
                 onPressed: isSending ? null : onClose,
                 child: Text(

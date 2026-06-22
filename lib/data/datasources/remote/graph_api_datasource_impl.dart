@@ -1,9 +1,11 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../../core/error/exceptions.dart';
+import '../../../domain/entities/local_attachment.dart';
 import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/calendar_recurrence.dart';
@@ -690,8 +692,10 @@ class GraphApiDatasourceImpl
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    List<LocalAttachment> newAttachments = const [],
   }) async {
     try {
+      final attachmentsList = await _buildGraphAttachments(newAttachments);
       await _dio.post<void>(
         '/me/sendMail',
         data: {
@@ -710,6 +714,7 @@ class GraphApiDatasourceImpl
               'ccRecipients': ccAddresses
                   .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
                   .toList(),
+            if (attachmentsList.isNotEmpty) 'attachments': attachmentsList,
           },
           'saveToSentItems': true,
         },
@@ -725,21 +730,44 @@ class GraphApiDatasourceImpl
     required String comment,
     bool replyAll = false,
     EmailBodyType bodyType = EmailBodyType.text,
+    List<LocalAttachment> newAttachments = const [],
   }) async {
-    final path = replyAll
-        ? '/me/messages/$messageId/replyAll'
-        : '/me/messages/$messageId/reply';
     try {
-      // Use message.body instead of comment so Graph doesn't auto-append the
-      // original (which would double-quote since we've already embedded it).
-      await _dio.post<void>(path, data: {
-        'message': {
-          'body': {
-            'contentType': bodyType == EmailBodyType.html ? 'html' : 'text',
-            'content': comment,
+      if (newAttachments.isEmpty) {
+        final path = replyAll
+            ? '/me/messages/$messageId/replyAll'
+            : '/me/messages/$messageId/reply';
+        await _dio.post<void>(path, data: {
+          'message': {
+            'body': {
+              'contentType': bodyType == EmailBodyType.html ? 'html' : 'text',
+              'content': comment,
+            },
           },
-        },
-      });
+        });
+      } else {
+        // Create a draft reply, attach files, then send.
+        final createPath = replyAll
+            ? '/me/messages/$messageId/createReplyAll'
+            : '/me/messages/$messageId/createReply';
+        final draftResp = await _dio.post<Map<String, dynamic>>(
+          createPath,
+          data: {
+            'message': {
+              'body': {
+                'contentType': bodyType == EmailBodyType.html ? 'html' : 'text',
+                'content': comment,
+              },
+            },
+          },
+        );
+        final draftId = draftResp.data?['id'] as String?;
+        if (draftId == null) {
+          throw const ServerException(message: 'No draft ID in reply response');
+        }
+        await _addAttachmentsToDraft(draftId, newAttachments);
+        await _dio.post<void>('/me/messages/$draftId/send');
+      }
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
@@ -752,19 +780,64 @@ class GraphApiDatasourceImpl
     required String comment,
     List<String> excludedAttachmentIds = const [],
     EmailBodyType bodyType = EmailBodyType.text,
+    List<LocalAttachment> newAttachments = const [],
   }) async {
     try {
-      await _dio.post<void>(
-        '/me/messages/$messageId/forward',
-        data: {
-          'comment': comment,
-          'toRecipients': toAddresses
-              .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
-              .toList(),
-        },
-      );
+      if (newAttachments.isEmpty) {
+        await _dio.post<void>(
+          '/me/messages/$messageId/forward',
+          data: {
+            'comment': comment,
+            'toRecipients': toAddresses
+                .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
+                .toList(),
+          },
+        );
+      } else {
+        // Create a forward draft, attach files, then send.
+        final draftResp = await _dio.post<Map<String, dynamic>>(
+          '/me/messages/$messageId/createForward',
+          data: {
+            'comment': comment,
+            'toRecipients': toAddresses
+                .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
+                .toList(),
+          },
+        );
+        final draftId = draftResp.data?['id'] as String?;
+        if (draftId == null) {
+          throw const ServerException(message: 'No draft ID in forward response');
+        }
+        await _addAttachmentsToDraft(draftId, newAttachments);
+        await _dio.post<void>('/me/messages/$draftId/send');
+      }
     } on DioException catch (e) {
       throw _mapDioException(e);
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _buildGraphAttachments(
+      List<LocalAttachment> attachments) async {
+    return [
+      for (final att in attachments)
+        {
+          '@odata.type': '#microsoft.graph.fileAttachment',
+          'name': att.name,
+          'contentType': att.mimeType,
+          'contentBytes': base64.encode(att.bytes),
+        }
+    ];
+  }
+
+  Future<void> _addAttachmentsToDraft(
+      String draftId, List<LocalAttachment> attachments) async {
+    for (final att in attachments) {
+      await _dio.post<void>('/me/messages/$draftId/attachments', data: {
+        '@odata.type': '#microsoft.graph.fileAttachment',
+        'name': att.name,
+        'contentType': att.mimeType,
+        'contentBytes': base64.encode(att.bytes),
+      });
     }
   }
 
@@ -1329,6 +1402,76 @@ class GraphApiDatasourceImpl
   static String _bareEmail(String address) {
     final m = _angleEmail.firstMatch(address);
     return m != null ? m.group(1)!.trim() : address.trim();
+  }
+
+  @override
+  Future<String> createServerDraft({
+    required List<String> toAddresses,
+    List<String> ccAddresses = const [],
+    required String subject,
+    required String body,
+    List<LocalAttachment> newAttachments = const [],
+  }) async {
+    try {
+      final resp = await _dio.post<Map<String, dynamic>>(
+        '/me/messages',
+        data: {
+          'subject': subject,
+          'body': {'contentType': 'Text', 'content': body},
+          'toRecipients':
+              toAddresses.map((a) => {'emailAddress': {'address': a}}).toList(),
+          if (ccAddresses.isNotEmpty)
+            'ccRecipients': ccAddresses
+                .map((a) => {'emailAddress': {'address': a}})
+                .toList(),
+        },
+      );
+      final id = resp.data?['id'] as String?;
+      if (id == null) throw const ServerException(message: 'No draft ID in response');
+      if (newAttachments.isNotEmpty) await _addAttachmentsToDraft(id, newAttachments);
+      return id;
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<String> updateServerDraft({
+    required String draftId,
+    required List<String> toAddresses,
+    List<String> ccAddresses = const [],
+    required String subject,
+    required String body,
+    List<LocalAttachment> newAttachments = const [],
+  }) async {
+    try {
+      await _dio.patch<void>(
+        '/me/messages/$draftId',
+        data: {
+          'subject': subject,
+          'body': {'contentType': 'Text', 'content': body},
+          'toRecipients':
+              toAddresses.map((a) => {'emailAddress': {'address': a}}).toList(),
+          if (ccAddresses.isNotEmpty)
+            'ccRecipients': ccAddresses
+                .map((a) => {'emailAddress': {'address': a}})
+                .toList(),
+        },
+      );
+      if (newAttachments.isNotEmpty) await _addAttachmentsToDraft(draftId, newAttachments);
+      return draftId;
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<void> deleteServerDraft({required String draftId}) async {
+    try {
+      await _dio.delete<void>('/me/messages/$draftId');
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
   }
 
   Exception _mapDioException(DioException e) {

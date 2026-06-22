@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:enough_mail/enough_mail.dart';
@@ -7,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import '../../../core/error/exceptions.dart';
 import '../../../core/utils/html_entities.dart';
 import '../../../domain/entities/email.dart';
+import '../../../domain/entities/local_attachment.dart';
 import '../../../domain/entities/email_attachment.dart';
 import '../../../domain/entities/inline_attachment.dart';
 import '../../../domain/entities/meeting_invite.dart';
@@ -714,8 +716,25 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
-  }) {
-    throw UnimplementedError('sendEmail not yet supported for Gmail');
+    List<LocalAttachment> newAttachments = const [],
+  }) async {
+    try {
+      final fromEmail = await _getUserEmail();
+      final builder = MessageBuilder()
+        ..from = [MailAddress(null, fromEmail)]
+        ..to = toAddresses.map((a) => MailAddress(null, a)).toList()
+        ..cc = ccAddresses.map((a) => MailAddress(null, a)).toList()
+        ..subject = subject
+        ..addTextPlain(body);
+      await _addAttachmentsToBuilder(builder, newAttachments);
+      final mime = builder.buildMimeMessage();
+      final encoded = base64Url
+          .encode(utf8.encode(mime.renderMessage()))
+          .replaceAll('=', '');
+      await _dio.post<void>('/users/me/messages/send', data: {'raw': encoded});
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
   }
 
   @override
@@ -724,6 +743,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     required String comment,
     bool replyAll = false,
     EmailBodyType bodyType = EmailBodyType.text,
+    List<LocalAttachment> newAttachments = const [],
   }) async {
     try {
       final rawResp = await _dio.get<Map<String, dynamic>>(
@@ -753,6 +773,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       } else {
         builder.addTextPlain(comment);
       }
+      await _addAttachmentsToBuilder(builder, newAttachments);
 
       final mime = builder.buildMimeMessage();
       final encoded = base64Url
@@ -778,6 +799,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     required String comment,
     List<String> excludedAttachmentIds = const [],
     EmailBodyType bodyType = EmailBodyType.text,
+    List<LocalAttachment> newAttachments = const [],
   }) async {
     try {
       final resp = await _dio.get<Map<String, dynamic>>(
@@ -864,6 +886,8 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         }
       }
 
+      await _addAttachmentsToBuilder(builder, newAttachments);
+
       final mime = builder.buildMimeMessage();
       final rawMime = mime.renderMessage();
       final rawBase64 =
@@ -875,6 +899,17 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       );
     } on DioException catch (e) {
       throw _mapException(e);
+    }
+  }
+
+  Future<void> _addAttachmentsToBuilder(
+      MessageBuilder builder, List<LocalAttachment> attachments) async {
+    for (final att in attachments) {
+      builder.addBinary(
+        att.bytes,
+        MediaType.fromText(att.mimeType),
+        filename: att.name,
+      );
     }
   }
 
@@ -986,6 +1021,124 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         '/users/me/labels',
         data: {'name': labelName},
       );
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  @override
+  Future<String> createServerDraft({
+    required List<String> toAddresses,
+    List<String> ccAddresses = const [],
+    required String subject,
+    required String body,
+    List<LocalAttachment> newAttachments = const [],
+  }) async {
+    try {
+      final fromEmail = await _getUserEmail();
+      final builder = MessageBuilder()
+        ..from = [MailAddress(null, fromEmail)]
+        ..to = toAddresses.map((a) => MailAddress(null, a)).toList()
+        ..cc = ccAddresses.map((a) => MailAddress(null, a)).toList()
+        ..subject = subject
+        ..addTextPlain(body);
+      await _addAttachmentsToBuilder(builder, newAttachments);
+      final mime = builder.buildMimeMessage();
+      final encoded = base64Url
+          .encode(utf8.encode(mime.renderMessage()))
+          .replaceAll('=', '');
+      final resp = await _dio.post<Map<String, dynamic>>(
+        '/users/me/drafts',
+        data: {'message': {'raw': encoded}},
+      );
+      final id = resp.data?['id'] as String?;
+      if (id == null) throw const ServerException(message: 'No draft ID in response');
+      return id;
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  @override
+  Future<String> updateServerDraft({
+    required String draftId,
+    required List<String> toAddresses,
+    List<String> ccAddresses = const [],
+    required String subject,
+    required String body,
+    List<LocalAttachment> newAttachments = const [],
+  }) async {
+    try {
+      final fromEmail = await _getUserEmail();
+      final builder = MessageBuilder()
+        ..from = [MailAddress(null, fromEmail)]
+        ..to = toAddresses.map((a) => MailAddress(null, a)).toList()
+        ..cc = ccAddresses.map((a) => MailAddress(null, a)).toList()
+        ..subject = subject
+        ..addTextPlain(body);
+      await _addAttachmentsToBuilder(builder, newAttachments);
+      final mime = builder.buildMimeMessage();
+      final encoded = base64Url
+          .encode(utf8.encode(mime.renderMessage()))
+          .replaceAll('=', '');
+
+      // The Drafts folder email list returns message IDs, but the drafts
+      // endpoint requires the draft ID (r…). Try the ID as-is; if Gmail
+      // returns 404, look up the real draft ID from the drafts list.
+      String resolvedId = draftId;
+      try {
+        await _dio.put<dynamic>(
+          '/users/me/drafts/$draftId',
+          data: {'message': {'raw': encoded}},
+        );
+        return draftId;
+      } on DioException catch (e) {
+        if (e.response?.statusCode != 404) rethrow;
+        resolvedId = await _findDraftIdByMessageId(draftId) ?? draftId;
+      }
+
+      if (resolvedId != draftId) {
+        await _dio.put<dynamic>(
+          '/users/me/drafts/$resolvedId',
+          data: {'message': {'raw': encoded}},
+        );
+        return resolvedId;
+      }
+
+      // Draft not found at all — create a new one as fallback.
+      final resp = await _dio.post<Map<String, dynamic>>(
+        '/users/me/drafts',
+        data: {'message': {'raw': encoded}},
+      );
+      final id = resp.data?['id'] as String?;
+      if (id == null) throw const ServerException(message: 'No draft ID in response');
+      return id;
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  // Fetches up to 200 drafts and returns the draft ID whose embedded message
+  // ID matches [messageId], or null if not found.
+  Future<String?> _findDraftIdByMessageId(String messageId) async {
+    final resp = await _dio.get<Map<String, dynamic>>(
+      '/users/me/drafts',
+      queryParameters: {'maxResults': 200},
+    );
+    final drafts = resp.data?['drafts'] as List<dynamic>? ?? [];
+    for (final d in drafts) {
+      final dMap = d as Map<String, dynamic>;
+      if ((dMap['message'] as Map<String, dynamic>?)?['id'] == messageId) {
+        return dMap['id'] as String;
+      }
+    }
+    return null;
+  }
+
+  @override
+  Future<void> deleteServerDraft({required String draftId}) async {
+    try {
+      await _dio.delete<void>('/users/me/drafts/$draftId');
     } on DioException catch (e) {
       throw _mapException(e);
     }

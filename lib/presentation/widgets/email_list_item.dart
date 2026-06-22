@@ -18,6 +18,7 @@ class EmailListItem extends StatelessWidget {
     this.showCheckbox = false,
     this.isSpam = false,
     this.onLongPress,
+    this.onDoubleTap,
   });
 
   final Email email;
@@ -27,6 +28,7 @@ class EmailListItem extends StatelessWidget {
   final bool isSpam;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
+  final VoidCallback? onDoubleTap;
   final VoidCallback onDelete;
   final void Function(DateTime? dueDate) onFlag;
   final double indent;
@@ -37,6 +39,7 @@ class EmailListItem extends StatelessWidget {
     final highlighted = isSelected || isMultiSelected;
     return GestureDetector(
       onTap: onTap,
+      onDoubleTap: onDoubleTap,
       onLongPress: onLongPress,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 120),

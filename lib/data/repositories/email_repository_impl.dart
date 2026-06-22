@@ -7,6 +7,7 @@ import '../../core/error/exceptions.dart';
 import '../../core/error/failures.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_folder.dart';
+import '../../domain/entities/local_attachment.dart';
 import '../../domain/repositories/email_repository.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../datasources/local/email_local_datasource.dart';
@@ -162,6 +163,7 @@ class EmailRepositoryImpl implements EmailRepository {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    List<LocalAttachment> newAttachments = const [],
   }) async {
     return _execute(() async {
       await _accountManager.emailDatasource.sendEmail(
@@ -169,6 +171,7 @@ class EmailRepositoryImpl implements EmailRepository {
         ccAddresses: ccAddresses,
         subject: subject,
         body: body,
+        newAttachments: newAttachments,
       );
       return unit;
     });
@@ -180,6 +183,7 @@ class EmailRepositoryImpl implements EmailRepository {
     required String comment,
     bool replyAll = false,
     EmailBodyType bodyType = EmailBodyType.text,
+    List<LocalAttachment> newAttachments = const [],
   }) async {
     return _execute(() async {
       await _accountManager.emailDatasource.replyToEmail(
@@ -187,6 +191,7 @@ class EmailRepositoryImpl implements EmailRepository {
         comment: comment,
         replyAll: replyAll,
         bodyType: bodyType,
+        newAttachments: newAttachments,
       );
       return unit;
     });
@@ -199,6 +204,7 @@ class EmailRepositoryImpl implements EmailRepository {
     required String comment,
     List<String> excludedAttachmentIds = const [],
     EmailBodyType bodyType = EmailBodyType.text,
+    List<LocalAttachment> newAttachments = const [],
   }) async {
     return _execute(() async {
       await _accountManager.emailDatasource.forwardEmail(
@@ -207,6 +213,7 @@ class EmailRepositoryImpl implements EmailRepository {
         comment: comment,
         excludedAttachmentIds: excludedAttachmentIds,
         bodyType: bodyType,
+        newAttachments: newAttachments,
       );
       return unit;
     });
@@ -360,6 +367,50 @@ class EmailRepositoryImpl implements EmailRepository {
           query: query,
           top: top,
         ));
+  }
+
+  @override
+  Future<Either<Failure, String>> createServerDraft({
+    required List<String> toAddresses,
+    List<String> ccAddresses = const [],
+    required String subject,
+    required String body,
+    List<LocalAttachment> newAttachments = const [],
+  }) {
+    return _execute(() => _accountManager.emailDatasource.createServerDraft(
+          toAddresses: toAddresses,
+          ccAddresses: ccAddresses,
+          subject: subject,
+          body: body,
+          newAttachments: newAttachments,
+        ));
+  }
+
+  @override
+  Future<Either<Failure, String>> updateServerDraft({
+    required String draftId,
+    required List<String> toAddresses,
+    List<String> ccAddresses = const [],
+    required String subject,
+    required String body,
+    List<LocalAttachment> newAttachments = const [],
+  }) {
+    return _execute(() => _accountManager.emailDatasource.updateServerDraft(
+          draftId: draftId,
+          toAddresses: toAddresses,
+          ccAddresses: ccAddresses,
+          subject: subject,
+          body: body,
+          newAttachments: newAttachments,
+        ));
+  }
+
+  @override
+  Future<Either<Failure, Unit>> deleteServerDraft({required String draftId}) {
+    return _execute(() async {
+      await _accountManager.emailDatasource.deleteServerDraft(draftId: draftId);
+      return unit;
+    });
   }
 
   Future<Either<Failure, T>> _execute<T>(Future<T> Function() fn) async {

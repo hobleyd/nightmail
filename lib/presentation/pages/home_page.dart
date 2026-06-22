@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -5,6 +8,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email_folder.dart';
 import '../../domain/entities/email.dart';
+import '../../domain/usecases/get_email.dart';
 import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/calendar/calendar_bloc.dart';
@@ -221,6 +225,64 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
       }
     }
 
+    final isDraftsFolder =
+        selectedFolder?.displayName.toLowerCase() == 'drafts';
+
+    void onEmailDoubleTapped(Email email) async {
+      // Fetch the full email body (list items only carry the preview).
+      final result =
+          await sl<GetEmail>()(GetEmailParams(id: email.id));
+      final full = result.getOrElse((_) => email);
+
+      if (isDraftsFolder) {
+        WindowController.create(
+          WindowConfiguration(
+            arguments: jsonEncode({
+              'mode': 'newEmail',
+              'existingDraftId': full.id,
+              'draftEmail': {
+                'subject': full.subject,
+                'toRecipients': full.toRecipients
+                    .map((r) => {'address': r.address, 'name': r.name})
+                    .toList(),
+                'ccRecipients': full.ccRecipients
+                    .map((r) => {'address': r.address, 'name': r.name})
+                    .toList(),
+                'body': full.body,
+                'bodyType': full.bodyType.name,
+              },
+            }),
+          ),
+        );
+      } else {
+        WindowController.create(
+          WindowConfiguration(
+            arguments: jsonEncode({
+              'type': 'emailView',
+              'email': {
+                'id': full.id,
+                'subject': full.subject,
+                'from': {
+                  'address': full.from.address,
+                  'name': full.from.name,
+                },
+                'toRecipients': full.toRecipients
+                    .map((r) => {'address': r.address, 'name': r.name})
+                    .toList(),
+                'ccRecipients': full.ccRecipients
+                    .map((r) => {'address': r.address, 'name': r.name})
+                    .toList(),
+                'body': full.body,
+                'bodyType': full.bodyType.name,
+                'receivedDateTime':
+                    full.receivedDateTime.toIso8601String(),
+              },
+            }),
+          ),
+        );
+      }
+    }
+
     return LayoutBuilder(
           builder: (context, constraints) {
             final totalWidth = constraints.maxWidth;
@@ -305,6 +367,7 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                       folder: selectedFolder,
                       selectedEmailId: homeState.selectedEmailId,
                       onEmailSelected: onEmailSelected,
+                      onEmailDoubleTapped: onEmailDoubleTapped,
                     ),
                   ),
                   _ResizeHandle(
@@ -368,6 +431,7 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                       folder: selectedFolder,
                       selectedEmailId: homeState.selectedEmailId,
                       onEmailSelected: onEmailSelected,
+                      onEmailDoubleTapped: onEmailDoubleTapped,
                     ),
                   ),
                   _ResizeHandle(
@@ -430,6 +494,7 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                     folder: selectedFolder,
                     selectedEmailId: homeState.selectedEmailId,
                     onEmailSelected: onEmailSelected,
+                    onEmailDoubleTapped: onEmailDoubleTapped,
                   ),
                 ),
                 _ResizeHandle(

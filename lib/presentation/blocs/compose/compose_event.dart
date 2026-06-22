@@ -1,6 +1,7 @@
 import 'package:equatable/equatable.dart';
 
 import '../../../domain/entities/email.dart';
+import '../../../domain/entities/local_attachment.dart';
 import '../../../domain/usecases/send_email.dart';
 
 sealed class ComposeEvent extends Equatable {
@@ -20,6 +21,7 @@ final class ComposeSubmitted extends ComposeEvent {
     required this.body,
     this.excludedAttachmentIds = const [],
     this.bodyType = EmailBodyType.text,
+    this.newAttachments = const [],
   });
 
   final ComposeMode mode;
@@ -30,8 +32,9 @@ final class ComposeSubmitted extends ComposeEvent {
   final String body;
   final List<String> excludedAttachmentIds;
   final EmailBodyType bodyType;
+  final List<LocalAttachment> newAttachments;
 
   @override
   List<Object?> get props =>
-      [mode, originalMessageId, toAddresses, ccAddresses, subject, body, excludedAttachmentIds, bodyType];
+      [mode, originalMessageId, toAddresses, ccAddresses, subject, body, excludedAttachmentIds, bodyType, newAttachments];
 }

@@ -53,6 +53,7 @@ dependencies:
   window_manager: ^0.5.1
   url_launcher: ^6.3.2
   caldav: ^1.5.0
+  desktop_drop: ^0.4.0
 
   # Background task scheduling (survives app sleep on mobile)
   workmanager: ^0.9.0+3

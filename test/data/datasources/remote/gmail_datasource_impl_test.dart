@@ -346,6 +346,145 @@ void main() {
     when(mockDio.post<void>(any)).thenAnswer((_) async => _trashResp());
   }
 
+  group('createServerDraft', () {
+    Response<Map<String, dynamic>> _draftResp(String draftId) => Response(
+          data: {'id': draftId},
+          statusCode: 200,
+          requestOptions: RequestOptions(path: '/users/me/drafts'),
+        );
+
+    test('calls POST /users/me/drafts and returns the draft ID', () async {
+      when(mockDio.post<Map<String, dynamic>>(
+        '/users/me/drafts',
+        data: anyNamed('data'),
+      )).thenAnswer((_) async => _draftResp('r1234567890'));
+
+      final id = await datasource.createServerDraft(
+        toAddresses: ['alice@example.com'],
+        subject: 'Hello',
+        body: 'World',
+      );
+
+      expect(id, equals('r1234567890'));
+      verify(mockDio.post<Map<String, dynamic>>(
+        '/users/me/drafts',
+        data: anyNamed('data'),
+      )).called(1);
+    });
+
+    test('throws ServerException when response contains no id', () async {
+      when(mockDio.post<Map<String, dynamic>>(
+        '/users/me/drafts',
+        data: anyNamed('data'),
+      )).thenAnswer((_) async => Response(
+            data: <String, dynamic>{},
+            statusCode: 200,
+            requestOptions: RequestOptions(path: '/users/me/drafts'),
+          ));
+
+      await expectLater(
+        datasource.createServerDraft(
+          toAddresses: ['alice@example.com'],
+          subject: 'Hello',
+          body: 'World',
+        ),
+        throwsA(isA<Exception>()),
+      );
+    });
+
+    test('propagates DioException on network failure', () async {
+      when(mockDio.post<Map<String, dynamic>>(
+        any,
+        data: anyNamed('data'),
+      )).thenThrow(DioException(
+        requestOptions: RequestOptions(path: ''),
+        type: DioExceptionType.connectionError,
+      ));
+
+      await expectLater(
+        datasource.createServerDraft(
+          toAddresses: ['alice@example.com'],
+          subject: 'Hello',
+          body: 'World',
+        ),
+        throwsA(isA<Exception>()),
+      );
+    });
+  });
+
+  group('updateServerDraft', () {
+    test('calls PUT /users/me/drafts/{id} and returns the same draft ID',
+        () async {
+      when(mockDio.put<Map<String, dynamic>>(
+        '/users/me/drafts/r1234567890',
+        data: anyNamed('data'),
+      )).thenAnswer((_) async => Response(
+            data: <String, dynamic>{},
+            statusCode: 200,
+            requestOptions: RequestOptions(path: ''),
+          ));
+
+      final id = await datasource.updateServerDraft(
+        draftId: 'r1234567890',
+        toAddresses: ['alice@example.com'],
+        subject: 'Updated',
+        body: 'Body',
+      );
+
+      expect(id, equals('r1234567890'));
+      verify(mockDio.put<Map<String, dynamic>>(
+        '/users/me/drafts/r1234567890',
+        data: anyNamed('data'),
+      )).called(1);
+    });
+
+    test('propagates DioException on network failure', () async {
+      when(mockDio.put<Map<String, dynamic>>(
+        any,
+        data: anyNamed('data'),
+      )).thenThrow(DioException(
+        requestOptions: RequestOptions(path: ''),
+        type: DioExceptionType.connectionError,
+      ));
+
+      await expectLater(
+        datasource.updateServerDraft(
+          draftId: 'r1234567890',
+          toAddresses: ['alice@example.com'],
+          subject: 'Updated',
+          body: 'Body',
+        ),
+        throwsA(isA<Exception>()),
+      );
+    });
+  });
+
+  group('deleteServerDraft', () {
+    test('calls DELETE /users/me/drafts/{id}', () async {
+      when(mockDio.delete<void>('/users/me/drafts/r1234567890'))
+          .thenAnswer((_) async => Response(
+                statusCode: 204,
+                requestOptions: RequestOptions(path: ''),
+              ));
+
+      await datasource.deleteServerDraft(draftId: 'r1234567890');
+
+      verify(mockDio.delete<void>('/users/me/drafts/r1234567890')).called(1);
+    });
+
+    test('propagates DioException on network failure', () async {
+      when(mockDio.delete<void>(any)).thenThrow(DioException(
+        requestOptions: RequestOptions(path: ''),
+        type: DioExceptionType.connectionError,
+      ));
+
+      await expectLater(
+        datasource.deleteServerDraft(draftId: 'r1234567890'),
+        throwsA(isA<Exception>()),
+      );
+    });
+  });
+
   group('deleteEmail', () {
     test('calls the Gmail trash endpoint with the correct message id', () async {
       stubTrash();

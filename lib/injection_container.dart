@@ -52,6 +52,8 @@ import 'domain/usecases/get_tasks.dart';
 import 'domain/usecases/mark_email_as_read.dart';
 import 'domain/usecases/record_known_senders.dart';
 import 'domain/usecases/search_contacts.dart';
+import 'domain/usecases/delete_server_draft.dart';
+import 'domain/usecases/save_server_draft.dart';
 import 'domain/usecases/search_emails.dart';
 import 'domain/usecases/send_email.dart';
 import 'domain/usecases/propose_new_time.dart';
@@ -160,6 +162,8 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => GetMailFolders(sl<EmailRepository>()));
   sl.registerLazySingleton(() => MarkEmailAsRead(sl<EmailRepository>()));
   sl.registerLazySingleton(() => SendEmail(sl<EmailRepository>()));
+  sl.registerLazySingleton(() => SaveServerDraft(sl<EmailRepository>()));
+  sl.registerLazySingleton(() => DeleteServerDraft(sl<EmailRepository>()));
   sl.registerLazySingleton(() => MoveEmail(sl<EmailRepository>()));
   sl.registerLazySingleton(() => ReportJunk(sl<EmailRepository>()));
   sl.registerLazySingleton(() => ClassifyEmails(sl<SpamFilterRepository>()));

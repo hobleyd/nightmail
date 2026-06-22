@@ -123,6 +123,32 @@ class _ComposeWindowPage extends StatelessWidget {
     );
   }
 
+  Email? _draftEmail() {
+    final raw = arguments['draftEmail'];
+    if (raw == null) return null;
+    final map = raw as Map<String, dynamic>;
+    EmailAddress parseAddress(Map<String, dynamic> m) =>
+        EmailAddress(address: m['address'] as String, name: m['name'] as String?);
+    final bodyTypeStr = map['bodyType'] as String? ?? 'text';
+    return Email(
+      id: '',
+      subject: map['subject'] as String? ?? '',
+      from: const EmailAddress(address: '', name: null),
+      toRecipients: (map['toRecipients'] as List<dynamic>? ?? [])
+          .map((r) => parseAddress(r as Map<String, dynamic>))
+          .toList(),
+      ccRecipients: (map['ccRecipients'] as List<dynamic>? ?? [])
+          .map((r) => parseAddress(r as Map<String, dynamic>))
+          .toList(),
+      bodyPreview: '',
+      body: map['body'] as String? ?? '',
+      bodyType: bodyTypeStr == 'html' ? EmailBodyType.html : EmailBodyType.text,
+      isRead: true,
+      receivedDateTime: DateTime.now(),
+      importance: EmailImportance.normal,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -153,10 +179,12 @@ class _ComposeWindowPage extends StatelessWidget {
           child: ComposeForm(
             mode: mode,
             originalEmail: _originalEmail(),
+            draftEmail: _draftEmail(),
             onClose: _close,
             fromAddress: fromAddress,
             accountId: accountId,
             scrollable: true,
+            existingDraftId: arguments['existingDraftId'] as String?,
             onTitleChanged: (title) => windowManager.setTitle(title),
           ),
         ),

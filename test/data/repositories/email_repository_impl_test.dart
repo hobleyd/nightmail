@@ -343,6 +343,116 @@ void main() {
     });
   });
 
+  group('createServerDraft', () {
+    test('returns Right(draftId) on datasource success', () async {
+      when(mockRemoteDatasource.createServerDraft(
+        toAddresses: anyNamed('toAddresses'),
+        ccAddresses: anyNamed('ccAddresses'),
+        subject: anyNamed('subject'),
+        body: anyNamed('body'),
+      )).thenAnswer((_) async => 'draft-id-123');
+
+      final result = await repository.createServerDraft(
+        toAddresses: ['to@example.com'],
+        subject: 'Draft',
+        body: 'Body',
+      );
+
+      expect(result.getOrElse((_) => ''), equals('draft-id-123'));
+      verify(mockRemoteDatasource.createServerDraft(
+        toAddresses: ['to@example.com'],
+        ccAddresses: [],
+        subject: 'Draft',
+        body: 'Body',
+      )).called(1);
+    });
+
+    test('returns Left(ServerFailure) on ServerException', () async {
+      when(mockRemoteDatasource.createServerDraft(
+        toAddresses: anyNamed('toAddresses'),
+        ccAddresses: anyNamed('ccAddresses'),
+        subject: anyNamed('subject'),
+        body: anyNamed('body'),
+      )).thenThrow(const ServerException(message: 'Server error'));
+
+      final result = await repository.createServerDraft(
+        toAddresses: ['to@example.com'],
+        subject: 'Draft',
+        body: 'Body',
+      );
+
+      expect(result.isLeft(), isTrue);
+      expect(result.fold((f) => f, (_) => null), isA<ServerFailure>());
+    });
+  });
+
+  group('updateServerDraft', () {
+    test('returns Right(draftId) on datasource success', () async {
+      when(mockRemoteDatasource.updateServerDraft(
+        draftId: anyNamed('draftId'),
+        toAddresses: anyNamed('toAddresses'),
+        ccAddresses: anyNamed('ccAddresses'),
+        subject: anyNamed('subject'),
+        body: anyNamed('body'),
+      )).thenAnswer((_) async => 'draft-id-123');
+
+      final result = await repository.updateServerDraft(
+        draftId: 'draft-id-123',
+        toAddresses: ['to@example.com'],
+        subject: 'Draft',
+        body: 'Body',
+      );
+
+      expect(result.getOrElse((_) => ''), equals('draft-id-123'));
+    });
+
+    test('returns Left(NetworkFailure) on NetworkException', () async {
+      when(mockRemoteDatasource.updateServerDraft(
+        draftId: anyNamed('draftId'),
+        toAddresses: anyNamed('toAddresses'),
+        ccAddresses: anyNamed('ccAddresses'),
+        subject: anyNamed('subject'),
+        body: anyNamed('body'),
+      )).thenThrow(const NetworkException(message: 'No connection'));
+
+      final result = await repository.updateServerDraft(
+        draftId: 'draft-id-123',
+        toAddresses: ['to@example.com'],
+        subject: 'Draft',
+        body: 'Body',
+      );
+
+      expect(result.isLeft(), isTrue);
+      expect(result.fold((f) => f, (_) => null), isA<NetworkFailure>());
+    });
+  });
+
+  group('deleteServerDraft', () {
+    test('returns Right(unit) on datasource success', () async {
+      when(mockRemoteDatasource.deleteServerDraft(
+        draftId: anyNamed('draftId'),
+      )).thenAnswer((_) async {});
+
+      final result = await repository.deleteServerDraft(draftId: 'draft-id-123');
+
+      expect(result.isRight(), isTrue);
+      verify(mockRemoteDatasource.deleteServerDraft(draftId: 'draft-id-123'))
+          .called(1);
+    });
+
+    test('returns Left(ServerFailure) on ServerException', () async {
+      when(mockRemoteDatasource.deleteServerDraft(
+        draftId: anyNamed('draftId'),
+      )).thenThrow(const ServerException(message: 'Not found'));
+
+      final result =
+          await repository.deleteServerDraft(draftId: 'draft-id-123');
+
+      expect(result.isLeft(), isTrue);
+      expect(result.fold((f) => f, (_) => null), isA<ServerFailure>());
+    });
+  });
+
   group('moveEmail', () {
     test('removes email from cache after successful remote move', () async {
       when(mockRemoteDatasource.moveEmail(any, any))

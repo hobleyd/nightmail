@@ -17,6 +17,7 @@ import 'presentation/blocs/theme/theme_state.dart';
 import 'presentation/pages/account_selection_page.dart';
 import 'presentation/pages/calendar_window.dart';
 import 'presentation/pages/compose_window.dart';
+import 'presentation/pages/email_view_window.dart';
 import 'presentation/pages/event_edit_window.dart';
 import 'presentation/pages/tasks_window.dart';
 import 'presentation/pages/home_page.dart';
@@ -77,9 +78,22 @@ void main(List<String> args) async {
       return;
     }
 
+    if (arguments['type'] == 'emailView') {
+      final emailMap = arguments['email'] as Map<String, dynamic>? ?? {};
+      final subject = emailMap['subject'] as String? ?? '';
+      final title = subject.isNotEmpty ? subject : '(No Subject)';
+      await showSubWindow(
+        WindowOptions(size: const Size(720, 580), center: true, title: title),
+      );
+      runApp(EmailViewWindowApp(windowId: windowId, arguments: arguments));
+      return;
+    }
+
     final mode = ComposeMode.values.byName(
       arguments['mode'] as String? ?? 'newEmail',
     );
+
+    final draftEmailRaw = arguments['draftEmail'] as Map<String, dynamic>?;
     final originalSubject =
         ((arguments['originalEmail'] as Map<String, dynamic>?)?['subject']
                 as String?) ??
@@ -87,13 +101,18 @@ void main(List<String> args) async {
     final cleanSubject = originalSubject
         .replaceFirst(RegExp(r'^(?:re:\s*)+', caseSensitive: false), '')
         .trim();
-    final title = switch (mode) {
-      ComposeMode.newEmail => 'New Email',
-      ComposeMode.reply || ComposeMode.replyAll =>
-        cleanSubject.isNotEmpty ? 'Re: $cleanSubject' : 'Reply',
-      ComposeMode.forward =>
-        originalSubject.isNotEmpty ? 'Fwd: $originalSubject' : 'Forward',
-    };
+    final title = draftEmailRaw != null
+        ? () {
+            final s = draftEmailRaw['subject'] as String? ?? '';
+            return s.isNotEmpty ? s : 'Draft';
+          }()
+        : switch (mode) {
+            ComposeMode.newEmail => 'New Email',
+            ComposeMode.reply || ComposeMode.replyAll =>
+              cleanSubject.isNotEmpty ? 'Re: $cleanSubject' : 'Reply',
+            ComposeMode.forward =>
+              originalSubject.isNotEmpty ? 'Fwd: $originalSubject' : 'Forward',
+          };
 
     await showSubWindow(
       WindowOptions(size: const Size(640, 520), center: true, title: title),

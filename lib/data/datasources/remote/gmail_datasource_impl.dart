@@ -61,7 +61,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       for (final map in rawLabels) {
         final id = map['id'] as String;
         final type = map['type'] as String? ?? '';
-        final rawName = map['name'] as String? ?? id;
+        final rawName = _transformLabelName(map['name'] as String? ?? id);
         final parts = rawName.split('/');
 
         // For each intermediate path segment, create a virtual parent folder
@@ -102,7 +102,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
           totalItemCount: 0,
           unreadItemCount: 0,
           parentFolderId: parentFolderId,
-          isHidden: type == 'system' && id.startsWith('CATEGORY_'),
+          isHidden: false,
           childFolderCount: 0,
         ));
       }
@@ -697,6 +697,13 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   bool _isHiddenSystemLabel(String id) {
     const hidden = {'CHAT', 'STARRED', 'IMPORTANT', 'UNREAD'};
     return hidden.contains(id);
+  }
+
+  String _transformLabelName(String name) {
+    if (!name.startsWith('CATEGORY_')) return name;
+    final suffix = name.substring('CATEGORY_'.length);
+    final titled = suffix[0].toUpperCase() + suffix.substring(1).toLowerCase();
+    return 'Category/$titled';
   }
 
   String _labelDisplayName(String name) {

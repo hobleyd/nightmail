@@ -701,15 +701,37 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
   }) async {
     final original = await _fetchOriginal(messageId);
 
-    final builder = MessageBuilder.prepareForwardMessage(
-      original,
-      from: MailAddress(_account.displayName, _account.emailAddress),
-    )..to = toAddresses.map((e) => MailAddress(null, e)).toList();
+    final originalSubject = original.decodeSubject() ?? '';
+    final fwdSubject = originalSubject.startsWith('Fwd:')
+        ? originalSubject
+        : 'Fwd: $originalSubject';
+
+    // Build a plain message — compose body already contains the quoted content
+    // the user can edit, so we don't auto-append via prepareForwardMessage.
+    final builder = MessageBuilder()
+      ..from = [MailAddress(_account.displayName, _account.emailAddress)]
+      ..to = toAddresses.map((e) => MailAddress(null, e)).toList()
+      ..subject = fwdSubject;
+
     if (bodyType == EmailBodyType.html) {
       builder.addTextHtml(comment);
     } else {
       builder.addTextPlain(comment);
     }
+
+    for (final info
+        in original.findContentInfo(disposition: ContentDisposition.attachment)) {
+      if (excludedAttachmentIds.contains(info.fetchId)) continue;
+      final bytes = original.getPart(info.fetchId)?.decodeContentBinary();
+      if (bytes == null || bytes.isEmpty) continue;
+      builder.addBinary(
+        bytes,
+        MediaType.fromText(
+            info.contentType?.mediaType.text ?? 'application/octet-stream'),
+        filename: info.fileName,
+      );
+    }
+
     await _addAttachmentsToBuilder(builder, newAttachments);
     await _sendMime(builder.buildMimeMessage());
   }

@@ -783,14 +783,24 @@ class GraphApiDatasourceImpl
     List<LocalAttachment> newAttachments = const [],
   }) async {
     try {
+      // Use message.body instead of comment so Graph doesn't auto-append the
+      // original (which would double-quote since we've already embedded it).
+      final messageBody = {
+        'body': {
+          'contentType': bodyType == EmailBodyType.html ? 'html' : 'text',
+          'content': comment,
+        },
+      };
+      final toRecipients = toAddresses
+          .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
+          .toList();
+
       if (newAttachments.isEmpty) {
         await _dio.post<void>(
           '/me/messages/$messageId/forward',
           data: {
-            'comment': comment,
-            'toRecipients': toAddresses
-                .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
-                .toList(),
+            'message': messageBody,
+            'toRecipients': toRecipients,
           },
         );
       } else {
@@ -798,10 +808,8 @@ class GraphApiDatasourceImpl
         final draftResp = await _dio.post<Map<String, dynamic>>(
           '/me/messages/$messageId/createForward',
           data: {
-            'comment': comment,
-            'toRecipients': toAddresses
-                .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
-                .toList(),
+            'message': messageBody,
+            'toRecipients': toRecipients,
           },
         );
         final draftId = draftResp.data?['id'] as String?;

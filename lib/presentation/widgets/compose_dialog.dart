@@ -594,17 +594,21 @@ class _ComposeFormState extends State<ComposeForm> {
         widget.mode == ComposeMode.replyAll;
 
     final String effectiveBody;
-    if (widget.mode == ComposeMode.forward) {
-      // Strip the quoted section — each backend appends the original automatically.
-      final sepIdx = body.indexOf(_forwardSeparator);
-      effectiveBody = sepIdx >= 0 ? body.substring(0, sepIdx).trim() : body;
-    } else if (isReplyLike && originalBodyType == EmailBodyType.html) {
+    if (isReplyLike && originalBodyType == EmailBodyType.html) {
       // For HTML originals, convert the plain-text body field to HTML so the
       // sent message matches the original email's content type.
       effectiveBody = const HtmlEscape().convert(body).replaceAll('\n', '<br>');
     } else {
       effectiveBody = body;
     }
+
+    // Forward always sends plain text — _initialBody() strips HTML when
+    // pre-populating, so the compose body is always plain regardless of original.
+    final effectiveBodyType = widget.mode == ComposeMode.forward
+        ? EmailBodyType.text
+        : (isReplyLike && originalBodyType == EmailBodyType.html)
+            ? EmailBodyType.html
+            : originalBodyType;
 
     context.read<ComposeBloc>().add(ComposeSubmitted(
           mode: widget.mode,
@@ -614,7 +618,7 @@ class _ComposeFormState extends State<ComposeForm> {
           subject: subject,
           body: effectiveBody,
           excludedAttachmentIds: _excludedAttachmentIds,
-          bodyType: originalBodyType,
+          bodyType: effectiveBodyType,
           newAttachments: _localAttachments,
         ));
   }

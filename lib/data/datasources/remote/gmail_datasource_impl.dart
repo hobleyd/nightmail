@@ -818,11 +818,6 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
           )['value'] as String;
 
       final originalSubject = hdr('Subject');
-      final originalFrom = hdr('From');
-      final originalDate = hdr('Date');
-      final originalTo = hdr('To');
-
-      final (rawBodyText, originalBodyType) = _extractBody(payload);
 
       final fromEmail = await _getUserEmail();
       final subject = originalSubject.startsWith('Fwd:')
@@ -837,33 +832,12 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         builder.from = [MailAddress(null, fromEmail)];
       }
 
-      if (originalBodyType == EmailBodyType.html) {
-        final htmlComment = comment.isNotEmpty
-            ? '<p>${const HtmlEscape().convert(comment).replaceAll('\n', '<br>')}</p>'
-            : '';
-        final htmlHeader = '<div style="border-left:1px solid #ccc;padding-left:8px;margin-top:8px">'
-            '<b>---------- Forwarded message ---------</b><br>'
-            '<b>From:</b> ${const HtmlEscape().convert(originalFrom)}<br>'
-            '<b>Date:</b> ${const HtmlEscape().convert(originalDate)}<br>'
-            '<b>Subject:</b> ${const HtmlEscape().convert(originalSubject)}<br>'
-            '<b>To:</b> ${const HtmlEscape().convert(originalTo)}<br><br>'
-            '$rawBodyText'
-            '</div>';
-        builder.addTextHtml('$htmlComment$htmlHeader');
+      // Compose body already contains the full forwarded content the user can edit;
+      // send it as-is rather than re-appending the original.
+      if (bodyType == EmailBodyType.html) {
+        builder.addTextHtml(comment);
       } else {
-        final forwardedHeader = [
-          '---------- Forwarded message ---------',
-          'From: $originalFrom',
-          'Date: $originalDate',
-          'Subject: $originalSubject',
-          'To: $originalTo',
-          '',
-        ].join('\n');
-        final bodyText = rawBodyText;
-        final fullBody = comment.isNotEmpty
-            ? '$comment\n\n$forwardedHeader\n$bodyText'
-            : '$forwardedHeader\n$bodyText';
-        builder.addTextPlain(fullBody);
+        builder.addTextPlain(comment);
       }
 
       final allAttachments = _extractAttachments(payload);

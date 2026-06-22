@@ -391,14 +391,22 @@ class _ComposeFormState extends State<ComposeForm> {
   void _addDroppedFiles(DropDoneDetails details) {
     Future.wait(details.files.map((f) async {
       try {
+        String name;
+        Uint8List bytes;
+        if (await FileSystemEntity.isDirectory(f.path)) {
+          (name, bytes) = await _readDroppedDirectory(f.path, f.name);
+        } else {
+          name = f.name;
+          bytes = await _readDroppedFileBytes(f.path);
+        }
         return LocalAttachment(
           path: f.path,
-          name: f.name,
-          mimeType: LocalAttachment.mimeTypeFromName(f.name),
-          bytes: await _readDroppedFileBytes(f.path),
+          name: name,
+          mimeType: LocalAttachment.mimeTypeFromName(name),
+          bytes: bytes,
         );
       } catch (e, st) {
-        debugPrint('Could not read dropped file "${f.name}": $e\n$st');
+        debugPrint('Could not attach "${f.name}": $e\n$st');
         return null;
       }
     })).then((results) {
@@ -421,46 +429,87 @@ class _ComposeFormState extends State<ComposeForm> {
     });
   }
 
+  // Returns (attachmentName, bytes) for a dropped directory.
+  //
+  // If a companion .zip exists at path + '.zip' (the tell-tale sign that Win32
+  // path-normalisation turned a filename like "report .pdf" into a directory),
+  // we extract the largest entry from that .zip and keep the original name.
+  // Otherwise we treat the drop as a genuine folder and compress it to a .zip.
+  Future<(String, Uint8List)> _readDroppedDirectory(
+      String path, String displayName) async {
+    if (Platform.isWindows) {
+      final extPath = r'\\?\' + path.replaceAll('/', r'\');
+      final extEscaped = extPath.replaceAll("'", "''");
+      final plainEscaped = path.replaceAll('/', r'\').replaceAll("'", "''");
+
+      final psResult = await Process.run('powershell', [
+        '-NoProfile', '-NonInteractive', '-Command',
+        "\$p = '$extEscaped'; \$plain = '$plainEscaped';"
+            r" $zip = $p.TrimEnd('\') + '.zip';"
+            r" if ([IO.File]::Exists($zip)) {"
+            r"   Add-Type -AssemblyName System.IO.Compression.FileSystem;"
+            r"   $arc = [IO.Compression.ZipFile]::OpenRead($zip);"
+            r"   $entry = $arc.Entries|Sort-Object Length -Descending|Select-Object -First 1;"
+            r"   if ($entry) {"
+            r"     $ms = New-Object IO.MemoryStream; $s = $entry.Open();"
+            r"     $s.CopyTo($ms); $s.Close(); $arc.Dispose();"
+            r"     Write-Output 'COMPANION'; [Convert]::ToBase64String($ms.ToArray())"
+            r"   } else { $arc.Dispose() }"
+            r" } else {"
+            r"   $tmp = [IO.Path]::Combine([IO.Path]::GetTempPath(),"
+            r"           [IO.Path]::GetRandomFileName() + '.zip');"
+            r"   Compress-Archive -LiteralPath $plain -DestinationPath $tmp -Force;"
+            r"   Write-Output 'ZIPPED';"
+            r"   [Convert]::ToBase64String([IO.File]::ReadAllBytes($tmp));"
+            r"   Remove-Item $tmp -Force"
+            r" }",
+      ]);
+
+      if (psResult.exitCode == 0) {
+        final lines = (psResult.stdout as String).trimRight().split('\n');
+        if (lines.length >= 2) {
+          final marker = lines[0].trim();
+          final b64 = lines.sublist(1).join('').trim();
+          if (b64.isNotEmpty) {
+            final bytes = base64Decode(b64);
+            return marker == 'COMPANION'
+                ? (displayName, bytes)
+                : ('$displayName.zip', bytes);
+          }
+        }
+      }
+    } else {
+      // macOS / Linux: zip via the system zip command.
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      final tempZip = '${Directory.systemTemp.path}/nm_$stamp.zip';
+      final result = await Process.run(
+        'zip', ['-r', tempZip, displayName],
+        workingDirectory: Directory(path).parent.path,
+      );
+      if (result.exitCode == 0) {
+        final bytes = await File(tempZip).readAsBytes();
+        File(tempZip).delete().ignore();
+        return ('$displayName.zip', bytes);
+      }
+    }
+
+    throw Exception('Could not read directory: $path');
+  }
+
   Future<Uint8List> _readDroppedFileBytes(String path) async {
-    // Fast path: standard Dart read (works for normal filenames).
     try {
       return await File(path).readAsBytes();
     } catch (_) {}
 
     if (!Platform.isWindows) return File(path).readAsBytes();
 
+    // .NET honours \\?\ without path normalisation, letting us open files whose
+    // names contain a trailing space before the extension.
     final winPath = r'\\?\' + path.replaceAll('/', r'\');
     final extEscaped = winPath.replaceAll("'", "''");
-
-    // .NET's managed IO honours \\?\ without path normalisation, so ReadAllBytes
-    // can open files whose names contain trailing spaces before the extension.
-    // If the path resolves to a directory rather than a file (which happens when
-    // Win32 previously normalised the name and created a directory at the plain
-    // path), we look inside the directory for the actual file, then fall back to
-    // extracting from a companion .zip file of the same base name.
     final psResult = await Process.run('powershell', [
       '-NoProfile', '-NonInteractive', '-Command',
-      "\$p = '$extEscaped';"
-          r" if ([IO.File]::Exists($p)) {"
-          r"   [Convert]::ToBase64String([IO.File]::ReadAllBytes($p))"
-          r" } elseif ([IO.Directory]::Exists($p)) {"
-          r"   $f = @([IO.DirectoryInfo]::new($p).GetFiles('*',[IO.SearchOption]::AllDirectories))|"
-          r"        Sort-Object Length -Descending|Select-Object -First 1;"
-          r"   if ($f -and $f.Length -gt 0) {"
-          r"     [Convert]::ToBase64String([IO.File]::ReadAllBytes($f.FullName))"
-          r"   } else {"
-          r"     $zip = $p.TrimEnd('\') + '.zip';"
-          r"     if ([IO.File]::Exists($zip)) {"
-          r"       Add-Type -AssemblyName System.IO.Compression.FileSystem;"
-          r"       $arc = [IO.Compression.ZipFile]::OpenRead($zip);"
-          r"       $entry = $arc.Entries|Sort-Object Length -Descending|Select-Object -First 1;"
-          r"       if ($entry) {"
-          r"         $ms = New-Object IO.MemoryStream; $s = $entry.Open(); $s.CopyTo($ms); $s.Close(); $arc.Dispose();"
-          r"         [Convert]::ToBase64String($ms.ToArray())"
-          r"       } else { $arc.Dispose() }"
-          r"     }"
-          r"   }"
-          r" }",
+      "[Convert]::ToBase64String([IO.File]::ReadAllBytes('$extEscaped'))",
     ]);
     if (psResult.exitCode == 0) {
       final out = (psResult.stdout as String).trim();

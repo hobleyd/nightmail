@@ -1,6 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Required for exact-time event reminders (API 33+; auto-granted for calendar apps) -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <!-- Fallback exact-alarm permission for API 31-32 (requires user opt-in in system settings) -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <application
         android:label="NightMail"
         android:name="${applicationName}"

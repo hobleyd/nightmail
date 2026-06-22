@@ -32,6 +32,7 @@ class UpdateCalendarEventParams extends Equatable {
     this.description,
     this.attendeeEmails = const [],
     this.recurrence,
+    this.reminderMinutes = 15,
   });
 
   final String id;
@@ -47,6 +48,9 @@ class UpdateCalendarEventParams extends Equatable {
   final List<String> attendeeEmails;
   final CalendarRecurrence? recurrence;
 
+  /// Minutes before start to fire a reminder.
+  final int reminderMinutes;
+
   @override
   List<Object?> get props => [
         id,
@@ -59,5 +63,6 @@ class UpdateCalendarEventParams extends Equatable {
         description,
         attendeeEmails,
         recurrence,
+        reminderMinutes,
       ];
 }

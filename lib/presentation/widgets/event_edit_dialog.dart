@@ -75,6 +75,7 @@ class EventEditDialog extends StatelessWidget {
                 })
             .toList(),
         if (e.recurrence != null) 'recurrence': _recurrenceToArgs(e.recurrence!),
+        if (e.reminderMinutes != null) 'reminderMinutes': e.reminderMinutes,
       };
 
   static Map<String, dynamic> _recurrenceToArgs(CalendarRecurrence r) => {
@@ -166,6 +167,7 @@ class _EventEditFormState extends State<EventEditForm> {
   late String _timezone;
   late List<String> _attendees;
   late CalendarRecurrence? _recurrence;
+  late int _reminderMinutes;
 
   List<AttendeeAvailability>? _availabilities;
   bool _checkingAvailability = false;
@@ -205,6 +207,7 @@ class _EventEditFormState extends State<EventEditForm> {
     _attendees =
         e?.attendees.map((a) => a.email).toList() ?? const [];
     _recurrence = e?.recurrence;
+    _reminderMinutes = e?.reminderMinutes ?? 15;
     _organizerEmail = sl<AccountManager>().activeAccount?.emailAddress;
   }
 
@@ -348,6 +351,7 @@ class _EventEditFormState extends State<EventEditForm> {
           attendeeEmails: _attendees.map(_extractEmail).toList(),
           recurrence: _recurrence,
           isTeamsMeeting: _isTeamsMeeting,
+          reminderMinutes: _reminderMinutes,
         ));
   }
 
@@ -505,6 +509,19 @@ class _EventEditFormState extends State<EventEditForm> {
                     recurrence: _recurrence,
                     startDate: _startDate,
                     onChanged: (r) => setState(() => _recurrence = r),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Divider(height: 1, color: c.separator),
+                const SizedBox(height: 10),
+                AbsorbPointer(
+                  absorbing: _readOnly,
+                  child: _LabeledField(
+                    label: 'Reminder',
+                    child: _ReminderDropdown(
+                      value: _reminderMinutes,
+                      onChanged: (v) => setState(() => _reminderMinutes = v),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -1946,6 +1963,56 @@ class _TeamsMeetingButton extends StatelessWidget {
     );
   }
 }
+
+// ─── Reminder dropdown ────────────────────────────────────────────────────────
+
+class _ReminderDropdown extends StatelessWidget {
+  const _ReminderDropdown({required this.value, required this.onChanged});
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  static const _options = [5, 10, 15, 30, 60, 120, 360, 720, 1440];
+
+  static String _label(int minutes) {
+    if (minutes < 60) return '$minutes min';
+    final h = minutes ~/ 60;
+    return '$h ${h == 1 ? 'hour' : 'hours'}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: c.separator,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<int>(
+          value: value,
+          isDense: true,
+          dropdownColor: c.surfacePanel,
+          style: TextStyle(color: c.textPrimary, fontSize: 12),
+          items: _options
+              .map((m) => DropdownMenuItem(
+                    value: m,
+                    child: Text(
+                      _label(m),
+                      style: TextStyle(color: c.textPrimary, fontSize: 12),
+                    ),
+                  ))
+              .toList(),
+          onChanged: (v) {
+            if (v != null) onChanged(v);
+          },
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Labeled field ────────────────────────────────────────────────────────────
 
 class _LabeledField extends StatelessWidget {
   const _LabeledField({required this.label, required this.child});

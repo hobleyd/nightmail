@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -9,6 +10,7 @@ import 'package:window_manager/window_manager.dart';
 import 'domain/usecases/send_email.dart';
 import 'infrastructure/accounts/account_manager.dart';
 import 'infrastructure/background/background_mail_service.dart';
+import 'infrastructure/notifications/notification_service.dart';
 import 'injection_container.dart';
 import 'presentation/blocs/account/account_cubit.dart';
 import 'presentation/blocs/theme/theme_cubit.dart';
@@ -18,6 +20,7 @@ import 'presentation/pages/calendar_window.dart';
 import 'presentation/pages/compose_window.dart';
 import 'presentation/pages/email_view_window.dart';
 import 'presentation/pages/event_edit_window.dart';
+import 'presentation/pages/reminder_popup_window.dart';
 import 'presentation/pages/tasks_window.dart';
 import 'presentation/pages/home_page.dart';
 
@@ -77,6 +80,15 @@ void main(List<String> args) async {
       return;
     }
 
+    if (arguments['type'] == 'eventReminder') {
+      final title = arguments['eventTitle'] as String? ?? 'Reminder';
+      await showSubWindow(
+        WindowOptions(size: const Size(300, 160), center: true, title: title),
+      );
+      runApp(ReminderPopupWindowApp(arguments: arguments));
+      return;
+    }
+
     if (arguments['type'] == 'emailView') {
       final emailMap = arguments['email'] as Map<String, dynamic>? ?? {};
       final subject = emailMap['subject'] as String? ?? '';
@@ -124,6 +136,9 @@ void main(List<String> args) async {
 await configureDependencies();
   await BackgroundMailService.initialize();
   await BackgroundMailService.schedulePeriodicCheck();
+  // Eagerly initialize NotificationService (installs method-call handlers and
+  // local-notifications plugin), then request permission without blocking startup.
+  unawaited(sl<NotificationService>().requestPermission());
   runApp(const NightMailApp());
 }
 

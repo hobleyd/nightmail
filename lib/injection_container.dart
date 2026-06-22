@@ -68,6 +68,7 @@ import 'infrastructure/accounts/account_manager.dart';
 import 'infrastructure/accounts/account_storage.dart';
 import 'infrastructure/badge/badge_service.dart';
 import 'infrastructure/cache/cache_encryption_service.dart';
+import 'infrastructure/notifications/notification_service.dart';
 import 'presentation/blocs/account/account_cubit.dart';
 import 'presentation/blocs/calendar/calendar_bloc.dart';
 import 'presentation/blocs/compose/compose_bloc.dart';
@@ -206,6 +207,7 @@ Future<void> configureDependencies() async {
   // Settings
   sl.registerLazySingleton(() => AppSettings());
   sl.registerLazySingleton(() => BadgeService());
+  sl.registerLazySingleton(() => NotificationService());
 
   // Presentation — singletons
   sl.registerLazySingleton(() => ThemeCubit());
@@ -278,5 +280,6 @@ Future<void> configureDependencies() async {
   sl.registerFactory(() => EventEditBloc(
         createCalendarEvent: sl<CreateCalendarEvent>(),
         updateCalendarEvent: sl<UpdateCalendarEvent>(),
+        notificationService: sl<NotificationService>(),
       ));
 }

@@ -9,6 +9,7 @@ import '../../domain/entities/calendar_recurrence.dart';
 import '../../domain/usecases/check_attendees_availability.dart';
 import '../../domain/usecases/create_calendar_event.dart';
 import '../../domain/usecases/update_calendar_event.dart';
+import '../../infrastructure/notifications/notification_service.dart';
 import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/event_edit/event_edit_bloc.dart';
@@ -95,6 +96,7 @@ class EventEditWindowApp extends StatelessWidget {
       timezone: raw['timezone'] as String?,
       attendees: _parseAttendees(raw['attendees'] as List<dynamic>?),
       recurrence: _parseRecurrence(raw['recurrence'] as Map<String, dynamic>?),
+      reminderMinutes: raw['reminderMinutes'] as int?,
     );
   }
 
@@ -157,6 +159,7 @@ class _EventEditWindowPage extends StatelessWidget {
       create: (_) => EventEditBloc(
         createCalendarEvent: sl<CreateCalendarEvent>(),
         updateCalendarEvent: sl<UpdateCalendarEvent>(),
+        notificationService: sl<NotificationService>(),
       ),
       child: Scaffold(
         body: BlocListener<EventEditBloc, EventEditState>(

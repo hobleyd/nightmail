@@ -2,9 +2,10 @@ import Cocoa
 import Contacts
 import EventKit
 import FlutterMacOS
+import UserNotifications
 import desktop_multi_window
 
-class MainFlutterWindow: NSWindow {
+class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
   // Each window (main + every desktop_multi_window secondary window) gets its
   // own FlutterEngine and binary messenger, so we must register the contacts
   // channel on every messenger.  Channels must be stored — FlutterMethodChannel
@@ -13,6 +14,7 @@ class MainFlutterWindow: NSWindow {
   private var allChannels: [FlutterMethodChannel] = []
   private var calendarNotifyChannels: [FlutterMethodChannel] = []
   private var badgeChannel: FlutterMethodChannel?
+  private var mainNotificationChannel: FlutterMethodChannel?
   private let eventStore = EKEventStore()
 
   override func awakeFromNib() {
@@ -24,6 +26,33 @@ class MainFlutterWindow: NSWindow {
     RegisterGeneratedPlugins(registry: flutterViewController)
     registerContactsChannel(messenger: flutterViewController.engine.binaryMessenger)
     registerEventKitChannel(messenger: flutterViewController.engine.binaryMessenger)
+
+    // Register the notification channel on the main window only.
+    // Reminder popups are always created from the main Flutter engine.
+    mainNotificationChannel = FlutterMethodChannel(
+      name: "au.com.sharpblue.nightmail/notifications",
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
+    mainNotificationChannel?.setMethodCallHandler { [weak self] call, result in
+      guard let self else { result(FlutterMethodNotImplemented); return }
+      switch call.method {
+      case "requestPermission":
+        self.handleNotificationPermission(result: result)
+      case "scheduleReminder":
+        let args = call.arguments as? [String: Any] ?? [:]
+        self.handleScheduleReminder(args: args, result: result)
+      case "cancelReminder":
+        let args = call.arguments as? [String: Any] ?? [:]
+        self.handleCancelReminder(args: args, result: result)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    if let ch = mainNotificationChannel { allChannels.append(ch) }
+
+    // Set this window as the UNUserNotificationCenter delegate so we receive
+    // foreground and tap callbacks.
+    UNUserNotificationCenter.current().delegate = self
 
     // Register the main window's calendar refresh channel for broadcasting eventSaved into Flutter.
     let mainCalendarChannel = FlutterMethodChannel(
@@ -39,6 +68,7 @@ class MainFlutterWindow: NSWindow {
       self?.registerContactsChannel(messenger: controller.engine.binaryMessenger)
       self?.registerEventKitChannel(messenger: controller.engine.binaryMessenger)
       self?.registerCalendarRefreshRelay(messenger: controller.engine.binaryMessenger)
+      self?.registerNotificationRelay(messenger: controller.engine.binaryMessenger)
     }
 
     badgeChannel = FlutterMethodChannel(
@@ -58,6 +88,91 @@ class MainFlutterWindow: NSWindow {
     super.awakeFromNib()
   }
 
+  // MARK: - UNUserNotificationCenter
+
+  private func handleNotificationPermission(result: @escaping FlutterResult) {
+    UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+      DispatchQueue.main.async { result(granted ? "granted" : "denied") }
+    }
+  }
+
+  private func handleScheduleReminder(args: [String: Any], result: @escaping FlutterResult) {
+    let id        = args["id"]       as? String ?? ""
+    let title     = args["title"]    as? String ?? ""
+    let body      = args["body"]     as? String ?? ""
+    let triggerMs = (args["triggerMs"] as? NSNumber)?.int64Value ?? 0
+    let startIso  = args["startIso"] as? String
+
+    let triggerDate = Date(timeIntervalSince1970: Double(triggerMs) / 1000.0)
+    let interval    = triggerDate.timeIntervalSinceNow
+    guard interval > 0 else { result(nil); return }
+
+    let content       = UNMutableNotificationContent()
+    content.title     = title
+    content.body      = body
+    content.sound     = .default
+    var userInfo: [String: Any] = ["eventId": id, "eventTitle": title]
+    if let iso = startIso { userInfo["startIso"] = iso }
+    content.userInfo  = userInfo
+
+    let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
+    let request = UNNotificationRequest(
+      identifier: "event_reminder_\(id)",
+      content: content,
+      trigger: trigger
+    )
+
+    UNUserNotificationCenter.current().add(request) { error in
+      DispatchQueue.main.async {
+        if let e = error {
+          result(FlutterError(code: "SCHEDULE_ERROR", message: e.localizedDescription, details: nil))
+        } else {
+          result(nil)
+        }
+      }
+    }
+  }
+
+  private func handleCancelReminder(args: [String: Any], result: @escaping FlutterResult) {
+    let id = args["id"] as? String ?? ""
+    UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["event_reminder_\(id)"])
+    result(nil)
+  }
+
+  private func sendReminderToFlutter(userInfo: [AnyHashable: Any]) {
+    let eventId    = userInfo["eventId"]    as? String ?? ""
+    let eventTitle = userInfo["eventTitle"] as? String ?? ""
+    let startIso   = userInfo["startIso"]   as? String
+    var args: [String: Any] = ["eventId": eventId, "eventTitle": eventTitle]
+    if let iso = startIso { args["startIso"] = iso }
+    mainNotificationChannel?.invokeMethod("showReminderPopup", arguments: args)
+  }
+
+  // Called when a notification is delivered while the app is in the foreground.
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    sendReminderToFlutter(userInfo: notification.request.content.userInfo)
+    if #available(macOS 11.0, *) {
+      completionHandler([.banner, .sound])
+    } else {
+      completionHandler([.alert, .sound])
+    }
+  }
+
+  // Called when the user taps a delivered notification (app was in background or closed).
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+  ) {
+    NSApp.activate(ignoringOtherApps: true)
+    sendReminderToFlutter(userInfo: response.notification.request.content.userInfo)
+    completionHandler()
+  }
+
   // MARK: - Calendar refresh relay
 
   private func registerCalendarRefreshRelay(messenger: FlutterBinaryMessenger) {
@@ -75,6 +190,33 @@ class MainFlutterWindow: NSWindow {
       }
     }
     calendarNotifyChannels.append(channel)
+    allChannels.append(channel)
+  }
+
+  // MARK: - Notification relay for secondary windows
+
+  /// Registers a notifications channel on a secondary window's messenger so that
+  /// scheduleReminder / cancelReminder calls from those windows reach the same Swift
+  /// handlers.  showReminderPopup is always *invoked* from mainNotificationChannel,
+  /// never handled here.
+  private func registerNotificationRelay(messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(
+      name: "au.com.sharpblue.nightmail/notifications",
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { [weak self] call, result in
+      guard let self else { result(FlutterMethodNotImplemented); return }
+      switch call.method {
+      case "scheduleReminder":
+        let args = call.arguments as? [String: Any] ?? [:]
+        self.handleScheduleReminder(args: args, result: result)
+      case "cancelReminder":
+        let args = call.arguments as? [String: Any] ?? [:]
+        self.handleCancelReminder(args: args, result: result)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
     allChannels.append(channel)
   }
 

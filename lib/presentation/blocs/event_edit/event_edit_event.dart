@@ -22,6 +22,7 @@ final class EventEditSubmitted extends EventEditBlocEvent {
     this.attendeeEmails = const [],
     this.recurrence,
     this.isTeamsMeeting = false,
+    this.reminderMinutes = 15,
   });
 
   /// Null for create, non-null for update.
@@ -37,6 +38,9 @@ final class EventEditSubmitted extends EventEditBlocEvent {
   final CalendarRecurrence? recurrence;
   final bool isTeamsMeeting;
 
+  /// Minutes before start to fire a reminder.
+  final int reminderMinutes;
+
   @override
   List<Object?> get props => [
         id,
@@ -50,5 +54,6 @@ final class EventEditSubmitted extends EventEditBlocEvent {
         attendeeEmails,
         recurrence,
         isTeamsMeeting,
+        reminderMinutes,
       ];
 }

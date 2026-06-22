@@ -351,6 +351,7 @@ class GraphApiDatasourceImpl
         attendeeEmails: params.attendeeEmails,
         recurrence: params.recurrence,
         isTeamsMeeting: params.isTeamsMeeting,
+        reminderMinutes: params.reminderMinutes,
       );
 
       final response = await _dio.post<Map<String, dynamic>>(
@@ -382,6 +383,7 @@ class GraphApiDatasourceImpl
         description: params.description,
         attendeeEmails: params.attendeeEmails,
         recurrence: params.recurrence,
+        reminderMinutes: params.reminderMinutes,
       );
 
       final response = await _dio.patch<Map<String, dynamic>>(
@@ -566,10 +568,13 @@ class GraphApiDatasourceImpl
     List<String> attendeeEmails = const [],
     CalendarRecurrence? recurrence,
     bool isTeamsMeeting = false,
+    int reminderMinutes = 15,
   }) {
     final body = <String, dynamic>{
       'subject': subject,
       'isAllDay': isAllDay,
+      'isReminderOn': true,
+      'reminderMinutesBeforeStart': reminderMinutes,
       if (isTeamsMeeting) 'isOnlineMeeting': true,
     };
 

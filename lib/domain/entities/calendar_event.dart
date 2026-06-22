@@ -19,6 +19,7 @@ class CalendarEvent extends Equatable {
     this.timezone,
     this.attendees = const [],
     this.recurrence,
+    this.reminderMinutes,
   });
 
   final String id;
@@ -36,6 +37,9 @@ class CalendarEvent extends Equatable {
 
   final List<CalendarEventAttendee> attendees;
   final CalendarRecurrence? recurrence;
+
+  /// Minutes before the event start to fire a reminder. Null means no reminder.
+  final int? reminderMinutes;
 
   Duration get duration => end.difference(start);
 

@@ -56,6 +56,10 @@ dependencies:
 
   # Background task scheduling (survives app sleep on mobile)
   workmanager: ^0.9.0+3
+
+  # Cross-platform local notifications (Linux/Windows/Android/iOS)
+  flutter_local_notifications: ^22.0.1
+  timezone: ^0.11.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

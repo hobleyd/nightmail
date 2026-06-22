@@ -16,6 +16,7 @@ class CalendarEventModel extends CalendarEvent {
     super.timezone,
     super.attendees,
     super.recurrence,
+    super.reminderMinutes,
   });
 
   factory CalendarEventModel.fromJson(Map<String, dynamic> json) {
@@ -35,6 +36,9 @@ class CalendarEventModel extends CalendarEvent {
       timezone: (json['start'] as Map<String, dynamic>?)?['timeZone'] as String?,
       attendees: _parseAttendees(json['attendees'] as List<dynamic>?),
       recurrence: _parseRecurrence(json['recurrence'] as Map<String, dynamic>?),
+      reminderMinutes: (json['isReminderOn'] as bool? ?? false)
+          ? json['reminderMinutesBeforeStart'] as int?
+          : null,
     );
   }
 

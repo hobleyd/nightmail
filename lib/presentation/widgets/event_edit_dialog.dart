@@ -206,7 +206,12 @@ class _EventEditFormState extends State<EventEditForm> {
     _endTime = TimeOfDay(hour: endLocal.hour, minute: endLocal.minute);
     _duration = endLocal.difference(startLocal);
     _isAllDay = e?.isAllDay ?? false;
-    _timezone = e?.timezone ?? _localIanaTimezone();
+    // The calendar list fetch forces timezone="UTC" via a Prefer header, so
+    // treat null or "UTC" as unset and default to the device's local timezone.
+    final storedTz = e?.timezone;
+    _timezone = (storedTz == null || storedTz == 'UTC')
+        ? _localIanaTimezone()
+        : storedTz;
     _attendees =
         e?.attendees.map((a) => a.email).toList() ?? const [];
     _recurrence = e?.recurrence;

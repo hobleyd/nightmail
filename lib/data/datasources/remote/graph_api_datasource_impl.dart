@@ -315,7 +315,7 @@ class GraphApiDatasourceImpl
           'startDateTime': startDateTime.toUtc().toIso8601String(),
           'endDateTime': endDateTime.toUtc().toIso8601String(),
           '\$select':
-              'id,subject,start,end,isAllDay,location,onlineMeeting,bodyPreview,showAs,isOrganizer,attendees,recurrence',
+              'id,subject,start,end,isAllDay,location,onlineMeeting,bodyPreview,showAs,isOrganizer,attendees,recurrence,isReminderOn,reminderMinutesBeforeStart',
           '\$top': 100,
         },
         options: Options(

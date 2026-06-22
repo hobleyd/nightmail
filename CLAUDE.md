@@ -64,7 +64,7 @@ Re-apply after `flutter pub cache repair`. Drop when desktop_drop publishes a fi
 1. **Bundling hardcodes `libWPEWebKit-2.0`** but the installed library is
    `libWPEWebKit-1.0.so`. Fix: derive the name dynamically from pkg-config.
 2. **`-Wno-deprecated-literal-operator` is Clang-only** — GCC errors on it.
-   Fix: guard it with `if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")`.
+   Fix: use `check_cxx_compiler_flag` so the flag is only added when supported.
 
 Both patches are applied by the CI via a Python script step. To apply locally:
 
@@ -72,14 +72,26 @@ Both patches are applied by the CI via a Python script step. To apply locally:
 import pathlib
 p = pathlib.Path.home() / '.pub-cache/hosted/pub.dev/flutter_inappwebview_linux-0.1.0-beta.1/linux/CMakeLists.txt'
 t = p.read_text()
-t = t.replace(
-  'find_and_add_library("libWPEWebKit-2.0" "${WPE_LIB_DIRS}" WPE_BUNDLED_LIBS)',
-  'list(GET WPE_WEBKIT_LIBRARIES 0 _wpe_webkit_libname)\nfind_and_add_library("lib${_wpe_webkit_libname}" "${WPE_LIB_DIRS}" WPE_BUNDLED_LIBS)'
+if 'find_and_add_library("libWPEWebKit-2.0"' in t:
+  t = t.replace(
+    'find_and_add_library("libWPEWebKit-2.0" "${WPE_LIB_DIRS}" WPE_BUNDLED_LIBS)',
+    'list(GET WPE_WEBKIT_LIBRARIES 0 _wpe_webkit_libname)\nfind_and_add_library("lib${_wpe_webkit_libname}" "${WPE_LIB_DIRS}" WPE_BUNDLED_LIBS)'
+  )
+CHECK_BLOCK = (
+  'check_cxx_compiler_flag("-Wno-deprecated-literal-operator" _WNO_DEPRECATED_LITERAL_OP)\n'
+  'if(_WNO_DEPRECATED_LITERAL_OP)\n'
+  '  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-literal-operator")\n'
+  'endif()'
 )
-t = t.replace(
-  'set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-literal-operator")',
-  'if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")\n  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-literal-operator")\nendif()'
-)
+if 'check_cxx_compiler_flag("-Wno-deprecated-literal-operator"' not in t:
+  t = t.replace(
+    'if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")\n  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-literal-operator")\nendif()',
+    CHECK_BLOCK
+  )
+  t = t.replace(
+    'set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-literal-operator")',
+    CHECK_BLOCK
+  )
 p.write_text(t)
 ```
 

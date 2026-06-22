@@ -144,15 +144,32 @@ jobs:
           p = pathlib.Path.home() / '.pub-cache/hosted/pub.dev/flutter_inappwebview_linux-0.1.0-beta.1/linux/CMakeLists.txt'
           t = p.read_text()
           # Fix bundling: derive lib name from pkg-config instead of hardcoding libWPEWebKit-2.0
-          t = t.replace(
-            'find_and_add_library("libWPEWebKit-2.0" "${WPE_LIB_DIRS}" WPE_BUNDLED_LIBS)',
-            'list(GET WPE_WEBKIT_LIBRARIES 0 _wpe_webkit_libname)\nfind_and_add_library("lib${_wpe_webkit_libname}" "${WPE_LIB_DIRS}" WPE_BUNDLED_LIBS)'
+          if 'find_and_add_library("libWPEWebKit-2.0"' in t:
+            t = t.replace(
+              'find_and_add_library("libWPEWebKit-2.0" "${WPE_LIB_DIRS}" WPE_BUNDLED_LIBS)',
+              'list(GET WPE_WEBKIT_LIBRARIES 0 _wpe_webkit_libname)\nfind_and_add_library("lib${_wpe_webkit_libname}" "${WPE_LIB_DIRS}" WPE_BUNDLED_LIBS)'
+            )
+          # Fix -Wno-deprecated-literal-operator: use check_cxx_compiler_flag so the
+          # flag is only added when the compiler supports it (GCC doesn't, Clang does).
+          # Handle all three possible states: bare set(), Clang-ID-guarded, or already
+          # using check_cxx_compiler_flag (idempotent).
+          CHECK_BLOCK = (
+            'check_cxx_compiler_flag("-Wno-deprecated-literal-operator" _WNO_DEPRECATED_LITERAL_OP)\n'
+            'if(_WNO_DEPRECATED_LITERAL_OP)\n'
+            '  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-literal-operator")\n'
+            'endif()'
           )
-          # Fix Clang-only flag that errors on GCC
-          t = t.replace(
-            'set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-literal-operator")',
-            'if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")\n  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-literal-operator")\nendif()'
-          )
+          if 'check_cxx_compiler_flag("-Wno-deprecated-literal-operator"' not in t:
+            # Replace Clang-ID-guarded form
+            t = t.replace(
+              'if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")\n  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-literal-operator")\nendif()',
+              CHECK_BLOCK
+            )
+            # Replace bare form (in case Clang-guarded form was not present)
+            t = t.replace(
+              'set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-literal-operator")',
+              CHECK_BLOCK
+            )
           p.write_text(t)
           EOF
 

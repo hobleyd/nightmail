@@ -568,13 +568,13 @@ class GraphApiDatasourceImpl
     List<String> attendeeEmails = const [],
     CalendarRecurrence? recurrence,
     bool isTeamsMeeting = false,
-    int reminderMinutes = 15,
+    int? reminderMinutes,
   }) {
     final body = <String, dynamic>{
       'subject': subject,
       'isAllDay': isAllDay,
-      'isReminderOn': true,
-      'reminderMinutesBeforeStart': reminderMinutes,
+      'isReminderOn': reminderMinutes != null,
+      if (reminderMinutes != null) 'reminderMinutesBeforeStart': reminderMinutes,
       if (isTeamsMeeting) 'isOnlineMeeting': true,
     };
 

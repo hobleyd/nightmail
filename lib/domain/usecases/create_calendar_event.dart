@@ -32,7 +32,7 @@ class CreateCalendarEventParams extends Equatable {
     this.attendeeEmails = const [],
     this.recurrence,
     this.isTeamsMeeting = false,
-    this.reminderMinutes = 15,
+    this.reminderMinutes,
   });
 
   final String subject;
@@ -48,8 +48,8 @@ class CreateCalendarEventParams extends Equatable {
   final CalendarRecurrence? recurrence;
   final bool isTeamsMeeting;
 
-  /// Minutes before start to fire a reminder.
-  final int reminderMinutes;
+  /// Minutes before start to fire a reminder. Null means no reminder.
+  final int? reminderMinutes;
 
   @override
   List<Object?> get props => [

@@ -64,6 +64,7 @@ class EventEditDialog extends StatelessWidget {
         'start': e.start.toUtc().toIso8601String(),
         'end': e.end.toUtc().toIso8601String(),
         'isAllDay': e.isAllDay,
+        'isOrganizer': e.isOrganizer,
         if (e.location != null) 'location': e.location,
         if (e.bodyPreview != null) 'bodyPreview': e.bodyPreview,
         if (e.timezone != null) 'timezone': e.timezone,
@@ -163,11 +164,12 @@ class _EventEditFormState extends State<EventEditForm> {
   late TimeOfDay _startTime;
   late DateTime _endDate;
   late TimeOfDay _endTime;
+  late Duration _duration;
   late bool _isAllDay;
   late String _timezone;
   late List<String> _attendees;
   late CalendarRecurrence? _recurrence;
-  late int _reminderMinutes;
+  late int? _reminderMinutes;
 
   List<AttendeeAvailability>? _availabilities;
   bool _checkingAvailability = false;
@@ -202,12 +204,13 @@ class _EventEditFormState extends State<EventEditForm> {
     _startTime = TimeOfDay(hour: startLocal.hour, minute: startLocal.minute);
     _endDate = DateTime(endLocal.year, endLocal.month, endLocal.day);
     _endTime = TimeOfDay(hour: endLocal.hour, minute: endLocal.minute);
+    _duration = endLocal.difference(startLocal);
     _isAllDay = e?.isAllDay ?? false;
     _timezone = e?.timezone ?? _localIanaTimezone();
     _attendees =
         e?.attendees.map((a) => a.email).toList() ?? const [];
     _recurrence = e?.recurrence;
-    _reminderMinutes = e?.reminderMinutes ?? 15;
+    _reminderMinutes = e?.reminderMinutes;
     _organizerEmail = sl<AccountManager>().activeAccount?.emailAddress;
   }
 
@@ -221,9 +224,12 @@ class _EventEditFormState extends State<EventEditForm> {
     super.dispose();
   }
 
-  bool get _readOnly => widget.event != null;
+  bool get _readOnly => widget.event != null && !widget.event!.isOrganizer;
 
-  String get _baseTitle => widget.event == null ? 'New Event' : 'View Event';
+  String get _baseTitle {
+    if (widget.event == null) return 'New Event';
+    return widget.event!.isOrganizer ? 'Edit Event' : 'View Event';
+  }
 
   String get _windowTitle {
     final subject = _titleController.text.trim();
@@ -402,19 +408,44 @@ class _EventEditFormState extends State<EventEditForm> {
                           endTime: _endTime,
                           isAllDay: _isAllDay,
                           onStartDateChanged: (d) {
-                            setState(() => _startDate = d);
+                            setState(() {
+                              _startDate = d;
+                              final newEnd = DateTime(d.year, d.month, d.day,
+                                  _startTime.hour, _startTime.minute)
+                                  .add(_duration);
+                              _endDate = DateTime(newEnd.year, newEnd.month, newEnd.day);
+                              _endTime = TimeOfDay(hour: newEnd.hour, minute: newEnd.minute);
+                            });
                             _scheduleAvailabilityCheck();
                           },
                           onStartTimeChanged: (t) {
-                            setState(() => _startTime = t);
+                            setState(() {
+                              _startTime = t;
+                              final newEnd = DateTime(_startDate.year,
+                                  _startDate.month, _startDate.day,
+                                  t.hour, t.minute)
+                                  .add(_duration);
+                              _endDate = DateTime(newEnd.year, newEnd.month, newEnd.day);
+                              _endTime = TimeOfDay(hour: newEnd.hour, minute: newEnd.minute);
+                            });
                             _scheduleAvailabilityCheck();
                           },
                           onEndDateChanged: (d) {
-                            setState(() => _endDate = d);
+                            setState(() {
+                              _endDate = d;
+                              final newEnd = DateTime(d.year, d.month, d.day,
+                                  _endTime.hour, _endTime.minute);
+                              _duration = newEnd.difference(_computedStart);
+                            });
                             _scheduleAvailabilityCheck();
                           },
                           onEndTimeChanged: (t) {
-                            setState(() => _endTime = t);
+                            setState(() {
+                              _endTime = t;
+                              final newEnd = DateTime(_endDate.year,
+                                  _endDate.month, _endDate.day, t.hour, t.minute);
+                              _duration = newEnd.difference(_computedStart);
+                            });
                             _scheduleAvailabilityCheck();
                           },
                         ),
@@ -1968,8 +1999,8 @@ class _TeamsMeetingButton extends StatelessWidget {
 
 class _ReminderDropdown extends StatelessWidget {
   const _ReminderDropdown({required this.value, required this.onChanged});
-  final int value;
-  final ValueChanged<int> onChanged;
+  final int? value;
+  final ValueChanged<int?> onChanged;
 
   static const _options = [5, 10, 15, 30, 60, 120, 360, 720, 1440];
 
@@ -1989,23 +2020,26 @@ class _ReminderDropdown extends StatelessWidget {
         borderRadius: BorderRadius.circular(4),
       ),
       child: DropdownButtonHideUnderline(
-        child: DropdownButton<int>(
+        child: DropdownButton<int?>(
           value: value,
           isDense: true,
           dropdownColor: c.surfacePanel,
           style: TextStyle(color: c.textPrimary, fontSize: 12),
-          items: _options
-              .map((m) => DropdownMenuItem(
-                    value: m,
-                    child: Text(
-                      _label(m),
-                      style: TextStyle(color: c.textPrimary, fontSize: 12),
-                    ),
-                  ))
-              .toList(),
-          onChanged: (v) {
-            if (v != null) onChanged(v);
-          },
+          items: [
+            DropdownMenuItem<int?>(
+              value: null,
+              child: Text('No reminder',
+                  style: TextStyle(color: c.textPrimary, fontSize: 12)),
+            ),
+            ..._options.map((m) => DropdownMenuItem<int?>(
+                  value: m,
+                  child: Text(
+                    _label(m),
+                    style: TextStyle(color: c.textPrimary, fontSize: 12),
+                  ),
+                )),
+          ],
+          onChanged: onChanged,
         ),
       ),
     );

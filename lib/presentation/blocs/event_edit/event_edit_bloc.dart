@@ -47,13 +47,15 @@ class EventEditBloc extends Bloc<EventEditBlocEvent, EventEditState> {
       result.fold(
         (f) => emit(EventEditError(message: f.message)),
         (e) {
-          _notificationService.scheduleEventReminder(
-            eventId: e.id,
-            eventTitle: e.subject,
-            startUtc: e.start,
-            reminderMinutes: event.reminderMinutes,
-            startIso: e.start.toIso8601String(),
-          );
+          if (event.reminderMinutes != null) {
+            _notificationService.scheduleEventReminder(
+              eventId: e.id,
+              eventTitle: e.subject,
+              startUtc: e.start,
+              reminderMinutes: event.reminderMinutes!,
+              startIso: e.start.toIso8601String(),
+            );
+          }
           emit(EventEditSaved(event: e));
         },
       );
@@ -77,13 +79,15 @@ class EventEditBloc extends Bloc<EventEditBlocEvent, EventEditState> {
         (f) => emit(EventEditError(message: f.message)),
         (e) {
           _notificationService.cancelEventReminder(e.id);
-          _notificationService.scheduleEventReminder(
-            eventId: e.id,
-            eventTitle: e.subject,
-            startUtc: e.start,
-            reminderMinutes: event.reminderMinutes,
-            startIso: e.start.toIso8601String(),
-          );
+          if (event.reminderMinutes != null) {
+            _notificationService.scheduleEventReminder(
+              eventId: e.id,
+              eventTitle: e.subject,
+              startUtc: e.start,
+              reminderMinutes: event.reminderMinutes!,
+              startIso: e.start.toIso8601String(),
+            );
+          }
           emit(EventEditSaved(event: e));
         },
       );

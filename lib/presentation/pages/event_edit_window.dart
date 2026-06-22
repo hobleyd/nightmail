@@ -91,6 +91,7 @@ class EventEditWindowApp extends StatelessWidget {
       start: DateTime.parse(raw['start'] as String).toLocal(),
       end: DateTime.parse(raw['end'] as String).toLocal(),
       isAllDay: raw['isAllDay'] as bool? ?? false,
+      isOrganizer: raw['isOrganizer'] as bool? ?? false,
       location: raw['location'] as String?,
       bodyPreview: raw['bodyPreview'] as String?,
       timezone: raw['timezone'] as String?,

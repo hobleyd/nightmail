@@ -1,3 +1,5 @@
+import 'dart:io';
+
 typedef TzEntry = ({String iana, String label, String abbreviation, int offsetHours});
 
 final List<TzEntry> kTimezones = List.unmodifiable(
@@ -48,9 +50,29 @@ final List<TzEntry> kTimezones = List.unmodifiable(
   ]..sort((a, b) => a.offsetHours.compareTo(b.offsetHours)),
 );
 
-/// Returns the best-guess IANA timezone for the device's current locale.
-/// Matches by abbreviation name first, then falls back to UTC offset.
+/// Returns the IANA timezone for the device's current locale.
+///
+/// Resolution order:
+///  1. Read the /etc/localtime symlink (macOS/Linux — gives exact IANA name).
+///  2. Match timezone abbreviation against the known list.
+///  3. Match UTC offset against the known list.
+///  4. Fall back to UTC.
 String localIanaTimezone() {
+  try {
+    final target = Link('/etc/localtime').targetSync();
+    for (final prefix in [
+      '/var/db/timezone/zoneinfo/', // macOS
+      '/usr/share/zoneinfo/', // Linux
+      'zoneinfo/',
+    ]) {
+      final idx = target.indexOf(prefix);
+      if (idx >= 0) {
+        final iana = target.substring(idx + prefix.length);
+        if (iana.isNotEmpty) return iana;
+      }
+    }
+  } catch (_) {}
+
   final offset = DateTime.now().timeZoneOffset;
   final name = DateTime.now().timeZoneName;
   for (final tz in kTimezones) {

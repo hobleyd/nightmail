@@ -6,7 +6,7 @@ import '../../core/usecases/usecase.dart';
 import '../../core/utils/jaro_winkler.dart';
 import '../repositories/sender_repository.dart';
 
-const _anomalyThreshold = 0.75;
+const _anomalyThreshold = 0.85;
 
 class SenderAnomalyResult extends Equatable {
   const SenderAnomalyResult({required this.score, required this.matches});

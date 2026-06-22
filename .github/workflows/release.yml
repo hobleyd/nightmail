@@ -198,6 +198,10 @@ jobs:
           cache: false
 
       - run: flutter pub get
+
+      - name: Patch desktop_drop compileSdk (0.4.4 hardcodes 33, needs 34+)
+        run: sed -i 's/compileSdk 33/compileSdk 36/' ~/.pub-cache/hosted/pub.dev/desktop_drop-0.4.4/android/build.gradle
+
       - run: dart run build_runner build --delete-conflicting-outputs
       - name: Generate code for enough_mail sub-package
         working-directory: packages/enough_mail

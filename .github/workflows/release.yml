@@ -136,6 +136,26 @@ jobs:
       - run: flutter config --enable-linux-desktop
       - run: flutter create --platforms=linux .
       - run: flutter pub get
+
+      - name: Patch flutter_inappwebview_linux CMakeLists (GCC + WPE 1.0 compat)
+        run: |
+          python3 - <<'EOF'
+          import pathlib
+          p = pathlib.Path.home() / '.pub-cache/hosted/pub.dev/flutter_inappwebview_linux-0.1.0-beta.1/linux/CMakeLists.txt'
+          t = p.read_text()
+          # Fix bundling: derive lib name from pkg-config instead of hardcoding libWPEWebKit-2.0
+          t = t.replace(
+            'find_and_add_library("libWPEWebKit-2.0" "${WPE_LIB_DIRS}" WPE_BUNDLED_LIBS)',
+            'list(GET WPE_WEBKIT_LIBRARIES 0 _wpe_webkit_libname)\nfind_and_add_library("lib${_wpe_webkit_libname}" "${WPE_LIB_DIRS}" WPE_BUNDLED_LIBS)'
+          )
+          # Fix Clang-only flag that errors on GCC
+          t = t.replace(
+            'set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-literal-operator")',
+            'if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")\n  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-literal-operator")\nendif()'
+          )
+          p.write_text(t)
+          EOF
+
       - run: dart run build_runner build --delete-conflicting-outputs
       - name: Generate code for enough_mail sub-package
         working-directory: packages/enough_mail

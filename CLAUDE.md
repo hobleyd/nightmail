@@ -56,6 +56,35 @@ sed -i '' 's/compileSdk 33/compileSdk 36/' \
 
 Re-apply after `flutter pub cache repair`. Drop when desktop_drop publishes a fix.
 
+### flutter_inappwebview_linux CMakeLists patches (GCC + WPE 1.0)
+
+`flutter_inappwebview_linux 0.1.0-beta.1` has two issues on Linux with GCC and
+`libwpewebkit-1.0-dev` (the package available in Ubuntu 22.04):
+
+1. **Bundling hardcodes `libWPEWebKit-2.0`** but the installed library is
+   `libWPEWebKit-1.0.so`. Fix: derive the name dynamically from pkg-config.
+2. **`-Wno-deprecated-literal-operator` is Clang-only** — GCC errors on it.
+   Fix: guard it with `if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")`.
+
+Both patches are applied by the CI via a Python script step. To apply locally:
+
+```python
+import pathlib
+p = pathlib.Path.home() / '.pub-cache/hosted/pub.dev/flutter_inappwebview_linux-0.1.0-beta.1/linux/CMakeLists.txt'
+t = p.read_text()
+t = t.replace(
+  'find_and_add_library("libWPEWebKit-2.0" "${WPE_LIB_DIRS}" WPE_BUNDLED_LIBS)',
+  'list(GET WPE_WEBKIT_LIBRARIES 0 _wpe_webkit_libname)\nfind_and_add_library("lib${_wpe_webkit_libname}" "${WPE_LIB_DIRS}" WPE_BUNDLED_LIBS)'
+)
+t = t.replace(
+  'set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-literal-operator")',
+  'if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")\n  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-literal-operator")\nendif()'
+)
+p.write_text(t)
+```
+
+Re-apply after `flutter pub cache repair`. Drop when `flutter_inappwebview_linux` publishes a fix.
+
 ## macOS Native Channels
 
 Custom platform channels live in `macos/Runner/MainFlutterWindow.swift`.

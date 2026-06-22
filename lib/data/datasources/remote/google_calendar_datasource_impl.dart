@@ -189,6 +189,45 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
   }
 
   @override
+  Future<void> removeMeetingFromCalendar({
+    required String emailId,
+    String? icsData,
+    DateTime? meetingStart,
+  }) async {
+    if (icsData == null) {
+      throw const ServerException(
+          message: 'Cannot remove meeting: no iCalendar data');
+    }
+    final event = _parseIcs(icsData);
+    if (event.uid == null) {
+      throw const ServerException(
+          message: 'Cannot remove meeting: iCalendar UID missing');
+    }
+    try {
+      final searchResp = await _dio.get<Map<String, dynamic>>(
+        '/calendars/primary/events',
+        queryParameters: {'iCalUID': event.uid, 'maxResults': 1},
+      );
+      final items = (searchResp.data?['items'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      if (items.isEmpty) return; // Not in calendar — nothing to remove.
+      final eventId = items.first['id'] as String;
+      await _dio.delete<void>('/calendars/primary/events/$eventId');
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  @override
+  Future<void> cancelMeetingFromEmail({
+    required String emailId,
+    DateTime? meetingStart,
+  }) async {
+    throw const ServerException(
+        message: 'Cancel from decline notification is not supported for Google Calendar');
+  }
+
+  @override
   Future<void> cancelCalendarEvent({required String eventId}) async {
     try {
       await _dio.delete<void>(

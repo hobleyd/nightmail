@@ -114,6 +114,31 @@ class EventKitCalendarDatasourceImpl implements CalendarRemoteDatasource {
   }
 
   @override
+  Future<void> removeMeetingFromCalendar({
+    required String emailId,
+    String? icsData,
+    DateTime? meetingStart,
+  }) async {
+    if (icsData == null) return;
+    final uid = _parseUid(icsData);
+    if (uid == null) return;
+    try {
+      await _channel.invokeMethod<void>('deleteEventByUID', {'uid': uid});
+    } on PlatformException {
+      // Best-effort — event may not be in the local EventKit store.
+    }
+  }
+
+  @override
+  Future<void> cancelMeetingFromEmail({
+    required String emailId,
+    DateTime? meetingStart,
+  }) async {
+    throw const ServerException(
+        message: 'Cancel from decline notification is not supported for local calendar');
+  }
+
+  @override
   Future<void> cancelCalendarEvent({required String eventId}) async {
     try {
       await _channel.invokeMethod<void>('deleteEvent', {'id': eventId});
@@ -257,6 +282,23 @@ class EventKitCalendarDatasourceImpl implements CalendarRemoteDatasource {
       }
     }
     return (null, false);
+  }
+
+  String? _parseUid(String icsData) {
+    final unfolded = icsData.replaceAll(RegExp(r'\r?\n[ \t]'), '');
+    bool inVEvent = false;
+    for (final rawLine in unfolded.split(RegExp(r'\r?\n'))) {
+      final line = rawLine.trim();
+      if (line.toUpperCase() == 'BEGIN:VEVENT') { inVEvent = true; continue; }
+      if (line.toUpperCase() == 'END:VEVENT') break;
+      if (!inVEvent) continue;
+      final colonIdx = line.indexOf(':');
+      if (colonIdx == -1) continue;
+      if (line.substring(0, colonIdx).toUpperCase() == 'UID') {
+        return line.substring(colonIdx + 1);
+      }
+    }
+    return null;
   }
 }
 

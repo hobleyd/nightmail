@@ -22,6 +22,8 @@ import '../../domain/entities/meeting_invite.dart';
 import '../../domain/usecases/check_sender_anomaly.dart';
 import '../../domain/usecases/delete_email.dart';
 import '../../domain/usecases/download_attachment.dart';
+import '../../domain/usecases/cancel_meeting_from_email.dart';
+import '../../domain/usecases/remove_cancelled_meeting.dart';
 import '../../domain/usecases/respond_to_meeting_invite.dart';
 import '../../domain/usecases/send_email.dart';
 import '../../infrastructure/accounts/account.dart';
@@ -125,8 +127,7 @@ class _EmailView extends StatelessWidget {
     final c = context.colors;
     final calendarAvailable =
         sl<AccountManager>().calendarDatasource != null;
-    final showInviteBanner =
-        email.meetingInvite != null && calendarAvailable;
+    final meetingType = email.meetingInvite?.type;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -134,8 +135,16 @@ class _EmailView extends StatelessWidget {
         Divider(height: 1, color: c.border),
         _EmailHeader(email: email, senderAnomaly: senderAnomaly),
         Divider(height: 1, color: c.border),
-        if (showInviteBanner) ...[
+        if (calendarAvailable && meetingType == MeetingEmailType.invitation) ...[
           _MeetingInviteBanner(email: email),
+          Divider(height: 1, color: c.border),
+        ],
+        if (calendarAvailable && meetingType == MeetingEmailType.cancellation) ...[
+          _MeetingCancellationBanner(email: email),
+          Divider(height: 1, color: c.border),
+        ],
+        if (calendarAvailable && meetingType == MeetingEmailType.declineNotification) ...[
+          _MeetingDeclineNotificationBanner(email: email),
           Divider(height: 1, color: c.border),
         ],
         Expanded(
@@ -503,6 +512,295 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
                 label: 'Decline',
                 icon: Icons.close_rounded,
                 onPressed: () => _respond(MeetingInviteResponseType.decline),
+              ),
+            ],
+          ),
+      },
+    );
+  }
+}
+
+class _MeetingCancellationBanner extends StatefulWidget {
+  const _MeetingCancellationBanner({required this.email});
+  final Email email;
+
+  @override
+  State<_MeetingCancellationBanner> createState() =>
+      _MeetingCancellationBannerState();
+}
+
+class _MeetingCancellationBannerState
+    extends State<_MeetingCancellationBanner> {
+  _InviteState _state = _InviteState.idle;
+  String? _errorMessage;
+
+  Future<void> _remove() async {
+    if (_state == _InviteState.loading) return;
+    setState(() {
+      _state = _InviteState.loading;
+      _errorMessage = null;
+    });
+
+    final result = await sl<RemoveCancelledMeeting>()(
+      RemoveCancelledMeetingParams(
+        emailId: widget.email.id,
+        icsData: widget.email.meetingInvite?.icsData,
+        meetingStart: widget.email.meetingInvite?.meetingStart,
+      ),
+    );
+
+    if (!mounted) return;
+    result.fold(
+      (failure) => setState(() {
+        _state = _InviteState.error;
+        _errorMessage = failure.message;
+      }),
+      (_) => setState(() => _state = _InviteState.done),
+    );
+
+    if (result.isRight() && mounted) {
+      context.read<CalendarBloc>().add(
+            CalendarWeekLoadRequested(
+                weekStart: context.read<CalendarBloc>().state.weekStart),
+          );
+
+      final email = widget.email;
+      final deleteResult =
+          await sl<DeleteEmail>()(DeleteEmailParams(id: email.id));
+      if (!mounted) return;
+      deleteResult.fold(
+        (_) {},
+        (_) {
+          context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+          context.read<HomeCubit>().clearEmail();
+          context
+              .read<EmailListBloc>()
+              .add(EmailListEmailDeleted(emailId: email.id));
+          if (email.parentFolderId != null) {
+            context.read<FolderListBloc>().add(
+                  FolderListUnreadCountChanged(
+                    folderId: email.parentFolderId!,
+                    unreadCountDelta: email.isRead ? 0 : -1,
+                    totalCountDelta: -1,
+                  ),
+                );
+          }
+        },
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 10),
+      color: c.surfacePanel,
+      child: switch (_state) {
+        _InviteState.loading => Row(
+            children: [
+              Icon(Icons.event_busy_rounded, size: 14, color: c.textDimmed),
+              const SizedBox(width: 8),
+              Text(
+                'Meeting cancelled',
+                style: TextStyle(color: c.textTertiary, fontSize: 12),
+              ),
+              const SizedBox(width: 12),
+              SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                    strokeWidth: 1.5, color: AppColors.accent),
+              ),
+            ],
+          ),
+        _InviteState.done => Row(
+            children: [
+              Icon(Icons.check_circle_outline_rounded,
+                  size: 14, color: AppColors.accent),
+              const SizedBox(width: 8),
+              Text(
+                'Removed from calendar',
+                style: TextStyle(color: c.textTertiary, fontSize: 12),
+              ),
+            ],
+          ),
+        _InviteState.error => Row(
+            children: [
+              Icon(Icons.error_outline_rounded, size: 14, color: Colors.redAccent),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _errorMessage ?? 'Something went wrong',
+                  style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              _InviteResponseButton(
+                label: 'Retry',
+                icon: Icons.refresh_rounded,
+                onPressed: () => setState(() => _state = _InviteState.idle),
+              ),
+            ],
+          ),
+        _InviteState.idle => Row(
+            children: [
+              Icon(Icons.event_busy_rounded, size: 14, color: c.textDimmed),
+              const SizedBox(width: 8),
+              Text(
+                'Meeting cancelled',
+                style: TextStyle(color: c.textTertiary, fontSize: 12),
+              ),
+              const Spacer(),
+              _InviteResponseButton(
+                label: 'Remove from calendar',
+                icon: Icons.delete_outline_rounded,
+                onPressed: _remove,
+              ),
+            ],
+          ),
+      },
+    );
+  }
+}
+
+class _MeetingDeclineNotificationBanner extends StatefulWidget {
+  const _MeetingDeclineNotificationBanner({required this.email});
+  final Email email;
+
+  @override
+  State<_MeetingDeclineNotificationBanner> createState() =>
+      _MeetingDeclineNotificationBannerState();
+}
+
+class _MeetingDeclineNotificationBannerState
+    extends State<_MeetingDeclineNotificationBanner> {
+  _InviteState _state = _InviteState.idle;
+  String? _errorMessage;
+
+  Future<void> _cancel() async {
+    if (_state == _InviteState.loading) return;
+    setState(() {
+      _state = _InviteState.loading;
+      _errorMessage = null;
+    });
+
+    final result = await sl<CancelMeetingFromEmail>()(
+      CancelMeetingFromEmailParams(
+        emailId: widget.email.id,
+        meetingStart: widget.email.meetingInvite?.meetingStart,
+      ),
+    );
+
+    if (!mounted) return;
+    result.fold(
+      (failure) => setState(() {
+        _state = _InviteState.error;
+        _errorMessage = failure.message;
+      }),
+      (_) => setState(() => _state = _InviteState.done),
+    );
+
+    if (result.isRight() && mounted) {
+      context.read<CalendarBloc>().add(
+            CalendarWeekLoadRequested(
+                weekStart: context.read<CalendarBloc>().state.weekStart),
+          );
+
+      final email = widget.email;
+      final deleteResult =
+          await sl<DeleteEmail>()(DeleteEmailParams(id: email.id));
+      if (!mounted) return;
+      deleteResult.fold(
+        (_) {},
+        (_) {
+          context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+          context.read<HomeCubit>().clearEmail();
+          context
+              .read<EmailListBloc>()
+              .add(EmailListEmailDeleted(emailId: email.id));
+          if (email.parentFolderId != null) {
+            context.read<FolderListBloc>().add(
+                  FolderListUnreadCountChanged(
+                    folderId: email.parentFolderId!,
+                    unreadCountDelta: email.isRead ? 0 : -1,
+                    totalCountDelta: -1,
+                  ),
+                );
+          }
+        },
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 10),
+      color: c.surfacePanel,
+      child: switch (_state) {
+        _InviteState.loading => Row(
+            children: [
+              Icon(Icons.person_remove_outlined, size: 14, color: c.textDimmed),
+              const SizedBox(width: 8),
+              Text(
+                'Meeting declined',
+                style: TextStyle(color: c.textTertiary, fontSize: 12),
+              ),
+              const SizedBox(width: 12),
+              SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                    strokeWidth: 1.5, color: AppColors.accent),
+              ),
+            ],
+          ),
+        _InviteState.done => Row(
+            children: [
+              Icon(Icons.check_circle_outline_rounded,
+                  size: 14, color: AppColors.accent),
+              const SizedBox(width: 8),
+              Text(
+                'Meeting cancelled',
+                style: TextStyle(color: c.textTertiary, fontSize: 12),
+              ),
+            ],
+          ),
+        _InviteState.error => Row(
+            children: [
+              Icon(Icons.error_outline_rounded,
+                  size: 14, color: Colors.redAccent),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _errorMessage ?? 'Something went wrong',
+                  style:
+                      const TextStyle(color: Colors.redAccent, fontSize: 12),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              _InviteResponseButton(
+                label: 'Retry',
+                icon: Icons.refresh_rounded,
+                onPressed: () => setState(() => _state = _InviteState.idle),
+              ),
+            ],
+          ),
+        _InviteState.idle => Row(
+            children: [
+              Icon(Icons.person_remove_outlined, size: 14, color: c.textDimmed),
+              const SizedBox(width: 8),
+              Text(
+                'Meeting declined',
+                style: TextStyle(color: c.textTertiary, fontSize: 12),
+              ),
+              const Spacer(),
+              _InviteResponseButton(
+                label: 'Cancel meeting',
+                icon: Icons.cancel_outlined,
+                onPressed: _cancel,
               ),
             ],
           ),

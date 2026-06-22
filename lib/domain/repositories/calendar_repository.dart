@@ -28,6 +28,17 @@ abstract interface class CalendarRepository {
     DateTime? meetingStart,
   });
 
+  Future<Either<Failure, void>> removeMeetingFromCalendar({
+    required String emailId,
+    String? icsData,
+    DateTime? meetingStart,
+  });
+
+  Future<Either<Failure, void>> cancelMeetingFromEmail({
+    required String emailId,
+    DateTime? meetingStart,
+  });
+
   Future<Either<Failure, void>> cancelCalendarEvent({
     required String eventId,
   });

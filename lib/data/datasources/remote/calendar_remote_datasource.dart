@@ -26,6 +26,17 @@ abstract interface class CalendarRemoteDatasource {
     String? userEmail,
   });
 
+  Future<void> removeMeetingFromCalendar({
+    required String emailId,
+    String? icsData,
+    DateTime? meetingStart,
+  });
+
+  Future<void> cancelMeetingFromEmail({
+    required String emailId,
+    DateTime? meetingStart,
+  });
+
   Future<void> cancelCalendarEvent({required String eventId});
 
   Future<void> declineCalendarEvent({

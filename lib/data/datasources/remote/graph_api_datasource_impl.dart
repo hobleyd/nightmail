@@ -494,6 +494,131 @@ class GraphApiDatasourceImpl
   }
 
   @override
+  Future<void> removeMeetingFromCalendar({
+    required String emailId,
+    String? icsData,
+    DateTime? meetingStart,
+  }) async {
+    // 1. Navigate from message to its linked calendar event.
+    String? eventId;
+    try {
+      final eventResp = await _dio.get<Map<String, dynamic>>(
+        '/me/messages/$emailId/event',
+        queryParameters: {'\$select': 'id'},
+      );
+      eventId = eventResp.data?['id'] as String?;
+    } on DioException {
+      // Navigation unavailable — fall through to calendar search.
+    }
+
+    if (eventId != null) {
+      try {
+        await _dio.delete<void>('/me/events/$eventId');
+        return;
+      } on DioException catch (e) {
+        final status = e.response?.statusCode;
+        if (status == 401 || status == 403) throw _mapDioException(e);
+        // Fall through to calendar search.
+      }
+    }
+
+    // 2. Fallback: search the calendar by start time and delete the attendee event.
+    if (meetingStart == null) {
+      throw const ServerException(
+          message: 'Could not locate the calendar event for this cancellation');
+    }
+    try {
+      final windowStart = meetingStart.subtract(const Duration(minutes: 30));
+      final windowEnd = meetingStart.add(const Duration(hours: 2));
+      String fmt(DateTime d) => d.toUtc().toIso8601String();
+      final calResp = await _dio.get<Map<String, dynamic>>(
+        '/me/calendarView',
+        queryParameters: {
+          'startDateTime': fmt(windowStart),
+          'endDateTime': fmt(windowEnd),
+          '\$select': 'id,isOrganizer',
+          '\$top': 50,
+        },
+        options: Options(headers: {'Prefer': 'outlook.timezone="UTC"'}),
+      );
+      final events = (calResp.data?['value'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      final attendeeEvents =
+          events.where((e) => e['isOrganizer'] != true).toList();
+      if (attendeeEvents.isEmpty) return; // Not in calendar — nothing to remove.
+      final targetId = attendeeEvents.first['id'] as String;
+      await _dio.delete<void>('/me/events/$targetId');
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<void> cancelMeetingFromEmail({
+    required String emailId,
+    DateTime? meetingStart,
+  }) async {
+    // 1. Navigate from the decline-notification message to the calendar event.
+    String? eventId;
+    try {
+      final eventResp = await _dio.get<Map<String, dynamic>>(
+        '/me/messages/$emailId/event',
+        queryParameters: {'\$select': 'id,isOrganizer'},
+      );
+      final isOrganizer = eventResp.data?['isOrganizer'] as bool? ?? false;
+      if (!isOrganizer) {
+        throw const ServerException(
+            message: 'You are not the organizer of this meeting');
+      }
+      eventId = eventResp.data?['id'] as String?;
+    } on DioException {
+      // Navigation unavailable — fall through to calendar search.
+    }
+
+    if (eventId != null) {
+      try {
+        await _dio.post<void>('/me/events/$eventId/cancel', data: {'comment': ''});
+        return;
+      } on DioException catch (e) {
+        final status = e.response?.statusCode;
+        if (status == 401 || status == 403) throw _mapDioException(e);
+      }
+    }
+
+    // 2. Fallback: search calendar by start time and cancel the organizer event.
+    if (meetingStart == null) {
+      throw const ServerException(
+          message: 'Could not locate the calendar event to cancel');
+    }
+    try {
+      final windowStart = meetingStart.subtract(const Duration(minutes: 30));
+      final windowEnd = meetingStart.add(const Duration(hours: 2));
+      String fmt(DateTime d) => d.toUtc().toIso8601String();
+      final calResp = await _dio.get<Map<String, dynamic>>(
+        '/me/calendarView',
+        queryParameters: {
+          'startDateTime': fmt(windowStart),
+          'endDateTime': fmt(windowEnd),
+          '\$select': 'id,isOrganizer',
+          '\$top': 50,
+        },
+        options: Options(headers: {'Prefer': 'outlook.timezone="UTC"'}),
+      );
+      final events = (calResp.data?['value'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      final organized = events.where((e) => e['isOrganizer'] == true).toList();
+      if (organized.isEmpty) {
+        throw const ServerException(
+            message: 'No organizer event found in your calendar at that time');
+      }
+      final targetId = organized.first['id'] as String;
+      await _dio.post<void>('/me/events/$targetId/cancel', data: {'comment': ''});
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
   Future<void> cancelCalendarEvent({required String eventId}) async {
     try {
       await _dio.post<void>(

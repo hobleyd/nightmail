@@ -444,7 +444,10 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       bodyType = extractedType;
       final icsData = _extractIcsData(payload);
       if (icsData != null) {
-        meetingInvite = MeetingInvite(icsData: icsData);
+        final type = _icsMethod(icsData) == 'CANCEL'
+            ? MeetingEmailType.cancellation
+            : MeetingEmailType.invitation;
+        meetingInvite = MeetingInvite(icsData: icsData, type: type);
       }
 
       final parsed = _extractAttachments(payload);
@@ -548,6 +551,17 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   /// Recursively scan MIME parts for a text/calendar part and return its decoded
   /// content. Returns null if no calendar part is found or if the content is
   /// stored as a separate attachment (see [_findIcsAttachmentId]).
+  /// Returns the METHOD value (e.g. 'REQUEST', 'CANCEL') from an iCalendar string.
+  String? _icsMethod(String icsData) {
+    for (final rawLine in icsData.split(RegExp(r'\r?\n'))) {
+      final line = rawLine.trim();
+      if (line.toUpperCase().startsWith('METHOD:')) {
+        return line.substring('METHOD:'.length).trim().toUpperCase();
+      }
+    }
+    return null;
+  }
+
   String? _extractIcsData(Map<String, dynamic> payload) {
     final mimeType = (payload['mimeType'] as String? ?? '').toLowerCase();
     final filename = (payload['filename'] as String? ?? '').toLowerCase();

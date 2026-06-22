@@ -193,6 +193,57 @@ class CalDavCalendarDatasourceImpl implements CalendarRemoteDatasource {
   }
 
   @override
+  Future<void> removeMeetingFromCalendar({
+    required String emailId,
+    String? icsData,
+    DateTime? meetingStart,
+  }) async {
+    if (icsData == null) return; // Best-effort — no ICS, nothing to remove.
+    final icsEvent = _parseIcs(icsData);
+    final uid = icsEvent.uid;
+    if (uid == null) return;
+
+    // Check the in-memory cache first (populated during the last calendar load).
+    if (_eventCache.containsKey(uid)) {
+      await cancelCalendarEvent(eventId: uid);
+      return;
+    }
+
+    // Cache miss: fetch events around the meeting start to find the event.
+    final refTime = meetingStart ?? icsEvent.start;
+    try {
+      final client = await _getClient();
+      final calendars = await _getCalendars();
+      for (final cal in calendars) {
+        try {
+          final events = await client.getEvents(
+            cal,
+            start: refTime.subtract(const Duration(hours: 1)),
+            end: refTime.add(const Duration(hours: 4)),
+          );
+          for (final e in events) {
+            _eventCache[e.uid] = e;
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+
+    if (_eventCache.containsKey(uid)) {
+      await cancelCalendarEvent(eventId: uid);
+    }
+    // Event not found — it may have already been removed.
+  }
+
+  @override
+  Future<void> cancelMeetingFromEmail({
+    required String emailId,
+    DateTime? meetingStart,
+  }) async {
+    throw const ServerException(
+        message: 'Cancel from decline notification is not supported for CalDAV');
+  }
+
+  @override
   Future<void> cancelCalendarEvent({required String eventId}) async {
     try {
       final client = await _getClient();
@@ -296,6 +347,7 @@ class CalDavCalendarDatasourceImpl implements CalendarRemoteDatasource {
     final unfolded = icsData.replaceAll(RegExp(r'\r?\n[ \t]'), '');
 
     String? summary;
+    String? uid;
     DateTime? start;
     DateTime? end;
     bool isAllDay = false;
@@ -319,6 +371,8 @@ class CalDavCalendarDatasourceImpl implements CalendarRemoteDatasource {
 
       if (namePart == 'SUMMARY') {
         summary = value;
+      } else if (namePart == 'UID') {
+        uid = value;
       } else if (namePart.startsWith('DTSTART')) {
         final (dt, allDay) = _parseIcsDateTime(namePart, value);
         if (dt != null) { start = dt; isAllDay = allDay; }
@@ -337,6 +391,7 @@ class CalDavCalendarDatasourceImpl implements CalendarRemoteDatasource {
 
     return _IcsEvent(
       summary: summary ?? '(No title)',
+      uid: uid,
       start: start ?? DateTime.now().toUtc(),
       end: end ?? (start ?? DateTime.now().toUtc()).add(const Duration(hours: 1)),
       isAllDay: isAllDay,
@@ -385,11 +440,13 @@ class _IcsEvent {
     required this.start,
     required this.end,
     required this.isAllDay,
+    this.uid,
     this.location,
     this.attendees = const [],
   });
 
   final String summary;
+  final String? uid;
   final DateTime start;
   final DateTime end;
   final bool isAllDay;

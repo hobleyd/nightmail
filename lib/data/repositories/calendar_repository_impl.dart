@@ -135,6 +135,66 @@ class CalendarRepositoryImpl implements CalendarRepository {
   }
 
   @override
+  Future<Either<Failure, void>> removeMeetingFromCalendar({
+    required String emailId,
+    String? icsData,
+    DateTime? meetingStart,
+  }) async {
+    final ds = _accountManager.calendarDatasource;
+    if (ds == null) {
+      return const Left(
+        ServerFailure(message: 'Calendar is not available for this account type'),
+      );
+    }
+
+    try {
+      await ds.removeMeetingFromCalendar(
+        emailId: emailId,
+        icsData: icsData,
+        meetingStart: meetingStart,
+      );
+      return const Right(null);
+    } on AuthException catch (e) {
+      return Left(AuthFailure(message: e.message));
+    } on NetworkException catch (e) {
+      return Left(NetworkFailure(message: e.message));
+    } on ServerException catch (e) {
+      return Left(ServerFailure(message: e.message, statusCode: e.statusCode));
+    } catch (e) {
+      return Left(ServerFailure(message: e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, void>> cancelMeetingFromEmail({
+    required String emailId,
+    DateTime? meetingStart,
+  }) async {
+    final ds = _accountManager.calendarDatasource;
+    if (ds == null) {
+      return const Left(
+        ServerFailure(message: 'Calendar is not available for this account type'),
+      );
+    }
+
+    try {
+      await ds.cancelMeetingFromEmail(
+        emailId: emailId,
+        meetingStart: meetingStart,
+      );
+      return const Right(null);
+    } on AuthException catch (e) {
+      return Left(AuthFailure(message: e.message));
+    } on NetworkException catch (e) {
+      return Left(NetworkFailure(message: e.message));
+    } on ServerException catch (e) {
+      return Left(ServerFailure(message: e.message, statusCode: e.statusCode));
+    } catch (e) {
+      return Left(ServerFailure(message: e.toString()));
+    }
+  }
+
+  @override
   Future<Either<Failure, void>> cancelCalendarEvent({
     required String eventId,
   }) async {

@@ -111,9 +111,15 @@ class EmailModel extends Email {
 
   static MeetingInvite? _parseMeetingInvite(
       String? odataType, String? meetingMessageType, Map<String, dynamic> json) {
-    // Only show accept/decline UI for incoming requests, not for acceptance/
-    // decline/cancellation notifications we receive when others respond to us.
-    if (meetingMessageType != 'meetingRequest') return null;
+    // Only surface invite/cancellation UI for relevant message types.
+    // Exclude acceptance/tentative/decline notifications (others responding to us).
+    final type = switch (meetingMessageType) {
+      'meetingRequest' => MeetingEmailType.invitation,
+      'meetingCancelled' => MeetingEmailType.cancellation,
+      'meetingDeclined' => MeetingEmailType.declineNotification,
+      _ => null,
+    };
+    if (type == null) return null;
 
     // Parse startDateTime (DateTimeTimeZone: {dateTime, timeZone}).
     // getEmail() sends Prefer: outlook.timezone="UTC" so Graph returns the
@@ -128,7 +134,7 @@ class EmailModel extends Email {
         meetingStart = DateTime.parse(utcStr);
       } catch (_) {}
     }
-    return MeetingInvite(meetingStart: meetingStart);
+    return MeetingInvite(meetingStart: meetingStart, type: type);
   }
 
   static EmailImportance _parseImportance(String? value) {

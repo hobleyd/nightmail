@@ -246,6 +246,9 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       case "deleteEvent":
         let id = (call.arguments as? [String: Any])?["id"] as? String ?? ""
         self.handleDeleteEvent(id: id, result: result)
+      case "deleteEventByUID":
+        let uid = (call.arguments as? [String: Any])?["uid"] as? String ?? ""
+        self.handleDeleteEventByUID(uid: uid, result: result)
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -372,6 +375,22 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     } catch {
       result(FlutterError(code: "DELETE_ERROR", message: error.localizedDescription, details: nil))
     }
+  }
+
+  private func handleDeleteEventByUID(uid: String, result: @escaping FlutterResult) {
+    let items = eventStore.calendarItems(withExternalIdentifier: uid)
+    var deleted = false
+    for item in items {
+      guard let event = item as? EKEvent else { continue }
+      do {
+        try eventStore.remove(event, span: .thisEvent)
+        deleted = true
+      } catch {}
+    }
+    if !deleted {
+      // Event not in local store — treat as already removed.
+    }
+    result(nil)
   }
 
   private func eventMap(_ e: EKEvent) -> [String: Any] {

@@ -84,8 +84,10 @@ class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+    return SizedBox(
+      height: 48,
+      child: Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 8, 0),
       child: Row(
         children: [
           Icon(Icons.checklist_rounded, size: 16, color: AppColors.accent),
@@ -109,6 +111,7 @@ class _Header extends StatelessWidget {
             onPressed: onClose,
           ),
         ],
+      ),
       ),
     );
   }

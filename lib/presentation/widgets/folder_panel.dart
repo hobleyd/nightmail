@@ -259,7 +259,7 @@ class _PanelHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       child: Row(
         children: [
           const Icon(Icons.mail_outline_rounded,
@@ -288,7 +288,7 @@ class _PanelHeader extends StatelessWidget {
             ),
           ),
           IconButton(
-            icon: Icon(Icons.search, size: 16, color: c.textMuted),
+            icon: Icon(Icons.search, size: 18, color: c.textMuted),
             tooltip: 'Search',
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 24, minHeight: 24),

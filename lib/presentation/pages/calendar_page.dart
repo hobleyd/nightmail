@@ -504,8 +504,10 @@ class _DayPanelHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+    return SizedBox(
+      height: 48,
+      child: Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 8, 0),
       child: Row(
         children: [
           Container(
@@ -617,6 +619,7 @@ class _DayPanelHeader extends StatelessWidget {
             ),
           ),
         ],
+      ),
       ),
     );
   }

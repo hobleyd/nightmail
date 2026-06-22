@@ -305,7 +305,7 @@ class _ReadingPaneToolbar extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       child: Row(
         children: [
           _ToolbarButton(
@@ -337,6 +337,7 @@ class _ReadingPaneToolbar extends StatelessWidget {
             icon: Icons.delete_outline_rounded,
             tooltip: 'Delete',
             color: c.textMuted,
+            iconSize: 20,
             onPressed: () => _confirmAndDelete(context),
           ),
         ],
@@ -572,17 +573,19 @@ class _ToolbarButton extends StatelessWidget {
     required this.tooltip,
     required this.color,
     required this.onPressed,
+    this.iconSize = 18,
   });
 
   final IconData icon;
   final String tooltip;
   final Color color;
   final VoidCallback onPressed;
+  final double iconSize;
 
   @override
   Widget build(BuildContext context) {
     return IconButton(
-      icon: Icon(icon, size: 16, color: color),
+      icon: Icon(icon, size: iconSize, color: color),
       tooltip: tooltip,
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(minWidth: 32, minHeight: 32),

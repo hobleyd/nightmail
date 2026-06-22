@@ -510,7 +510,7 @@ class _ListHeader extends StatelessWidget {
     final c = context.colors;
     if (isSearchMode) {
       return Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+        padding: const EdgeInsets.fromLTRB(12, 13, 8, 13),
         child: Row(
           children: [
             Icon(Icons.search, size: 16, color: c.textMuted),
@@ -560,7 +560,7 @@ class _ListHeader extends StatelessWidget {
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 8, 12),
+      padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
       child: Row(
         children: [
           Text(
@@ -573,7 +573,7 @@ class _ListHeader extends StatelessWidget {
             ),
           ),
           IconButton(
-            icon: Icon(Icons.refresh_rounded, size: 18, color: c.textMuted),
+            icon: Icon(Icons.refresh_rounded, size: 20, color: c.textMuted),
             tooltip: 'Refresh',
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -592,7 +592,7 @@ class _ListHeader extends StatelessWidget {
           ],
           const Spacer(),
           IconButton(
-            icon: Icon(Icons.edit_square, size: 18, color: c.textMuted),
+            icon: Icon(Icons.edit_square, size: 20, color: c.textMuted),
             tooltip: 'Compose',
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -600,7 +600,7 @@ class _ListHeader extends StatelessWidget {
           ),
           if (onMarkUnread != null)
             IconButton(
-              icon: Icon(Icons.mark_email_unread_outlined, size: 18, color: c.textMuted),
+              icon: Icon(Icons.mark_email_unread_outlined, size: 20, color: c.textMuted),
               tooltip: 'Mark as unread',
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -608,7 +608,7 @@ class _ListHeader extends StatelessWidget {
             ),
           if (onReportJunk != null)
             IconButton(
-              icon: Icon(Icons.report_outlined, size: 18, color: c.textMuted),
+              icon: Icon(Icons.report_outlined, size: 20, color: c.textMuted),
               tooltip: 'Report junk',
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -616,7 +616,7 @@ class _ListHeader extends StatelessWidget {
             ),
           if (onDelete != null)
             IconButton(
-              icon: Icon(Icons.delete_outline_rounded, size: 18, color: c.textMuted),
+              icon: Icon(Icons.delete_outline_rounded, size: 20, color: c.textMuted),
               tooltip: 'Delete selected',
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 32, minHeight: 32),

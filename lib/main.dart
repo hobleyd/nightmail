@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:webview_windows/webview_windows.dart' as wvw;
 import 'package:window_manager/window_manager.dart';
 
 import 'domain/usecases/send_email.dart';
@@ -122,10 +121,7 @@ void main(List<String> args) async {
     return;
   }
 
-  if (Platform.isWindows) {
-    await wvw.WebviewController.initializeEnvironment();
-  }
-  await configureDependencies();
+await configureDependencies();
   await BackgroundMailService.initialize();
   await BackgroundMailService.schedulePeriodicCheck();
   runApp(const NightMailApp());

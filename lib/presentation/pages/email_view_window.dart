@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../core/theme/app_colors.dart';
@@ -10,6 +8,7 @@ import '../../domain/entities/email_address.dart';
 import '../../injection_container.dart';
 import '../blocs/theme/theme_cubit.dart';
 import '../blocs/theme/theme_state.dart';
+import '../widgets/html_body_view.dart';
 
 class EmailViewWindowApp extends StatelessWidget {
   const EmailViewWindowApp({
@@ -90,6 +89,12 @@ class _EmailViewPage extends StatelessWidget {
     );
   }
 
+  static String _senderDomain(String address) {
+    final at = address.lastIndexOf('@');
+    if (at == -1 || at == address.length - 1) return address.toLowerCase();
+    return address.substring(at + 1).toLowerCase();
+  }
+
   static String _formatAddress(EmailAddress addr) {
     final name = addr.name;
     if (name != null && name.isNotEmpty) return '$name <${addr.address}>';
@@ -153,19 +158,10 @@ class _EmailViewPage extends StatelessWidget {
           Divider(height: 1, color: c.border),
           Expanded(
             child: email.bodyType == EmailBodyType.html
-                ? SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-                    child: HtmlWidget(
-                      email.body,
-                      onTapUrl: (url) async {
-                        final uri = Uri.tryParse(url);
-                        if (uri != null) {
-                          await launchUrl(uri,
-                              mode: LaunchMode.externalApplication);
-                        }
-                        return true;
-                      },
-                    ),
+                ? HtmlBodyView(
+                    html: email.body,
+                    inlineAttachments: const [],
+                    senderDomain: _senderDomain(email.from.address),
                   )
                 : SingleChildScrollView(
                     padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),

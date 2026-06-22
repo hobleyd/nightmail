@@ -803,7 +803,7 @@ class _ComposeFormState extends State<ComposeForm> {
                 Stack(
                   children: [
                     SizedBox(
-                      height: quotedEmail != null ? 150 : 240,
+                      height: forwardEmail != null ? 150 : 240,
                       child: TextField(
                         controller: _bodyController,
                         focusNode: _bodyFocus,

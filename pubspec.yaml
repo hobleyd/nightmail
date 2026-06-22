@@ -37,9 +37,8 @@ dependencies:
 
   # UUID generation
   uuid: ^4.5.1
-  flutter_widget_from_html: ^0.17.2
   webview_flutter: ^4.14.0
-  webview_windows: ^0.4.0
+  flutter_inappwebview: 6.2.0-beta.3
   intl: ^0.20.2
   path_provider: ^2.1.5
   open_file: ^4.0.0
@@ -57,7 +56,6 @@ dependencies:
 
   # Background task scheduling (survives app sleep on mobile)
   workmanager: ^0.9.0+3
-
 dev_dependencies:
   flutter_test:
     sdk: flutter

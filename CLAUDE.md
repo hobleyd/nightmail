@@ -26,6 +26,22 @@ flutter run
 
 Always `flutter clean` after changing entitlements or code signing settings.
 
+### flutter_inappwebview macOS patch (beta.3 + Xcode 16+)
+
+`flutter_inappwebview_macos 1.2.0-beta.3` ships a `Package.swift` declaring
+`.macOS("10.14")` but references `ASWebAuthenticationSession` (10.15 only), which
+causes a compile error on Xcode 16+. The fix is a one-line patch in the pub cache:
+
+```bash
+# File: ~/.pub-cache/hosted/pub.dev/flutter_inappwebview_macos-1.2.0-beta.3/
+#       macos/flutter_inappwebview_macos/Package.swift
+# Change: .macOS("10.14") → .macOS("10.15")
+sed -i '' 's/\.macOS("10.14")/.macOS("10.15")/' \
+  ~/.pub-cache/hosted/pub.dev/flutter_inappwebview_macos-1.2.0-beta.3/macos/flutter_inappwebview_macos/Package.swift
+```
+
+Re-apply after `flutter pub cache repair`. Drop when 6.2.0 stable ships.
+
 ## macOS Native Channels
 
 Custom platform channels live in `macos/Runner/MainFlutterWindow.swift`.

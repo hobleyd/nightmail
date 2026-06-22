@@ -808,6 +808,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       );
       if (resp.data == null) throw const ServerException(message: 'Message not found');
 
+      final threadId = resp.data!['threadId'] as String?;
       final payload = resp.data!['payload'] as Map<String, dynamic>? ?? {};
       final hdrs = (payload['headers'] as List<dynamic>? ?? [])
           .cast<Map<String, dynamic>>();
@@ -869,7 +870,10 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
 
       await _dio.post<void>(
         '/users/me/messages/send',
-        data: {'raw': rawBase64},
+        data: {
+          'raw': rawBase64,
+          if (threadId != null) 'threadId': threadId,
+        },
       );
     } on DioException catch (e) {
       throw _mapException(e);

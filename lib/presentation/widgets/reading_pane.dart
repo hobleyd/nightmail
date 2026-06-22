@@ -679,6 +679,9 @@ class _AnomalousFromRow extends StatelessWidget {
   void _showMatchesMenu(BuildContext context, Offset position) {
     final matches = anomalyMatches;
     if (matches == null || matches.isEmpty) return;
+    // Capture bloc before entering the overlay subtree — context.read won't
+    // work inside PopupMenuItem because it's mounted outside the BlocProvider.
+    final bloc = context.read<EmailDetailBloc>();
     final rect = RelativeRect.fromLTRB(
       position.dx,
       position.dy,
@@ -699,16 +702,36 @@ class _AnomalousFromRow extends StatelessWidget {
         ),
         ...matches.map(
           (m) => PopupMenuItem<void>(
-            height: 44,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
+            height: 52,
+            child: Row(
               children: [
-                Text(m.address,
-                    style: const TextStyle(fontSize: 12)),
-                Text(m.name,
-                    style: const TextStyle(
-                        fontSize: 11, color: Colors.grey)),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(m.address,
+                          style: const TextStyle(fontSize: 12)),
+                      Text(m.name,
+                          style: const TextStyle(
+                              fontSize: 11, color: Colors.grey)),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.merge_rounded, size: 16),
+                  tooltip: 'Same person — don\'t warn again',
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 32,
+                  ),
+                  onPressed: () {
+                    Navigator.of(context, rootNavigator: true).pop();
+                    bloc.add(EmailDetailMergeSenderRequested(
+                        matchAddress: m.address));
+                  },
+                ),
               ],
             ),
           ),

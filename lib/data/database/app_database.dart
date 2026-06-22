@@ -65,6 +65,18 @@ class LocalDrafts extends Table {
   Set<Column> get primaryKey => {draftId};
 }
 
+/// Pairs of sender addresses the user has confirmed belong to the same person.
+/// address1 < address2 (alphabetically, lower-cased) so each pair has one
+/// canonical row regardless of which address was the incoming one.
+class SenderAliases extends Table {
+  TextColumn get accountId => text()();
+  TextColumn get address1 => text()();
+  TextColumn get address2 => text()();
+
+  @override
+  Set<Column> get primaryKey => {accountId, address1, address2};
+}
+
 /// Stores Microsoft Graph delta sync tokens per account and folder.
 /// A delta link lets the poller fetch only changes since the last sync
 /// rather than refetching the full folder.
@@ -77,13 +89,13 @@ class DeltaSyncTokens extends Table {
   Set<Column> get primaryKey => {accountId, folderId};
 }
 
-@DriftDatabase(tables: [CachedEmails, KnownSenders, DeltaSyncTokens, CachedFolders, LocalDrafts])
+@DriftDatabase(tables: [CachedEmails, KnownSenders, SenderAliases, DeltaSyncTokens, CachedFolders, LocalDrafts])
 class AppDatabase extends _$AppDatabase
     implements DeltaTokenDatasource, FolderLocalDatasource {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 6;
+  int get schemaVersion => 7;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -119,6 +131,9 @@ class AppDatabase extends _$AppDatabase
           }
           if (from < 6) {
             await m.createTable(localDrafts);
+          }
+          if (from < 7) {
+            await m.createTable(senderAliases);
           }
         },
       );

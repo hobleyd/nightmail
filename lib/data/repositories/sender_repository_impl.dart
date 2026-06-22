@@ -26,4 +26,22 @@ class SenderRepositoryImpl implements SenderRepository {
   @override
   Future<void> clearSendersForAccount(String accountId) =>
       _localDatasource.clearSendersForAccount(accountId);
+
+  @override
+  Future<void> mergeSenders({
+    required String accountId,
+    required String address1,
+    required String address2,
+  }) {
+    final a = address1.toLowerCase();
+    final b = address2.toLowerCase();
+    final lo = a.compareTo(b) <= 0 ? a : b;
+    final hi = a.compareTo(b) <= 0 ? b : a;
+    return _localDatasource.upsertAlias(
+        accountId: accountId, address1: lo, address2: hi);
+  }
+
+  @override
+  Future<Set<(String, String)>> getAliasesForAccount(String accountId) =>
+      _localDatasource.getAliasesForAccount(accountId);
 }

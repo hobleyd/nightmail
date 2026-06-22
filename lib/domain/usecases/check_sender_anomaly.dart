@@ -35,6 +35,7 @@ class CheckSenderAnomaly
       CheckSenderAnomalyParams params) async {
     try {
       final senders = await _repository.getSendersForAccount(params.accountId);
+      final aliases = await _repository.getAliasesForAccount(params.accountId);
       final incomingAddress = params.fromAddress.toLowerCase();
       final incomingName = params.fromName;
 
@@ -44,6 +45,7 @@ class CheckSenderAnomaly
 
       for (final sender in senders) {
         if (sender.address == incomingAddress) continue;
+        if (aliases.contains(_pair(incomingAddress, sender.address))) continue;
         final score = jaroWinkler(incomingName, sender.name);
         if (score >= _anomalyThreshold) {
           if (seenAddresses.add(sender.address)) {
@@ -59,6 +61,9 @@ class CheckSenderAnomaly
       return Left(CacheFailure(message: e.toString()));
     }
   }
+
+  static (String, String) _pair(String a, String b) =>
+      a.compareTo(b) <= 0 ? (a, b) : (b, a);
 }
 
 class CheckSenderAnomalyParams extends Equatable {

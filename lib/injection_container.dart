@@ -28,6 +28,7 @@ import 'domain/repositories/system_contacts_repository.dart';
 import 'domain/repositories/tasks_repository.dart';
 import 'domain/usecases/attach_email_to_task.dart';
 import 'domain/usecases/check_sender_anomaly.dart';
+import 'domain/usecases/merge_sender_addresses.dart';
 import 'domain/usecases/cancel_calendar_event.dart';
 import 'domain/usecases/check_attendees_availability.dart';
 import 'domain/usecases/create_calendar_event.dart';
@@ -176,6 +177,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => GetCachedFolders(sl<EmailRepository>()));
   sl.registerLazySingleton(() => RecordKnownSenders(sl<SenderRepository>()));
   sl.registerLazySingleton(() => CheckSenderAnomaly(sl<SenderRepository>()));
+  sl.registerLazySingleton(() => MergeSenderAddresses(sl<SenderRepository>()));
   sl.registerLazySingleton(() => SearchContacts(
         senderRepository: sl<SenderRepository>(),
         systemContactsRepository: sl<SystemContactsRepository>(),
@@ -250,6 +252,7 @@ Future<void> configureDependencies() async {
         getEmail: sl<GetEmail>(),
         emlParser: sl<EmlParser>(),
         checkSenderAnomaly: sl<CheckSenderAnomaly>(),
+        mergeSenderAddresses: sl<MergeSenderAddresses>(),
         accountManager: sl<AccountManager>(),
       ));
   sl.registerFactory(

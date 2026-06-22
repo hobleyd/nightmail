@@ -29,3 +29,13 @@ final class EmailDetailLoadedFromEml extends EmailDetailEvent {
 final class EmailDetailCleared extends EmailDetailEvent {
   const EmailDetailCleared();
 }
+
+final class EmailDetailMergeSenderRequested extends EmailDetailEvent {
+  const EmailDetailMergeSenderRequested({required this.matchAddress});
+
+  /// The known-sender address to merge with the current email's from address.
+  final String matchAddress;
+
+  @override
+  List<Object?> get props => [matchAddress];
+}

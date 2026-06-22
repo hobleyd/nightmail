@@ -40,4 +40,29 @@ class SenderLocalDatasourceImpl implements SenderLocalDatasource {
           ..where((t) => t.accountId.equals(accountId)))
         .go();
   }
+
+  @override
+  Future<void> upsertAlias({
+    required String accountId,
+    required String address1,
+    required String address2,
+  }) async {
+    await _database
+        .into(_database.senderAliases)
+        .insertOnConflictUpdate(
+          SenderAliasesCompanion.insert(
+            accountId: accountId,
+            address1: address1,
+            address2: address2,
+          ),
+        );
+  }
+
+  @override
+  Future<Set<(String, String)>> getAliasesForAccount(String accountId) async {
+    final rows = await (_database.select(_database.senderAliases)
+          ..where((t) => t.accountId.equals(accountId)))
+        .get();
+    return rows.map((r) => (r.address1, r.address2)).toSet();
+  }
 }

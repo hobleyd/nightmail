@@ -533,19 +533,31 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
         .where((a) => a.email.isNotEmpty)
         .toList();
 
+    final description = json['description'] as String?;
     return CalendarEventModel(
       id: json['id'] as String? ?? '',
       subject: json['summary'] as String? ?? '(No title)',
       start: start,
       end: end,
       isAllDay: isAllDay,
-      location: json['location'] as String?,
-      bodyPreview: json['description'] as String?,
+      location: _parseLocation(json['location'] as String?, description),
+      bodyPreview: description,
       status: status,
       isOrganizer: isOrganizer,
       timezone: startMap['timeZone'] as String?,
       attendees: attendees,
     );
+  }
+
+  static String? _parseLocation(String? location, String? description) {
+    if (location != null && location.startsWith('https://')) return location;
+    if (description != null) {
+      final match = RegExp(
+        r'https://teams\.microsoft\.com/l/meetup-join/[^\s<>"]*',
+      ).firstMatch(description);
+      if (match != null) return match.group(0);
+    }
+    return (location != null && location.isNotEmpty) ? location : null;
   }
 
   CalendarEventStatus _parseStatus(String? value) {

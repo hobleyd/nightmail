@@ -33,6 +33,7 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
   // before the controller was ready, or during rapid email switches.
   String _pendingHtml = '';
   bool _webViewReady = false;
+  File? _tempHtmlFile;
 
   WebViewController? _flutterController;
 
@@ -44,9 +45,13 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
     super.initState();
     if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
       final (html, blocked) = _buildHtml(allowExternal: false);
-      _inAppInitialHtml = html;
       _pendingHtml = html;
       _hasBlockedImages = blocked;
+      if (Platform.isWindows) {
+        _writeTempFile(html);
+      } else {
+        _inAppInitialHtml = html;
+      }
       // Defer webview creation by one frame so the native window (HWND) is
       // fully initialised before WebView2 tries to attach its compositor.
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -56,6 +61,13 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
       _initFlutter();
     }
     _loadAlwaysAllowSetting();
+  }
+
+  void _writeTempFile(String html) {
+    _tempHtmlFile ??= File(
+      '${Directory.systemTemp.path}${Platform.pathSeparator}nightmail_email_${identityHashCode(this)}.html',
+    );
+    _tempHtmlFile!.writeAsStringSync(html);
   }
 
   void _initFlutter() {
@@ -100,6 +112,7 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
 
   @override
   void dispose() {
+    try { _tempHtmlFile?.deleteSync(); } catch (_) {}
     super.dispose();
   }
 
@@ -110,7 +123,14 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
       _hasBlockedImages = blocked;
       _pendingHtml = html;
     });
-    if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
+    if (Platform.isWindows) {
+      _writeTempFile(html);
+      _inAppController?.loadUrl(
+        urlRequest: iaw.URLRequest(
+          url: iaw.WebUri(Uri.file(_tempHtmlFile!.path).toString()),
+        ),
+      );
+    } else if (Platform.isLinux || Platform.isMacOS) {
       // If the controller isn't ready yet, _pendingHtml is picked up in
       // onWebViewCreated once initialisation completes.
       _inAppController?.loadData(data: html);
@@ -213,34 +233,61 @@ a[href]:hover::after {
   Widget build(BuildContext context) {
     final Widget webviewWidget;
     if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
-      webviewWidget = !_webViewReady
-          ? const SizedBox.shrink()
-          : iaw.InAppWebView(
-        initialData: iaw.InAppWebViewInitialData(data: _inAppInitialHtml),
-        initialSettings: iaw.InAppWebViewSettings(
-          javaScriptEnabled: false,
-          useShouldOverrideUrlLoading: true,
-        ),
-        onWebViewCreated: (controller) {
-          _inAppController = controller;
-          // Apply any content that arrived before the controller was ready.
-          if (_pendingHtml != _inAppInitialHtml) {
-            controller.loadData(data: _pendingHtml);
-          }
-        },
-        shouldOverrideUrlLoading: (controller, navigationAction) async {
-          final uri = navigationAction.request.url;
-          if (uri != null) {
-            final scheme = uri.scheme;
-            if (scheme == 'http' || scheme == 'https' || scheme == 'mailto') {
-              await launchUrl(Uri.parse(uri.toString()),
-                  mode: LaunchMode.externalApplication);
-              return iaw.NavigationActionPolicy.CANCEL;
+      if (!_webViewReady) {
+        webviewWidget = const SizedBox.shrink();
+      } else if (Platform.isWindows && _tempHtmlFile != null) {
+        webviewWidget = iaw.InAppWebView(
+          initialUrlRequest: iaw.URLRequest(
+            url: iaw.WebUri(Uri.file(_tempHtmlFile!.path).toString()),
+          ),
+          initialSettings: iaw.InAppWebViewSettings(
+            javaScriptEnabled: false,
+            useShouldOverrideUrlLoading: true,
+          ),
+          onWebViewCreated: (controller) {
+            _inAppController = controller;
+          },
+          shouldOverrideUrlLoading: (controller, navigationAction) async {
+            final uri = navigationAction.request.url;
+            if (uri != null) {
+              final scheme = uri.scheme;
+              if (scheme == 'http' || scheme == 'https' || scheme == 'mailto') {
+                await launchUrl(Uri.parse(uri.toString()),
+                    mode: LaunchMode.externalApplication);
+                return iaw.NavigationActionPolicy.CANCEL;
+              }
             }
-          }
-          return iaw.NavigationActionPolicy.ALLOW;
-        },
-      );
+            return iaw.NavigationActionPolicy.ALLOW;
+          },
+        );
+      } else {
+        webviewWidget = iaw.InAppWebView(
+          initialData: iaw.InAppWebViewInitialData(data: _inAppInitialHtml),
+          initialSettings: iaw.InAppWebViewSettings(
+            javaScriptEnabled: false,
+            useShouldOverrideUrlLoading: true,
+          ),
+          onWebViewCreated: (controller) {
+            _inAppController = controller;
+            // Apply any content that arrived before the controller was ready.
+            if (_pendingHtml != _inAppInitialHtml) {
+              controller.loadData(data: _pendingHtml);
+            }
+          },
+          shouldOverrideUrlLoading: (controller, navigationAction) async {
+            final uri = navigationAction.request.url;
+            if (uri != null) {
+              final scheme = uri.scheme;
+              if (scheme == 'http' || scheme == 'https' || scheme == 'mailto') {
+                await launchUrl(Uri.parse(uri.toString()),
+                    mode: LaunchMode.externalApplication);
+                return iaw.NavigationActionPolicy.CANCEL;
+              }
+            }
+            return iaw.NavigationActionPolicy.ALLOW;
+          },
+        );
+      }
     } else {
       final ctrl = _flutterController;
       webviewWidget = ctrl != null

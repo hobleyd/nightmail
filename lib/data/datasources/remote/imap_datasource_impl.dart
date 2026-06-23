@@ -810,13 +810,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       await _selectMailboxPath(client, mailboxPath);
       final sequence = MessageSequence.fromId(uid, isUid: true);
       if (junkPath != null) {
-        try {
-          await client.uidCopy(sequence, targetMailboxPath: junkPath);
-        } on ImapException {
-          // Copy failed (e.g. folder inaccessible or wrong path encoding).
-          // Fall through to delete from source so the message doesn't linger
-          // in the inbox and cause confusing reappearance on folder switch.
-        }
+        await client.uidCopy(sequence, targetMailboxPath: junkPath);
       }
       await client.uidStore(
         sequence,

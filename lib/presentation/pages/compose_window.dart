@@ -159,6 +159,7 @@ class _ComposeWindowPage extends StatelessWidget {
             ? '${account.displayName} <${account.emailAddress}>'
             : account.emailAddress;
     final accountId = account?.id;
+    final accountDomain = _domainOf(account?.emailAddress);
     return BlocProvider(
       create: (_) => ComposeBloc(sendEmail: sl<SendEmail>()),
       child: Scaffold(
@@ -183,6 +184,7 @@ class _ComposeWindowPage extends StatelessWidget {
             onClose: _close,
             fromAddress: fromAddress,
             accountId: accountId,
+            accountDomain: accountDomain,
             scrollable: true,
             existingDraftId: arguments['existingDraftId'] as String?,
             onTitleChanged: (title) => windowManager.setTitle(title),
@@ -190,5 +192,12 @@ class _ComposeWindowPage extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  static String? _domainOf(String? email) {
+    if (email == null) return null;
+    final at = email.lastIndexOf('@');
+    if (at < 0 || at == email.length - 1) return null;
+    return email.substring(at + 1).toLowerCase();
   }
 }

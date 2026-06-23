@@ -29,6 +29,7 @@ class ComposeDialog extends StatelessWidget {
     this.draftEmail,
     required this.fromAddress,
     this.accountId,
+    this.accountDomain,
   });
 
   final ComposeMode mode;
@@ -36,6 +37,7 @@ class ComposeDialog extends StatelessWidget {
   final Email? draftEmail;
   final String fromAddress;
   final String? accountId;
+  final String? accountDomain;
 
   static Future<void> show(
     BuildContext context, {
@@ -54,6 +56,9 @@ class ComposeDialog extends StatelessWidget {
         : '';
     final accountId =
         accountState is AccountsLoaded ? accountState.activeAccount.id : null;
+    final accountDomain = accountState is AccountsLoaded
+        ? _domainOf(accountState.activeAccount.emailAddress)
+        : null;
     return showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -65,6 +70,7 @@ class ComposeDialog extends StatelessWidget {
           draftEmail: draftEmail,
           fromAddress: fromAddress,
           accountId: accountId,
+          accountDomain: accountDomain,
         ),
       ),
     );
@@ -102,9 +108,16 @@ class ComposeDialog extends StatelessWidget {
           onClose: close,
           fromAddress: fromAddress,
           accountId: accountId,
+          accountDomain: accountDomain,
         ),
       ),
     );
+  }
+
+  static String? _domainOf(String email) {
+    final at = email.lastIndexOf('@');
+    if (at < 0 || at == email.length - 1) return null;
+    return email.substring(at + 1).toLowerCase();
   }
 }
 
@@ -117,6 +130,7 @@ class ComposeForm extends StatefulWidget {
     required this.onClose,
     required this.fromAddress,
     this.accountId,
+    this.accountDomain,
     this.scrollable = false,
     this.existingDraftId,
     this.onTitleChanged,
@@ -129,6 +143,7 @@ class ComposeForm extends StatefulWidget {
   final VoidCallback onClose;
   final String fromAddress;
   final String? accountId;
+  final String? accountDomain;
   final bool scrollable;
   // Server-side ID of the draft being edited. When provided, the first
   // successful auto-save updates this draft (Graph/IMAP) then deletes it,
@@ -657,6 +672,7 @@ class _ComposeFormState extends State<ComposeForm> {
           showInput: _toInputEditable,
           hintText: 'recipient@example.com',
           accountId: accountId,
+          accountDomain: widget.accountDomain,
         ),
         const SizedBox(height: 8),
         RecipientInputField(
@@ -673,6 +689,7 @@ class _ComposeFormState extends State<ComposeForm> {
           showInput: _ccInputEditable,
           hintText: 'cc@example.com',
           accountId: accountId,
+          accountDomain: widget.accountDomain,
         ),
         const SizedBox(height: 8),
         _FieldRow(

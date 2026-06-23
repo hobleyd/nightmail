@@ -19,6 +19,7 @@ class SearchContacts {
   Future<List<ContactSuggestion>> call({
     required String query,
     required String accountId,
+    String? accountDomain,
   }) async {
     final q = query.toLowerCase().trim();
     if (q.isEmpty) return [];
@@ -62,6 +63,15 @@ class SearchContacts {
         debugPrint('[NightMail] directory-contacts search error: $e');
       }),
     ]);
+
+    final domain = accountDomain?.toLowerCase();
+    if (domain != null && domain.isNotEmpty) {
+      results.sort((a, b) {
+        final aInternal = a.address.toLowerCase().endsWith('@$domain') ? 0 : 1;
+        final bInternal = b.address.toLowerCase().endsWith('@$domain') ? 0 : 1;
+        return aInternal.compareTo(bInternal);
+      });
+    }
 
     return results.take(8).toList();
   }

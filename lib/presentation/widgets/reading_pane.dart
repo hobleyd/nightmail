@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
+
+import '../../core/platform/window_utils.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart' as iaw;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -197,7 +199,7 @@ class _ReadingPaneToolbar extends StatelessWidget {
   final Email email;
 
   Future<void> _openComposeWindow(ComposeMode mode) async {
-    await WindowController.create(
+    await createSubWindow(
       WindowConfiguration(
         arguments: jsonEncode({
           'mode': mode.name,

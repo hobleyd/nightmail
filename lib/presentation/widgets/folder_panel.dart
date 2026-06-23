@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
+
+import '../../core/platform/window_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -933,7 +935,7 @@ class _SettingsFooter extends StatelessWidget {
             },
           ),
           GestureDetector(
-            onDoubleTap: () => WindowController.create(
+            onDoubleTap: () => createSubWindow(
               WindowConfiguration(
                 arguments: jsonEncode({'type': 'calendar'}),
               ),
@@ -947,7 +949,7 @@ class _SettingsFooter extends StatelessWidget {
             ),
           ),
           GestureDetector(
-            onDoubleTap: () => WindowController.create(
+            onDoubleTap: () => createSubWindow(
               WindowConfiguration(
                 arguments: jsonEncode({'type': 'tasks'}),
               ),

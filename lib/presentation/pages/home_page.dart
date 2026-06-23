@@ -1,6 +1,8 @@
 import 'dart:convert';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
+
+import '../../core/platform/window_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -235,7 +237,7 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
       final full = result.getOrElse((_) => email);
 
       if (isDraftsFolder) {
-        WindowController.create(
+        createSubWindow(
           WindowConfiguration(
             arguments: jsonEncode({
               'mode': 'newEmail',
@@ -255,7 +257,7 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
           ),
         );
       } else {
-        WindowController.create(
+        createSubWindow(
           WindowConfiguration(
             arguments: jsonEncode({
               'type': 'emailView',

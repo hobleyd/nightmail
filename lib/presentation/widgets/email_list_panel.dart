@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
+
+import '../../core/platform/window_utils.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -79,7 +81,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
   }
 
   Future<void> _openComposeWindow() async {
-    await WindowController.create(
+    await createSubWindow(
       WindowConfiguration(
         arguments: jsonEncode({'mode': ComposeMode.newEmail.name}),
       ),

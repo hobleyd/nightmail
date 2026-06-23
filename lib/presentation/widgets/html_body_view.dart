@@ -29,6 +29,10 @@ class HtmlBodyView extends StatefulWidget {
 class _HtmlBodyViewState extends State<HtmlBodyView> {
   iaw.InAppWebViewController? _inAppController;
   String _inAppInitialHtml = '';
+  // Tracks the latest HTML to load; applied in onWebViewCreated if it changed
+  // before the controller was ready, or during rapid email switches.
+  String _pendingHtml = '';
+  bool _webViewReady = false;
 
   WebViewController? _flutterController;
 
@@ -41,7 +45,13 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
     if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
       final (html, blocked) = _buildHtml(allowExternal: false);
       _inAppInitialHtml = html;
+      _pendingHtml = html;
       _hasBlockedImages = blocked;
+      // Defer webview creation by one frame so the native window (HWND) is
+      // fully initialised before WebView2 tries to attach its compositor.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _webViewReady = true);
+      });
     } else {
       _initFlutter();
     }
@@ -98,8 +108,11 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
     setState(() {
       _allowExternalImages = allowExternal;
       _hasBlockedImages = blocked;
+      _pendingHtml = html;
     });
     if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
+      // If the controller isn't ready yet, _pendingHtml is picked up in
+      // onWebViewCreated once initialisation completes.
       _inAppController?.loadData(data: html);
     } else {
       _flutterController?.loadHtmlString(html);
@@ -200,7 +213,9 @@ a[href]:hover::after {
   Widget build(BuildContext context) {
     final Widget webviewWidget;
     if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
-      webviewWidget = iaw.InAppWebView(
+      webviewWidget = !_webViewReady
+          ? const SizedBox.shrink()
+          : iaw.InAppWebView(
         initialData: iaw.InAppWebViewInitialData(data: _inAppInitialHtml),
         initialSettings: iaw.InAppWebViewSettings(
           javaScriptEnabled: false,
@@ -208,6 +223,10 @@ a[href]:hover::after {
         ),
         onWebViewCreated: (controller) {
           _inAppController = controller;
+          // Apply any content that arrived before the controller was ready.
+          if (_pendingHtml != _inAppInitialHtml) {
+            controller.loadData(data: _pendingHtml);
+          }
         },
         shouldOverrideUrlLoading: (controller, navigationAction) async {
           final uri = navigationAction.request.url;

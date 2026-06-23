@@ -1595,7 +1595,7 @@ class _EmailBody extends StatelessWidget {
   }
 }
 
-class _PdfPreview extends StatelessWidget {
+class _PdfPreview extends StatefulWidget {
   const _PdfPreview({
     required this.filePath,
     required this.fileName,
@@ -1604,6 +1604,25 @@ class _PdfPreview extends StatelessWidget {
   final String filePath;
   final String fileName;
   final VoidCallback onClose;
+
+  @override
+  State<_PdfPreview> createState() => _PdfPreviewState();
+}
+
+class _PdfPreviewState extends State<_PdfPreview> {
+  bool _webViewReady = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (Platform.isWindows) {
+      Future.delayed(const Duration(milliseconds: 50), () {
+        if (mounted) setState(() => _webViewReady = true);
+      });
+    } else {
+      _webViewReady = true;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1619,7 +1638,7 @@ class _PdfPreview extends StatelessWidget {
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  fileName,
+                  widget.fileName,
                   style: TextStyle(
                     color: c.textSecondary,
                     fontSize: 12,
@@ -1630,7 +1649,7 @@ class _PdfPreview extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               GestureDetector(
-                onTap: onClose,
+                onTap: widget.onClose,
                 child: Icon(Icons.close_rounded, size: 16, color: c.textMuted),
               ),
             ],
@@ -1638,14 +1657,16 @@ class _PdfPreview extends StatelessWidget {
         ),
         Divider(height: 1, color: c.border),
         Expanded(
-          child: iaw.InAppWebView(
-            initialUrlRequest: iaw.URLRequest(
-              url: iaw.WebUri(Uri.file(filePath).toString()),
-            ),
-            initialSettings: iaw.InAppWebViewSettings(
-              allowFileAccessFromFileURLs: true,
-            ),
-          ),
+          child: _webViewReady
+              ? iaw.InAppWebView(
+                  initialUrlRequest: iaw.URLRequest(
+                    url: iaw.WebUri(Uri.file(widget.filePath).toString()),
+                  ),
+                  initialSettings: iaw.InAppWebViewSettings(
+                    allowFileAccessFromFileURLs: true,
+                  ),
+                )
+              : const SizedBox.shrink(),
         ),
       ],
     );

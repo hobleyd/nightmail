@@ -52,9 +52,10 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
       } else {
         _inAppInitialHtml = html;
       }
-      // Defer webview creation by one frame so the native window (HWND) is
-      // fully initialised before WebView2 tries to attach its compositor.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Defer webview creation so the Win32 HWND is fully ready for WebView2
+      // composition. One post-frame callback is not enough on all machines;
+      // a short real-time delay lets the message pump finish initialising.
+      Future.delayed(const Duration(milliseconds: 50), () {
         if (mounted) setState(() => _webViewReady = true);
       });
     } else {

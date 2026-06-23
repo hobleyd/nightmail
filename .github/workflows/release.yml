@@ -232,6 +232,11 @@ jobs:
           name: linux-bundle
           path: build/linux/x64/release/bundle/
 
+      - name: Restore executable permissions on bundle
+        run: |
+          chmod +x build/linux/x64/release/bundle/nightmail
+          find build/linux/x64/release/bundle/lib -name "*.so*" -exec chmod +x {} \;
+
       - name: Install Snapcraft
         run: sudo snap install snapcraft --classic
 

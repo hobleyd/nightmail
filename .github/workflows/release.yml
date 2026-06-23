@@ -199,11 +199,40 @@ jobs:
       - name: Copy missing libs into bundle
         run: |
           BUNDLE_LIB=build/linux/x64/release/bundle/lib
+
+          # Recursively copy a library and its deps into the bundle,
+          # skipping fundamental system libs that are guaranteed on any Linux.
+          bundle_with_deps() {
+            local src=$1
+            local name
+            name=$(basename "$src")
+            [ -f "$BUNDLE_LIB/$name" ] && return
+            case "$name" in
+              libc.so* | libm.so* | libpthread.so* | libdl.so* | librt.so* | ld-linux* | libgcc_s* ) return ;;
+            esac
+            echo "Bundling $src"
+            cp "$src" "$BUNDLE_LIB/" 2>/dev/null || return
+            ldd "$src" 2>/dev/null | awk '/=> \// { print $3 }' | while read dep; do
+              bundle_with_deps "$dep"
+            done
+          }
+
+          # Explicitly bundle WPEWebKit and wpe-related libs.
+          # These are only in Debian Sid, not Ubuntu 24.04, so ldd "not found"
+          # detection won't catch them (they resolve fine on the build host).
+          find /usr/lib /usr/lib/x86_64-linux-gnu \
+            \( -name "libWPEWebKit*.so*" -o -name "libwpe-*.so*" -o -name "libWPEBackend*.so*" \) \
+            -type f 2>/dev/null | while read lib; do
+            bundle_with_deps "$lib"
+          done
+
+          # Also handle any remaining "not found" libs for the main binary and bundled libs.
           copy_if_missing() {
             local lib=$1
-            local found=$(find /usr/lib/x86_64-linux-gnu /usr/lib -name "$lib" 2>/dev/null | head -1)
+            local found
+            found=$(find /usr/lib/x86_64-linux-gnu /usr/lib -name "$lib" 2>/dev/null | head -1)
             if [ -n "$found" ]; then
-              echo "Copying $found"
+              echo "Copying missing: $found"
               cp "$found" "$BUNDLE_LIB/"
             else
               echo "WARNING: $lib not found on host"

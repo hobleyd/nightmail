@@ -37,6 +37,7 @@ class EmailDetailBloc extends Bloc<EmailDetailEvent, EmailDetailState> {
     EmailDetailLoadRequested event,
     Emitter<EmailDetailState> emit,
   ) async {
+    emit(const EmailDetailInitial());
     emit(const EmailDetailLoading());
     final result = await _getEmail(GetEmailParams(id: event.emailId));
     await result.fold(

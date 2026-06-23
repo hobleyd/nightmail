@@ -175,8 +175,14 @@ class _ComposeFormState extends State<ComposeForm> {
     _serverDraftId = widget.existingDraftId;
     _pendingOldDraftId = widget.existingDraftId;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _bodyFocus.requestFocus();
-      _bodyController.selection = const TextSelection.collapsed(offset: 0);
+      final isReply = widget.mode == ComposeMode.reply ||
+          widget.mode == ComposeMode.replyAll;
+      if (isReply) {
+        _bodyFocus.requestFocus();
+        _bodyController.selection = const TextSelection.collapsed(offset: 0);
+      } else {
+        _toFieldKey.currentState?.requestFocus();
+      }
       widget.onTitleChanged?.call(_title);
     });
   }

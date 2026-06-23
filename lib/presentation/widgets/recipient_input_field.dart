@@ -103,6 +103,8 @@ class RecipientInputFieldState extends State<RecipientInputField> {
 
   void flush() => _flushInput();
 
+  void requestFocus() => _inputFocus.requestFocus();
+
   void _flushInput() {
     final text = _inputController.text
         .trim()

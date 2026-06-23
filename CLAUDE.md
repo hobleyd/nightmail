@@ -62,7 +62,7 @@ Re-apply after `flutter pub cache repair`. Drop when desktop_drop publishes a fi
 **`-Wno-deprecated-literal-operator` is Clang-only** — GCC errors on it.
 Fix: use `check_cxx_compiler_flag` so the flag is only added when supported.
 
-CI builds Linux inside a **Debian Trixie container** (via `container: debian:trixie`
+CI builds Linux inside a **Debian Sid container** (via `container: debian:sid`
 on the `build-linux` job) because `libwpewebkit-2.0-dev` is not available on
 Ubuntu 22.04 or 24.04. The snap packaging runs in a separate `snap-linux` job on
 Ubuntu 24.04, consuming the bundle artifact uploaded by `build-linux`.

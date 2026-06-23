@@ -56,27 +56,23 @@ sed -i '' 's/compileSdk 33/compileSdk 36/' \
 
 Re-apply after `flutter pub cache repair`. Drop when desktop_drop publishes a fix.
 
-### flutter_inappwebview_linux CMakeLists patches (GCC + WPE 1.0)
+### flutter_inappwebview_linux CMakeLists patch (GCC compat)
 
-`flutter_inappwebview_linux 0.1.0-beta.1` has two issues on Linux with GCC and
-`libwpewebkit-1.0-dev` (the package available in Ubuntu 22.04):
+`flutter_inappwebview_linux 0.1.0-beta.1` has a GCC compatibility issue:
+**`-Wno-deprecated-literal-operator` is Clang-only** — GCC errors on it.
+Fix: use `check_cxx_compiler_flag` so the flag is only added when supported.
 
-1. **Bundling hardcodes `libWPEWebKit-2.0`** but the installed library is
-   `libWPEWebKit-1.0.so`. Fix: derive the name dynamically from pkg-config.
-2. **`-Wno-deprecated-literal-operator` is Clang-only** — GCC errors on it.
-   Fix: use `check_cxx_compiler_flag` so the flag is only added when supported.
+CI builds Linux inside a **Debian Sid container** (via `container: debian:sid`
+on the `build-linux` job) because `libwpewebkit-2.0-dev` is not available on
+Ubuntu 22.04 or 24.04. The snap packaging runs in a separate `snap-linux` job on
+Ubuntu 24.04, consuming the bundle artifact uploaded by `build-linux`.
 
-Both patches are applied by the CI via a Python script step. To apply locally:
+The patch is applied by the CI via a Python script step. To apply locally:
 
 ```python
 import pathlib
 p = pathlib.Path.home() / '.pub-cache/hosted/pub.dev/flutter_inappwebview_linux-0.1.0-beta.1/linux/CMakeLists.txt'
 t = p.read_text()
-if 'find_and_add_library("libWPEWebKit-2.0"' in t:
-  t = t.replace(
-    'find_and_add_library("libWPEWebKit-2.0" "${WPE_LIB_DIRS}" WPE_BUNDLED_LIBS)',
-    'list(GET WPE_WEBKIT_LIBRARIES 0 _wpe_webkit_libname)\nfind_and_add_library("lib${_wpe_webkit_libname}" "${WPE_LIB_DIRS}" WPE_BUNDLED_LIBS)'
-  )
 CHECK_BLOCK = (
   'check_cxx_compiler_flag("-Wno-deprecated-literal-operator" _WNO_DEPRECATED_LITERAL_OP)\n'
   'if(_WNO_DEPRECATED_LITERAL_OP)\n'

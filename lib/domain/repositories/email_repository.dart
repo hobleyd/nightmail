@@ -47,6 +47,8 @@ abstract interface class EmailRepository {
     required String messageId,
     required String comment,
     bool replyAll = false,
+    List<String> toAddresses = const [],
+    List<String> ccAddresses = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   });

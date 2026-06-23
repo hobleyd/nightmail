@@ -684,6 +684,8 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     required String messageId,
     required String comment,
     bool replyAll = false,
+    List<String> toAddresses = const [],
+    List<String> ccAddresses = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
@@ -693,6 +695,18 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       MailAddress(_account.displayName, _account.emailAddress),
       replyAll: replyAll,
     );
+    if (toAddresses.isNotEmpty) {
+      builder.to = [
+        ...(builder.to ?? []),
+        ...toAddresses.map((a) => MailAddress(null, a)),
+      ];
+    }
+    if (ccAddresses.isNotEmpty) {
+      builder.cc = [
+        ...(builder.cc ?? []),
+        ...ccAddresses.map((a) => MailAddress(null, a)),
+      ];
+    }
     if (bodyType == EmailBodyType.html) {
       builder.addTextHtml(comment);
     } else {

@@ -763,6 +763,8 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     required String messageId,
     required String comment,
     bool replyAll = false,
+    List<String> toAddresses = const [],
+    List<String> ccAddresses = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
@@ -789,6 +791,18 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         MailAddress(null, fromEmail),
         replyAll: replyAll,
       );
+      if (toAddresses.isNotEmpty) {
+        builder.to = [
+          ...(builder.to ?? []),
+          ...toAddresses.map((a) => MailAddress(null, a)),
+        ];
+      }
+      if (ccAddresses.isNotEmpty) {
+        builder.cc = [
+          ...(builder.cc ?? []),
+          ...ccAddresses.map((a) => MailAddress(null, a)),
+        ];
+      }
       if (bodyType == EmailBodyType.html) {
         builder.addTextHtml(comment);
       } else {

@@ -1536,6 +1536,21 @@ class GraphApiDatasourceImpl
     }
   }
 
+  @override
+  Future<void> renameFolder({
+    required String folderId,
+    required String newDisplayName,
+  }) async {
+    try {
+      await _dio.patch<void>(
+        '/me/mailFolders/$folderId',
+        data: {'displayName': newDisplayName},
+      );
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
   static final _angleEmail = RegExp(r'<([^>]+)>\s*$');
 
   /// Extracts a bare email address from an optionally formatted string like

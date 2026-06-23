@@ -1040,6 +1040,30 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   }
 
   @override
+  Future<void> renameFolder({
+    required String folderId,
+    required String newDisplayName,
+  }) async {
+    try {
+      // Fetch the current label to extract the parent prefix.
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '/users/me/labels/$folderId',
+      );
+      final currentName = resp.data?['name'] as String? ?? '';
+      final lastSlash = currentName.lastIndexOf('/');
+      final newName = lastSlash >= 0
+          ? '${currentName.substring(0, lastSlash)}/$newDisplayName'
+          : newDisplayName;
+      await _dio.patch<void>(
+        '/users/me/labels/$folderId',
+        data: {'name': newName},
+      );
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  @override
   Future<String> createServerDraft({
     required List<String> toAddresses,
     List<String> ccAddresses = const [],

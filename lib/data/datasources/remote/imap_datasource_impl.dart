@@ -1097,6 +1097,31 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     }
   }
 
+  @override
+  Future<void> renameFolder({
+    required String folderId,
+    required String newDisplayName,
+  }) async {
+    try {
+      final client = await _getConnectedClient();
+      final sep = _pathSeparator;
+      final lastSep = folderId.lastIndexOf(sep);
+      final newPath = lastSep >= 0
+          ? '${folderId.substring(0, lastSep)}$sep$newDisplayName'
+          : newDisplayName;
+      final leafName = lastSep >= 0 ? folderId.substring(lastSep + sep.length) : folderId;
+      final mailbox = Mailbox(
+        encodedName: leafName,
+        encodedPath: folderId,
+        flags: [],
+        pathSeparator: sep,
+      );
+      await client.renameMailbox(mailbox, newPath);
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    }
+  }
+
   /// Returns the path of the Trash mailbox, or null if the message is already
   /// in Trash or no Trash folder can be located on this server.
   Future<String?> _findTrashPath(

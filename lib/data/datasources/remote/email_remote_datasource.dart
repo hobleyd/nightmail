@@ -74,6 +74,12 @@ abstract interface class EmailRemoteDatasource {
     required String displayName,
   });
 
+  /// Renames [folderId] to [newDisplayName].
+  Future<void> renameFolder({
+    required String folderId,
+    required String newDisplayName,
+  });
+
   /// Searches [folderId] (and its immediate children where supported) for
   /// emails matching [query].  Supports `from:`, `to:`, `subject:`, and
   /// `has:attachment` notation.  Results are NOT cached.

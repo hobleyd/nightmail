@@ -361,6 +361,20 @@ class EmailRepositoryImpl implements EmailRepository {
   }
 
   @override
+  Future<Either<Failure, Unit>> renameFolder({
+    required String folderId,
+    required String newDisplayName,
+  }) async {
+    return _execute(() async {
+      await _accountManager.emailDatasource.renameFolder(
+        folderId: folderId,
+        newDisplayName: newDisplayName,
+      );
+      return unit;
+    });
+  }
+
+  @override
   Future<Either<Failure, List<Email>>> searchEmails({
     String? folderId,
     required String query,

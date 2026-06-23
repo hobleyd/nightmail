@@ -6,6 +6,7 @@ import '../../../domain/entities/email_folder.dart';
 import '../../../domain/usecases/create_folder.dart';
 import '../../../domain/usecases/get_cached_folders.dart';
 import '../../../domain/usecases/get_mail_folders.dart';
+import '../../../domain/usecases/rename_folder.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
 import 'folder_list_event.dart';
 import 'folder_list_state.dart';
@@ -15,17 +16,20 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
     required this._getMailFolders,
     required this._getCachedFolders,
     required this._createFolder,
+    required this._renameFolder,
     required this._accountManager,
   }) : super(const FolderListInitial()) {
     on<FolderListLoadRequested>(_onLoadRequested);
     on<FolderListFolderEmptied>(_onFolderEmptied);
     on<FolderListUnreadCountChanged>(_onUnreadCountChanged);
     on<FolderListCreateFolderRequested>(_onCreateFolderRequested);
+    on<FolderListRenameFolderRequested>(_onRenameFolderRequested);
   }
 
   final GetMailFolders _getMailFolders;
   final GetCachedFolders _getCachedFolders;
   final CreateFolder _createFolder;
+  final RenameFolder _renameFolder;
   final AccountManager _accountManager;
 
   Future<void> _onLoadRequested(
@@ -112,6 +116,20 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
     final result = await _createFolder(CreateFolderParams(
       parentFolderId: event.parentFolderId,
       displayName: event.displayName,
+    ));
+    result.fold(
+      (_) {},
+      (_) => add(const FolderListLoadRequested()),
+    );
+  }
+
+  Future<void> _onRenameFolderRequested(
+    FolderListRenameFolderRequested event,
+    Emitter<FolderListState> emit,
+  ) async {
+    final result = await _renameFolder(RenameFolderParams(
+      folderId: event.folderId,
+      newDisplayName: event.newDisplayName,
     ));
     result.fold(
       (_) {},

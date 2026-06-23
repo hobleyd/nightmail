@@ -51,6 +51,7 @@ class FolderPanel extends StatefulWidget {
 class _FolderPanelState extends State<FolderPanel> {
   late Set<String> _expandedIds;
   String? _creatingChildOfId;
+  String? _renamingFolderId;
 
   @override
   void initState() {
@@ -158,6 +159,22 @@ class _FolderPanelState extends State<FolderPanel> {
             onCancel: () => setState(() => _creatingChildOfId = null),
           );
         }
+        if (item.folder.id == _renamingFolderId) {
+          return _FolderRenamingRow(
+            depth: item.depth,
+            currentName: item.folder.displayName,
+            onSubmit: (name) {
+              context.read<FolderListBloc>().add(
+                    FolderListRenameFolderRequested(
+                      folderId: item.folder.id,
+                      newDisplayName: name,
+                    ),
+                  );
+              setState(() => _renamingFolderId = null);
+            },
+            onCancel: () => setState(() => _renamingFolderId = null),
+          );
+        }
         return _FolderItem(
           folder: item.folder,
           depth: item.depth,
@@ -182,6 +199,7 @@ class _FolderPanelState extends State<FolderPanel> {
             });
             widget.onExpandedIdsChanged?.call(_expandedIds);
           },
+          onRename: () => setState(() => _renamingFolderId = item.folder.id),
         );
       },
     );
@@ -307,7 +325,7 @@ class _PanelHeader extends StatelessWidget {
   }
 }
 
-enum _FolderAction { addFolder, deleteAll }
+enum _FolderAction { addFolder, rename, deleteAll }
 
 class _FolderItem extends StatefulWidget {
   const _FolderItem({
@@ -319,6 +337,7 @@ class _FolderItem extends StatefulWidget {
     required this.onTap,
     required this.onExpandTap,
     required this.onAddFolder,
+    required this.onRename,
   });
 
   final EmailFolder folder;
@@ -329,6 +348,7 @@ class _FolderItem extends StatefulWidget {
   final VoidCallback onTap;
   final VoidCallback onExpandTap;
   final VoidCallback onAddFolder;
+  final VoidCallback onRename;
 
   @override
   State<_FolderItem> createState() => _FolderItemState();
@@ -551,6 +571,17 @@ class _FolderItemState extends State<_FolderItem>
           ),
         ),
         PopupMenuItem(
+          value: _FolderAction.rename,
+          child: Row(
+            children: const [
+              Icon(Icons.drive_file_rename_outline_rounded, size: 16),
+              SizedBox(width: 8),
+              Text('Rename', style: TextStyle(fontSize: 13)),
+            ],
+          ),
+        ),
+        const PopupMenuDivider(),
+        PopupMenuItem(
           value: _FolderAction.deleteAll,
           child: Row(
             children: [
@@ -571,6 +602,8 @@ class _FolderItemState extends State<_FolderItem>
     if (!context.mounted) return;
     if (result == _FolderAction.addFolder) {
       widget.onAddFolder();
+    } else if (result == _FolderAction.rename) {
+      widget.onRename();
     } else if (result == _FolderAction.deleteAll) {
       await _confirmDeleteAll(context);
     }
@@ -1095,6 +1128,105 @@ class _FolderCreatingRowState extends State<_FolderCreatingRow> {
               onSubmitted: (value) {
                 final name = value.trim();
                 if (name.isNotEmpty) widget.onSubmit(name);
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FolderRenamingRow extends StatefulWidget {
+  const _FolderRenamingRow({
+    required this.depth,
+    required this.currentName,
+    required this.onSubmit,
+    required this.onCancel,
+  });
+
+  final int depth;
+  final String currentName;
+  final ValueChanged<String> onSubmit;
+  final VoidCallback onCancel;
+
+  @override
+  State<_FolderRenamingRow> createState() => _FolderRenamingRowState();
+}
+
+class _FolderRenamingRowState extends State<_FolderRenamingRow> {
+  late final TextEditingController _controller;
+  final _focusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.currentName)
+      ..selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: widget.currentName.length,
+      );
+    _focusNode.onKeyEvent = (node, event) {
+      if (event is KeyDownEvent &&
+          event.logicalKey == LogicalKeyboardKey.escape) {
+        widget.onCancel();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    };
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final indentWidth = widget.depth * 16.0;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+      padding: EdgeInsets.only(
+        left: 10 + indentWidth,
+        right: 10,
+        top: 4,
+        bottom: 4,
+      ),
+      child: Row(
+        children: [
+          const SizedBox(width: 20),
+          const Icon(Icons.folder_outlined, size: 16, color: AppColors.accent),
+          const SizedBox(width: 10),
+          Expanded(
+            child: TextField(
+              controller: _controller,
+              focusNode: _focusNode,
+              autofocus: true,
+              style: TextStyle(color: c.textSecondary, fontSize: 13),
+              decoration: InputDecoration(
+                isDense: true,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(4),
+                  borderSide: BorderSide(color: AppColors.accent),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(4),
+                  borderSide: BorderSide(color: AppColors.accent, width: 1.5),
+                ),
+              ),
+              onSubmitted: (value) {
+                final name = value.trim();
+                if (name.isNotEmpty && name != widget.currentName) {
+                  widget.onSubmit(name);
+                } else {
+                  widget.onCancel();
+                }
               },
             ),
           ),

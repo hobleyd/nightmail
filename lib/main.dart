@@ -3,10 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'core/settings/window_bounds_service.dart';
 import 'domain/usecases/send_email.dart';
 import 'infrastructure/accounts/account_manager.dart';
 import 'infrastructure/background/background_mail_service.dart';
@@ -139,6 +141,22 @@ await configureDependencies();
   // Eagerly initialize NotificationService (installs method-call handlers and
   // local-notifications plugin), then request permission without blocking startup.
   unawaited(sl<NotificationService>().requestPermission());
+
+  if (!kIsWeb && (Platform.isMacOS || Platform.isLinux || Platform.isWindows)) {
+    try {
+      final restored = await WindowBoundsService().loadValidatedBounds();
+      if (restored != null) {
+        if (restored.fullScreen) {
+          await windowManager.setFullScreen(true);
+        } else if (restored.maximized) {
+          await windowManager.maximize();
+        } else if (restored.bounds != null) {
+          await windowManager.setBounds(restored.bounds!);
+        }
+      }
+    } catch (_) {}
+  }
+
   runApp(const NightMailApp());
 }
 
@@ -150,6 +168,9 @@ class NightMailApp extends StatefulWidget {
 }
 
 class _NightMailAppState extends State<NightMailApp> with WindowListener {
+  final _windowBoundsService = WindowBoundsService();
+  Timer? _boundsDebounce;
+
   static ThemeData _buildTheme({String? fontFamily, bool dark = false}) {
     return ThemeData(
       colorScheme: ColorScheme.fromSeed(
@@ -170,16 +191,70 @@ class _NightMailAppState extends State<NightMailApp> with WindowListener {
 
   @override
   void dispose() {
+    _boundsDebounce?.cancel();
     windowManager.removeListener(this);
     super.dispose();
   }
 
+  void _scheduleBoundsSave() {
+    _boundsDebounce?.cancel();
+    _boundsDebounce = Timer(
+      const Duration(milliseconds: 500),
+      () async {
+        try {
+          // Special states are handled by their own event overrides below.
+          if (await windowManager.isMaximized()) return;
+          if (await windowManager.isFullScreen()) return;
+          final bounds = await windowManager.getBounds();
+          await _windowBoundsService.saveBounds(bounds);
+        } catch (_) {}
+      },
+    );
+  }
+
+  Future<void> _saveCurrentState() async {
+    try {
+      final isFullScreen = await windowManager.isFullScreen();
+      final isMaximized = await windowManager.isMaximized();
+      final bounds = await windowManager.getBounds();
+      await _windowBoundsService.saveBounds(
+        bounds,
+        fullScreen: isFullScreen,
+        maximized: isMaximized,
+      );
+    } catch (_) {}
+  }
+
   @override
-  void onWindowClose() {
+  void onWindowClose() async {
     // Quit the whole app when the main window is closed, even if
     // compose windows are still open.
+    _boundsDebounce?.cancel();
+    await _saveCurrentState();
     windowManager.destroy();
   }
+
+  // Save immediately when entering a special state so a subsequent quit
+  // doesn't have to re-query the (now-changed) window state.
+  @override
+  void onWindowMaximize() => _saveCurrentState();
+
+  @override
+  void onWindowEnterFullScreen() => _saveCurrentState();
+
+  // macOS/Windows: fires once when resize/move finishes.
+  @override
+  void onWindowResized() => _scheduleBoundsSave();
+
+  @override
+  void onWindowMoved() => _scheduleBoundsSave();
+
+  // Linux: fires continuously during resize/move — debounce handles it.
+  @override
+  void onWindowResize() => _scheduleBoundsSave();
+
+  @override
+  void onWindowMove() => _scheduleBoundsSave();
 
   @override
   Widget build(BuildContext context) {

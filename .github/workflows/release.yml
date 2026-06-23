@@ -66,6 +66,12 @@ jobs:
       - run: flutter config --enable-macos-desktop
       - run: flutter create --platforms=macos .
       - run: flutter pub get
+
+      - name: Patch flutter_inappwebview_macos Package.swift (10.14 → 10.15)
+        run: |
+          sed -i '' 's/\.macOS("10.14")/.macOS("10.15")/' \
+            ~/.pub-cache/hosted/pub.dev/flutter_inappwebview_macos-1.2.0-beta.3/macos/flutter_inappwebview_macos/Package.swift
+
       - run: dart run build_runner build --delete-conflicting-outputs
       - name: Generate code for enough_mail sub-package
         working-directory: packages/enough_mail

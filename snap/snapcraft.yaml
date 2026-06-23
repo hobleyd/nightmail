@@ -1,10 +1,14 @@
 name: nightmail
 base: core24
 version: 'dev'
-summary: A cross-platform email client for Office 365
+title: NightMail
+summary: A cross-platform email client for Microsoft 365, Gmail, and IMAP/SMTP
 description: |
-  NightMail is a cross-platform email client for Office 365 via the
-  Microsoft Graph API.
+  NightMail supports Microsoft 365, Google Workspace, Gmail, and standard
+  IMAP/SMTP accounts from a single unified interface. Provides a three-pane
+  layout with integrated calendar, tasks, and contacts across all providers.
+contact: https://github.com/hobleyd/nightmail/issues
+website: https://github.com/hobleyd/nightmail
 grade: stable
 confinement: classic
 
@@ -16,3 +20,11 @@ parts:
   nightmail:
     plugin: dump
     source: build/linux/x64/release/bundle
+    build-packages:
+      - patchelf
+    override-prime: |
+      craftctl default
+      patchelf --set-rpath '$ORIGIN/lib' "$CRAFT_PRIME/nightmail"
+      find "$CRAFT_PRIME/lib" -name "*.so*" -type f | while read lib; do
+        patchelf --set-rpath '$ORIGIN' "$lib" 2>/dev/null || true
+      done

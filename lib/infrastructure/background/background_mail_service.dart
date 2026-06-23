@@ -4,10 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:workmanager/workmanager.dart';
 
-import '../../core/error/exceptions.dart';
-import '../../data/datasources/local/delta_token_datasource.dart';
-import '../../data/datasources/remote/graph_delta_datasource.dart';
-import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../../injection_container.dart';
 
@@ -80,9 +76,11 @@ void _callbackDispatcher() {
 /// Lightweight poll executed in the WorkManager background isolate.
 ///
 /// Initialises a minimal DI context, loads accounts from secure storage, then
-/// runs a single poll cycle for each account — keeping delta tokens fresh and
-/// the SQLite cache up-to-date so the inbox is populated immediately when the
-/// user opens the app.
+/// performs a folder-count poll for each account.  A simple folder poll (rather
+/// than a Microsoft delta sync) is used deliberately: delta sync advances the
+/// shared SQLite token, which causes the foreground [MailPollerCubit] to see
+/// hasChanges=false on its next run and never trigger a UI refresh.  Folder
+/// polling is enough to keep OAuth tokens from expiring.
 Future<void> _runBackgroundPoll() async {
   WidgetsFlutterBinding.ensureInitialized();
   await configureDependencies();
@@ -93,39 +91,10 @@ Future<void> _runBackgroundPoll() async {
   final accounts = accountManager.accounts;
   if (accounts.isEmpty) return;
 
-  final database = sl<DeltaTokenDatasource>();
-
   for (final account in accounts) {
     try {
       final ds = accountManager.buildEmailDatasourceForAccount(account);
-
-      if (account is MicrosoftAccount && ds is GraphDeltaDatasource) {
-        final deltaDs = ds as GraphDeltaDatasource;
-        final savedToken =
-            await database.loadDeltaToken(account.id, 'inbox');
-        if (savedToken != null) {
-          // Incremental delta sync keeps the token fresh and the local cache
-          // up-to-date so the foreground app can show changes immediately.
-          final result =
-              await deltaDs.syncMailDelta('inbox', deltaLink: savedToken);
-          await database.saveDeltaToken(
-              account.id, 'inbox', result.deltaLink);
-        } else {
-          // No token yet — a lightweight folder poll is enough to warm up
-          // the connection until the main app bootstraps the delta token.
-          await ds.getMailFolders();
-        }
-      } else {
-        // Gmail / IMAP: folder-count poll keeps OAuth tokens from expiring
-        // and gives us a freshness signal when the app comes to foreground.
-        await ds.getMailFolders();
-      }
-    } on ServerException catch (e) {
-      if (e.statusCode == 410) {
-        // Expired delta token — clear it so the next foreground poll
-        // bootstraps a fresh one.
-        await database.clearDeltaTokensForAccount(account.id);
-      }
+      await ds.getMailFolders();
     } catch (_) {
       // Silently skip accounts that fail; the foreground poller will retry.
     }

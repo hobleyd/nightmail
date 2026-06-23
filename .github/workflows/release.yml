@@ -138,6 +138,9 @@ jobs:
             libepoxy-dev libwayland-dev \
             binutils coreutils desktop-file-utils fakeroot patchelf util-linux imagemagick
 
+      - name: Mark all directories as git-safe (root in container vs runner ownership)
+        run: git config --global --add safe.directory '*'
+
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'

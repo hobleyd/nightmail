@@ -859,22 +859,32 @@ class GraphApiDatasourceImpl
     required String messageId,
     required String comment,
     bool replyAll = false,
+    List<String> toAddresses = const [],
+    List<String> ccAddresses = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
     try {
+      final messageBody = <String, dynamic>{
+        'body': {
+          'contentType': bodyType == EmailBodyType.html ? 'html' : 'text',
+          'content': comment,
+        },
+        if (toAddresses.isNotEmpty)
+          'toRecipients': toAddresses
+              .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
+              .toList(),
+        if (ccAddresses.isNotEmpty)
+          'ccRecipients': ccAddresses
+              .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
+              .toList(),
+      };
+
       if (newAttachments.isEmpty) {
         final path = replyAll
             ? '/me/messages/$messageId/replyAll'
             : '/me/messages/$messageId/reply';
-        await _dio.post<void>(path, data: {
-          'message': {
-            'body': {
-              'contentType': bodyType == EmailBodyType.html ? 'html' : 'text',
-              'content': comment,
-            },
-          },
-        });
+        await _dio.post<void>(path, data: {'message': messageBody});
       } else {
         // Create a draft reply, attach files, then send.
         final createPath = replyAll
@@ -882,14 +892,7 @@ class GraphApiDatasourceImpl
             : '/me/messages/$messageId/createReply';
         final draftResp = await _dio.post<Map<String, dynamic>>(
           createPath,
-          data: {
-            'message': {
-              'body': {
-                'contentType': bodyType == EmailBodyType.html ? 'html' : 'text',
-                'content': comment,
-              },
-            },
-          },
+          data: {'message': messageBody},
         );
         final draftId = draftResp.data?['id'] as String?;
         if (draftId == null) {

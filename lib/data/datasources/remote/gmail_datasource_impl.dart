@@ -763,6 +763,8 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     required String messageId,
     required String comment,
     bool replyAll = false,
+    List<String> toAddresses = const [],
+    List<String> ccAddresses = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
@@ -789,6 +791,18 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         MailAddress(null, fromEmail),
         replyAll: replyAll,
       );
+      if (toAddresses.isNotEmpty) {
+        builder.to = [
+          ...(builder.to ?? []),
+          ...toAddresses.map((a) => MailAddress(null, a)),
+        ];
+      }
+      if (ccAddresses.isNotEmpty) {
+        builder.cc = [
+          ...(builder.cc ?? []),
+          ...ccAddresses.map((a) => MailAddress(null, a)),
+        ];
+      }
       if (bodyType == EmailBodyType.html) {
         builder.addTextHtml(comment);
       } else {
@@ -1139,6 +1153,21 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     try {
       await _dio.delete<void>('/users/me/drafts/$draftId');
     } on DioException catch (e) {
+      // If the ID is a message ID rather than a draft ID, look up the real
+      // draft ID and retry once. This happens when a draft is opened from the
+      // Drafts folder (where we only have the message ID) and sent before the
+      // first auto-save, which would have normalised the ID.
+      if (e.response?.statusCode == 404) {
+        final resolvedId = await _findDraftIdByMessageId(draftId);
+        if (resolvedId != null) {
+          try {
+            await _dio.delete<void>('/users/me/drafts/$resolvedId');
+            return;
+          } on DioException catch (e2) {
+            throw _mapException(e2);
+          }
+        }
+      }
       throw _mapException(e);
     }
   }

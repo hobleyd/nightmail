@@ -182,6 +182,8 @@ class EmailRepositoryImpl implements EmailRepository {
     required String messageId,
     required String comment,
     bool replyAll = false,
+    List<String> toAddresses = const [],
+    List<String> ccAddresses = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
@@ -190,6 +192,8 @@ class EmailRepositoryImpl implements EmailRepository {
         messageId: messageId,
         comment: comment,
         replyAll: replyAll,
+        toAddresses: toAddresses,
+        ccAddresses: ccAddresses,
         bodyType: bodyType,
         newAttachments: newAttachments,
       );

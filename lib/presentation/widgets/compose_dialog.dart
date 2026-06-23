@@ -226,6 +226,12 @@ class _ComposeFormState extends State<ComposeForm> {
     return text.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
   }
 
+  // Extracts the bare email address from a string that may be "Name <addr>" or just "addr".
+  String _bareAddress(String address) {
+    final match = RegExp(r'<([^>]+)>').firstMatch(address);
+    return (match?.group(1) ?? address).trim();
+  }
+
   String _initialTo() {
     if (widget.draftEmail != null) {
       return widget.draftEmail!.toRecipients.map((r) => r.address).join(', ');
@@ -237,7 +243,7 @@ class _ComposeFormState extends State<ComposeForm> {
       ComposeMode.replyAll => [
           email.from.address,
           ...email.toRecipients.map((r) => r.address),
-        ].join(', '),
+        ].where((a) => a.toLowerCase() != _bareAddress(widget.fromAddress).toLowerCase()).join(', '),
       ComposeMode.forward => '',
       ComposeMode.newEmail => '',
     };
@@ -251,7 +257,7 @@ class _ComposeFormState extends State<ComposeForm> {
     if (email == null) return '';
     return switch (widget.mode) {
       ComposeMode.replyAll =>
-        email.ccRecipients.map((r) => r.address).join(', '),
+        email.ccRecipients.map((r) => r.address).where((a) => a.toLowerCase() != _bareAddress(widget.fromAddress).toLowerCase()).join(', '),
       _ => '',
     };
   }

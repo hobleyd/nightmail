@@ -27,6 +27,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
 
   ImapClient? _client;
   String? _selectedMailboxPath;
+  Future<ImapClient>? _connectingFuture;
 
   /// Non-empty when the server uses abbreviated folder names that must be
   /// prefixed (e.g. Courier IMAP returns "Sent" in LIST but requires
@@ -82,7 +83,16 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
 
   Future<ImapClient> _getConnectedClient() async {
     if (_client != null && _client!.isConnected) return _client!;
+    _connectingFuture ??= _doConnect();
+    try {
+      return await _connectingFuture!;
+    } catch (_) {
+      _connectingFuture = null;
+      rethrow;
+    }
+  }
 
+  Future<ImapClient> _doConnect() async {
     final password = await _credentialStorage.loadPassword(_account.id);
     if (password == null) {
       throw const AuthException(message: 'No IMAP credentials stored');
@@ -97,6 +107,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     await client.login(_account.emailAddress, password);
     _client = client;
     _selectedMailboxPath = null;
+    _connectingFuture = null;
     return client;
   }
 
@@ -575,6 +586,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
   }
 
   Future<void> disconnect() async {
+    _connectingFuture = null;
     final client = _client;
     _client = null;
     _selectedMailboxPath = null;
@@ -672,6 +684,8 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     required String messageId,
     required String comment,
     bool replyAll = false,
+    List<String> toAddresses = const [],
+    List<String> ccAddresses = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
@@ -681,6 +695,18 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       MailAddress(_account.displayName, _account.emailAddress),
       replyAll: replyAll,
     );
+    if (toAddresses.isNotEmpty) {
+      builder.to = [
+        ...(builder.to ?? []),
+        ...toAddresses.map((a) => MailAddress(null, a)),
+      ];
+    }
+    if (ccAddresses.isNotEmpty) {
+      builder.cc = [
+        ...(builder.cc ?? []),
+        ...ccAddresses.map((a) => MailAddress(null, a)),
+      ];
+    }
     if (bodyType == EmailBodyType.html) {
       builder.addTextHtml(comment);
     } else {

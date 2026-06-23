@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart' as iaw;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -58,7 +59,7 @@ class ReadingPane extends StatelessWidget {
                     color: AppColors.accent, strokeWidth: 2),
               ),
             EmailDetailLoaded(:final email, :final senderAnomaly) =>
-              _EmailView(email: email, senderAnomaly: senderAnomaly),
+              _EmailView(key: ValueKey(email.id), email: email, senderAnomaly: senderAnomaly),
             EmailDetailError(:final message) => _ErrorState(message: message),
           };
         },
@@ -117,38 +118,74 @@ class _ErrorState extends StatelessWidget {
   }
 }
 
-class _EmailView extends StatelessWidget {
-  const _EmailView({required this.email, this.senderAnomaly});
+class _EmailView extends StatefulWidget {
+  const _EmailView({super.key, required this.email, this.senderAnomaly});
   final Email email;
   final SenderAnomalyResult? senderAnomaly;
+
+  @override
+  State<_EmailView> createState() => _EmailViewState();
+}
+
+class _EmailViewState extends State<_EmailView> {
+  String? _pdfPreviewPath;
+  String? _pdfPreviewName;
+  String? _pdfPreviewAttachmentId;
+
+  void _showPdfPreview(String path, String name, String attachmentId) {
+    setState(() {
+      _pdfPreviewPath = path;
+      _pdfPreviewName = name;
+      _pdfPreviewAttachmentId = attachmentId;
+    });
+  }
+
+  void _closePdfPreview() {
+    setState(() {
+      _pdfPreviewPath = null;
+      _pdfPreviewName = null;
+      _pdfPreviewAttachmentId = null;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final calendarAvailable =
         sl<AccountManager>().calendarDatasource != null;
-    final meetingType = email.meetingInvite?.type;
+    final meetingType = widget.email.meetingInvite?.type;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _ReadingPaneToolbar(email: email),
+        _ReadingPaneToolbar(email: widget.email),
         Divider(height: 1, color: c.border),
-        _EmailHeader(email: email, senderAnomaly: senderAnomaly),
+        _EmailHeader(
+          email: widget.email,
+          senderAnomaly: widget.senderAnomaly,
+          onPdfPreview: _showPdfPreview,
+          activePdfAttachmentId: _pdfPreviewAttachmentId,
+        ),
         Divider(height: 1, color: c.border),
         if (calendarAvailable && meetingType == MeetingEmailType.invitation) ...[
-          _MeetingInviteBanner(email: email),
+          _MeetingInviteBanner(email: widget.email),
           Divider(height: 1, color: c.border),
         ],
         if (calendarAvailable && meetingType == MeetingEmailType.cancellation) ...[
-          _MeetingCancellationBanner(email: email),
+          _MeetingCancellationBanner(email: widget.email),
           Divider(height: 1, color: c.border),
         ],
         if (calendarAvailable && meetingType == MeetingEmailType.declineNotification) ...[
-          _MeetingDeclineNotificationBanner(email: email),
+          _MeetingDeclineNotificationBanner(email: widget.email),
           Divider(height: 1, color: c.border),
         ],
         Expanded(
-          child: _EmailBody(email: email),
+          child: _pdfPreviewPath != null
+              ? _PdfPreview(
+                  filePath: _pdfPreviewPath!,
+                  fileName: _pdfPreviewName!,
+                  onClose: _closePdfPreview,
+                )
+              : _EmailBody(email: widget.email),
         ),
       ],
     );
@@ -893,9 +930,16 @@ class _ToolbarButton extends StatelessWidget {
 }
 
 class _EmailHeader extends StatelessWidget {
-  const _EmailHeader({required this.email, this.senderAnomaly});
+  const _EmailHeader({
+    required this.email,
+    this.senderAnomaly,
+    this.onPdfPreview,
+    this.activePdfAttachmentId,
+  });
   final Email email;
   final SenderAnomalyResult? senderAnomaly;
+  final void Function(String path, String name, String attachmentId)? onPdfPreview;
+  final String? activePdfAttachmentId;
 
   static Color? _anomalyColor(double? score) {
     if (score == null) return null;
@@ -958,6 +1002,8 @@ class _EmailHeader extends StatelessWidget {
             _AttachmentsSection(
               emailId: email.id,
               attachments: email.attachments,
+              onPdfPreview: onPdfPreview,
+              activePdfAttachmentId: activePdfAttachmentId,
             ),
           ],
         ],
@@ -1120,9 +1166,13 @@ class _AttachmentsSection extends StatelessWidget {
   const _AttachmentsSection({
     required this.emailId,
     required this.attachments,
+    this.onPdfPreview,
+    this.activePdfAttachmentId,
   });
   final String emailId;
   final List<EmailAttachment> attachments;
+  final void Function(String path, String name, String attachmentId)? onPdfPreview;
+  final String? activePdfAttachmentId;
 
   @override
   Widget build(BuildContext context) {
@@ -1151,8 +1201,12 @@ class _AttachmentsSection extends StatelessWidget {
                 spacing: 6,
                 runSpacing: 4,
                 children: attachments
-                    .map((a) =>
-                        _AttachmentChip(emailId: emailId, attachment: a))
+                    .map((a) => _AttachmentChip(
+                          emailId: emailId,
+                          attachment: a,
+                          onPdfPreview: onPdfPreview,
+                          isActive: a.id == activePdfAttachmentId,
+                        ))
                     .toList(),
               ),
               Align(
@@ -1347,9 +1401,16 @@ class _SaveAllButtonState extends State<_SaveAllButton> {
 }
 
 class _AttachmentChip extends StatefulWidget {
-  const _AttachmentChip({required this.emailId, required this.attachment});
+  const _AttachmentChip({
+    required this.emailId,
+    required this.attachment,
+    this.onPdfPreview,
+    this.isActive = false,
+  });
   final String emailId;
   final EmailAttachment attachment;
+  final void Function(String path, String name, String attachmentId)? onPdfPreview;
+  final bool isActive;
 
   @override
   State<_AttachmentChip> createState() => _AttachmentChipState();
@@ -1361,6 +1422,14 @@ class _AttachmentChipState extends State<_AttachmentChip> {
   bool get _isMobile =>
       defaultTargetPlatform == TargetPlatform.android ||
       defaultTargetPlatform == TargetPlatform.iOS;
+
+  bool get _isPdf {
+    final ct = widget.attachment.contentType.toLowerCase();
+    final ext = widget.attachment.name.contains('.')
+        ? widget.attachment.name.split('.').last.toLowerCase()
+        : '';
+    return ct.contains('pdf') || ext == 'pdf';
+  }
 
   static IconData _iconFor(String contentType, String name) {
     final ct = contentType.toLowerCase();
@@ -1409,6 +1478,17 @@ class _AttachmentChipState extends State<_AttachmentChip> {
         await OpenFile.open(file.path);
       });
 
+  Future<void> _previewPdf() => _withBytes((bytes) async {
+        final dir = await getTemporaryDirectory();
+        final file = File('${dir.path}/${widget.attachment.name}');
+        await file.writeAsBytes(bytes);
+        widget.onPdfPreview?.call(
+          file.path,
+          widget.attachment.name,
+          widget.attachment.id,
+        );
+      });
+
   Future<void> _saveAs() => _withBytes((bytes) async {
         if (_isMobile) {
           // Mobile: share sheet lets the user pick Files / Downloads
@@ -1432,16 +1512,22 @@ class _AttachmentChipState extends State<_AttachmentChip> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final isPdf = _isPdf;
     return GestureDetector(
-      onTap: _isMobile ? _open : null,
+      onTap: _isMobile ? _open : isPdf ? _previewPdf : null,
       onDoubleTap: _isMobile ? null : _open,
       onLongPress: _isMobile ? _saveAs : null,
       onSecondaryTap: _isMobile ? null : _saveAs,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
         decoration: BoxDecoration(
-          color: c.badgeBg,
+          color: widget.isActive
+              ? AppColors.accent.withValues(alpha: 0.12)
+              : c.badgeBg,
           borderRadius: BorderRadius.circular(5),
+          border: widget.isActive
+              ? Border.all(color: AppColors.accent.withValues(alpha: 0.4), width: 1)
+              : null,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -1505,6 +1591,63 @@ class _EmailBody extends StatelessWidget {
           height: 1.6,
         ),
       ),
+    );
+  }
+}
+
+class _PdfPreview extends StatelessWidget {
+  const _PdfPreview({
+    required this.filePath,
+    required this.fileName,
+    required this.onClose,
+  });
+  final String filePath;
+  final String fileName;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: Row(
+            children: [
+              Icon(Icons.picture_as_pdf_rounded, size: 14, color: c.textMuted),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  fileName,
+                  style: TextStyle(
+                    color: c.textSecondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: onClose,
+                child: Icon(Icons.close_rounded, size: 16, color: c.textMuted),
+              ),
+            ],
+          ),
+        ),
+        Divider(height: 1, color: c.border),
+        Expanded(
+          child: iaw.InAppWebView(
+            initialUrlRequest: iaw.URLRequest(
+              url: iaw.WebUri(Uri.file(filePath).toString()),
+            ),
+            initialSettings: iaw.InAppWebViewSettings(
+              allowFileAccessFromFileURLs: true,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

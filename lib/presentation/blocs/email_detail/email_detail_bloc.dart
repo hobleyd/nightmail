@@ -44,8 +44,12 @@ class EmailDetailBloc extends Bloc<EmailDetailEvent, EmailDetailState> {
       (failure) async => emit(EmailDetailError(message: failure.message)),
       (email) async {
         final name = email.from.name;
-        final accountId = _accountManager.activeAccount?.id;
-        final senderAnomaly = (name != null && name.isNotEmpty && accountId != null)
+        final activeAccount = _accountManager.activeAccount;
+        final accountId = activeAccount?.id;
+        final accountDomain = _domainOf(activeAccount?.emailAddress);
+        final senderDomain = _domainOf(email.from.address);
+        final isInternal = accountDomain != null && accountDomain == senderDomain;
+        final senderAnomaly = (name != null && name.isNotEmpty && accountId != null && !isInternal)
             ? await _checkSenderAnomaly(CheckSenderAnomalyParams(
                 accountId: accountId,
                 fromAddress: email.from.address,
@@ -96,7 +100,10 @@ class EmailDetailBloc extends Bloc<EmailDetailEvent, EmailDetailState> {
     ));
 
     final name = current.email.from.name;
-    final updatedAnomaly = (name != null && name.isNotEmpty)
+    final accountDomain = _domainOf(_accountManager.activeAccount?.emailAddress);
+    final senderDomain = _domainOf(current.email.from.address);
+    final isInternal = accountDomain != null && accountDomain == senderDomain;
+    final updatedAnomaly = (name != null && name.isNotEmpty && !isInternal)
         ? await _checkSenderAnomaly(CheckSenderAnomalyParams(
               accountId: accountId,
               fromAddress: current.email.from.address,
@@ -106,5 +113,12 @@ class EmailDetailBloc extends Bloc<EmailDetailEvent, EmailDetailState> {
 
     emit(EmailDetailLoaded(
         email: current.email, senderAnomaly: updatedAnomaly));
+  }
+
+  static String? _domainOf(String? email) {
+    if (email == null) return null;
+    final at = email.lastIndexOf('@');
+    if (at < 0 || at == email.length - 1) return null;
+    return email.substring(at + 1).toLowerCase();
   }
 }

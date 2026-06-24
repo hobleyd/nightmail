@@ -639,14 +639,19 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
     final builder = MessageBuilder()
       ..from = [MailAddress(_account.displayName, _account.emailAddress)]
       ..to = toAddresses.map((e) => MailAddress(null, e)).toList()
       ..cc = ccAddresses.map((e) => MailAddress(null, e)).toList()
-      ..subject = subject
-      ..addTextPlain(body);
+      ..subject = subject;
+    if (bodyType == EmailBodyType.html) {
+      builder.addTextHtml(body);
+    } else {
+      builder.addTextPlain(body);
+    }
     await _addAttachmentsToBuilder(builder, newAttachments);
     await _sendMime(builder.buildMimeMessage());
   }
@@ -765,11 +770,21 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
   Future<void> _addAttachmentsToBuilder(
       MessageBuilder builder, List<LocalAttachment> attachments) async {
     for (final att in attachments) {
-      builder.addBinary(
-        att.bytes,
-        MediaType.fromText(att.mimeType),
-        filename: att.name,
-      );
+      if (att.isInline && att.contentId != null) {
+        final part = builder.addBinary(
+          att.bytes,
+          MediaType.fromText(att.mimeType),
+          filename: att.name,
+          disposition: ContentDispositionHeader.from(ContentDisposition.inline),
+        );
+        part.setHeader('Content-Id', '<${att.contentId}>');
+      } else {
+        builder.addBinary(
+          att.bytes,
+          MediaType.fromText(att.mimeType),
+          filename: att.name,
+        );
+      }
     }
   }
 
@@ -974,6 +989,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
     try {
@@ -986,8 +1002,12 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
         ..from = [MailAddress(_account.displayName, _account.emailAddress)]
         ..to = toAddresses.map((a) => MailAddress(null, a)).toList()
         ..cc = ccAddresses.map((a) => MailAddress(null, a)).toList()
-        ..subject = subject
-        ..addTextPlain(body);
+        ..subject = subject;
+      if (bodyType == EmailBodyType.html) {
+        builder.addTextHtml(body);
+      } else {
+        builder.addTextPlain(body);
+      }
       await _addAttachmentsToBuilder(builder, newAttachments);
       final message = builder.buildMimeMessage();
       final msgId = message.getHeaderValue('message-id') ?? '';
@@ -1017,6 +1037,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
     final separatorIdx = draftId.lastIndexOf(':');
@@ -1029,8 +1050,12 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
         ..from = [MailAddress(_account.displayName, _account.emailAddress)]
         ..to = toAddresses.map((a) => MailAddress(null, a)).toList()
         ..cc = ccAddresses.map((a) => MailAddress(null, a)).toList()
-        ..subject = subject
-        ..addTextPlain(body);
+        ..subject = subject;
+      if (bodyType == EmailBodyType.html) {
+        builder.addTextHtml(body);
+      } else {
+        builder.addTextPlain(body);
+      }
       await _addAttachmentsToBuilder(builder, newAttachments);
       final message = builder.buildMimeMessage();
       final msgId = message.getHeaderValue('message-id') ?? '';
@@ -1092,6 +1117,31 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       // any create action is triggered from the UI so this will be populated.
       final newPath = '$parentFolderId$_pathSeparator$displayName';
       await client.createMailbox(newPath);
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    }
+  }
+
+  @override
+  Future<void> renameFolder({
+    required String folderId,
+    required String newDisplayName,
+  }) async {
+    try {
+      final client = await _getConnectedClient();
+      final sep = _pathSeparator;
+      final lastSep = folderId.lastIndexOf(sep);
+      final newPath = lastSep >= 0
+          ? '${folderId.substring(0, lastSep)}$sep$newDisplayName'
+          : newDisplayName;
+      final leafName = lastSep >= 0 ? folderId.substring(lastSep + sep.length) : folderId;
+      final mailbox = Mailbox(
+        encodedName: leafName,
+        encodedPath: folderId,
+        flags: [],
+        pathSeparator: sep,
+      );
+      await client.renameMailbox(mailbox, newPath);
     } on ImapException catch (e) {
       throw ServerException(message: e.message ?? 'IMAP error');
     }

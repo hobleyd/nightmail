@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../injection_container.dart';
+import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_attachment.dart';
@@ -19,6 +20,7 @@ import '../blocs/account/account_cubit.dart';
 import '../blocs/compose/compose_bloc.dart';
 import '../blocs/compose/compose_event.dart';
 import '../blocs/compose/compose_state.dart';
+import 'html_email_editor.dart';
 import 'recipient_input_field.dart';
 
 class ComposeDialog extends StatelessWidget {
@@ -29,6 +31,8 @@ class ComposeDialog extends StatelessWidget {
     this.draftEmail,
     required this.fromAddress,
     this.accountId,
+    this.accountDomain,
+    required this.defaultComposeFormat,
   });
 
   final ComposeMode mode;
@@ -36,13 +40,15 @@ class ComposeDialog extends StatelessWidget {
   final Email? draftEmail;
   final String fromAddress;
   final String? accountId;
+  final String? accountDomain;
+  final EmailBodyType defaultComposeFormat;
 
   static Future<void> show(
     BuildContext context, {
     required ComposeMode mode,
     Email? originalEmail,
     Email? draftEmail,
-  }) {
+  }) async {
     final accountState = context.read<AccountCubit>().state;
     final fromAddress = accountState is AccountsLoaded
         ? () {
@@ -54,6 +60,11 @@ class ComposeDialog extends StatelessWidget {
         : '';
     final accountId =
         accountState is AccountsLoaded ? accountState.activeAccount.id : null;
+    final accountDomain = accountState is AccountsLoaded
+        ? _domainOf(accountState.activeAccount.emailAddress)
+        : null;
+    final defaultFormat = await sl<AppSettings>().loadDefaultComposeFormat();
+    if (!context.mounted) return;
     return showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -65,6 +76,8 @@ class ComposeDialog extends StatelessWidget {
           draftEmail: draftEmail,
           fromAddress: fromAddress,
           accountId: accountId,
+          accountDomain: accountDomain,
+          defaultComposeFormat: defaultFormat,
         ),
       ),
     );
@@ -102,9 +115,17 @@ class ComposeDialog extends StatelessWidget {
           onClose: close,
           fromAddress: fromAddress,
           accountId: accountId,
+          accountDomain: accountDomain,
+          defaultComposeFormat: defaultComposeFormat,
         ),
       ),
     );
+  }
+
+  static String? _domainOf(String email) {
+    final at = email.lastIndexOf('@');
+    if (at < 0 || at == email.length - 1) return null;
+    return email.substring(at + 1).toLowerCase();
   }
 }
 
@@ -117,24 +138,24 @@ class ComposeForm extends StatefulWidget {
     required this.onClose,
     required this.fromAddress,
     this.accountId,
+    this.accountDomain,
     this.scrollable = false,
     this.existingDraftId,
     this.onTitleChanged,
+    required this.defaultComposeFormat,
   });
 
   final ComposeMode mode;
   final Email? originalEmail;
-  // When set, pre-populates all fields from a saved draft (server-side or local).
   final Email? draftEmail;
   final VoidCallback onClose;
   final String fromAddress;
   final String? accountId;
+  final String? accountDomain;
   final bool scrollable;
-  // Server-side ID of the draft being edited. When provided, the first
-  // successful auto-save updates this draft (Graph/IMAP) then deletes it,
-  // replacing it with a fresh one so the ID stays current.
   final String? existingDraftId;
   final ValueChanged<String>? onTitleChanged;
+  final EmailBodyType defaultComposeFormat;
 
   @override
   State<ComposeForm> createState() => _ComposeFormState();
@@ -153,9 +174,12 @@ class _ComposeFormState extends State<ComposeForm> {
   List<LocalAttachment> _localAttachments = [];
   bool _isDragOver = false;
 
+  late EmailBodyType _bodyType;
+  // Tracks the latest HTML from the WebView (updated on every change event).
+  String _htmlBodyCache = '';
+  final _htmlEditorKey = GlobalKey<HtmlEmailEditorState>();
+
   String? _serverDraftId;
-  // Set when opened from an existing server draft. After the first successful
-  // save the old draft is deleted and this is cleared.
   String? _pendingOldDraftId;
   Timer? _draftTimer;
   DateTime? _lastDraftSavedAt;
@@ -167,31 +191,54 @@ class _ComposeFormState extends State<ComposeForm> {
     _ccRecipients = _parseAddresses(_initialCc());
     _fromController = TextEditingController(text: widget.fromAddress);
     _subjectController = TextEditingController(text: _initialSubject());
-    _bodyController = TextEditingController(text: _initialBody());
+
+    _bodyType = _determineInitialBodyType();
+    if (_bodyType == EmailBodyType.html) {
+      _htmlBodyCache = _buildInitialHtmlBody();
+      _bodyController = TextEditingController();
+    } else {
+      _bodyController = TextEditingController(text: _buildInitialPlainBody());
+    }
+
     _subjectController.addListener(_onSubjectChanged);
     _bodyController.addListener(_scheduleDraftSave);
-    // When opening an existing server draft, seed the ID so the first
-    // auto-save updates it rather than creating a duplicate.
+
     _serverDraftId = widget.existingDraftId;
     _pendingOldDraftId = widget.existingDraftId;
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _bodyFocus.requestFocus();
-      _bodyController.selection = const TextSelection.collapsed(offset: 0);
+      final isReply = widget.mode == ComposeMode.reply ||
+          widget.mode == ComposeMode.replyAll;
+      if (isReply && _bodyType == EmailBodyType.text) {
+        _bodyFocus.requestFocus();
+        _bodyController.selection = const TextSelection.collapsed(offset: 0);
+      } else {
+        _toFieldKey.currentState?.requestFocus();
+      }
       widget.onTitleChanged?.call(_title);
     });
   }
 
+  EmailBodyType _determineInitialBodyType() {
+    if (widget.draftEmail != null) return widget.draftEmail!.bodyType;
+    if (widget.originalEmail != null) return widget.originalEmail!.bodyType;
+    return widget.defaultComposeFormat;
+  }
+
   static const _forwardSeparator = '---------- Forwarded message ---------';
 
-  String _initialBody() {
-    if (widget.draftEmail != null) return widget.draftEmail!.body;
+  // Plain text body for plain-text mode.
+  String _buildInitialPlainBody() {
+    if (widget.draftEmail != null) {
+      final draft = widget.draftEmail!;
+      return draft.bodyType == EmailBodyType.html
+          ? _stripHtml(draft.body)
+          : draft.body;
+    }
     final email = widget.originalEmail;
     if (email == null) return '';
 
-    final fromName = email.from.name;
-    final from = (fromName != null && fromName.isNotEmpty)
-        ? '$fromName <${email.from.address}>'
-        : email.from.address;
+    final from = _formatFrom(email);
 
     if (widget.mode == ComposeMode.forward) {
       final bodyText = email.bodyType == EmailBodyType.html
@@ -221,12 +268,65 @@ class _ComposeFormState extends State<ComposeForm> {
     }
   }
 
+  // HTML body for HTML-editor mode.
+  String _buildInitialHtmlBody() {
+    if (widget.draftEmail != null) {
+      final draft = widget.draftEmail!;
+      return draft.bodyType == EmailBodyType.html
+          ? draft.body
+          : _plainToHtml(draft.body);
+    }
+    final email = widget.originalEmail;
+    if (email == null) return '';
+
+    final from = _formatFrom(email);
+    final dateStr = _formatDate(email.receivedDateTime);
+    final fromEsc = const HtmlEscape().convert(from);
+    final dateEsc = const HtmlEscape().convert(dateStr);
+
+    if (widget.mode == ComposeMode.forward) {
+      final htmlBody = email.bodyType == EmailBodyType.html
+          ? email.body
+          : _plainToHtml(email.body);
+      final subjectEsc = const HtmlEscape().convert(email.subject);
+      final fromHeaderEsc = const HtmlEscape().convert(from);
+      return '<div><br></div>'
+          '<div>---------- Forwarded message ---------</div>'
+          '<div>From: $fromHeaderEsc</div>'
+          '<div>Date: $dateEsc</div>'
+          '<div>Subject: $subjectEsc</div>'
+          '<div><br></div>'
+          '$htmlBody';
+    }
+
+    if (widget.mode != ComposeMode.reply && widget.mode != ComposeMode.replyAll) {
+      return '';
+    }
+
+    final htmlBody = email.bodyType == EmailBodyType.html
+        ? email.body
+        : _plainToHtml(email.body);
+
+    return '<div><br></div>'
+        '<div><br></div>'
+        '<blockquote style="margin:0 0 0 0;border-left:2px solid #ccc;padding-left:12px;color:#666">'
+        '<div>On $dateEsc, $fromEsc wrote:</div>'
+        '$htmlBody'
+        '</blockquote>';
+  }
+
+  String _formatFrom(Email email) {
+    final fromName = email.from.name;
+    return (fromName != null && fromName.isNotEmpty)
+        ? '$fromName <${email.from.address}>'
+        : email.from.address;
+  }
+
   List<String> _parseAddresses(String text) {
     if (text.trim().isEmpty) return [];
     return text.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
   }
 
-  // Extracts the bare email address from a string that may be "Name <addr>" or just "addr".
   String _bareAddress(String address) {
     final match = RegExp(r'<([^>]+)>').firstMatch(address);
     return (match?.group(1) ?? address).trim();
@@ -280,14 +380,16 @@ class _ComposeFormState extends State<ComposeForm> {
 
   @override
   void dispose() {
-    // Capture values before controllers are torn down.
     final hasPendingSave = _draftTimer?.isActive == true;
     final draftId = _serverDraftId;
     final oldDraftId = _pendingOldDraftId;
     final to = List<String>.from(_toRecipients);
     final cc = List<String>.from(_ccRecipients);
     final subject = _subjectController.text;
-    final body = _bodyController.text;
+    final body = _bodyType == EmailBodyType.html
+        ? _htmlBodyCache
+        : _bodyController.text;
+    final bodyType = _bodyType;
     final attachments = List<LocalAttachment>.from(_localAttachments);
 
     _draftTimer?.cancel();
@@ -299,7 +401,6 @@ class _ComposeFormState extends State<ComposeForm> {
     _bodyFocus.dispose();
     super.dispose();
 
-    // If a debounced save was queued when the window closed, flush it now.
     if (hasPendingSave) {
       sl<SaveServerDraft>()(SaveServerDraftParams(
         existingDraftId: draftId,
@@ -307,6 +408,7 @@ class _ComposeFormState extends State<ComposeForm> {
         ccAddresses: cc,
         subject: subject,
         body: body,
+        bodyType: bodyType,
         newAttachments: attachments,
       )).then((result) {
         result.fold((_) {}, (newId) {
@@ -329,15 +431,18 @@ class _ComposeFormState extends State<ComposeForm> {
     _draftTimer = Timer(const Duration(milliseconds: 1500), _saveDraft);
   }
 
-  // Returns null on success, or an error message string on failure.
   Future<String?> _saveDraft() async {
     final oldDraftId = _pendingOldDraftId;
+    final body = _bodyType == EmailBodyType.html
+        ? _htmlBodyCache
+        : _bodyController.text;
     final result = await sl<SaveServerDraft>()(SaveServerDraftParams(
       existingDraftId: _serverDraftId,
       toAddresses: _toRecipients,
       ccAddresses: _ccRecipients,
       subject: _subjectController.text,
-      body: _bodyController.text,
+      body: body,
+      bodyType: _bodyType,
       newAttachments: _localAttachments,
     ));
     return result.fold(
@@ -362,13 +467,19 @@ class _ComposeFormState extends State<ComposeForm> {
     _serverDraftId = null;
   }
 
-  bool get _hasContent =>
-      _serverDraftId != null ||
-      _toRecipients.isNotEmpty ||
-      _ccRecipients.isNotEmpty ||
-      _subjectController.text.isNotEmpty ||
-      _bodyController.text.isNotEmpty ||
-      _localAttachments.isNotEmpty;
+  bool get _hasContent {
+    final htmlEmpty = _htmlBodyCache.isEmpty ||
+        _htmlBodyCache == '<br>' ||
+        _htmlBodyCache == '<div><br></div>';
+    return _serverDraftId != null ||
+        _toRecipients.isNotEmpty ||
+        _ccRecipients.isNotEmpty ||
+        _subjectController.text.isNotEmpty ||
+        (_bodyType == EmailBodyType.html
+            ? !htmlEmpty
+            : _bodyController.text.isNotEmpty) ||
+        _localAttachments.where((a) => !a.isInline).isNotEmpty;
+  }
 
   Future<void> _requestClose(BuildContext context) async {
     if (!_hasContent) {
@@ -403,9 +514,72 @@ class _ComposeFormState extends State<ComposeForm> {
         await _deleteDraft();
         if (mounted) widget.onClose();
       case null:
-        // dismissed — keep editing
         break;
     }
+  }
+
+  // Switch from HTML to plain text — asks for confirmation because it's lossy.
+  Future<void> _switchToPlainText(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: context.colors.surfacePanel,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        title: Text(
+          'Switch to Plain Text?',
+          style: TextStyle(
+            color: context.colors.textPrimary,
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        content: Text(
+          'Switching to plain text will remove all formatting and inline images. '
+          'This cannot be undone.',
+          style: TextStyle(color: context.colors.textSecondary, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(
+              'Keep HTML',
+              style: TextStyle(color: context.colors.textMuted, fontSize: 13),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.red.shade600,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('Switch to Plain Text', style: TextStyle(fontSize: 13)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final plainText = _stripHtml(_htmlBodyCache);
+    // Remove inline attachments — they don't apply in plain text mode.
+    setState(() {
+      _bodyType = EmailBodyType.text;
+      _localAttachments = _localAttachments.where((a) => !a.isInline).toList();
+    });
+    _bodyController.text = plainText;
+    _scheduleDraftSave();
+  }
+
+  void _switchToHtml() {
+    final plainText = _bodyController.text;
+    final html = _plainToHtml(plainText);
+    setState(() {
+      _bodyType = EmailBodyType.html;
+      _htmlBodyCache = html;
+    });
+    _htmlEditorKey.currentState?.setContent(html);
+    _scheduleDraftSave();
   }
 
   void _addDroppedFiles(DropDoneDetails details) {
@@ -434,7 +608,7 @@ class _ComposeFormState extends State<ComposeForm> {
       final failCount = results.length - added.length;
       if (!mounted) return;
       if (failCount > 0) {
-        ScaffoldMessenger.of(this.context).showSnackBar(SnackBar(
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(failCount == 1
               ? 'Could not attach file: Windows denied access. Try copying it to your Desktop first.'
               : '$failCount files could not be attached: Windows denied access.'),
@@ -442,19 +616,44 @@ class _ComposeFormState extends State<ComposeForm> {
           duration: const Duration(seconds: 8),
         ));
       }
-      if (added.isNotEmpty) {
+      if (added.isEmpty) return;
+
+      if (_bodyType == EmailBodyType.html) {
+        // In HTML mode, route image files inline into the editor body.
+        final images = added.where((a) => a.mimeType.startsWith('image/')).toList();
+        final nonImages = added.where((a) => !a.mimeType.startsWith('image/')).toList();
+
+        for (final img in images) {
+          _insertInlineImage(img);
+        }
+        if (nonImages.isNotEmpty) {
+          setState(() => _localAttachments = [..._localAttachments, ...nonImages]);
+          _scheduleDraftSave();
+        }
+      } else {
         setState(() => _localAttachments = [..._localAttachments, ...added]);
         _scheduleDraftSave();
       }
     });
   }
 
-  // Returns (attachmentName, bytes) for a dropped directory.
-  //
-  // If a companion .zip exists at path + '.zip' (the tell-tale sign that Win32
-  // path-normalisation turned a filename like "report .pdf" into a directory),
-  // we extract the largest entry from that .zip and keep the original name.
-  // Otherwise we treat the drop as a genuine folder and compress it to a .zip.
+  void _insertInlineImage(LocalAttachment att) {
+    final contentId =
+        '${DateTime.now().millisecondsSinceEpoch}_${att.name.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_')}@nightmail';
+    final inlineAtt = LocalAttachment(
+      path: att.path,
+      name: att.name,
+      mimeType: att.mimeType,
+      bytes: att.bytes,
+      isInline: true,
+      contentId: contentId,
+    );
+    setState(() => _localAttachments = [..._localAttachments, inlineAtt]);
+    final dataUri = 'data:${att.mimeType};base64,${base64.encode(att.bytes)}';
+    _htmlEditorKey.currentState?.insertImage(dataUri, contentId);
+    _scheduleDraftSave();
+  }
+
   Future<(String, Uint8List)> _readDroppedDirectory(
       String path, String displayName) async {
     if (Platform.isWindows) {
@@ -499,7 +698,6 @@ class _ComposeFormState extends State<ComposeForm> {
         }
       }
     } else {
-      // macOS / Linux: zip via the system zip command.
       final stamp = DateTime.now().millisecondsSinceEpoch;
       final tempZip = '${Directory.systemTemp.path}/nm_$stamp.zip';
       final result = await Process.run(
@@ -523,8 +721,6 @@ class _ComposeFormState extends State<ComposeForm> {
 
     if (!Platform.isWindows) return File(path).readAsBytes();
 
-    // .NET honours \\?\ without path normalisation, letting us open files whose
-    // names contain a trailing space before the extension.
     final winPath = r'\\?\' + path.replaceAll('/', r'\');
     final extEscaped = winPath.replaceAll("'", "''");
     final psResult = await Process.run('powershell', [
@@ -551,12 +747,6 @@ class _ComposeFormState extends State<ComposeForm> {
     return subject.isNotEmpty ? subject : _baseTitle;
   }
 
-  bool get _toInputEditable => true;
-
-  bool get _ccInputEditable => true;
-
-  bool get _subjectEditable => true;
-
   void _handleDrop(String address, String fromFieldId, String toFieldId) {
     if (fromFieldId == toFieldId) return;
     setState(() {
@@ -577,13 +767,12 @@ class _ComposeFormState extends State<ComposeForm> {
     });
   }
 
-  void _submit(BuildContext context) {
+  Future<void> _submit(BuildContext context) async {
     _toFieldKey.currentState?.flush();
     _ccFieldKey.currentState?.flush();
     final to = _toRecipients;
     final cc = _ccRecipients;
     final subject = _subjectController.text.trim();
-    final body = _bodyController.text.trim();
 
     if ((widget.mode == ComposeMode.newEmail ||
             widget.mode == ComposeMode.forward) &&
@@ -594,28 +783,20 @@ class _ComposeFormState extends State<ComposeForm> {
       return;
     }
 
-    final originalBodyType =
-        widget.originalEmail?.bodyType ?? EmailBodyType.text;
-    final isReplyLike = widget.mode == ComposeMode.reply ||
-        widget.mode == ComposeMode.replyAll;
-
     final String effectiveBody;
-    if (isReplyLike && originalBodyType == EmailBodyType.html) {
-      // For HTML originals, convert the plain-text body field to HTML so the
-      // sent message matches the original email's content type.
-      effectiveBody = const HtmlEscape().convert(body).replaceAll('\n', '<br>');
+    final EmailBodyType effectiveBodyType;
+
+    if (_bodyType == EmailBodyType.html) {
+      final freshHtml = await _htmlEditorKey.currentState?.getContent();
+      if (freshHtml != null) _htmlBodyCache = freshHtml;
+      effectiveBody = _substituteInlineImageSrcs(_htmlBodyCache);
+      effectiveBodyType = EmailBodyType.html;
     } else {
-      effectiveBody = body;
+      effectiveBody = _bodyController.text.trim();
+      effectiveBodyType = EmailBodyType.text;
     }
 
-    // Forward always sends plain text — _initialBody() strips HTML when
-    // pre-populating, so the compose body is always plain regardless of original.
-    final effectiveBodyType = widget.mode == ComposeMode.forward
-        ? EmailBodyType.text
-        : (isReplyLike && originalBodyType == EmailBodyType.html)
-            ? EmailBodyType.html
-            : originalBodyType;
-
+    if (!mounted) return;
     context.read<ComposeBloc>().add(ComposeSubmitted(
           mode: widget.mode,
           originalMessageId: widget.originalEmail?.id,
@@ -627,6 +808,77 @@ class _ComposeFormState extends State<ComposeForm> {
           bodyType: effectiveBodyType,
           newAttachments: _localAttachments,
         ));
+  }
+
+  // Replace data: URI src attrs with cid: references for inline images.
+  String _substituteInlineImageSrcs(String html) {
+    return html.replaceAllMapped(
+      RegExp(r'<img\b[^>]*>', caseSensitive: false),
+      (match) {
+        final tag = match.group(0)!;
+        final cidMatch =
+            RegExp(r'data-cid="([^"]*)"').firstMatch(tag);
+        if (cidMatch == null) return tag;
+        final contentId = cidMatch.group(1)!;
+        return tag.replaceFirst(
+          RegExp(r'src="data:[^"]*"'),
+          'src="cid:$contentId"',
+        );
+      },
+    );
+  }
+
+  Future<void> _onLinkRequested(BuildContext context) async {
+    final urlController = TextEditingController();
+    final url = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: context.colors.surfacePanel,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        title: Text(
+          'Insert Link',
+          style: TextStyle(
+            color: context.colors.textPrimary,
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        content: TextField(
+          controller: urlController,
+          autofocus: true,
+          style: TextStyle(color: context.colors.textPrimary, fontSize: 13),
+          decoration: InputDecoration(
+            hintText: 'https://example.com',
+            hintStyle: TextStyle(color: context.colors.textMuted, fontSize: 13),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
+          ),
+          onSubmitted: (v) => Navigator.of(context).pop(v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(
+              'Cancel',
+              style: TextStyle(color: context.colors.textMuted, fontSize: 13),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(urlController.text.trim()),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.accent,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('Insert', style: TextStyle(fontSize: 13)),
+          ),
+        ],
+      ),
+    );
+    urlController.dispose();
+    if (url != null && url.isNotEmpty) {
+      _htmlEditorKey.currentState?.insertLink(url);
+    }
   }
 
   List<Widget> _buildFields(AppColors c, String? accountId) => [
@@ -648,9 +900,10 @@ class _ComposeFormState extends State<ComposeForm> {
           },
           onDropAccepted: (address, fromFieldId) =>
               _handleDrop(address, fromFieldId, 'to'),
-          showInput: _toInputEditable,
+          showInput: true,
           hintText: 'recipient@example.com',
           accountId: accountId,
+          accountDomain: widget.accountDomain,
         ),
         const SizedBox(height: 8),
         RecipientInputField(
@@ -664,21 +917,102 @@ class _ComposeFormState extends State<ComposeForm> {
           },
           onDropAccepted: (address, fromFieldId) =>
               _handleDrop(address, fromFieldId, 'cc'),
-          showInput: _ccInputEditable,
+          showInput: true,
           hintText: 'cc@example.com',
           accountId: accountId,
+          accountDomain: widget.accountDomain,
         ),
         const SizedBox(height: 8),
         _FieldRow(
           label: 'Subject',
           controller: _subjectController,
-          enabled: _subjectEditable,
+          enabled: true,
           hintText: 'Subject',
         ),
         const SizedBox(height: 12),
         Divider(height: 1, color: c.border),
         const SizedBox(height: 12),
       ];
+
+  Widget _buildEditorModeRow(AppColors c) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          const Spacer(),
+          Container(
+            height: 26,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: c.surfaceBase,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: c.border),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<EmailBodyType>(
+                value: _bodyType,
+                isDense: true,
+                dropdownColor: c.surfacePanel,
+                style: TextStyle(color: c.textSecondary, fontSize: 11),
+                underline: const SizedBox.shrink(),
+                items: const [
+                  DropdownMenuItem(
+                    value: EmailBodyType.html,
+                    child: Text('Rich Text'),
+                  ),
+                  DropdownMenuItem(
+                    value: EmailBodyType.text,
+                    child: Text('Plain Text'),
+                  ),
+                ],
+                onChanged: (val) {
+                  if (val == null || val == _bodyType) return;
+                  if (val == EmailBodyType.text) {
+                    _switchToPlainText(context);
+                  } else {
+                    _switchToHtml();
+                  }
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBodyEditor(AppColors c) {
+    if (_bodyType == EmailBodyType.html) {
+      return HtmlEmailEditor(
+        key: _htmlEditorKey,
+        initialHtml: _htmlBodyCache,
+        onContentChanged: (html) {
+          _htmlBodyCache = html;
+          _scheduleDraftSave();
+        },
+        onLinkRequested: () => _onLinkRequested(context),
+      );
+    }
+
+    return TextField(
+      controller: _bodyController,
+      focusNode: _bodyFocus,
+      maxLines: null,
+      expands: true,
+      textAlignVertical: TextAlignVertical.top,
+      style: TextStyle(
+        color: c.textPrimary,
+        fontSize: 13,
+        height: 1.5,
+      ),
+      decoration: InputDecoration(
+        hintText: 'Write your message here…',
+        hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
+        border: InputBorder.none,
+        contentPadding: EdgeInsets.zero,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -698,16 +1032,17 @@ class _ComposeFormState extends State<ComposeForm> {
   }
 
   Widget _buildContent(BuildContext context, AppColors c, String? accountId) {
+    final forwardEmail =
+        widget.mode == ComposeMode.forward ? widget.originalEmail : null;
+    final visibleAttachments =
+        _localAttachments.where((a) => !a.isInline).toList();
+
     if (widget.scrollable) {
-      final forwardEmail =
-          widget.mode == ComposeMode.forward ? widget.originalEmail : null;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _TitleBar(title: _title, onClose: () => _requestClose(context)),
           Divider(height: 1, color: c.border),
-          // Fields are fixed-height — kept outside the Expanded area so the
-          // body + quoted-email section can grow freely when the window resizes.
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
             child: Column(
@@ -734,33 +1069,15 @@ class _ComposeFormState extends State<ComposeForm> {
                                     id
                                   ]),
                         ),
-                      if (_localAttachments.isNotEmpty)
+                      if (visibleAttachments.isNotEmpty)
                         _LocalAttachmentChips(
-                          attachments: _localAttachments,
+                          attachments: visibleAttachments,
                           onRemove: (att) => setState(() => _localAttachments =
                               _localAttachments.where((a) => a != att).toList()),
                         ),
                       Expanded(
                         flex: 2,
-                        child: TextField(
-                          controller: _bodyController,
-                          focusNode: _bodyFocus,
-                          maxLines: null,
-                          expands: true,
-                          textAlignVertical: TextAlignVertical.top,
-                          style: TextStyle(
-                            color: c.textPrimary,
-                            fontSize: 13,
-                            height: 1.5,
-                          ),
-                          decoration: InputDecoration(
-                            hintText: 'Write your message here…',
-                            hintStyle:
-                                TextStyle(color: c.textMuted, fontSize: 13),
-                            border: InputBorder.none,
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                        ),
+                        child: _buildBodyEditor(c),
                       ),
                       const SizedBox(height: 8),
                     ],
@@ -771,13 +1088,23 @@ class _ComposeFormState extends State<ComposeForm> {
             ),
           ),
           Divider(height: 1, color: c.border),
-          _Footer(onSend: () => _submit(context), onClose: () => _requestClose(context), draftSavedAt: _lastDraftSavedAt),
+          _Footer(
+            onSend: () => _submit(context),
+            onClose: () => _requestClose(context),
+            draftSavedAt: _lastDraftSavedAt,
+            bodyType: _bodyType,
+            onBodyTypeChanged: (val) {
+              if (val == EmailBodyType.text) {
+                _switchToPlainText(context);
+              } else {
+                _switchToHtml();
+              }
+            },
+          ),
         ],
       );
     }
 
-    final forwardEmail =
-        widget.mode == ComposeMode.forward ? widget.originalEmail : null;
     return SizedBox(
       width: 600,
       child: Column(
@@ -792,17 +1119,16 @@ class _ComposeFormState extends State<ComposeForm> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 ..._buildFields(c, accountId),
-                if (forwardEmail != null &&
-                    forwardEmail.attachments.isNotEmpty)
+                if (forwardEmail != null && forwardEmail.attachments.isNotEmpty)
                   _ForwardAttachmentChips(
                     attachments: forwardEmail.attachments,
                     excludedIds: _excludedAttachmentIds,
                     onRemove: (id) => setState(
                         () => _excludedAttachmentIds = [..._excludedAttachmentIds, id]),
                   ),
-                if (_localAttachments.isNotEmpty)
+                if (visibleAttachments.isNotEmpty)
                   _LocalAttachmentChips(
-                    attachments: _localAttachments,
+                    attachments: visibleAttachments,
                     onRemove: (att) => setState(() => _localAttachments =
                         _localAttachments.where((a) => a != att).toList()),
                   ),
@@ -810,24 +1136,7 @@ class _ComposeFormState extends State<ComposeForm> {
                   children: [
                     SizedBox(
                       height: forwardEmail != null ? 150 : 240,
-                      child: TextField(
-                        controller: _bodyController,
-                        focusNode: _bodyFocus,
-                        maxLines: null,
-                        expands: true,
-                        textAlignVertical: TextAlignVertical.top,
-                        style: TextStyle(
-                          color: c.textPrimary,
-                          fontSize: 13,
-                          height: 1.5,
-                        ),
-                        decoration: InputDecoration(
-                          hintText: 'Write your message here…',
-                          hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.zero,
-                        ),
-                      ),
+                      child: _buildBodyEditor(c),
                     ),
                     if (_isDragOver) const Positioned.fill(child: _DropOverlay()),
                   ],
@@ -836,13 +1145,24 @@ class _ComposeFormState extends State<ComposeForm> {
             ),
           ),
           Divider(height: 1, color: c.border),
-          _Footer(onSend: () => _submit(context), onClose: () => _requestClose(context), draftSavedAt: _lastDraftSavedAt),
+          _Footer(
+            onSend: () => _submit(context),
+            onClose: () => _requestClose(context),
+            draftSavedAt: _lastDraftSavedAt,
+            bodyType: _bodyType,
+            onBodyTypeChanged: (val) {
+              if (val == EmailBodyType.text) {
+                _switchToPlainText(context);
+              } else {
+                _switchToHtml();
+              }
+            },
+          ),
         ],
       ),
     );
   }
 }
-
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -864,6 +1184,15 @@ String _stripHtml(String html) {
       .replaceAll('&#39;', "'")
       .replaceAll(RegExp(r'\n{3,}'), '\n\n')
       .trim();
+}
+
+String _plainToHtml(String text) {
+  if (text.isEmpty) return '';
+  final escape = const HtmlEscape();
+  return text.split('\n').map((line) {
+    final escaped = escape.convert(line);
+    return escaped.isEmpty ? '<div><br></div>' : '<div>$escaped</div>';
+  }).join('');
 }
 
 String _formatDate(DateTime dt) {
@@ -1050,7 +1379,6 @@ class _AttachmentChip extends StatelessWidget {
   }
 }
 
-
 enum _CloseAction { saveToDrafts, delete }
 
 class _CloseDraftDialog extends StatelessWidget {
@@ -1196,10 +1524,18 @@ class _DropOverlay extends StatelessWidget {
 }
 
 class _Footer extends StatelessWidget {
-  const _Footer({required this.onSend, required this.onClose, this.draftSavedAt});
+  const _Footer({
+    required this.onSend,
+    required this.onClose,
+    this.draftSavedAt,
+    required this.bodyType,
+    required this.onBodyTypeChanged,
+  });
   final VoidCallback onSend;
   final VoidCallback onClose;
   final DateTime? draftSavedAt;
+  final EmailBodyType bodyType;
+  final ValueChanged<EmailBodyType> onBodyTypeChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -1211,11 +1547,45 @@ class _Footer extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: Row(
             children: [
-              if (draftSavedAt != null)
+              Container(
+                height: 26,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                decoration: BoxDecoration(
+                  color: c.surfaceBase,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: c.border),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<EmailBodyType>(
+                    value: bodyType,
+                    isDense: true,
+                    dropdownColor: c.surfacePanel,
+                    style: TextStyle(color: c.textSecondary, fontSize: 11),
+                    items: const [
+                      DropdownMenuItem(
+                        value: EmailBodyType.html,
+                        child: Text('Rich Text'),
+                      ),
+                      DropdownMenuItem(
+                        value: EmailBodyType.text,
+                        child: Text('Plain Text'),
+                      ),
+                    ],
+                    onChanged: isSending
+                        ? null
+                        : (val) {
+                            if (val != null) onBodyTypeChanged(val);
+                          },
+                  ),
+                ),
+              ),
+              if (draftSavedAt != null) ...[
+                const SizedBox(width: 8),
                 Text(
                   'Draft saved',
                   style: TextStyle(color: c.textMuted, fontSize: 11),
                 ),
+              ],
               const Spacer(),
               TextButton(
                 onPressed: isSending ? null : onClose,

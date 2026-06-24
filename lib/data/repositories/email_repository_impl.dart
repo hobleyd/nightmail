@@ -163,6 +163,7 @@ class EmailRepositoryImpl implements EmailRepository {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
     return _execute(() async {
@@ -171,6 +172,7 @@ class EmailRepositoryImpl implements EmailRepository {
         ccAddresses: ccAddresses,
         subject: subject,
         body: body,
+        bodyType: bodyType,
         newAttachments: newAttachments,
       );
       return unit;
@@ -361,6 +363,20 @@ class EmailRepositoryImpl implements EmailRepository {
   }
 
   @override
+  Future<Either<Failure, Unit>> renameFolder({
+    required String folderId,
+    required String newDisplayName,
+  }) async {
+    return _execute(() async {
+      await _accountManager.emailDatasource.renameFolder(
+        folderId: folderId,
+        newDisplayName: newDisplayName,
+      );
+      return unit;
+    });
+  }
+
+  @override
   Future<Either<Failure, List<Email>>> searchEmails({
     String? folderId,
     required String query,
@@ -379,6 +395,7 @@ class EmailRepositoryImpl implements EmailRepository {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) {
     return _execute(() => _accountManager.emailDatasource.createServerDraft(
@@ -386,6 +403,7 @@ class EmailRepositoryImpl implements EmailRepository {
           ccAddresses: ccAddresses,
           subject: subject,
           body: body,
+          bodyType: bodyType,
           newAttachments: newAttachments,
         ));
   }
@@ -397,6 +415,7 @@ class EmailRepositoryImpl implements EmailRepository {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) {
     return _execute(() => _accountManager.emailDatasource.updateServerDraft(
@@ -405,6 +424,7 @@ class EmailRepositoryImpl implements EmailRepository {
           ccAddresses: ccAddresses,
           subject: subject,
           body: body,
+          bodyType: bodyType,
           newAttachments: newAttachments,
         ));
   }

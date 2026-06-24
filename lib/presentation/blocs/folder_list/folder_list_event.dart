@@ -32,6 +32,19 @@ final class FolderListCreateFolderRequested extends FolderListEvent {
   List<Object?> get props => [parentFolderId, displayName];
 }
 
+final class FolderListRenameFolderRequested extends FolderListEvent {
+  const FolderListRenameFolderRequested({
+    required this.folderId,
+    required this.newDisplayName,
+  });
+
+  final String folderId;
+  final String newDisplayName;
+
+  @override
+  List<Object?> get props => [folderId, newDisplayName];
+}
+
 final class FolderListUnreadCountChanged extends FolderListEvent {
   const FolderListUnreadCountChanged({
     required this.folderId,

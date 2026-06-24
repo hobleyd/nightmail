@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
+
+import '../../core/platform/window_utils.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -45,7 +47,7 @@ class EventEditDialog extends StatelessWidget {
     String? accountId,
     bool isO365Account = false,
   }) async {
-    await WindowController.create(
+    await createSubWindow(
       WindowConfiguration(
         arguments: jsonEncode({
           'type': 'eventEdit',

@@ -8,6 +8,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../core/config/oauth_client_id_storage.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
+import '../../domain/entities/email.dart';
 import '../../injection_container.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/accounts/account_manager.dart';
@@ -232,6 +233,8 @@ class _AppearanceSection extends StatelessWidget {
         _FontSizeSetting(),
         const SizedBox(height: 12),
         const _DeleteConfirmSetting(),
+        const SizedBox(height: 12),
+        const _ComposeFormatSetting(),
       ],
     );
   }
@@ -512,6 +515,73 @@ class _DeleteConfirmSettingState extends State<_DeleteConfirmSetting> {
             setState(() => _value = val);
             sl<AppSettings>().saveConfirmDeleteEmail(val);
           },
+        ),
+      ],
+    );
+  }
+}
+
+class _ComposeFormatSetting extends StatefulWidget {
+  const _ComposeFormatSetting();
+
+  @override
+  State<_ComposeFormatSetting> createState() => _ComposeFormatSettingState();
+}
+
+class _ComposeFormatSettingState extends State<_ComposeFormatSetting> {
+  EmailBodyType _value = AppSettings.defaultComposeFormat;
+
+  @override
+  void initState() {
+    super.initState();
+    sl<AppSettings>().loadDefaultComposeFormat().then((v) {
+      if (mounted) setState(() => _value = v);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Row(
+      children: [
+        Text(
+          'Compose format',
+          style: TextStyle(color: c.textSecondary, fontSize: 13),
+        ),
+        const Spacer(),
+        Flexible(
+          child: Container(
+            height: 32,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            decoration: BoxDecoration(
+              color: c.surfaceBase,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: c.separatorStrong),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<EmailBodyType>(
+                value: _value,
+                isDense: true,
+                dropdownColor: c.surfacePanel,
+                style: TextStyle(color: c.textSecondary, fontSize: 13),
+                items: const [
+                  DropdownMenuItem(
+                    value: EmailBodyType.html,
+                    child: Text('Rich Text (HTML)'),
+                  ),
+                  DropdownMenuItem(
+                    value: EmailBodyType.text,
+                    child: Text('Plain Text'),
+                  ),
+                ],
+                onChanged: (val) {
+                  if (val == null) return;
+                  setState(() => _value = val);
+                  sl<AppSettings>().saveDefaultComposeFormat(val);
+                },
+              ),
+            ),
+          ),
         ),
       ],
     );

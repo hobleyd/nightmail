@@ -39,6 +39,7 @@ abstract interface class EmailRepository {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   });
 
@@ -117,6 +118,12 @@ abstract interface class EmailRepository {
     required String displayName,
   });
 
+  /// Renames [folderId] to [newDisplayName].
+  Future<Either<Failure, Unit>> renameFolder({
+    required String folderId,
+    required String newDisplayName,
+  });
+
   /// Searches [folderId] (and its immediate children where supported) for
   /// emails matching [query].  Supports `from:`, `to:`, `subject:`, and
   /// `has:attachment` notation.  Results are NOT cached.
@@ -132,6 +139,7 @@ abstract interface class EmailRepository {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   });
 
@@ -142,6 +150,7 @@ abstract interface class EmailRepository {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   });
 

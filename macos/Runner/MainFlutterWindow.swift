@@ -62,6 +62,8 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     calendarNotifyChannels.append(mainCalendarChannel)
     allChannels.append(mainCalendarChannel)
 
+    registerWindowUtilsChannel(messenger: flutterViewController.engine.binaryMessenger) { [weak self] in self }
+
     // Register contacts + plugins for every secondary window too.
     FlutterMultiWindowPlugin.setOnWindowCreatedCallback { [weak self] controller in
       RegisterGeneratedPlugins(registry: controller)
@@ -69,6 +71,10 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       self?.registerEventKitChannel(messenger: controller.engine.binaryMessenger)
       self?.registerCalendarRefreshRelay(messenger: controller.engine.binaryMessenger)
       self?.registerNotificationRelay(messenger: controller.engine.binaryMessenger)
+      self?.registerWindowUtilsChannel(
+        messenger: controller.engine.binaryMessenger,
+        windowProvider: { [weak controller] in controller?.view.window }
+      )
     }
 
     badgeChannel = FlutterMethodChannel(
@@ -451,8 +457,10 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       NSApp.activate(ignoringOtherApps: true)
 
       let store = CNContactStore()
-      // Use the completion-handler form — more reliable on macOS 15 than async/await.
-      store.requestAccess(for: .contacts) { granted, error in
+      // Explicit cast selects the completion-handler overload. The async/await form
+      // throws CNError.authorizationDenied on macOS 15 for notDetermined apps.
+      let requestAccess = store.requestAccess as (CNEntityType, @escaping (Bool, Error?) -> Void) -> Void
+      requestAccess(.contacts) { granted, error in
         DispatchQueue.main.async {
           let after = CNContactStore.authorizationStatus(for: .contacts)
           if let e = error as? NSError {
@@ -465,6 +473,36 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
         }
       }
     }
+  }
+
+  // MARK: - Window utilities channel
+
+  private func registerWindowUtilsChannel(
+    messenger: FlutterBinaryMessenger,
+    windowProvider: @escaping () -> NSWindow?
+  ) {
+    let channel = FlutterMethodChannel(
+      name: "au.com.sharpblue.nightmail/window_utils",
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { call, result in
+      if call.method == "getMyScreenInfo" {
+        let screen = windowProvider()?.screen ?? NSScreen.screens.first
+        let frame = screen?.visibleFrame ?? .zero
+        guard !NSScreen.screens.isEmpty else { result(nil); return }
+        let mainScreenHeight = NSScreen.screens[0].frame.height
+        result([
+          "x": frame.origin.x,
+          "y": frame.origin.y,
+          "width": frame.size.width,
+          "height": frame.size.height,
+          "mainScreenHeight": mainScreenHeight,
+        ])
+      } else {
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    allChannels.append(channel)
   }
 
   private func handleSearch(query: String, result: @escaping FlutterResult) {

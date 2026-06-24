@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/error/exceptions.dart';
@@ -12,7 +13,7 @@ import '../../../infrastructure/accounts/account_manager.dart';
 import '../../../infrastructure/badge/badge_service.dart';
 import 'mail_poller_state.dart';
 
-class MailPollerCubit extends Cubit<MailPollerState> {
+class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver {
   MailPollerCubit({
     required AccountManager accountManager,
     required AppSettings appSettings,
@@ -44,10 +45,19 @@ class MailPollerCubit extends Cubit<MailPollerState> {
   final Set<String> _bootstrapping = {};
 
   Future<void> initialize() async {
+    // Remove before add to guard against multiple initialize() calls (e.g.
+    // BlocProvider.value rebuilds) registering duplicate observers.
+    WidgetsBinding.instance.removeObserver(this);
+    WidgetsBinding.instance.addObserver(this);
     final interval = await _appSettings.loadPollIntervalSeconds();
     if (!isClosed) emit(state.copyWith(pollIntervalSeconds: interval));
     await _primeBadgeFromCache();
     _startTimer(interval);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _poll();
   }
 
   Future<void> _primeBadgeFromCache() async {
@@ -285,6 +295,7 @@ class MailPollerCubit extends Cubit<MailPollerState> {
 
   @override
   Future<void> close() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     return super.close();
   }

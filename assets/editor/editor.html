@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --toolbar-bg: #f5f5f5;
+  --toolbar-border: #d8d8d8;
+  --btn-hover: #e4e4e4;
+  --btn-active: #d0d0d0;
+  --placeholder: #aaaaaa;
+  --link: #0066cc;
+  --quote-border: #c0c0c0;
+  --quote-fg: #666666;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1e1e1e;
+    --fg: #e2e2e2;
+    --toolbar-bg: #282828;
+    --toolbar-border: #3a3a3a;
+    --btn-hover: #363636;
+    --btn-active: #464646;
+    --placeholder: #666666;
+    --link: #6699ff;
+    --quote-border: #444444;
+    --quote-fg: #888888;
+  }
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+body { display: flex; flex-direction: column; }
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1px;
+  padding: 4px 8px;
+  background: var(--toolbar-bg);
+  border-bottom: 1px solid var(--toolbar-border);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.toolbar button {
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 0 7px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--fg);
+  height: 26px;
+  min-width: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s;
+}
+.toolbar button:hover { background: var(--btn-hover); }
+.toolbar button:active { background: var(--btn-active); }
+.toolbar button.active { background: var(--btn-active); }
+
+.sep {
+  width: 1px;
+  height: 16px;
+  background: var(--toolbar-border);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+.editor {
+  flex: 1;
+  padding: 12px 16px;
+  outline: none;
+  overflow-y: auto;
+  word-wrap: break-word;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+.editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--placeholder);
+  pointer-events: none;
+  display: block;
+}
+
+.editor a { color: var(--link); }
+
+.editor blockquote {
+  border-left: 3px solid var(--quote-border);
+  margin: 4px 0 4px 0;
+  padding-left: 12px;
+  color: var(--quote-fg);
+}
+
+.editor img { max-width: 100%; height: auto; }
+
+.editor ul, .editor ol { padding-left: 1.5em; }
+</style>
+</head>
+<body>
+<div class="toolbar" id="toolbar">
+  <button title="Bold" id="btn-bold" onmousedown="event.preventDefault(); fmt('bold')"><b>B</b></button>
+  <button title="Italic" id="btn-italic" onmousedown="event.preventDefault(); fmt('italic')"><i>I</i></button>
+  <button title="Underline" id="btn-underline" onmousedown="event.preventDefault(); fmt('underline')"><u>U</u></button>
+  <button title="Strikethrough" id="btn-strike" onmousedown="event.preventDefault(); fmt('strikeThrough')"><s>S</s></button>
+  <span class="sep"></span>
+  <button title="Bullet list" onmousedown="event.preventDefault(); fmt('insertUnorderedList')">&#x2022;&#x2261;</button>
+  <button title="Numbered list" onmousedown="event.preventDefault(); fmt('insertOrderedList')">1&#x2261;</button>
+  <span class="sep"></span>
+  <button title="Insert link" onmousedown="event.preventDefault(); requestLink()">&#x1F517;</button>
+  <button title="Remove formatting" onmousedown="event.preventDefault(); fmt('removeFormat')">&#x2715;</button>
+</div>
+<div class="editor" id="editor" contenteditable="true" spellcheck="true" data-placeholder="Write your message here…"></div>
+
+<script>
+const editor = document.getElementById('editor');
+let changeTimer = null;
+
+function fmt(cmd) {
+  document.execCommand(cmd, false, null);
+  editor.focus();
+  scheduleChange();
+}
+
+function requestLink() {
+  window.flutter_inappwebview.callHandler('onLinkRequest');
+}
+
+function insertLink(url) {
+  editor.focus();
+  document.execCommand('createLink', false, url);
+  scheduleChange();
+}
+
+function scheduleChange() {
+  clearTimeout(changeTimer);
+  changeTimer = setTimeout(fireChange, 300);
+}
+
+function fireChange() {
+  window.flutter_inappwebview.callHandler('onContentChanged', editor.innerHTML);
+}
+
+function setContent(html) {
+  editor.innerHTML = html;
+  // Place cursor at the beginning
+  const range = document.createRange();
+  const sel = window.getSelection();
+  if (editor.firstChild) {
+    range.setStart(editor, 0);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+}
+
+function getContent() {
+  return editor.innerHTML;
+}
+
+function insertImage(dataUri, contentId) {
+  editor.focus();
+  const img = document.createElement('img');
+  img.src = dataUri;
+  img.setAttribute('data-cid', contentId);
+  img.style.maxWidth = '100%';
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0) {
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+    range.insertNode(img);
+    range.setStartAfter(img);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } else {
+    editor.appendChild(img);
+  }
+  scheduleChange();
+}
+
+editor.addEventListener('input', scheduleChange);
+
+editor.addEventListener('keydown', function(e) {
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    document.execCommand('insertHTML', false, '    ');
+    scheduleChange();
+  }
+});
+
+// Update toolbar button states on selection change
+document.addEventListener('selectionchange', function() {
+  ['bold','italic','underline','strikeThrough'].forEach(function(cmd) {
+    const id = {'bold':'btn-bold','italic':'btn-italic','underline':'btn-underline','strikeThrough':'btn-strike'}[cmd];
+    const btn = document.getElementById(id);
+    if (btn) {
+      btn.classList.toggle('active', document.queryCommandState(cmd));
+    }
+  });
+});
+</script>
+</body>
+</html>

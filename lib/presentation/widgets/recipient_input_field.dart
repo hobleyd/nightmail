@@ -26,6 +26,7 @@ class RecipientInputField extends StatefulWidget {
     this.labelWidth = 52,
     this.hintText,
     this.accountId,
+    this.accountDomain,
     this.showInput = true,
     this.fieldId,
     this.onDropAccepted,
@@ -40,6 +41,7 @@ class RecipientInputField extends StatefulWidget {
   final ValueChanged<List<String>> onChanged;
   final String? hintText;
   final String? accountId;
+  final String? accountDomain;
   final bool showInput;
   final String? fieldId;
   final RecipientDropAccepted? onDropAccepted;
@@ -103,6 +105,8 @@ class RecipientInputFieldState extends State<RecipientInputField> {
 
   void flush() => _flushInput();
 
+  void requestFocus() => _inputFocus.requestFocus();
+
   void _flushInput() {
     final text = _inputController.text
         .trim()
@@ -148,6 +152,7 @@ class RecipientInputFieldState extends State<RecipientInputField> {
           results = await sl<SearchContacts>().call(
             query: query,
             accountId: accountId,
+            accountDomain: widget.accountDomain,
           );
         } else {
           results = await sl<SystemContactsRepository>().search(query);

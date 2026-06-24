@@ -44,13 +44,35 @@ void main(List<String> args) async {
     await sl<AccountManager>().initialize();
 
     Future<void> showSubWindow(WindowOptions options) async {
+      final screenInfoRaw =
+          arguments['_screenInfo'] as Map<dynamic, dynamic>?;
+
       try {
-        await windowManager.waitUntilReadyToShow(options);
-        await (await WindowController.fromCurrentEngine()).show();
-      } catch (_) {
-        // Fallback: window_manager unavailable in this sub-window context.
-        await (await WindowController.fromCurrentEngine()).show();
-      }
+        if (screenInfoRaw != null) {
+          final vx = (screenInfoRaw['x'] as num).toDouble();
+          final vy = (screenInfoRaw['y'] as num).toDouble();
+          final vw = (screenInfoRaw['width'] as num).toDouble();
+          final vh = (screenInfoRaw['height'] as num).toDouble();
+          final mainH = (screenInfoRaw['mainScreenHeight'] as num).toDouble();
+          final winW = options.size?.width ?? 800.0;
+          final winH = options.size?.height ?? 600.0;
+
+          await windowManager.waitUntilReadyToShow(
+            WindowOptions(size: options.size, title: options.title),
+          );
+          // Center within the source screen.
+          // Cocoa uses bottom-left origin; window_manager flips Y relative to
+          // NSScreen.screens[0].frame.height (the "primary" screen height).
+          final cocoaX = vx + (vw - winW) / 2;
+          final cocoaY = vy + (vh - winH) / 2;
+          await windowManager.setPosition(
+            Offset(cocoaX, mainH - cocoaY - winH),
+          );
+        } else {
+          await windowManager.waitUntilReadyToShow(options);
+        }
+      } catch (_) {}
+      await (await WindowController.fromCurrentEngine()).show();
     }
 
     if (arguments['type'] == 'calendar') {

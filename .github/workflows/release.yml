@@ -200,26 +200,38 @@ jobs:
         run: |
           BUNDLE_LIB=build/linux/x64/release/bundle/lib
 
-          # Recursively copy a library and its deps into the bundle,
-          # skipping fundamental system libs that are guaranteed on any Linux.
-          # Also creates a SONAME symlink (e.g. libWPEWebKit-2.0.so.1 ->
-          # libWPEWebKit-2.0.so.1.9.8) so the runtime linker finds the lib
-          # under the name embedded in DT_NEEDED entries.
+          # Ensure a SONAME symlink exists for a versioned lib already in the bundle.
+          # e.g. libWPEWebKit-2.0.so.1 -> libWPEWebKit-2.0.so.1.9.8
+          # The CMake build copies the versioned file but not the SONAME symlink,
+          # so the runtime linker (which looks up DT_NEEDED by exact name) fails.
+          ensure_soname_symlink() {
+            local lib=$1
+            local name soname
+            name=$(basename "$lib")
+            soname=$(objdump -p "$lib" 2>/dev/null | awk '/SONAME/ {print $2}')
+            if [ -n "$soname" ] && [ "$soname" != "$name" ] && [ ! -e "$BUNDLE_LIB/$soname" ]; then
+              echo "Symlink $soname -> $name"
+              ln -s "$name" "$BUNDLE_LIB/$soname"
+            fi
+          }
+
+          # Recursively copy a library and its deps into the bundle.
+          # Skips fundamental system libs. If the file is already present
+          # (copied by CMake), still ensures the SONAME symlink is created.
           bundle_with_deps() {
             local src=$1
             local name
             name=$(basename "$src")
-            [ -f "$BUNDLE_LIB/$name" ] && return
+            if [ -f "$BUNDLE_LIB/$name" ]; then
+              ensure_soname_symlink "$BUNDLE_LIB/$name"
+              return
+            fi
             case "$name" in
               libc.so* | libm.so* | libpthread.so* | libdl.so* | librt.so* | ld-linux* | libgcc_s* ) return ;;
             esac
             echo "Bundling $name"
             cp "$src" "$BUNDLE_LIB/" 2>/dev/null || return
-            local soname
-            soname=$(objdump -p "$src" 2>/dev/null | awk '/SONAME/ {print $2}')
-            if [ -n "$soname" ] && [ "$soname" != "$name" ] && [ ! -e "$BUNDLE_LIB/$soname" ]; then
-              ln -s "$name" "$BUNDLE_LIB/$soname"
-            fi
+            ensure_soname_symlink "$BUNDLE_LIB/$name"
             ldd "$src" 2>/dev/null | awk '/=> \// { print $3 }' | while read dep; do
               bundle_with_deps "$dep"
             done

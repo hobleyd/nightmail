@@ -1,7 +1,13 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:desktop_multi_window/desktop_multi_window.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../../core/platform/window_utils.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
@@ -25,6 +31,77 @@ class ComposeWindowApp extends StatelessWidget {
 
   final String windowId;
   final Map<String, dynamic> arguments;
+
+  /// Opens a compose screen: a new push route on mobile, a sub-window on desktop.
+  static Future<void> open(
+    BuildContext context, {
+    required ComposeMode mode,
+    Email? originalEmail,
+    Email? draftEmail,
+    String? existingDraftId,
+  }) async {
+    final isMobile = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+    if (isMobile) {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => _MobileComposePage(
+            mode: mode,
+            originalEmail: originalEmail,
+            draftEmail: draftEmail,
+            existingDraftId: existingDraftId,
+          ),
+          fullscreenDialog: true,
+        ),
+      );
+      return;
+    }
+
+    Map<String, dynamic> args = {'mode': mode.name};
+    if (existingDraftId != null) args['existingDraftId'] = existingDraftId;
+    if (originalEmail != null) {
+      args['originalEmail'] = {
+        'id': originalEmail.id,
+        'subject': originalEmail.subject,
+        'from': {
+          'address': originalEmail.from.address,
+          'name': originalEmail.from.name,
+        },
+        'toRecipients': originalEmail.toRecipients
+            .map((r) => {'address': r.address, 'name': r.name})
+            .toList(),
+        'ccRecipients': originalEmail.ccRecipients
+            .map((r) => {'address': r.address, 'name': r.name})
+            .toList(),
+        'body': originalEmail.body,
+        'bodyType': originalEmail.bodyType.name,
+        'receivedDateTime': originalEmail.receivedDateTime.toIso8601String(),
+        'attachments': originalEmail.attachments
+            .map((a) => {
+                  'id': a.id,
+                  'name': a.name,
+                  'contentType': a.contentType,
+                  'size': a.size,
+                })
+            .toList(),
+      };
+    }
+    if (draftEmail != null) {
+      args['draftEmail'] = {
+        'subject': draftEmail.subject,
+        'toRecipients': draftEmail.toRecipients
+            .map((r) => {'address': r.address, 'name': r.name})
+            .toList(),
+        'ccRecipients': draftEmail.ccRecipients
+            .map((r) => {'address': r.address, 'name': r.name})
+            .toList(),
+        'body': draftEmail.body,
+        'bodyType': draftEmail.bodyType.name,
+      };
+    }
+    await createSubWindow(
+      WindowConfiguration(arguments: jsonEncode(args)),
+    );
+  }
 
   static final _darkTheme = ThemeData(
     colorScheme: ColorScheme.fromSeed(
@@ -216,5 +293,92 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage> {
     final at = email.lastIndexOf('@');
     if (at < 0 || at == email.length - 1) return null;
     return email.substring(at + 1).toLowerCase();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Mobile full-screen compose route
+// ---------------------------------------------------------------------------
+
+class _MobileComposePage extends StatefulWidget {
+  const _MobileComposePage({
+    required this.mode,
+    this.originalEmail,
+    this.draftEmail,
+    this.existingDraftId,
+  });
+
+  final ComposeMode mode;
+  final Email? originalEmail;
+  final Email? draftEmail;
+  final String? existingDraftId;
+
+  @override
+  State<_MobileComposePage> createState() => _MobileComposePageState();
+}
+
+class _MobileComposePageState extends State<_MobileComposePage> {
+  EmailBodyType _defaultComposeFormat = AppSettings.defaultComposeFormat;
+
+  @override
+  void initState() {
+    super.initState();
+    sl<AppSettings>().loadDefaultComposeFormat().then((format) {
+      if (mounted) setState(() => _defaultComposeFormat = format);
+    });
+  }
+
+  static String? _domainOf(String? email) {
+    if (email == null) return null;
+    final at = email.lastIndexOf('@');
+    if (at < 0 || at == email.length - 1) return null;
+    return email.substring(at + 1).toLowerCase();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final account = sl<AccountManager>().activeAccount;
+    final fromAddress = account == null
+        ? ''
+        : account.displayName.isNotEmpty
+            ? '${account.displayName} <${account.emailAddress}>'
+            : account.emailAddress;
+
+    return BlocProvider(
+      create: (_) => ComposeBloc(sendEmail: sl<SendEmail>()),
+      child: Scaffold(
+        backgroundColor: c.surfacePanel,
+        body: SafeArea(
+          child: BlocListener<ComposeBloc, ComposeState>(
+            listener: (context, state) {
+              if (state is ComposeSent || state is ComposeError) {
+                if (state is ComposeError) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(state.message),
+                      backgroundColor: Colors.red.shade700,
+                    ),
+                  );
+                }
+                if (state is ComposeSent) Navigator.of(context).pop();
+              }
+            },
+            child: ComposeForm(
+              mode: widget.mode,
+              originalEmail: widget.originalEmail,
+              draftEmail: widget.draftEmail,
+              onClose: () => Navigator.of(context).pop(),
+              fromAddress: fromAddress,
+              accountId: account?.id,
+              accountDomain: _domainOf(account?.emailAddress),
+              scrollable: true,
+              existingDraftId: widget.existingDraftId,
+              defaultComposeFormat: _defaultComposeFormat,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

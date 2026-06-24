@@ -1,9 +1,5 @@
-import 'dart:convert';
 import 'dart:math' as math;
 
-import 'package:desktop_multi_window/desktop_multi_window.dart';
-
-import '../../core/platform/window_utils.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -13,6 +9,7 @@ import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import 'email_drag_data.dart';
 import '../../domain/entities/email_folder.dart';
+import '../pages/compose_window.dart';
 import '../../domain/usecases/send_email.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
 import '../blocs/email_detail/email_detail_event.dart';
@@ -38,6 +35,7 @@ class EmailListPanel extends StatefulWidget {
     required this.onEmailSelected,
     this.folder,
     this.onEmailDoubleTapped,
+    this.onBack,
   });
 
   final String folderName;
@@ -45,6 +43,7 @@ class EmailListPanel extends StatefulWidget {
   final String? selectedEmailId;
   final ValueChanged<Email> onEmailSelected;
   final ValueChanged<Email>? onEmailDoubleTapped;
+  final VoidCallback? onBack;
 
   @override
   State<EmailListPanel> createState() => _EmailListPanelState();
@@ -82,11 +81,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
   }
 
   Future<void> _openComposeWindow() async {
-    await createSubWindow(
-      WindowConfiguration(
-        arguments: jsonEncode({'mode': ComposeMode.newEmail.name}),
-      ),
-    );
+    await ComposeWindowApp.open(context, mode: ComposeMode.newEmail);
   }
 
   void _submitSearch(String query) {
@@ -317,6 +312,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
                   onSearchSubmit: _submitSearch,
                   onSearchClear: _clearSearch,
                   onCompose: _openComposeWindow,
+                  onBack: widget.onBack,
                   onRefresh: () {
                     context
                         .read<EmailListBloc>()
@@ -509,6 +505,7 @@ class _ListHeader extends StatelessWidget {
     required this.onSearchSubmit,
     required this.onSearchClear,
     required this.onCompose,
+    this.onBack,
     this.onDelete,
     this.onReportJunk,
     this.onMarkUnread,
@@ -522,6 +519,7 @@ class _ListHeader extends StatelessWidget {
   final ValueChanged<String> onSearchSubmit;
   final VoidCallback onSearchClear;
   final VoidCallback onCompose;
+  final VoidCallback? onBack;
   final VoidCallback? onDelete;
   final VoidCallback? onReportJunk;
   final VoidCallback? onMarkUnread;
@@ -581,16 +579,27 @@ class _ListHeader extends StatelessWidget {
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
       child: Row(
         children: [
-          Text(
-            folderName,
-            style: const TextStyle(
-              color: Colors.black,
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              letterSpacing: -0.3,
+          if (onBack != null)
+            IconButton(
+              icon: Icon(Icons.arrow_back_ios_new_rounded, size: 18, color: c.textMuted),
+              tooltip: 'Back',
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              onPressed: onBack,
+            ),
+          Padding(
+            padding: EdgeInsets.only(left: onBack != null ? 0 : 8),
+            child: Text(
+              folderName,
+              style: const TextStyle(
+                color: Colors.black,
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.3,
+              ),
             ),
           ),
           IconButton(

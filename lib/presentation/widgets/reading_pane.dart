@@ -1,9 +1,5 @@
-import 'dart:convert';
 import 'dart:io';
 
-import 'package:desktop_multi_window/desktop_multi_window.dart';
-
-import '../../core/platform/window_utils.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart' as iaw;
 import 'package:flutter/foundation.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -47,10 +43,13 @@ import '../blocs/email_list/email_list_event.dart';
 import '../blocs/folder_list/folder_list_bloc.dart';
 import '../blocs/folder_list/folder_list_event.dart';
 import '../blocs/home/home_cubit.dart';
+import '../pages/compose_window.dart';
 import 'email_date_formatter.dart';
 
 class ReadingPane extends StatelessWidget {
-  const ReadingPane({super.key});
+  const ReadingPane({super.key, this.onBack});
+
+  final VoidCallback? onBack;
 
   @override
   Widget build(BuildContext context) {
@@ -66,7 +65,7 @@ class ReadingPane extends StatelessWidget {
                     color: AppColors.accent, strokeWidth: 2),
               ),
             EmailDetailLoaded(:final email, :final senderAnomaly) =>
-              _EmailView(key: ValueKey(email.id), email: email, senderAnomaly: senderAnomaly),
+              _EmailView(key: ValueKey(email.id), email: email, senderAnomaly: senderAnomaly, onBack: onBack),
             EmailDetailError(:final message) => _ErrorState(message: message),
           };
         },
@@ -126,9 +125,10 @@ class _ErrorState extends StatelessWidget {
 }
 
 class _EmailView extends StatefulWidget {
-  const _EmailView({super.key, required this.email, this.senderAnomaly});
+  const _EmailView({super.key, required this.email, this.senderAnomaly, this.onBack});
   final Email email;
   final SenderAnomalyResult? senderAnomaly;
+  final VoidCallback? onBack;
 
   @override
   State<_EmailView> createState() => _EmailViewState();
@@ -164,7 +164,7 @@ class _EmailViewState extends State<_EmailView> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _ReadingPaneToolbar(email: widget.email),
+        _ReadingPaneToolbar(email: widget.email, onBack: widget.onBack),
         Divider(height: 1, color: c.border),
         _EmailHeader(
           email: widget.email,
@@ -200,39 +200,12 @@ class _EmailViewState extends State<_EmailView> {
 }
 
 class _ReadingPaneToolbar extends StatelessWidget {
-  const _ReadingPaneToolbar({required this.email});
+  const _ReadingPaneToolbar({required this.email, this.onBack});
   final Email email;
+  final VoidCallback? onBack;
 
-  Future<void> _openComposeWindow(ComposeMode mode) async {
-    await createSubWindow(
-      WindowConfiguration(
-        arguments: jsonEncode({
-          'mode': mode.name,
-          'originalEmail': {
-            'id': email.id,
-            'subject': email.subject,
-            'from': {'address': email.from.address, 'name': email.from.name},
-            'toRecipients': email.toRecipients
-                .map((r) => {'address': r.address, 'name': r.name})
-                .toList(),
-            'ccRecipients': email.ccRecipients
-                .map((r) => {'address': r.address, 'name': r.name})
-                .toList(),
-            'body': email.body,
-            'bodyType': email.bodyType.name,
-            'receivedDateTime': email.receivedDateTime.toIso8601String(),
-            'attachments': email.attachments
-                .map((a) => {
-                      'id': a.id,
-                      'name': a.name,
-                      'contentType': a.contentType,
-                      'size': a.size,
-                    })
-                .toList(),
-          },
-        }),
-      ),
-    );
+  Future<void> _openComposeWindow(BuildContext context, ComposeMode mode) async {
+    await ComposeWindowApp.open(context, mode: mode, originalEmail: email);
   }
 
   Future<void> _confirmAndDelete(BuildContext context) async {
@@ -361,23 +334,32 @@ class _ReadingPaneToolbar extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       child: Row(
         children: [
+          if (onBack != null) ...[
+            _ToolbarButton(
+              icon: Icons.arrow_back_ios_new_rounded,
+              tooltip: 'Back',
+              color: context.colors.textMuted,
+              onPressed: onBack!,
+            ),
+            const SizedBox(width: 4),
+          ],
           _ToolbarButton(
             icon: Icons.reply_rounded,
             tooltip: 'Reply',
             color: c.textMuted,
-            onPressed: () => _openComposeWindow(ComposeMode.reply),
+            onPressed: () => _openComposeWindow(context, ComposeMode.reply),
           ),
           _ToolbarButton(
             icon: Icons.reply_all_rounded,
             tooltip: 'Reply All',
             color: c.textMuted,
-            onPressed: () => _openComposeWindow(ComposeMode.replyAll),
+            onPressed: () => _openComposeWindow(context, ComposeMode.replyAll),
           ),
           _ToolbarButton(
             icon: Icons.forward_to_inbox_rounded,
             tooltip: 'Forward',
             color: c.textMuted,
-            onPressed: () => _openComposeWindow(ComposeMode.forward),
+            onPressed: () => _openComposeWindow(context, ComposeMode.forward),
           ),
           const Spacer(),
           _ToolbarButton(

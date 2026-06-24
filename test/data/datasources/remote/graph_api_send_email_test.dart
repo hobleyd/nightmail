@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nightmail/data/datasources/remote/graph_api_datasource_impl.dart';
+import 'package:nightmail/domain/entities/email.dart';
 
 import 'graph_api_send_email_test.mocks.dart';
 
@@ -142,7 +143,7 @@ void main() {
   });
 
   group('GraphApiDatasourceImpl.sendEmail — body HTML conversion', () {
-    test('sends body as HTML content type', () async {
+    test('sends body as text content type by default', () async {
       when(mockDio.post<void>(any, data: anyNamed('data')))
           .thenAnswer((_) async => _voidResp());
 
@@ -155,7 +156,41 @@ void main() {
       final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
           .captured.single as Map<String, dynamic>;
       final emailBody = (body['message'] as Map)['body'] as Map;
+      expect(emailBody['contentType'], 'text');
+    });
+
+    test('sends body as HTML content type when bodyType is html', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _voidResp());
+
+      await datasource.sendEmail(
+        toAddresses: ['to@example.com'],
+        subject: 'Subject',
+        body: '<p>Hello</p>',
+        bodyType: EmailBodyType.html,
+      );
+
+      final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      final emailBody = (body['message'] as Map)['body'] as Map;
       expect(emailBody['contentType'], 'html');
+    });
+
+    test('passes HTML body through unchanged', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _voidResp());
+
+      await datasource.sendEmail(
+        toAddresses: ['to@example.com'],
+        subject: 'Subject',
+        body: '<p>Line 1</p><p>Line 2</p>',
+        bodyType: EmailBodyType.html,
+      );
+
+      final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      final content = (body['message'] as Map)['body']['content'] as String;
+      expect(content, '<p>Line 1</p><p>Line 2</p>');
     });
 
     test('converts newlines to <br> tags', () async {
@@ -208,7 +243,7 @@ void main() {
       expect(content, 'R&amp;D team');
     });
 
-    test('preserves plain text with no special characters unchanged except type', () async {
+    test('preserves plain text with no special characters unchanged', () async {
       when(mockDio.post<void>(any, data: anyNamed('data')))
           .thenAnswer((_) async => _voidResp());
 
@@ -221,7 +256,7 @@ void main() {
       final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
           .captured.single as Map<String, dynamic>;
       final emailBody = (body['message'] as Map)['body'] as Map;
-      expect(emailBody['contentType'], 'html');
+      expect(emailBody['contentType'], 'text');
       expect(emailBody['content'], 'Just plain text');
     });
   });

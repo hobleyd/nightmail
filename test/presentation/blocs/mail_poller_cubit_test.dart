@@ -92,6 +92,8 @@ MailDeltaResult _emptyDelta() => MailDeltaResult(
   GetCachedFolders,
 ])
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late MockAccountManager mockAccountManager;
   late MockAppSettings mockAppSettings;
   late MockBadgeService mockBadgeService;

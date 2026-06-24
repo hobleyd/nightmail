@@ -331,6 +331,58 @@ void main() {
         queryParameters: anyNamed('queryParameters'),
       ));
     });
+
+    // Regression: Gmail API returns 400 when removeLabelIds contains SENT.
+    // If the whole modify call fails, INBOX stays on the message and the
+    // thread reappears in the inbox after a refresh.
+
+    test('does not include SENT in removeLabelIds — Gmail forbids removing it', () async {
+      stubMeta(['SENT']);
+      stubModify();
+
+      await datasource.moveEmail('msg1', 'Label_dest');
+
+      final captured = verify(mockDio.post<void>(
+        '/users/me/messages/msg1/modify',
+        data: captureAnyNamed('data'),
+      )).captured.single as Map<String, dynamic>;
+
+      expect(captured['addLabelIds'], ['Label_dest']);
+      // SENT is the only label and it cannot be removed, so no removeLabelIds key.
+      expect(captured.containsKey('removeLabelIds'), isFalse);
+    });
+
+    test('removes INBOX but not SENT when message carries both', () async {
+      stubMeta(['SENT', 'INBOX']);
+      stubModify();
+
+      await datasource.moveEmail('msg1', 'Label_dest');
+
+      final captured = verify(mockDio.post<void>(
+        '/users/me/messages/msg1/modify',
+        data: captureAnyNamed('data'),
+      )).captured.single as Map<String, dynamic>;
+
+      expect(captured['addLabelIds'], ['Label_dest']);
+      expect(captured['removeLabelIds'], contains('INBOX'));
+      expect(captured['removeLabelIds'], isNot(contains('SENT')));
+    });
+
+    test('removes user label but not SENT when message carries both', () async {
+      stubMeta(['SENT', 'Label_old']);
+      stubModify();
+
+      await datasource.moveEmail('msg1', 'Label_new');
+
+      final captured = verify(mockDio.post<void>(
+        '/users/me/messages/msg1/modify',
+        data: captureAnyNamed('data'),
+      )).captured.single as Map<String, dynamic>;
+
+      expect(captured['addLabelIds'], ['Label_new']);
+      expect(captured['removeLabelIds'], contains('Label_old'));
+      expect(captured['removeLabelIds'], isNot(contains('SENT')));
+    });
   });
 
   // ---------------------------------------------------------------------------

@@ -200,51 +200,53 @@ jobs:
         run: |
           BUNDLE_LIB=build/linux/x64/release/bundle/lib
 
-          # Ensure a SONAME symlink exists for a versioned lib already in the bundle.
-          # e.g. libWPEWebKit-2.0.so.1 -> libWPEWebKit-2.0.so.1.9.8
-          # The CMake build copies the versioned file but not the SONAME symlink,
-          # so the runtime linker (which looks up DT_NEEDED by exact name) fails.
+          # Use a temp dir to track which libs have had their deps walked,
+          # preventing redundant work and infinite loops on the dep graph.
+          PROCESSED=$(mktemp -d)
+
           ensure_soname_symlink() {
-            local lib=$1
-            local name soname
+            local lib=$1 name soname
             name=$(basename "$lib")
             soname=$(objdump -p "$lib" 2>/dev/null | awk '/SONAME/ {print $2}')
             if [ -n "$soname" ] && [ "$soname" != "$name" ] && [ ! -e "$BUNDLE_LIB/$soname" ]; then
-              echo "Symlink $soname -> $name"
+              echo "  Symlink $soname -> $name"
               ln -s "$name" "$BUNDLE_LIB/$soname"
             fi
           }
 
-          # Recursively copy a library and its deps into the bundle.
-          # Skips fundamental system libs. If the file is already present
-          # (copied by CMake), still ensures the SONAME symlink is created.
+          # Recursively copy src and all its transitive deps into the bundle.
+          # Skips fundamental system libs. For files already in the bundle
+          # (e.g. pre-copied by CMake), still walks their deps so that
+          # Debian Sid-only transitive libs (ICU 78, etc.) get bundled.
+          # filesystem-backed PROCESSED set is visible across pipe subshells.
           bundle_with_deps() {
-            local src=$1
-            local name
+            local src=$1 name
             name=$(basename "$src")
-            if [ -f "$BUNDLE_LIB/$name" ]; then
-              ensure_soname_symlink "$BUNDLE_LIB/$name"
-              return
-            fi
+            [ -f "$PROCESSED/$name" ] && return
+            touch "$PROCESSED/$name"
             case "$name" in
               libc.so* | libm.so* | libpthread.so* | libdl.so* | librt.so* | ld-linux* | libgcc_s* ) return ;;
             esac
-            echo "Bundling $name"
-            cp "$src" "$BUNDLE_LIB/" 2>/dev/null || return
+            if [ ! -f "$BUNDLE_LIB/$name" ]; then
+              echo "  Bundling $name"
+              cp "$src" "$BUNDLE_LIB/" 2>/dev/null || return
+            fi
             ensure_soname_symlink "$BUNDLE_LIB/$name"
             ldd "$src" 2>/dev/null | awk '/=> \// { print $3 }' | while read dep; do
               bundle_with_deps "$dep"
             done
           }
 
-          # Explicitly bundle WPEWebKit and wpe-related libs.
+          # Seed with WPEWebKit and wpe-related libs from the system.
           # These are only in Debian Sid, not Ubuntu 24.04, so ldd "not found"
-          # detection won't catch them (they resolve fine on the build host).
+          # won't catch them. Walking their deps here also bundles transitive
+          # Debian-only libs (ICU 78, libsoup 3, etc.).
           find /usr/lib/x86_64-linux-gnu \
             \( -name "libWPEWebKit*.so*" -o -name "libwpe-*.so*" -o -name "libWPEBackend*.so*" \) \
             -type f 2>/dev/null | while read lib; do
             bundle_with_deps "$lib"
           done
+          rm -rf "$PROCESSED"
 
           # Also handle any remaining "not found" libs for the main binary and bundled libs.
           copy_if_missing() {

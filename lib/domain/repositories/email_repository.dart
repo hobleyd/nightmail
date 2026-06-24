@@ -39,6 +39,7 @@ abstract interface class EmailRepository {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   });
 
@@ -138,6 +139,7 @@ abstract interface class EmailRepository {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   });
 
@@ -148,6 +150,7 @@ abstract interface class EmailRepository {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   });
 

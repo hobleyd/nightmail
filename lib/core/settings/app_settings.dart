@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 
+import '../../domain/entities/email.dart';
+
 class AppSettings {
   static const int defaultPollIntervalSeconds = 30;
   static const String _pollIntervalFile = 'poll_interval';
@@ -10,6 +12,9 @@ class AppSettings {
   static const String _confirmDeleteEmailFile = 'confirm_delete_email';
 
   static const String _externalImageDomainsFile = 'external_image_domains';
+
+  static const EmailBodyType defaultComposeFormat = EmailBodyType.html;
+  static const String _composeFormatFile = 'compose_format';
 
   Future<File> _file(String name) async {
     final dir = await getApplicationSupportDirectory();
@@ -48,6 +53,25 @@ class AppSettings {
     try {
       final file = await _file(_confirmDeleteEmailFile);
       await file.writeAsString('$value');
+    } catch (_) {}
+  }
+
+  Future<EmailBodyType> loadDefaultComposeFormat() async {
+    try {
+      final file = await _file(_composeFormatFile);
+      if (await file.exists()) {
+        return (await file.readAsString()).trim() == 'text'
+            ? EmailBodyType.text
+            : EmailBodyType.html;
+      }
+    } catch (_) {}
+    return defaultComposeFormat;
+  }
+
+  Future<void> saveDefaultComposeFormat(EmailBodyType format) async {
+    try {
+      final file = await _file(_composeFormatFile);
+      await file.writeAsString(format == EmailBodyType.html ? 'html' : 'text');
     } catch (_) {}
   }
 

@@ -30,6 +30,7 @@ abstract interface class EmailRemoteDatasource {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   });
 
@@ -95,6 +96,7 @@ abstract interface class EmailRemoteDatasource {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   });
 
@@ -105,6 +107,7 @@ abstract interface class EmailRemoteDatasource {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   });
 

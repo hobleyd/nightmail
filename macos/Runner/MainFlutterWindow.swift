@@ -457,8 +457,10 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       NSApp.activate(ignoringOtherApps: true)
 
       let store = CNContactStore()
-      // Use the completion-handler form — more reliable on macOS 15 than async/await.
-      store.requestAccess(for: .contacts) { granted, error in
+      // Explicit cast selects the completion-handler overload. The async/await form
+      // throws CNError.authorizationDenied on macOS 15 for notDetermined apps.
+      let requestAccess = store.requestAccess as (CNEntityType, @escaping (Bool, Error?) -> Void) -> Void
+      requestAccess(.contacts) { granted, error in
         DispatchQueue.main.async {
           let after = CNContactStore.authorizationStatus(for: .contacts)
           if let e = error as? NSError {

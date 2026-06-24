@@ -6,6 +6,8 @@ class LocalAttachment {
     required this.name,
     required this.mimeType,
     required this.bytes,
+    this.isInline = false,
+    this.contentId,
   });
 
   final String path;
@@ -14,6 +16,11 @@ class LocalAttachment {
   // Bytes are read eagerly at drop time so no file-system access is needed
   // later when saving/sending (avoids Windows permission issues at save time).
   final Uint8List bytes;
+  // When true, this attachment is an inline image referenced from the HTML body
+  // by its [contentId] (cid: scheme). Not shown in the attachments chip list.
+  final bool isInline;
+  // Content-Id value used in the HTML body as `src="cid:{contentId}"`.
+  final String? contentId;
 
   static String mimeTypeFromName(String filename) {
     final dot = filename.lastIndexOf('.');

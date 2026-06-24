@@ -87,6 +87,7 @@ flutter:
   assets:
     - assets/logo.png
     - assets/sharpblue.png
+    - assets/editor/editor.html
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

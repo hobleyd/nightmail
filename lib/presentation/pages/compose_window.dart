@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_address.dart';
@@ -69,7 +70,7 @@ class ComposeWindowApp extends StatelessWidget {
   }
 }
 
-class _ComposeWindowPage extends StatelessWidget {
+class _ComposeWindowPage extends StatefulWidget {
   const _ComposeWindowPage({
     required this.windowId,
     required this.mode,
@@ -80,10 +81,25 @@ class _ComposeWindowPage extends StatelessWidget {
   final ComposeMode mode;
   final Map<String, dynamic> arguments;
 
+  @override
+  State<_ComposeWindowPage> createState() => _ComposeWindowPageState();
+}
+
+class _ComposeWindowPageState extends State<_ComposeWindowPage> {
+  EmailBodyType _defaultComposeFormat = AppSettings.defaultComposeFormat;
+
+  @override
+  void initState() {
+    super.initState();
+    sl<AppSettings>().loadDefaultComposeFormat().then((format) {
+      if (mounted) setState(() => _defaultComposeFormat = format);
+    });
+  }
+
   void _close() => windowManager.close();
 
   Email? _originalEmail() {
-    final raw = arguments['originalEmail'];
+    final raw = widget.arguments['originalEmail'];
     if (raw == null) return null;
     final map = raw as Map<String, dynamic>;
     EmailAddress parseAddress(Map<String, dynamic> m) =>
@@ -124,7 +140,7 @@ class _ComposeWindowPage extends StatelessWidget {
   }
 
   Email? _draftEmail() {
-    final raw = arguments['draftEmail'];
+    final raw = widget.arguments['draftEmail'];
     if (raw == null) return null;
     final map = raw as Map<String, dynamic>;
     EmailAddress parseAddress(Map<String, dynamic> m) =>
@@ -178,7 +194,7 @@ class _ComposeWindowPage extends StatelessWidget {
             }
           },
           child: ComposeForm(
-            mode: mode,
+            mode: widget.mode,
             originalEmail: _originalEmail(),
             draftEmail: _draftEmail(),
             onClose: _close,
@@ -186,8 +202,9 @@ class _ComposeWindowPage extends StatelessWidget {
             accountId: accountId,
             accountDomain: accountDomain,
             scrollable: true,
-            existingDraftId: arguments['existingDraftId'] as String?,
+            existingDraftId: widget.arguments['existingDraftId'] as String?,
             onTitleChanged: (title) => windowManager.setTitle(title),
+            defaultComposeFormat: _defaultComposeFormat,
           ),
         ),
       ),

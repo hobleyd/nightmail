@@ -737,6 +737,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
     try {
@@ -745,8 +746,12 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         ..from = [MailAddress(null, fromEmail)]
         ..to = toAddresses.map((a) => MailAddress(null, a)).toList()
         ..cc = ccAddresses.map((a) => MailAddress(null, a)).toList()
-        ..subject = subject
-        ..addTextPlain(body);
+        ..subject = subject;
+      if (bodyType == EmailBodyType.html) {
+        builder.addTextHtml(body);
+      } else {
+        builder.addTextPlain(body);
+      }
       await _addAttachmentsToBuilder(builder, newAttachments);
       final mime = builder.buildMimeMessage();
       final encoded = base64Url
@@ -918,11 +923,21 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   Future<void> _addAttachmentsToBuilder(
       MessageBuilder builder, List<LocalAttachment> attachments) async {
     for (final att in attachments) {
-      builder.addBinary(
-        att.bytes,
-        MediaType.fromText(att.mimeType),
-        filename: att.name,
-      );
+      if (att.isInline && att.contentId != null) {
+        final part = builder.addBinary(
+          att.bytes,
+          MediaType.fromText(att.mimeType),
+          filename: att.name,
+          disposition: ContentDispositionHeader.from(ContentDisposition.inline),
+        );
+        part.setHeader('Content-Id', '<${att.contentId}>');
+      } else {
+        builder.addBinary(
+          att.bytes,
+          MediaType.fromText(att.mimeType),
+          filename: att.name,
+        );
+      }
     }
   }
 
@@ -1069,6 +1084,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
     try {
@@ -1077,8 +1093,12 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         ..from = [MailAddress(null, fromEmail)]
         ..to = toAddresses.map((a) => MailAddress(null, a)).toList()
         ..cc = ccAddresses.map((a) => MailAddress(null, a)).toList()
-        ..subject = subject
-        ..addTextPlain(body);
+        ..subject = subject;
+      if (bodyType == EmailBodyType.html) {
+        builder.addTextHtml(body);
+      } else {
+        builder.addTextPlain(body);
+      }
       await _addAttachmentsToBuilder(builder, newAttachments);
       final mime = builder.buildMimeMessage();
       final encoded = base64Url
@@ -1103,6 +1123,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
     try {
@@ -1111,8 +1132,12 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         ..from = [MailAddress(null, fromEmail)]
         ..to = toAddresses.map((a) => MailAddress(null, a)).toList()
         ..cc = ccAddresses.map((a) => MailAddress(null, a)).toList()
-        ..subject = subject
-        ..addTextPlain(body);
+        ..subject = subject;
+      if (bodyType == EmailBodyType.html) {
+        builder.addTextHtml(body);
+      } else {
+        builder.addTextPlain(body);
+      }
       await _addAttachmentsToBuilder(builder, newAttachments);
       final mime = builder.buildMimeMessage();
       final encoded = base64Url

@@ -20,6 +20,7 @@ class SendEmail {
           ccAddresses: params.ccAddresses,
           subject: params.subject,
           body: params.body,
+          bodyType: params.bodyType,
           newAttachments: params.newAttachments,
         ),
       ComposeMode.reply => _repository.replyToEmail(

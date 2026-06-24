@@ -1,6 +1,7 @@
 import 'package:fpdart/fpdart.dart';
 
 import '../../core/error/failures.dart';
+import '../entities/email.dart';
 import '../entities/local_attachment.dart';
 import '../repositories/email_repository.dart';
 
@@ -11,6 +12,7 @@ class SaveServerDraftParams {
     this.ccAddresses = const [],
     required this.subject,
     required this.body,
+    this.bodyType = EmailBodyType.text,
     this.newAttachments = const [],
   });
 
@@ -19,6 +21,7 @@ class SaveServerDraftParams {
   final List<String> ccAddresses;
   final String subject;
   final String body;
+  final EmailBodyType bodyType;
   final List<LocalAttachment> newAttachments;
 }
 
@@ -35,6 +38,7 @@ class SaveServerDraft {
         ccAddresses: params.ccAddresses,
         subject: params.subject,
         body: params.body,
+        bodyType: params.bodyType,
         newAttachments: params.newAttachments,
       );
     }
@@ -43,6 +47,7 @@ class SaveServerDraft {
       ccAddresses: params.ccAddresses,
       subject: params.subject,
       body: params.body,
+      bodyType: params.bodyType,
       newAttachments: params.newAttachments,
     );
   }

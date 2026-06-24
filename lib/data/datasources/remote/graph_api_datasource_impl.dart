@@ -822,20 +822,22 @@ class GraphApiDatasourceImpl
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
     try {
       final attachmentsList = await _buildGraphAttachments(newAttachments);
+      final bodyContent = bodyType == EmailBodyType.html
+          ? body
+          : const HtmlEscape().convert(body).replaceAll('\n', '<br>');
       await _dio.post<void>(
         '/me/sendMail',
         data: {
           'message': {
             'subject': subject,
             'body': {
-              'contentType': 'html',
-              'content': const HtmlEscape()
-                  .convert(body)
-                  .replaceAll('\n', '<br>'),
+              'contentType': bodyType == EmailBodyType.html ? 'html' : 'text',
+              'content': bodyContent,
             },
             'toRecipients': toAddresses
                 .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
@@ -966,6 +968,8 @@ class GraphApiDatasourceImpl
           'name': att.name,
           'contentType': att.mimeType,
           'contentBytes': base64.encode(att.bytes),
+          if (att.isInline) 'isInline': true,
+          if (att.isInline && att.contentId != null) 'contentId': att.contentId,
         }
     ];
   }
@@ -978,6 +982,8 @@ class GraphApiDatasourceImpl
         'name': att.name,
         'contentType': att.mimeType,
         'contentBytes': base64.encode(att.bytes),
+        if (att.isInline) 'isInline': true,
+        if (att.isInline && att.contentId != null) 'contentId': att.contentId,
       });
     }
   }
@@ -1566,14 +1572,16 @@ class GraphApiDatasourceImpl
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
     try {
+      final contentType = bodyType == EmailBodyType.html ? 'Html' : 'Text';
       final resp = await _dio.post<Map<String, dynamic>>(
         '/me/messages',
         data: {
           'subject': subject,
-          'body': {'contentType': 'Text', 'content': body},
+          'body': {'contentType': contentType, 'content': body},
           'toRecipients':
               toAddresses.map((a) => {'emailAddress': {'address': a}}).toList(),
           if (ccAddresses.isNotEmpty)
@@ -1598,14 +1606,16 @@ class GraphApiDatasourceImpl
     List<String> ccAddresses = const [],
     required String subject,
     required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
     try {
+      final contentType = bodyType == EmailBodyType.html ? 'Html' : 'Text';
       await _dio.patch<void>(
         '/me/messages/$draftId',
         data: {
           'subject': subject,
-          'body': {'contentType': 'Text', 'content': body},
+          'body': {'contentType': contentType, 'content': body},
           'toRecipients':
               toAddresses.map((a) => {'emailAddress': {'address': a}}).toList(),
           if (ccAddresses.isNotEmpty)

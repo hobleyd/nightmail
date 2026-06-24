@@ -202,6 +202,9 @@ jobs:
 
           # Recursively copy a library and its deps into the bundle,
           # skipping fundamental system libs that are guaranteed on any Linux.
+          # Also creates a SONAME symlink (e.g. libWPEWebKit-2.0.so.1 ->
+          # libWPEWebKit-2.0.so.1.9.8) so the runtime linker finds the lib
+          # under the name embedded in DT_NEEDED entries.
           bundle_with_deps() {
             local src=$1
             local name
@@ -210,8 +213,13 @@ jobs:
             case "$name" in
               libc.so* | libm.so* | libpthread.so* | libdl.so* | librt.so* | ld-linux* | libgcc_s* ) return ;;
             esac
-            echo "Bundling $src"
+            echo "Bundling $name"
             cp "$src" "$BUNDLE_LIB/" 2>/dev/null || return
+            local soname
+            soname=$(objdump -p "$src" 2>/dev/null | awk '/SONAME/ {print $2}')
+            if [ -n "$soname" ] && [ "$soname" != "$name" ] && [ ! -e "$BUNDLE_LIB/$soname" ]; then
+              ln -s "$name" "$BUNDLE_LIB/$soname"
+            fi
             ldd "$src" 2>/dev/null | awk '/=> \// { print $3 }' | while read dep; do
               bundle_with_deps "$dep"
             done
@@ -220,7 +228,7 @@ jobs:
           # Explicitly bundle WPEWebKit and wpe-related libs.
           # These are only in Debian Sid, not Ubuntu 24.04, so ldd "not found"
           # detection won't catch them (they resolve fine on the build host).
-          find /usr/lib /usr/lib/x86_64-linux-gnu \
+          find /usr/lib/x86_64-linux-gnu \
             \( -name "libWPEWebKit*.so*" -o -name "libwpe-*.so*" -o -name "libWPEBackend*.so*" \) \
             -type f 2>/dev/null | while read lib; do
             bundle_with_deps "$lib"

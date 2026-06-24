@@ -56,42 +56,22 @@ sed -i '' 's/compileSdk 33/compileSdk 36/' \
 
 Re-apply after `flutter pub cache repair`. Drop when desktop_drop publishes a fix.
 
-### flutter_inappwebview_linux CMakeLists patch (GCC compat)
+## Linux WebView
 
-`flutter_inappwebview_linux 0.1.0-beta.1` has a GCC compatibility issue:
-**`-Wno-deprecated-literal-operator` is Clang-only** — GCC errors on it.
-Fix: use `check_cxx_compiler_flag` so the flag is only added when supported.
+Linux uses `webview_flutter` (GTK WebKit / `libwebkit2gtk-4.1`) rather than
+`flutter_inappwebview_linux` (WPE WebKit). GTK WebKit is available on Ubuntu 24.04
+with glibc 2.39; WPEWebKit from Debian Sid required glibc 2.42 which is incompatible
+with Ubuntu 24.04 snap targets.
 
-CI builds Linux inside a **Debian Sid container** (via `container: debian:sid`
-on the `build-linux` job) because `libwpewebkit-2.0-dev` is not available on
-Ubuntu 22.04 or 24.04. The snap packaging runs in a separate `snap-linux` job on
-Ubuntu 24.04, consuming the bundle artifact uploaded by `build-linux`.
+CI builds Linux on `ubuntu-24.04` (no container). `libwebkit2gtk-4.1-dev` is
+installed as a system dep. The snap consumes the bundle artifact from the same job.
 
-The patch is applied by the CI via a Python script step. To apply locally:
+JS communication differs between the two plugins:
+- `flutter_inappwebview`: `window.flutter_inappwebview.callHandler(name, args)`
+- `webview_flutter`: `window.channelName.postMessage(value)`
 
-```python
-import pathlib
-p = pathlib.Path.home() / '.pub-cache/hosted/pub.dev/flutter_inappwebview_linux-0.1.0-beta.1/linux/CMakeLists.txt'
-t = p.read_text()
-CHECK_BLOCK = (
-  'check_cxx_compiler_flag("-Wno-deprecated-literal-operator" _WNO_DEPRECATED_LITERAL_OP)\n'
-  'if(_WNO_DEPRECATED_LITERAL_OP)\n'
-  '  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-literal-operator")\n'
-  'endif()'
-)
-if 'check_cxx_compiler_flag("-Wno-deprecated-literal-operator"' not in t:
-  t = t.replace(
-    'if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")\n  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-literal-operator")\nendif()',
-    CHECK_BLOCK
-  )
-  t = t.replace(
-    'set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-literal-operator")',
-    CHECK_BLOCK
-  )
-p.write_text(t)
-```
-
-Re-apply after `flutter pub cache repair`. Drop when `flutter_inappwebview_linux` publishes a fix.
+`assets/editor/editor.html` has a `_flutterNotify()` shim that routes to whichever
+API is present at runtime.
 
 ## macOS Native Channels
 

@@ -139,8 +139,16 @@ function fmt(cmd) {
   scheduleChange();
 }
 
+function _flutterNotify(name, value) {
+  if (window.flutter_inappwebview) {
+    window.flutter_inappwebview.callHandler(name, value);
+  } else if (window[name]) {
+    window[name].postMessage(value !== undefined ? String(value) : '');
+  }
+}
+
 function requestLink() {
-  window.flutter_inappwebview.callHandler('onLinkRequest');
+  _flutterNotify('onLinkRequest');
 }
 
 function insertLink(url) {
@@ -155,7 +163,7 @@ function scheduleChange() {
 }
 
 function fireChange() {
-  window.flutter_inappwebview.callHandler('onContentChanged', editor.innerHTML);
+  _flutterNotify('onContentChanged', editor.innerHTML);
 }
 
 function setContent(html) {

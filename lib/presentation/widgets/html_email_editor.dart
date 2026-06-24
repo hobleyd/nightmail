@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart' as iaw;
+import 'package:webview_flutter/webview_flutter.dart';
 
 class HtmlEmailEditor extends StatefulWidget {
   const HtmlEmailEditor({
@@ -23,7 +24,8 @@ class HtmlEmailEditor extends StatefulWidget {
 }
 
 class HtmlEmailEditorState extends State<HtmlEmailEditor> {
-  iaw.InAppWebViewController? _controller;
+  iaw.InAppWebViewController? _inAppController;
+  WebViewController? _flutterController;
   bool _ready = false;
   String _pendingHtml = '';
 
@@ -31,10 +33,34 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
   void initState() {
     super.initState();
     _pendingHtml = widget.initialHtml;
-    // Defer webview creation by one frame so the HWND / layer tree is ready.
+    if (Platform.isLinux) {
+      _initFlutterController();
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) setState(() => _ready = true);
     });
+  }
+
+  void _initFlutterController() {
+    _flutterController = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..addJavaScriptChannel(
+        'onContentChanged',
+        onMessageReceived: (msg) => widget.onContentChanged(msg.message),
+      )
+      ..addJavaScriptChannel(
+        'onLinkRequest',
+        onMessageReceived: (_) => widget.onLinkRequested(),
+      )
+      ..setNavigationDelegate(NavigationDelegate(
+        onPageFinished: (_) async {
+          if (_pendingHtml.isNotEmpty) {
+            await _flutterController
+                ?.runJavaScript('setContent(${jsonEncode(_pendingHtml)})');
+          }
+        },
+      ))
+      ..loadFlutterAsset('assets/editor/editor.html');
   }
 
   @override
@@ -42,60 +68,82 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.initialHtml != widget.initialHtml) {
       _pendingHtml = widget.initialHtml;
-      _controller?.evaluateJavascript(
-        source: 'setContent(${jsonEncode(widget.initialHtml)})',
-      );
+      if (Platform.isLinux) {
+        _flutterController
+            ?.runJavaScript('setContent(${jsonEncode(widget.initialHtml)})');
+      } else {
+        _inAppController?.evaluateJavascript(
+          source: 'setContent(${jsonEncode(widget.initialHtml)})',
+        );
+      }
     }
   }
 
   Future<void> setContent(String html) async {
     _pendingHtml = html;
-    await _controller?.evaluateJavascript(
-      source: 'setContent(${jsonEncode(html)})',
-    );
+    if (Platform.isLinux) {
+      await _flutterController?.runJavaScript('setContent(${jsonEncode(html)})');
+    } else {
+      await _inAppController?.evaluateJavascript(
+        source: 'setContent(${jsonEncode(html)})',
+      );
+    }
   }
 
   Future<String> getContent() async {
-    final result = await _controller?.evaluateJavascript(source: 'getContent()');
-    return result?.toString() ?? _pendingHtml;
+    if (Platform.isLinux) {
+      final result = await _flutterController
+          ?.runJavaScriptReturningResult('getContent()');
+      if (result == null) return _pendingHtml;
+      // runJavaScriptReturningResult returns JSON-encoded strings (with quotes)
+      try {
+        return jsonDecode(result.toString()) as String;
+      } catch (_) {
+        return result.toString();
+      }
+    } else {
+      final result =
+          await _inAppController?.evaluateJavascript(source: 'getContent()');
+      return result?.toString() ?? _pendingHtml;
+    }
   }
 
   Future<void> insertImage(String dataUri, String contentId) async {
-    await _controller?.evaluateJavascript(
-      source: 'insertImage(${jsonEncode(dataUri)}, ${jsonEncode(contentId)})',
-    );
+    final js =
+        'insertImage(${jsonEncode(dataUri)}, ${jsonEncode(contentId)})';
+    if (Platform.isLinux) {
+      await _flutterController?.runJavaScript(js);
+    } else {
+      await _inAppController?.evaluateJavascript(source: js);
+    }
   }
 
   Future<void> insertLink(String url) async {
-    await _controller?.evaluateJavascript(
-      source: 'insertLink(${jsonEncode(url)})',
-    );
+    final js = 'insertLink(${jsonEncode(url)})';
+    if (Platform.isLinux) {
+      await _flutterController?.runJavaScript(js);
+    } else {
+      await _inAppController?.evaluateJavascript(source: js);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     if (!_ready) return const SizedBox.shrink();
 
-    // On Windows, InAppWebView requires a file URL rather than initialData.
-    // On macOS/Linux, initialData works fine.
-    final Widget webView;
-    if (Platform.isWindows) {
-      webView = iaw.InAppWebView(
-        initialFile: 'assets/editor/editor.html',
-        initialSettings: _settings(),
-        onWebViewCreated: _onCreated,
-        onLoadStop: _onLoadStop,
-      );
-    } else {
-      webView = iaw.InAppWebView(
-        initialFile: 'assets/editor/editor.html',
-        initialSettings: _settings(),
-        onWebViewCreated: _onCreated,
-        onLoadStop: _onLoadStop,
-      );
+    if (Platform.isLinux) {
+      final ctrl = _flutterController;
+      return ctrl != null
+          ? WebViewWidget(controller: ctrl)
+          : const SizedBox.shrink();
     }
 
-    return webView;
+    return iaw.InAppWebView(
+      initialFile: 'assets/editor/editor.html',
+      initialSettings: _settings(),
+      onWebViewCreated: _onCreated,
+      onLoadStop: _onLoadStop,
+    );
   }
 
   iaw.InAppWebViewSettings _settings() => iaw.InAppWebViewSettings(
@@ -106,7 +154,7 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
       );
 
   void _onCreated(iaw.InAppWebViewController controller) {
-    _controller = controller;
+    _inAppController = controller;
     controller.addJavaScriptHandler(
       handlerName: 'onContentChanged',
       callback: (args) {

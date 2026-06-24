@@ -227,11 +227,15 @@ class _EmailListPanelState extends State<EmailListPanel> {
     if (_selectedEmailIds.isNotEmpty) {
       _deleteSelected();
     } else if (widget.selectedEmailId != null) {
-      context.read<EmailDetailBloc>().add(const EmailDetailCleared());
-      context.read<HomeCubit>().clearEmail();
-      context
-          .read<EmailListBloc>()
-          .add(EmailListEmailDeleted(emailId: widget.selectedEmailId!));
+      final deletedId = widget.selectedEmailId!;
+      final nextEmail = _findNextEmail(_currentFlatItems(), deletedId);
+      if (nextEmail != null) {
+        widget.onEmailSelected(nextEmail);
+      } else {
+        context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+        context.read<HomeCubit>().clearEmail();
+      }
+      context.read<EmailListBloc>().add(EmailListEmailDeleted(emailId: deletedId));
     }
   }
 
@@ -369,6 +373,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
                               onToggleConversation: (id) => context
                                   .read<EmailListBloc>()
                                   .add(EmailListToggleConversation(conversationId: id)),
+                              onAutoSelectEmail: widget.onEmailSelected,
                             ),
                     EmailListError(:final message) =>
                       _ErrorView(message: message),
@@ -475,6 +480,19 @@ List<_ListItem> _buildListItems(
   }
 
   return items;
+}
+
+Email? _findNextEmail(List<_ListItem> items, String emailId) {
+  final index = items.indexWhere((item) => switch (item) {
+    _SingleEmailItem(:final email) => email.id == emailId,
+    _ConversationHeaderItem(:final latestEmail) => latestEmail.id == emailId,
+  });
+  if (index == -1 || items.length <= 1) return null;
+  final nextIndex = index < items.length - 1 ? index + 1 : index - 1;
+  return switch (items[nextIndex]) {
+    _SingleEmailItem(email: final e) => e,
+    _ConversationHeaderItem(latestEmail: final e) => e,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -670,6 +688,7 @@ class _EmailListView extends StatelessWidget {
     this.spamEmailIds = const {},
     this.onEmailLongPressed,
     this.onEmailDoubleTapped,
+    this.onAutoSelectEmail,
   });
 
   final List<Email> emails;
@@ -684,6 +703,7 @@ class _EmailListView extends StatelessWidget {
   final Set<String> expandedConversationIds;
   final Set<String> spamEmailIds;
   final ValueChanged<String> onToggleConversation;
+  final ValueChanged<Email>? onAutoSelectEmail;
 
   @override
   Widget build(BuildContext context) {
@@ -721,8 +741,13 @@ class _EmailListView extends StatelessWidget {
                 onLongPress: () => onEmailLongPressed?.call(email, i),
                 onDelete: () {
                   if (email.id == selectedEmailId) {
-                    context.read<EmailDetailBloc>().add(const EmailDetailCleared());
-                    context.read<HomeCubit>().clearEmail();
+                    final nextEmail = _findNextEmail(items, email.id);
+                    if (nextEmail != null) {
+                      onAutoSelectEmail?.call(nextEmail);
+                    } else {
+                      context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+                      context.read<HomeCubit>().clearEmail();
+                    }
                   }
                   context.read<EmailListBloc>().add(EmailListEmailDeleted(emailId: email.id));
                 },
@@ -748,8 +773,13 @@ class _EmailListView extends StatelessWidget {
                 onToggleExpand: () => onToggleConversation(item.conversationId),
                 onDelete: () {
                   if (item.latestEmail.id == selectedEmailId) {
-                    context.read<EmailDetailBloc>().add(const EmailDetailCleared());
-                    context.read<HomeCubit>().clearEmail();
+                    final nextEmail = _findNextEmail(items, item.latestEmail.id);
+                    if (nextEmail != null) {
+                      onAutoSelectEmail?.call(nextEmail);
+                    } else {
+                      context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+                      context.read<HomeCubit>().clearEmail();
+                    }
                   }
                   context.read<EmailListBloc>().add(EmailListEmailDeleted(emailId: item.latestEmail.id));
                 },

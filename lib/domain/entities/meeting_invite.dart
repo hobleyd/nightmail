@@ -6,6 +6,9 @@ class MeetingInvite {
   const MeetingInvite({
     this.icsData,
     this.meetingStart,
+    this.meetingEnd,
+    this.location,
+    this.isAllDay = false,
     this.type = MeetingEmailType.invitation,
   });
 
@@ -13,9 +16,19 @@ class MeetingInvite {
   /// null for O365 (Graph API handles responses via the message endpoint).
   final String? icsData;
 
-  /// Start time of the meeting, populated from eventMessage.startDateTime for
-  /// O365. Used as a calendar-search fallback when the message→event link fails.
+  /// Start time of the meeting (UTC). Parsed from icsData for Gmail;
+  /// from eventMessage.startDateTime for O365.
   final DateTime? meetingStart;
+
+  /// End time of the meeting (UTC). Parsed from icsData for Gmail;
+  /// from eventMessage.endDateTime for O365.
+  final DateTime? meetingEnd;
+
+  /// Meeting location or room name, if provided.
+  final String? location;
+
+  /// True if this is an all-day event.
+  final bool isAllDay;
 
   final MeetingEmailType type;
 }

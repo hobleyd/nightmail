@@ -40,6 +40,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   bool _polling = false;
   bool _initialized = false;
   final Map<String, int> _baselineUnread = {};
+  final Map<String, int> _baselineTotal = {};
   final Map<String, int> _latestPolledUnread = {};
   final Set<String> _newMailAccounts = {};
   final Set<String> _bootstrapping = {};
@@ -188,8 +189,11 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
             final unreadCount = inboxes.first.unreadItemCount;
             _latestPolledUnread[account.id] = unreadCount;
 
+            final totalCount = inboxes.first.totalItemCount;
+
             if (!_initialized || !_baselineUnread.containsKey(account.id)) {
               _baselineUnread[account.id] = unreadCount;
+              _baselineTotal[account.id] = totalCount;
               if (account.id != activeId && unreadCount > 0) {
                 if (_newMailAccounts.add(account.id)) changed = true;
               }
@@ -197,9 +201,14 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
             }
 
             if (account.id == activeId) {
-              final prev = _baselineUnread[account.id];
-              if (prev != null && unreadCount > prev) activeInboxChanged = true;
+              final prevUnread = _baselineUnread[account.id];
+              final prevTotal = _baselineTotal[account.id];
+              if ((prevUnread != null && unreadCount > prevUnread) ||
+                  (prevTotal != null && totalCount > prevTotal)) {
+                activeInboxChanged = true;
+              }
               _baselineUnread[account.id] = unreadCount;
+              _baselineTotal[account.id] = totalCount;
               if (_newMailAccounts.remove(account.id)) changed = true;
             } else if (unreadCount > 0) {
               if (_newMailAccounts.add(account.id)) changed = true;

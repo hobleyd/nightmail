@@ -134,7 +134,31 @@ class EmailModel extends Email {
         meetingStart = DateTime.parse(utcStr);
       } catch (_) {}
     }
-    return MeetingInvite(meetingStart: meetingStart, type: type);
+
+    DateTime? meetingEnd;
+    final endMap = json['endDateTime'] as Map<String, dynamic>?;
+    final endStr = endMap?['dateTime'] as String?;
+    if (endStr != null) {
+      try {
+        final utcStr = endStr.endsWith('Z') ? endStr : '${endStr}Z';
+        meetingEnd = DateTime.parse(utcStr);
+      } catch (_) {}
+    }
+
+    String? location;
+    final locationMap = json['location'] as Map<String, dynamic>?;
+    final locationName = locationMap?['displayName'] as String?;
+    if (locationName != null && locationName.isNotEmpty) location = locationName;
+
+    final isAllDay = json['isAllDay'] as bool? ?? false;
+
+    return MeetingInvite(
+      meetingStart: meetingStart,
+      meetingEnd: meetingEnd,
+      location: location,
+      isAllDay: isAllDay,
+      type: type,
+    );
   }
 
   static EmailImportance _parseImportance(String? value) {

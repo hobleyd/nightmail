@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../core/error/exceptions.dart';
 import '../../../core/utils/html_entities.dart';
+import '../../../core/utils/ics_parser.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/local_attachment.dart';
 import '../../../domain/entities/email_attachment.dart';
@@ -291,9 +292,23 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
             );
             final raw = ar.data?['data'] as String?;
             if (raw != null && raw.isNotEmpty) {
-              meetingInvite = MeetingInvite(
-                icsData: utf8.decode(base64Url.decode(_padBase64(raw))),
-              );
+              final icsStr = utf8.decode(base64Url.decode(_padBase64(raw)));
+              final type = _icsMethod(icsStr) == 'CANCEL'
+                  ? MeetingEmailType.cancellation
+                  : MeetingEmailType.invitation;
+              try {
+                final event = IcsParser.parse(icsStr);
+                meetingInvite = MeetingInvite(
+                  icsData: icsStr,
+                  type: type,
+                  meetingStart: event.start,
+                  meetingEnd: event.end,
+                  location: event.location,
+                  isAllDay: event.isAllDay,
+                );
+              } catch (_) {
+                meetingInvite = MeetingInvite(icsData: icsStr, type: type);
+              }
             }
           } catch (_) {}
         }
@@ -447,7 +462,19 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         final type = _icsMethod(icsData) == 'CANCEL'
             ? MeetingEmailType.cancellation
             : MeetingEmailType.invitation;
-        meetingInvite = MeetingInvite(icsData: icsData, type: type);
+        try {
+          final event = IcsParser.parse(icsData);
+          meetingInvite = MeetingInvite(
+            icsData: icsData,
+            type: type,
+            meetingStart: event.start,
+            meetingEnd: event.end,
+            location: event.location,
+            isAllDay: event.isAllDay,
+          );
+        } catch (_) {
+          meetingInvite = MeetingInvite(icsData: icsData, type: type);
+        }
       }
 
       final parsed = _extractAttachments(payload);

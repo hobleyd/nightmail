@@ -27,8 +27,11 @@ import '../../domain/usecases/delete_email.dart';
 import '../../domain/usecases/download_attachment.dart';
 import '../../domain/usecases/cancel_meeting_from_email.dart';
 import '../../domain/usecases/remove_cancelled_meeting.dart';
+import '../../domain/entities/calendar_event.dart';
+import '../../domain/usecases/get_calendar_events.dart';
 import '../../domain/usecases/respond_to_meeting_invite.dart';
 import '../../domain/usecases/send_email.dart';
+import 'package:intl/intl.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../../injection_container.dart';
@@ -408,6 +411,53 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
   _InviteState _state = _InviteState.idle;
   String? _errorMessage;
   MeetingInviteResponseType? _responded;
+  List<CalendarEvent> _conflicts = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _checkConflicts();
+  }
+
+  Future<void> _checkConflicts() async {
+    final invite = widget.email.meetingInvite;
+    final start = invite?.meetingStart;
+    final end = invite?.meetingEnd ?? start?.add(const Duration(hours: 1));
+    if (start == null) return;
+
+    final result = await sl<GetCalendarEvents>()(GetCalendarEventsParams(
+      startDateTime: start.subtract(const Duration(minutes: 1)),
+      endDateTime: end!,
+    ));
+    if (!mounted) return;
+    result.fold((_) {}, (events) {
+      final conflicts = events.where((e) {
+        if (e.status == CalendarEventStatus.free) return false;
+        // Skip the calendar entry auto-created for this invite itself (same start+end).
+        if (e.start.toUtc().isAtSameMomentAs(start.toUtc()) &&
+            e.end.toUtc().isAtSameMomentAs(end.toUtc())) return false;
+        return e.start.isBefore(end) && e.end.isAfter(start);
+      }).toList();
+      if (conflicts.isNotEmpty) setState(() => _conflicts = conflicts);
+    });
+  }
+
+  String _formatMeetingTime(MeetingInvite invite) {
+    final start = invite.meetingStart;
+    final end = invite.meetingEnd;
+    if (start == null) return '';
+    final local = start.toLocal();
+    if (invite.isAllDay) {
+      return DateFormat('EEE d MMM yyyy').format(local);
+    }
+    final datePart = DateFormat('EEE d MMM yyyy').format(local);
+    final startTime = DateFormat('h:mm a').format(local);
+    if (end != null) {
+      final endTime = DateFormat('h:mm a').format(end.toLocal());
+      return '$datePart  $startTime – $endTime';
+    }
+    return '$datePart  $startTime';
+  }
 
   Future<void> _respond(MeetingInviteResponseType response) async {
     if (_state == _InviteState.loading) return;
@@ -469,6 +519,115 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
     }
   }
 
+  Widget _buildIdleState(AppColors c) {
+    final invite = widget.email.meetingInvite;
+    final timeStr = invite != null ? _formatMeetingTime(invite) : '';
+    final location = invite?.location;
+    final hasDetails = timeStr.isNotEmpty || location != null;
+
+    final buttons = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _InviteResponseButton(
+          label: 'Accept',
+          icon: Icons.check_rounded,
+          onPressed: () => _respond(MeetingInviteResponseType.accept),
+        ),
+        const SizedBox(width: 6),
+        _InviteResponseButton(
+          label: 'Maybe',
+          icon: Icons.help_outline_rounded,
+          onPressed: () => _respond(MeetingInviteResponseType.tentative),
+        ),
+        const SizedBox(width: 6),
+        _InviteResponseButton(
+          label: 'Decline',
+          icon: Icons.close_rounded,
+          onPressed: () => _respond(MeetingInviteResponseType.decline),
+        ),
+      ],
+    );
+
+    if (!hasDetails && _conflicts.isEmpty) {
+      return Row(
+        children: [
+          Icon(Icons.calendar_today_rounded, size: 14, color: c.textDimmed),
+          const SizedBox(width: 8),
+          Text('Meeting invitation',
+              style: TextStyle(color: c.textTertiary, fontSize: 12)),
+          const Spacer(),
+          buttons,
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 1),
+              child: Icon(Icons.calendar_today_rounded,
+                  size: 14, color: c.textDimmed),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (timeStr.isNotEmpty)
+                    Text(timeStr,
+                        style: TextStyle(
+                            color: c.textPrimary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500)),
+                  if (location != null) ...[
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        Icon(Icons.place_outlined,
+                            size: 12, color: c.textDimmed),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(location,
+                              style: TextStyle(
+                                  color: c.textTertiary, fontSize: 11),
+                              overflow: TextOverflow.ellipsis),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            buttons,
+          ],
+        ),
+        if (_conflicts.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Icon(Icons.warning_amber_rounded,
+                  size: 12, color: Colors.orange.shade700),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  'Conflicts with: ${_conflicts.map((e) => e.subject).join(', ')}',
+                  style: TextStyle(
+                      color: Colors.orange.shade700, fontSize: 11),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -526,34 +685,7 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
               ),
             ],
           ),
-        _InviteState.idle => Row(
-            children: [
-              Icon(Icons.calendar_today_rounded, size: 14, color: c.textDimmed),
-              const SizedBox(width: 8),
-              Text(
-                'Meeting invitation',
-                style: TextStyle(color: c.textTertiary, fontSize: 12),
-              ),
-              const Spacer(),
-              _InviteResponseButton(
-                label: 'Accept',
-                icon: Icons.check_rounded,
-                onPressed: () => _respond(MeetingInviteResponseType.accept),
-              ),
-              const SizedBox(width: 6),
-              _InviteResponseButton(
-                label: 'Maybe',
-                icon: Icons.help_outline_rounded,
-                onPressed: () => _respond(MeetingInviteResponseType.tentative),
-              ),
-              const SizedBox(width: 6),
-              _InviteResponseButton(
-                label: 'Decline',
-                icon: Icons.close_rounded,
-                onPressed: () => _respond(MeetingInviteResponseType.decline),
-              ),
-            ],
-          ),
+        _InviteState.idle => _buildIdleState(c),
       },
     );
   }

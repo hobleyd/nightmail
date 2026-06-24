@@ -16,6 +16,7 @@ import '../blocs/email_detail/email_detail_bloc.dart';
 import '../blocs/email_detail/email_detail_event.dart';
 import '../blocs/email_list/email_list_bloc.dart';
 import '../blocs/email_list/email_list_event.dart';
+import 'email_drag_data.dart';
 import '../blocs/email_list/email_list_state.dart';
 import '../blocs/folder_list/folder_list_bloc.dart';
 import '../blocs/folder_list/folder_list_event.dart';
@@ -403,12 +404,13 @@ class _FolderItemState extends State<_FolderItem>
 
   @override
   Widget build(BuildContext context) {
-    return DragTarget<List<String>>(
+    return DragTarget<EmailDragData>(
       onWillAcceptWithDetails: (_) => true,
       onAcceptWithDetails: (details) {
         context.read<EmailListBloc>().add(EmailListEmailsMoved(
-              emailIds: details.data,
+              emailIds: details.data.emailIds,
               destinationFolderId: widget.folder.id,
+              conversationId: details.data.conversationId,
             ));
       },
       builder: (context, candidateData, _) =>

@@ -270,10 +270,18 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   ) async {
     final current = state;
     if (current is! EmailListLoaded) return;
-    final ids = event.emailIds.toSet();
-    emit(current.copyWith(
-      emails: current.emails.where((e) => !ids.contains(e.id)).toList(),
-    ));
+
+    // When a conversationId is present, remove the entire thread from view
+    // (including cross-folder display emails not in emailIds). This prevents
+    // the thread stub from reappearing after the optimistic update.
+    final movedIds = event.emailIds.toSet();
+    final filteredEmails = event.conversationId != null
+        ? current.emails
+            .where((e) => e.conversationId != event.conversationId)
+            .toList()
+        : current.emails.where((e) => !movedIds.contains(e.id)).toList();
+    emit(current.copyWith(emails: filteredEmails));
+
     await Future.wait(
       event.emailIds.map((id) => _moveEmail(MoveEmailParams(
             id: id,

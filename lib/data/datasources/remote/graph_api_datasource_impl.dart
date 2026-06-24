@@ -129,7 +129,7 @@ class GraphApiDatasourceImpl
         queryParameters: {
           '\$filter': "conversationId eq '$conversationId'",
           '\$select': _emailListSelect,
-          '\$top': 50,
+          '\$top': 200,
         },
       );
       final value =

@@ -35,6 +35,7 @@ class AppColors {
   // Accent-based selection states (same in both themes)
   Color get selectionBg => accent.withAlpha(30);
   Color get selectionEmailBg => accent.withAlpha(25);
+  Color get hoverEmailBg => accent.withAlpha(13);
   Color get selectionBorder => accent.withAlpha(80);
   Color get badgeBg => accent.withAlpha(40);
 

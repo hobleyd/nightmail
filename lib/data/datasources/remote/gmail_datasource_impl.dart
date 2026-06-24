@@ -997,7 +997,9 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
 
     // Labels that act as "folders" — either user-created (Label_xxx) or the
     // small set of system labels that represent a mailbox location.
-    const folderLike = {'INBOX', 'SENT', 'SPAM', 'TRASH'};
+    // SENT cannot be removed via the Gmail API (returns 400) — exclude it so
+    // the entire modify call doesn't fail for messages that carry that label.
+    const folderLike = {'INBOX', 'SPAM', 'TRASH'};
     final toRemove = currentLabels
         .where((l) => l != destinationFolderId)
         .where((l) => folderLike.contains(l) || l.startsWith('Label_'))

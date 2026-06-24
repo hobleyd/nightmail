@@ -11,6 +11,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
+import 'email_drag_data.dart';
 import '../../domain/entities/email_folder.dart';
 import '../../domain/usecases/send_email.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
@@ -731,6 +732,7 @@ class _EmailListView extends StatelessWidget {
           _ConversationHeaderItem() => _DraggableEmailItem(
               key: ValueKey('drag_conv_${item.conversationId}'),
               emailIds: item.allEmailIds,
+              conversationId: item.conversationId,
               selectedEmailIds: selectedEmailIds,
               dragLabel: '${item.totalCount} emails – ${item.latestEmail.subject}',
               child: _ConversationHeader(
@@ -760,7 +762,7 @@ class _EmailListView extends StatelessWidget {
   }
 }
 
-class _ConversationHeader extends StatelessWidget {
+class _ConversationHeader extends StatefulWidget {
   const _ConversationHeader({
     required this.latestEmail,
     required this.totalCount,
@@ -790,189 +792,204 @@ class _ConversationHeader extends StatelessWidget {
   final void Function(DateTime? dueDate) onFlag;
 
   @override
+  State<_ConversationHeader> createState() => _ConversationHeaderState();
+}
+
+class _ConversationHeaderState extends State<_ConversationHeader> {
+  bool _isHovered = false;
+
+  @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final highlighted = isSelected || isMultiSelected;
+    final highlighted = widget.isSelected || widget.isMultiSelected;
     // Use a Stack so the chevron floats over the left margin without shifting
     // the email content — conversation rows stay pixel-aligned with single emails.
-    return Stack(
-      children: [
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: onTap,
-          onLongPress: onLongPress,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: highlighted ? c.selectionEmailBg : Colors.transparent,
-              borderRadius: BorderRadius.circular(8),
-              border: isSelected ? Border.all(color: c.selectionBorder) : null,
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                AnimatedSize(
-                  duration: const Duration(milliseconds: 200),
-                  curve: Curves.easeOut,
-                  child: showCheckbox
-                      ? Padding(
-                          padding: const EdgeInsets.only(right: 8, top: 2),
-                          child: Icon(
-                            isMultiSelected
-                                ? Icons.check_circle_rounded
-                                : Icons.radio_button_unchecked_rounded,
-                            size: 18,
-                            color:
-                                isMultiSelected ? AppColors.accent : c.textMuted,
-                          ),
-                        )
-                      : const SizedBox.shrink(),
-                ),
-                // Unread dot
-                Padding(
-                  padding: const EdgeInsets.only(top: 6, right: 8),
-                  child: AnimatedOpacity(
-                    opacity: hasUnread ? 1.0 : 0.0,
-                    duration: const Duration(milliseconds: 300),
-                    child: Container(
-                      width: 7,
-                      height: 7,
-                      decoration: const BoxDecoration(
-                        color: AppColors.accent,
-                        shape: BoxShape.circle,
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: Stack(
+        children: [
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: widget.onTap,
+            onLongPress: widget.onLongPress,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: highlighted
+                    ? c.selectionEmailBg
+                    : _isHovered
+                        ? c.hoverEmailBg
+                        : Colors.transparent,
+                borderRadius: BorderRadius.circular(8),
+                border: widget.isSelected ? Border.all(color: c.selectionBorder) : null,
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOut,
+                    child: widget.showCheckbox
+                        ? Padding(
+                            padding: const EdgeInsets.only(right: 8, top: 2),
+                            child: Icon(
+                              widget.isMultiSelected
+                                  ? Icons.check_circle_rounded
+                                  : Icons.radio_button_unchecked_rounded,
+                              size: 18,
+                              color:
+                                  widget.isMultiSelected ? AppColors.accent : c.textMuted,
+                            ),
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+                  // Unread dot
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6, right: 8),
+                    child: AnimatedOpacity(
+                      opacity: widget.hasUnread ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 300),
+                      child: Container(
+                        width: 7,
+                        height: 7,
+                        decoration: const BoxDecoration(
+                          color: AppColors.accent,
+                          shape: BoxShape.circle,
+                        ),
                       ),
                     ),
                   ),
-                ),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              latestEmail.from.displayName,
-                              style: TextStyle(
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                widget.latestEmail.from.displayName,
+                                style: TextStyle(
+                                  color: Colors.black,
+                                  fontSize: 13,
+                                  fontWeight: widget.hasUnread ? FontWeight.w600 : FontWeight.w400,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: c.badgeBg,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                '${widget.totalCount}',
+                                style: TextStyle(
+                                  color: AppColors.accent,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              formatEmailDate(widget.latestEmail.receivedDateTime),
+                              style: const TextStyle(
                                 color: Colors.black,
-                                fontSize: 13,
-                                fontWeight: hasUnread ? FontWeight.w600 : FontWeight.w400,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: c.badgeBg,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              '$totalCount',
-                              style: TextStyle(
-                                color: AppColors.accent,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w400,
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            formatEmailDate(latestEmail.receivedDateTime),
-                            style: const TextStyle(
-                              color: Colors.black,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w400,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 3),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              latestEmail.subject,
-                              style: TextStyle(
-                                color: Colors.black,
-                                fontSize: 12,
-                                fontWeight: hasUnread ? FontWeight.w500 : FontWeight.w400,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          if (latestEmail.hasAttachments)
-                            Padding(
-                              padding: const EdgeInsets.only(left: 4),
-                              child: Icon(
-                                Icons.attach_file_rounded,
-                                size: 12,
-                                color: c.textDimmed,
-                              ),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        latestEmail.bodyPreview,
-                        style: const TextStyle(
-                          color: Colors.black,
-                          fontSize: 11,
-                          height: 1.3,
+                          ],
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        const SizedBox(height: 3),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                widget.latestEmail.subject,
+                                style: TextStyle(
+                                  color: Colors.black,
+                                  fontSize: 12,
+                                  fontWeight: widget.hasUnread ? FontWeight.w500 : FontWeight.w400,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (widget.latestEmail.hasAttachments)
+                              Padding(
+                                padding: const EdgeInsets.only(left: 4),
+                                child: Icon(
+                                  Icons.attach_file_rounded,
+                                  size: 12,
+                                  color: c.textDimmed,
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          widget.latestEmail.bodyPreview,
+                          style: const TextStyle(
+                            color: Colors.black,
+                            fontSize: 11,
+                            height: 1.3,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      FlagIconButton(
+                        color: c.textDimmed,
+                        onTap: () => widget.onFlag(null),
+                        onSchedule: (date) => widget.onFlag(date),
+                      ),
+                      const SizedBox(height: 2),
+                      _ActionIcon(
+                        icon: Icons.delete_outline_rounded,
+                        color: c.textDimmed,
+                        onTap: widget.onDelete,
                       ),
                     ],
                   ),
-                ),
-                const SizedBox(width: 4),
-                Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    _ActionIcon(
-                      icon: Icons.delete_outline_rounded,
-                      color: c.textDimmed,
-                      onTap: onDelete,
-                    ),
-                    const SizedBox(height: 2),
-                    FlagIconButton(
-                      color: c.textDimmed,
-                      onTap: () => onFlag(null),
-                      onSchedule: (date) => onFlag(date),
-                    ),
-                  ],
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-        ),
-        // Chevron overlaid in the left margin — intercepts taps before the email content
-        Positioned(
-          left: 0,
-          top: 0,
-          bottom: 0,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: onToggleExpand,
-            child: SizedBox(
-              width: 16,
-              child: Center(
-                child: Icon(
-                  isExpanded
-                      ? Icons.expand_more_rounded
-                      : Icons.chevron_right_rounded,
-                  size: 12,
-                  color: c.textMuted,
+          // Chevron sits inside the highlight's left padding, aligned with the highlight edge
+          Positioned(
+            left: 8,
+            top: 0,
+            bottom: 0,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.onToggleExpand,
+              child: SizedBox(
+                width: 12,
+                child: Center(
+                  child: Icon(
+                    widget.isExpanded
+                        ? Icons.expand_more_rounded
+                        : Icons.chevron_right_rounded,
+                    size: 12,
+                    color: c.textMuted,
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -1050,25 +1067,29 @@ class _DraggableEmailItem extends StatelessWidget {
     required this.dragLabel,
     required this.child,
     this.selectedEmailIds = const {},
+    this.conversationId,
   });
 
   final List<String> emailIds;
   final Set<String> selectedEmailIds;
   final String dragLabel;
   final Widget child;
+  final String? conversationId;
 
-  List<String> get _effectiveDragIds {
-    if (selectedEmailIds.isEmpty) return emailIds;
-    final isInSelection = emailIds.any(selectedEmailIds.contains);
-    return isInSelection ? List.of(selectedEmailIds) : emailIds;
+  EmailDragData get _effectiveDragData {
+    if (selectedEmailIds.isNotEmpty && emailIds.any(selectedEmailIds.contains)) {
+      // Multi-select drag — user chose specific emails, ignore conversationId
+      return EmailDragData(emailIds: List.of(selectedEmailIds));
+    }
+    return EmailDragData(emailIds: emailIds, conversationId: conversationId);
   }
 
   @override
   Widget build(BuildContext context) {
-    final dragIds = _effectiveDragIds;
-    return Draggable<List<String>>(
-      data: dragIds,
-      feedback: _DragFeedback(count: dragIds.length),
+    final dragData = _effectiveDragData;
+    return Draggable<EmailDragData>(
+      data: dragData,
+      feedback: _DragFeedback(count: dragData.emailIds.length),
       childWhenDragging: Opacity(opacity: 0.4, child: child),
       child: child,
     );

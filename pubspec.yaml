@@ -140,7 +140,3 @@ dependency_overrides:
   # Remove once upstream enough_mail releases a fix.
   enough_mail:
     path: packages/enough_mail
-  # No-op stub: Linux WebView is provided by webview_flutter; flutter_inappwebview_linux
-  # requires WPE WebKit which is not available on Ubuntu 24.04.
-  flutter_inappwebview_linux:
-    path: linux_plugin_stubs/flutter_inappwebview_linux

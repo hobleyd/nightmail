@@ -6,7 +6,6 @@ import 'package:desktop_multi_window/desktop_multi_window.dart';
 import '../../core/platform/window_utils.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart' as iaw;
 import 'package:flutter/foundation.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -2040,17 +2039,11 @@ class _PdfPreview extends StatefulWidget {
 
 class _PdfPreviewState extends State<_PdfPreview> {
   bool _webViewReady = false;
-  WebViewController? _flutterController;
 
   @override
   void initState() {
     super.initState();
-    if (Platform.isLinux) {
-      _flutterController = WebViewController()
-        ..setJavaScriptMode(JavaScriptMode.disabled)
-        ..loadFile(widget.filePath);
-      _webViewReady = true;
-    } else if (Platform.isWindows) {
+    if (Platform.isWindows) {
       Future.delayed(const Duration(milliseconds: 50), () {
         if (mounted) setState(() => _webViewReady = true);
       });
@@ -2092,18 +2085,16 @@ class _PdfPreviewState extends State<_PdfPreview> {
         ),
         Divider(height: 1, color: c.border),
         Expanded(
-          child: !_webViewReady
-              ? const SizedBox.shrink()
-              : Platform.isLinux
-                  ? WebViewWidget(controller: _flutterController!)
-                  : iaw.InAppWebView(
-                      initialUrlRequest: iaw.URLRequest(
-                        url: iaw.WebUri(Uri.file(widget.filePath).toString()),
-                      ),
-                      initialSettings: iaw.InAppWebViewSettings(
-                        allowFileAccessFromFileURLs: true,
-                      ),
-                    ),
+          child: _webViewReady
+              ? iaw.InAppWebView(
+                  initialUrlRequest: iaw.URLRequest(
+                    url: iaw.WebUri(Uri.file(widget.filePath).toString()),
+                  ),
+                  initialSettings: iaw.InAppWebViewSettings(
+                    allowFileAccessFromFileURLs: true,
+                  ),
+                )
+              : const SizedBox.shrink(),
         ),
       ],
     );

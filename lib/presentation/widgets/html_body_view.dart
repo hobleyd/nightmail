@@ -43,7 +43,7 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
   @override
   void initState() {
     super.initState();
-    if (Platform.isMacOS || Platform.isWindows) {
+    if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
       final (html, blocked) = _buildHtml(allowExternal: false);
       _pendingHtml = html;
       _hasBlockedImages = blocked;
@@ -131,7 +131,7 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
           url: iaw.WebUri(Uri.file(_tempHtmlFile!.path).toString()),
         ),
       );
-    } else if (Platform.isMacOS) {
+    } else if (Platform.isLinux || Platform.isMacOS) {
       // If the controller isn't ready yet, _pendingHtml is picked up in
       // onWebViewCreated once initialisation completes.
       _inAppController?.loadData(data: html);
@@ -233,7 +233,7 @@ a[href]:hover::after {
   @override
   Widget build(BuildContext context) {
     final Widget webviewWidget;
-    if (Platform.isMacOS || Platform.isWindows) {
+    if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
       if (!_webViewReady) {
         webviewWidget = const SizedBox.shrink();
       } else if (Platform.isWindows && _tempHtmlFile != null) {

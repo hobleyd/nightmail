@@ -174,6 +174,18 @@ await configureDependencies();
           await windowManager.maximize();
         } else if (restored.bounds != null) {
           await windowManager.setBounds(restored.bounds!);
+          // On Windows, moving the window to a monitor with a different DPI
+          // triggers WM_DPICHANGED which rescales the window size. Re-apply
+          // after the first frame; by then devicePixelRatio reflects the
+          // target display's DPI so setBounds lands at the correct size.
+          if (Platform.isWindows) {
+            final bounds = restored.bounds!;
+            WidgetsBinding.instance.addPostFrameCallback((_) async {
+              try {
+                await windowManager.setBounds(bounds);
+              } catch (_) {}
+            });
+          }
         }
       }
     } catch (_) {}

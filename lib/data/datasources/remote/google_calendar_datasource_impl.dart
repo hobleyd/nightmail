@@ -119,6 +119,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     String? icsData,
     DateTime? meetingStart,
     String? userEmail,
+    String? message,
   }) async {
     if (icsData == null) {
       throw const ServerException(
@@ -270,6 +271,26 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
   }) async {
     // Google Calendar has no native propose-new-time API; decline the original.
     await declineCalendarEvent(eventId: eventId, userEmail: userEmail);
+  }
+
+  @override
+  Future<void> proposeNewTimeFromEmail({
+    required String emailId,
+    required DateTime newStart,
+    required DateTime newEnd,
+    String? icsData,
+    DateTime? meetingStart,
+    String? userEmail,
+    String? message,
+  }) async {
+    // Google Calendar has no native propose-new-time API; decline the invite.
+    await respondToMeetingInvite(
+      emailId: emailId,
+      response: MeetingInviteResponseType.decline,
+      icsData: icsData,
+      meetingStart: meetingStart,
+      userEmail: userEmail,
+    );
   }
 
   @override

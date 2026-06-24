@@ -29,6 +29,7 @@ import '../../domain/usecases/cancel_meeting_from_email.dart';
 import '../../domain/usecases/remove_cancelled_meeting.dart';
 import '../../domain/entities/calendar_event.dart';
 import '../../domain/usecases/get_calendar_events.dart';
+import '../../domain/usecases/propose_new_time_from_email.dart';
 import '../../domain/usecases/respond_to_meeting_invite.dart';
 import '../../domain/usecases/send_email.dart';
 import 'package:intl/intl.dart';
@@ -397,7 +398,7 @@ class _ReadingPaneToolbar extends StatelessWidget {
   }
 }
 
-enum _InviteState { idle, loading, done, error }
+enum _InviteState { idle, loading, done, error, proposing }
 
 class _MeetingInviteBanner extends StatefulWidget {
   const _MeetingInviteBanner({required this.email});
@@ -411,12 +412,27 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
   _InviteState _state = _InviteState.idle;
   String? _errorMessage;
   MeetingInviteResponseType? _responded;
+  bool _proposedNewTime = false;
   List<CalendarEvent> _conflicts = [];
+  bool _addNote = false;
+  final TextEditingController _noteController = TextEditingController();
+  DateTime? _proposedStart;
+  DateTime? _proposedEnd;
 
   @override
   void initState() {
     super.initState();
     _checkConflicts();
+    final invite = widget.email.meetingInvite;
+    _proposedStart = invite?.meetingStart;
+    _proposedEnd = invite?.meetingEnd ??
+        invite?.meetingStart?.add(const Duration(hours: 1));
+  }
+
+  @override
+  void dispose() {
+    _noteController.dispose();
+    super.dispose();
   }
 
   Future<void> _checkConflicts() async {
@@ -472,6 +488,7 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
         response: response,
         icsData: widget.email.meetingInvite?.icsData,
         meetingStart: widget.email.meetingInvite?.meetingStart,
+        message: _addNote ? _noteController.text.trim() : null,
       ),
     );
 
@@ -519,6 +536,105 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
     }
   }
 
+  Future<void> _sendProposal() async {
+    final start = _proposedStart;
+    final end = _proposedEnd;
+    if (start == null || end == null) return;
+    if (_state == _InviteState.loading) return;
+    setState(() {
+      _state = _InviteState.loading;
+      _errorMessage = null;
+    });
+
+    final result = await sl<ProposeNewTimeFromEmail>()(
+      ProposeNewTimeFromEmailParams(
+        emailId: widget.email.id,
+        newStart: start,
+        newEnd: end,
+        icsData: widget.email.meetingInvite?.icsData,
+        meetingStart: widget.email.meetingInvite?.meetingStart,
+        message: _addNote ? _noteController.text.trim() : null,
+      ),
+    );
+
+    if (!mounted) return;
+    result.fold(
+      (failure) => setState(() {
+        _state = _InviteState.error;
+        _errorMessage = failure.message;
+      }),
+      (_) => setState(() {
+        _state = _InviteState.done;
+        _proposedNewTime = true;
+      }),
+    );
+
+    if (result.isRight() && mounted) {
+      final calendarState = context.read<CalendarBloc>().state;
+      context.read<CalendarBloc>().add(
+            CalendarWeekLoadRequested(weekStart: calendarState.weekStart),
+          );
+
+      final email = widget.email;
+      final deleteResult =
+          await sl<DeleteEmail>()(DeleteEmailParams(id: email.id));
+      if (!mounted) return;
+      deleteResult.fold(
+        (_) {},
+        (_) {
+          context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+          context.read<HomeCubit>().clearEmail();
+          context
+              .read<EmailListBloc>()
+              .add(EmailListEmailDeleted(emailId: email.id));
+          if (email.parentFolderId != null) {
+            context.read<FolderListBloc>().add(
+                  FolderListUnreadCountChanged(
+                    folderId: email.parentFolderId!,
+                    unreadCountDelta: email.isRead ? 0 : -1,
+                    totalCountDelta: -1,
+                  ),
+                );
+          }
+        },
+      );
+    }
+  }
+
+  Future<void> _pickDateTime({
+    required bool isStart,
+  }) async {
+    final current = isStart ? _proposedStart : _proposedEnd;
+    final base = current ?? DateTime.now();
+    final date = await showDatePicker(
+      context: context,
+      initialDate: base.toLocal(),
+      firstDate: DateTime.now().subtract(const Duration(days: 1)),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(base.toLocal()),
+    );
+    if (time == null || !mounted) return;
+    final combined = DateTime(
+      date.year, date.month, date.day, time.hour, time.minute,
+    ).toUtc();
+    setState(() {
+      if (isStart) {
+        _proposedStart = combined;
+        // Keep end after start; nudge it if needed.
+        final end = _proposedEnd;
+        if (end != null && !end.isAfter(combined)) {
+          _proposedEnd = combined.add(const Duration(hours: 1));
+        }
+      } else {
+        _proposedEnd = combined;
+      }
+    });
+  }
+
   Widget _buildIdleState(AppColors c) {
     final invite = widget.email.meetingInvite;
     final timeStr = invite != null ? _formatMeetingTime(invite) : '';
@@ -545,21 +661,14 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
           icon: Icons.close_rounded,
           onPressed: () => _respond(MeetingInviteResponseType.decline),
         ),
+        const SizedBox(width: 6),
+        _InviteResponseButton(
+          label: 'Propose New Time',
+          icon: Icons.schedule_rounded,
+          onPressed: () => setState(() => _state = _InviteState.proposing),
+        ),
       ],
     );
-
-    if (!hasDetails && _conflicts.isEmpty) {
-      return Row(
-        children: [
-          Icon(Icons.calendar_today_rounded, size: 14, color: c.textDimmed),
-          const SizedBox(width: 8),
-          Text('Meeting invitation',
-              style: TextStyle(color: c.textTertiary, fontSize: 12)),
-          const Spacer(),
-          buttons,
-        ],
-      );
-    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -573,35 +682,41 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
                   size: 14, color: c.textDimmed),
             ),
             const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (timeStr.isNotEmpty)
-                    Text(timeStr,
-                        style: TextStyle(
-                            color: c.textPrimary,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500)),
-                  if (location != null) ...[
-                    const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        Icon(Icons.place_outlined,
-                            size: 12, color: c.textDimmed),
-                        const SizedBox(width: 4),
-                        Flexible(
-                          child: Text(location,
-                              style: TextStyle(
-                                  color: c.textTertiary, fontSize: 11),
-                              overflow: TextOverflow.ellipsis),
-                        ),
-                      ],
-                    ),
+            if (hasDetails)
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (timeStr.isNotEmpty)
+                      Text(timeStr,
+                          style: TextStyle(
+                              color: c.textPrimary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500)),
+                    if (location != null) ...[
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Icon(Icons.place_outlined,
+                              size: 12, color: c.textDimmed),
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(location,
+                                style: TextStyle(
+                                    color: c.textTertiary, fontSize: 11),
+                                overflow: TextOverflow.ellipsis),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
-                ],
-              ),
-            ),
+                ),
+              )
+            else ...[
+              Text('Meeting invitation',
+                  style: TextStyle(color: c.textTertiary, fontSize: 12)),
+              const Spacer(),
+            ],
             const SizedBox(width: 12),
             buttons,
           ],
@@ -616,12 +731,156 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
               Expanded(
                 child: Text(
                   'Conflicts with: ${_conflicts.map((e) => e.subject).join(', ')}',
-                  style: TextStyle(
-                      color: Colors.orange.shade700, fontSize: 11),
+                  style:
+                      TextStyle(color: Colors.orange.shade700, fontSize: 11),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],
+          ),
+        ],
+        _buildNoteRow(c),
+      ],
+    );
+  }
+
+  Widget _buildProposingState(AppColors c) {
+    String fmt(DateTime? dt) {
+      if (dt == null) return '—';
+      return _formatMeetingTime(MeetingInvite(
+        meetingStart: dt,
+        meetingEnd: dt.add(const Duration(seconds: 1)),
+        isAllDay: false,
+      )).split('  ').last;
+    }
+
+    String fmtDate(DateTime? dt) {
+      if (dt == null) return '—';
+      return DateFormat('EEE d MMM yyyy').format(dt.toLocal());
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.schedule_rounded, size: 14, color: c.textDimmed),
+            const SizedBox(width: 8),
+            Text('Propose new time',
+                style: TextStyle(
+                    color: c.textPrimary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500)),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            SizedBox(
+              width: 36,
+              child: Text('From',
+                  style: TextStyle(color: c.textTertiary, fontSize: 11)),
+            ),
+            _DateTimeChip(
+              label: fmtDate(_proposedStart),
+              onTap: () => _pickDateTime(isStart: true),
+              c: c,
+            ),
+            const SizedBox(width: 6),
+            _DateTimeChip(
+              label: fmt(_proposedStart),
+              onTap: () => _pickDateTime(isStart: true),
+              c: c,
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            SizedBox(
+              width: 36,
+              child: Text('To',
+                  style: TextStyle(color: c.textTertiary, fontSize: 11)),
+            ),
+            _DateTimeChip(
+              label: fmtDate(_proposedEnd),
+              onTap: () => _pickDateTime(isStart: false),
+              c: c,
+            ),
+            const SizedBox(width: 6),
+            _DateTimeChip(
+              label: fmt(_proposedEnd),
+              onTap: () => _pickDateTime(isStart: false),
+              c: c,
+            ),
+            const Spacer(),
+            _InviteResponseButton(
+              label: 'Send',
+              icon: Icons.send_rounded,
+              onPressed: _sendProposal,
+            ),
+            const SizedBox(width: 6),
+            _InviteResponseButton(
+              label: 'Cancel',
+              icon: Icons.close_rounded,
+              onPressed: () => setState(() => _state = _InviteState.idle),
+            ),
+          ],
+        ),
+        _buildNoteRow(c),
+      ],
+    );
+  }
+
+  Widget _buildNoteRow(AppColors c) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: Checkbox(
+                value: _addNote,
+                onChanged: (v) => setState(() => _addNote = v ?? false),
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text('Add note',
+                style: TextStyle(color: c.textTertiary, fontSize: 11)),
+          ],
+        ),
+        if (_addNote) ...[
+          const SizedBox(height: 4),
+          TextField(
+            controller: _noteController,
+            style: TextStyle(color: c.textPrimary, fontSize: 12),
+            maxLines: 3,
+            minLines: 1,
+            decoration: InputDecoration(
+              hintText: 'Note to organiser…',
+              hintStyle: TextStyle(color: c.textDimmed, fontSize: 12),
+              isDense: true,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(4),
+                borderSide: BorderSide(color: c.border),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(4),
+                borderSide: BorderSide(color: c.border),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(4),
+                borderSide:
+                    const BorderSide(color: AppColors.accent, width: 1.5),
+              ),
+            ),
           ),
         ],
       ],
@@ -658,23 +917,28 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
                   size: 14, color: AppColors.accent),
               const SizedBox(width: 8),
               Text(
-                switch (_responded!) {
-                  MeetingInviteResponseType.accept => 'Accepted',
-                  MeetingInviteResponseType.tentative => 'Tentatively accepted',
-                  MeetingInviteResponseType.decline => 'Declined',
-                },
+                _proposedNewTime
+                    ? 'Proposal sent'
+                    : switch (_responded!) {
+                        MeetingInviteResponseType.accept => 'Accepted',
+                        MeetingInviteResponseType.tentative =>
+                          'Tentatively accepted',
+                        MeetingInviteResponseType.decline => 'Declined',
+                      },
                 style: TextStyle(color: c.textTertiary, fontSize: 12),
               ),
             ],
           ),
         _InviteState.error => Row(
             children: [
-              Icon(Icons.error_outline_rounded, size: 14, color: Colors.redAccent),
+              Icon(Icons.error_outline_rounded,
+                  size: 14, color: Colors.redAccent),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   _errorMessage ?? 'Something went wrong',
-                  style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                  style:
+                      const TextStyle(color: Colors.redAccent, fontSize: 12),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -686,7 +950,37 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
             ],
           ),
         _InviteState.idle => _buildIdleState(c),
+        _InviteState.proposing => _buildProposingState(c),
       },
+    );
+  }
+}
+
+class _DateTimeChip extends StatelessWidget {
+  const _DateTimeChip({
+    required this.label,
+    required this.onTap,
+    required this.c,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+  final AppColors c;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(4),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          border: Border.all(color: c.border),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(label,
+            style: TextStyle(color: c.textPrimary, fontSize: 11)),
+      ),
     );
   }
 }
@@ -814,7 +1108,7 @@ class _MeetingCancellationBannerState
               ),
             ],
           ),
-        _InviteState.idle => Row(
+        _InviteState.idle || _InviteState.proposing => Row(
             children: [
               Icon(Icons.event_busy_rounded, size: 14, color: c.textDimmed),
               const SizedBox(width: 8),
@@ -959,7 +1253,7 @@ class _MeetingDeclineNotificationBannerState
               ),
             ],
           ),
-        _InviteState.idle => Row(
+        _InviteState.idle || _InviteState.proposing => Row(
             children: [
               Icon(Icons.person_remove_outlined, size: 14, color: c.textDimmed),
               const SizedBox(width: 8),

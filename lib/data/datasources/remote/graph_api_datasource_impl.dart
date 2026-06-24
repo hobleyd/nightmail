@@ -407,13 +407,14 @@ class GraphApiDatasourceImpl
     String? icsData,
     DateTime? meetingStart,
     String? userEmail,
+    String? message,
   }) async {
     final endpoint = switch (response) {
       MeetingInviteResponseType.accept => 'accept',
       MeetingInviteResponseType.tentative => 'tentativelyAccept',
       MeetingInviteResponseType.decline => 'decline',
     };
-    final body = {'sendResponse': true, 'comment': ''};
+    final body = {'sendResponse': true, 'comment': message ?? ''};
 
     // 1. Try the message-level action (works for unprocessed eventMessages).
     try {
@@ -488,6 +489,90 @@ class GraphApiDatasourceImpl
       }
       final targetId = attendeeEvents.first['id'] as String;
       await _dio.post<void>('/me/events/$targetId/$endpoint', data: body);
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<void> proposeNewTimeFromEmail({
+    required String emailId,
+    required DateTime newStart,
+    required DateTime newEnd,
+    String? icsData,
+    DateTime? meetingStart,
+    String? userEmail,
+    String? message,
+  }) async {
+    final tz = 'UTC';
+    final body = {
+      'sendResponse': true,
+      'comment': message ?? '',
+      'proposedNewTime': {
+        'start': {
+          'dateTime': _formatLocalDateTime(newStart.toUtc()),
+          'timeZone': tz,
+        },
+        'end': {
+          'dateTime': _formatLocalDateTime(newEnd.toUtc()),
+          'timeZone': tz,
+        },
+      },
+    };
+
+    // Navigate from message to its linked calendar event.
+    String? eventId;
+    try {
+      final eventResp = await _dio.get<Map<String, dynamic>>(
+        '/me/messages/$emailId/event',
+        queryParameters: {'\$select': 'id,isOrganizer'},
+      );
+      final isOrganizer = eventResp.data?['isOrganizer'] as bool? ?? false;
+      if (isOrganizer) return;
+      eventId = eventResp.data?['id'] as String?;
+    } on DioException {
+      // Navigation unavailable — fall through to calendar search.
+    }
+
+    if (eventId != null) {
+      try {
+        await _dio.post<void>('/me/events/$eventId/decline', data: body);
+        return;
+      } on DioException catch (e) {
+        final status = e.response?.statusCode;
+        if (status == 401 || status == 403) throw _mapDioException(e);
+      }
+    }
+
+    // Fall back to calendar search by meeting start time.
+    if (meetingStart == null) {
+      throw const ServerException(
+          message: 'Could not locate the calendar event for this invite');
+    }
+    try {
+      final windowStart = meetingStart.subtract(const Duration(minutes: 30));
+      final windowEnd = meetingStart.add(const Duration(hours: 2));
+      String fmt(DateTime d) => d.toUtc().toIso8601String();
+      final calResp = await _dio.get<Map<String, dynamic>>(
+        '/me/calendarView',
+        queryParameters: {
+          'startDateTime': fmt(windowStart),
+          'endDateTime': fmt(windowEnd),
+          '\$select': 'id,isOrganizer',
+          '\$top': 50,
+        },
+        options: Options(headers: {'Prefer': 'outlook.timezone="UTC"'}),
+      );
+      final events = (calResp.data?['value'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      final attendeeEvents =
+          events.where((e) => e['isOrganizer'] != true).toList();
+      if (attendeeEvents.isEmpty) {
+        throw const ServerException(
+            message: 'No meeting found in your calendar at that time');
+      }
+      final targetId = attendeeEvents.first['id'] as String;
+      await _dio.post<void>('/me/events/$targetId/decline', data: body);
     } on DioException catch (e) {
       throw _mapDioException(e);
     }

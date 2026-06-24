@@ -103,6 +103,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
     required MeetingInviteResponseType response,
     String? icsData,
     DateTime? meetingStart,
+    String? message,
   }) async {
     final ds = _accountManager.calendarDatasource;
     if (ds == null) {
@@ -121,6 +122,47 @@ class CalendarRepositoryImpl implements CalendarRepository {
         icsData: icsData,
         meetingStart: meetingStart,
         userEmail: userEmail,
+        message: message,
+      );
+      return const Right(null);
+    } on AuthException catch (e) {
+      return Left(AuthFailure(message: e.message));
+    } on NetworkException catch (e) {
+      return Left(NetworkFailure(message: e.message));
+    } on ServerException catch (e) {
+      return Left(ServerFailure(message: e.message, statusCode: e.statusCode));
+    } catch (e) {
+      return Left(ServerFailure(message: e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, void>> proposeNewTimeFromEmail({
+    required String emailId,
+    required DateTime newStart,
+    required DateTime newEnd,
+    String? icsData,
+    DateTime? meetingStart,
+    String? message,
+  }) async {
+    final ds = _accountManager.calendarDatasource;
+    if (ds == null) {
+      return const Left(
+        ServerFailure(message: 'Calendar is not available for this account type'),
+      );
+    }
+
+    final userEmail = _accountManager.activeAccount?.emailAddress;
+
+    try {
+      await ds.proposeNewTimeFromEmail(
+        emailId: emailId,
+        newStart: newStart,
+        newEnd: newEnd,
+        icsData: icsData,
+        meetingStart: meetingStart,
+        userEmail: userEmail,
+        message: message,
       );
       return const Right(null);
     } on AuthException catch (e) {

@@ -171,6 +171,7 @@ class CalDavCalendarDatasourceImpl implements CalendarRemoteDatasource {
     String? icsData,
     DateTime? meetingStart,
     String? userEmail,
+    String? message,
   }) async {
     if (response == MeetingInviteResponseType.decline) return;
     if (icsData == null) return;
@@ -279,6 +280,26 @@ class CalDavCalendarDatasourceImpl implements CalendarRemoteDatasource {
   }) async {
     // CalDAV has no propose-new-time mechanism; remove from local calendar.
     await cancelCalendarEvent(eventId: eventId);
+  }
+
+  @override
+  Future<void> proposeNewTimeFromEmail({
+    required String emailId,
+    required DateTime newStart,
+    required DateTime newEnd,
+    String? icsData,
+    DateTime? meetingStart,
+    String? userEmail,
+    String? message,
+  }) async {
+    // CalDAV has no propose-new-time mechanism; decline the invite instead.
+    await respondToMeetingInvite(
+      emailId: emailId,
+      response: MeetingInviteResponseType.decline,
+      icsData: icsData,
+      meetingStart: meetingStart,
+      userEmail: userEmail,
+    );
   }
 
   @override

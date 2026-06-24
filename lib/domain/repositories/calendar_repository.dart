@@ -26,6 +26,16 @@ abstract interface class CalendarRepository {
     required MeetingInviteResponseType response,
     String? icsData,
     DateTime? meetingStart,
+    String? message,
+  });
+
+  Future<Either<Failure, void>> proposeNewTimeFromEmail({
+    required String emailId,
+    required DateTime newStart,
+    required DateTime newEnd,
+    String? icsData,
+    DateTime? meetingStart,
+    String? message,
   });
 
   Future<Either<Failure, void>> removeMeetingFromCalendar({

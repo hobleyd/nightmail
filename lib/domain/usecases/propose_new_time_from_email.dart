@@ -3,20 +3,20 @@ import 'package:fpdart/fpdart.dart';
 
 import '../../core/error/failures.dart';
 import '../../core/usecases/usecase.dart';
-import '../entities/meeting_invite.dart';
 import '../repositories/calendar_repository.dart';
 
-class RespondToMeetingInvite
-    implements UseCase<void, RespondToMeetingInviteParams> {
-  const RespondToMeetingInvite(this._repository);
+class ProposeNewTimeFromEmail
+    implements UseCase<void, ProposeNewTimeFromEmailParams> {
+  const ProposeNewTimeFromEmail(this._repository);
 
   final CalendarRepository _repository;
 
   @override
-  Future<Either<Failure, void>> call(RespondToMeetingInviteParams params) {
-    return _repository.respondToMeetingInvite(
+  Future<Either<Failure, void>> call(ProposeNewTimeFromEmailParams params) {
+    return _repository.proposeNewTimeFromEmail(
       emailId: params.emailId,
-      response: params.response,
+      newStart: params.newStart,
+      newEnd: params.newEnd,
       icsData: params.icsData,
       meetingStart: params.meetingStart,
       message: params.message,
@@ -24,21 +24,24 @@ class RespondToMeetingInvite
   }
 }
 
-class RespondToMeetingInviteParams extends Equatable {
-  const RespondToMeetingInviteParams({
+class ProposeNewTimeFromEmailParams extends Equatable {
+  const ProposeNewTimeFromEmailParams({
     required this.emailId,
-    required this.response,
+    required this.newStart,
+    required this.newEnd,
     this.icsData,
     this.meetingStart,
     this.message,
   });
 
   final String emailId;
-  final MeetingInviteResponseType response;
+  final DateTime newStart;
+  final DateTime newEnd;
   final String? icsData;
   final DateTime? meetingStart;
   final String? message;
 
   @override
-  List<Object?> get props => [emailId, response, icsData, meetingStart, message];
+  List<Object?> get props =>
+      [emailId, newStart, newEnd, icsData, meetingStart, message];
 }

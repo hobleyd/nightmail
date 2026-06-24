@@ -95,6 +95,7 @@ class EventKitCalendarDatasourceImpl implements CalendarRemoteDatasource {
     String? icsData,
     DateTime? meetingStart,
     String? userEmail,
+    String? message,
   }) async {
     if (response == MeetingInviteResponseType.decline) return;
     if (icsData == null) return;
@@ -165,6 +166,26 @@ class EventKitCalendarDatasourceImpl implements CalendarRemoteDatasource {
     String? message,
   }) async {
     await cancelCalendarEvent(eventId: eventId);
+  }
+
+  @override
+  Future<void> proposeNewTimeFromEmail({
+    required String emailId,
+    required DateTime newStart,
+    required DateTime newEnd,
+    String? icsData,
+    DateTime? meetingStart,
+    String? userEmail,
+    String? message,
+  }) async {
+    // EventKit has no propose-new-time mechanism; decline the invite instead.
+    await respondToMeetingInvite(
+      emailId: emailId,
+      response: MeetingInviteResponseType.decline,
+      icsData: icsData,
+      meetingStart: meetingStart,
+      userEmail: userEmail,
+    );
   }
 
   @override

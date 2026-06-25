@@ -49,6 +49,13 @@ namespace flutter_inappwebview_plugin
   private:
     InAppWebView* webView_;
 
+    // Shared alive flag — same pattern as InAppWebView::isAlive_.  Set to false
+    // at the very start of ~UserContentController() so that the unremovable
+    // Runtime.executionContextCreated DevTools callback (registered with a null
+    // token and therefore impossible to unregister) can detect destruction and
+    // bail out before touching freed members.
+    std::shared_ptr<bool> isAlive_ = std::make_shared<bool>(true);
+
     // used to track Content World names -> Execution Context ID
     std::map<std::string, int> contentWorlds_;
     // used only to track plugin script to inject inside new Content Worlds

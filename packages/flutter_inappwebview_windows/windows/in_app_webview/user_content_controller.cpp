@@ -25,10 +25,11 @@ namespace flutter_inappwebview_plugin
     if (succeededOrLog(webView_->webView->GetDevToolsProtocolEventReceiver(L"Runtime.executionContextCreated", &executionContextCreated))) {
       auto hr = executionContextCreated->add_DevToolsProtocolEventReceived(
         Callback<ICoreWebView2DevToolsProtocolEventReceivedEventHandler>(
-          [this](
+          [this, alive = isAlive_](
             ICoreWebView2* sender,
             ICoreWebView2DevToolsProtocolEventReceivedEventArgs* args) -> HRESULT
           {
+            if (!*alive) return S_OK;
             wil::unique_cotaskmem_string json;
             if (succeededOrLog(args->get_ParameterObjectAsJson(&json))) {
               nlohmann::json context = nlohmann::json::parse(wide_to_utf8(json.get()))["context"];
@@ -459,6 +460,7 @@ namespace flutter_inappwebview_plugin
 
   UserContentController::~UserContentController()
   {
+    *isAlive_ = false;
     debugLog("dealloc UserContentController");
     removeAllUserOnlyScripts();
     removeAllPluginScripts();

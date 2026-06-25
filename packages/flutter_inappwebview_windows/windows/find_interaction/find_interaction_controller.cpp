@@ -234,18 +234,23 @@ namespace flutter_inappwebview_plugin
   void FindInteractionController::dispose()
   {
     *isAlive_ = false;
-    // Unregister handlers then release find_ while the WebView2 controller is
-    // still open.  ICoreWebView2Find is non-standard: calling remove_* OR
-    // Release() on it after webViewController->Close() crashes the process.
-    // InAppWebView::~InAppWebView() must therefore call dispose() BEFORE
-    // webViewController->Close().
-    unregisterFindEventHandlers();
+    // ICoreWebView2Find (and ICoreWebView2FindOptions) violate COM conventions:
+    // WebView2 frees the underlying objects when the controller closes, regardless
+    // of COM ref count.  Any method call on them after that — including remove_*
+    // or Release() — crashes the process with an access violation.
+    // The controller may be closed by WebView2 itself (triggered by HWND
+    // destruction) before our destructor runs, so we can never guarantee the
+    // objects are in a valid state here.
+    // Detach to abandon the pointers without calling any COM methods.
+    // The isAlive_ guard on all callbacks prevents use-after-free.
+    static_cast<void>(find_.detach());
+    static_cast<void>(findOptions_.detach());
+    activeMatchIndexChangedRegistered_ = false;
+    matchCountChangedRegistered_ = false;
     if (channelDelegate) {
       channelDelegate->dispose();
       channelDelegate.reset();
     }
-    findOptions_ = nullptr;
-    find_ = nullptr;
   }
 
   FindInteractionController::~FindInteractionController()

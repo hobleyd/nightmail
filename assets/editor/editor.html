@@ -75,6 +75,24 @@ body { display: flex; flex-direction: column; }
 .toolbar button:active { background: var(--btn-active); }
 .toolbar button.active { background: var(--btn-active); }
 
+/* colour button: stacked A + swatch bar */
+#btn-color {
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 7px;
+}
+#btn-color .color-letter {
+  font-size: 12px;
+  font-weight: bold;
+  line-height: 1;
+}
+#btn-color .color-swatch {
+  width: 14px;
+  height: 3px;
+  border-radius: 1px;
+  background: #cc0000;
+}
+
 .sep {
   width: 1px;
   height: 16px;
@@ -121,17 +139,31 @@ body { display: flex; flex-direction: column; }
   <button title="Underline" id="btn-underline" onmousedown="event.preventDefault(); fmt('underline')"><u>U</u></button>
   <button title="Strikethrough" id="btn-strike" onmousedown="event.preventDefault(); fmt('strikeThrough')"><s>S</s></button>
   <span class="sep"></span>
+  <button id="btn-color" title="Font colour" onmousedown="event.preventDefault()" onclick="openColorPicker()">
+    <span class="color-letter">A</span>
+    <span class="color-swatch" id="color-swatch"></span>
+  </button>
+  <span class="sep"></span>
   <button title="Bullet list" onmousedown="event.preventDefault(); fmt('insertUnorderedList')">&#x2022;&#x2261;</button>
   <button title="Numbered list" onmousedown="event.preventDefault(); fmt('insertOrderedList')">1&#x2261;</button>
+  <span class="sep"></span>
+  <button title="Decrease indent" onmousedown="event.preventDefault(); fmt('outdent')">&#x21E4;</button>
+  <button title="Increase indent" onmousedown="event.preventDefault(); fmt('indent')">&#x21E5;</button>
   <span class="sep"></span>
   <button title="Insert link" onmousedown="event.preventDefault(); requestLink()">&#x1F517;</button>
   <button title="Remove formatting" onmousedown="event.preventDefault(); fmt('removeFormat')">&#x2715;</button>
 </div>
+<input type="color" id="color-input" style="position:fixed; opacity:0; width:0; height:0; pointer-events:none;" value="#cc0000">
 <div class="editor" id="editor" contenteditable="true" spellcheck="true" data-placeholder="Write your message here…"></div>
 
 <script>
 const editor = document.getElementById('editor');
+const colorInput = document.getElementById('color-input');
+const colorSwatch = document.getElementById('color-swatch');
 let changeTimer = null;
+
+// Initialise swatch to match the input's default value
+colorSwatch.style.background = colorInput.value;
 
 function fmt(cmd) {
   document.execCommand(cmd, false, null);
@@ -139,6 +171,7 @@ function fmt(cmd) {
   scheduleChange();
 }
 
+<<<<<<< HEAD
 function _flutterNotify(name, value) {
   if (window.flutter_inappwebview) {
     window.flutter_inappwebview.callHandler(name, value);
@@ -147,6 +180,20 @@ function _flutterNotify(name, value) {
   }
 }
 
+=======
+function openColorPicker() {
+  colorInput.click();
+}
+
+colorInput.addEventListener('input', function(e) {
+  const color = e.target.value;
+  colorSwatch.style.background = color;
+  editor.focus();
+  document.execCommand('foreColor', false, color);
+  scheduleChange();
+});
+
+>>>>>>> bdd4813 (feat: add font colour picker and indent/outdent to HTML editor toolbar)
 function requestLink() {
   _flutterNotify('onLinkRequest');
 }
@@ -168,7 +215,6 @@ function fireChange() {
 
 function setContent(html) {
   editor.innerHTML = html;
-  // Place cursor at the beginning
   const range = document.createRange();
   const sel = window.getSelection();
   if (editor.firstChild) {
@@ -209,21 +255,41 @@ editor.addEventListener('input', scheduleChange);
 editor.addEventListener('keydown', function(e) {
   if (e.key === 'Tab') {
     e.preventDefault();
-    document.execCommand('insertHTML', false, '    ');
+    document.execCommand('insertHTML', false, '    ');
     scheduleChange();
   }
 });
 
-// Update toolbar button states on selection change
+// Update toolbar button active states and colour swatch on selection change
 document.addEventListener('selectionchange', function() {
   ['bold','italic','underline','strikeThrough'].forEach(function(cmd) {
     const id = {'bold':'btn-bold','italic':'btn-italic','underline':'btn-underline','strikeThrough':'btn-strike'}[cmd];
     const btn = document.getElementById(id);
-    if (btn) {
-      btn.classList.toggle('active', document.queryCommandState(cmd));
-    }
+    if (btn) btn.classList.toggle('active', document.queryCommandState(cmd));
   });
+
+  // Reflect the foreground colour at the cursor in the swatch
+  const raw = document.queryCommandValue('foreColor');
+  if (raw) {
+    const hex = cssColorToHex(raw);
+    if (hex) {
+      colorSwatch.style.background = hex;
+      colorInput.value = hex;
+    }
+  }
 });
+
+// Converts CSS rgb(...) or #rrggbb strings returned by queryCommandValue to #rrggbb
+function cssColorToHex(color) {
+  const m = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/);
+  if (m) {
+    return '#' + [m[1], m[2], m[3]]
+      .map(n => parseInt(n, 10).toString(16).padStart(2, '0'))
+      .join('');
+  }
+  if (/^#[0-9a-fA-F]{6}$/.test(color)) return color;
+  return null;
+}
 </script>
 </body>
 </html>

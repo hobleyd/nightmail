@@ -144,11 +144,151 @@ class _HomeView extends StatelessWidget {
       ],
       child: Scaffold(
         backgroundColor: context.colors.surfaceBase,
-        body: const _ThreePanelLayout(),
+        body: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              if (constraints.maxWidth < 600) {
+                return const _MobileLayout();
+              }
+              return const _ThreePanelLayout();
+            },
+          ),
+        ),
       ),
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// Mobile single-pane navigation
+// ---------------------------------------------------------------------------
+
+enum _MobileStep { folders, emailList, readingPane }
+
+class _MobileLayout extends StatefulWidget {
+  const _MobileLayout();
+
+  @override
+  State<_MobileLayout> createState() => _MobileLayoutState();
+}
+
+class _MobileLayoutState extends State<_MobileLayout> {
+  _MobileStep _step = _MobileStep.folders;
+
+  void _back() {
+    setState(() {
+      switch (_step) {
+        case _MobileStep.folders:
+          break;
+        case _MobileStep.emailList:
+          _step = _MobileStep.folders;
+        case _MobileStep.readingPane:
+          _step = _MobileStep.emailList;
+          context.read<HomeCubit>().clearEmail();
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: _step == _MobileStep.folders,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _back();
+      },
+      child: BlocBuilder<HomeCubit, HomeState>(
+        builder: (context, homeState) {
+          return BlocBuilder<FolderListBloc, FolderListState>(
+            builder: (context, folderState) {
+              final selectedFolder = _resolveFolder(homeState, folderState);
+              final accountState = context.read<AccountCubit>().state;
+              final accountId = accountState is AccountsLoaded
+                  ? accountState.activeAccount.id
+                  : '';
+              final homeCubit = context.read<HomeCubit>();
+
+              void onEmailSelected(Email email) {
+                homeCubit.selectEmail(email.id);
+                context.read<EmailDetailBloc>().add(
+                      EmailDetailLoadRequested(emailId: email.id),
+                    );
+                if (!email.isRead) {
+                  context.read<EmailListBloc>().add(
+                        EmailListMarkReadRequested(
+                            emailId: email.id, isRead: true),
+                      );
+                  if (selectedFolder != null) {
+                    context.read<FolderListBloc>().add(
+                          FolderListUnreadCountChanged(
+                            folderId: selectedFolder.id,
+                            unreadCountDelta: -1,
+                          ),
+                        );
+                  }
+                  context.read<MailPollerCubit>().decrementUnreadCount();
+                }
+                setState(() => _step = _MobileStep.readingPane);
+              }
+
+              return switch (_step) {
+                _MobileStep.folders => FolderPanel(
+                    key: ValueKey(accountId),
+                    selectedFolderId: homeState.selectedFolderId,
+                    initialExpandedIds:
+                        homeCubit.savedExpandedForAccount(accountId),
+                    onExpandedIdsChanged: (ids) {
+                      final s = context.read<AccountCubit>().state;
+                      if (s is AccountsLoaded) {
+                        homeCubit.rememberExpandedForAccount(
+                            s.activeAccount.id, ids);
+                      }
+                    },
+                    onFolderSelected: (folder) {
+                      homeCubit.selectFolder(folder.id);
+                      context
+                          .read<EmailDetailBloc>()
+                          .add(const EmailDetailCleared());
+                      context.read<EmailListBloc>().add(
+                            EmailListLoadRequested(
+                              folderId: folder.id,
+                              folderDisplayName: folder.displayName,
+                            ),
+                          );
+                      setState(() => _step = _MobileStep.emailList);
+                    },
+                    onCalendarTapped: () {},
+                    onTasksTapped: () {},
+                  ),
+                _MobileStep.emailList => EmailListPanel(
+                    folderName: selectedFolder?.displayName ?? 'Inbox',
+                    folder: selectedFolder,
+                    selectedEmailId: homeState.selectedEmailId,
+                    onEmailSelected: onEmailSelected,
+                    onBack: _back,
+                  ),
+                _MobileStep.readingPane => ReadingPane(onBack: _back),
+              };
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  EmailFolder? _resolveFolder(
+      HomeState homeState, FolderListState folderListState) {
+    if (homeState.selectedFolderId == null) return null;
+    if (folderListState is FolderListLoaded) {
+      try {
+        return folderListState.folders
+            .firstWhere((f) => f.id == homeState.selectedFolderId);
+      } catch (_) {}
+    }
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 
 class _ThreePanelLayout extends StatefulWidget {
   const _ThreePanelLayout();

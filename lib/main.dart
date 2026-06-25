@@ -205,6 +205,9 @@ class _NightMailAppState extends State<NightMailApp> with WindowListener {
   final _windowBoundsService = WindowBoundsService();
   Timer? _boundsDebounce;
 
+  static bool get _isDesktop =>
+      !kIsWeb && (Platform.isMacOS || Platform.isLinux || Platform.isWindows);
+
   static ThemeData _buildTheme({String? fontFamily, bool dark = false}) {
     return ThemeData(
       colorScheme: ColorScheme.fromSeed(
@@ -219,14 +222,16 @@ class _NightMailAppState extends State<NightMailApp> with WindowListener {
   @override
   void initState() {
     super.initState();
-    windowManager.addListener(this);
-    windowManager.setPreventClose(true);
+    if (_isDesktop) {
+      windowManager.addListener(this);
+      windowManager.setPreventClose(true);
+    }
   }
 
   @override
   void dispose() {
     _boundsDebounce?.cancel();
-    windowManager.removeListener(this);
+    if (_isDesktop) windowManager.removeListener(this);
     super.dispose();
   }
 

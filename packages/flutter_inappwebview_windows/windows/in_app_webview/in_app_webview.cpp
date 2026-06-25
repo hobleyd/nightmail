@@ -351,8 +351,9 @@ namespace flutter_inappwebview_plugin
 
     auto add_AcceleratorKeyPressed_HResult = webViewController->add_AcceleratorKeyPressed(
       Callback<ICoreWebView2AcceleratorKeyPressedEventHandler>(
-        [this](ICoreWebView2Controller* sender, ICoreWebView2AcceleratorKeyPressedEventArgs* args)
+        [this, alive = isAlive_](ICoreWebView2Controller* sender, ICoreWebView2AcceleratorKeyPressedEventArgs* args)
         {
+          if (!*alive) return S_OK;
           if (channelDelegate) {
             auto handled = settings->handleAcceleratorKeyPressed;
             args->put_Handled(handled);
@@ -368,8 +369,9 @@ namespace flutter_inappwebview_plugin
 
     auto add_ZoomFactorChanged_HResult = webViewController->add_ZoomFactorChanged(
       Callback<ICoreWebView2ZoomFactorChangedEventHandler>(
-        [this](ICoreWebView2Controller* sender, IUnknown* args)
+        [this, alive = isAlive_](ICoreWebView2Controller* sender, IUnknown* args)
         {
+          if (!*alive) return S_OK;
           double newScale;
           if (succeededOrLog(sender->get_ZoomFactor(&newScale))) {
             if (channelDelegate) {
@@ -386,10 +388,11 @@ namespace flutter_inappwebview_plugin
     if (succeededOrLog(webView->GetDevToolsProtocolEventReceiver(L"Fetch.requestPaused", &fetchRequestPausedEventReceiver))) {
       auto add_DevToolsProtocolEventReceived_HResult = fetchRequestPausedEventReceiver->add_DevToolsProtocolEventReceived(
         Callback<ICoreWebView2DevToolsProtocolEventReceivedEventHandler>(
-          [this](
+          [this, alive = isAlive_](
             ICoreWebView2* sender,
             ICoreWebView2DevToolsProtocolEventReceivedEventArgs* args) -> HRESULT
           {
+            if (!*alive) return S_OK;
             wil::unique_cotaskmem_string json;
             if (succeededOrLog(args->get_ParameterObjectAsJson(&json))) {
               auto requestPausedData = nlohmann::json::parse(wide_to_utf8(json.get()));
@@ -407,8 +410,9 @@ namespace flutter_inappwebview_plugin
               }
               auto isForMainFrame = pageFrameId_.empty() || string_equals(pageFrameId_, frameId);
 
-              auto allowRequest = [this, requestId, url, isForMainFrame]()
+              auto allowRequest = [this, requestId, url, isForMainFrame, alive]()
                 {
+                  if (!*alive) return;
                   failedAndLog(webView->CallDevToolsProtocolMethod(L"Fetch.continueRequest",
                     utf8_to_wide("{\"requestId\":\"" + requestId + "\"}").c_str(),
                     Callback<ICoreWebView2CallDevToolsProtocolMethodCompletedHandler>(
@@ -428,8 +432,9 @@ namespace flutter_inappwebview_plugin
                   }
                 };
 
-              auto cancelRequest = [this, requestId]()
+              auto cancelRequest = [this, requestId, alive]()
                 {
+                  if (!*alive) return;
                   failedAndLog(webView->CallDevToolsProtocolMethod(L"Fetch.failRequest",
                     utf8_to_wide("{\"requestId\":\"" + requestId + "\", \"errorReason\": \"Aborted\"}").c_str(),
                     Callback<ICoreWebView2CallDevToolsProtocolMethodCompletedHandler>(
@@ -485,8 +490,9 @@ namespace flutter_inappwebview_plugin
                 );
 
                 auto callback = std::make_unique<WebViewChannelDelegate::ShouldOverrideUrlLoadingCallback>();
-                callback->nonNullSuccess = [this, allowRequest, cancelRequest](const NavigationActionPolicy actionPolicy)
+                callback->nonNullSuccess = [this, allowRequest, cancelRequest, alive](const NavigationActionPolicy actionPolicy)
                   {
+                    if (!*alive) return false;
                     if (actionPolicy == NavigationActionPolicy::allow) {
                       allowRequest();
                     }
@@ -495,8 +501,9 @@ namespace flutter_inappwebview_plugin
                     }
                     return false;
                   };
-                auto defaultBehaviour = [this, allowRequest](const std::optional<const NavigationActionPolicy> actionPolicy)
+                auto defaultBehaviour = [this, allowRequest, alive](const std::optional<const NavigationActionPolicy> actionPolicy)
                   {
+                    if (!*alive) return;
                     allowRequest();
                   };
                 callback->defaultBehaviour = defaultBehaviour;
@@ -705,8 +712,9 @@ namespace flutter_inappwebview_plugin
     failedLog(add_NavigationCompleted_HResult);
 
     auto add_DocumentTitleChanged_HResult = webView->add_DocumentTitleChanged(Callback<ICoreWebView2DocumentTitleChangedEventHandler>(
-      [this](ICoreWebView2* sender, IUnknown* args)
+      [this, alive = isAlive_](ICoreWebView2* sender, IUnknown* args)
       {
+        if (!*alive) return S_OK;
         if (channelDelegate) {
           wil::unique_cotaskmem_string title;
           sender->get_DocumentTitle(&title);
@@ -719,8 +727,9 @@ namespace flutter_inappwebview_plugin
 
     auto add_ContainsFullScreenElementChanged_HResult = webView->add_ContainsFullScreenElementChanged(
       Callback<ICoreWebView2ContainsFullScreenElementChangedEventHandler>(
-        [this](ICoreWebView2* sender, IUnknown* args)
+        [this, alive = isAlive_](ICoreWebView2* sender, IUnknown* args)
         {
+          if (!*alive) return S_OK;
           if (!channelDelegate) {
             return S_OK;
           }
@@ -740,8 +749,9 @@ namespace flutter_inappwebview_plugin
     failedLog(add_ContainsFullScreenElementChanged_HResult);
 
     auto add_HistoryChanged_HResult = webView->add_HistoryChanged(Callback<ICoreWebView2HistoryChangedEventHandler>(
-      [this](ICoreWebView2* sender, IUnknown* args)
+      [this, alive = isAlive_](ICoreWebView2* sender, IUnknown* args)
       {
+        if (!*alive) return S_OK;
         if (channelDelegate) {
           std::optional<bool> isReload = std::nullopt;
           if (lastNavigationAction_ && lastNavigationAction_->navigationType.has_value()) {
@@ -767,10 +777,11 @@ namespace flutter_inappwebview_plugin
     if (succeededOrLog(webView->GetDevToolsProtocolEventReceiver(L"Runtime.consoleAPICalled", &consoleMessageReceiver))) {
       auto consoleMessageReceiver_add_DevToolsProtocolEventReceived_HResult = consoleMessageReceiver->add_DevToolsProtocolEventReceived(
         Callback<ICoreWebView2DevToolsProtocolEventReceivedEventHandler>(
-          [this](
+          [this, alive = isAlive_](
             ICoreWebView2* sender,
             ICoreWebView2DevToolsProtocolEventReceivedEventArgs* args) -> HRESULT
           {
+            if (!*alive) return S_OK;
 
             if (!channelDelegate) {
               return S_OK;
@@ -811,8 +822,9 @@ namespace flutter_inappwebview_plugin
 
     auto add_NewWindowRequested_HResult = webView->add_NewWindowRequested(
       Callback<ICoreWebView2NewWindowRequestedEventHandler>(
-        [this](ICoreWebView2* sender, ICoreWebView2NewWindowRequestedEventArgs* args)
+        [this, alive = isAlive_](ICoreWebView2* sender, ICoreWebView2NewWindowRequestedEventArgs* args)
         {
+          if (!*alive) return S_OK;
           wil::com_ptr<ICoreWebView2Deferral> deferral;
           if (channelDelegate && plugin && plugin->inAppWebViewManager && succeededOrLog(args->GetDeferral(&deferral))) {
             plugin->inAppWebViewManager->windowAutoincrementId++;
@@ -843,8 +855,9 @@ namespace flutter_inappwebview_plugin
               std::move(windowFeatures));
 
             auto callback = std::make_unique<WebViewChannelDelegate::CreateWindowCallback>();
-            auto defaultBehaviour = [this, windowId, urlRequest, deferral, args](const std::optional<const bool> handledByClient)
+            auto defaultBehaviour = [this, windowId, urlRequest, deferral, args, alive](const std::optional<const bool> handledByClient)
               {
+                if (!*alive) { failedLog(deferral->Complete()); return; }
                 if (plugin && plugin->inAppWebViewManager && map_contains(plugin->inAppWebViewManager->windowWebViews, windowId)) {
                   plugin->inAppWebViewManager->windowWebViews.erase(windowId);
                 }
@@ -857,8 +870,9 @@ namespace flutter_inappwebview_plugin
                 return !handledByClient;
               };
             callback->defaultBehaviour = defaultBehaviour;
-            callback->error = [this, defaultBehaviour](const std::string& error_code, const std::string& error_message, const flutter::EncodableValue* error_details)
+            callback->error = [this, defaultBehaviour, alive](const std::string& error_code, const std::string& error_message, const flutter::EncodableValue* error_details)
               {
+                if (!*alive) return;
                 debugLog(error_code + ", " + error_message);
                 defaultBehaviour(std::nullopt);
               };
@@ -870,8 +884,9 @@ namespace flutter_inappwebview_plugin
     failedLog(add_NewWindowRequested_HResult);
 
     auto add_WindowCloseRequested_HResult = webView->add_WindowCloseRequested(Callback<ICoreWebView2WindowCloseRequestedEventHandler>(
-      [this](ICoreWebView2* sender, IUnknown* args)
+      [this, alive = isAlive_](ICoreWebView2* sender, IUnknown* args)
       {
+        if (!*alive) return S_OK;
         if (channelDelegate) {
           channelDelegate->onCloseWindow();
         }
@@ -881,8 +896,9 @@ namespace flutter_inappwebview_plugin
     failedLog(add_WindowCloseRequested_HResult);
 
     auto add_PermissionRequested_HResult = webView->add_PermissionRequested(Callback<ICoreWebView2PermissionRequestedEventHandler>(
-      [this](ICoreWebView2* sender, ICoreWebView2PermissionRequestedEventArgs* args)
+      [this, alive = isAlive_](ICoreWebView2* sender, ICoreWebView2PermissionRequestedEventArgs* args)
       {
+        if (!*alive) return S_OK;
         wil::com_ptr<ICoreWebView2Deferral> deferral;
         if (channelDelegate && succeededOrLog(args->GetDeferral(&deferral))) {
           wil::unique_cotaskmem_string uri;
@@ -956,23 +972,27 @@ namespace flutter_inappwebview_plugin
             auto url = request->url.has_value() ? request->url.value() : "";
             auto isCustomScheme = !url.empty() && !starts_with(url, std::string{ "file://" }) && !starts_with(url, std::string{ "http://" }) && !starts_with(url, std::string{ "https://" });
 
-            auto onLoadResourceWithCustomSchemeCallback = [this, deferral, request, args]()
+            auto onLoadResourceWithCustomSchemeCallback = [this, deferral, request, args, alive]()
               {
+                if (!*alive) { failedLog(deferral->Complete()); return; }
                 if (channelDelegate) {
                   auto callback = std::make_unique<WebViewChannelDelegate::LoadResourceWithCustomSchemeCallback>();
-                  auto defaultBehaviour = [this, deferral, args](const std::optional<std::shared_ptr<CustomSchemeResponse>> response)
+                  auto defaultBehaviour = [this, deferral, args, alive](const std::optional<std::shared_ptr<CustomSchemeResponse>> response)
                     {
+                      if (!*alive) { failedLog(deferral->Complete()); return; }
                       failedLog(deferral->Complete());
                     };
-                  callback->nonNullSuccess = [this, deferral, args](const std::shared_ptr<CustomSchemeResponse> response)
+                  callback->nonNullSuccess = [this, deferral, args, alive](const std::shared_ptr<CustomSchemeResponse> response)
                     {
+                      if (!*alive) { failedLog(deferral->Complete()); return false; }
                       args->put_Response(response->toWebView2Response(webViewEnv));
                       failedLog(deferral->Complete());
                       return false;
                     };
                   callback->defaultBehaviour = defaultBehaviour;
-                  callback->error = [this, defaultBehaviour](const std::string& error_code, const std::string& error_message, const flutter::EncodableValue* error_details)
+                  callback->error = [this, defaultBehaviour, alive](const std::string& error_code, const std::string& error_message, const flutter::EncodableValue* error_details)
                     {
+                      if (!*alive) { return; }
                       debugLog(error_code + ", " + error_message);
                       defaultBehaviour(std::nullopt);
                     };
@@ -985,18 +1005,21 @@ namespace flutter_inappwebview_plugin
 
             if (settings->useShouldInterceptRequest) {
               auto callback = std::make_unique<WebViewChannelDelegate::ShouldInterceptRequestCallback>();
-              auto defaultBehaviour = [this, deferral, args](const std::optional<std::shared_ptr<WebResourceResponse>> response)
+              auto defaultBehaviour = [this, deferral, args, alive](const std::optional<std::shared_ptr<WebResourceResponse>> response)
                 {
+                  if (!*alive) { failedLog(deferral->Complete()); return; }
                   failedLog(deferral->Complete());
                 };
-              callback->nonNullSuccess = [this, deferral, args](const std::shared_ptr<WebResourceResponse> response)
+              callback->nonNullSuccess = [this, deferral, args, alive](const std::shared_ptr<WebResourceResponse> response)
                 {
+                  if (!*alive) { failedLog(deferral->Complete()); return false; }
                   args->put_Response(response->toWebView2Response(webViewEnv));
                   failedLog(deferral->Complete());
                   return false;
                 };
-              callback->nullSuccess = [this, deferral, args, isCustomScheme, onLoadResourceWithCustomSchemeCallback]()
+              callback->nullSuccess = [this, deferral, args, isCustomScheme, onLoadResourceWithCustomSchemeCallback, alive]()
                 {
+                  if (!*alive) { failedLog(deferral->Complete()); return false; }
                   if (isCustomScheme) {
                     onLoadResourceWithCustomSchemeCallback();
                   }
@@ -1006,8 +1029,9 @@ namespace flutter_inappwebview_plugin
                   return false;
                 };
               callback->defaultBehaviour = defaultBehaviour;
-              callback->error = [this, defaultBehaviour](const std::string& error_code, const std::string& error_message, const flutter::EncodableValue* error_details)
+              callback->error = [this, defaultBehaviour, alive](const std::string& error_code, const std::string& error_message, const flutter::EncodableValue* error_details)
                 {
+                  if (!*alive) { return; }
                   debugLog(error_code + ", " + error_message);
                   defaultBehaviour(std::nullopt);
                 };
@@ -1097,8 +1121,9 @@ namespace flutter_inappwebview_plugin
     if (SUCCEEDED(webView->QueryInterface(IID_PPV_ARGS(&webView2)))) {
       auto add_DOMContentLoaded_HResult = webView2->add_DOMContentLoaded(
         Callback<ICoreWebView2DOMContentLoadedEventHandler>(
-          [this](ICoreWebView2* sender, ICoreWebView2DOMContentLoadedEventArgs* args)
+          [this, alive = isAlive_](ICoreWebView2* sender, ICoreWebView2DOMContentLoadedEventArgs* args)
           {
+            if (!*alive) return S_OK;
             if (channelDelegate) {
               wil::unique_cotaskmem_string uri;
               std::optional<std::string> url = SUCCEEDED(webView->get_Source(&uri)) ? wide_to_utf8(uri.get()) : std::optional<std::string>{};
@@ -1116,14 +1141,16 @@ namespace flutter_inappwebview_plugin
     if (SUCCEEDED(webView->QueryInterface(IID_PPV_ARGS(&webView4)))) {
       auto add_FrameCreated_HResult = webView4->add_FrameCreated(
         Callback<ICoreWebView2FrameCreatedEventHandler>(
-          [this](ICoreWebView2* sender, ICoreWebView2FrameCreatedEventArgs* args)
+          [this, alive = isAlive_](ICoreWebView2* sender, ICoreWebView2FrameCreatedEventArgs* args)
           {
+            if (!*alive) return S_OK;
             wil::com_ptr<ICoreWebView2Frame> frame;
             wil::com_ptr<ICoreWebView2Frame2> frame2;
             if (succeededOrLog(args->get_Frame(&frame)) && SUCCEEDED(frame->QueryInterface(IID_PPV_ARGS(&frame2)))) {
               auto frame_add_WebMessageReceived_HResult = frame2->add_WebMessageReceived(Callback<ICoreWebView2FrameWebMessageReceivedEventHandler>(
-                [this](ICoreWebView2Frame* sender, ICoreWebView2WebMessageReceivedEventArgs* args)
+                [this, alive](ICoreWebView2Frame* sender, ICoreWebView2WebMessageReceivedEventArgs* args)
                 {
+                  if (!*alive) return S_OK;
                   return this->onCallJsHandler(false, args);
                 }).Get(), nullptr);
               failedLog(frame_add_WebMessageReceived_HResult);
@@ -1135,8 +1162,9 @@ namespace flutter_inappwebview_plugin
 
       auto add_DownloadStarting_HResult = webView4->add_DownloadStarting(
         Callback<ICoreWebView2DownloadStartingEventHandler>(
-          [this](ICoreWebView2* sender, ICoreWebView2DownloadStartingEventArgs* args)
+          [this, alive = isAlive_](ICoreWebView2* sender, ICoreWebView2DownloadStartingEventArgs* args)
           {
+            if (!*alive) return S_OK;
             wil::com_ptr<ICoreWebView2Deferral> deferral;
             wil::com_ptr<ICoreWebView2DownloadOperation> download;
             if (channelDelegate && settings->useOnDownloadStart && succeededOrLog(args->get_DownloadOperation(&download)) && succeededOrLog(args->GetDeferral(&deferral))) {
@@ -1204,10 +1232,11 @@ namespace flutter_inappwebview_plugin
     if (auto webView5 = webView.try_query<ICoreWebView2_5>()) {
       auto add_ClientCertificateRequested_HResult = webView5->add_ClientCertificateRequested(
         Callback<ICoreWebView2ClientCertificateRequestedEventHandler>(
-          [this](
+          [this, alive = isAlive_](
             ICoreWebView2* sender,
             ICoreWebView2ClientCertificateRequestedEventArgs* args)
           {
+            if (!*alive) return S_OK;
             wil::com_ptr<ICoreWebView2Deferral> deferral;
             wil::unique_cotaskmem_string host;
 
@@ -1323,10 +1352,11 @@ namespace flutter_inappwebview_plugin
     if (auto webView10 = webView.try_query<ICoreWebView2_10>()) {
       auto add_BasicAuthenticationRequested_HResult = webView10->add_BasicAuthenticationRequested(
         Callback<ICoreWebView2BasicAuthenticationRequestedEventHandler>(
-          [this](
+          [this, alive = isAlive_](
             ICoreWebView2* sender,
             ICoreWebView2BasicAuthenticationRequestedEventArgs* args)
           {
+            if (!*alive) return S_OK;
             wil::com_ptr<ICoreWebView2Deferral> deferral;
             wil::com_ptr<ICoreWebView2BasicAuthenticationResponse> basicAuthenticationResponse;
             wil::unique_cotaskmem_string url;
@@ -1410,8 +1440,9 @@ namespace flutter_inappwebview_plugin
     if (auto webView14 = webView.try_query<ICoreWebView2_14>()) {
       auto add_ServerCertificateErrorDetected_HResult = webView14->add_ServerCertificateErrorDetected(
         Callback<ICoreWebView2ServerCertificateErrorDetectedEventHandler>(
-          [this](ICoreWebView2* sender, ICoreWebView2ServerCertificateErrorDetectedEventArgs* args)
+          [this, alive = isAlive_](ICoreWebView2* sender, ICoreWebView2ServerCertificateErrorDetectedEventArgs* args)
           {
+            if (!*alive) return S_OK;
             wil::com_ptr<ICoreWebView2Deferral> deferral;
             wil::unique_cotaskmem_string requestUrl;
             if (succeededOrLog(args->get_RequestUri(&requestUrl)) && succeededOrLog(args->GetDeferral(&deferral))) {
@@ -1495,8 +1526,9 @@ namespace flutter_inappwebview_plugin
     if (auto webView15 = webView.try_query<ICoreWebView2_15>()) {
       auto add_FaviconChanged_HResult = webView15->add_FaviconChanged(
         Callback<ICoreWebView2FaviconChangedEventHandler>(
-          [this, webView15](ICoreWebView2* sender, IUnknown* args)
+          [this, webView15, alive = isAlive_](ICoreWebView2* sender, IUnknown* args)
           {
+            if (!*alive) return S_OK;
             if (!channelDelegate) {
               return S_OK;
             }
@@ -1507,8 +1539,9 @@ namespace flutter_inappwebview_plugin
 
             auto hr = webView15->GetFavicon(COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG,
               Callback<ICoreWebView2GetFaviconCompletedHandler>(
-                [this, faviconUrl](HRESULT errorCode, IStream* faviconStream)
+                [this, faviconUrl, alive](HRESULT errorCode, IStream* faviconStream)
                 {
+                  if (!*alive) return S_OK;
                   std::optional<std::vector<uint8_t>> icon = std::nullopt;
                   if (succeededOrLog(errorCode) && faviconStream) {
                     icon = readStreamBytes(faviconStream);
@@ -1537,8 +1570,9 @@ namespace flutter_inappwebview_plugin
     if (auto webView18 = webView.try_query<ICoreWebView2_18>()) {
       auto add_LaunchingExternalUriScheme_HResult = webView18->add_LaunchingExternalUriScheme(
         Callback<ICoreWebView2LaunchingExternalUriSchemeEventHandler>(
-          [this](ICoreWebView2* sender, ICoreWebView2LaunchingExternalUriSchemeEventArgs* args)
+          [this, alive = isAlive_](ICoreWebView2* sender, ICoreWebView2LaunchingExternalUriSchemeEventArgs* args)
           {
+            if (!*alive) return S_OK;
             wil::com_ptr<ICoreWebView2Deferral> deferral;
             failedLog(args->GetDeferral(&deferral));
 
@@ -1597,8 +1631,9 @@ namespace flutter_inappwebview_plugin
     if (auto webView24 = webView.try_query<ICoreWebView2_24>()) {
       auto add_NotificationReceived_HResult = webView24->add_NotificationReceived(
         Callback<ICoreWebView2NotificationReceivedEventHandler>(
-          [this](ICoreWebView2* sender, ICoreWebView2NotificationReceivedEventArgs* args)
+          [this, alive = isAlive_](ICoreWebView2* sender, ICoreWebView2NotificationReceivedEventArgs* args)
           {
+            if (!*alive) return S_OK;
             wil::com_ptr<ICoreWebView2Deferral> deferral;
             failedLog(args->GetDeferral(&deferral));
 
@@ -1716,8 +1751,9 @@ namespace flutter_inappwebview_plugin
     if (auto webView25 = webView.try_query<ICoreWebView2_25>()) {
       auto add_SaveAsUIShowing_HResult = webView25->add_SaveAsUIShowing(
         Callback<ICoreWebView2SaveAsUIShowingEventHandler>(
-          [this](ICoreWebView2* sender, ICoreWebView2SaveAsUIShowingEventArgs* args)
+          [this, alive = isAlive_](ICoreWebView2* sender, ICoreWebView2SaveAsUIShowingEventArgs* args)
           {
+            if (!*alive) return S_OK;
             wil::com_ptr<ICoreWebView2Deferral> deferral;
             failedLog(args->GetDeferral(&deferral));
 
@@ -1795,8 +1831,9 @@ namespace flutter_inappwebview_plugin
     if (auto webView26 = webView.try_query<ICoreWebView2_26>()) {
       auto add_SaveFileSecurityCheckStarting_HResult = webView26->add_SaveFileSecurityCheckStarting(
         Callback<ICoreWebView2SaveFileSecurityCheckStartingEventHandler>(
-          [this](ICoreWebView2* sender, ICoreWebView2SaveFileSecurityCheckStartingEventArgs* args)
+          [this, alive = isAlive_](ICoreWebView2* sender, ICoreWebView2SaveFileSecurityCheckStartingEventArgs* args)
           {
+            if (!*alive) return S_OK;
             wil::com_ptr<ICoreWebView2Deferral> deferral;
             failedLog(args->GetDeferral(&deferral));
 
@@ -1862,8 +1899,9 @@ namespace flutter_inappwebview_plugin
     if (auto webView27 = webView.try_query<ICoreWebView2_27>()) {
       auto add_ScreenCaptureStarting_HResult = webView27->add_ScreenCaptureStarting(
         Callback<ICoreWebView2ScreenCaptureStartingEventHandler>(
-          [this](ICoreWebView2* sender, ICoreWebView2ScreenCaptureStartingEventArgs* args)
+          [this, alive = isAlive_](ICoreWebView2* sender, ICoreWebView2ScreenCaptureStartingEventArgs* args)
           {
+            if (!*alive) return S_OK;
             wil::com_ptr<ICoreWebView2Deferral> deferral;
             failedLog(args->GetDeferral(&deferral));
 
@@ -1939,9 +1977,10 @@ namespace flutter_inappwebview_plugin
 
     failedLog(webViewCompositionController->add_CursorChanged(
       Callback<ICoreWebView2CursorChangedEventHandler>(
-        [this](ICoreWebView2CompositionController* sender,
+        [this, alive = isAlive_](ICoreWebView2CompositionController* sender,
           IUnknown* args) -> HRESULT
         {
+          if (!*alive) return S_OK;
           HCURSOR cursor;
           if (cursorChangedCallback_ &&
             sender->get_Cursor(&cursor) == S_OK) {

@@ -69,22 +69,6 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
     super.dispose();
   }
 
-  @override
-  void didUpdateWidget(HtmlEmailEditor oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.initialHtml != widget.initialHtml) {
-      _pendingHtml = widget.initialHtml;
-      if (Platform.isLinux) {
-        _flutterController
-            ?.runJavaScript('setContent(${jsonEncode(widget.initialHtml)})');
-      } else {
-        _inAppController?.evaluateJavascript(
-          source: 'setContent(${jsonEncode(widget.initialHtml)})',
-        );
-      }
-    }
-  }
-
   Future<void> setContent(String html) async {
     _pendingHtml = html;
     if (Platform.isLinux) {

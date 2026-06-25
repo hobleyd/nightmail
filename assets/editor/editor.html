@@ -171,7 +171,6 @@ function fmt(cmd) {
   scheduleChange();
 }
 
-<<<<<<< HEAD
 function _flutterNotify(name, value) {
   if (window.flutter_inappwebview) {
     window.flutter_inappwebview.callHandler(name, value);
@@ -180,7 +179,6 @@ function _flutterNotify(name, value) {
   }
 }
 
-=======
 function openColorPicker() {
   colorInput.click();
 }
@@ -192,8 +190,6 @@ colorInput.addEventListener('input', function(e) {
   document.execCommand('foreColor', false, color);
   scheduleChange();
 });
-
->>>>>>> bdd4813 (feat: add font colour picker and indent/outdent to HTML editor toolbar)
 function requestLink() {
   _flutterNotify('onLinkRequest');
 }

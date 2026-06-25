@@ -4186,8 +4186,6 @@ namespace flutter_inappwebview_plugin
       // then destroy the Window created with it
       DestroyWindow(parentWindow);
     }
-    // Dispose objects that hold ICoreWebView2Find (or other COM objects that
-    // crash on Release() after Close()) BEFORE calling webViewController->Close().
     if (findInteractionController) {
       findInteractionController->dispose();
       findInteractionController.reset();

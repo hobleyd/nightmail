@@ -27,6 +27,7 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
   iaw.InAppWebViewController? _inAppController;
   WebViewController? _flutterController;
   bool _ready = false;
+  bool _disposed = false;
   String _pendingHtml = '';
 
   @override
@@ -65,6 +66,7 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
 
   @override
   void dispose() {
+    _disposed = true;
     _inAppController = null;
     super.dispose();
   }
@@ -148,6 +150,7 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
     controller.addJavaScriptHandler(
       handlerName: 'onContentChanged',
       callback: (args) {
+        if (!mounted) return null;
         final html = args.isNotEmpty ? args[0].toString() : '';
         widget.onContentChanged(html);
         return null;
@@ -156,6 +159,7 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
     controller.addJavaScriptHandler(
       handlerName: 'onLinkRequest',
       callback: (_) {
+        if (!mounted) return null;
         widget.onLinkRequested();
         return null;
       },
@@ -164,6 +168,7 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
 
   Future<void> _onLoadStop(
       iaw.InAppWebViewController controller, iaw.WebUri? url) async {
+    if (_disposed) return;
     if (_pendingHtml.isNotEmpty) {
       await controller.evaluateJavascript(
         source: 'setContent(${jsonEncode(_pendingHtml)})',

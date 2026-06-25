@@ -144,8 +144,13 @@ dependency_overrides:
   # requires WPE WebKit which is not available on Ubuntu 24.04.
   flutter_inappwebview_linux:
     path: linux_plugin_stubs/flutter_inappwebview_linux
-  # Local patch: fixes use-after-free crash (ERROR_INVALID_STATE 0x8007139F) where
-  # pending async callbacks (evaluateJavascript / navigation events) captured `this`
-  # and fired after ~InAppWebView() ran.  Adds isAlive_ shared_ptr guard.
+  # Local patch: fixes use-after-free crash (ERROR_INVALID_STATE 0x8007139F).
+  # (1) Adds isAlive_ shared_ptr guard to all [this]-capturing async callbacks in
+  #     InAppWebView, UserContentController, and FindInteractionController so they
+  #     bail out if fired after object destruction.
+  # (2) ICoreWebView2Find crashes on both remove_* and Release() after Close(), so
+  #     InAppWebView::~InAppWebView() now disposes findInteractionController,
+  #     printJobManager, and notification/message-channel objects before calling
+  #     webViewController->Close().
   flutter_inappwebview_windows:
     path: packages/flutter_inappwebview_windows

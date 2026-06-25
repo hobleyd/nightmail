@@ -4186,9 +4186,17 @@ namespace flutter_inappwebview_plugin
       // then destroy the Window created with it
       DestroyWindow(parentWindow);
     }
-    if (webViewController) {
-      failedLog(webViewController->Close());
+    // Dispose objects that hold ICoreWebView2Find (or other COM objects that
+    // crash on Release() after Close()) BEFORE calling webViewController->Close().
+    if (findInteractionController) {
+      findInteractionController->dispose();
+      findInteractionController.reset();
     }
+    if (printJobManager) {
+      printJobManager->dispose();
+      printJobManager.reset();
+    }
+    disposeAllWebNotificationControllers();
     for (auto& [id, channel] : webMessageChannels_) {
       if (channel) {
         channel->dispose();
@@ -4201,14 +4209,8 @@ namespace flutter_inappwebview_plugin
       }
     }
     webMessageListeners_.clear();
-    if (printJobManager) {
-      printJobManager->dispose();
-      printJobManager.reset();
-    }
-    disposeAllWebNotificationControllers();
-    if (findInteractionController) {
-      findInteractionController->dispose();
-      findInteractionController.reset();
+    if (webViewController) {
+      failedLog(webViewController->Close());
     }
     navigationActions_.clear();
     inAppBrowser = nullptr;

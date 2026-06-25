@@ -234,18 +234,18 @@ namespace flutter_inappwebview_plugin
   void FindInteractionController::dispose()
   {
     *isAlive_ = false;
-    // Null find_ BEFORE calling unregisterFindEventHandlers() so that method
-    // short-circuits on the !find_ check.  Calling remove_ActiveMatchIndexChanged /
-    // remove_MatchCountChanged on an ICoreWebView2Find after
-    // webViewController->Close() crashes the process rather than returning
-    // ERROR_INVALID_STATE, so we must not reach those calls during teardown.
-    find_ = nullptr;
+    // Unregister handlers then release find_ while the WebView2 controller is
+    // still open.  ICoreWebView2Find is non-standard: calling remove_* OR
+    // Release() on it after webViewController->Close() crashes the process.
+    // InAppWebView::~InAppWebView() must therefore call dispose() BEFORE
+    // webViewController->Close().
     unregisterFindEventHandlers();
     if (channelDelegate) {
       channelDelegate->dispose();
       channelDelegate.reset();
     }
     findOptions_ = nullptr;
+    find_ = nullptr;
   }
 
   FindInteractionController::~FindInteractionController()

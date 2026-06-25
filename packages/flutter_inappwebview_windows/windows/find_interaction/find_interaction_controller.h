@@ -37,6 +37,8 @@ namespace flutter_inappwebview_plugin
     std::optional<flutter::EncodableMap> getActiveFindSessionMap() const;
 
   private:
+    std::shared_ptr<bool> isAlive_ = std::make_shared<bool>(true);
+
     wil::com_ptr<ICoreWebView2Find> find_;
     wil::com_ptr<ICoreWebView2FindOptions> findOptions_;
     std::optional<std::string> searchText_;

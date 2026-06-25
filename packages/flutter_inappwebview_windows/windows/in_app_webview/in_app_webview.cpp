@@ -4176,7 +4176,6 @@ namespace flutter_inappwebview_plugin
   InAppWebView::~InAppWebView()
   {
     *isAlive_ = false;
-    debugLog("dealloc InAppWebView");
     userContentController = nullptr;
     if (webView) {
       failedLog(webView->Stop());
@@ -4214,5 +4213,14 @@ namespace flutter_inappwebview_plugin
     navigationActions_.clear();
     inAppBrowser = nullptr;
     plugin = nullptr;
+    devToolsProtocolEventListener_.clear();
+    surface_ = nullptr;
+    cursorChangedCallback_ = nullptr;
+    surfaceSizeChangedCallback_ = nullptr;
+    channelDelegate.reset();
+    webView = nullptr;
+    webViewCompositionController = nullptr;
+    webViewController = nullptr;
+    webViewEnv = nullptr;
   }
 }

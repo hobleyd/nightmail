@@ -75,8 +75,9 @@ namespace flutter_inappwebview_plugin
     isDoneCounting_ = false;
 
     failedLog(find_->Start(findOptions_.get(), Callback<ICoreWebView2FindStartCompletedHandler>(
-      [this](HRESULT errorCode) -> HRESULT
+      [this, alive = isAlive_](HRESULT errorCode) -> HRESULT
       {
+        if (!*alive) return S_OK;
         failedLog(errorCode);
         isDoneCounting_ = true;
         updateFindState();
@@ -133,8 +134,9 @@ namespace flutter_inappwebview_plugin
     if (!activeMatchIndexChangedRegistered_) {
       EventRegistrationToken token = {};
       auto hr = find_->add_ActiveMatchIndexChanged(Callback<ICoreWebView2FindActiveMatchIndexChangedEventHandler>(
-        [this](ICoreWebView2Find* sender, IUnknown* args) -> HRESULT
+        [this, alive = isAlive_](ICoreWebView2Find* sender, IUnknown* args) -> HRESULT
         {
+          if (!*alive) return S_OK;
           updateFindState();
           notifyFindResult();
           return S_OK;
@@ -148,8 +150,9 @@ namespace flutter_inappwebview_plugin
     if (!matchCountChangedRegistered_) {
       EventRegistrationToken token = {};
       auto hr = find_->add_MatchCountChanged(Callback<ICoreWebView2FindMatchCountChangedEventHandler>(
-        [this](ICoreWebView2Find* sender, IUnknown* args) -> HRESULT
+        [this, alive = isAlive_](ICoreWebView2Find* sender, IUnknown* args) -> HRESULT
         {
+          if (!*alive) return S_OK;
           updateFindState();
           notifyFindResult();
           return S_OK;
@@ -230,13 +233,19 @@ namespace flutter_inappwebview_plugin
 
   void FindInteractionController::dispose()
   {
+    *isAlive_ = false;
+    // Null find_ BEFORE calling unregisterFindEventHandlers() so that method
+    // short-circuits on the !find_ check.  Calling remove_ActiveMatchIndexChanged /
+    // remove_MatchCountChanged on an ICoreWebView2Find after
+    // webViewController->Close() crashes the process rather than returning
+    // ERROR_INVALID_STATE, so we must not reach those calls during teardown.
+    find_ = nullptr;
     unregisterFindEventHandlers();
     if (channelDelegate) {
       channelDelegate->dispose();
       channelDelegate.reset();
     }
     findOptions_ = nullptr;
-    find_ = nullptr;
   }
 
   FindInteractionController::~FindInteractionController()

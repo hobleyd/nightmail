@@ -64,6 +64,12 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
   }
 
   @override
+  void dispose() {
+    _inAppController = null;
+    super.dispose();
+  }
+
+  @override
   void didUpdateWidget(HtmlEmailEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.initialHtml != widget.initialHtml) {

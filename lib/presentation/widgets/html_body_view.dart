@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -113,6 +114,7 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
 
   @override
   void dispose() {
+    _inAppController = null;
     try { _tempHtmlFile?.deleteSync(); } catch (_) {}
     super.dispose();
   }
@@ -253,8 +255,8 @@ a[href]:hover::after {
             if (uri != null) {
               final scheme = uri.scheme;
               if (scheme == 'http' || scheme == 'https' || scheme == 'mailto') {
-                await launchUrl(Uri.parse(uri.toString()),
-                    mode: LaunchMode.externalApplication);
+                unawaited(launchUrl(Uri.parse(uri.toString()),
+                    mode: LaunchMode.externalApplication));
                 return iaw.NavigationActionPolicy.CANCEL;
               }
             }
@@ -280,8 +282,8 @@ a[href]:hover::after {
             if (uri != null) {
               final scheme = uri.scheme;
               if (scheme == 'http' || scheme == 'https' || scheme == 'mailto') {
-                await launchUrl(Uri.parse(uri.toString()),
-                    mode: LaunchMode.externalApplication);
+                unawaited(launchUrl(Uri.parse(uri.toString()),
+                    mode: LaunchMode.externalApplication));
                 return iaw.NavigationActionPolicy.CANCEL;
               }
             }

@@ -1,5 +1,5 @@
 name: nightmail
-description: "A cross-platform email client for Office 365 via Microsoft Graph API."
+description: "A cross-platform email client for Office 365, Gmail & IMAP."
 publish_to: 'none'
 
 version: 1.4.0+1

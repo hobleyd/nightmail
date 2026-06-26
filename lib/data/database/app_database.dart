@@ -1,5 +1,6 @@
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../../domain/entities/email_folder.dart';
 import '../datasources/local/delta_token_datasource.dart';
@@ -89,13 +90,66 @@ class DeltaSyncTokens extends Table {
   Set<Column> get primaryKey => {accountId, folderId};
 }
 
-@DriftDatabase(tables: [CachedEmails, KnownSenders, SenderAliases, DeltaSyncTokens, CachedFolders, LocalDrafts])
+/// Single-row blob holding the last good models.dev `api.json` fetch.
+///
+/// This is the cold-start fallback for the AI provider/model catalog: the
+/// registry serves the in-memory catalog while online and parses this raw
+/// blob on a cold offline launch (stale-while-revalidate). It is a raw blob,
+/// not a parsed mirror of the catalog. [etag]/[lastModified] support
+/// conditional refresh requests.
+class CatalogCache extends Table {
+  /// Always 0 — enforces a single row.
+  IntColumn get id => integer().withDefault(const Constant(0))();
+  TextColumn get rawJson => text()();
+  DateTimeColumn get fetchedAt => dateTime()();
+  TextColumn get etag => text().nullable()();
+  TextColumn get lastModified => text().nullable()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+/// Durable user AI configuration — the configured providers (catalog picks and
+/// BYO custom endpoints). API keys are NOT stored here; they live in
+/// flutter_secure_storage keyed by providerId.
+class AiConfig extends Table {
+  TextColumn get id => text()();
+  TextColumn get providerId => text()();
+  TextColumn get source => text()(); // catalog | user
+  TextColumn get displayName => text().nullable()();
+  TextColumn get apiBaseUrl => text().nullable()();
+  TextColumn get wireProtocol => text()(); // openai | anthropic | google | ollama | azure
+  TextColumn get kind => text()(); // cloud | local | selfHosted
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+/// Per-capability routing: maps each AI capability
+/// (compose | summarize | triage | search) to a (providerId, modelId) so each
+/// feature can use a different backend.
+class CapabilityRouting extends Table {
+  TextColumn get capability => text()();
+  TextColumn get providerId => text()();
+  TextColumn get modelId => text()();
+
+  @override
+  Set<Column> get primaryKey => {capability};
+}
+
+@DriftDatabase(tables: [CachedEmails, KnownSenders, SenderAliases, DeltaSyncTokens, CachedFolders, LocalDrafts, CatalogCache, AiConfig, CapabilityRouting])
 class AppDatabase extends _$AppDatabase
     implements DeltaTokenDatasource, FolderLocalDatasource {
   AppDatabase() : super(_openConnection());
 
+  /// Test-only constructor: lets a unit test open the schema on an in-memory
+  /// [QueryExecutor] (e.g. `NativeDatabase.memory()`) instead of the on-disk
+  /// `nightmail_cache` file. Not used by production code.
+  @visibleForTesting
+  AppDatabase.forTesting(QueryExecutor executor) : super(executor);
+
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -134,6 +188,11 @@ class AppDatabase extends _$AppDatabase
           }
           if (from < 7) {
             await m.createTable(senderAliases);
+          }
+          if (from < 8) {
+            await m.createTable(catalogCache);
+            await m.createTable(aiConfig);
+            await m.createTable(capabilityRouting);
           }
         },
       );

@@ -17,6 +17,8 @@ import '../../domain/usecases/delete_server_draft.dart';
 import '../../domain/usecases/save_server_draft.dart';
 import '../../domain/usecases/send_email.dart';
 import '../blocs/account/account_cubit.dart';
+import '../blocs/ai/ai_compose_cubit.dart';
+import '../blocs/ai/ai_compose_state.dart';
 import '../blocs/compose/compose_bloc.dart';
 import '../blocs/compose/compose_event.dart';
 import '../blocs/compose/compose_state.dart';
@@ -179,6 +181,23 @@ class _ComposeFormState extends State<ComposeForm> {
   String _htmlBodyCache = '';
   final _htmlEditorKey = GlobalKey<HtmlEmailEditorState>();
 
+  // AI compose / smart-reply streaming.
+  late final AiComposeCubit _aiCubit;
+  // Length of the AI text already inserted into the editor this generation, so
+  // each streaming state inserts only the new delta at the caret.
+  int _aiInsertedLen = 0;
+  bool _aiGenerating = false;
+  // Snapshot of the editor HTML taken when an AI draft starts. On the terminal
+  // [AiComposeDone] we rebuild the editor as base + full draft if the streamed
+  // inserts couldn't be trusted (e.g. the webview was still mounting), so no
+  // streamed tokens are ever permanently lost (M3).
+  String _aiBaseHtml = '';
+  // True when the editor was (re)mounted for this generation (plain → HTML
+  // switch). The streamed caret is lost across the remount and early deltas can
+  // race the fresh webview, so on Done we reconcile the full draft via
+  // setContent rather than trusting [_aiInsertedLen].
+  bool _aiReconcileFull = false;
+
   String? _serverDraftId;
   String? _pendingOldDraftId;
   Timer? _draftTimer;
@@ -187,6 +206,7 @@ class _ComposeFormState extends State<ComposeForm> {
   @override
   void initState() {
     super.initState();
+    _aiCubit = sl<AiComposeCubit>();
     _toRecipients = _parseAddresses(_initialTo());
     _ccRecipients = _parseAddresses(_initialCc());
     _fromController = TextEditingController(text: widget.fromAddress);
@@ -397,6 +417,7 @@ class _ComposeFormState extends State<ComposeForm> {
     _draftTimer?.cancel();
     _subjectController.removeListener(_onSubjectChanged);
     _bodyController.removeListener(_scheduleDraftSave);
+    unawaited(_aiCubit.close());
     _fromController.dispose();
     _subjectController.dispose();
     _bodyController.dispose();
@@ -582,6 +603,156 @@ class _ComposeFormState extends State<ComposeForm> {
     });
     _htmlEditorKey.currentState?.setContent(html);
     _scheduleDraftSave();
+  }
+
+  // ---------------------------------------------------------------------------
+  // AI compose / smart-reply
+  // ---------------------------------------------------------------------------
+
+  /// Prompts the user for an instruction and kicks off a streaming AI draft.
+  Future<void> _onAiCompose(BuildContext context) async {
+    // Snapshot the caret BEFORE the prompt dialog steals focus, so the draft
+    // streams in where the user placed the cursor (e.g. above a quoted reply).
+    await _htmlEditorKey.currentState?.saveSelection();
+
+    final instruction = await _promptForAiInstruction(context);
+    if (instruction == null || instruction.trim().isEmpty || !mounted) return;
+
+    // AI streaming renders through the HTML (webview) editor; force it on so the
+    // tokens land somewhere visible even if the draft started as plain text.
+    final remountedEditor = _bodyType != EmailBodyType.html;
+    if (remountedEditor) {
+      _switchToHtml();
+    }
+
+    _aiInsertedLen = 0;
+    // Capture the pre-draft content and remount state so the terminal Done can
+    // authoritatively rebuild base + full draft if early inserts were dropped.
+    _aiBaseHtml = _htmlBodyCache;
+    _aiReconcileFull = remountedEditor;
+
+    final original = widget.originalEmail;
+    final contextText = original == null
+        ? null
+        : (original.bodyType == EmailBodyType.html
+            ? _stripHtml(original.body)
+            : original.body);
+
+    setState(() => _aiGenerating = true);
+    _aiCubit.generate(instruction.trim(), context: contextText);
+  }
+
+  /// Small modal asking what the AI should write. Returns null on cancel.
+  Future<String?> _promptForAiInstruction(BuildContext context) {
+    final c = context.colors;
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: c.surfacePanel,
+          title: Text(
+            'Draft with AI',
+            style: TextStyle(color: c.textPrimary, fontSize: 16),
+          ),
+          content: SizedBox(
+            width: 420,
+            child: TextField(
+              controller: controller,
+              autofocus: true,
+              minLines: 2,
+              maxLines: 5,
+              style: TextStyle(color: c.textPrimary, fontSize: 13),
+              decoration: InputDecoration(
+                hintText: 'Describe the reply you want — e.g. "politely '
+                    'decline and suggest meeting next week".',
+                hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
+              ),
+              onSubmitted: (v) => Navigator.of(dialogContext).pop(v),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text('Cancel', style: TextStyle(color: c.textMuted)),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: AppColors.accent),
+              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+              child: const Text('Generate'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Reacts to streaming state from [AiComposeCubit], inserting each new token
+  /// delta at the saved editor caret via [HtmlEmailEditorState.insertAtCursor]
+  /// (no innerHTML rewrite, no caret reset), so the draft streams in smoothly
+  /// where the user positioned the cursor.
+  /// Inserts any not-yet-rendered portion of [text] at the editor caret.
+  void _insertAiDelta(String text) {
+    if (text.length <= _aiInsertedLen) return;
+    final editor = _htmlEditorKey.currentState;
+    // If the editor isn't mounted yet, don't advance the cursor — the missing
+    // text is retried on the next delta and finally reconciled on Done, so
+    // streamed tokens are never permanently lost (M3).
+    if (editor == null) return;
+    final delta = text.substring(_aiInsertedLen);
+    editor.insertAtCursor(delta);
+    // Advance only after a (best-effort) insert against a mounted editor.
+    _aiInsertedLen = text.length;
+  }
+
+  /// Finalises the streamed AI draft. When the editor was (re)mounted for this
+  /// generation the streamed caret/inserts can't be trusted (early deltas may
+  /// have raced the fresh webview or been clobbered by its initial setContent),
+  /// so we authoritatively rebuild the editor content as base + full draft
+  /// rather than relying on [_aiInsertedLen]. Otherwise we flush any trailing
+  /// delta into the already-live editor (M3).
+  void _finishAiDraft(String text) {
+    final editor = _htmlEditorKey.currentState;
+    if (editor == null) {
+      _aiReconcileFull = false;
+      return;
+    }
+    if (_aiReconcileFull) {
+      final full = _aiBaseHtml + _plainToHtml(text);
+      editor.setContent(full);
+      _htmlBodyCache = full;
+      _aiInsertedLen = text.length;
+    } else {
+      _insertAiDelta(text);
+    }
+    _aiReconcileFull = false;
+  }
+
+  void _onAiComposeStateChanged(BuildContext context, AiComposeState state) {
+    switch (state) {
+      case AiComposeIdle():
+        break;
+      case AiComposeStreaming(:final text):
+        _insertAiDelta(text);
+      case AiComposeDone(:final text):
+        _finishAiDraft(text);
+        setState(() => _aiGenerating = false);
+        _scheduleDraftSave();
+      case AiComposeError(:final failure):
+        setState(() => _aiGenerating = false);
+        // Never surface raw provider/exception text — failure.message can carry
+        // verbatim provider error bodies. Log the detail and show a fixed,
+        // user-safe message instead (L12).
+        debugPrint('AI draft failed: ${failure.message}');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              "Couldn't generate the AI draft. Please try again.",
+            ),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+    }
   }
 
   void _addDroppedFiles(DropDoneDetails details) {
@@ -1024,11 +1195,15 @@ class _ComposeFormState extends State<ComposeForm> {
     return BlocListener<ComposeBloc, ComposeState>(
       listenWhen: (_, curr) => curr is ComposeSent,
       listener: (_, _) { _deleteDraft(); },
-      child: DropTarget(
-        onDragDone: _addDroppedFiles,
-        onDragEntered: (_) => setState(() => _isDragOver = true),
-        onDragExited: (_) => setState(() => _isDragOver = false),
-        child: _buildContent(context, c, accountId),
+      child: BlocListener<AiComposeCubit, AiComposeState>(
+        bloc: _aiCubit,
+        listener: _onAiComposeStateChanged,
+        child: DropTarget(
+          onDragDone: _addDroppedFiles,
+          onDragEntered: (_) => setState(() => _isDragOver = true),
+          onDragExited: (_) => setState(() => _isDragOver = false),
+          child: _buildContent(context, c, accountId),
+        ),
       ),
     );
   }
@@ -1102,6 +1277,8 @@ class _ComposeFormState extends State<ComposeForm> {
                 _switchToHtml();
               }
             },
+            onAiCompose:
+                _aiGenerating ? null : () => _onAiCompose(context),
           ),
         ],
       );
@@ -1159,6 +1336,8 @@ class _ComposeFormState extends State<ComposeForm> {
                 _switchToHtml();
               }
             },
+            onAiCompose:
+                _aiGenerating ? null : () => _onAiCompose(context),
           ),
         ],
       ),
@@ -1532,12 +1711,15 @@ class _Footer extends StatelessWidget {
     this.draftSavedAt,
     required this.bodyType,
     required this.onBodyTypeChanged,
+    this.onAiCompose,
   });
   final VoidCallback onSend;
   final VoidCallback onClose;
   final DateTime? draftSavedAt;
   final EmailBodyType bodyType;
   final ValueChanged<EmailBodyType> onBodyTypeChanged;
+  // Opens the AI draft prompt. Null while a generation is already in flight.
+  final VoidCallback? onAiCompose;
 
   @override
   Widget build(BuildContext context) {
@@ -1589,6 +1771,19 @@ class _Footer extends StatelessWidget {
                 ),
               ],
               const Spacer(),
+              TextButton.icon(
+                onPressed: isSending ? null : onAiCompose,
+                icon: const Icon(Icons.auto_awesome_rounded, size: 16),
+                label: const Text('AI', style: TextStyle(fontSize: 13)),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.accent,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+              const SizedBox(width: 8),
               TextButton(
                 onPressed: isSending ? null : onClose,
                 child: Text(

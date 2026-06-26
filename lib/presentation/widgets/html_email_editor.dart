@@ -80,6 +80,21 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
     );
   }
 
+  /// Snapshots the current caret position inside the editor so a later
+  /// [insertAtCursor] lands there even after the editor loses focus.
+  Future<void> saveSelection() async {
+    await _controller?.evaluateJavascript(source: 'saveSelection()');
+  }
+
+  /// Inserts [text] at the saved caret (or end of body as a fallback) without
+  /// rewriting innerHTML or resetting the selection — used to stream AI drafts
+  /// in token-by-token where the user placed the cursor.
+  Future<void> insertAtCursor(String text) async {
+    await _controller?.evaluateJavascript(
+      source: 'insertAtSaved(${jsonEncode(text)})',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!_ready) return const SizedBox.shrink();

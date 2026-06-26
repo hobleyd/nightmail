@@ -84,8 +84,9 @@ data/
     catalog_response_model.dart
   datasources/ai/
     models_dev_catalog_datasource.dart   # dio fetch from models.dev/api.json
-    ai_catalog_cache_datasource.dart     # drift-backed cache; stale-while-revalidate
-    ai_provider_registry.dart            # ★ THE REGISTRY (singleton in get_it)
+    ai_catalog_cache_datasource.dart     # ONE raw-JSON blob (cold-start fallback)
+    ai_config_datasource.dart            # drift: configured providers + per-capability routing
+    ai_provider_registry.dart            # ★ THE REGISTRY (singleton in get_it, in-memory catalog)
     ai_adapter_factory.dart              # wireProtocol -> adapter (lazy)
     inference/
       ai_adapter.dart                    # ★ normalization boundary (interface)
@@ -113,19 +114,24 @@ presentation/
 `AiProviderRegistry` — a `get_it` singleton, the single source of truth for "what backends
 exist and what can they do."
 
+- **Reference data vs. config (key decision):** the models.dev catalog is *reference data* —
+  ephemeral, refreshed from upstream, never mirrored row-by-row into drift. Only the user's
+  *configuration* is durable.
 - **Catalog ingestion:** `models_dev_catalog_datasource` fetches `https://models.dev/api.json`
   (~2.4 MB, 144 providers / 5308 models, a JSON object keyed by provider id) via the existing
-  `dio` instance. `ai_catalog_cache_datasource` persists it into **drift tables** (see "Schema
-  Mapping" below) for queryability — filter by kind/modality/capability in SQL rather than
-  loading the whole blob. **Stale-while-revalidate**: serve cache immediately, refresh in the
-  background, operate fully offline when the network/catalog is unavailable.
+  `dio` instance, parses it into in-memory `AiProvider`/`AiModel` entities, and the registry
+  **holds them in memory** for the session. Filtering/sorting 5308 entries in Dart is instant —
+  no SQL needed. `ai_catalog_cache_datasource` persists **one** raw-JSON blob (the last good
+  fetch) as a cold-start fallback. **Stale-while-revalidate**: serve the in-memory/blob catalog
+  immediately, refresh from network in the background; on a cold offline launch the picker is
+  populated from the blob.
 - **Derived fields:** models.dev carries no privacy `kind` and no `wireProtocol`. The mapper
   **derives** both — `kind` from the provider id / `env` / `open_weights` heuristic, and
   `wireProtocol` from the provider's `npm` package (and per-model `provider.shape`). See
   "Schema Mapping" for the rules.
-- **Assembly:** `registry.all()` = catalog providers ∪ user BYO providers (OpenAI-compatible
-  endpoints stored in `flutter_secure_storage`). Every entry **source-tagged**
-  `catalog | user`.
+- **Assembly:** `registry.all()` = in-memory catalog providers ∪ user BYO providers (custom
+  OpenAI-compatible endpoints, stored as rows in the `ai_config` drift table; their API keys in
+  `flutter_secure_storage`). Every entry **source-tagged** `catalog | user`.
 - **Query API:** `all()`, `byId(id)`, `byKind(cloud | local | selfHosted)`,
   `modelsFor(providerId)`, `forCapability(capability)`. Use cases query this; they never keep
   parallel provider lists.
@@ -141,46 +147,50 @@ Resolved against the live `api.json` (field names below are verbatim from the JS
 is an **object keyed by provider id**; each provider's `models` is likewise an **object keyed
 by model id** (iterate `.entries`; the key is redundant with the nested `id`).
 
-### Provider — JSON → entity / drift `ai_providers` table
+These map models.dev JSON into **in-memory** `AiProvider` / `AiModel` entities (held by the
+registry for the session). They are **not** drift tables — see "Persistence" below for what is
+actually stored.
 
-| models.dev field | type | entity / column | notes |
+### Provider — JSON → `AiProvider` entity
+
+| models.dev field | type | entity field | notes |
 |---|---|---|---|
-| `id` (= map key) | string | `id` (PK) | |
+| `id` (= map key) | string | `id` | |
 | `name` | string | `name` | |
 | `npm` | string | `npm` | AI-SDK package, e.g. `@ai-sdk/anthropic` — drives `wireProtocol` |
 | `doc` | string | `doc` | docs URL |
-| `env` | array\<string> | `envJson` (TEXT, JSON) | env var names; **empty ⇒ no key required** |
+| `env` | array\<string> | `env` | env var names; **empty ⇒ no key required** |
 | `api` | string? | `apiBaseUrl` (nullable) | absent for most first-party hosted providers |
-| — derived — | — | `kind` (TEXT enum) | `cloud \| local \| selfHosted`, see rules |
-| — derived — | — | `wireProtocol` (TEXT enum) | `openai \| anthropic \| google \| ollama`, see rules |
-| — | — | `source` (TEXT enum) | `catalog \| user` |
+| — derived — | — | `kind` | `cloud \| local \| selfHosted`, see rules |
+| — derived — | — | `wireProtocol` | `openai \| anthropic \| google \| ollama`, see rules |
+| — | — | `source` | `catalog \| user` |
 
-### Model — JSON → entity / drift `ai_models` table
+### Model — JSON → `AiModel` entity
 
-Composite key `(providerId, id)`; FK `providerId → ai_providers.id`.
+Identified by `(providerId, id)`.
 
 **Always present:** `id`, `name`, `attachment` (bool), `reasoning` (bool), `tool_call` (bool),
-`open_weights` (bool), `release_date` (TEXT `YYYY-MM-DD`), `last_updated` (TEXT).
-`modalities.{input,output}` (array\<string>, enum `text|image|audio|video|pdf`) → flattened to
-`inputModalitiesJson` / `outputModalitiesJson` (TEXT, JSON lists).
+`open_weights` (bool), `release_date` (`YYYY-MM-DD`), `last_updated`.
+`modalities.{input,output}` (array\<string>, enum `text|image|audio|video|pdf`) → `inputModalities`
+/ `outputModalities` lists.
 `limit.context` / `limit.output` (number, always) → `contextLimit` / `outputLimit`;
 `limit.input` (number, **optional**) → `inputLimit` (nullable).
 
-**Optional scalars** → nullable columns: `temperature` (bool), `structured_output` (bool),
-`family` (string), `status` (string enum `alpha|beta|deprecated`).
-`knowledge` (string) → `knowledgeRaw` (TEXT, **do not parse** — granularity varies
-`YYYY-MM` vs `YYYY-MM-DD`).
+**Optional scalars:** `temperature` (bool), `structured_output` (bool), `family` (string),
+`status` (enum `alpha|beta|deprecated`). `knowledge` (string) → `knowledgeRaw` (**do not parse** —
+granularity varies `YYYY-MM` vs `YYYY-MM-DD`).
 
-**`cost` (object, optional — absent for free/local models):** flatten scalars to nullable REAL
-columns `costInput`, `costOutput`, `costCacheRead`, `costCacheWrite`, `costReasoning`,
-`costInputAudio`, `costOutputAudio`. Keep the variable parts as JSON TEXT columns:
-`costTiersJson` (`cost.tiers` array), `costOver200kJson` (`cost.context_over_200k` object).
+**`cost` (object, optional — absent for free/local models):** `input`, `output`, `cache_read`,
+`cache_write`, `reasoning`, `input_audio`, `output_audio` (all nullable), plus the variable
+parts `cost.tiers` (array) and `cost.context_over_200k` (object) kept as-is.
 
-**Variable/polymorphic** → JSON TEXT columns: `reasoningOptionsJson` (`reasoning_options`
-array of `{type, min?, max?, values?}`), `experimentalJson` (`experimental`),
-`providerOverrideJson` (per-model `provider` `{npm?, api?, shape?}`).
-`interleaved` is **polymorphic (bool | `{field}`)** → normalize to nullable `interleavedField`
-(TEXT): null when false/absent, the `field` value (e.g. `reasoning_content`) when object.
+**Variable/polymorphic:** `reasoning_options` (array of `{type, min?, max?, values?}`),
+`experimental`, per-model `provider` (`{npm?, api?, shape?}`).
+`interleaved` is **polymorphic (bool | `{field}`)** → normalize to nullable `interleavedField`:
+null when false/absent, the `field` value (e.g. `reasoning_content`) when object.
+
+(Since the catalog lives in memory, these are plain entity fields — lists/objects stay as Dart
+collections, not JSON-encoded columns.)
 
 ### Derivation rules
 
@@ -196,12 +206,35 @@ array of `{type, min?, max?, values?}`), `experimentalJson` (`experimental`),
   make a hosted provider `local`.)
 - **`requiresApiKey`** = `env` is non-empty.
 
-### Drift specifics
+### Persistence (what is actually stored)
 
-Two tables (`ai_providers`, `ai_models`) plus a `catalog_meta` row holding `fetchedAt` +
-`etag`/`lastModified` for stale-while-revalidate. The drift database already exists in the app
-(`drift` / `drift_flutter` deps) — add these tables to the existing schema with a migration,
-do not spin up a second database.
+The full catalog is **not** mirrored into drift. Only two things persist:
+
+1. **Catalog cold-start blob** — one entry holding the last good `api.json` (raw text) plus
+   `fetchedAt` and `etag`/`lastModified` for stale-while-revalidate. Stored via
+   `ai_catalog_cache_datasource`. Implementation: a single-row drift table `catalog_cache`
+   (or a file via `path_provider` — drift chosen for consistency with the app DB). This is a
+   blob, not a parsed mirror; the registry parses it on cold offline launch.
+
+2. **`ai_config` drift table** — the durable user configuration, the only normalized table:
+
+   | column | type | notes |
+   |---|---|---|
+   | `id` | TEXT PK | config row id |
+   | `providerId` | TEXT | catalog id, or a synthetic id for a BYO provider |
+   | `source` | TEXT | `catalog \| user` |
+   | `displayName` | TEXT? | for BYO providers |
+   | `apiBaseUrl` | TEXT? | for BYO / self-hosted endpoints |
+   | `wireProtocol` | TEXT | needed for BYO entries not in the catalog |
+   | `kind` | TEXT | `cloud \| local \| selfHosted` |
+
+   Plus a `capability_routing` table mapping `capability (compose|summarize|triage|search) →
+   (providerId, modelId)` so each feature can use a different backend. API keys are **not**
+   here — they live in `flutter_secure_storage`, keyed by `providerId`.
+
+The drift database already exists in the app (`drift` / `drift_flutter` deps) — add
+`catalog_cache`, `ai_config`, and `capability_routing` to the existing schema with a
+migration; do not spin up a second database.
 
 ## The Normalization Boundary
 
@@ -271,7 +304,9 @@ compose dialog
   exhaustiveness trick, Dart-native via sealed classes).
 - **Adapters:** contract tests with mocked `dio` (`mockito`, already a dep), including an SSE
   stream fixture for the streaming path.
-- **Catalog:** stale-while-revalidate behavior (cache hit, background refresh, offline).
+- **Catalog:** stale-while-revalidate behavior — in-memory serve, background refresh, and
+  cold-start from the blob when offline. Config round-trip through the `ai_config` /
+  `capability_routing` drift tables.
 - **Use cases:** mocked repositories.
 
 ## Dependencies
@@ -301,5 +336,8 @@ Then, as follow-on slices against the same registry: summarize → triage (exten
 
 - Semantic search indexing strategy (embeddings store) — its own future spec.
 
-**Resolved:** models.dev schema mapping is fixed (see "Schema Mapping"). Catalog cache is
-**drift** (queryable), added to the existing app database via migration.
+**Resolved:** models.dev schema mapping is fixed (see "Schema Mapping"). The catalog is
+*reference data* — fetched live and held in memory, with one raw-JSON cold-start blob; it is
+**not** mirrored into drift. Drift persists only durable config (`ai_config`,
+`capability_routing`) plus the single `catalog_cache` blob row, added to the existing app
+database via migration.

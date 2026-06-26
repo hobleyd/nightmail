@@ -159,10 +159,10 @@ class AiInferenceRepositoryImpl implements AiInferenceRepository {
         // `/v1` suffix here would double it into `/v1/v1/messages` (404).
         return 'https://api.anthropic.com';
       case AiWireProtocol.google:
-        // Google speaks the OpenAI-compatible protocol at the `/v1beta/openai`
-        // base, so the OpenAI adapter's `{base}/chat/completions` resolves
-        // correctly.
-        return 'https://generativelanguage.googleapis.com/v1beta/openai';
+        // Google's native Gemini surface. The Google adapter appends
+        // `/models/{modelId}:generateContent` (or `:streamGenerateContent`),
+        // so the base is the `/v1beta` root without the `/openai` suffix.
+        return 'https://generativelanguage.googleapis.com/v1beta';
       case AiWireProtocol.ollama:
         return 'http://localhost:11434/v1';
       case AiWireProtocol.azure:

@@ -30,7 +30,7 @@ import 'ai_adapter.dart';
 /// A single instance serves every Google-protocol provider — the API key and
 /// endpoint are supplied per call (see [AiAdapter]).
 class GoogleAdapter implements AiAdapter {
-  GoogleAdapter({required Dio dio}) : _dio = dio;
+  const GoogleAdapter({required Dio dio}) : _dio = dio;
 
   final Dio _dio;
 
@@ -47,6 +47,10 @@ class GoogleAdapter implements AiAdapter {
     required String? apiKey,
     required String baseUrl,
   }) async {
+    if (apiKey == null || apiKey.isEmpty) {
+      return const Left(MissingApiKey(message: 'Gemini requires an API key.'));
+    }
+
     try {
       final response = await _dio.post<dynamic>(
         _endpoint(baseUrl, request.modelId, stream: false),
@@ -69,10 +73,18 @@ class GoogleAdapter implements AiAdapter {
           : null;
 
       final text = _extractText(candidate);
+      // A fully safety-blocked prompt has no candidate; surface
+      // `promptFeedback.blockReason` (e.g. "SAFETY") as the finishReason so a
+      // block isn't reported as a clean empty success.
+      final promptFeedback = data['promptFeedback'];
+      final blockReason =
+          (promptFeedback is Map && promptFeedback['blockReason'] is String)
+              ? promptFeedback['blockReason'] as String
+              : null;
       final finishReason =
           (candidate is Map && candidate['finishReason'] is String)
               ? candidate['finishReason'] as String
-              : null;
+              : blockReason;
       final (promptTokens, completionTokens) =
           _extractUsage(data['usageMetadata']);
 
@@ -103,6 +115,11 @@ class GoogleAdapter implements AiAdapter {
     required String? apiKey,
     required String baseUrl,
   }) async* {
+    if (apiKey == null || apiKey.isEmpty) {
+      yield const Left(MissingApiKey(message: 'Gemini requires an API key.'));
+      return;
+    }
+
     Response<ResponseBody> response;
     try {
       response = await _dio.post<ResponseBody>(
@@ -140,6 +157,7 @@ class GoogleAdapter implements AiAdapter {
     int? promptTokens;
     int? completionTokens;
     String? finishReason;
+    String? blockReason;
 
     // Decode the byte stream with a single stateful `utf8.decoder` (as the
     // OpenAI/Anthropic adapters do) so multibyte code points split across
@@ -167,6 +185,21 @@ class GoogleAdapter implements AiAdapter {
         } catch (_) {
           // Skip keep-alive / non-JSON SSE comment lines.
           continue;
+        }
+
+        // A mid-stream `{"error":{...}}` event (e.g. RESOURCE_EXHAUSTED)
+        // truncates the generation; surface it instead of falling through to a
+        // synthetic clean `done`.
+        if (json['error'] != null) {
+          yield Left(_failureFromErrorObject(json['error']));
+          return;
+        }
+
+        // A fully safety-blocked prompt arrives as `promptFeedback.blockReason`
+        // with no candidates; remember it for the terminal chunk's finishReason.
+        final promptFeedback = json['promptFeedback'];
+        if (promptFeedback is Map && promptFeedback['blockReason'] is String) {
+          blockReason = promptFeedback['blockReason'] as String;
         }
 
         final candidates = json['candidates'];
@@ -203,12 +236,14 @@ class GoogleAdapter implements AiAdapter {
     // Gemini's SSE stream has no explicit terminal sentinel: it simply ends
     // after the chunk carrying the final `finishReason`/usage. Emit one
     // synthetic terminal chunk carrying whatever finishReason/usage was
-    // gathered so the consumer always receives a `done` signal.
+    // gathered so the consumer always receives a `done` signal. A
+    // safety-blocked prompt has no candidate finishReason; surface its
+    // `blockReason` so a block isn't reported as a clean empty success.
     yield Right(
       AiChunk(
         delta: '',
         done: true,
-        finishReason: finishReason,
+        finishReason: finishReason ?? blockReason,
         promptTokens: promptTokens,
         completionTokens: completionTokens,
       ),
@@ -228,8 +263,14 @@ class GoogleAdapter implements AiAdapter {
     if (base.endsWith('/openai')) {
       base = base.substring(0, base.length - '/openai'.length);
     }
+    // The id may arrive in Gemini's native resource form (`models/gemini-...`)
+    // via the free-form model-id field or a `/models` listing. Strip a leading
+    // slash and `models/` prefix so we don't double it into `.../models/models/`.
+    final model = modelId
+        .replaceFirst(RegExp(r'^/+'), '')
+        .replaceFirst(RegExp(r'^models/'), '');
     final method = stream ? 'streamGenerateContent?alt=sse' : 'generateContent';
-    return '$base/models/$modelId:$method';
+    return '$base/models/$model:$method';
   }
 
   Map<String, String> _headers(String? apiKey, {required bool stream}) {
@@ -364,24 +405,96 @@ class GoogleAdapter implements AiAdapter {
       debugPrint('GoogleAdapter provider error (HTTP $status): $detail');
     }
 
+    if (status == 401 || status == 403) {
+      return MissingApiKey(
+        message: 'Gemini rejected the API key (HTTP $status). '
+            'Check it in AI settings.',
+      );
+    }
     if (status == 429) {
       return const RateLimited(
         message: 'Gemini is rate limiting requests (HTTP 429). '
             'Try again shortly.',
       );
     }
-    if (status == 400 || status == 401 || status == 403) {
-      // Gemini reports an invalid/missing key as 400 ("API key not valid") or
-      // 403; treat the 400 here as a key problem for parity with siblings.
-      return MissingApiKey(
-        message: 'Gemini rejected the API key (HTTP $status). '
-            'Check it in AI settings.',
+    if (status == 400) {
+      // Gemini signals context overflow with a 400 INVALID_ARGUMENT, not a
+      // 413/429 — classify it from the parsed error text before anything else.
+      if (_looksLikeContextOverflow(detail)) {
+        return const ContextTooLong(
+          message: 'This message is too long for the selected model. '
+              'Shorten it and try again.',
+        );
+      }
+      // Gemini reports an invalid/missing key as a 400 ("API key not valid").
+      if ((detail ?? '').toLowerCase().contains('api key not valid')) {
+        return const MissingApiKey(
+          message: 'Gemini rejected the API key (HTTP 400). '
+              'Check it in AI settings.',
+        );
+      }
+      // Any other 400 is a malformed request, not a key problem.
+      return const ProviderUnreachable(
+        message: 'Gemini rejected the request (HTTP 400).',
       );
     }
 
     return ProviderUnreachable(
       message: 'Gemini returned an error (HTTP $status).',
     );
+  }
+
+  /// Maps a Gemini SSE/body `error` object (`{code, message, status}`) onto an
+  /// [AiFailure] by its `code`, mirroring the HTTP-status classification.
+  Failure _failureFromErrorObject(dynamic error) {
+    final code = (error is Map && error['code'] is num)
+        ? (error['code'] as num).toInt()
+        : null;
+    final message = (error is Map && error['message'] is String)
+        ? error['message'] as String
+        : null;
+    if (message != null) {
+      debugPrint('GoogleAdapter stream error (code $code): $message');
+    }
+    if (code == 429) {
+      return const RateLimited(
+        message: 'Gemini is rate limiting requests (HTTP 429). '
+            'Try again shortly.',
+      );
+    }
+    if (code == 401 || code == 403) {
+      return MissingApiKey(
+        message: 'Gemini rejected the API key (HTTP $code). '
+            'Check it in AI settings.',
+      );
+    }
+    if (code == 400) {
+      if (_looksLikeContextOverflow(message)) {
+        return const ContextTooLong(
+          message: 'This message is too long for the selected model. '
+              'Shorten it and try again.',
+        );
+      }
+      return const ProviderUnreachable(
+        message: 'Gemini rejected the request (HTTP 400).',
+      );
+    }
+    return const ProviderUnreachable(
+      message: 'Gemini stream failed.',
+    );
+  }
+
+  /// Heuristic for distinguishing a context-window 400 from other bad requests,
+  /// mirroring the OpenAI-compatible adapter's `_looksLikeContextOverflow`.
+  bool _looksLikeContextOverflow(String? detail) {
+    if (detail == null) return false;
+    final d = detail.toLowerCase();
+    return d.contains('token count') ||
+        d.contains('exceeds the maximum') ||
+        d.contains('input token') ||
+        d.contains('context length') ||
+        d.contains('context window') ||
+        d.contains('too many tokens');
   }
 
   /// Best-effort extraction of a human message from a Gemini error body

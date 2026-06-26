@@ -41,8 +41,9 @@ class AiAdapterFactory {
         return _azureAdapter;
       case AiWireProtocol.google:
         // Google speaks its native Gemini `generateContent` API, handled by a
-        // dedicated adapter. The default base URL is supplied by the inference
-        // repo (`_defaultBaseUrl(google)` → `.../v1beta`).
+        // dedicated adapter. The default base URL is resolved by
+        // `AiInferenceRepositoryImpl` via `AiProvider.defaultBaseUrl`
+        // (`.../v1beta`), not by this factory.
         return _googleAdapter;
       case AiWireProtocol.ollama:
         // Intentional: Ollama's first-class `/v1` OpenAI-compatibility surface

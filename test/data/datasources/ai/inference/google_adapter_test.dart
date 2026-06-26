@@ -48,11 +48,12 @@ void main() {
     ],
   );
 
-  DioException dioErrorWithStatus(int status) => DioException(
+  DioException dioErrorWithStatus(int status, {Object? data}) => DioException(
         requestOptions: RequestOptions(path: '/models'),
         response: Response<dynamic>(
           requestOptions: RequestOptions(path: '/models'),
           statusCode: status,
+          data: data,
         ),
         type: DioExceptionType.badResponse,
       );
@@ -240,14 +241,50 @@ void main() {
       );
     });
 
-    test('maps HTTP 400 to MissingApiKey (Left)', () async {
+    test('maps a generic HTTP 400 to ProviderUnreachable (Left)', () async {
       when(
         mockDio.post<dynamic>(
           any,
           data: anyNamed('data'),
           options: anyNamed('options'),
         ),
-      ).thenThrow(dioErrorWithStatus(400));
+      ).thenThrow(
+        dioErrorWithStatus(
+          400,
+          data: const {
+            'error': {'message': 'Invalid value at generationConfig'},
+          },
+        ),
+      );
+
+      final result = await adapter.run(
+        tRequest,
+        apiKey: apiKey,
+        baseUrl: baseUrl,
+      );
+
+      expect(result.isLeft(), isTrue);
+      result.match(
+        (failure) => expect(failure, isA<ProviderUnreachable>()),
+        (_) => fail('expected a Left'),
+      );
+    });
+
+    test('maps a 400 "API key not valid" to MissingApiKey (Left)', () async {
+      when(
+        mockDio.post<dynamic>(
+          any,
+          data: anyNamed('data'),
+          options: anyNamed('options'),
+        ),
+      ).thenThrow(
+        dioErrorWithStatus(
+          400,
+          data: const {
+            'error': {'message': 'API key not valid. Please pass a valid key.'},
+          },
+        ),
+      );
 
       final result = await adapter.run(
         tRequest,
@@ -259,6 +296,213 @@ void main() {
       result.match(
         (failure) => expect(failure, isA<MissingApiKey>()),
         (_) => fail('expected a Left'),
+      );
+    });
+
+    test('maps a 400 context-overflow message to ContextTooLong (Left)',
+        () async {
+      when(
+        mockDio.post<dynamic>(
+          any,
+          data: anyNamed('data'),
+          options: anyNamed('options'),
+        ),
+      ).thenThrow(
+        dioErrorWithStatus(
+          400,
+          data: const {
+            'error': {
+              'message': 'The input token count (1052576) exceeds the maximum '
+                  'number of tokens allowed (1048576).',
+            },
+          },
+        ),
+      );
+
+      final result = await adapter.run(
+        tRequest,
+        apiKey: apiKey,
+        baseUrl: baseUrl,
+      );
+
+      expect(result.isLeft(), isTrue);
+      result.match(
+        (failure) => expect(failure, isA<ContextTooLong>()),
+        (_) => fail('expected a Left'),
+      );
+    });
+
+    test('maps HTTP 401 and 403 to MissingApiKey (Left)', () async {
+      for (final status in const [401, 403]) {
+        when(
+          mockDio.post<dynamic>(
+            any,
+            data: anyNamed('data'),
+            options: anyNamed('options'),
+          ),
+        ).thenThrow(dioErrorWithStatus(status));
+
+        final result = await adapter.run(
+          tRequest,
+          apiKey: apiKey,
+          baseUrl: baseUrl,
+        );
+
+        expect(result.isLeft(), isTrue, reason: 'status $status');
+        result.match(
+          (failure) =>
+              expect(failure, isA<MissingApiKey>(), reason: 'status $status'),
+          (_) => fail('expected a Left for status $status'),
+        );
+      }
+    });
+
+    test('maps a 5xx to ProviderUnreachable (Left)', () async {
+      when(
+        mockDio.post<dynamic>(
+          any,
+          data: anyNamed('data'),
+          options: anyNamed('options'),
+        ),
+      ).thenThrow(dioErrorWithStatus(503));
+
+      final result = await adapter.run(
+        tRequest,
+        apiKey: apiKey,
+        baseUrl: baseUrl,
+      );
+
+      expect(result.isLeft(), isTrue);
+      result.match(
+        (failure) => expect(failure, isA<ProviderUnreachable>()),
+        (_) => fail('expected a Left'),
+      );
+    });
+
+    test('a null or empty apiKey returns MissingApiKey before any network call',
+        () async {
+      final result = await adapter.run(tRequest, apiKey: '', baseUrl: baseUrl);
+
+      expect(result.isLeft(), isTrue);
+      result.match(
+        (failure) => expect(failure, isA<MissingApiKey>()),
+        (_) => fail('expected a Left'),
+      );
+      verifyNever(
+        mockDio.post<dynamic>(
+          any,
+          data: anyNamed('data'),
+          options: anyNamed('options'),
+        ),
+      );
+    });
+
+    test('a non-Map response body yields ProviderUnreachable (Left)', () async {
+      when(
+        mockDio.post<dynamic>(
+          any,
+          data: anyNamed('data'),
+          options: anyNamed('options'),
+        ),
+      ).thenAnswer(
+        (_) async => Response<dynamic>(
+          data: 'not a json object',
+          statusCode: 200,
+          requestOptions: RequestOptions(path: '/models'),
+        ),
+      );
+
+      final result = await adapter.run(
+        tRequest,
+        apiKey: apiKey,
+        baseUrl: baseUrl,
+      );
+
+      expect(result.isLeft(), isTrue);
+      result.match(
+        (failure) => expect(failure, isA<ProviderUnreachable>()),
+        (_) => fail('expected a Left'),
+      );
+    });
+
+    test('an empty candidates list surfaces promptFeedback.blockReason as the '
+        'finishReason', () async {
+      when(
+        mockDio.post<dynamic>(
+          any,
+          data: anyNamed('data'),
+          options: anyNamed('options'),
+        ),
+      ).thenAnswer(
+        (_) async => Response<dynamic>(
+          data: const {
+            'candidates': <dynamic>[],
+            'promptFeedback': {'blockReason': 'SAFETY'},
+          },
+          statusCode: 200,
+          requestOptions: RequestOptions(path: '/models'),
+        ),
+      );
+
+      final result = await adapter.run(
+        tRequest,
+        apiKey: apiKey,
+        baseUrl: baseUrl,
+      );
+
+      expect(result.isRight(), isTrue);
+      final response = result.getOrElse((_) => throw StateError('left'));
+      expect(response.text, '');
+      expect(response.finishReason, 'SAFETY');
+    });
+
+    test('a models/-prefixed modelId does not double the /models path segment',
+        () async {
+      when(
+        mockDio.post<dynamic>(
+          any,
+          data: anyNamed('data'),
+          options: anyNamed('options'),
+        ),
+      ).thenAnswer(
+        (_) async => Response<dynamic>(
+          data: const {
+            'candidates': [
+              {
+                'content': {
+                  'parts': [
+                    {'text': 'ok'},
+                  ],
+                },
+              },
+            ],
+          },
+          statusCode: 200,
+          requestOptions: RequestOptions(path: '/models'),
+        ),
+      );
+
+      await adapter.run(
+        const AiRequest(
+          providerId: 'google',
+          modelId: 'models/gemini-1.5-flash',
+          messages: [AiMessage(role: AiRole.user, content: 'Hi')],
+        ),
+        apiKey: apiKey,
+        baseUrl: baseUrl,
+      );
+
+      final captured = verify(
+        mockDio.post<dynamic>(
+          captureAny,
+          data: anyNamed('data'),
+          options: anyNamed('options'),
+        ),
+      ).captured;
+
+      expect(
+        captured.single,
+        '$baseUrl/models/gemini-1.5-flash:generateContent',
       );
     });
 
@@ -475,6 +719,151 @@ void main() {
       chunks.single.match(
         (failure) => expect(failure, isA<RateLimited>()),
         (_) => fail('expected a Left'),
+      );
+    });
+
+    test('decodes a multibyte code point split across two byte chunks',
+        () async {
+      // "😀" (U+1F600) encodes to 4 UTF-8 bytes. Frame the SSE event so the
+      // emoji's bytes straddle a chunk boundary; a stateful utf8.decoder must
+      // carry the partial code point over rather than emitting U+FFFD.
+      final full = utf8.encode(
+        'data: {"candidates":[{"content":{"parts":[{"text":"hi😀"}]},'
+        '"finishReason":"STOP"}]}\n\n',
+      );
+      final splitAt = full.indexOf(0xF0); // first byte of the emoji
+      final events = <Uint8List>[
+        Uint8List.fromList(full.sublist(0, splitAt + 2)),
+        Uint8List.fromList(full.sublist(splitAt + 2)),
+      ];
+
+      when(
+        mockDio.post<ResponseBody>(
+          any,
+          data: anyNamed('data'),
+          options: anyNamed('options'),
+        ),
+      ).thenAnswer(
+        (_) async => Response<ResponseBody>(
+          data: ResponseBody(Stream.fromIterable(events), 200),
+          statusCode: 200,
+          requestOptions: RequestOptions(path: '/models'),
+        ),
+      );
+
+      final chunks = await adapter
+          .stream(tRequest, apiKey: apiKey, baseUrl: baseUrl)
+          .toList();
+
+      expect(chunks.every((c) => c.isRight()), isTrue);
+      final text = chunks
+          .map((c) => c.getOrElse((_) => throw StateError('left')))
+          .map((c) => c.delta)
+          .join();
+      expect(text, 'hi😀');
+    });
+
+    test('a delta-only stream with no finishReason emits exactly one terminal '
+        'done chunk with a null finishReason', () async {
+      final events = <Uint8List>[
+        sse('data: {"candidates":[{"content":{"parts":[{"text":"a"}]}}]}\n\n'),
+        sse('data: {"candidates":[{"content":{"parts":[{"text":"b"}]}}]}\n\n'),
+      ];
+
+      when(
+        mockDio.post<ResponseBody>(
+          any,
+          data: anyNamed('data'),
+          options: anyNamed('options'),
+        ),
+      ).thenAnswer(
+        (_) async => Response<ResponseBody>(
+          data: ResponseBody(Stream.fromIterable(events), 200),
+          statusCode: 200,
+          requestOptions: RequestOptions(path: '/models'),
+        ),
+      );
+
+      final chunks = await adapter
+          .stream(tRequest, apiKey: apiKey, baseUrl: baseUrl)
+          .toList();
+
+      expect(chunks.every((c) => c.isRight()), isTrue);
+      final aiChunks = chunks
+          .map((c) => c.getOrElse((_) => throw StateError('left')))
+          .toList();
+
+      expect(aiChunks.map((c) => c.delta).join(), 'ab');
+      final done = aiChunks.where((c) => c.done).toList();
+      expect(done, hasLength(1));
+      expect(done.single.delta, '');
+      expect(done.single.finishReason, isNull);
+    });
+
+    test('a mid-stream error event yields a Left and stops the stream',
+        () async {
+      final events = <Uint8List>[
+        sse('data: {"candidates":[{"content":{"parts":[{"text":"hi"}]}}]}\n\n'),
+        sse(
+          'data: {"error":{"code":429,"message":"RESOURCE_EXHAUSTED",'
+          '"status":"RESOURCE_EXHAUSTED"}}\n\n',
+        ),
+        sse(
+          'data: {"candidates":[{"content":{"parts":[{"text":"never"}]},'
+          '"finishReason":"STOP"}]}\n\n',
+        ),
+      ];
+
+      when(
+        mockDio.post<ResponseBody>(
+          any,
+          data: anyNamed('data'),
+          options: anyNamed('options'),
+        ),
+      ).thenAnswer(
+        (_) async => Response<ResponseBody>(
+          data: ResponseBody(Stream.fromIterable(events), 200),
+          statusCode: 200,
+          requestOptions: RequestOptions(path: '/models'),
+        ),
+      );
+
+      final chunks = await adapter
+          .stream(tRequest, apiKey: apiKey, baseUrl: baseUrl)
+          .toList();
+
+      // The first delta is emitted, then a Left, and nothing after it.
+      expect(chunks.last.isLeft(), isTrue);
+      chunks.last.match(
+        (failure) => expect(failure, isA<RateLimited>()),
+        (_) => fail('expected the terminal emission to be a Left'),
+      );
+      // No terminal done chunk after the error.
+      final rights = chunks
+          .where((c) => c.isRight())
+          .map((c) => c.getOrElse((_) => throw StateError('left')))
+          .toList();
+      expect(rights.any((c) => c.done), isFalse);
+      expect(rights.map((c) => c.delta).join(), 'hi');
+    });
+
+    test('a null or empty apiKey yields MissingApiKey before any network call',
+        () async {
+      final chunks = await adapter
+          .stream(tRequest, apiKey: '', baseUrl: baseUrl)
+          .toList();
+
+      expect(chunks, hasLength(1));
+      chunks.single.match(
+        (failure) => expect(failure, isA<MissingApiKey>()),
+        (_) => fail('expected a Left'),
+      );
+      verifyNever(
+        mockDio.post<ResponseBody>(
+          any,
+          data: anyNamed('data'),
+          options: anyNamed('options'),
+        ),
       );
     });
   });

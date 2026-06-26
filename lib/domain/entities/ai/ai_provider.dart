@@ -101,12 +101,17 @@ class AiProvider extends Equatable {
     final known = byId[id];
     if (known != null) return known;
     switch (wireProtocol) {
-      case AiWireProtocol.anthropic:
-        return 'https://api.anthropic.com';
-      case AiWireProtocol.google:
-        return 'https://generativelanguage.googleapis.com/v1beta';
       case AiWireProtocol.ollama:
         return 'http://localhost:11434/v1';
+      case AiWireProtocol.anthropic:
+      case AiWireProtocol.google:
+        // The `byId` map already covers the genuine first-party `anthropic` /
+        // `google` ids. A provider that shares the SDK family but is *not* the
+        // first-party id (e.g. `google-vertex`) reaches here — its correct
+        // endpoint is a regional/Vertex host we don't know, so returning null
+        // makes the settings UI prompt for a base URL and lets inference fail
+        // closed rather than dialing the first-party host with the wrong key.
+        return null;
       case AiWireProtocol.openai:
       case AiWireProtocol.azure:
         // Unknown OpenAI-compatible host or an Azure per-resource endpoint —

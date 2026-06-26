@@ -75,6 +75,22 @@ void main() {
     source: AiProviderSource.catalog,
   );
 
+  // A first-party Google catalog provider with NO explicit apiBaseUrl, so the
+  // inference repo must supply its default: exactly
+  // `https://generativelanguage.googleapis.com/v1beta` (the native Gemini
+  // surface the GoogleAdapter expects).
+  const tGoogleProvider = AiProvider(
+    id: 'google',
+    name: 'Google',
+    npm: '@ai-sdk/google',
+    doc: 'https://example.com',
+    env: ['GEMINI_API_KEY'],
+    apiBaseUrl: null,
+    kind: AiProviderKind.cloud,
+    wireProtocol: AiWireProtocol.google,
+    source: AiProviderSource.catalog,
+  );
+
   // An Azure provider with NO apiBaseUrl. Azure has no fixed endpoint, so this
   // must fail closed with NoProviderConfigured rather than dialing a placeholder
   // host (finding L14).
@@ -316,6 +332,35 @@ void main() {
         any,
         apiKey: tApiKey,
         baseUrl: 'https://api.anthropic.com',
+      ));
+    });
+
+    test(
+        'google provider with null apiBaseUrl resolves to '
+        'https://generativelanguage.googleapis.com/v1beta', () async {
+      when(mockRegistry.byId('google')).thenReturn(tGoogleProvider);
+      when(mockSettingsRepository.getApiKey('google'))
+          .thenAnswer((_) async => const Right(tApiKey));
+      when(mockAdapterFactory.forProtocol(AiWireProtocol.google))
+          .thenReturn(mockAdapter);
+      when(mockAdapter.run(any,
+              apiKey: anyNamed('apiKey'), baseUrl: anyNamed('baseUrl')))
+          .thenAnswer((_) async => const Right(tResponse));
+
+      final result = await repository.run(
+        const AiRequest(
+          messages: [AiMessage(role: AiRole.user, content: 'Hello')],
+          providerId: 'google',
+          modelId: 'gemini-1.5-flash',
+        ),
+      );
+
+      expect(result.isRight(), isTrue);
+      verify(mockAdapterFactory.forProtocol(AiWireProtocol.google));
+      verify(mockAdapter.run(
+        any,
+        apiKey: tApiKey,
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
       ));
     });
 

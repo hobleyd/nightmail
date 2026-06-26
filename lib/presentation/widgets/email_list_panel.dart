@@ -594,8 +594,8 @@ class _ListHeader extends StatelessWidget {
             padding: EdgeInsets.only(left: onBack != null ? 0 : 8),
             child: Text(
               folderName,
-              style: const TextStyle(
-                color: Colors.black,
+              style: TextStyle(
+                color: c.textPrimary,
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
                 letterSpacing: -0.3,
@@ -911,7 +911,7 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
                               child: Text(
                                 widget.latestEmail.from.displayName,
                                 style: TextStyle(
-                                  color: Colors.black,
+                                  color: c.textPrimary,
                                   fontSize: 13,
                                   fontWeight: widget.hasUnread ? FontWeight.w600 : FontWeight.w400,
                                 ),
@@ -937,8 +937,8 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
                             const SizedBox(width: 4),
                             Text(
                               formatEmailDate(widget.latestEmail.receivedDateTime),
-                              style: const TextStyle(
-                                color: Colors.black,
+                              style: TextStyle(
+                                color: c.textTertiary,
                                 fontSize: 11,
                                 fontWeight: FontWeight.w400,
                               ),
@@ -952,7 +952,7 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
                               child: Text(
                                 widget.latestEmail.subject,
                                 style: TextStyle(
-                                  color: Colors.black,
+                                  color: c.textSecondary,
                                   fontSize: 12,
                                   fontWeight: widget.hasUnread ? FontWeight.w500 : FontWeight.w400,
                                 ),
@@ -965,7 +965,7 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
                                 child: Icon(
                                   Icons.attach_file_rounded,
                                   size: 12,
-                                  color: c.textDimmed,
+                                  color: c.textMuted,
                                 ),
                               ),
                           ],
@@ -973,8 +973,8 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
                         const SizedBox(height: 3),
                         Text(
                           widget.latestEmail.bodyPreview,
-                          style: const TextStyle(
-                            color: Colors.black,
+                          style: TextStyle(
+                            color: c.textTertiary,
                             fontSize: 11,
                             height: 1.3,
                           ),
@@ -989,14 +989,14 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       FlagIconButton(
-                        color: c.textDimmed,
+                        color: c.textMuted,
                         onTap: () => widget.onFlag(null),
                         onSchedule: (date) => widget.onFlag(date),
                       ),
                       const SizedBox(height: 2),
                       _ActionIcon(
                         icon: Icons.delete_outline_rounded,
-                        color: c.textDimmed,
+                        color: c.textMuted,
                         onTap: widget.onDelete,
                       ),
                     ],

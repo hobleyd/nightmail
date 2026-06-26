@@ -111,7 +111,7 @@ class _EmailListItemState extends State<EmailListItem> {
                           child: Text(
                             widget.email.from.displayName,
                             style: TextStyle(
-                              color: Colors.black,
+                              color: c.textPrimary,
                               fontSize: 13,
                               fontWeight: widget.email.isRead
                                   ? FontWeight.w400
@@ -124,7 +124,7 @@ class _EmailListItemState extends State<EmailListItem> {
                         Text(
                           formatEmailDate(widget.email.receivedDateTime),
                           style: TextStyle(
-                            color: Colors.black,
+                            color: c.textTertiary,
                             fontSize: 11,
                             fontWeight: widget.email.isRead
                                 ? FontWeight.w400
@@ -140,7 +140,7 @@ class _EmailListItemState extends State<EmailListItem> {
                           child: Text(
                             widget.email.subject,
                             style: TextStyle(
-                              color: Colors.black,
+                              color: c.textSecondary,
                               fontSize: 12,
                               fontWeight: widget.email.isRead
                                   ? FontWeight.w400
@@ -155,7 +155,7 @@ class _EmailListItemState extends State<EmailListItem> {
                             child: Icon(
                               Icons.attach_file_rounded,
                               size: 12,
-                              color: c.textDimmed,
+                              color: c.textMuted,
                             ),
                           ),
                       ],
@@ -163,8 +163,8 @@ class _EmailListItemState extends State<EmailListItem> {
                     const SizedBox(height: 3),
                     Text(
                       widget.email.bodyPreview,
-                      style: const TextStyle(
-                        color: Colors.black,
+                      style: TextStyle(
+                        color: c.textTertiary,
                         fontSize: 11,
                         height: 1.3,
                       ),
@@ -179,14 +179,14 @@ class _EmailListItemState extends State<EmailListItem> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   FlagIconButton(
-                    color: c.textDimmed,
+                    color: c.textMuted,
                     onTap: () => widget.onFlag(null),
                     onSchedule: (date) => widget.onFlag(date),
                   ),
                   const SizedBox(height: 2),
                   _ActionIcon(
                     icon: Icons.delete_outline_rounded,
-                    color: c.textDimmed,
+                    color: c.textMuted,
                     onTap: widget.onDelete,
                   ),
                 ],

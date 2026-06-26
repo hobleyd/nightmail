@@ -246,6 +246,66 @@ function insertImage(dataUri, contentId) {
   scheduleChange();
 }
 
+// --- Caret-tracked insertion (used for streaming AI drafts) ----------------
+var savedRange = null;
+
+function _rangeInEditor(range) {
+  return range && editor.contains(range.commonAncestorContainer);
+}
+
+// Keep savedRange current as the caret moves inside the editor, so it survives
+// the editor losing focus (e.g. when the AI prompt dialog opens).
+document.addEventListener('selectionchange', function() {
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0) {
+    const r = sel.getRangeAt(0);
+    if (_rangeInEditor(r)) savedRange = r.cloneRange();
+  }
+});
+
+// Explicit snapshot; returns true if a caret inside the editor was captured.
+function saveSelection() {
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0) {
+    const r = sel.getRangeAt(0);
+    if (_rangeInEditor(r)) { savedRange = r.cloneRange(); return true; }
+  }
+  return false;
+}
+
+function _endOfEditorRange() {
+  const r = document.createRange();
+  r.selectNodeContents(editor);
+  r.collapse(false);
+  return r;
+}
+
+// Inserts text at the saved caret (or the end of the editor as a fallback),
+// converting newlines to <br>, and advances the saved caret past it. Does not
+// reset the user's selection or rewrite innerHTML, so streaming stays smooth.
+function insertAtSaved(text) {
+  if (!text) return;
+  let range = (savedRange && _rangeInEditor(savedRange))
+      ? savedRange
+      : _endOfEditorRange();
+  range.deleteContents();
+
+  const frag = document.createDocumentFragment();
+  const parts = String(text).split('\n');
+  for (let i = 0; i < parts.length; i++) {
+    if (i > 0) frag.appendChild(document.createElement('br'));
+    if (parts[i]) frag.appendChild(document.createTextNode(parts[i]));
+  }
+  const lastNode = frag.lastChild;
+  range.insertNode(frag);
+  if (lastNode) {
+    range.setStartAfter(lastNode);
+    range.collapse(true);
+  }
+  savedRange = range.cloneRange();
+  scheduleChange();
+}
+
 editor.addEventListener('input', scheduleChange);
 
 editor.addEventListener('keydown', function(e) {

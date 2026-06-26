@@ -12,6 +12,7 @@ import '../../domain/entities/email.dart';
 import '../../injection_container.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/accounts/account_manager.dart';
+import 'settings/ai_settings_page.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/mail_poller/mail_poller_cubit.dart';
 import '../blocs/mail_poller/mail_poller_state.dart';
@@ -23,6 +24,7 @@ bool get _isApplePlatform => !kIsWeb && (Platform.isMacOS || Platform.isIOS);
 enum SettingsSection {
   about('About'),
   accounts('Accounts'),
+  ai('AI'),
   appearance('Appearance'),
   general('General'),
   security('Security');
@@ -172,6 +174,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       child: switch (_selectedSection) {
                         SettingsSection.about => const _AboutSection(),
                         SettingsSection.accounts => const _AccountsSection(),
+                        SettingsSection.ai => const AiSettingsPage(),
                         SettingsSection.appearance => const _AppearanceSection(),
                         SettingsSection.general => const _GeneralSection(),
                         SettingsSection.security => const _SecuritySection(),
@@ -1415,6 +1418,7 @@ class _MobileSettingsSectionPage extends StatelessWidget {
         child: switch (section) {
           SettingsSection.about => const _AboutSection(),
           SettingsSection.accounts => const _AccountsSection(),
+          SettingsSection.ai => const AiSettingsPage(),
           SettingsSection.appearance => const _AppearanceSection(),
           SettingsSection.general => const _GeneralSection(),
           SettingsSection.security => const _SecuritySection(),

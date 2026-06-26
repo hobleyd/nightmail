@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:get_it/get_it.dart';
@@ -19,6 +20,24 @@ import 'data/repositories/spam_filter_repository_impl.dart';
 import 'data/repositories/system_contacts_repository_impl.dart';
 import 'data/repositories/tasks_repository_impl.dart';
 import 'data/services/eml_parser.dart';
+// AI subsystem
+import 'data/datasources/ai/ai_adapter_factory.dart';
+import 'data/datasources/ai/ai_catalog_cache_datasource.dart';
+import 'data/datasources/ai/ai_config_datasource.dart';
+import 'data/datasources/ai/ai_provider_registry.dart';
+import 'data/datasources/ai/models_dev_catalog_datasource.dart';
+import 'data/datasources/ai/provider_models_datasource.dart';
+import 'data/datasources/ai/inference/anthropic_adapter.dart';
+import 'data/datasources/ai/inference/openai_compatible_adapter.dart';
+import 'data/repositories/ai_catalog_repository_impl.dart';
+import 'data/repositories/ai_inference_repository_impl.dart';
+import 'data/repositories/ai_settings_repository_impl.dart';
+import 'domain/repositories/ai_catalog_repository.dart';
+import 'domain/repositories/ai_inference_repository.dart';
+import 'domain/repositories/ai_settings_repository.dart';
+import 'domain/usecases/ai/compose_reply.dart';
+import 'presentation/blocs/ai/ai_compose_cubit.dart';
+import 'presentation/blocs/ai/ai_settings_cubit.dart';
 import 'domain/repositories/calendar_repository.dart';
 import 'domain/repositories/directory_contacts_repository.dart';
 import 'domain/repositories/email_repository.dart';
@@ -291,4 +310,105 @@ Future<void> configureDependencies() async {
         updateCalendarEvent: sl<UpdateCalendarEvent>(),
         notificationService: sl<NotificationService>(),
       ));
+
+  // ---------------------------------------------------------------------------
+  // AI subsystem
+  // ---------------------------------------------------------------------------
+  // Dedicated Dio for the AI subsystem (models.dev catalog fetch + provider
+  // adapters). The app intentionally has no shared Dio singleton — each HTTP
+  // concern builds its own client — so one instance is registered here and
+  // reused by every AI consumer rather than constructing a fresh client per
+  // adapter.
+  //
+  // Explicit timeouts (M2): default Dio leaves every timeout null, so the cold
+  // first-launch catalog fetch (~2.4MB from models.dev) and live `/models`
+  // lookups could hang forever on a slow/captive-portal network, leaving AI
+  // Settings stuck on a spinner with no error. These bounds make hangs surface
+  // as DioException → NetworkException/ProviderUnreachable. Streaming inference
+  // overrides receiveTimeout per-call (Options) so long token streams aren't
+  // cut by the 60s default.
+  sl.registerLazySingleton<Dio>(
+    () => Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(seconds: 60),
+      ),
+    ),
+  );
+
+  // Datasources
+  sl.registerLazySingleton<ModelsDevCatalogDatasource>(
+    () => ModelsDevCatalogDatasourceImpl(dio: sl<Dio>()),
+  );
+  sl.registerLazySingleton<AiCatalogCacheDatasource>(
+    () => AiCatalogCacheDatasourceImpl(database: sl<AppDatabase>()),
+  );
+  sl.registerLazySingleton<AiConfigDatasource>(
+    () => AiConfigDatasourceImpl(database: sl<AppDatabase>()),
+  );
+  sl.registerLazySingleton<ProviderModelsDatasource>(
+    () => ProviderModelsDatasourceImpl(dio: sl<Dio>()),
+  );
+
+  // Registry — single source of truth for available providers/models.
+  sl.registerLazySingleton<AiProviderRegistry>(
+    () => AiProviderRegistry(
+      catalogDatasource: sl<ModelsDevCatalogDatasource>(),
+      cacheDatasource: sl<AiCatalogCacheDatasource>(),
+      configDatasource: sl<AiConfigDatasource>(),
+    ),
+  );
+
+  // Wire adapters + factory (lazy resolution by AiWireProtocol).
+  sl.registerLazySingleton<AiAdapterFactory>(
+    () => AiAdapterFactory(
+      openAiAdapter: OpenAiCompatibleAdapter(dio: sl<Dio>()),
+      anthropicAdapter: AnthropicAdapter(dio: sl<Dio>()),
+      // Azure OpenAI / AI Foundry: OpenAI shape with the `api-key` header.
+      azureAdapter:
+          OpenAiCompatibleAdapter(dio: sl<Dio>(), useApiKeyHeader: true),
+    ),
+  );
+
+  // Repositories
+  sl.registerLazySingleton<AiCatalogRepository>(
+    () => AiCatalogRepositoryImpl(
+      registry: sl<AiProviderRegistry>(),
+      providerModels: sl<ProviderModelsDatasource>(),
+    ),
+  );
+  sl.registerLazySingleton<AiSettingsRepository>(
+    () => AiSettingsRepositoryImpl(
+      configDatasource: sl<AiConfigDatasource>(),
+      secureStorage: sl<FlutterSecureStorage>(),
+    ),
+  );
+  sl.registerLazySingleton<AiInferenceRepository>(
+    () => AiInferenceRepositoryImpl(
+      registry: sl<AiProviderRegistry>(),
+      adapterFactory: sl<AiAdapterFactory>(),
+      settingsRepository: sl<AiSettingsRepository>(),
+    ),
+  );
+
+  // Use cases
+  sl.registerLazySingleton(
+    () => ComposeReply(
+      settingsRepository: sl<AiSettingsRepository>(),
+      inferenceRepository: sl<AiInferenceRepository>(),
+      // Privacy "cloud bodies" guard (H1): ComposeReply resolves the routed
+      // provider's kind via the catalog registry to decide whether the quoted
+      // original body may be sent to a cloud provider.
+      catalogRepository: sl<AiCatalogRepository>(),
+    ),
+  );
+
+  // Presentation — AI cubits (factories)
+  sl.registerFactory(() => AiComposeCubit(composeReply: sl<ComposeReply>()));
+  sl.registerFactory(
+    () => AiSettingsCubit(
+      catalogRepository: sl<AiCatalogRepository>(),
+      settingsRepository: sl<AiSettingsRepository>(),
+    ),
+  );
 }

@@ -174,6 +174,18 @@ await configureDependencies();
           await windowManager.maximize();
         } else if (restored.bounds != null) {
           await windowManager.setBounds(restored.bounds!);
+          // On Windows, moving the window to a monitor with a different DPI
+          // triggers WM_DPICHANGED which rescales the window size. Re-apply
+          // after the first frame; by then devicePixelRatio reflects the
+          // target display's DPI so setBounds lands at the correct size.
+          if (Platform.isWindows) {
+            final bounds = restored.bounds!;
+            WidgetsBinding.instance.addPostFrameCallback((_) async {
+              try {
+                await windowManager.setBounds(bounds);
+              } catch (_) {}
+            });
+          }
         }
       }
     } catch (_) {}
@@ -193,6 +205,9 @@ class _NightMailAppState extends State<NightMailApp> with WindowListener {
   final _windowBoundsService = WindowBoundsService();
   Timer? _boundsDebounce;
 
+  static bool get _isDesktop =>
+      !kIsWeb && (Platform.isMacOS || Platform.isLinux || Platform.isWindows);
+
   static ThemeData _buildTheme({String? fontFamily, bool dark = false}) {
     return ThemeData(
       colorScheme: ColorScheme.fromSeed(
@@ -207,14 +222,16 @@ class _NightMailAppState extends State<NightMailApp> with WindowListener {
   @override
   void initState() {
     super.initState();
-    windowManager.addListener(this);
-    windowManager.setPreventClose(true);
+    if (_isDesktop) {
+      windowManager.addListener(this);
+      windowManager.setPreventClose(true);
+    }
   }
 
   @override
   void dispose() {
     _boundsDebounce?.cancel();
-    windowManager.removeListener(this);
+    if (_isDesktop) windowManager.removeListener(this);
     super.dispose();
   }
 

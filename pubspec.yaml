@@ -1,5 +1,5 @@
 name: nightmail
-description: "A cross-platform email client for Office 365 via Microsoft Graph API."
+description: "A cross-platform email client for Office 365, Gmail & IMAP."
 publish_to: 'none'
 
 version: 1.4.0+1
@@ -140,3 +140,13 @@ dependency_overrides:
   # Remove once upstream enough_mail releases a fix.
   enough_mail:
     path: packages/enough_mail
+  # Local patch: fixes use-after-free crash (ERROR_INVALID_STATE 0x8007139F).
+  # (1) Adds isAlive_ shared_ptr guard to all [this]-capturing async callbacks in
+  #     InAppWebView, UserContentController, and FindInteractionController so they
+  #     bail out if fired after object destruction.
+  # (2) ICoreWebView2Find crashes on both remove_* and Release() after Close(), so
+  #     InAppWebView::~InAppWebView() now disposes findInteractionController,
+  #     printJobManager, and notification/message-channel objects before calling
+  #     webViewController->Close().
+  flutter_inappwebview_windows:
+    path: packages/flutter_inappwebview_windows

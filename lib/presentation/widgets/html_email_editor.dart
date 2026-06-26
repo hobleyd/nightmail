@@ -25,6 +25,7 @@ class HtmlEmailEditor extends StatefulWidget {
 class HtmlEmailEditorState extends State<HtmlEmailEditor> {
   iaw.InAppWebViewController? _controller;
   bool _ready = false;
+  bool _disposed = false;
   String _pendingHtml = '';
 
   @override
@@ -46,6 +47,13 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
         source: 'setContent(${jsonEncode(widget.initialHtml)})',
       );
     }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _controller = null;
+    super.dispose();
   }
 
   Future<void> setContent(String html) async {
@@ -96,6 +104,7 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
     controller.addJavaScriptHandler(
       handlerName: 'onContentChanged',
       callback: (args) {
+        if (!mounted) return null;
         final html = args.isNotEmpty ? args[0].toString() : '';
         widget.onContentChanged(html);
         return null;
@@ -104,6 +113,7 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
     controller.addJavaScriptHandler(
       handlerName: 'onLinkRequest',
       callback: (_) {
+        if (!mounted) return null;
         widget.onLinkRequested();
         return null;
       },
@@ -112,6 +122,7 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
 
   Future<void> _onLoadStop(
       iaw.InAppWebViewController controller, iaw.WebUri? url) async {
+    if (_disposed) return;
     if (_pendingHtml.isNotEmpty) {
       await controller.evaluateJavascript(
         source: 'setContent(${jsonEncode(_pendingHtml)})',

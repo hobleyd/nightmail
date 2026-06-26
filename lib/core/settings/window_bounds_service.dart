@@ -47,11 +47,36 @@ class WindowBoundsService {
       final displays = await screenRetriever.getAllDisplays();
       final saved = await _loadMap();
 
+      // Build candidates: per display, try exact key first then resolution
+      // fallback. The fallback handles the case where the OS-assigned device
+      // path (e.g. \\.\DISPLAY2 on Windows) changes between sessions due to
+      // docking-station re-enumeration or a monitor being reconnected.
       final candidates = <(Display, _DisplayEntry)>[];
+      final usedEntries = <_DisplayEntry>{};
       for (final display in displays) {
-        final entry = saved[_displayKey(display)];
-        if (entry != null) candidates.add((display, entry));
+        // 1. Exact key match.
+        final exactEntry = saved[_displayKey(display)];
+        if (exactEntry != null && !usedEntries.contains(exactEntry)) {
+          candidates.add((display, exactEntry));
+          usedEntries.add(exactEntry);
+          continue;
+        }
+        // 2. Resolution-based fallback (newest saves at the end of the map,
+        //    iterate in reverse so the most-recent save wins).
+        final sizeKey = _sizeKey(display);
+        for (final e in saved.entries.toList().reversed) {
+          if (usedEntries.contains(e.value)) continue;
+          if (!e.key.endsWith('_$sizeKey')) continue;
+          // Validate the saved bounds are actually visible in the current
+          // display layout before accepting the fallback match.
+          final b = e.value.bounds;
+          if (b != null && !_isTitleBarReachable(b, displays)) continue;
+          candidates.add((display, e.value));
+          usedEntries.add(e.value);
+          break;
+        }
       }
+
       if (candidates.isEmpty) return null;
 
       // External displays first, built-in last.
@@ -67,7 +92,7 @@ class WindowBoundsService {
         }
         if (entry.bounds != null &&
             _isTitleBarReachable(entry.bounds!, displays)) {
-          return WindowRestoreState(bounds: entry.bounds);
+          return WindowRestoreState(bounds: entry.bounds!);
         }
       }
       return null;
@@ -155,17 +180,31 @@ class WindowBoundsService {
 
   // ── Display helpers ──────────────────────────────────────────────────────
 
-  /// Stable per-display key: name (or id fallback) + native resolution.
+  /// Stable per-display key: identifier + native resolution.
   ///
   /// macOS:   name = NSScreen.localizedName (stable, descriptive)
   /// Linux:   id   = "" always; name = EDID model from gdk_monitor_get_model
-  /// Windows: id   = DeviceID (stable HW id); name = friendly display name
+  /// Windows: screen_retriever returns the VOLATILE device path (e.g.
+  ///          "\\.\DISPLAY2") as display.name and the STABLE hardware
+  ///          DeviceID (PnP instance path) as display.id.  On Windows we
+  ///          therefore prefer id over name.
   static String _displayKey(Display display) {
-    final identifier =
-        (display.name?.isNotEmpty == true) ? display.name! : display.id;
+    final String identifier;
+    if (Platform.isWindows) {
+      identifier = display.id.isNotEmpty ? display.id : (display.name ?? '');
+    } else {
+      identifier =
+          (display.name?.isNotEmpty == true) ? display.name! : display.id;
+    }
+    return '${identifier}_${_sizeKey(display)}';
+  }
+
+  /// Resolution-only portion of the key ("WxH").  Used by the fallback
+  /// lookup in [loadValidatedBounds] when the full key doesn't match.
+  static String _sizeKey(Display display) {
     final w = display.size.width.toInt();
     final h = display.size.height.toInt();
-    return '${identifier}_${w}x$h';
+    return '${w}x$h';
   }
 
   /// Returns the display whose visible area contains the window centre.

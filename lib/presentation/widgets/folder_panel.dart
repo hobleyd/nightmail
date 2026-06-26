@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../core/platform/window_utils.dart';
 import 'package:flutter/material.dart';
@@ -970,11 +972,13 @@ class _SettingsFooter extends StatelessWidget {
             },
           ),
           GestureDetector(
-            onDoubleTap: () => createSubWindow(
-              WindowConfiguration(
-                arguments: jsonEncode({'type': 'calendar'}),
-              ),
-            ),
+            onDoubleTap: !kIsWeb && (Platform.isAndroid || Platform.isIOS)
+                ? null
+                : () => createSubWindow(
+                      WindowConfiguration(
+                        arguments: jsonEncode({'type': 'calendar'}),
+                      ),
+                    ),
             child: IconButton(
               icon: Icon(Icons.calendar_month_outlined, size: 16, color: c.textMuted),
               tooltip: 'Calendar',
@@ -984,11 +988,13 @@ class _SettingsFooter extends StatelessWidget {
             ),
           ),
           GestureDetector(
-            onDoubleTap: () => createSubWindow(
-              WindowConfiguration(
-                arguments: jsonEncode({'type': 'tasks'}),
-              ),
-            ),
+            onDoubleTap: !kIsWeb && (Platform.isAndroid || Platform.isIOS)
+                ? null
+                : () => createSubWindow(
+                      WindowConfiguration(
+                        arguments: jsonEncode({'type': 'tasks'}),
+                      ),
+                    ),
             child: IconButton(
               icon: Icon(Icons.checklist_rounded, size: 16, color: c.textMuted),
               tooltip: 'Tasks',
@@ -1003,22 +1009,7 @@ class _SettingsFooter extends StatelessWidget {
             tooltip: 'Settings',
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-            onPressed: () {
-              final themeCubit = context.read<ThemeCubit>();
-              final accountCubit = context.read<AccountCubit>();
-              final pollerCubit = context.read<MailPollerCubit>();
-              showDialog<void>(
-                context: context,
-                builder: (ctx) => MultiBlocProvider(
-                  providers: [
-                    BlocProvider.value(value: themeCubit),
-                    BlocProvider.value(value: accountCubit),
-                    BlocProvider.value(value: pollerCubit),
-                  ],
-                  child: const SettingsDialog(),
-                ),
-              );
-            },
+            onPressed: () => SettingsDialog.open(context),
           ),
           IconButton(
             icon: Icon(Icons.logout_rounded, size: 16, color: c.textMuted),

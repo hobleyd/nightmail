@@ -35,12 +35,17 @@ class BackgroundMailService {
   /// Register a periodic background check. Safe to call multiple times —
   /// WorkManager deduplicates tasks by [_periodicTaskName].
   ///
-  /// On iOS the system decides the exact run time; [intervalMinutes] is a
-  /// minimum hint. On Android, WorkManager honours the interval closely.
+  /// On iOS the BGTask handler and initial scheduling request are managed
+  /// entirely from AppDelegate.swift to satisfy Apple's requirement that
+  /// BGTaskScheduler.register is called before didFinishLaunchingWithOptions
+  /// returns.  Calling registerPeriodicTask from Dart on iOS would invoke
+  /// BGTaskScheduler.register a second time for the same identifier, which
+  /// crashes the app.  On Android, WorkManager honours the interval closely.
   static Future<void> schedulePeriodicCheck({
     int intervalMinutes = 15,
   }) async {
     if (!_isMobile) return;
+    if (Platform.isIOS) return;
     await Workmanager().registerPeriodicTask(
       _periodicTaskName,
       _periodicTaskTag,

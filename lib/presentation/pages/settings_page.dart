@@ -34,6 +34,37 @@ enum SettingsSection {
 class SettingsDialog extends StatefulWidget {
   const SettingsDialog({super.key});
 
+  /// Opens settings: a push route on mobile, a dialog on desktop.
+  static Future<void> open(BuildContext context) {
+    final isMobile = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+
+    final themeCubit = context.read<ThemeCubit>();
+    final accountCubit = context.read<AccountCubit>();
+    final pollerCubit = context.read<MailPollerCubit>();
+
+    Widget wrap(Widget child) => MultiBlocProvider(
+          providers: [
+            BlocProvider.value(value: themeCubit),
+            BlocProvider.value(value: accountCubit),
+            BlocProvider.value(value: pollerCubit),
+          ],
+          child: child,
+        );
+
+    if (isMobile) {
+      return Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => wrap(const _MobileSettingsPage()),
+        ),
+      );
+    }
+
+    return showDialog<void>(
+      context: context,
+      builder: (ctx) => wrap(const SettingsDialog()),
+    );
+  }
+
   @override
   State<SettingsDialog> createState() => _SettingsDialogState();
 }
@@ -1292,6 +1323,108 @@ class _SecuritySectionState extends State<_SecuritySection> {
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// Mobile settings navigation
+// ---------------------------------------------------------------------------
+
+class _MobileSettingsPage extends StatelessWidget {
+  const _MobileSettingsPage();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final sections = SettingsSection.values.toList()
+      ..sort((a, b) => a.label.compareTo(b.label));
+
+    return Scaffold(
+      backgroundColor: c.surfacePanel,
+      appBar: AppBar(
+        title: Text(
+          'Settings',
+          style: TextStyle(
+            color: c.textPrimary,
+            fontSize: 17,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        backgroundColor: c.surfacePanel,
+        elevation: 0,
+        iconTheme: IconThemeData(color: c.textMuted),
+      ),
+      body: ListView.separated(
+        itemCount: sections.length,
+        separatorBuilder: (_, _) => Divider(height: 1, color: c.separator),
+        itemBuilder: (context, index) {
+          final section = sections[index];
+          return ListTile(
+            title: Text(
+              section.label,
+              style: TextStyle(color: c.textSecondary, fontSize: 15),
+            ),
+            trailing: Icon(Icons.chevron_right_rounded, color: c.textMuted),
+            onTap: () {
+              final themeCubit = context.read<ThemeCubit>();
+              final accountCubit = context.read<AccountCubit>();
+              final pollerCubit = context.read<MailPollerCubit>();
+              Navigator.of(context).push<void>(
+                MaterialPageRoute(
+                  builder: (_) => MultiBlocProvider(
+                    providers: [
+                      BlocProvider.value(value: themeCubit),
+                      BlocProvider.value(value: accountCubit),
+                      BlocProvider.value(value: pollerCubit),
+                    ],
+                    child: _MobileSettingsSectionPage(section: section),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _MobileSettingsSectionPage extends StatelessWidget {
+  const _MobileSettingsSectionPage({required this.section});
+
+  final SettingsSection section;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Scaffold(
+      backgroundColor: c.surfacePanel,
+      appBar: AppBar(
+        title: Text(
+          section.label,
+          style: TextStyle(
+            color: c.textPrimary,
+            fontSize: 17,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        backgroundColor: c.surfacePanel,
+        elevation: 0,
+        iconTheme: IconThemeData(color: c.textMuted),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: switch (section) {
+          SettingsSection.about => const _AboutSection(),
+          SettingsSection.accounts => const _AccountsSection(),
+          SettingsSection.appearance => const _AppearanceSection(),
+          SettingsSection.general => const _GeneralSection(),
+          SettingsSection.security => const _SecuritySection(),
+        },
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 
 class _AccountDetailRow extends StatelessWidget {
   const _AccountDetailRow({

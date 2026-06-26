@@ -308,9 +308,11 @@ class _ComposeFormState extends State<ComposeForm> {
         : _plainToHtml(email.body);
 
     return '<div><br></div>'
+        '<div>---------- Original Message ----------</div>'
+        '<div>From: $fromEsc</div>'
+        '<div>Date: $dateEsc</div>'
         '<div><br></div>'
         '<blockquote style="margin:0 0 0 0;border-left:2px solid #ccc;padding-left:12px;color:#666">'
-        '<div>On $dateEsc, $fromEsc wrote:</div>'
         '$htmlBody'
         '</blockquote>';
   }

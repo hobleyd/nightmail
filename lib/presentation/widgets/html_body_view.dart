@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -33,6 +34,7 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
   // before the controller was ready, or during rapid email switches.
   String _pendingHtml = '';
   bool _webViewReady = false;
+  bool _disposed = false;
   File? _tempHtmlFile;
 
   WebViewController? _flutterController;
@@ -113,11 +115,14 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
 
   @override
   void dispose() {
+    _disposed = true;
+    _inAppController = null;
     try { _tempHtmlFile?.deleteSync(); } catch (_) {}
     super.dispose();
   }
 
   void _reloadWith({required bool allowExternal}) {
+    if (_disposed) return;
     final (html, blocked) = _buildHtml(allowExternal: allowExternal);
     setState(() {
       _allowExternalImages = allowExternal;
@@ -249,12 +254,13 @@ a[href]:hover::after {
             _inAppController = controller;
           },
           shouldOverrideUrlLoading: (controller, navigationAction) async {
+            if (_disposed) return iaw.NavigationActionPolicy.CANCEL;
             final uri = navigationAction.request.url;
             if (uri != null) {
               final scheme = uri.scheme;
               if (scheme == 'http' || scheme == 'https' || scheme == 'mailto') {
-                await launchUrl(Uri.parse(uri.toString()),
-                    mode: LaunchMode.externalApplication);
+                unawaited(launchUrl(Uri.parse(uri.toString()),
+                    mode: LaunchMode.externalApplication));
                 return iaw.NavigationActionPolicy.CANCEL;
               }
             }
@@ -276,12 +282,13 @@ a[href]:hover::after {
             }
           },
           shouldOverrideUrlLoading: (controller, navigationAction) async {
+            if (_disposed) return iaw.NavigationActionPolicy.CANCEL;
             final uri = navigationAction.request.url;
             if (uri != null) {
               final scheme = uri.scheme;
               if (scheme == 'http' || scheme == 'https' || scheme == 'mailto') {
-                await launchUrl(Uri.parse(uri.toString()),
-                    mode: LaunchMode.externalApplication);
+                unawaited(launchUrl(Uri.parse(uri.toString()),
+                    mode: LaunchMode.externalApplication));
                 return iaw.NavigationActionPolicy.CANCEL;
               }
             }

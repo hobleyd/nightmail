@@ -9,7 +9,9 @@ import 'inference/ai_adapter.dart';
 /// so the compiler fails the build if a protocol is added without an adapter.
 ///
 /// `google` speaks Google's native Gemini `generateContent` API via its own
-/// dedicated adapter. `ollama` remains an OpenAI-compatible stand-in; it keeps
+/// dedicated adapter. `ollama` is intentionally served by the OpenAI-compatible
+/// adapter — Ollama's `/v1` OpenAI-compatibility surface is first-class (chat,
+/// streaming, and model listing), so no separate adapter is needed. Each keeps
 /// an explicit case so the exhaustiveness check still flags any new protocol.
 class AiAdapterFactory {
   const AiAdapterFactory({
@@ -43,7 +45,8 @@ class AiAdapterFactory {
         // repo (`_defaultBaseUrl(google)` → `.../v1beta`).
         return _googleAdapter;
       case AiWireProtocol.ollama:
-        // TODO(ai): dedicated Ollama adapter — OpenAI-compatible stand-in.
+        // Intentional: Ollama's first-class `/v1` OpenAI-compatibility surface
+        // is complete for our needs (chat, streaming, model listing).
         return _openAiAdapter;
     }
   }

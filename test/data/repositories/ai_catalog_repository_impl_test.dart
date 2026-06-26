@@ -5,7 +5,7 @@ import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/data/datasources/ai/ai_provider_registry.dart';
 import 'package:nightmail/data/datasources/ai/provider_models_datasource.dart';
-import 'package:nightmail/data/repositories/ai_catalog_repository_impl.dart';
+import 'package:nightmail/data/repositories/ai/ai_catalog_repository_impl.dart';
 import 'package:nightmail/domain/entities/ai/ai_model.dart';
 import 'package:nightmail/domain/entities/ai/ai_provider.dart';
 

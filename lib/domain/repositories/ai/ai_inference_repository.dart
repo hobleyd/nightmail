@@ -1,9 +1,9 @@
 import 'package:fpdart/fpdart.dart';
 
-import '../../core/error/failures.dart';
-import '../entities/ai/ai_chunk.dart';
-import '../entities/ai/ai_request.dart';
-import '../entities/ai/ai_response.dart';
+import '../../../core/error/failures.dart';
+import '../../entities/ai/ai_chunk.dart';
+import '../../entities/ai/ai_request.dart';
+import '../../entities/ai/ai_response.dart';
 
 /// Runs inference requests against the configured AI backends.
 ///

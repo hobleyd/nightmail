@@ -5,8 +5,8 @@ import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/domain/entities/ai/ai_capability.dart';
 import 'package:nightmail/domain/entities/ai/ai_provider.dart';
-import 'package:nightmail/domain/repositories/ai_catalog_repository.dart';
-import 'package:nightmail/domain/repositories/ai_settings_repository.dart';
+import 'package:nightmail/domain/repositories/ai/ai_catalog_repository.dart';
+import 'package:nightmail/domain/repositories/ai/ai_settings_repository.dart';
 import 'package:nightmail/presentation/blocs/ai/ai_settings_cubit.dart';
 import 'package:nightmail/presentation/blocs/ai/ai_settings_state.dart';
 

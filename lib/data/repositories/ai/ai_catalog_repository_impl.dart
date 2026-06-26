@@ -1,11 +1,11 @@
 import 'package:fpdart/fpdart.dart';
 
-import '../../core/error/failures.dart';
-import '../../domain/entities/ai/ai_model.dart';
-import '../../domain/entities/ai/ai_provider.dart';
-import '../../domain/repositories/ai_catalog_repository.dart';
-import '../datasources/ai/ai_provider_registry.dart';
-import '../datasources/ai/provider_models_datasource.dart';
+import '../../../core/error/failures.dart';
+import '../../../domain/entities/ai/ai_model.dart';
+import '../../../domain/entities/ai/ai_provider.dart';
+import '../../../domain/repositories/ai/ai_catalog_repository.dart';
+import '../../datasources/ai/ai_provider_registry.dart';
+import '../../datasources/ai/provider_models_datasource.dart';
 
 /// Thin [AiCatalogRepository] over the in-memory [AiProviderRegistry].
 ///

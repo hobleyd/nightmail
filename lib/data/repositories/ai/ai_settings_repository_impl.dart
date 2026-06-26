@@ -1,11 +1,11 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:fpdart/fpdart.dart';
 
-import '../../core/error/failures.dart';
-import '../../domain/entities/ai/ai_capability.dart';
-import '../../domain/entities/ai/ai_provider.dart';
-import '../../domain/repositories/ai_settings_repository.dart';
-import '../datasources/ai/ai_config_datasource.dart';
+import '../../../core/error/failures.dart';
+import '../../../domain/entities/ai/ai_capability.dart';
+import '../../../domain/entities/ai/ai_provider.dart';
+import '../../../domain/repositories/ai/ai_settings_repository.dart';
+import '../../datasources/ai/ai_config_datasource.dart';
 
 /// Durable AI configuration backed by the [AiConfigDatasource] drift tables
 /// (routing + BYO provider rows) and [FlutterSecureStorage] for API keys.

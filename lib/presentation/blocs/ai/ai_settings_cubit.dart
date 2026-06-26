@@ -2,8 +2,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../domain/entities/ai/ai_capability.dart';
 import '../../../domain/entities/ai/ai_provider.dart';
-import '../../../domain/repositories/ai_catalog_repository.dart';
-import '../../../domain/repositories/ai_settings_repository.dart';
+import '../../../domain/repositories/ai/ai_catalog_repository.dart';
+import '../../../domain/repositories/ai/ai_settings_repository.dart';
 import 'ai_settings_state.dart';
 
 /// Drives the AI settings screen.

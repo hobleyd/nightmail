@@ -1,8 +1,8 @@
 import 'package:fpdart/fpdart.dart';
 
-import '../../core/error/failures.dart';
-import '../entities/ai/ai_capability.dart';
-import '../entities/ai/ai_provider.dart';
+import '../../../core/error/failures.dart';
+import '../../entities/ai/ai_capability.dart';
+import '../../entities/ai/ai_provider.dart';
 
 /// Durable AI configuration: configured providers (including BYO), the
 /// per-capability routing table, the cloud-privacy guard, and API keys.

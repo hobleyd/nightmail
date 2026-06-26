@@ -5,7 +5,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../domain/entities/ai/ai_capability.dart';
 import '../../../domain/entities/ai/ai_model.dart';
 import '../../../domain/entities/ai/ai_provider.dart';
-import '../../../domain/repositories/ai_catalog_repository.dart';
+import '../../../domain/repositories/ai/ai_catalog_repository.dart';
 import '../../../injection_container.dart';
 import '../../blocs/ai/ai_settings_cubit.dart';
 import '../../blocs/ai/ai_settings_state.dart';

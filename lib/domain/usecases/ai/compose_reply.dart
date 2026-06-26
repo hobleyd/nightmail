@@ -6,9 +6,9 @@ import '../../entities/ai/ai_chunk.dart';
 import '../../entities/ai/ai_message.dart';
 import '../../entities/ai/ai_provider.dart';
 import '../../entities/ai/ai_request.dart';
-import '../../repositories/ai_catalog_repository.dart';
-import '../../repositories/ai_inference_repository.dart';
-import '../../repositories/ai_settings_repository.dart';
+import '../../repositories/ai/ai_catalog_repository.dart';
+import '../../repositories/ai/ai_inference_repository.dart';
+import '../../repositories/ai/ai_settings_repository.dart';
 
 /// Streams an AI-drafted reply token-by-token into the compose editor.
 ///

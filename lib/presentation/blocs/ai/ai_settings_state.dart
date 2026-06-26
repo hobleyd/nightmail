@@ -2,7 +2,7 @@ import 'package:equatable/equatable.dart';
 
 import '../../../domain/entities/ai/ai_capability.dart';
 import '../../../domain/entities/ai/ai_provider.dart';
-import '../../../domain/repositories/ai_settings_repository.dart';
+import '../../../domain/repositories/ai/ai_settings_repository.dart';
 
 /// Lifecycle of the AI settings screen.
 enum AiSettingsStatus { loading, loaded, error }

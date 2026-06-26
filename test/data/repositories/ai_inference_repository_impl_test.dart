@@ -6,14 +6,14 @@ import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/data/datasources/ai/ai_adapter_factory.dart';
 import 'package:nightmail/data/datasources/ai/ai_provider_registry.dart';
 import 'package:nightmail/data/datasources/ai/inference/ai_adapter.dart';
-import 'package:nightmail/data/repositories/ai_inference_repository_impl.dart';
+import 'package:nightmail/data/repositories/ai/ai_inference_repository_impl.dart';
 import 'package:nightmail/domain/entities/ai/ai_chunk.dart';
 import 'package:nightmail/domain/entities/ai/ai_message.dart';
 import 'package:nightmail/domain/entities/ai/ai_model.dart';
 import 'package:nightmail/domain/entities/ai/ai_provider.dart';
 import 'package:nightmail/domain/entities/ai/ai_request.dart';
 import 'package:nightmail/domain/entities/ai/ai_response.dart';
-import 'package:nightmail/domain/repositories/ai_settings_repository.dart';
+import 'package:nightmail/domain/repositories/ai/ai_settings_repository.dart';
 
 import 'ai_inference_repository_impl_test.mocks.dart';
 

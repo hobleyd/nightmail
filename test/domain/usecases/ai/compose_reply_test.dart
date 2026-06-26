@@ -8,9 +8,9 @@ import 'package:nightmail/domain/entities/ai/ai_chunk.dart';
 import 'package:nightmail/domain/entities/ai/ai_message.dart';
 import 'package:nightmail/domain/entities/ai/ai_provider.dart';
 import 'package:nightmail/domain/entities/ai/ai_request.dart';
-import 'package:nightmail/domain/repositories/ai_catalog_repository.dart';
-import 'package:nightmail/domain/repositories/ai_inference_repository.dart';
-import 'package:nightmail/domain/repositories/ai_settings_repository.dart';
+import 'package:nightmail/domain/repositories/ai/ai_catalog_repository.dart';
+import 'package:nightmail/domain/repositories/ai/ai_inference_repository.dart';
+import 'package:nightmail/domain/repositories/ai/ai_settings_repository.dart';
 import 'package:nightmail/domain/usecases/ai/compose_reply.dart';
 
 import 'compose_reply_test.mocks.dart';

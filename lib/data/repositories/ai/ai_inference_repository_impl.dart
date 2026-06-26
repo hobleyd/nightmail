@@ -1,15 +1,15 @@
 import 'package:fpdart/fpdart.dart';
 
-import '../../core/error/failures.dart';
-import '../../domain/entities/ai/ai_chunk.dart';
-import '../../domain/entities/ai/ai_provider.dart';
-import '../../domain/entities/ai/ai_request.dart';
-import '../../domain/entities/ai/ai_response.dart';
-import '../../domain/repositories/ai_inference_repository.dart';
-import '../../domain/repositories/ai_settings_repository.dart';
-import '../datasources/ai/ai_adapter_factory.dart';
-import '../datasources/ai/ai_provider_registry.dart';
-import '../datasources/ai/inference/ai_adapter.dart';
+import '../../../core/error/failures.dart';
+import '../../../domain/entities/ai/ai_chunk.dart';
+import '../../../domain/entities/ai/ai_provider.dart';
+import '../../../domain/entities/ai/ai_request.dart';
+import '../../../domain/entities/ai/ai_response.dart';
+import '../../../domain/repositories/ai/ai_inference_repository.dart';
+import '../../../domain/repositories/ai/ai_settings_repository.dart';
+import '../../datasources/ai/ai_adapter_factory.dart';
+import '../../datasources/ai/ai_provider_registry.dart';
+import '../../datasources/ai/inference/ai_adapter.dart';
 
 /// Resolves a request to a provider descriptor, endpoint, key and wire adapter,
 /// then delegates to that adapter.

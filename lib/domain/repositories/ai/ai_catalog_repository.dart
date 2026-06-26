@@ -1,8 +1,8 @@
 import 'package:fpdart/fpdart.dart';
 
-import '../../core/error/failures.dart';
-import '../entities/ai/ai_model.dart';
-import '../entities/ai/ai_provider.dart';
+import '../../../core/error/failures.dart';
+import '../../entities/ai/ai_model.dart';
+import '../../entities/ai/ai_provider.dart';
 
 /// Source of truth for "what AI backends exist and what can they do".
 ///

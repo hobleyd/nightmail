@@ -5,9 +5,9 @@ import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/data/datasources/ai/ai_config_datasource.dart';
-import 'package:nightmail/data/repositories/ai_settings_repository_impl.dart';
+import 'package:nightmail/data/repositories/ai/ai_settings_repository_impl.dart';
 import 'package:nightmail/domain/entities/ai/ai_capability.dart';
-import 'package:nightmail/domain/repositories/ai_settings_repository.dart';
+import 'package:nightmail/domain/repositories/ai/ai_settings_repository.dart';
 
 import 'ai_settings_repository_impl_test.mocks.dart';
 

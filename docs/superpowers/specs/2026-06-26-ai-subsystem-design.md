@@ -83,8 +83,8 @@ data/
     ai_model_model.dart
     catalog_response_model.dart
   datasources/ai/
-    models_dev_catalog_datasource.dart   # dio fetch from models.dev
-    ai_catalog_cache_datasource.dart     # persist catalog; stale-while-revalidate
+    models_dev_catalog_datasource.dart   # dio fetch from models.dev/api.json
+    ai_catalog_cache_datasource.dart     # drift-backed cache; stale-while-revalidate
     ai_provider_registry.dart            # ★ THE REGISTRY (singleton in get_it)
     ai_adapter_factory.dart              # wireProtocol -> adapter (lazy)
     inference/
@@ -113,10 +113,16 @@ presentation/
 `AiProviderRegistry` — a `get_it` singleton, the single source of truth for "what backends
 exist and what can they do."
 
-- **Catalog ingestion:** `models_dev_catalog_datasource` fetches the models.dev JSON via the
-  existing `dio` instance. `ai_catalog_cache_datasource` persists it (drift table or JSON
-  blob via `path_provider`). **Stale-while-revalidate**: serve cache immediately, refresh in
-  the background, operate fully offline when the network/catalog is unavailable.
+- **Catalog ingestion:** `models_dev_catalog_datasource` fetches `https://models.dev/api.json`
+  (~2.4 MB, 144 providers / 5308 models, a JSON object keyed by provider id) via the existing
+  `dio` instance. `ai_catalog_cache_datasource` persists it into **drift tables** (see "Schema
+  Mapping" below) for queryability — filter by kind/modality/capability in SQL rather than
+  loading the whole blob. **Stale-while-revalidate**: serve cache immediately, refresh in the
+  background, operate fully offline when the network/catalog is unavailable.
+- **Derived fields:** models.dev carries no privacy `kind` and no `wireProtocol`. The mapper
+  **derives** both — `kind` from the provider id / `env` / `open_weights` heuristic, and
+  `wireProtocol` from the provider's `npm` package (and per-model `provider.shape`). See
+  "Schema Mapping" for the rules.
 - **Assembly:** `registry.all()` = catalog providers ∪ user BYO providers (OpenAI-compatible
   endpoints stored in `flutter_secure_storage`). Every entry **source-tagged**
   `catalog | user`.
@@ -128,6 +134,74 @@ exist and what can they do."
 - **Availability metadata** on each entry: `requiresApiKey`, `isAvailable()` (API key present
   / local server reachable), `installHint`. The UI uses this to show "needs API key" or
   "Ollama not running" rather than failing opaquely.
+
+## models.dev Schema Mapping & Drift Cache
+
+Resolved against the live `api.json` (field names below are verbatim from the JSON). Top level
+is an **object keyed by provider id**; each provider's `models` is likewise an **object keyed
+by model id** (iterate `.entries`; the key is redundant with the nested `id`).
+
+### Provider — JSON → entity / drift `ai_providers` table
+
+| models.dev field | type | entity / column | notes |
+|---|---|---|---|
+| `id` (= map key) | string | `id` (PK) | |
+| `name` | string | `name` | |
+| `npm` | string | `npm` | AI-SDK package, e.g. `@ai-sdk/anthropic` — drives `wireProtocol` |
+| `doc` | string | `doc` | docs URL |
+| `env` | array\<string> | `envJson` (TEXT, JSON) | env var names; **empty ⇒ no key required** |
+| `api` | string? | `apiBaseUrl` (nullable) | absent for most first-party hosted providers |
+| — derived — | — | `kind` (TEXT enum) | `cloud \| local \| selfHosted`, see rules |
+| — derived — | — | `wireProtocol` (TEXT enum) | `openai \| anthropic \| google \| ollama`, see rules |
+| — | — | `source` (TEXT enum) | `catalog \| user` |
+
+### Model — JSON → entity / drift `ai_models` table
+
+Composite key `(providerId, id)`; FK `providerId → ai_providers.id`.
+
+**Always present:** `id`, `name`, `attachment` (bool), `reasoning` (bool), `tool_call` (bool),
+`open_weights` (bool), `release_date` (TEXT `YYYY-MM-DD`), `last_updated` (TEXT).
+`modalities.{input,output}` (array\<string>, enum `text|image|audio|video|pdf`) → flattened to
+`inputModalitiesJson` / `outputModalitiesJson` (TEXT, JSON lists).
+`limit.context` / `limit.output` (number, always) → `contextLimit` / `outputLimit`;
+`limit.input` (number, **optional**) → `inputLimit` (nullable).
+
+**Optional scalars** → nullable columns: `temperature` (bool), `structured_output` (bool),
+`family` (string), `status` (string enum `alpha|beta|deprecated`).
+`knowledge` (string) → `knowledgeRaw` (TEXT, **do not parse** — granularity varies
+`YYYY-MM` vs `YYYY-MM-DD`).
+
+**`cost` (object, optional — absent for free/local models):** flatten scalars to nullable REAL
+columns `costInput`, `costOutput`, `costCacheRead`, `costCacheWrite`, `costReasoning`,
+`costInputAudio`, `costOutputAudio`. Keep the variable parts as JSON TEXT columns:
+`costTiersJson` (`cost.tiers` array), `costOver200kJson` (`cost.context_over_200k` object).
+
+**Variable/polymorphic** → JSON TEXT columns: `reasoningOptionsJson` (`reasoning_options`
+array of `{type, min?, max?, values?}`), `experimentalJson` (`experimental`),
+`providerOverrideJson` (per-model `provider` `{npm?, api?, shape?}`).
+`interleaved` is **polymorphic (bool | `{field}`)** → normalize to nullable `interleavedField`
+(TEXT): null when false/absent, the `field` value (e.g. `reasoning_content`) when object.
+
+### Derivation rules
+
+- **`wireProtocol`** from `npm`: `@ai-sdk/anthropic` → `anthropic`; `@ai-sdk/google*` →
+  `google`; everything OpenAI-shaped (`@ai-sdk/openai`, `openai-compatible`, most others) →
+  `openai`; known local-runtime providers (`ollama`, `lmstudio`, `llama`) → `ollama`. Per-model
+  `provider.shape` (`completions|responses`) selects the request variant inside the OpenAI
+  adapter. **Unknown `npm` ⇒ default `openai`** (the compatible adapter), and the
+  `wireProtocol` sealed `switch` stays exhaustive at compile time.
+- **`kind`**: provider id in a known-local set (`ollama`, `lmstudio`, `llama`) → `local`;
+  a `user`-source BYO entry pointing at a custom `apiBaseUrl` → `selfHosted`; otherwise →
+  `cloud`. (`open_weights` is a *model* flag and is surfaced in the UI, but does not by itself
+  make a hosted provider `local`.)
+- **`requiresApiKey`** = `env` is non-empty.
+
+### Drift specifics
+
+Two tables (`ai_providers`, `ai_models`) plus a `catalog_meta` row holding `fetchedAt` +
+`etag`/`lastModified` for stale-while-revalidate. The drift database already exists in the app
+(`drift` / `drift_flutter` deps) — add these tables to the existing schema with a migration,
+do not spin up a second database.
 
 ## The Normalization Boundary
 
@@ -153,7 +227,9 @@ compose editor live; a terminal chunk carries `finishReason` + usage.
 
 ## Privacy Model (email-specific)
 
-- Provider `kind` (cloud / local / selfHosted) surfaced everywhere a model is chosen.
+- Provider `kind` (cloud / local / selfHosted) — **derived** by the mapper (models.dev has no
+  such field; see "Schema Mapping") — surfaced everywhere a model is chosen. A model's
+  `open_weights` flag is shown too, but cloud-hosted open-weights models are still `cloud`.
 - **Per-capability routing:** the user may route triage to a local model while compose uses a
   cloud one. Selection is stored per capability in `AiSettingsRepository`.
 - **Conservative default guard:** a "don't send mail bodies to cloud providers" setting that
@@ -223,9 +299,7 @@ Then, as follow-on slices against the same registry: summarize → triage (exten
 
 ## Open Questions / Deferred
 
-- Exact models.dev schema mapping (field names) — resolved during implementation against the
-  live JSON.
-- Whether catalog cache is a drift table or a JSON blob — decided in the implementation plan
-  (drift if we want queryability, JSON blob if simpler). Default: JSON blob via
-  `path_provider`.
 - Semantic search indexing strategy (embeddings store) — its own future spec.
+
+**Resolved:** models.dev schema mapping is fixed (see "Schema Mapping"). Catalog cache is
+**drift** (queryable), added to the existing app database via migration.

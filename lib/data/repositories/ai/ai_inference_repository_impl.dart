@@ -96,17 +96,17 @@ class AiInferenceRepositoryImpl implements AiInferenceRepository {
         );
       }
 
-      // Azure has no fixed endpoint — a per-resource base URL must be supplied
-      // at configuration time. Fail closed with a typed config failure rather
-      // than dialing a placeholder host that would surface as a confusing DNS
-      // error to the user.
-      final hasBase =
-          provider.apiBaseUrl != null && provider.apiBaseUrl!.isNotEmpty;
-      if (provider.wireProtocol == AiWireProtocol.azure && !hasBase) {
+      // Endpoint: an explicit per-provider base URL wins; otherwise the
+      // provider's built-in default (first-party + known OpenAI-compatible
+      // hosts). When neither exists (Azure per-resource, or an unknown
+      // OpenAI-compatible host), fail closed with a typed config failure rather
+      // than dialing a wrong/placeholder host.
+      final baseUrl = provider.defaultBaseUrl;
+      if (baseUrl == null || baseUrl.isEmpty) {
         return Left(
           NoProviderConfigured(
-            message: 'Provider "${provider.id}" (Azure) requires an explicit '
-                'API base URL, but none is configured.',
+            message: 'Provider "${provider.id}" requires an API base URL, '
+                'but none is configured.',
           ),
         );
       }
@@ -115,9 +115,7 @@ class AiInferenceRepositoryImpl implements AiInferenceRepository {
         _ResolvedTarget(
           adapter: _adapterFactory.forProtocol(provider.wireProtocol),
           apiKey: apiKey,
-          baseUrl: hasBase
-              ? provider.apiBaseUrl!
-              : _defaultBaseUrl(provider.wireProtocol),
+          baseUrl: baseUrl,
           // Resolve the routed model's wire shape (completions vs responses)
           // from its catalog providerOverride before delegating.
           request: _withResolvedShape(request, provider),
@@ -144,31 +142,6 @@ class AiInferenceRepositoryImpl implements AiInferenceRepository {
       break;
     }
     return request;
-  }
-
-  /// Fallback endpoint when a provider carries no explicit `apiBaseUrl`.
-  ///
-  /// Azure is intentionally absent — it has no fixed endpoint, so a missing
-  /// base URL is rejected in [_resolve] with a typed failure instead.
-  static String _defaultBaseUrl(AiWireProtocol protocol) {
-    switch (protocol) {
-      case AiWireProtocol.openai:
-        return 'https://api.openai.com/v1';
-      case AiWireProtocol.anthropic:
-        // No trailing `/v1`: the Anthropic adapter appends `/v1/messages`, so a
-        // `/v1` suffix here would double it into `/v1/v1/messages` (404).
-        return 'https://api.anthropic.com';
-      case AiWireProtocol.google:
-        // Google's native Gemini surface. The Google adapter appends
-        // `/models/{modelId}:generateContent` (or `:streamGenerateContent`),
-        // so the base is the `/v1beta` root without the `/openai` suffix.
-        return 'https://generativelanguage.googleapis.com/v1beta';
-      case AiWireProtocol.ollama:
-        return 'http://localhost:11434/v1';
-      case AiWireProtocol.azure:
-        // Unreachable: azure with a missing base URL fails closed in _resolve.
-        return 'https://YOUR-RESOURCE.openai.azure.com/openai/v1';
-    }
   }
 }
 

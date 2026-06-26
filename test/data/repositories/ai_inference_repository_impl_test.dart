@@ -344,6 +344,41 @@ void main() {
       verifyNever(mockAdapterFactory.forProtocol(any));
     });
 
+    test('unknown OpenAI-compatible host with null apiBaseUrl fails closed',
+        () async {
+      // An openai-protocol provider that is not a known first-party host (so no
+      // built-in default) and has no configured base URL must fail closed rather
+      // than dialing api.openai.com with someone else's key.
+      const tUnknownHost = AiProvider(
+        id: 'some-proxy',
+        name: 'Some Proxy',
+        npm: '',
+        doc: '',
+        env: ['SOME_PROXY_API_KEY'],
+        kind: AiProviderKind.cloud,
+        wireProtocol: AiWireProtocol.openai,
+        source: AiProviderSource.catalog,
+      );
+      when(mockRegistry.byId('some-proxy')).thenReturn(tUnknownHost);
+      when(mockSettingsRepository.getApiKey('some-proxy'))
+          .thenAnswer((_) async => const Right(tApiKey));
+
+      final result = await repository.run(
+        const AiRequest(
+          messages: [AiMessage(role: AiRole.user, content: 'Hello')],
+          providerId: 'some-proxy',
+          modelId: 'm',
+        ),
+      );
+
+      expect(result.isLeft(), isTrue);
+      result.fold(
+        (failure) => expect(failure, isA<NoProviderConfigured>()),
+        (_) => fail('expected a Left'),
+      );
+      verifyNever(mockAdapterFactory.forProtocol(any));
+    });
+
     test(
         'model with providerOverride shape=responses delegates a request with '
         'shape=responses', () async {

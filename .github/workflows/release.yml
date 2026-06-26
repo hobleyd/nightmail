@@ -133,11 +133,11 @@ jobs:
       - name: Add WPE WebKit PPA
         run: |
           curl -fsSL \
-            http://wpe-webkit-linux.sharpblue.com.au/wpe-webkit-linux.gpg \
+            https://hobleyd.github.io/wpe-webkit-linux/wpe-webkit-linux.gpg \
             | sudo gpg --dearmor \
               -o /usr/share/keyrings/wpe-webkit-linux.gpg
           echo "deb [signed-by=/usr/share/keyrings/wpe-webkit-linux.gpg] \
-            http://wpe-webkit-linux.sharpblue.com.au/apt noble main" \
+            https://hobleyd.github.io/wpe-webkit-linux/apt noble main" \
             | sudo tee /etc/apt/sources.list.d/wpe-webkit-linux.list
 
       - name: Install system dependencies

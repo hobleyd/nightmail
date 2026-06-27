@@ -79,7 +79,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     final c = context.colors;
     // Get sections in alphabetical order
     final sections = SettingsSection.values.toList()
-      ..sort((a, b) => a.label.compareTo(b.label));
+      ..sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
 
     return Dialog(
       backgroundColor: c.surfacePanel,
@@ -1354,7 +1354,7 @@ class _MobileSettingsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     final sections = SettingsSection.values.toList()
-      ..sort((a, b) => a.label.compareTo(b.label));
+      ..sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
 
     return Scaffold(
       backgroundColor: c.surfacePanel,

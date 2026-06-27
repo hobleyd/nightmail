@@ -27,6 +27,8 @@ import '../blocs/folder_list/folder_list_state.dart';
 import '../blocs/home/home_cubit.dart';
 import '../blocs/mail_poller/mail_poller_cubit.dart';
 import '../blocs/mail_poller/mail_poller_state.dart';
+import '../blocs/ai/ai_compose_cubit.dart';
+import '../widgets/ai_day_panel.dart';
 import '../widgets/email_list_panel.dart';
 import '../widgets/folder_panel.dart';
 import '../widgets/reading_pane.dart';
@@ -51,6 +53,7 @@ class HomePage extends StatelessWidget {
         BlocProvider(create: (_) => sl<EmailListBloc>()),
         BlocProvider(create: (_) => sl<EmailDetailBloc>()),
         BlocProvider(create: (_) => HomeCubit()),
+        BlocProvider(create: (_) => sl<AiComposeCubit>()),
         BlocProvider(create: (_) => sl<CalendarBloc>()),
         BlocProvider(
           create: (_) =>
@@ -258,6 +261,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
                     },
                     onCalendarTapped: () {},
                     onTasksTapped: () {},
+                    onAiTapped: () {},
                   ),
                 _MobileStep.emailList => EmailListPanel(
                     folderName: selectedFolder?.displayName ?? 'Inbox',
@@ -483,7 +487,78 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                   homeCubit.showTasks();
                 }
               },
+              onAiTapped: () {
+                if (homeState.view == HomeView.ai) {
+                  homeCubit.showEmail();
+                } else {
+                  homeCubit.showAi();
+                }
+              },
             );
+
+            if (homeState.view == HomeView.ai) {
+              return Row(
+                children: [
+                  SizedBox(width: _folderWidth, child: folderPanel),
+                  _ResizeHandle(
+                    onDrag: (delta) {
+                      setState(() {
+                        final max = totalWidth -
+                            _handleWidth * 3 -
+                            _emailListWidth -
+                            _minReadingPaneWidth -
+                            _calendarPaneWidth;
+                        _folderWidth =
+                            (_folderWidth + delta).clamp(_minPanelWidth, max);
+                      });
+                    },
+                  ),
+                  SizedBox(
+                    width: _emailListWidth,
+                    child: EmailListPanel(
+                      folderName: selectedFolder?.displayName ?? 'Inbox',
+                      folder: selectedFolder,
+                      selectedEmailId: homeState.selectedEmailId,
+                      onEmailSelected: onEmailSelected,
+                      onEmailDoubleTapped: onEmailDoubleTapped,
+                    ),
+                  ),
+                  _ResizeHandle(
+                    onDrag: (delta) {
+                      setState(() {
+                        final max = totalWidth -
+                            _handleWidth * 3 -
+                            _folderWidth -
+                            _minReadingPaneWidth -
+                            _calendarPaneWidth;
+                        _emailListWidth =
+                            (_emailListWidth + delta).clamp(_minPanelWidth, max);
+                      });
+                    },
+                  ),
+                  const Expanded(child: ReadingPane()),
+                  _ResizeHandle(
+                    onDrag: (delta) {
+                      setState(() {
+                        final max = totalWidth -
+                            _handleWidth * 3 -
+                            _folderWidth -
+                            _emailListWidth -
+                            _minReadingPaneWidth;
+                        _calendarPaneWidth = (_calendarPaneWidth - delta)
+                            .clamp(_minCalendarPaneWidth, max);
+                      });
+                    },
+                  ),
+                  SizedBox(
+                    width: calendarWidth,
+                    child: AiDayPanel(
+                      onClose: () => context.read<HomeCubit>().showEmail(),
+                    ),
+                  ),
+                ],
+              );
+            }
 
             if (homeState.view == HomeView.tasks) {
               return Row(

@@ -36,6 +36,7 @@ class FolderPanel extends StatefulWidget {
     required this.onFolderSelected,
     required this.onCalendarTapped,
     required this.onTasksTapped,
+    required this.onAiTapped,
     this.initialExpandedIds = const {},
     this.onExpandedIdsChanged,
   });
@@ -44,6 +45,7 @@ class FolderPanel extends StatefulWidget {
   final ValueChanged<EmailFolder> onFolderSelected;
   final VoidCallback onCalendarTapped;
   final VoidCallback onTasksTapped;
+  final VoidCallback onAiTapped;
   final Set<String> initialExpandedIds;
   final ValueChanged<Set<String>>? onExpandedIdsChanged;
 
@@ -133,6 +135,7 @@ class _FolderPanelState extends State<FolderPanel> {
           _SettingsFooter(
             onCalendarTapped: widget.onCalendarTapped,
             onTasksTapped: widget.onTasksTapped,
+            onAiTapped: widget.onAiTapped,
           ),
         ],
       ),
@@ -819,10 +822,12 @@ class _SettingsFooter extends StatelessWidget {
   const _SettingsFooter({
     required this.onCalendarTapped,
     required this.onTasksTapped,
+    required this.onAiTapped,
   });
 
   final VoidCallback onCalendarTapped;
   final VoidCallback onTasksTapped;
+  final VoidCallback onAiTapped;
 
   @override
   Widget build(BuildContext context) {
@@ -1002,6 +1007,13 @@ class _SettingsFooter extends StatelessWidget {
               constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
               onPressed: onTasksTapped,
             ),
+          ),
+          IconButton(
+            icon: Icon(Icons.auto_awesome_rounded, size: 16, color: c.textMuted),
+            tooltip: 'AI',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            onPressed: onAiTapped,
           ),
           const Spacer(),
           IconButton(

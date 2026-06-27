@@ -39,17 +39,6 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
   }
 
   @override
-  void didUpdateWidget(HtmlEmailEditor oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.initialHtml != widget.initialHtml) {
-      _pendingHtml = widget.initialHtml;
-      _controller?.evaluateJavascript(
-        source: 'setContent(${jsonEncode(widget.initialHtml)})',
-      );
-    }
-  }
-
-  @override
   void dispose() {
     _disposed = true;
     _controller = null;

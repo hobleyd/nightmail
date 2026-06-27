@@ -3,13 +3,22 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/app_colors.dart';
-import '../blocs/ai/ai_compose_cubit.dart';
 import '../blocs/ai/ai_compose_state.dart';
+import '../blocs/ai/ai_folder_cubit.dart';
 
 class AiDayPanel extends StatefulWidget {
-  const AiDayPanel({super.key, required this.onClose});
+  const AiDayPanel({
+    super.key,
+    required this.onClose,
+    this.contextProvider,
+  });
 
   final VoidCallback onClose;
+
+  /// Called just before generation to collect the context string to pass to the
+  /// AI (e.g. a formatted excerpt of the current folder's emails). Returns null
+  /// when no context is available.
+  final String? Function()? contextProvider;
 
   @override
   State<AiDayPanel> createState() => _AiDayPanelState();
@@ -27,7 +36,7 @@ class _AiDayPanelState extends State<AiDayPanel> {
       if (event is KeyDownEvent &&
           event.logicalKey == LogicalKeyboardKey.enter &&
           !HardwareKeyboard.instance.isShiftPressed) {
-        if (context.read<AiComposeCubit>().state is! AiComposeStreaming) {
+        if (context.read<AiFolderCubit>().state is! AiComposeStreaming) {
           _generate();
         }
         return KeyEventResult.handled;
@@ -47,13 +56,14 @@ class _AiDayPanelState extends State<AiDayPanel> {
   void _generate() {
     final instruction = _controller.text.trim();
     if (instruction.isEmpty) return;
-    context.read<AiComposeCubit>().generate(instruction);
+    final emailContext = widget.contextProvider?.call();
+    context.read<AiFolderCubit>().generate(instruction, context: emailContext);
   }
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return BlocConsumer<AiComposeCubit, AiComposeState>(
+    return BlocConsumer<AiFolderCubit, AiComposeState>(
       listener: (context, state) {
         if (state is AiComposeStreaming || state is AiComposeDone) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -151,7 +161,7 @@ class _AiDayPanelState extends State<AiDayPanel> {
               if (state is AiComposeDone || state is AiComposeError)
                 TextButton(
                   onPressed: () =>
-                      context.read<AiComposeCubit>().cancel(),
+                      context.read<AiFolderCubit>().cancel(),
                   style: TextButton.styleFrom(
                     foregroundColor: c.textMuted,
                     padding: const EdgeInsets.symmetric(
@@ -166,7 +176,7 @@ class _AiDayPanelState extends State<AiDayPanel> {
               if (isGenerating)
                 TextButton(
                   onPressed: () =>
-                      context.read<AiComposeCubit>().cancel(),
+                      context.read<AiFolderCubit>().cancel(),
                   style: TextButton.styleFrom(
                     foregroundColor: c.textMuted,
                     padding: const EdgeInsets.symmetric(

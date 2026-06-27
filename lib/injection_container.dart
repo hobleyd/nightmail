@@ -36,7 +36,9 @@ import 'domain/repositories/ai/ai_catalog_repository.dart';
 import 'domain/repositories/ai/ai_inference_repository.dart';
 import 'domain/repositories/ai/ai_settings_repository.dart';
 import 'domain/usecases/ai/compose_reply.dart';
+import 'domain/usecases/ai/query_email_folder.dart';
 import 'presentation/blocs/ai/ai_compose_cubit.dart';
+import 'presentation/blocs/ai/ai_folder_cubit.dart';
 import 'presentation/blocs/ai/ai_settings_cubit.dart';
 import 'domain/repositories/calendar_repository.dart';
 import 'domain/repositories/directory_contacts_repository.dart';
@@ -403,8 +405,19 @@ Future<void> configureDependencies() async {
     ),
   );
 
+  sl.registerLazySingleton(
+    () => QueryEmailFolder(
+      settingsRepository: sl<AiSettingsRepository>(),
+      inferenceRepository: sl<AiInferenceRepository>(),
+      catalogRepository: sl<AiCatalogRepository>(),
+    ),
+  );
+
   // Presentation — AI cubits (factories)
   sl.registerFactory(() => AiComposeCubit(composeReply: sl<ComposeReply>()));
+  sl.registerFactory(
+    () => AiFolderCubit(queryEmailFolder: sl<QueryEmailFolder>()),
+  );
   sl.registerFactory(
     () => AiSettingsCubit(
       catalogRepository: sl<AiCatalogRepository>(),

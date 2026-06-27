@@ -27,7 +27,8 @@ import '../blocs/folder_list/folder_list_state.dart';
 import '../blocs/home/home_cubit.dart';
 import '../blocs/mail_poller/mail_poller_cubit.dart';
 import '../blocs/mail_poller/mail_poller_state.dart';
-import '../blocs/ai/ai_compose_cubit.dart';
+import '../blocs/ai/ai_folder_cubit.dart';
+import '../blocs/email_list/email_list_state.dart';
 import '../widgets/ai_day_panel.dart';
 import '../widgets/email_list_panel.dart';
 import '../widgets/folder_panel.dart';
@@ -53,7 +54,7 @@ class HomePage extends StatelessWidget {
         BlocProvider(create: (_) => sl<EmailListBloc>()),
         BlocProvider(create: (_) => sl<EmailDetailBloc>()),
         BlocProvider(create: (_) => HomeCubit()),
-        BlocProvider(create: (_) => sl<AiComposeCubit>()),
+        BlocProvider(create: (_) => sl<AiFolderCubit>()),
         BlocProvider(create: (_) => sl<CalendarBloc>()),
         BlocProvider(
           create: (_) =>
@@ -554,6 +555,15 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                     width: calendarWidth,
                     child: AiDayPanel(
                       onClose: () => context.read<HomeCubit>().showEmail(),
+                      contextProvider: () {
+                        final listState =
+                            context.read<EmailListBloc>().state;
+                        if (listState is! EmailListLoaded ||
+                            listState.emails.isEmpty) {
+                          return null;
+                        }
+                        return _formatFolderEmailsForAi(listState.emails);
+                      },
                     ),
                   ),
                 ],
@@ -785,4 +795,25 @@ class _ResizeHandleState extends State<_ResizeHandle> {
       ),
     );
   }
+}
+
+/// Formats up to 25 emails from the current folder into a compact text block
+/// for use as AI context. Uses subject/from/date/preview only to stay within
+/// token budget and avoid sending full bodies.
+String _formatFolderEmailsForAi(List<Email> emails) {
+  final buffer = StringBuffer();
+  final capped = emails.take(25);
+  var index = 1;
+  for (final email in capped) {
+    buffer.writeln('[Email $index]');
+    buffer.writeln('From: ${email.from.displayName}');
+    buffer.writeln('Subject: ${email.subject}');
+    buffer.writeln('Date: ${email.receivedDateTime.toLocal()}');
+    if (email.bodyPreview.isNotEmpty) {
+      buffer.writeln('Preview: ${email.bodyPreview}');
+    }
+    buffer.writeln();
+    index++;
+  }
+  return buffer.toString().trimRight();
 }

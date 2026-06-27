@@ -72,7 +72,7 @@ class SettingsDialog extends StatefulWidget {
 }
 
 class _SettingsDialogState extends State<SettingsDialog> {
-  SettingsSection _selectedSection = SettingsSection.accounts;
+  SettingsSection _selectedSection = SettingsSection.about;
 
   @override
   Widget build(BuildContext context) {
@@ -266,8 +266,6 @@ class _AppearanceSection extends StatelessWidget {
         const SizedBox(height: 12),
         _FontSizeSetting(),
         const SizedBox(height: 12),
-        const _DeleteConfirmSetting(),
-        const SizedBox(height: 12),
         const _ComposeFormatSetting(),
       ],
     );
@@ -282,6 +280,8 @@ class _GeneralSection extends StatelessWidget {
     return Column(
       children: [
         _PollIntervalSetting(),
+        const SizedBox(height: 12),
+        const _DeleteConfirmSetting(),
       ],
     );
   }
@@ -300,7 +300,8 @@ class _PollIntervalSetting extends StatelessWidget {
               style: TextStyle(color: c.textSecondary, fontSize: 13),
             ),
             const Spacer(),
-            Flexible(
+            SizedBox(
+              width: 180,
               child: Container(
                 height: 32,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -313,6 +314,7 @@ class _PollIntervalSetting extends StatelessWidget {
                   child: DropdownButton<int>(
                     value: state.pollIntervalSeconds,
                     isDense: true,
+                    isExpanded: true,
                     dropdownColor: c.surfacePanel,
                     style: TextStyle(color: c.textSecondary, fontSize: 13),
                     items: const [
@@ -358,7 +360,8 @@ class _ThemeSetting extends StatelessWidget {
               ),
             ),
             const Spacer(),
-            Flexible(
+            SizedBox(
+              width: 180,
               child: Container(
                 height: 32,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -371,6 +374,7 @@ class _ThemeSetting extends StatelessWidget {
                   child: DropdownButton<AppThemeMode>(
                     value: state.mode,
                     isDense: true,
+                    isExpanded: true,
                     dropdownColor: c.surfacePanel,
                     style: TextStyle(color: c.textSecondary, fontSize: 13),
                     items: const [
@@ -414,7 +418,8 @@ class _FontFamilySetting extends StatelessWidget {
               style: TextStyle(color: c.textSecondary, fontSize: 13),
             ),
             const Spacer(),
-            Flexible(
+            SizedBox(
+              width: 180,
               child: Container(
                 height: 32,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -427,6 +432,7 @@ class _FontFamilySetting extends StatelessWidget {
                   child: DropdownButton<String?>(
                     value: state.fontFamily,
                     isDense: true,
+                    isExpanded: true,
                     dropdownColor: c.surfacePanel,
                     style: TextStyle(color: c.textSecondary, fontSize: 13),
                     items: [
@@ -479,7 +485,8 @@ class _FontSizeSetting extends StatelessWidget {
               style: TextStyle(color: c.textSecondary, fontSize: 13),
             ),
             const Spacer(),
-            Flexible(
+            SizedBox(
+              width: 180,
               child: Container(
                 height: 32,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -492,6 +499,7 @@ class _FontSizeSetting extends StatelessWidget {
                   child: DropdownButton<double>(
                     value: state.fontScale,
                     isDense: true,
+                    isExpanded: true,
                     dropdownColor: c.surfacePanel,
                     style: TextStyle(color: c.textSecondary, fontSize: 13),
                     items: const [
@@ -542,13 +550,19 @@ class _DeleteConfirmSettingState extends State<_DeleteConfirmSetting> {
           style: TextStyle(color: c.textSecondary, fontSize: 13),
         ),
         const Spacer(),
-        Checkbox(
-          value: _value,
-          onChanged: (val) {
-            if (val == null) return;
-            setState(() => _value = val);
-            sl<AppSettings>().saveConfirmDeleteEmail(val);
-          },
+        SizedBox(
+          width: 180,
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: Checkbox(
+              value: _value,
+              onChanged: (val) {
+                if (val == null) return;
+                setState(() => _value = val);
+                sl<AppSettings>().saveConfirmDeleteEmail(val);
+              },
+            ),
+          ),
         ),
       ],
     );
@@ -583,7 +597,8 @@ class _ComposeFormatSettingState extends State<_ComposeFormatSetting> {
           style: TextStyle(color: c.textSecondary, fontSize: 13),
         ),
         const Spacer(),
-        Flexible(
+        SizedBox(
+          width: 180,
           child: Container(
             height: 32,
             padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -596,6 +611,7 @@ class _ComposeFormatSettingState extends State<_ComposeFormatSetting> {
               child: DropdownButton<EmailBodyType>(
                 value: _value,
                 isDense: true,
+                isExpanded: true,
                 dropdownColor: c.surfacePanel,
                 style: TextStyle(color: c.textSecondary, fontSize: 13),
                 items: const [

@@ -931,10 +931,11 @@ class _AddProviderDialogState extends State<_AddProviderDialog> {
     final provider = _picked;
     if (provider == null) return;
 
-    // Some catalog providers (Azure / AI Foundry, gateways, …) carry no endpoint
-    // in models.dev — the user must supply their per-resource/project base URL.
-    final needsUrl =
-        provider.apiBaseUrl == null || provider.apiBaseUrl!.isEmpty;
+    // Only some catalog providers need a user-supplied endpoint (Azure /
+    // AI Foundry, gateways, unknown OpenAI-compatible hosts). First-party
+    // providers (OpenAI/Anthropic/Google) carry a built-in default, so don't
+    // prompt for those.
+    final needsUrl = provider.defaultBaseUrl == null;
     final url = _catalogUrlController.text.trim();
     if (needsUrl && url.isEmpty) return;
 
@@ -1093,7 +1094,7 @@ class _AddProviderDialogState extends State<_AddProviderDialog> {
             ],
           ),
           const SizedBox(height: 12),
-          if (provider.apiBaseUrl == null || provider.apiBaseUrl!.isEmpty) ...[
+          if (provider.defaultBaseUrl == null) ...[
             _FormRow(
               label: 'Base URL',
               child: _PlainField(

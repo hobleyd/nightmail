@@ -78,6 +78,48 @@ class AiProvider extends Equatable {
   /// True when the provider declares any [env] var, i.e. an API key is needed.
   bool get requiresApiKey => env.isNotEmpty;
 
+  /// A built-in default endpoint for providers whose models.dev entry carries
+  /// no `api` URL but whose endpoint we know — first-party providers
+  /// (OpenAI/Anthropic/Google) and a few common OpenAI-compatible hosts.
+  ///
+  /// Returns null when the user must supply the endpoint themselves: an Azure
+  /// per-resource URL, or an OpenAI-compatible host we have no default for.
+  /// Used both by inference resolution and to decide whether the settings UI
+  /// needs to prompt for a base URL.
+  String? get defaultBaseUrl {
+    if (apiBaseUrl != null && apiBaseUrl!.isNotEmpty) return apiBaseUrl;
+    const byId = <String, String>{
+      'openai': 'https://api.openai.com/v1',
+      'anthropic': 'https://api.anthropic.com',
+      'google': 'https://generativelanguage.googleapis.com/v1beta',
+      'groq': 'https://api.groq.com/openai/v1',
+      'mistral': 'https://api.mistral.ai/v1',
+      'xai': 'https://api.x.ai/v1',
+      'deepseek': 'https://api.deepseek.com',
+      'cerebras': 'https://api.cerebras.ai/v1',
+    };
+    final known = byId[id];
+    if (known != null) return known;
+    switch (wireProtocol) {
+      case AiWireProtocol.ollama:
+        return 'http://localhost:11434/v1';
+      case AiWireProtocol.anthropic:
+      case AiWireProtocol.google:
+        // The `byId` map already covers the genuine first-party `anthropic` /
+        // `google` ids. A provider that shares the SDK family but is *not* the
+        // first-party id (e.g. `google-vertex`) reaches here — its correct
+        // endpoint is a regional/Vertex host we don't know, so returning null
+        // makes the settings UI prompt for a base URL and lets inference fail
+        // closed rather than dialing the first-party host with the wrong key.
+        return null;
+      case AiWireProtocol.openai:
+      case AiWireProtocol.azure:
+        // Unknown OpenAI-compatible host or an Azure per-resource endpoint —
+        // there is no safe default; the user must configure the base URL.
+        return null;
+    }
+  }
+
   AiProvider copyWith({
     String? apiBaseUrl,
     AiWireProtocol? wireProtocol,

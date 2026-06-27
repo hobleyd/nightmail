@@ -11,16 +11,19 @@ void main() {
   late MockAiAdapter mockOpenAiAdapter;
   late MockAiAdapter mockAnthropicAdapter;
   late MockAiAdapter mockAzureAdapter;
+  late MockAiAdapter mockGoogleAdapter;
   late AiAdapterFactory factory;
 
   setUp(() {
     mockOpenAiAdapter = MockAiAdapter();
     mockAnthropicAdapter = MockAiAdapter();
     mockAzureAdapter = MockAiAdapter();
+    mockGoogleAdapter = MockAiAdapter();
     factory = AiAdapterFactory(
       openAiAdapter: mockOpenAiAdapter,
       anthropicAdapter: mockAnthropicAdapter,
       azureAdapter: mockAzureAdapter,
+      googleAdapter: mockGoogleAdapter,
     );
   });
 
@@ -46,12 +49,11 @@ void main() {
       );
     });
 
-    test('google resolves to the OpenAI-compatible stand-in adapter', () {
-      // Interim: google has no dedicated adapter yet (see source TODO) and
-      // falls back to the OpenAI-compatible adapter.
+    test('google resolves to the dedicated Google (Gemini) adapter instance',
+        () {
       expect(
         factory.forProtocol(AiWireProtocol.google),
-        same(mockOpenAiAdapter),
+        same(mockGoogleAdapter),
       );
     });
 

@@ -75,6 +75,22 @@ void main() {
     source: AiProviderSource.catalog,
   );
 
+  // A first-party Google catalog provider with NO explicit apiBaseUrl, so the
+  // inference repo must supply its default: exactly
+  // `https://generativelanguage.googleapis.com/v1beta` (the native Gemini
+  // surface the GoogleAdapter expects).
+  const tGoogleProvider = AiProvider(
+    id: 'google',
+    name: 'Google',
+    npm: '@ai-sdk/google',
+    doc: 'https://example.com',
+    env: ['GEMINI_API_KEY'],
+    apiBaseUrl: null,
+    kind: AiProviderKind.cloud,
+    wireProtocol: AiWireProtocol.google,
+    source: AiProviderSource.catalog,
+  );
+
   // An Azure provider with NO apiBaseUrl. Azure has no fixed endpoint, so this
   // must fail closed with NoProviderConfigured rather than dialing a placeholder
   // host (finding L14).
@@ -319,6 +335,35 @@ void main() {
       ));
     });
 
+    test(
+        'google provider with null apiBaseUrl resolves to '
+        'https://generativelanguage.googleapis.com/v1beta', () async {
+      when(mockRegistry.byId('google')).thenReturn(tGoogleProvider);
+      when(mockSettingsRepository.getApiKey('google'))
+          .thenAnswer((_) async => const Right(tApiKey));
+      when(mockAdapterFactory.forProtocol(AiWireProtocol.google))
+          .thenReturn(mockAdapter);
+      when(mockAdapter.run(any,
+              apiKey: anyNamed('apiKey'), baseUrl: anyNamed('baseUrl')))
+          .thenAnswer((_) async => const Right(tResponse));
+
+      final result = await repository.run(
+        const AiRequest(
+          messages: [AiMessage(role: AiRole.user, content: 'Hello')],
+          providerId: 'google',
+          modelId: 'gemini-1.5-flash',
+        ),
+      );
+
+      expect(result.isRight(), isTrue);
+      verify(mockAdapterFactory.forProtocol(AiWireProtocol.google));
+      verify(mockAdapter.run(
+        any,
+        apiKey: tApiKey,
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      ));
+    });
+
     test('azure provider with null apiBaseUrl returns NoProviderConfigured [L14]',
         () async {
       // Azure has no fixed endpoint, so a missing base URL must fail closed with
@@ -341,6 +386,41 @@ void main() {
         (_) => fail('expected a Left'),
       );
       // Fails closed before resolving an adapter.
+      verifyNever(mockAdapterFactory.forProtocol(any));
+    });
+
+    test('unknown OpenAI-compatible host with null apiBaseUrl fails closed',
+        () async {
+      // An openai-protocol provider that is not a known first-party host (so no
+      // built-in default) and has no configured base URL must fail closed rather
+      // than dialing api.openai.com with someone else's key.
+      const tUnknownHost = AiProvider(
+        id: 'some-proxy',
+        name: 'Some Proxy',
+        npm: '',
+        doc: '',
+        env: ['SOME_PROXY_API_KEY'],
+        kind: AiProviderKind.cloud,
+        wireProtocol: AiWireProtocol.openai,
+        source: AiProviderSource.catalog,
+      );
+      when(mockRegistry.byId('some-proxy')).thenReturn(tUnknownHost);
+      when(mockSettingsRepository.getApiKey('some-proxy'))
+          .thenAnswer((_) async => const Right(tApiKey));
+
+      final result = await repository.run(
+        const AiRequest(
+          messages: [AiMessage(role: AiRole.user, content: 'Hello')],
+          providerId: 'some-proxy',
+          modelId: 'm',
+        ),
+      );
+
+      expect(result.isLeft(), isTrue);
+      result.fold(
+        (failure) => expect(failure, isA<NoProviderConfigured>()),
+        (_) => fail('expected a Left'),
+      );
       verifyNever(mockAdapterFactory.forProtocol(any));
     });
 

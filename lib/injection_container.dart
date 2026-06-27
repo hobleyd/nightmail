@@ -28,6 +28,7 @@ import 'data/datasources/ai/ai_provider_registry.dart';
 import 'data/datasources/ai/models_dev_catalog_datasource.dart';
 import 'data/datasources/ai/provider_models_datasource.dart';
 import 'data/datasources/ai/inference/anthropic_adapter.dart';
+import 'data/datasources/ai/inference/google_adapter.dart';
 import 'data/datasources/ai/inference/openai_compatible_adapter.dart';
 import 'data/repositories/ai/ai_catalog_repository_impl.dart';
 import 'data/repositories/ai/ai_inference_repository_impl.dart';
@@ -369,6 +370,8 @@ Future<void> configureDependencies() async {
       // Azure OpenAI / AI Foundry: OpenAI shape with the `api-key` header.
       azureAdapter:
           OpenAiCompatibleAdapter(dio: sl<Dio>(), useApiKeyHeader: true),
+      // Google Gemini: native `generateContent` API.
+      googleAdapter: GoogleAdapter(dio: sl<Dio>()),
     ),
   );
 

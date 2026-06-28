@@ -1,5 +1,5 @@
 import Cocoa
-import Contacts
+@preconcurrency import Contacts
 import EventKit
 import FlutterMacOS
 import UserNotifications

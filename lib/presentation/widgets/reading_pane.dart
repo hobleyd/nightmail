@@ -1389,6 +1389,7 @@ class _EmailHeader extends StatelessWidget {
               value: email.toRecipients
                   .map((r) => r.displayName)
                   .join(', '),
+              wrap: true,
             ),
           ],
           if (email.ccRecipients.isNotEmpty) ...[
@@ -1399,6 +1400,7 @@ class _EmailHeader extends StatelessWidget {
               value: email.ccRecipients
                   .map((r) => r.displayName)
                   .join(', '),
+              wrap: true,
             ),
           ],
           const SizedBox(height: 6),
@@ -1532,11 +1534,13 @@ class _MetaRow extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.value,
+    this.wrap = false,
   });
 
   final IconData icon;
   final String label;
   final String value;
+  final bool wrap;
 
   @override
   Widget build(BuildContext context) {
@@ -1564,7 +1568,7 @@ class _MetaRow extends StatelessWidget {
               color: c.textTertiary,
               fontSize: 12,
             ),
-            overflow: TextOverflow.ellipsis,
+            overflow: wrap ? null : TextOverflow.ellipsis,
           ),
         ),
       ],

@@ -41,6 +41,9 @@ dependencies:
   html_view:
     path: packages/html_view
   intl: ^0.20.2
+
+  # AI chat surface (streaming markdown chat UI for the AI day panel)
+  flutter_gen_ai_chat_ui: ^2.14.0
   path_provider: ^2.1.5
   open_file: ^4.0.0
   file_selector: ^1.1.0

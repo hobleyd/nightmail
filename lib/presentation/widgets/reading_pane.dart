@@ -15,6 +15,7 @@ import 'html_body_view.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
+import '../../domain/entities/email_address.dart';
 import '../../domain/entities/email_attachment.dart';
 import '../../domain/entities/inline_attachment.dart';
 import '../../domain/entities/meeting_invite.dart';
@@ -1383,24 +1384,18 @@ class _EmailHeader extends StatelessWidget {
           ),
           if (email.toRecipients.isNotEmpty) ...[
             const SizedBox(height: 6),
-            _MetaRow(
+            _RecipientRow(
               icon: Icons.mail_outline_rounded,
               label: 'To',
-              value: email.toRecipients
-                  .map((r) => r.displayName)
-                  .join(', '),
-              wrap: true,
+              recipients: email.toRecipients,
             ),
           ],
           if (email.ccRecipients.isNotEmpty) ...[
             const SizedBox(height: 6),
-            _MetaRow(
+            _RecipientRow(
               icon: Icons.people_outline_rounded,
               label: 'Cc',
-              value: email.ccRecipients
-                  .map((r) => r.displayName)
-                  .join(', '),
-              wrap: true,
+              recipients: email.ccRecipients,
             ),
           ],
           const SizedBox(height: 6),
@@ -1526,6 +1521,62 @@ class _AnomalousFromRow extends StatelessWidget {
       onSecondaryTapUp: (d) => _showMatchesMenu(context, d.globalPosition),
       child: highlighted,
     );
+  }
+}
+
+class _RecipientRow extends StatelessWidget {
+  const _RecipientRow({
+    required this.icon,
+    required this.label,
+    required this.recipients,
+  });
+
+  final IconData icon;
+  final String label;
+  final List<EmailAddress> recipients;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 14, color: c.textDimmed),
+        const SizedBox(width: 6),
+        SizedBox(
+          width: 44,
+          child: Text(
+            label,
+            style: TextStyle(
+              color: c.textDimmed,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Wrap(
+            children: [
+              for (int i = 0; i < recipients.length; i++)
+                _buildChip(context, recipients[i], isLast: i == recipients.length - 1),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildChip(BuildContext context, EmailAddress r, {required bool isLast}) {
+    final c = context.colors;
+    final display = isLast ? r.displayName : '${r.displayName}, ';
+    final text = Text(
+      display,
+      style: TextStyle(color: c.textTertiary, fontSize: 12),
+    );
+    if (r.name?.isNotEmpty == true) {
+      return Tooltip(message: r.address, child: text);
+    }
+    return text;
   }
 }
 

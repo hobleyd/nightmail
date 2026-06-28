@@ -354,6 +354,11 @@ class _ComposeFormState extends State<ComposeForm> {
     return (match?.group(1) ?? address).trim();
   }
 
+  static List<String> _dedupAddresses(List<String> addresses) {
+    final seen = <String>{};
+    return addresses.where((a) => seen.add(a.toLowerCase())).toList();
+  }
+
   String _initialTo() {
     if (widget.draftEmail != null) {
       return widget.draftEmail!.toRecipients.map((r) => r.address).join(', ');
@@ -362,10 +367,10 @@ class _ComposeFormState extends State<ComposeForm> {
     if (email == null) return '';
     return switch (widget.mode) {
       ComposeMode.reply => email.from.address,
-      ComposeMode.replyAll => [
+      ComposeMode.replyAll => _dedupAddresses([
           email.from.address,
           ...email.toRecipients.map((r) => r.address),
-        ].where((a) => a.toLowerCase() != _bareAddress(widget.fromAddress).toLowerCase()).join(', '),
+        ].where((a) => a.toLowerCase() != _bareAddress(widget.fromAddress).toLowerCase()).toList()).join(', '),
       ComposeMode.forward => '',
       ComposeMode.newEmail => '',
     };
@@ -378,8 +383,19 @@ class _ComposeFormState extends State<ComposeForm> {
     final email = widget.originalEmail;
     if (email == null) return '';
     return switch (widget.mode) {
-      ComposeMode.replyAll =>
-        email.ccRecipients.map((r) => r.address).where((a) => a.toLowerCase() != _bareAddress(widget.fromAddress).toLowerCase()).join(', '),
+      ComposeMode.replyAll => () {
+          final myAddress = _bareAddress(widget.fromAddress).toLowerCase();
+          final toSet = {
+            email.from.address.toLowerCase(),
+            ...email.toRecipients.map((r) => r.address.toLowerCase()),
+          };
+          return _dedupAddresses(
+            email.ccRecipients
+                .map((r) => r.address)
+                .where((a) => a.toLowerCase() != myAddress && !toSet.contains(a.toLowerCase()))
+                .toList(),
+          ).join(', ');
+        }(),
       _ => '',
     };
   }

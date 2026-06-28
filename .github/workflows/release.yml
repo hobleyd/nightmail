@@ -245,7 +245,7 @@ jobs:
           # so they must be bundled.  Built with -D_FORTIFY_SOURCE=2 so they only
           # require glibc 2.39, which is what Ubuntu 24.04 and the snap base provide.
           find /usr/lib/x86_64-linux-gnu \
-            \( -name "libWPEWebKit-1.0*.so*" \
+            \( -name "libWPEWebKit-1.1*.so*" \
                -o -name "libWPEBackend-fdo*.so*" \) \
             -type f 2>/dev/null | while read lib; do
             bundle_with_deps "$lib"

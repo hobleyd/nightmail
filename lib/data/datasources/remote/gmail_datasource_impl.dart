@@ -192,9 +192,17 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       if (threads.isEmpty) return [];
 
       // Fetch all messages in each thread in parallel.
+      // When viewing a normal folder (not Trash/Spam), exclude messages that
+      // have been trashed or marked as spam — they belong to those folders and
+      // must not be re-cached under the current folder (the cache primary key
+      // is (emailId, accountId), so an insertOrReplace would move them here).
+      final excludeLabels = (folderId == 'TRASH' || folderId == 'SPAM')
+          ? const <String>{}
+          : const {'TRASH', 'SPAM'};
+
       final threadFutures = threads.map((t) {
         final id = (t as Map<String, dynamic>)['id'] as String;
-        return _fetchThreadMessages(id);
+        return _fetchThreadMessages(id, excludeLabels: excludeLabels);
       });
 
       return (await Future.wait(threadFutures)).expand((msgs) => msgs).toList();
@@ -203,7 +211,10 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     }
   }
 
-  Future<List<EmailModel>> _fetchThreadMessages(String threadId) async {
+  Future<List<EmailModel>> _fetchThreadMessages(
+    String threadId, {
+    Set<String> excludeLabels = const {},
+  }) async {
     try {
       final resp = await _dio.get<Map<String, dynamic>>(
         '/users/me/threads/$threadId',
@@ -213,8 +224,15 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         },
       );
       if (resp.data == null) return [];
-      final messages = (resp.data!['messages'] as List<dynamic>? ?? [])
+      var messages = (resp.data!['messages'] as List<dynamic>? ?? [])
           .cast<Map<String, dynamic>>();
+      if (excludeLabels.isNotEmpty) {
+        messages = messages.where((m) {
+          final labels =
+              (m['labelIds'] as List<dynamic>? ?? []).cast<String>();
+          return !labels.any(excludeLabels.contains);
+        }).toList();
+      }
       return messages.map((m) => _parseMessage(m, fullBody: false)).toList();
     } catch (_) {
       return [];

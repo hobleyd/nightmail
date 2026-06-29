@@ -330,9 +330,23 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     emit(current.copyWith(
       emails: current.emails.where((e) => !ids.contains(e.id)).toList(),
     ));
-    await Future.wait(
+    final results = await Future.wait(
       event.emailIds.map((id) => _reportJunk(ReportJunkParams(id: id))),
     );
+    final failedIds = {
+      for (var i = 0; i < event.emailIds.length; i++)
+        if (results[i].isLeft()) event.emailIds[i],
+    };
+    if (failedIds.isNotEmpty) {
+      final after = state;
+      if (after is EmailListLoaded) {
+        final failedEmails =
+            junkEmails.where((e) => failedIds.contains(e.id)).toList();
+        emit(after.copyWith(
+          emails: [...after.emails, ...failedEmails],
+        ));
+      }
+    }
     if (_accountManager.activeAccount is ImapAccount) {
       final accountId = _accountManager.activeAccount?.id;
       if (accountId != null && junkEmails.isNotEmpty) {

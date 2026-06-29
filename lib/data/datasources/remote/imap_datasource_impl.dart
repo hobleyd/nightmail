@@ -822,17 +822,20 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     try {
       final client = await _getConnectedClient();
       final junkPath = await _findJunkPath(client);
+      if (junkPath == null) {
+        throw const ServerException(message: 'Junk folder not found');
+      }
       await _selectMailboxPath(client, mailboxPath);
       final sequence = MessageSequence.fromId(uid, isUid: true);
-      if (junkPath != null) {
-        await client.uidCopy(sequence, targetMailboxPath: junkPath);
-      }
+      await client.uidCopy(sequence, targetMailboxPath: junkPath);
       await client.uidStore(
         sequence,
         [MessageFlags.deleted],
         action: StoreAction.add,
       );
       await client.expunge();
+    } on ServerException {
+      rethrow;
     } on ImapException catch (e) {
       throw ServerException(message: e.message ?? 'IMAP error');
     }
@@ -862,7 +865,9 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
           .where(
             (mb) =>
                 mb.path.toLowerCase() == fullName.toLowerCase() ||
-                mb.path.toLowerCase() == name.toLowerCase(),
+                mb.path.toLowerCase() == name.toLowerCase() ||
+                mb.path.split(_pathSeparator).last.toLowerCase() ==
+                    name.toLowerCase(),
           )
           .firstOrNull;
       if (match != null) return match;
@@ -897,7 +902,9 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
           .where(
             (mb) =>
                 mb.path.toLowerCase() == fullName.toLowerCase() ||
-                mb.path.toLowerCase() == name.toLowerCase(),
+                mb.path.toLowerCase() == name.toLowerCase() ||
+                mb.path.split(_pathSeparator).last.toLowerCase() ==
+                    name.toLowerCase(),
           )
           .firstOrNull;
       if (match != null) return match;
@@ -1188,7 +1195,9 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
           .where(
             (mb) =>
                 mb.path.toLowerCase() == fullName.toLowerCase() ||
-                mb.path.toLowerCase() == name.toLowerCase(),
+                mb.path.toLowerCase() == name.toLowerCase() ||
+                mb.path.split(_pathSeparator).last.toLowerCase() ==
+                    name.toLowerCase(),
           )
           .firstOrNull;
       if (match != null) return match;

@@ -202,6 +202,10 @@ class _ComposeFormState extends State<ComposeForm> {
   String? _pendingOldDraftId;
   Timer? _draftTimer;
   DateTime? _lastDraftSavedAt;
+  bool _sent = false;
+  // Tracks an in-flight _saveDraft() call so _submit() can await it and
+  // collect the ID of any draft created after _sent was set to true.
+  Completer<String?>? _saveCompleter;
 
   @override
   void initState() {
@@ -471,33 +475,51 @@ class _ComposeFormState extends State<ComposeForm> {
   }
 
   Future<String?> _saveDraft() async {
+    if (_sent) return null;
+    final completer = Completer<String?>();
+    _saveCompleter = completer;
     final oldDraftId = _pendingOldDraftId;
     final body = _bodyType == EmailBodyType.html
         ? _htmlBodyCache
         : _bodyController.text;
-    final result = await sl<SaveServerDraft>()(SaveServerDraftParams(
-      existingDraftId: _serverDraftId,
-      toAddresses: _toRecipients,
-      ccAddresses: _ccRecipients,
-      subject: _subjectController.text,
-      body: body,
-      bodyType: _bodyType,
-      newAttachments: _localAttachments,
-    ));
-    return result.fold(
-      (failure) => failure.message,
-      (newId) {
-        _serverDraftId = newId;
-        if (mounted) setState(() => _lastDraftSavedAt = DateTime.now());
-        if (oldDraftId != null) {
-          _pendingOldDraftId = null;
-          if (newId != oldDraftId) {
-            sl<DeleteServerDraft>()(oldDraftId).ignore();
+    try {
+      final result = await sl<SaveServerDraft>()(SaveServerDraftParams(
+        existingDraftId: _serverDraftId,
+        toAddresses: _toRecipients,
+        ccAddresses: _ccRecipients,
+        subject: _subjectController.text,
+        body: body,
+        bodyType: _bodyType,
+        newAttachments: _localAttachments,
+      ));
+      return result.fold(
+        (failure) {
+          completer.complete(null);
+          return failure.message;
+        },
+        (newId) {
+          completer.complete(newId);
+          if (_sent) {
+            // _submit() is waiting on this completer and will delete the draft.
+            return null;
           }
-        }
-        return null;
-      },
-    );
+          _serverDraftId = newId;
+          if (mounted) setState(() => _lastDraftSavedAt = DateTime.now());
+          if (oldDraftId != null) {
+            _pendingOldDraftId = null;
+            if (newId != oldDraftId) {
+              sl<DeleteServerDraft>()(oldDraftId).ignore();
+            }
+          }
+          return null;
+        },
+      );
+    } catch (e) {
+      if (!completer.isCompleted) completer.complete(null);
+      rethrow;
+    } finally {
+      if (_saveCompleter == completer) _saveCompleter = null;
+    }
   }
 
   Future<void> _deleteDraft() async {
@@ -957,6 +979,8 @@ class _ComposeFormState extends State<ComposeForm> {
   }
 
   Future<void> _submit(BuildContext context) async {
+    _sent = true;
+    _draftTimer?.cancel();
     _toFieldKey.currentState?.flush();
     _ccFieldKey.currentState?.flush();
     final to = _toRecipients;
@@ -966,6 +990,7 @@ class _ComposeFormState extends State<ComposeForm> {
     if ((widget.mode == ComposeMode.newEmail ||
             widget.mode == ComposeMode.forward) &&
         to.isEmpty) {
+      _sent = false;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please enter at least one recipient')),
       );
@@ -983,6 +1008,26 @@ class _ComposeFormState extends State<ComposeForm> {
     } else {
       effectiveBody = _bodyController.text.trim();
       effectiveBodyType = EmailBodyType.text;
+    }
+
+    // The compose window is a separate process; windowManager.close() will kill
+    // it as soon as ComposeSent fires. Delete the draft HERE, with await, so the
+    // deletion completes before we dispatch (and before the process can be torn down).
+    //
+    // If _saveDraft() is still in-flight (timer already fired, HTTP pending),
+    // wait for it via _saveCompleter so we get the ID it creates/returns.
+    final inFlightId =
+        _saveCompleter != null ? await _saveCompleter!.future : null;
+    final idsToDelete = <String>{?_serverDraftId, ?inFlightId};
+    _serverDraftId = null;
+    if (idsToDelete.isNotEmpty) {
+      await Future.wait(
+        idsToDelete.map((id) async {
+          try {
+            await sl<DeleteServerDraft>()(id);
+          } catch (_) {}
+        }),
+      );
     }
 
     if (!mounted) return;

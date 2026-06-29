@@ -29,7 +29,7 @@ class HomeCubit extends Cubit<HomeState> {
   void selectFolder(String folderId) {
     emit(HomeState(
       selectedFolderId: folderId,
-      view: HomeView.email,
+      view: state.view,
       accountLabel: state.accountLabel,
     ));
   }

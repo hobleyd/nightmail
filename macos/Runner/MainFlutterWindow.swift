@@ -75,6 +75,7 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
         messenger: controller.engine.binaryMessenger,
         windowProvider: { [weak controller] in controller?.view.window }
       )
+      self?.registerDesktopDrop(on: controller)
     }
 
     badgeChannel = FlutterMethodChannel(
@@ -505,6 +506,18 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     allChannels.append(channel)
   }
 
+  // MARK: - desktop_drop secondary window fix
+
+  private func registerDesktopDrop(on viewController: FlutterViewController) {
+    let channel = FlutterMethodChannel(
+      name: "desktop_drop",
+      binaryMessenger: viewController.engine.binaryMessenger
+    )
+    let overlay = SecondaryWindowDropOverlay(frame: viewController.view.bounds, channel: channel)
+    overlay.autoresizingMask = [.width, .height]
+    viewController.view.addSubview(overlay)
+  }
+
   private func handleSearch(query: String, result: @escaping FlutterResult) {
     let status = CNContactStore.authorizationStatus(for: .contacts)
     guard status == .authorized else {
@@ -536,5 +549,87 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
         result(matches)
       }
     }
+  }
+}
+
+// desktop_drop's DesktopDropPlugin.register(with:) always installs its drag overlay on
+// app.mainFlutterWindow, so secondary desktop_multi_window windows never receive drop
+// events.  This NSView replicates the plugin's DropTarget and is installed manually on
+// each secondary FlutterViewController's view by registerDesktopDrop(on:).
+private class SecondaryWindowDropOverlay: NSView {
+  private let channel: FlutterMethodChannel
+
+  private lazy var destinationURL: URL = {
+    let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("Drops")
+    try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: nil)
+    return url
+  }()
+
+  private lazy var workQueue: OperationQueue = {
+    let q = OperationQueue()
+    q.qualityOfService = .userInitiated
+    return q
+  }()
+
+  init(frame: NSRect, channel: FlutterMethodChannel) {
+    self.channel = channel
+    super.init(frame: frame)
+    registerForDraggedTypes(
+      NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) }
+      + [.fileURL]
+    )
+  }
+
+  required init?(coder: NSCoder) { fatalError() }
+
+  override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+    channel.invokeMethod("entered", arguments: flutterPoint(sender.draggingLocation))
+    return .copy
+  }
+
+  override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+    channel.invokeMethod("updated", arguments: flutterPoint(sender.draggingLocation))
+    return .copy
+  }
+
+  override func draggingExited(_ sender: NSDraggingInfo?) {
+    channel.invokeMethod("exited", arguments: nil)
+  }
+
+  override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+    var urls = [String]()
+    let searchOptions: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+    let group = DispatchGroup()
+
+    sender.enumerateDraggingItems(
+      options: [], for: nil,
+      classes: [NSFilePromiseReceiver.self, NSURL.self],
+      searchOptions: searchOptions
+    ) { item, _, _ in
+      switch item.item {
+      case let receiver as NSFilePromiseReceiver:
+        group.enter()
+        receiver.receivePromisedFiles(
+          atDestination: self.destinationURL, options: [:],
+          operationQueue: self.workQueue
+        ) { fileURL, error in
+          if error == nil { urls.append(fileURL.path) }
+          group.leave()
+        }
+      case let url as URL:
+        urls.append(url.path)
+      default:
+        break
+      }
+    }
+
+    group.notify(queue: .main) {
+      self.channel.invokeMethod("performOperation", arguments: urls)
+    }
+    return true
+  }
+
+  private func flutterPoint(_ location: NSPoint) -> [CGFloat] {
+    [location.x, bounds.height - location.y]
   }
 }

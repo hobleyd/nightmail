@@ -38,7 +38,8 @@ dependencies:
   # UUID generation
   uuid: ^4.5.1
   webview_flutter: ^4.14.0
-  flutter_inappwebview: 6.2.0-beta.3
+  html_view:
+    path: packages/html_view
   intl: ^0.20.2
   path_provider: ^2.1.5
   open_file: ^4.0.0
@@ -140,13 +141,3 @@ dependency_overrides:
   # Remove once upstream enough_mail releases a fix.
   enough_mail:
     path: packages/enough_mail
-  # Local patch: fixes use-after-free crash (ERROR_INVALID_STATE 0x8007139F).
-  # (1) Adds isAlive_ shared_ptr guard to all [this]-capturing async callbacks in
-  #     InAppWebView, UserContentController, and FindInteractionController so they
-  #     bail out if fired after object destruction.
-  # (2) ICoreWebView2Find crashes on both remove_* and Release() after Close(), so
-  #     InAppWebView::~InAppWebView() now disposes findInteractionController,
-  #     printJobManager, and notification/message-channel objects before calling
-  #     webViewController->Close().
-  flutter_inappwebview_windows:
-    path: packages/flutter_inappwebview_windows

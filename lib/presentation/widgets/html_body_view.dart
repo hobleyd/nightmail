@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart' as iaw;
+import 'package:html_view/html_view.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -28,19 +28,19 @@ class HtmlBodyView extends StatefulWidget {
 }
 
 class _HtmlBodyViewState extends State<HtmlBodyView> {
-  iaw.InAppWebViewController? _inAppController;
-  String _inAppInitialHtml = '';
-  // Tracks the latest HTML to load; applied in onWebViewCreated if it changed
-  // before the controller was ready, or during rapid email switches.
+  // Desktop (Windows / macOS / Linux): html_view overlay WebView.
+  HtmlViewController? _htmlController;
+  StreamSubscription<String>? _linkSub;
+  // Tracks the latest HTML so _initHtmlView can apply updates that arrived
+  // while the controller was still initialising.
   String _pendingHtml = '';
-  bool _webViewReady = false;
-  bool _disposed = false;
-  File? _tempHtmlFile;
 
+  // Mobile (Android / iOS): webview_flutter.
   WebViewController? _flutterController;
 
   bool _allowExternalImages = false;
   bool _hasBlockedImages = false;
+  bool _disposed = false;
 
   @override
   void initState() {
@@ -49,28 +49,23 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
       final (html, blocked) = _buildHtml(allowExternal: false);
       _pendingHtml = html;
       _hasBlockedImages = blocked;
-      if (Platform.isWindows) {
-        _writeTempFile(html);
-      } else {
-        _inAppInitialHtml = html;
-      }
-      // Defer webview creation so the Win32 HWND is fully ready for WebView2
-      // composition. One post-frame callback is not enough on all machines;
-      // a short real-time delay lets the message pump finish initialising.
-      Future.delayed(const Duration(milliseconds: 50), () {
-        if (mounted) setState(() => _webViewReady = true);
-      });
+      _initHtmlView();
     } else {
       _initFlutter();
     }
     _loadAlwaysAllowSetting();
   }
 
-  void _writeTempFile(String html) {
-    _tempHtmlFile ??= File(
-      '${Directory.systemTemp.path}${Platform.pathSeparator}nightmail_email_${identityHashCode(this)}.html',
-    );
-    _tempHtmlFile!.writeAsStringSync(html);
+  Future<void> _initHtmlView() async {
+    final ctrl = HtmlViewController();
+    await ctrl.initialize();
+    if (_disposed) { unawaited(ctrl.dispose()); return; }
+    _linkSub = ctrl.onLinkOpened.listen((url) {
+      final uri = Uri.tryParse(url);
+      if (uri != null) unawaited(launchUrl(uri, mode: LaunchMode.externalApplication));
+    });
+    setState(() => _htmlController = ctrl);
+    unawaited(ctrl.loadHtml(_pendingHtml));
   }
 
   void _initFlutter() {
@@ -91,9 +86,6 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
       ))
       ..loadHtmlString(html);
   }
-
-  bool _hasExternalImages(String html) =>
-      RegExp(r'''src\s*=\s*["']?https?://''', caseSensitive: false).hasMatch(html);
 
   Future<void> _loadAlwaysAllowSetting() async {
     final domains = await sl<AppSettings>().loadExternalImageDomains();
@@ -116,30 +108,21 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
   @override
   void dispose() {
     _disposed = true;
-    _inAppController = null;
-    try { _tempHtmlFile?.deleteSync(); } catch (_) {}
+    _linkSub?.cancel();
+    unawaited(_htmlController?.dispose());
     super.dispose();
   }
 
   void _reloadWith({required bool allowExternal}) {
     if (_disposed) return;
     final (html, blocked) = _buildHtml(allowExternal: allowExternal);
+    _pendingHtml = html;
     setState(() {
       _allowExternalImages = allowExternal;
       _hasBlockedImages = blocked;
-      _pendingHtml = html;
     });
-    if (Platform.isWindows) {
-      _writeTempFile(html);
-      _inAppController?.loadUrl(
-        urlRequest: iaw.URLRequest(
-          url: iaw.WebUri(Uri.file(_tempHtmlFile!.path).toString()),
-        ),
-      );
-    } else if (Platform.isLinux || Platform.isMacOS) {
-      // If the controller isn't ready yet, _pendingHtml is picked up in
-      // onWebViewCreated once initialisation completes.
-      _inAppController?.loadData(data: html);
+    if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
+      unawaited(_htmlController?.loadHtml(html));
     } else {
       _flutterController?.loadHtmlString(html);
     }
@@ -190,6 +173,7 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
     }
 
     const injected = '''
+<meta http-equiv="Content-Security-Policy" content="script-src 'none'; object-src 'none';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
 <style>
 * { box-sizing: border-box !important; }
@@ -239,63 +223,10 @@ a[href]:hover::after {
   Widget build(BuildContext context) {
     final Widget webviewWidget;
     if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
-      if (!_webViewReady) {
-        webviewWidget = const SizedBox.shrink();
-      } else if (Platform.isWindows && _tempHtmlFile != null) {
-        webviewWidget = iaw.InAppWebView(
-          initialUrlRequest: iaw.URLRequest(
-            url: iaw.WebUri(Uri.file(_tempHtmlFile!.path).toString()),
-          ),
-          initialSettings: iaw.InAppWebViewSettings(
-            javaScriptEnabled: false,
-            useShouldOverrideUrlLoading: true,
-          ),
-          onWebViewCreated: (controller) {
-            _inAppController = controller;
-          },
-          shouldOverrideUrlLoading: (controller, navigationAction) async {
-            if (_disposed) return iaw.NavigationActionPolicy.CANCEL;
-            final uri = navigationAction.request.url;
-            if (uri != null) {
-              final scheme = uri.scheme;
-              if (scheme == 'http' || scheme == 'https' || scheme == 'mailto') {
-                unawaited(launchUrl(Uri.parse(uri.toString()),
-                    mode: LaunchMode.externalApplication));
-                return iaw.NavigationActionPolicy.CANCEL;
-              }
-            }
-            return iaw.NavigationActionPolicy.ALLOW;
-          },
-        );
-      } else {
-        webviewWidget = iaw.InAppWebView(
-          initialData: iaw.InAppWebViewInitialData(data: _inAppInitialHtml),
-          initialSettings: iaw.InAppWebViewSettings(
-            javaScriptEnabled: false,
-            useShouldOverrideUrlLoading: true,
-          ),
-          onWebViewCreated: (controller) {
-            _inAppController = controller;
-            // Apply any content that arrived before the controller was ready.
-            if (_pendingHtml != _inAppInitialHtml) {
-              controller.loadData(data: _pendingHtml);
-            }
-          },
-          shouldOverrideUrlLoading: (controller, navigationAction) async {
-            if (_disposed) return iaw.NavigationActionPolicy.CANCEL;
-            final uri = navigationAction.request.url;
-            if (uri != null) {
-              final scheme = uri.scheme;
-              if (scheme == 'http' || scheme == 'https' || scheme == 'mailto') {
-                unawaited(launchUrl(Uri.parse(uri.toString()),
-                    mode: LaunchMode.externalApplication));
-                return iaw.NavigationActionPolicy.CANCEL;
-              }
-            }
-            return iaw.NavigationActionPolicy.ALLOW;
-          },
-        );
-      }
+      final ctrl = _htmlController;
+      webviewWidget = ctrl != null
+          ? HtmlViewWidget(controller: ctrl)
+          : const SizedBox.shrink();
     } else {
       final ctrl = _flutterController;
       webviewWidget = ctrl != null

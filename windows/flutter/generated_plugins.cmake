@@ -7,8 +7,8 @@ list(APPEND FLUTTER_PLUGIN_LIST
   desktop_multi_window
   desktop_webview_window
   file_selector_windows
-  flutter_inappwebview_windows
   flutter_secure_storage_windows
+  html_view
   screen_retriever_windows
   share_plus
   url_launcher_windows

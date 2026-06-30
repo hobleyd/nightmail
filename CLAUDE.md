@@ -26,22 +26,6 @@ flutter run
 
 Always `flutter clean` after changing entitlements or code signing settings.
 
-### flutter_inappwebview macOS patch (beta.3 + Xcode 16+)
-
-`flutter_inappwebview_macos 1.2.0-beta.3` ships a `Package.swift` declaring
-`.macOS("10.14")` but references `ASWebAuthenticationSession` (10.15 only), which
-causes a compile error on Xcode 16+. The fix is a one-line patch in the pub cache:
-
-```bash
-# File: ~/.pub-cache/hosted/pub.dev/flutter_inappwebview_macos-1.2.0-beta.3/
-#       macos/flutter_inappwebview_macos/Package.swift
-# Change: .macOS("10.14") → .macOS("10.15")
-sed -i '' 's/\.macOS("10.14")/.macOS("10.15")/' \
-  ~/.pub-cache/hosted/pub.dev/flutter_inappwebview_macos-1.2.0-beta.3/macos/flutter_inappwebview_macos/Package.swift
-```
-
-Re-apply after `flutter pub cache repair`. Drop when 6.2.0 stable ships.
-
 ### desktop_drop Android patch (compileSdk 33 + androidx.fragment 1.7.1)
 
 `desktop_drop 0.4.4` sets `compileSdk 33` but `androidx.fragment:fragment:1.7.1`
@@ -55,41 +39,6 @@ sed -i '' 's/compileSdk 33/compileSdk 36/' \
 ```
 
 Re-apply after `flutter pub cache repair`. Drop when desktop_drop publishes a fix.
-
-## Linux WebView
-
-Linux uses `flutter_inappwebview` (WPE WebKit / `wpewebkit-1.0` ABI), the same plugin
-as macOS and Windows. Ubuntu 24.04 does not ship WPEWebKit in its repos, so we build
-it ourselves and publish it to a custom APT repo.
-
-### Custom WPE WebKit PPA
-
-Source: `../wpe-webkit-linux` (GitHub: hobleyd/wpe-webkit-linux)
-APT repo: `http://wpe-webkit-linux.sharpblue.com.au/apt`
-GPG key: `http://wpe-webkit-linux.sharpblue.com.au/wpe-webkit-linux.gpg`
-
-The PPA provides `libwpewebkit-1.0-dev` built from WPEWebKit 2.42.x against glibc 2.39.
-The critical build flag is `-D_FORTIFY_SOURCE=2` (Ubuntu 24.04's GCC defaults to
-`FORTIFY_SOURCE=3`, which introduces glibc 2.42 symbol deps incompatible with the
-Ubuntu 24.04 snap base).
-
-CI installs from this PPA before building. `libWPEWebKit-1.0.so.3` and
-`libWPEBackend-fdo*.so*` are bundled into the snap since they are not in Ubuntu's
-default repos.
-
-### flutter_inappwebview_linux CMakeLists patches
-
-Two patches are applied in CI after `flutter pub get`:
-
-1. **Library name**: `flutter_inappwebview_linux 0.1.0-beta.1` hardcodes
-   `find_and_add_library("libWPEWebKit-2.0"...)` but with the `wpewebkit-1.0` ABI the
-   library is `libWPEWebKit-1.0.so.3`. The patch derives the name dynamically from
-   the pkg-config result instead.
-
-2. **GCC compat**: `-Wno-deprecated-literal-operator` is Clang-only. GCC rejects it
-   with a fatal error. The patch wraps it in `check_cxx_compiler_flag()`.
-
-Both patches are applied via a Python script in the `build-linux` CI step.
 
 ## macOS Native Channels
 

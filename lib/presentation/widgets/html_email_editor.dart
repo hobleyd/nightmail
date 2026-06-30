@@ -1,8 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart' as iaw;
+import 'package:html_view/html_view.dart';
 
 class HtmlEmailEditor extends StatefulWidget {
   const HtmlEmailEditor({
@@ -14,8 +14,8 @@ class HtmlEmailEditor extends StatefulWidget {
 
   final String initialHtml;
   final ValueChanged<String> onContentChanged;
-  // Called when the user taps the link button. The caller should prompt for a
-  // URL and call [HtmlEmailEditorState.insertLink] with the result.
+  /// Called when the user taps the link button in the editor toolbar.
+  /// The caller should prompt for a URL and call [insertLink].
   final VoidCallback onLinkRequested;
 
   @override
@@ -23,114 +23,92 @@ class HtmlEmailEditor extends StatefulWidget {
 }
 
 class HtmlEmailEditorState extends State<HtmlEmailEditor> {
-  iaw.InAppWebViewController? _controller;
-  bool _ready = false;
-  bool _disposed = false;
+  late final HtmlViewController _controller;
+  StreamSubscription<String>? _contentSub;
+  StreamSubscription<void>?   _linkSub;
+  StreamSubscription<void>?   _loadedSub;
+
   String _pendingHtml = '';
+  bool   _disposed    = false;
 
   @override
   void initState() {
     super.initState();
     _pendingHtml = widget.initialHtml;
-    // Defer webview creation by one frame so the HWND / layer tree is ready.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) setState(() => _ready = true);
+
+    _controller = HtmlViewController();
+    _controller.initialize().then((_) {
+      if (_disposed) return;
+      _contentSub = _controller.onContentChanged.listen((html) {
+        if (mounted) widget.onContentChanged(html);
+      });
+      _linkSub = _controller.onLinkRequest.listen((_) {
+        if (mounted) widget.onLinkRequested();
+      });
+      _loadedSub = _controller.onPageLoaded.listen((_) async {
+        if (_disposed) return;
+        if (_pendingHtml.isNotEmpty) {
+          await _controller.eval('setContent(${jsonEncode(_pendingHtml)})');
+        }
+      });
+      _controller.loadAsset('assets/editor/editor.html');
     });
   }
 
   @override
   void dispose() {
     _disposed = true;
-    _controller = null;
+    _contentSub?.cancel();
+    _linkSub?.cancel();
+    _loadedSub?.cancel();
+    _controller.dispose();
     super.dispose();
   }
 
+  // -------------------------------------------------------------------------
+  // Public API (called by compose_dialog.dart)
+  // -------------------------------------------------------------------------
+
   Future<void> setContent(String html) async {
     _pendingHtml = html;
-    await _controller?.evaluateJavascript(
-      source: 'setContent(${jsonEncode(html)})',
-    );
+    await _controller.eval('setContent(${jsonEncode(html)})');
   }
 
   Future<String> getContent() async {
-    final result = await _controller?.evaluateJavascript(source: 'getContent()');
-    return result?.toString() ?? _pendingHtml;
+    // Returns JSON-encoded string from JS; strip outer quotes.
+    final raw = await _controller.eval('getContent()');
+    if (raw == null || raw == 'null') return _pendingHtml;
+    // JS result is JSON: "\"<html>\"" — decode it.
+    try {
+      return jsonDecode(raw) as String;
+    } catch (_) {
+      return raw;
+    }
   }
 
   Future<void> insertImage(String dataUri, String contentId) async {
-    await _controller?.evaluateJavascript(
-      source: 'insertImage(${jsonEncode(dataUri)}, ${jsonEncode(contentId)})',
-    );
+    await _controller.eval(
+        'insertImage(${jsonEncode(dataUri)}, ${jsonEncode(contentId)})');
   }
 
   Future<void> insertLink(String url) async {
-    await _controller?.evaluateJavascript(
-      source: 'insertLink(${jsonEncode(url)})',
-    );
+    await _controller.eval('insertLink(${jsonEncode(url)})');
   }
 
-  /// Snapshots the current caret position inside the editor so a later
-  /// [insertAtCursor] lands there even after the editor loses focus.
   Future<void> saveSelection() async {
-    await _controller?.evaluateJavascript(source: 'saveSelection()');
+    await _controller.eval('saveSelection()');
   }
 
-  /// Inserts [text] at the saved caret (or end of body as a fallback) without
-  /// rewriting innerHTML or resetting the selection — used to stream AI drafts
-  /// in token-by-token where the user placed the cursor.
   Future<void> insertAtCursor(String text) async {
-    await _controller?.evaluateJavascript(
-      source: 'insertAtSaved(${jsonEncode(text)})',
-    );
+    await _controller.eval('insertAtSaved(${jsonEncode(text)})');
   }
+
+  // -------------------------------------------------------------------------
+  // Build
+  // -------------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
-    if (!_ready) return const SizedBox.shrink();
-
-    return iaw.InAppWebView(
-      initialFile: 'assets/editor/editor.html',
-      initialSettings: _settings(),
-      onWebViewCreated: _onCreated,
-      onLoadStop: _onLoadStop,
-    );
-  }
-
-  iaw.InAppWebViewSettings _settings() => iaw.InAppWebViewSettings(
-        javaScriptEnabled: true,
-        transparentBackground: true,
-        useShouldOverrideUrlLoading: false,
-        disableContextMenu: false,
-      );
-
-  void _onCreated(iaw.InAppWebViewController controller) {
-    _controller = controller;
-    controller.addJavaScriptHandler(
-      handlerName: 'onContentChanged',
-      callback: (args) {
-        if (!mounted) return null;
-        final html = args.isNotEmpty ? args[0].toString() : '';
-        widget.onContentChanged(html);
-        return null;
-      },
-    );
-    controller.addJavaScriptHandler(
-      handlerName: 'onLinkRequest',
-      callback: (_) {
-        if (!mounted) return null;
-        widget.onLinkRequested();
-        return null;
-      },
-    );
-  }
-
-  Future<void> _onLoadStop(
-      iaw.InAppWebViewController controller, iaw.WebUri? url) async {
-    if (_disposed) return;
-    if (_pendingHtml.isNotEmpty) {
-      await controller.evaluateJavascript(
-        source: 'setContent(${jsonEncode(_pendingHtml)})',
-      );
-    }
+    return HtmlViewWidget(controller: _controller);
   }
 }

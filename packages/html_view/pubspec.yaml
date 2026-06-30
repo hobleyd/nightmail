@@ -1,0 +1,30 @@
+name: html_view
+description: Cross-platform HTML/CSS3 widget using native browser engines in windowed mode.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+  flutter: '>=3.19.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  window_manager: ^0.5.1
+
+flutter:
+  plugin:
+    platforms:
+      windows:
+        pluginClass: HtmlViewPluginCApi
+        fileName: html_view_plugin_c_api.cpp
+      linux:
+        pluginClass: HtmlViewPlugin
+        fileName: html_view_plugin.cc
+      macos:
+        pluginClass: HtmlViewPlugin
+      ios:
+        pluginClass: HtmlViewPlugin
+      android:
+        package: com.nightmail.html_view
+        pluginClass: HtmlViewPlugin

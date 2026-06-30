@@ -1,7 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter_inappwebview/flutter_inappwebview.dart' as iaw;
 import 'package:flutter/foundation.dart';
+import 'package:html_view/html_view.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -2075,23 +2076,34 @@ class _PdfPreview extends StatefulWidget {
 }
 
 class _PdfPreviewState extends State<_PdfPreview> {
-  bool _webViewReady = false;
+  HtmlViewController? _htmlController;
+  bool _disposed = false;
 
   @override
   void initState() {
     super.initState();
-    if (Platform.isWindows) {
-      Future.delayed(const Duration(milliseconds: 50), () {
-        if (mounted) setState(() => _webViewReady = true);
-      });
-    } else {
-      _webViewReady = true;
-    }
+    _initHtmlView();
+  }
+
+  Future<void> _initHtmlView() async {
+    final ctrl = HtmlViewController();
+    await ctrl.initialize();
+    if (_disposed) { unawaited(ctrl.dispose()); return; }
+    setState(() => _htmlController = ctrl);
+    unawaited(ctrl.loadUrl(Uri.file(widget.filePath).toString()));
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    unawaited(_htmlController?.dispose());
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final ctrl = _htmlController;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -2122,15 +2134,8 @@ class _PdfPreviewState extends State<_PdfPreview> {
         ),
         Divider(height: 1, color: c.border),
         Expanded(
-          child: _webViewReady
-              ? iaw.InAppWebView(
-                  initialUrlRequest: iaw.URLRequest(
-                    url: iaw.WebUri(Uri.file(widget.filePath).toString()),
-                  ),
-                  initialSettings: iaw.InAppWebViewSettings(
-                    allowFileAccessFromFileURLs: true,
-                  ),
-                )
+          child: ctrl != null
+              ? HtmlViewWidget(controller: ctrl)
               : const SizedBox.shrink(),
         ),
       ],

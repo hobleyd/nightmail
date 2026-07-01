@@ -22,6 +22,7 @@ import '../blocs/ai/ai_compose_state.dart';
 import '../blocs/compose/compose_bloc.dart';
 import '../blocs/compose/compose_event.dart';
 import '../blocs/compose/compose_state.dart';
+import 'compose_body_builder.dart';
 import 'html_email_editor.dart';
 import 'recipient_input_field.dart';
 
@@ -249,104 +250,17 @@ class _ComposeFormState extends State<ComposeForm> {
     return widget.defaultComposeFormat;
   }
 
-  static const _forwardSeparator = '---------- Forwarded message ---------';
+  String _buildInitialPlainBody() => ComposeBodyBuilder.buildInitialPlainBody(
+        originalEmail: widget.originalEmail,
+        draftEmail: widget.draftEmail,
+        mode: widget.mode,
+      );
 
-  // Plain text body for plain-text mode.
-  String _buildInitialPlainBody() {
-    if (widget.draftEmail != null) {
-      final draft = widget.draftEmail!;
-      return draft.bodyType == EmailBodyType.html
-          ? _stripHtml(draft.body)
-          : draft.body;
-    }
-    final email = widget.originalEmail;
-    if (email == null) return '';
-
-    final from = _formatFrom(email);
-
-    if (widget.mode == ComposeMode.forward) {
-      final bodyText = email.bodyType == EmailBodyType.html
-          ? _stripHtml(email.body)
-          : email.body;
-      return '\n\n$_forwardSeparator\n'
-          'From: $from\n'
-          'Date: ${_formatDate(email.receivedDateTime)}\n'
-          'Subject: ${email.subject}\n\n'
-          '$bodyText';
-    }
-
-    if (widget.mode != ComposeMode.reply && widget.mode != ComposeMode.replyAll) {
-      return '';
-    }
-
-    final header = 'On ${_formatDate(email.receivedDateTime)}, $from wrote:';
-    if (email.bodyType == EmailBodyType.html) {
-      final bodyText = _stripHtml(email.body);
-      return '\n\n---\n\n$header\n\n$bodyText';
-    } else {
-      final quoted = email.body
-          .split('\n')
-          .map((line) => '> $line')
-          .join('\n');
-      return '\n\n$header\n$quoted';
-    }
-  }
-
-  // HTML body for HTML-editor mode.
-  String _buildInitialHtmlBody() {
-    if (widget.draftEmail != null) {
-      final draft = widget.draftEmail!;
-      return draft.bodyType == EmailBodyType.html
-          ? draft.body
-          : _plainToHtml(draft.body);
-    }
-    final email = widget.originalEmail;
-    if (email == null) return '';
-
-    final from = _formatFrom(email);
-    final dateStr = _formatDate(email.receivedDateTime);
-    final fromEsc = const HtmlEscape().convert(from);
-    final dateEsc = const HtmlEscape().convert(dateStr);
-
-    if (widget.mode == ComposeMode.forward) {
-      final htmlBody = email.bodyType == EmailBodyType.html
-          ? email.body
-          : _plainToHtml(email.body);
-      final subjectEsc = const HtmlEscape().convert(email.subject);
-      final fromHeaderEsc = const HtmlEscape().convert(from);
-      return '<div><br></div>'
-          '<div>---------- Forwarded message ---------</div>'
-          '<div>From: $fromHeaderEsc</div>'
-          '<div>Date: $dateEsc</div>'
-          '<div>Subject: $subjectEsc</div>'
-          '<div><br></div>'
-          '$htmlBody';
-    }
-
-    if (widget.mode != ComposeMode.reply && widget.mode != ComposeMode.replyAll) {
-      return '';
-    }
-
-    final htmlBody = email.bodyType == EmailBodyType.html
-        ? email.body
-        : _plainToHtml(email.body);
-
-    return '<div><br></div>'
-        '<div>---------- Original Message ----------</div>'
-        '<div>From: $fromEsc</div>'
-        '<div>Date: $dateEsc</div>'
-        '<div><br></div>'
-        '<blockquote style="margin:0 0 0 0;border-left:2px solid #ccc;padding-left:12px;color:#666">'
-        '$htmlBody'
-        '</blockquote>';
-  }
-
-  String _formatFrom(Email email) {
-    final fromName = email.from.name;
-    return (fromName != null && fromName.isNotEmpty)
-        ? '$fromName <${email.from.address}>'
-        : email.from.address;
-  }
+  String _buildInitialHtmlBody() => ComposeBodyBuilder.buildInitialHtmlBody(
+        originalEmail: widget.originalEmail,
+        draftEmail: widget.draftEmail,
+        mode: widget.mode,
+      );
 
   List<String> _parseAddresses(String text) {
     if (text.trim().isEmpty) return [];

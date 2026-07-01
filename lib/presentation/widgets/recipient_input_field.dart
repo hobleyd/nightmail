@@ -30,6 +30,7 @@ class RecipientInputField extends StatefulWidget {
     this.showInput = true,
     this.fieldId,
     this.onDropAccepted,
+    this.onTabToNext,
   }) : assert(
           fieldId == null || onDropAccepted != null,
           'onDropAccepted is required when fieldId is set',
@@ -45,6 +46,10 @@ class RecipientInputField extends StatefulWidget {
   final bool showInput;
   final String? fieldId;
   final RecipientDropAccepted? onDropAccepted;
+  /// Called when Tab is pressed in the input with no suggestion dropdown
+  /// open, so the caller can move focus to the next field in a fixed order
+  /// instead of relying on default focus traversal.
+  final VoidCallback? onTabToNext;
 
   @override
   State<RecipientInputField> createState() => RecipientInputFieldState();
@@ -320,11 +325,22 @@ class RecipientInputFieldState extends State<RecipientInputField> {
                     _addSuggestion(_suggestions[_suggestionIndex]);
                     return KeyEventResult.handled;
                   }
+                  if (event.logicalKey == LogicalKeyboardKey.tab) {
+                    _addSuggestion(
+                        _suggestions[_suggestionIndex >= 0 ? _suggestionIndex : 0]);
+                    return KeyEventResult.handled;
+                  }
                 }
                 if (event.logicalKey == LogicalKeyboardKey.backspace &&
                     _inputController.text.isEmpty &&
                     widget.recipients.isNotEmpty) {
                   _selectChip(widget.recipients.length - 1);
+                  return KeyEventResult.handled;
+                }
+                if (event.logicalKey == LogicalKeyboardKey.tab &&
+                    widget.onTabToNext != null) {
+                  _flushInput();
+                  widget.onTabToNext!();
                   return KeyEventResult.handled;
                 }
                 return KeyEventResult.ignored;

@@ -248,6 +248,14 @@ class _ComposeFormState extends State<ComposeForm> {
     });
   }
 
+  void _focusBodyEditor() {
+    if (_bodyType == EmailBodyType.html) {
+      _htmlEditorKey.currentState?.focus();
+    } else {
+      _bodyFocus.requestFocus();
+    }
+  }
+
   EmailBodyType _determineInitialBodyType() {
     if (widget.draftEmail != null) return widget.draftEmail!.bodyType;
     if (widget.originalEmail != null) return widget.originalEmail!.bodyType;
@@ -1056,6 +1064,7 @@ class _ComposeFormState extends State<ComposeForm> {
           hintText: 'recipient@example.com',
           accountId: accountId,
           accountDomain: widget.accountDomain,
+          onTabToNext: () => _ccFieldKey.currentState?.requestFocus(),
         ),
         const SizedBox(height: 8),
         RecipientInputField(
@@ -1073,6 +1082,7 @@ class _ComposeFormState extends State<ComposeForm> {
           hintText: 'cc@example.com',
           accountId: accountId,
           accountDomain: widget.accountDomain,
+          onTabToNext: _focusBodyEditor,
         ),
         const SizedBox(height: 8),
         _FieldRow(

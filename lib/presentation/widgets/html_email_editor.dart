@@ -56,7 +56,7 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
           await _controller.eval('setContent(${jsonEncode(_pendingHtml)})');
         }
         if (widget.autofocus && !_disposed) {
-          await _controller.eval('focusEditor()');
+          await focus();
         }
       });
       _controller.loadAsset('assets/editor/editor.html');
@@ -109,6 +109,10 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
 
   Future<void> insertAtCursor(String text) async {
     await _controller.eval('insertAtSaved(${jsonEncode(text)})');
+  }
+
+  Future<void> focus() async {
+    await _controller.eval('focusEditor()');
   }
 
   // -------------------------------------------------------------------------

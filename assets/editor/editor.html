@@ -205,8 +205,18 @@ function scheduleChange() {
   changeTimer = setTimeout(fireChange, 300);
 }
 
+// Serialising editor.innerHTML is O(DOM size) — with a large quoted reply
+// body this can block the main thread for a while. Defer it to an idle
+// slot so it doesn't compete with the next keystroke if the user resumes
+// typing right as the debounce timer fires.
 function fireChange() {
-  _flutterNotify('onContentChanged', editor.innerHTML);
+  if (window.requestIdleCallback) {
+    requestIdleCallback(function() {
+      _flutterNotify('onContentChanged', editor.innerHTML);
+    }, {timeout: 500});
+  } else {
+    _flutterNotify('onContentChanged', editor.innerHTML);
+  }
 }
 
 function setContent(html) {

@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../../core/error/exceptions.dart';
+import '../../../domain/entities/contact_details.dart';
 import '../../../domain/entities/local_attachment.dart';
 import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/email.dart';
@@ -898,6 +899,64 @@ class GraphApiDatasourceImpl
       return (displayName: displayName, email: email);
     } on DioException catch (e) {
       throw _mapDioException(e);
+    }
+  }
+
+  /// Looks up an org directory profile by email via Graph's `/users/{id}`.
+  /// Returns null on 404 (not in the directory, e.g. an external sender) or
+  /// 403 (the `User.Read.All` scope hasn't been granted yet) — both are
+  /// expected, silent cases for a best-effort contact-details lookup.
+  Future<ContactDetails?> fetchDirectoryProfile(String email) async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/users/${Uri.encodeComponent(email)}',
+        queryParameters: {
+          '\$select': 'displayName,jobTitle,department,companyName,'
+              'mobilePhone,businessPhones,officeLocation,mail,userPrincipalName',
+        },
+      );
+      final data = response.data;
+      if (data == null) return null;
+
+      final phones = <String>[
+        if ((data['mobilePhone'] as String?)?.isNotEmpty ?? false)
+          data['mobilePhone'] as String,
+        ...((data['businessPhones'] as List<dynamic>? ?? [])
+            .whereType<String>()
+            .where((p) => p.isNotEmpty)),
+      ];
+
+      return ContactDetails(
+        address: data['mail'] as String? ??
+            data['userPrincipalName'] as String? ??
+            email,
+        name: data['displayName'] as String?,
+        jobTitle: data['jobTitle'] as String?,
+        department: data['department'] as String?,
+        companyName: data['companyName'] as String?,
+        officeLocation: data['officeLocation'] as String?,
+        phoneNumbers: phones,
+      );
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      if (status == 404 || status == 403) return null;
+      throw _mapDioException(e);
+    }
+  }
+
+  /// Best-effort photo fetch — any failure (no photo set, no permission)
+  /// resolves to null rather than surfacing an error, since the photo is
+  /// purely decorative in the contact-details card.
+  Future<Uint8List?> fetchDirectoryPhoto(String email) async {
+    try {
+      final response = await _dio.get<List<int>>(
+        '/users/${Uri.encodeComponent(email)}/photo/\$value',
+        options: Options(responseType: ResponseType.bytes),
+      );
+      final data = response.data;
+      return data == null ? null : Uint8List.fromList(data);
+    } catch (_) {
+      return null;
     }
   }
 

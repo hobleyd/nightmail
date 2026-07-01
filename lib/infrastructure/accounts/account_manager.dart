@@ -62,6 +62,12 @@ class AccountManager {
   // any account regardless of which one is currently active.
   final Map<String, GmailContactsDatasourceImpl> _contactsDatasourceCache = {};
 
+  // Lazily built and cached per Microsoft account ID so directory profile
+  // lookups (contact hover card) work for any account, not just the active
+  // one. Reuses GraphApiDatasourceImpl since directory lookups hit the same
+  // Graph host/auth as email.
+  final Map<String, GraphApiDatasourceImpl> _directoryDatasourceCache = {};
+
   List<Account> get accounts => List.unmodifiable(_accounts);
   bool get hasAccounts => _accounts.isNotEmpty;
   int get activeIndex => _activeIndex;
@@ -106,6 +112,32 @@ class AccountManager {
       client: GooglePeopleHttpClient(authService: authSvc),
     );
     _contactsDatasourceCache[accountId] = ds;
+    return ds;
+  }
+
+  GraphApiDatasourceImpl? directoryDatasourceForAccount(String accountId) {
+    if (_directoryDatasourceCache.containsKey(accountId)) {
+      return _directoryDatasourceCache[accountId];
+    }
+    final account = _accounts.cast<Account?>().firstWhere(
+      (a) => a?.id == accountId,
+      orElse: () => null,
+    );
+    if (account is! MicrosoftAccount) return null;
+    final tokenStorage = TokenStorage(
+      _secureStorage,
+      storageKey: 'token_${account.id}',
+    );
+    final authSvc = MicrosoftAuthService(
+      clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
+      tenantId: account.tenantId,
+      redirectUri: AppConfig.microsoftRedirectUri,
+      tokenStorage: tokenStorage,
+    );
+    final ds = GraphApiDatasourceImpl(
+      client: GraphHttpClient(authService: authSvc),
+    );
+    _directoryDatasourceCache[accountId] = ds;
     return ds;
   }
 
@@ -239,6 +271,7 @@ class AccountManager {
 
     await _clearCredentials(_accounts[idx]);
     _contactsDatasourceCache.remove(accountId);
+    _directoryDatasourceCache.remove(accountId);
 
     final updated = [..._accounts]..removeAt(idx);
     _accounts = updated;
@@ -247,6 +280,7 @@ class AccountManager {
       _emailDatasource = null;
       _calendarDatasource = null;
       _contactsDatasourceCache.clear();
+      _directoryDatasourceCache.clear();
       _authService = null;
     } else {
       _activeIndex = _activeIndex.clamp(0, _accounts.length - 1);

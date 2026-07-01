@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'html_body_view.dart';
+import 'contact_hover_card.dart';
 
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
@@ -1575,6 +1576,19 @@ class _RecipientRow extends StatelessWidget {
       display,
       style: TextStyle(color: c.textTertiary, fontSize: 12),
     );
+
+    final account = sl<AccountManager>().activeAccount;
+    if (account is GmailAccount || account is MicrosoftAccount) {
+      final wrapped = r.name?.isNotEmpty == true
+          ? Tooltip(message: r.address, child: text)
+          : text;
+      return ContactHoverTarget(
+        address: r.address,
+        accountId: account!.id,
+        child: wrapped,
+      );
+    }
+
     if (r.name?.isNotEmpty == true) {
       return Tooltip(message: r.address, child: text);
     }

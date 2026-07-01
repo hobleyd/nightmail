@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'html_view_controller.dart';
+import 'html_view_overlay_guard.dart';
 
 class HtmlViewWidget extends StatefulWidget {
   const HtmlViewWidget({
@@ -26,16 +27,18 @@ class _HtmlViewWidgetState extends State<HtmlViewWidget>
     with WindowListener {
   final _key = GlobalKey();
 
-  // Tracks whether the native WebView2 HWND is currently visible.
   // WebView2 (a native Win32 child window) always paints over Flutter's
-  // DirectX surface, so we hide it whenever a Flutter overlay route
-  // (dialog, bottom sheet, etc.) is shown on top of this widget's route.
-  bool _nativeVisible = true;
+  // DirectX surface, so we hide it whenever something Flutter-rendered
+  // should appear on top of it: either a ModalRoute (dialog, bottom sheet)
+  // pushed above this widget's route, or a non-route overlay (hover card,
+  // dropdown) that has claimed HtmlViewOverlayGuard.
+  bool _isModalCurrent = true;
 
   @override
   void initState() {
     super.initState();
     windowManager.addListener(this);
+    HtmlViewOverlayGuard.activeCount.addListener(_onGuardChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _reportPosition();
       _reportSize();
@@ -48,12 +51,20 @@ class _HtmlViewWidgetState extends State<HtmlViewWidget>
     // ModalRoute.of() registers a dependency on _ModalScopeStatus so this
     // method is called whenever a route is pushed/popped above this widget.
     final isCurrent = ModalRoute.of(context)?.isCurrent ?? true;
-    if (isCurrent != _nativeVisible) {
-      _nativeVisible = isCurrent;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) unawaited(widget.controller.setVisible(_nativeVisible));
-      });
+    if (isCurrent != _isModalCurrent) {
+      _isModalCurrent = isCurrent;
+      _applyVisibility();
     }
+  }
+
+  void _onGuardChanged() => _applyVisibility();
+
+  void _applyVisibility() {
+    final visible =
+        _isModalCurrent && HtmlViewOverlayGuard.activeCount.value == 0;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(widget.controller.setVisible(visible));
+    });
   }
 
   @override
@@ -104,6 +115,7 @@ class _HtmlViewWidgetState extends State<HtmlViewWidget>
   @override
   void dispose() {
     windowManager.removeListener(this);
+    HtmlViewOverlayGuard.activeCount.removeListener(_onGuardChanged);
     super.dispose();
   }
 }

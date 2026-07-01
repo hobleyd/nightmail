@@ -13,6 +13,7 @@ import 'data/datasources/local/folder_local_datasource.dart';
 import 'data/datasources/local/sender_local_datasource.dart';
 import 'data/datasources/local/sender_local_datasource_impl.dart';
 import 'data/repositories/calendar_repository_impl.dart';
+import 'data/repositories/contact_details_repository_impl.dart';
 import 'data/repositories/directory_contacts_repository_impl.dart';
 import 'data/repositories/email_repository_impl.dart';
 import 'data/repositories/sender_repository_impl.dart';
@@ -42,6 +43,7 @@ import 'presentation/blocs/ai/ai_compose_cubit.dart';
 import 'presentation/blocs/ai/ai_folder_cubit.dart';
 import 'presentation/blocs/ai/ai_settings_cubit.dart';
 import 'domain/repositories/calendar_repository.dart';
+import 'domain/repositories/contact_details_repository.dart';
 import 'domain/repositories/directory_contacts_repository.dart';
 import 'domain/repositories/email_repository.dart';
 import 'domain/repositories/sender_repository.dart';
@@ -67,6 +69,7 @@ import 'domain/usecases/create_folder.dart';
 import 'domain/usecases/rename_folder.dart';
 import 'domain/usecases/empty_folder.dart';
 import 'domain/usecases/get_calendar_events.dart';
+import 'domain/usecases/get_contact_details.dart';
 import 'domain/usecases/get_email.dart';
 import 'domain/usecases/get_emails.dart';
 import 'domain/usecases/get_mail_folders.dart';
@@ -173,6 +176,9 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton<DirectoryContactsRepository>(
     () => DirectoryContactsRepositoryImpl(accountManager: sl<AccountManager>()),
   );
+  sl.registerLazySingleton<ContactDetailsRepository>(
+    () => ContactDetailsRepositoryImpl(accountManager: sl<AccountManager>()),
+  );
   sl.registerLazySingleton<CalendarRepository>(
     () => CalendarRepositoryImpl(accountManager: sl<AccountManager>()),
   );
@@ -211,6 +217,7 @@ Future<void> configureDependencies() async {
         systemContactsRepository: sl<SystemContactsRepository>(),
         directoryContactsRepository: sl<DirectoryContactsRepository>(),
       ));
+  sl.registerLazySingleton(() => GetContactDetails(sl<ContactDetailsRepository>()));
   sl.registerLazySingleton(() => GetCalendarEvents(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => CreateCalendarEvent(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => UpdateCalendarEvent(sl<CalendarRepository>()));

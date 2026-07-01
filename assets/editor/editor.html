@@ -235,6 +235,22 @@ function getContent() {
   return editor.innerHTML;
 }
 
+function focusEditor() {
+  editor.focus();
+  const sel = window.getSelection();
+  if (sel.rangeCount === 0 || !_rangeInEditor(sel.getRangeAt(0))) {
+    const range = document.createRange();
+    if (editor.firstChild) {
+      range.setStart(editor, 0);
+    } else {
+      range.selectNodeContents(editor);
+    }
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+}
+
 function insertImage(dataUri, contentId) {
   editor.focus();
   const img = document.createElement('img');

@@ -234,9 +234,13 @@ class _ComposeFormState extends State<ComposeForm> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final isReply = widget.mode == ComposeMode.reply ||
           widget.mode == ComposeMode.replyAll;
-      if (isReply && _bodyType == EmailBodyType.text) {
-        _bodyFocus.requestFocus();
-        _bodyController.selection = const TextSelection.collapsed(offset: 0);
+      if (isReply) {
+        if (_bodyType == EmailBodyType.text) {
+          _bodyFocus.requestFocus();
+          _bodyController.selection = const TextSelection.collapsed(offset: 0);
+        }
+        // Else: the HTML editor autofocuses itself once its content finishes
+        // loading (see HtmlEmailEditor.autofocus in _buildBodyEditor).
       } else {
         _toFieldKey.currentState?.requestFocus();
       }
@@ -1134,6 +1138,8 @@ class _ComposeFormState extends State<ComposeForm> {
       return HtmlEmailEditor(
         key: _htmlEditorKey,
         initialHtml: _htmlBodyCache,
+        autofocus: widget.mode == ComposeMode.reply ||
+            widget.mode == ComposeMode.replyAll,
         onContentChanged: (html) {
           _htmlBodyCache = html;
           _scheduleDraftSave();

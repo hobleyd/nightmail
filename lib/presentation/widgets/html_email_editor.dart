@@ -10,6 +10,7 @@ class HtmlEmailEditor extends StatefulWidget {
     required this.initialHtml,
     required this.onContentChanged,
     required this.onLinkRequested,
+    this.autofocus = false,
   });
 
   final String initialHtml;
@@ -17,6 +18,10 @@ class HtmlEmailEditor extends StatefulWidget {
   /// Called when the user taps the link button in the editor toolbar.
   /// The caller should prompt for a URL and call [insertLink].
   final VoidCallback onLinkRequested;
+  /// Focuses the editor as soon as its content finishes loading. The webview
+  /// loads asynchronously, so this can't be done with a synchronous
+  /// `requestFocus()` call from the parent the way the plain-text body works.
+  final bool autofocus;
 
   @override
   State<HtmlEmailEditor> createState() => HtmlEmailEditorState();
@@ -49,6 +54,9 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
         if (_disposed) return;
         if (_pendingHtml.isNotEmpty) {
           await _controller.eval('setContent(${jsonEncode(_pendingHtml)})');
+        }
+        if (widget.autofocus && !_disposed) {
+          await _controller.eval('focusEditor()');
         }
       });
       _controller.loadAsset('assets/editor/editor.html');

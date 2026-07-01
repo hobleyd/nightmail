@@ -80,7 +80,7 @@ class ComposeBodyBuilder {
 
     if (mode == ComposeMode.forward) {
       final htmlBody = email.bodyType == EmailBodyType.html
-          ? email.body
+          ? extractHtmlBodyContent(email.body)
           : plainToHtml(email.body);
       final subjectEsc = const HtmlEscape().convert(email.subject);
       final fromHeaderEsc = const HtmlEscape().convert(from);
@@ -103,7 +103,7 @@ class ComposeBodyBuilder {
     }
 
     final htmlBody = email.bodyType == EmailBodyType.html
-        ? email.body
+        ? extractHtmlBodyContent(email.body)
         : plainToHtml(email.body);
 
     final toEsc = const HtmlEscape().convert(formatAddressList(email.toRecipients));
@@ -157,6 +157,17 @@ class ComposeBodyBuilder {
       final escaped = escape.convert(line);
       return escaped.isEmpty ? '<div><br></div>' : '<div>$escaped</div>';
     }).join('');
+  }
+
+  /// Extracts the `<body>` content from a full HTML document.
+  /// Graph API returns full HTML documents; embedding them verbatim inside a
+  /// contenteditable div confuses WebKit's fragment parser.
+  static String extractHtmlBodyContent(String html) {
+    final open = RegExp(r'<body[^>]*>', caseSensitive: false).firstMatch(html);
+    if (open == null) return html;
+    final close = RegExp(r'</body>', caseSensitive: false).firstMatch(html);
+    if (close == null) return html.substring(open.end);
+    return html.substring(open.end, close.start);
   }
 
   static String formatDate(DateTime dt) {

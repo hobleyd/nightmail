@@ -13,9 +13,7 @@ struct WebkitView {
 
   FlMethodChannel* channel;
   FlEventChannel* event_channel;
-  FlEventSink* event_sink;
 
-  // Pending method call waiting for async result (eval)
   FlMethodCall* pending_eval;
 
   gint pos_x;
@@ -30,11 +28,11 @@ struct WebkitView {
 
   void HandleMethod(FlMethodCall* method_call);
   void EmitEvent(const char* type, const char* value);
+  void UpdatePosition();
 
  private:
   void DoLoadAsset(const std::string& key, FlMethodCall* call);
   void DoEval(const std::string& js, FlMethodCall* call);
-  void UpdatePosition();
 
   static std::string GetExecutableDir();
   static std::string AssetPath(const std::string& key);

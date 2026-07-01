@@ -77,6 +77,9 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
   // Public API (called by compose_dialog.dart)
   // -------------------------------------------------------------------------
 
+  Future<void> hide() => _controller.setVisible(false);
+  Future<void> show() => _controller.setVisible(true);
+
   Future<void> setContent(String html) async {
     _pendingHtml = html;
     await _controller.eval('setContent(${jsonEncode(html)})');

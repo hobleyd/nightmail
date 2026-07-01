@@ -81,7 +81,14 @@ static void my_application_activate(GApplication* application) {
   gdk_rgba_parse(&background_color, "#000000");
   fl_view_set_background_color(view, &background_color);
   gtk_widget_show(GTK_WIDGET(view));
-  gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
+
+  // Wrap FlView in a GtkOverlay so html_view plugin can embed WebkitViews as
+  // overlay children using window-relative coordinates (works on both X11 and
+  // Wayland without needing absolute screen coordinates).
+  GtkOverlay* html_overlay = GTK_OVERLAY(gtk_overlay_new());
+  gtk_widget_show(GTK_WIDGET(html_overlay));
+  gtk_container_add(GTK_CONTAINER(html_overlay), GTK_WIDGET(view));
+  gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(html_overlay));
 
   // Show the window when Flutter renders.
   // Requires the view to be realized so we can start rendering.

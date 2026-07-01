@@ -474,6 +474,9 @@ class _ComposeFormState extends State<ComposeForm> {
       return;
     }
 
+    final editorState = _htmlEditorKey.currentState;
+    if (editorState != null) await editorState.hide();
+
     final action = await showDialog<_CloseAction>(
       context: context,
       barrierDismissible: true,
@@ -489,6 +492,7 @@ class _ComposeFormState extends State<ComposeForm> {
         if (error == null) {
           widget.onClose();
         } else {
+          if (editorState != null) await editorState.show();
           ScaffoldMessenger.of(this.context).showSnackBar(
             SnackBar(
               content: Text('Failed to save draft: $error'),
@@ -501,12 +505,16 @@ class _ComposeFormState extends State<ComposeForm> {
         await _deleteDraft();
         if (mounted) widget.onClose();
       case null:
+        if (editorState != null) await editorState.show();
         break;
     }
   }
 
   // Switch from HTML to plain text — asks for confirmation because it's lossy.
   Future<void> _switchToPlainText(BuildContext context) async {
+    final editorState = _htmlEditorKey.currentState;
+    if (editorState != null) await editorState.hide();
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -546,7 +554,13 @@ class _ComposeFormState extends State<ComposeForm> {
         ],
       ),
     );
-    if (confirmed != true || !mounted) return;
+    if (confirmed != true) {
+      if (mounted && editorState != null) await editorState.show();
+      return;
+    }
+    if (!mounted) return;
+    // confirmed — the HTML editor will be replaced by a plain text field,
+    // so there's no need to un-hide it.
 
     final plainText = _stripHtml(_htmlBodyCache);
     // Remove inline attachments — they don't apply in plain text mode.
@@ -577,9 +591,13 @@ class _ComposeFormState extends State<ComposeForm> {
   Future<void> _onAiCompose(BuildContext context) async {
     // Snapshot the caret BEFORE the prompt dialog steals focus, so the draft
     // streams in where the user placed the cursor (e.g. above a quoted reply).
-    await _htmlEditorKey.currentState?.saveSelection();
+    final editorState = _htmlEditorKey.currentState;
+    await editorState?.saveSelection();
 
+    if (editorState != null) await editorState.hide();
     final instruction = await _promptForAiInstruction(context);
+    if (mounted && editorState != null) await editorState.show();
+
     if (instruction == null || instruction.trim().isEmpty || !mounted) return;
 
     // AI streaming renders through the HTML (webview) editor; force it on so the
@@ -990,6 +1008,9 @@ class _ComposeFormState extends State<ComposeForm> {
 
   Future<void> _onLinkRequested(BuildContext context) async {
     final urlController = TextEditingController();
+    final editorState = _htmlEditorKey.currentState;
+    if (editorState != null) await editorState.hide();
+
     final url = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
@@ -1036,6 +1057,7 @@ class _ComposeFormState extends State<ComposeForm> {
       ),
     );
     urlController.dispose();
+    if (mounted && editorState != null) await editorState.show();
     if (url != null && url.isNotEmpty) {
       _htmlEditorKey.currentState?.insertLink(url);
     }

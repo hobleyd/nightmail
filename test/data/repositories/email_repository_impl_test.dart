@@ -486,4 +486,154 @@ void main() {
       ));
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // forwardEmail — ccAddresses plumbing
+  // ---------------------------------------------------------------------------
+
+  group('forwardEmail', () {
+    test('passes ccAddresses to datasource', () async {
+      when(mockRemoteDatasource.forwardEmail(
+        messageId: anyNamed('messageId'),
+        toAddresses: anyNamed('toAddresses'),
+        ccAddresses: anyNamed('ccAddresses'),
+        comment: anyNamed('comment'),
+        excludedAttachmentIds: anyNamed('excludedAttachmentIds'),
+        bodyType: anyNamed('bodyType'),
+        newAttachments: anyNamed('newAttachments'),
+      )).thenAnswer((_) async {});
+
+      await repository.forwardEmail(
+        messageId: 'msg1',
+        toAddresses: ['to@example.com'],
+        ccAddresses: ['cc@example.com'],
+        comment: 'FYI',
+      );
+
+      verify(mockRemoteDatasource.forwardEmail(
+        messageId: 'msg1',
+        toAddresses: ['to@example.com'],
+        ccAddresses: ['cc@example.com'],
+        comment: 'FYI',
+        excludedAttachmentIds: anyNamed('excludedAttachmentIds'),
+        bodyType: anyNamed('bodyType'),
+        newAttachments: anyNamed('newAttachments'),
+      )).called(1);
+    });
+
+    test('passes empty ccAddresses when no Cc specified', () async {
+      when(mockRemoteDatasource.forwardEmail(
+        messageId: anyNamed('messageId'),
+        toAddresses: anyNamed('toAddresses'),
+        ccAddresses: anyNamed('ccAddresses'),
+        comment: anyNamed('comment'),
+        excludedAttachmentIds: anyNamed('excludedAttachmentIds'),
+        bodyType: anyNamed('bodyType'),
+        newAttachments: anyNamed('newAttachments'),
+      )).thenAnswer((_) async {});
+
+      await repository.forwardEmail(
+        messageId: 'msg1',
+        toAddresses: ['to@example.com'],
+        comment: 'FYI',
+      );
+
+      verify(mockRemoteDatasource.forwardEmail(
+        messageId: 'msg1',
+        toAddresses: ['to@example.com'],
+        ccAddresses: [],
+        comment: 'FYI',
+        excludedAttachmentIds: anyNamed('excludedAttachmentIds'),
+        bodyType: anyNamed('bodyType'),
+        newAttachments: anyNamed('newAttachments'),
+      )).called(1);
+    });
+
+    test('returns Right(unit) on success', () async {
+      when(mockRemoteDatasource.forwardEmail(
+        messageId: anyNamed('messageId'),
+        toAddresses: anyNamed('toAddresses'),
+        ccAddresses: anyNamed('ccAddresses'),
+        comment: anyNamed('comment'),
+        excludedAttachmentIds: anyNamed('excludedAttachmentIds'),
+        bodyType: anyNamed('bodyType'),
+        newAttachments: anyNamed('newAttachments'),
+      )).thenAnswer((_) async {});
+
+      final result = await repository.forwardEmail(
+        messageId: 'msg1',
+        toAddresses: ['to@example.com'],
+        ccAddresses: ['cc@example.com'],
+        comment: 'FYI',
+      );
+
+      expect(result.isRight(), isTrue);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // replyToEmail — recipient plumbing
+  // ---------------------------------------------------------------------------
+
+  group('replyToEmail', () {
+    test('passes toAddresses and ccAddresses to datasource on plain reply', () async {
+      when(mockRemoteDatasource.replyToEmail(
+        messageId: anyNamed('messageId'),
+        comment: anyNamed('comment'),
+        replyAll: anyNamed('replyAll'),
+        toAddresses: anyNamed('toAddresses'),
+        ccAddresses: anyNamed('ccAddresses'),
+        bodyType: anyNamed('bodyType'),
+        newAttachments: anyNamed('newAttachments'),
+      )).thenAnswer((_) async {});
+
+      await repository.replyToEmail(
+        messageId: 'msg1',
+        comment: 'Thanks',
+        replyAll: false,
+        toAddresses: ['sender@example.com'],
+        ccAddresses: ['cc@example.com'],
+      );
+
+      verify(mockRemoteDatasource.replyToEmail(
+        messageId: 'msg1',
+        comment: 'Thanks',
+        replyAll: false,
+        toAddresses: ['sender@example.com'],
+        ccAddresses: ['cc@example.com'],
+        bodyType: anyNamed('bodyType'),
+        newAttachments: anyNamed('newAttachments'),
+      )).called(1);
+    });
+
+    test('passes replyAll=true when replying to all', () async {
+      when(mockRemoteDatasource.replyToEmail(
+        messageId: anyNamed('messageId'),
+        comment: anyNamed('comment'),
+        replyAll: anyNamed('replyAll'),
+        toAddresses: anyNamed('toAddresses'),
+        ccAddresses: anyNamed('ccAddresses'),
+        bodyType: anyNamed('bodyType'),
+        newAttachments: anyNamed('newAttachments'),
+      )).thenAnswer((_) async {});
+
+      await repository.replyToEmail(
+        messageId: 'msg1',
+        comment: 'Thanks',
+        replyAll: true,
+        toAddresses: ['a@example.com', 'b@example.com'],
+        ccAddresses: ['cc1@example.com', 'cc2@example.com'],
+      );
+
+      verify(mockRemoteDatasource.replyToEmail(
+        messageId: 'msg1',
+        comment: 'Thanks',
+        replyAll: true,
+        toAddresses: ['a@example.com', 'b@example.com'],
+        ccAddresses: ['cc1@example.com', 'cc2@example.com'],
+        bodyType: anyNamed('bodyType'),
+        newAttachments: anyNamed('newAttachments'),
+      )).called(1);
+    });
+  });
 }

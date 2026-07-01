@@ -47,6 +47,7 @@ abstract interface class EmailRemoteDatasource {
   Future<void> forwardEmail({
     required String messageId,
     required List<String> toAddresses,
+    List<String> ccAddresses = const [],
     required String comment,
     List<String> excludedAttachmentIds = const [],
     EmailBodyType bodyType = EmailBodyType.text,

@@ -171,18 +171,38 @@ class WebKitView: NSObject, WKScriptMessageHandler, FlutterStreamHandler, WKNavi
       updateFrame()
       result(nil)
 
+    case "setVisible":
+      guard let visible = call.arguments as? Bool else {
+        result(FlutterError(code: "bad_args", message: nil, details: nil)); return
+      }
+      webView.isHidden = !visible
+      result(nil)
+
     default:
       result(FlutterMethodNotImplemented)
     }
   }
 
   private func loadAsset(key: String, result: @escaping FlutterResult) {
-    let resPath = Bundle.main.resourcePath ?? ""
-    let fullPath = "\(resPath)/flutter_assets/\(key)"
-    let fileURL = URL(fileURLWithPath: fullPath)
-    let accessURL = URL(fileURLWithPath: "\(resPath)/flutter_assets")
-    webView.loadFileURL(fileURL, allowingReadAccessTo: accessURL)
-    result(nil)
+    // Flutter assets are bundled inside App.framework/Resources/flutter_assets/,
+    // not in the main bundle's Resources. Search all loaded frameworks first,
+    // then fall back to the main bundle for other build configurations.
+    let searchBundles: [Bundle] = Bundle.allFrameworks.filter {
+      $0.bundlePath.hasSuffix("App.framework")
+    } + [Bundle.main]
+
+    for bundle in searchBundles {
+      guard let resPath = bundle.resourcePath else { continue }
+      let fullPath = "\(resPath)/flutter_assets/\(key)"
+      if FileManager.default.fileExists(atPath: fullPath) {
+        let fileURL = URL(fileURLWithPath: fullPath)
+        let accessURL = URL(fileURLWithPath: "\(resPath)/flutter_assets")
+        webView.loadFileURL(fileURL, allowingReadAccessTo: accessURL)
+        result(nil)
+        return
+      }
+    }
+    result(FlutterError(code: "not_found", message: "Asset not found: \(key)", details: nil))
   }
 
   // MARK: - Layout

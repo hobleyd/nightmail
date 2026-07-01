@@ -44,6 +44,7 @@ class SendEmail {
       ComposeMode.forward => _repository.forwardEmail(
           messageId: params.originalMessageId!,
           toAddresses: params.toAddresses,
+          ccAddresses: params.ccAddresses,
           comment: params.body,
           excludedAttachmentIds: params.excludedAttachmentIds,
           bodyType: params.bodyType,

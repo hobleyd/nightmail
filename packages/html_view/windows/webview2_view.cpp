@@ -400,6 +400,12 @@ void WebView2View::HandleMethod(
             std::get<double>((*list)[2]));
     result->Success();
 
+  } else if (name == "setVisible") {
+    const auto* v = std::get_if<bool>(call.arguments());
+    if (!v) { result->Error("bad_args"); return; }
+    if (controller_) controller_->put_IsVisible(*v ? TRUE : FALSE);
+    result->Success();
+
   } else if (name == "dispose") {
     result->Success();
 

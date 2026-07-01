@@ -94,6 +94,16 @@ class HtmlViewController {
     return _channel!.invokeMethod('setSize', [w, h, dpr]);
   }
 
+  /// Show or hide the native WebView2 control.
+  /// Call with [false] when a Flutter overlay (dialog, bottom sheet, etc.)
+  /// appears on top so it isn't obscured by the native HWND.
+  Future<void> setVisible(bool visible) async {
+    if (_channel == null) return;
+    try {
+      await _channel!.invokeMethod('setVisible', visible);
+    } catch (_) {}
+  }
+
   Future<void> dispose() async {
     try { await _eventSub?.cancel(); } catch (_) {}
     _onContentChanged.close();

@@ -291,6 +291,16 @@ void WebkitView::HandleMethod(FlMethodCall* method_call) {
     UpdatePosition();
     fl_method_call_respond_success(method_call, nullptr, nullptr);
 
+  } else if (strcmp(name, "setVisible") == 0 &&
+             fl_value_get_type(args) == FL_VALUE_TYPE_BOOL) {
+    gboolean visible = fl_value_get_bool(args);
+    if (visible) {
+      gtk_widget_show(GTK_WIDGET(web_view));
+    } else {
+      gtk_widget_hide(GTK_WIDGET(web_view));
+    }
+    fl_method_call_respond_success(method_call, nullptr, nullptr);
+
   } else {
     fl_method_call_respond_not_implemented(method_call, nullptr);
   }

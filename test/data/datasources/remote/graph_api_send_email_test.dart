@@ -303,4 +303,242 @@ void main() {
       );
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // forwardEmail
+  // ---------------------------------------------------------------------------
+
+  Response<void> _forwardVoidResp(String messageId) => Response<void>(
+        statusCode: 202,
+        requestOptions: RequestOptions(path: '/me/messages/$messageId/forward'),
+      );
+
+  group('GraphApiDatasourceImpl.forwardEmail — To recipients', () {
+    test('includes toRecipients in the POST body', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _forwardVoidResp('msg1'));
+
+      await datasource.forwardEmail(
+        messageId: 'msg1',
+        toAddresses: ['alice@example.com'],
+        comment: 'FYI',
+      );
+
+      final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      final to = body['toRecipients'] as List;
+      expect(to, hasLength(1));
+      expect(to[0], {'emailAddress': {'address': 'alice@example.com'}});
+    });
+
+    test('strips display name from To address in forward', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _forwardVoidResp('msg1'));
+
+      await datasource.forwardEmail(
+        messageId: 'msg1',
+        toAddresses: ['Alice Smith <alice@example.com>'],
+        comment: 'FYI',
+      );
+
+      final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      final to = body['toRecipients'] as List;
+      expect(to[0], {'emailAddress': {'address': 'alice@example.com'}});
+    });
+  });
+
+  group('GraphApiDatasourceImpl.forwardEmail — Cc recipients', () {
+    test('includes ccRecipients in message body when ccAddresses is non-empty', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _forwardVoidResp('msg1'));
+
+      await datasource.forwardEmail(
+        messageId: 'msg1',
+        toAddresses: ['to@example.com'],
+        ccAddresses: ['cc@example.com'],
+        comment: 'FYI',
+      );
+
+      final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      final message = body['message'] as Map;
+      expect(message.containsKey('ccRecipients'), isTrue);
+      final cc = message['ccRecipients'] as List;
+      expect(cc, hasLength(1));
+      expect(cc[0], {'emailAddress': {'address': 'cc@example.com'}});
+    });
+
+    test('omits ccRecipients from message when ccAddresses is empty', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _forwardVoidResp('msg1'));
+
+      await datasource.forwardEmail(
+        messageId: 'msg1',
+        toAddresses: ['to@example.com'],
+        comment: 'FYI',
+      );
+
+      final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      final message = body['message'] as Map;
+      expect(message.containsKey('ccRecipients'), isFalse);
+    });
+
+    test('strips display name from Cc address in forward', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _forwardVoidResp('msg1'));
+
+      await datasource.forwardEmail(
+        messageId: 'msg1',
+        toAddresses: ['to@example.com'],
+        ccAddresses: ['Carol Jones <carol@example.com>'],
+        comment: 'FYI',
+      );
+
+      final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      final cc = (body['message'] as Map)['ccRecipients'] as List;
+      expect(cc[0], {'emailAddress': {'address': 'carol@example.com'}});
+    });
+
+    test('sends multiple Cc recipients in forward', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _forwardVoidResp('msg1'));
+
+      await datasource.forwardEmail(
+        messageId: 'msg1',
+        toAddresses: ['to@example.com'],
+        ccAddresses: ['cc1@example.com', 'cc2@example.com'],
+        comment: 'FYI',
+      );
+
+      final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      final cc = (body['message'] as Map)['ccRecipients'] as List;
+      expect(cc, hasLength(2));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // replyToEmail
+  // ---------------------------------------------------------------------------
+
+  Response<void> _replyVoidResp(String messageId) => Response<void>(
+        statusCode: 202,
+        requestOptions: RequestOptions(path: '/me/messages/$messageId/reply'),
+      );
+
+  group('GraphApiDatasourceImpl.replyToEmail — To recipients', () {
+    test('includes toRecipients in message body when toAddresses is non-empty', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _replyVoidResp('msg1'));
+
+      await datasource.replyToEmail(
+        messageId: 'msg1',
+        comment: 'Thanks',
+        toAddresses: ['alice@example.com'],
+      );
+
+      final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      final message = body['message'] as Map;
+      expect(message.containsKey('toRecipients'), isTrue);
+      final to = message['toRecipients'] as List;
+      expect(to, hasLength(1));
+      expect(to[0], {'emailAddress': {'address': 'alice@example.com'}});
+    });
+
+    test('omits toRecipients from message when toAddresses is empty', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _replyVoidResp('msg1'));
+
+      await datasource.replyToEmail(
+        messageId: 'msg1',
+        comment: 'Thanks',
+      );
+
+      final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      final message = body['message'] as Map;
+      expect(message.containsKey('toRecipients'), isFalse);
+    });
+  });
+
+  group('GraphApiDatasourceImpl.replyToEmail — Cc recipients', () {
+    test('includes ccRecipients in message body when ccAddresses is non-empty', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _replyVoidResp('msg1'));
+
+      await datasource.replyToEmail(
+        messageId: 'msg1',
+        comment: 'Thanks',
+        toAddresses: ['to@example.com'],
+        ccAddresses: ['cc@example.com'],
+      );
+
+      final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      final message = body['message'] as Map;
+      expect(message.containsKey('ccRecipients'), isTrue);
+      final cc = message['ccRecipients'] as List;
+      expect(cc, hasLength(1));
+      expect(cc[0], {'emailAddress': {'address': 'cc@example.com'}});
+    });
+
+    test('omits ccRecipients from message when ccAddresses is empty', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _replyVoidResp('msg1'));
+
+      await datasource.replyToEmail(
+        messageId: 'msg1',
+        comment: 'Thanks',
+        toAddresses: ['to@example.com'],
+      );
+
+      final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      final message = body['message'] as Map;
+      expect(message.containsKey('ccRecipients'), isFalse);
+    });
+
+    test('sends multiple Cc recipients in reply', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _replyVoidResp('msg1'));
+
+      await datasource.replyToEmail(
+        messageId: 'msg1',
+        comment: 'Thanks',
+        toAddresses: ['to@example.com'],
+        ccAddresses: ['cc1@example.com', 'cc2@example.com'],
+      );
+
+      final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      final cc = (body['message'] as Map)['ccRecipients'] as List;
+      expect(cc, hasLength(2));
+    });
+
+    test('posts to replyAll endpoint when replyAll is true', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => Response<void>(
+                statusCode: 202,
+                requestOptions: RequestOptions(path: '/me/messages/msg1/replyAll'),
+              ));
+
+      await datasource.replyToEmail(
+        messageId: 'msg1',
+        comment: 'Thanks all',
+        replyAll: true,
+        toAddresses: ['a@example.com', 'b@example.com'],
+        ccAddresses: ['cc@example.com'],
+      );
+
+      final captured = verify(mockDio.post<void>(captureAny, data: captureAnyNamed('data')))
+          .captured;
+      expect(captured[0], contains('replyAll'));
+      final message = (captured[1] as Map<String, dynamic>)['message'] as Map;
+      expect((message['ccRecipients'] as List), hasLength(1));
+    });
+  });
 }

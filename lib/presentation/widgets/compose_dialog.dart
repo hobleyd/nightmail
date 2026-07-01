@@ -22,6 +22,7 @@ import '../blocs/ai/ai_compose_state.dart';
 import '../blocs/compose/compose_bloc.dart';
 import '../blocs/compose/compose_event.dart';
 import '../blocs/compose/compose_state.dart';
+import 'compose_body_builder.dart';
 import 'html_email_editor.dart';
 import 'recipient_input_field.dart';
 
@@ -249,104 +250,17 @@ class _ComposeFormState extends State<ComposeForm> {
     return widget.defaultComposeFormat;
   }
 
-  static const _forwardSeparator = '---------- Forwarded message ---------';
+  String _buildInitialPlainBody() => ComposeBodyBuilder.buildInitialPlainBody(
+        originalEmail: widget.originalEmail,
+        draftEmail: widget.draftEmail,
+        mode: widget.mode,
+      );
 
-  // Plain text body for plain-text mode.
-  String _buildInitialPlainBody() {
-    if (widget.draftEmail != null) {
-      final draft = widget.draftEmail!;
-      return draft.bodyType == EmailBodyType.html
-          ? _stripHtml(draft.body)
-          : draft.body;
-    }
-    final email = widget.originalEmail;
-    if (email == null) return '';
-
-    final from = _formatFrom(email);
-
-    if (widget.mode == ComposeMode.forward) {
-      final bodyText = email.bodyType == EmailBodyType.html
-          ? _stripHtml(email.body)
-          : email.body;
-      return '\n\n$_forwardSeparator\n'
-          'From: $from\n'
-          'Date: ${_formatDate(email.receivedDateTime)}\n'
-          'Subject: ${email.subject}\n\n'
-          '$bodyText';
-    }
-
-    if (widget.mode != ComposeMode.reply && widget.mode != ComposeMode.replyAll) {
-      return '';
-    }
-
-    final header = 'On ${_formatDate(email.receivedDateTime)}, $from wrote:';
-    if (email.bodyType == EmailBodyType.html) {
-      final bodyText = _stripHtml(email.body);
-      return '\n\n---\n\n$header\n\n$bodyText';
-    } else {
-      final quoted = email.body
-          .split('\n')
-          .map((line) => '> $line')
-          .join('\n');
-      return '\n\n$header\n$quoted';
-    }
-  }
-
-  // HTML body for HTML-editor mode.
-  String _buildInitialHtmlBody() {
-    if (widget.draftEmail != null) {
-      final draft = widget.draftEmail!;
-      return draft.bodyType == EmailBodyType.html
-          ? draft.body
-          : _plainToHtml(draft.body);
-    }
-    final email = widget.originalEmail;
-    if (email == null) return '';
-
-    final from = _formatFrom(email);
-    final dateStr = _formatDate(email.receivedDateTime);
-    final fromEsc = const HtmlEscape().convert(from);
-    final dateEsc = const HtmlEscape().convert(dateStr);
-
-    if (widget.mode == ComposeMode.forward) {
-      final htmlBody = email.bodyType == EmailBodyType.html
-          ? email.body
-          : _plainToHtml(email.body);
-      final subjectEsc = const HtmlEscape().convert(email.subject);
-      final fromHeaderEsc = const HtmlEscape().convert(from);
-      return '<div><br></div>'
-          '<div>---------- Forwarded message ---------</div>'
-          '<div>From: $fromHeaderEsc</div>'
-          '<div>Date: $dateEsc</div>'
-          '<div>Subject: $subjectEsc</div>'
-          '<div><br></div>'
-          '$htmlBody';
-    }
-
-    if (widget.mode != ComposeMode.reply && widget.mode != ComposeMode.replyAll) {
-      return '';
-    }
-
-    final htmlBody = email.bodyType == EmailBodyType.html
-        ? email.body
-        : _plainToHtml(email.body);
-
-    return '<div><br></div>'
-        '<div>---------- Original Message ----------</div>'
-        '<div>From: $fromEsc</div>'
-        '<div>Date: $dateEsc</div>'
-        '<div><br></div>'
-        '<blockquote style="margin:0 0 0 0;border-left:2px solid #ccc;padding-left:12px;color:#666">'
-        '$htmlBody'
-        '</blockquote>';
-  }
-
-  String _formatFrom(Email email) {
-    final fromName = email.from.name;
-    return (fromName != null && fromName.isNotEmpty)
-        ? '$fromName <${email.from.address}>'
-        : email.from.address;
-  }
+  String _buildInitialHtmlBody() => ComposeBodyBuilder.buildInitialHtmlBody(
+        originalEmail: widget.originalEmail,
+        draftEmail: widget.draftEmail,
+        mode: widget.mode,
+      );
 
   List<String> _parseAddresses(String text) {
     if (text.trim().isEmpty) return [];
@@ -548,6 +462,9 @@ class _ComposeFormState extends State<ComposeForm> {
       return;
     }
 
+    final editorState = _htmlEditorKey.currentState;
+    if (editorState != null) await editorState.hide();
+
     final action = await showDialog<_CloseAction>(
       context: context,
       barrierDismissible: true,
@@ -563,6 +480,7 @@ class _ComposeFormState extends State<ComposeForm> {
         if (error == null) {
           widget.onClose();
         } else {
+          if (editorState != null) await editorState.show();
           ScaffoldMessenger.of(this.context).showSnackBar(
             SnackBar(
               content: Text('Failed to save draft: $error'),
@@ -575,12 +493,16 @@ class _ComposeFormState extends State<ComposeForm> {
         await _deleteDraft();
         if (mounted) widget.onClose();
       case null:
+        if (editorState != null) await editorState.show();
         break;
     }
   }
 
   // Switch from HTML to plain text — asks for confirmation because it's lossy.
   Future<void> _switchToPlainText(BuildContext context) async {
+    final editorState = _htmlEditorKey.currentState;
+    if (editorState != null) await editorState.hide();
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -620,7 +542,13 @@ class _ComposeFormState extends State<ComposeForm> {
         ],
       ),
     );
-    if (confirmed != true || !mounted) return;
+    if (confirmed != true) {
+      if (mounted && editorState != null) await editorState.show();
+      return;
+    }
+    if (!mounted) return;
+    // confirmed — the HTML editor will be replaced by a plain text field,
+    // so there's no need to un-hide it.
 
     final plainText = _stripHtml(_htmlBodyCache);
     // Remove inline attachments — they don't apply in plain text mode.
@@ -651,9 +579,13 @@ class _ComposeFormState extends State<ComposeForm> {
   Future<void> _onAiCompose(BuildContext context) async {
     // Snapshot the caret BEFORE the prompt dialog steals focus, so the draft
     // streams in where the user placed the cursor (e.g. above a quoted reply).
-    await _htmlEditorKey.currentState?.saveSelection();
+    final editorState = _htmlEditorKey.currentState;
+    await editorState?.saveSelection();
 
+    if (editorState != null) await editorState.hide();
     final instruction = await _promptForAiInstruction(context);
+    if (mounted && editorState != null) await editorState.show();
+
     if (instruction == null || instruction.trim().isEmpty || !mounted) return;
 
     // AI streaming renders through the HTML (webview) editor; force it on so the
@@ -1064,6 +996,9 @@ class _ComposeFormState extends State<ComposeForm> {
 
   Future<void> _onLinkRequested(BuildContext context) async {
     final urlController = TextEditingController();
+    final editorState = _htmlEditorKey.currentState;
+    if (editorState != null) await editorState.hide();
+
     final url = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
@@ -1110,6 +1045,7 @@ class _ComposeFormState extends State<ComposeForm> {
       ),
     );
     urlController.dispose();
+    if (mounted && editorState != null) await editorState.show();
     if (url != null && url.isNotEmpty) {
       _htmlEditorKey.currentState?.insertLink(url);
     }

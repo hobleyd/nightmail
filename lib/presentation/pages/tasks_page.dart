@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/todo_task.dart';
 import '../../domain/entities/todo_task_list.dart';
+import '../blocs/account/account_cubit.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
 import '../blocs/email_detail/email_detail_event.dart';
 import '../blocs/tasks/tasks_bloc.dart';
@@ -64,7 +65,8 @@ class TasksDayPanel extends StatelessWidget {
                         tasks: tasks,
                         selectedListId: selectedListId,
                       ),
-                    TasksError(:final message) => _ErrorView(message: message),
+                    TasksError(:final message, :final requiresReauth) =>
+                      _ErrorView(message: message, requiresReauth: requiresReauth),
                   };
                 },
               ),
@@ -455,9 +457,10 @@ class _EmptyPlaceholder extends StatelessWidget {
 }
 
 class _ErrorView extends StatelessWidget {
-  const _ErrorView({required this.message});
+  const _ErrorView({required this.message, this.requiresReauth = false});
 
   final String message;
+  final bool requiresReauth;
 
   @override
   Widget build(BuildContext context) {
@@ -465,10 +468,31 @@ class _ErrorView extends StatelessWidget {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Text(
-          message,
-          style: TextStyle(fontSize: 12, color: c.textMuted),
-          textAlign: TextAlign.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              requiresReauth
+                  ? 'Google Tasks requires re-authorization.'
+                  : message,
+              style: TextStyle(fontSize: 12, color: c.textMuted),
+              textAlign: TextAlign.center,
+            ),
+            if (requiresReauth) ...[
+              const SizedBox(height: 12),
+              TextButton(
+                onPressed: () {
+                  final accountCubit = context.read<AccountCubit>();
+                  final tasksBloc = context.read<TasksBloc>();
+                  accountCubit
+                      .reauthenticateActiveOAuth()
+                      .then((_) => tasksBloc.add(const TasksLoadRequested()))
+                      .catchError((_) {});
+                },
+                child: const Text('Re-authorize'),
+              ),
+            ],
+          ],
         ),
       ),
     );

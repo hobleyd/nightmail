@@ -230,7 +230,7 @@ class GoogleTasksDatasourceImpl implements TasksRemoteDatasource {
         e.type == DioExceptionType.receiveTimeout) {
       return NetworkException(message: e.message ?? 'Network error');
     }
-    if (statusCode == 401) {
+    if (statusCode == 401 || statusCode == 403) {
       return const AuthException(message: 'Authentication required');
     }
     return ServerException(

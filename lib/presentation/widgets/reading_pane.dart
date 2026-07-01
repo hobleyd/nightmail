@@ -189,6 +189,7 @@ class _EmailViewState extends State<_EmailView> {
         Expanded(
           child: _pdfPreviewPath != null
               ? _PdfPreview(
+                  key: ValueKey(_pdfPreviewPath),
                   filePath: _pdfPreviewPath!,
                   fileName: _pdfPreviewName!,
                   onClose: _closePdfPreview,
@@ -2063,6 +2064,7 @@ class _EmailBody extends StatelessWidget {
 
 class _PdfPreview extends StatefulWidget {
   const _PdfPreview({
+    super.key,
     required this.filePath,
     required this.fileName,
     required this.onClose,

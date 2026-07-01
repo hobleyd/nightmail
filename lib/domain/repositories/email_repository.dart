@@ -58,6 +58,7 @@ abstract interface class EmailRepository {
   Future<Either<Failure, Unit>> forwardEmail({
     required String messageId,
     required List<String> toAddresses,
+    List<String> ccAddresses = const [],
     required String comment,
     List<String> excludedAttachmentIds = const [],
     EmailBodyType bodyType = EmailBodyType.text,

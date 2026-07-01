@@ -106,4 +106,23 @@ class AppSettings {
       await file.writeAsString(domains.join('\n'));
     } catch (_) {}
   }
+
+  static const String _activeViewFile = 'active_view';
+
+  Future<String> loadActiveView() async {
+    try {
+      final file = await _file(_activeViewFile);
+      if (await file.exists()) {
+        return (await file.readAsString()).trim();
+      }
+    } catch (_) {}
+    return 'email';
+  }
+
+  Future<void> saveActiveView(String view) async {
+    try {
+      final file = await _file(_activeViewFile);
+      await file.writeAsString(view);
+    } catch (_) {}
+  }
 }

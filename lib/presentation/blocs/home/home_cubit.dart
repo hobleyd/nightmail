@@ -1,10 +1,25 @@
 import 'package:equatable/equatable.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../core/settings/app_settings.dart';
+
 enum HomeView { email, calendar, tasks, ai }
 
 class HomeCubit extends Cubit<HomeState> {
-  HomeCubit() : super(const HomeState());
+  HomeCubit(this._appSettings) : super(const HomeState());
+
+  final AppSettings _appSettings;
+
+  Future<void> load() async {
+    final raw = await _appSettings.loadActiveView();
+    final view = HomeView.values.firstWhere(
+      (v) => v.name == raw,
+      orElse: () => HomeView.email,
+    );
+    if (view != HomeView.email) {
+      emit(state.copyWith(view: view));
+    }
+  }
 
   final Map<String, String> _savedFolders = {};
   final Map<String, Set<String>> _savedExpanded = {};
@@ -44,18 +59,22 @@ class HomeCubit extends Cubit<HomeState> {
 
   void showCalendar() {
     emit(state.copyWith(view: HomeView.calendar));
+    _appSettings.saveActiveView('calendar');
   }
 
   void showTasks() {
     emit(state.copyWith(view: HomeView.tasks));
+    _appSettings.saveActiveView('tasks');
   }
 
   void showAi() {
     emit(state.copyWith(view: HomeView.ai));
+    _appSettings.saveActiveView('ai');
   }
 
   void showEmail() {
     emit(state.copyWith(view: HomeView.email));
+    _appSettings.saveActiveView('email');
   }
 
   void setAccountLabel(String label) {

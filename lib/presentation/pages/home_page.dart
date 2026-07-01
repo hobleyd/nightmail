@@ -11,6 +11,7 @@ import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email_folder.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/usecases/get_email.dart';
+import '../../core/settings/app_settings.dart';
 import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/calendar/calendar_bloc.dart';
@@ -53,7 +54,7 @@ class HomePage extends StatelessWidget {
         ),
         BlocProvider(create: (_) => sl<EmailListBloc>()),
         BlocProvider(create: (_) => sl<EmailDetailBloc>()),
-        BlocProvider(create: (_) => HomeCubit()),
+        BlocProvider(create: (_) => HomeCubit(sl<AppSettings>())..load()),
         BlocProvider(create: (_) => sl<AiFolderCubit>()),
         BlocProvider(create: (_) => sl<CalendarBloc>()),
         BlocProvider(

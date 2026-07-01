@@ -100,15 +100,15 @@ class _HtmlViewWidgetState extends State<HtmlViewWidget>
 
   @override
   Widget build(BuildContext context) {
-    return NotificationListener<SizeChangedLayoutNotification>(
-      onNotification: (_) {
-        _reportPosition();
-        _reportSize();
-        return true;
+    return LayoutBuilder(
+      builder: (_, __) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _reportPosition();
+          _reportSize();
+        });
+        return SizedBox.expand(key: _key);
       },
-      child: SizeChangedLayoutNotifier(
-        child: SizedBox.expand(key: _key),
-      ),
     );
   }
 

@@ -8,52 +8,16 @@
 
 #include "webkit_view.h"
 
-// Expose for webkit_view.cc overlay child positioning.
-extern gboolean html_view_get_child_position(GtkOverlay*, GtkWidget*,
-                                              GdkRectangle*, gpointer);
-
 struct _HtmlViewPlugin {
   GObject parent_instance;
 
-  GtkOverlay* overlay;
+  GtkOverlay* overlay;   // resolved at registration time from FlView's parent
   FlBinaryMessenger* messenger;
   std::unordered_map<gint64, std::unique_ptr<WebkitView>>* views;
   gint64 next_id;
 };
 
 G_DEFINE_TYPE(HtmlViewPlugin, html_view_plugin, G_TYPE_OBJECT)
-
-// ---------------------------------------------------------------------------
-// Overlay setup (run once on first createView)
-// ---------------------------------------------------------------------------
-
-static void setup_overlay(HtmlViewPlugin* self, FlPluginRegistrar* registrar) {
-  if (self->overlay) return;
-
-  FlView* fl_view = fl_plugin_registrar_get_view(registrar);
-  if (!fl_view) return;
-
-  GtkWidget* window = gtk_widget_get_toplevel(GTK_WIDGET(fl_view));
-  if (!GTK_IS_WINDOW(window)) return;
-
-  GtkWidget* current_child = gtk_bin_get_child(GTK_BIN(window));
-  if (!current_child) return;
-
-  GtkWidget* overlay = gtk_overlay_new();
-
-  g_object_ref(current_child);
-  gtk_container_remove(GTK_CONTAINER(window), current_child);
-  gtk_container_add(GTK_CONTAINER(overlay), current_child);
-  g_object_unref(current_child);
-
-  gtk_container_add(GTK_CONTAINER(window), overlay);
-  gtk_widget_show(overlay);
-
-  self->overlay = GTK_OVERLAY(overlay);
-
-  g_signal_connect(self->overlay, "get-child-position",
-                   G_CALLBACK(html_view_get_child_position), nullptr);
-}
 
 // ---------------------------------------------------------------------------
 // Method call handler
@@ -68,9 +32,10 @@ static void method_call_handler(FlMethodChannel*,
   if (strcmp(method, "createView") == 0) {
     if (!self->overlay) {
       fl_method_call_respond_error(method_call, "no_overlay",
-                                   "GtkOverlay not initialised", nullptr, nullptr);
+                                   "GtkOverlay not found", nullptr, nullptr);
       return;
     }
+
     gint64 id = self->next_id++;
     auto view = std::make_unique<WebkitView>(id, self->overlay, self->messenger);
     (*self->views)[id] = std::move(view);
@@ -104,9 +69,9 @@ static void html_view_plugin_class_init(HtmlViewPluginClass* klass) {
 }
 
 static void html_view_plugin_init(HtmlViewPlugin* self) {
-  self->overlay  = nullptr;
-  self->next_id  = 1;
-  self->views    = new std::unordered_map<gint64, std::unique_ptr<WebkitView>>();
+  self->overlay   = nullptr;
+  self->next_id   = 1;
+  self->views     = new std::unordered_map<gint64, std::unique_ptr<WebkitView>>();
   self->messenger = nullptr;
 }
 
@@ -114,14 +79,22 @@ static void html_view_plugin_init(HtmlViewPlugin* self) {
 // Public registration entry point
 // ---------------------------------------------------------------------------
 
+FLUTTER_PLUGIN_EXPORT
 void html_view_plugin_register_with_registrar(FlPluginRegistrar* registrar) {
   HtmlViewPlugin* plugin = HTML_VIEW_PLUGIN(
       g_object_new(html_view_plugin_get_type(), nullptr));
 
   plugin->messenger = fl_plugin_registrar_get_messenger(registrar);
 
-  // Set up GtkOverlay inside the Flutter window.
-  setup_overlay(plugin, registrar);
+  // Find the GtkOverlay that wraps the FlView. my_application.cc inserts it
+  // between the GtkWindow and the FlView before fl_register_plugins() is called.
+  FlView* fl_view = fl_plugin_registrar_get_view(registrar);
+  if (fl_view) {
+    GtkWidget* parent = gtk_widget_get_parent(GTK_WIDGET(fl_view));
+    if (GTK_IS_OVERLAY(parent)) {
+      plugin->overlay = GTK_OVERLAY(parent);
+    }
+  }
 
   g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
   g_autoptr(FlMethodChannel) channel = fl_method_channel_new(

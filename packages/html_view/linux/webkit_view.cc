@@ -6,11 +6,6 @@
 
 // ---------------------------------------------------------------------------
 // JS bridge injected before any page scripts.
-// editor.html's _flutterNotify() falls back to window[name].postMessage(),
-// which our injected objects forward via the webkit message handler.
-//
-// NOTE: We use \x01 (SOH) as separator instead of \x00 because
-// jsc_value_to_string() returns a C string that truncates at null bytes.
 // ---------------------------------------------------------------------------
 static const char* kJsBridge = R"JS(
 (function() {
@@ -58,7 +53,7 @@ static void on_decide_policy(WebKitWebView*,
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// JS message handler
 // ---------------------------------------------------------------------------
 
 static void on_js_message(WebKitUserContentManager*,
@@ -83,22 +78,28 @@ static void on_js_message(WebKitUserContentManager*,
   g_free(str);
 }
 
-// Called by GtkOverlay to position each overlay child.
-gboolean html_view_get_child_position(GtkOverlay* /* overlay */,
+// ---------------------------------------------------------------------------
+// GtkOverlay get-child-position: position this view's web_view widget.
+// Returns TRUE only for our own widget; FALSE lets other handlers run.
+// ---------------------------------------------------------------------------
+
+static gboolean on_get_child_position(GtkOverlay*,
                                       GtkWidget* widget,
                                       GdkRectangle* alloc,
-                                      gpointer /* data */) {
-  WebkitView* view =
-      static_cast<WebkitView*>(g_object_get_data(G_OBJECT(widget), "html_view_ptr"));
-  if (!view) return FALSE;
-  alloc->x = view->pos_x;
-  alloc->y = view->pos_y;
+                                      gpointer data) {
+  WebkitView* view = static_cast<WebkitView*>(data);
+  if (widget != GTK_WIDGET(view->web_view)) return FALSE;
+  alloc->x      = view->pos_x;
+  alloc->y      = view->pos_y;
   alloc->width  = MAX(1, view->width);
   alloc->height = MAX(1, view->height);
   return TRUE;
 }
 
-// Eval completion callback.
+// ---------------------------------------------------------------------------
+// Eval completion callback
+// ---------------------------------------------------------------------------
+
 struct EvalClosure {
   WebkitView* view;
   FlMethodCall* call;
@@ -142,17 +143,16 @@ static void on_eval_done(GObject* source,
 WebkitView::WebkitView(gint64 id_, GtkOverlay* overlay_,
                        FlBinaryMessenger* messenger)
     : id(id_),
+      web_view(nullptr),
       overlay(overlay_),
       pending_eval(nullptr),
       pos_x(0), pos_y(0), width(0), height(0),
       alive(TRUE) {
-  // Create user content manager with the HtmlView message handler.
   WebKitUserContentManager* ucm = webkit_user_content_manager_new();
   webkit_user_content_manager_register_script_message_handler(ucm, "HtmlView");
   g_signal_connect(ucm, "script-message-received::HtmlView",
                    G_CALLBACK(on_js_message), this);
 
-  // Inject bridge script at document creation (before any page script).
   WebKitUserScript* script = webkit_user_script_new(
       kJsBridge,
       WEBKIT_USER_CONTENT_INJECT_TOP_FRAME,
@@ -161,7 +161,6 @@ WebkitView::WebkitView(gint64 id_, GtkOverlay* overlay_,
   webkit_user_content_manager_add_script(ucm, script);
   webkit_user_script_unref(script);
 
-  // Create WebKitWebView.
   web_view = WEBKIT_WEB_VIEW(
       webkit_web_view_new_with_user_content_manager(ucm));
   g_object_unref(ucm);
@@ -169,18 +168,19 @@ WebkitView::WebkitView(gint64 id_, GtkOverlay* overlay_,
   WebKitSettings* settings = webkit_web_view_get_settings(web_view);
   webkit_settings_set_enable_javascript(settings, TRUE);
   webkit_settings_set_enable_developer_extras(settings, FALSE);
+  webkit_settings_set_hardware_acceleration_policy(
+      settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_NEVER);
 
-  // Intercept http/https/mailto link navigations.
   g_signal_connect(web_view, "decide-policy",
                    G_CALLBACK(on_decide_policy), this);
 
-  // Tag the GtkWidget so get-child-position can look us up.
-  g_object_set_data(G_OBJECT(web_view), "html_view_ptr", this);
-
+  // Position this widget via the overlay's get-child-position signal.
+  // The signal uses an accumulator that stops on the first TRUE return, so
+  // each view's handler only fires for its own web_view widget.
+  g_signal_connect(overlay, "get-child-position",
+                   G_CALLBACK(on_get_child_position), this);
   gtk_overlay_add_overlay(overlay, GTK_WIDGET(web_view));
-  // Disable input pass-through (overlay child captures events).
-  gtk_overlay_set_overlay_pass_through(overlay, GTK_WIDGET(web_view), FALSE);
-  gtk_widget_show(GTK_WIDGET(web_view));
+  // Don't show yet — wait until we have valid dimensions from setSize.
 
   // Method channel: html_view/<id>
   std::string ch_name = "html_view/" + std::to_string(id);
@@ -211,6 +211,7 @@ WebkitView::WebkitView(gint64 id_, GtkOverlay* overlay_,
 
 WebkitView::~WebkitView() {
   alive = FALSE;
+
   if (channel) {
     fl_method_channel_set_method_call_handler(channel, nullptr, nullptr, nullptr);
     g_object_unref(channel);
@@ -220,10 +221,13 @@ WebkitView::~WebkitView() {
     g_object_unref(event_channel);
     event_channel = nullptr;
   }
-  if (web_view) {
-    // Remove from overlay.
+
+  if (overlay && web_view) {
+    g_signal_handlers_disconnect_by_data(G_OBJECT(overlay), this);
     gtk_container_remove(GTK_CONTAINER(overlay), GTK_WIDGET(web_view));
+    // gtk_container_remove drops the overlay's ref; web_view is destroyed.
     web_view = nullptr;
+    overlay = nullptr;
   }
 }
 
@@ -270,7 +274,6 @@ void WebkitView::HandleMethod(FlMethodCall* method_call) {
   } else if (strcmp(name, "setPosition") == 0 &&
              fl_value_get_type(args) == FL_VALUE_TYPE_LIST &&
              fl_value_get_length(args) == 3) {
-    // Args: [x_logical, y_logical, dpr] — GTK uses logical pixels.
     double x = fl_value_get_float(fl_value_get_list_value(args, 0));
     double y = fl_value_get_float(fl_value_get_list_value(args, 1));
     pos_x = static_cast<gint>(x);
@@ -293,6 +296,18 @@ void WebkitView::HandleMethod(FlMethodCall* method_call) {
   }
 }
 
+void WebkitView::UpdatePosition() {
+  if (!overlay || !web_view) return;
+
+  // Show the widget once we have valid dimensions.
+  if (width > 0 && height > 0 && !gtk_widget_get_visible(GTK_WIDGET(web_view))) {
+    gtk_widget_show(GTK_WIDGET(web_view));
+  }
+
+  // Ask the GtkOverlay to re-query child positions (calls on_get_child_position).
+  gtk_widget_queue_resize(GTK_WIDGET(overlay));
+}
+
 void WebkitView::DoLoadAsset(const std::string& key, FlMethodCall* call) {
   std::string path = AssetPath(key);
   std::string uri  = "file://" + path;
@@ -301,16 +316,11 @@ void WebkitView::DoLoadAsset(const std::string& key, FlMethodCall* call) {
 }
 
 void WebkitView::DoEval(const std::string& js, FlMethodCall* call) {
-  g_object_ref(call);  // keep alive across async
+  g_object_ref(call);
   auto* closure = new EvalClosure{this, call};
   webkit_web_view_evaluate_javascript(web_view, js.c_str(), -1,
                                       nullptr, nullptr, nullptr,
                                       on_eval_done, closure);
-}
-
-void WebkitView::UpdatePosition() {
-  if (!overlay) return;
-  gtk_widget_queue_resize(GTK_WIDGET(overlay));
 }
 
 void WebkitView::EmitEvent(const char* type, const char* value) {

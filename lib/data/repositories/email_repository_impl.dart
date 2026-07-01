@@ -207,6 +207,7 @@ class EmailRepositoryImpl implements EmailRepository {
   Future<Either<Failure, Unit>> forwardEmail({
     required String messageId,
     required List<String> toAddresses,
+    List<String> ccAddresses = const [],
     required String comment,
     List<String> excludedAttachmentIds = const [],
     EmailBodyType bodyType = EmailBodyType.text,
@@ -216,6 +217,7 @@ class EmailRepositoryImpl implements EmailRepository {
       await _accountManager.emailDatasource.forwardEmail(
         messageId: messageId,
         toAddresses: toAddresses,
+        ccAddresses: ccAddresses,
         comment: comment,
         excludedAttachmentIds: excludedAttachmentIds,
         bodyType: bodyType,

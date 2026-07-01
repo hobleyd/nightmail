@@ -997,6 +997,7 @@ class GraphApiDatasourceImpl
   Future<void> forwardEmail({
     required String messageId,
     required List<String> toAddresses,
+    List<String> ccAddresses = const [],
     required String comment,
     List<String> excludedAttachmentIds = const [],
     EmailBodyType bodyType = EmailBodyType.text,
@@ -1005,11 +1006,15 @@ class GraphApiDatasourceImpl
     try {
       // Use message.body instead of comment so Graph doesn't auto-append the
       // original (which would double-quote since we've already embedded it).
-      final messageBody = {
+      final messageBody = <String, dynamic>{
         'body': {
           'contentType': bodyType == EmailBodyType.html ? 'html' : 'text',
           'content': comment,
         },
+        if (ccAddresses.isNotEmpty)
+          'ccRecipients': ccAddresses
+              .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
+              .toList(),
       };
       final toRecipients = toAddresses
           .map((a) => {'emailAddress': {'address': _bareEmail(a)}})

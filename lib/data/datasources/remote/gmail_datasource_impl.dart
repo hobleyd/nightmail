@@ -842,16 +842,10 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         replyAll: replyAll,
       );
       if (toAddresses.isNotEmpty) {
-        builder.to = [
-          ...(builder.to ?? []),
-          ...toAddresses.map((a) => MailAddress(null, a)),
-        ];
+        builder.to = toAddresses.map((a) => MailAddress(null, a)).toList();
       }
       if (ccAddresses.isNotEmpty) {
-        builder.cc = [
-          ...(builder.cc ?? []),
-          ...ccAddresses.map((a) => MailAddress(null, a)),
-        ];
+        builder.cc = ccAddresses.map((a) => MailAddress(null, a)).toList();
       }
       if (bodyType == EmailBodyType.html) {
         builder.addTextHtml(comment);
@@ -881,6 +875,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   Future<void> forwardEmail({
     required String messageId,
     required List<String> toAddresses,
+    List<String> ccAddresses = const [],
     required String comment,
     List<String> excludedAttachmentIds = const [],
     EmailBodyType bodyType = EmailBodyType.text,
@@ -913,6 +908,10 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       final builder = MessageBuilder()
         ..to = toAddresses.map((e) => MailAddress(null, e)).toList()
         ..subject = subject;
+
+      if (ccAddresses.isNotEmpty) {
+        builder.cc = ccAddresses.map((e) => MailAddress(null, e)).toList();
+      }
 
       if (fromEmail.isNotEmpty) {
         builder.from = [MailAddress(null, fromEmail)];

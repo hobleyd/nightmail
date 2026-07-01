@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mockito/annotations.dart';
@@ -5,6 +7,43 @@ import 'package:mockito/mockito.dart';
 import 'package:nightmail/data/datasources/remote/gmail_datasource_impl.dart';
 
 import 'gmail_datasource_impl_test.mocks.dart';
+
+String _padBase64(String s) {
+  final padding = (4 - s.length % 4) % 4;
+  return s + ('=' * padding);
+}
+
+/// Returns a base64url-encoded (no padding) minimal raw MIME email.
+String _rawMime({
+  String from = 'alice@example.com',
+  String to = 'me@example.com',
+  String subject = 'Test Subject',
+  String body = 'Hello',
+}) {
+  final mime = 'From: $from\r\nTo: $to\r\nSubject: $subject\r\n'
+      'MIME-Version: 1.0\r\nContent-Type: text/plain\r\n\r\n$body';
+  return base64Url.encode(utf8.encode(mime)).replaceAll('=', '');
+}
+
+/// Minimal "full" format message JSON for the GET messages/{id}?format=full mock.
+Map<String, dynamic> _fullMessage({String subject = 'Test Subject'}) => {
+      'threadId': 'thread1',
+      'payload': {
+        'mimeType': 'text/plain',
+        'headers': [
+          {'name': 'Subject', 'value': subject},
+        ],
+        'parts': <dynamic>[],
+      },
+    };
+
+Response<Map<String, dynamic>> _jsonResp(Map<String, dynamic> data, String path) =>
+    Response(data: data, statusCode: 200, requestOptions: RequestOptions(path: path));
+
+Response<void> _sendResp() => Response<void>(
+      statusCode: 200,
+      requestOptions: RequestOptions(path: '/users/me/messages/send'),
+    );
 
 Response<Map<String, dynamic>> _labelsResp(List<Map<String, dynamic>> labels) =>
     Response(
@@ -567,6 +606,142 @@ void main() {
         datasource.deleteEmail('msg1'),
         throwsA(isA<DioException>()),
       );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // forwardEmail — To and Cc recipients in raw MIME
+  // ---------------------------------------------------------------------------
+
+  void _stubGetByUrl(Map<String, dynamic> Function(String url) responder) {
+    when(mockDio.get<Map<String, dynamic>>(any)).thenAnswer((inv) async {
+      final url = inv.positionalArguments[0] as String;
+      return _jsonResp(responder(url), url);
+    });
+    when(mockDio.get<Map<String, dynamic>>(any,
+            queryParameters: anyNamed('queryParameters')))
+        .thenAnswer((inv) async {
+      final url = inv.positionalArguments[0] as String;
+      return _jsonResp(responder(url), url);
+    });
+  }
+
+  group('GmailDatasourceImpl.forwardEmail — To recipients in MIME', () {
+    test('sets To header in raw MIME', () async {
+      _stubGetByUrl((url) => url.contains('profile')
+          ? {'emailAddress': 'me@example.com'}
+          : _fullMessage());
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _sendResp());
+
+      await datasource.forwardEmail(
+        messageId: 'msg1',
+        toAddresses: ['alice@example.com'],
+        comment: 'FYI',
+      );
+
+      final data = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      final rawMime =
+          utf8.decode(base64Url.decode(_padBase64(data['raw'] as String)));
+      expect(rawMime.toLowerCase(), contains('to: alice@example.com'));
+    });
+  });
+
+  group('GmailDatasourceImpl.forwardEmail — Cc recipients in MIME', () {
+    test('includes Cc header in raw MIME when ccAddresses is non-empty', () async {
+      _stubGetByUrl((url) => url.contains('profile')
+          ? {'emailAddress': 'me@example.com'}
+          : _fullMessage());
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _sendResp());
+
+      await datasource.forwardEmail(
+        messageId: 'msg1',
+        toAddresses: ['to@example.com'],
+        ccAddresses: ['cc@example.com'],
+        comment: 'FYI',
+      );
+
+      final data = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      final rawMime =
+          utf8.decode(base64Url.decode(_padBase64(data['raw'] as String)));
+      expect(rawMime.toLowerCase(), contains('cc: cc@example.com'));
+    });
+
+    test('omits Cc header when ccAddresses is empty', () async {
+      _stubGetByUrl((url) => url.contains('profile')
+          ? {'emailAddress': 'me@example.com'}
+          : _fullMessage());
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _sendResp());
+
+      await datasource.forwardEmail(
+        messageId: 'msg1',
+        toAddresses: ['to@example.com'],
+        comment: 'FYI',
+      );
+
+      final data = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      final rawMime =
+          utf8.decode(base64Url.decode(_padBase64(data['raw'] as String)));
+      expect(rawMime.toLowerCase(), isNot(contains('\r\ncc:')));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // replyToEmail — To/Cc in raw MIME, no duplicates
+  // ---------------------------------------------------------------------------
+
+  group('GmailDatasourceImpl.replyToEmail — Cc recipients in MIME', () {
+    test('includes Cc header in raw MIME when ccAddresses is non-empty', () async {
+      _stubGetByUrl((url) => url.contains('profile')
+          ? {'emailAddress': 'me@example.com'}
+          : {'raw': _rawMime(), 'threadId': 'thread1'});
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _sendResp());
+
+      await datasource.replyToEmail(
+        messageId: 'msg1',
+        comment: 'Thanks',
+        toAddresses: ['alice@example.com'],
+        ccAddresses: ['cc@example.com'],
+      );
+
+      final data = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      final rawMime =
+          utf8.decode(base64Url.decode(_padBase64(data['raw'] as String)));
+      expect(rawMime.toLowerCase(), contains('cc: cc@example.com'));
+    });
+  });
+
+  group('GmailDatasourceImpl.replyToEmail — To not duplicated', () {
+    test('To address appears only once in raw MIME (not duplicated vs prepareReplyToMessage)', () async {
+      _stubGetByUrl((url) => url.contains('profile')
+          ? {'emailAddress': 'me@example.com'}
+          : {'raw': _rawMime(from: 'alice@example.com'), 'threadId': 'thread1'});
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _sendResp());
+
+      await datasource.replyToEmail(
+        messageId: 'msg1',
+        comment: 'Thanks',
+        toAddresses: ['alice@example.com'],
+      );
+
+      final data = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      final rawMime =
+          utf8.decode(base64Url.decode(_padBase64(data['raw'] as String)));
+      // alice@example.com should appear in To exactly once
+      final toLineMatches =
+          RegExp(r'to:.*alice@example\.com', caseSensitive: false)
+              .allMatches(rawMime)
+              .length;
+      expect(toLineMatches, equals(1));
     });
   });
 }

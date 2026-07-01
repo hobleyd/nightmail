@@ -1135,21 +1135,15 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   }) async {
     try {
       final fromEmail = await _getUserEmail();
-      final builder = MessageBuilder()
-        ..from = [MailAddress(null, fromEmail)]
-        ..to = toAddresses.map((a) => MailAddress(null, a)).toList()
-        ..cc = ccAddresses.map((a) => MailAddress(null, a)).toList()
-        ..subject = subject;
-      if (bodyType == EmailBodyType.html) {
-        builder.addTextHtml(body);
-      } else {
-        builder.addTextPlain(body);
-      }
-      await _addAttachmentsToBuilder(builder, newAttachments);
-      final mime = builder.buildMimeMessage();
-      final encoded = base64Url
-          .encode(utf8.encode(mime.renderMessage()))
-          .replaceAll('=', '');
+      final encoded = await compute(_buildDraftRawBase64, _DraftMimeParams(
+        fromAddress: fromEmail,
+        toAddresses: toAddresses,
+        ccAddresses: ccAddresses,
+        subject: subject,
+        body: body,
+        isHtml: bodyType == EmailBodyType.html,
+        attachments: newAttachments,
+      ));
       final resp = await _dio.post<Map<String, dynamic>>(
         '/users/me/drafts',
         data: {'message': {'raw': encoded}},
@@ -1174,21 +1168,15 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   }) async {
     try {
       final fromEmail = await _getUserEmail();
-      final builder = MessageBuilder()
-        ..from = [MailAddress(null, fromEmail)]
-        ..to = toAddresses.map((a) => MailAddress(null, a)).toList()
-        ..cc = ccAddresses.map((a) => MailAddress(null, a)).toList()
-        ..subject = subject;
-      if (bodyType == EmailBodyType.html) {
-        builder.addTextHtml(body);
-      } else {
-        builder.addTextPlain(body);
-      }
-      await _addAttachmentsToBuilder(builder, newAttachments);
-      final mime = builder.buildMimeMessage();
-      final encoded = base64Url
-          .encode(utf8.encode(mime.renderMessage()))
-          .replaceAll('=', '');
+      final encoded = await compute(_buildDraftRawBase64, _DraftMimeParams(
+        fromAddress: fromEmail,
+        toAddresses: toAddresses,
+        ccAddresses: ccAddresses,
+        subject: subject,
+        body: body,
+        isHtml: bodyType == EmailBodyType.html,
+        attachments: newAttachments,
+      ));
 
       // The Drafts folder email list returns message IDs, but the drafts
       // endpoint requires the draft ID (r…). Try the ID as-is; if Gmail
@@ -1301,4 +1289,68 @@ class _GmailAttachment {
   final bool isInline;
   final String? contentId;
   final String? inlineData;
+}
+
+/// Inputs for [_buildDraftRawBase64]. Kept as plain, isolate-transferable
+/// data (no [MessageBuilder]/[MimeMessage] instances) since [compute] runs
+/// the builder on a background isolate.
+class _DraftMimeParams {
+  const _DraftMimeParams({
+    required this.fromAddress,
+    required this.toAddresses,
+    required this.ccAddresses,
+    required this.subject,
+    required this.body,
+    required this.isHtml,
+    required this.attachments,
+  });
+
+  final String fromAddress;
+  final List<String> toAddresses;
+  final List<String> ccAddresses;
+  final String subject;
+  final String body;
+  final bool isHtml;
+  final List<LocalAttachment> attachments;
+}
+
+/// Builds, renders and base64url-encodes a draft MIME message off the main
+/// isolate.
+///
+/// Encoding a large HTML body (a long quoted reply can be hundreds of KB)
+/// via [MessageBuilder.buildMimeMessage], [MimeMessage.renderMessage] and
+/// then base64 is synchronous CPU work; running it on the main isolate
+/// froze the compose UI every time the draft autosave timer fired.
+/// [compute] moves it to a worker isolate so only the network request
+/// touches the main isolate.
+String _buildDraftRawBase64(_DraftMimeParams p) {
+  final builder = MessageBuilder()
+    ..from = [MailAddress(null, p.fromAddress)]
+    ..to = p.toAddresses.map((a) => MailAddress(null, a)).toList()
+    ..cc = p.ccAddresses.map((a) => MailAddress(null, a)).toList()
+    ..subject = p.subject;
+  if (p.isHtml) {
+    builder.addTextHtml(p.body);
+  } else {
+    builder.addTextPlain(p.body);
+  }
+  for (final att in p.attachments) {
+    if (att.isInline && att.contentId != null) {
+      final part = builder.addBinary(
+        att.bytes,
+        MediaType.fromText(att.mimeType),
+        filename: att.name,
+        disposition: ContentDispositionHeader.from(ContentDisposition.inline),
+      );
+      part.setHeader('Content-Id', '<${att.contentId}>');
+    } else {
+      builder.addBinary(
+        att.bytes,
+        MediaType.fromText(att.mimeType),
+        filename: att.name,
+      );
+    }
+  }
+  final mime = builder.buildMimeMessage();
+  return base64Url.encode(utf8.encode(mime.renderMessage())).replaceAll('=', '');
 }

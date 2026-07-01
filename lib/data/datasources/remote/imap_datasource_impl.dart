@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:enough_mail/enough_mail.dart';
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart' show compute, visibleForTesting;
 
 import '../../../core/error/exceptions.dart';
 import '../../../core/utils/html_entities.dart';
@@ -1004,21 +1004,22 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       if (draftsPath == null) {
         throw const ServerException(message: 'Drafts mailbox not found');
       }
-      final builder = MessageBuilder()
-        ..from = [MailAddress(_account.displayName, _account.emailAddress)]
-        ..to = toAddresses.map((a) => MailAddress(null, a)).toList()
-        ..cc = ccAddresses.map((a) => MailAddress(null, a)).toList()
-        ..subject = subject;
-      if (bodyType == EmailBodyType.html) {
-        builder.addTextHtml(body);
-      } else {
-        builder.addTextPlain(body);
-      }
-      await _addAttachmentsToBuilder(builder, newAttachments);
-      final message = builder.buildMimeMessage();
-      final msgId = message.getHeaderValue('message-id') ?? '';
-      await client.appendMessage(
-        message,
+      final msgId = MessageBuilder.createMessageId(
+        _account.emailAddress.split('@').last,
+      );
+      final mimeText = await compute(_buildDraftMimeText, _DraftMimeParams(
+        fromName: _account.displayName,
+        fromAddress: _account.emailAddress,
+        toAddresses: toAddresses,
+        ccAddresses: ccAddresses,
+        subject: subject,
+        body: body,
+        isHtml: bodyType == EmailBodyType.html,
+        attachments: newAttachments,
+        messageId: msgId,
+      ));
+      await client.appendMessageText(
+        mimeText,
         targetMailboxPath: draftsPath,
         flags: [MessageFlags.draft],
       );
@@ -1052,21 +1053,22 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     final oldUid = int.tryParse(draftId.substring(separatorIdx + 1)) ?? 0;
     try {
       final client = await _getConnectedClient();
-      final builder = MessageBuilder()
-        ..from = [MailAddress(_account.displayName, _account.emailAddress)]
-        ..to = toAddresses.map((a) => MailAddress(null, a)).toList()
-        ..cc = ccAddresses.map((a) => MailAddress(null, a)).toList()
-        ..subject = subject;
-      if (bodyType == EmailBodyType.html) {
-        builder.addTextHtml(body);
-      } else {
-        builder.addTextPlain(body);
-      }
-      await _addAttachmentsToBuilder(builder, newAttachments);
-      final message = builder.buildMimeMessage();
-      final msgId = message.getHeaderValue('message-id') ?? '';
-      await client.appendMessage(
-        message,
+      final msgId = MessageBuilder.createMessageId(
+        _account.emailAddress.split('@').last,
+      );
+      final mimeText = await compute(_buildDraftMimeText, _DraftMimeParams(
+        fromName: _account.displayName,
+        fromAddress: _account.emailAddress,
+        toAddresses: toAddresses,
+        ccAddresses: ccAddresses,
+        subject: subject,
+        body: body,
+        isHtml: bodyType == EmailBodyType.html,
+        attachments: newAttachments,
+        messageId: msgId,
+      ));
+      await client.appendMessageText(
+        mimeText,
         targetMailboxPath: draftsPath,
         flags: [MessageFlags.draft],
       );
@@ -1243,4 +1245,71 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       rethrow;
     }
   }
+}
+
+/// Inputs for [_buildDraftMimeText]. Kept as plain, isolate-transferable
+/// data (no [MessageBuilder]/[MimeMessage] instances) since [compute] runs
+/// the builder on a background isolate.
+class _DraftMimeParams {
+  const _DraftMimeParams({
+    required this.fromName,
+    required this.fromAddress,
+    required this.toAddresses,
+    required this.ccAddresses,
+    required this.subject,
+    required this.body,
+    required this.isHtml,
+    required this.attachments,
+    required this.messageId,
+  });
+
+  final String fromName;
+  final String fromAddress;
+  final List<String> toAddresses;
+  final List<String> ccAddresses;
+  final String subject;
+  final String body;
+  final bool isHtml;
+  final List<LocalAttachment> attachments;
+  final String messageId;
+}
+
+/// Builds and renders a draft MIME message off the main isolate.
+///
+/// Encoding a large HTML body (a long quoted reply can be hundreds of KB)
+/// via [MessageBuilder.buildMimeMessage] and [MimeMessage.renderMessage] is
+/// synchronous CPU work; running it on the main isolate froze the compose
+/// UI every time the draft autosave timer fired. [compute] moves it to a
+/// worker isolate so only the cheap network I/O (APPEND) touches the
+/// account's connection back on the caller's isolate.
+String _buildDraftMimeText(_DraftMimeParams p) {
+  final builder = MessageBuilder()
+    ..from = [MailAddress(p.fromName, p.fromAddress)]
+    ..to = p.toAddresses.map((a) => MailAddress(null, a)).toList()
+    ..cc = p.ccAddresses.map((a) => MailAddress(null, a)).toList()
+    ..subject = p.subject
+    ..messageId = p.messageId;
+  if (p.isHtml) {
+    builder.addTextHtml(p.body);
+  } else {
+    builder.addTextPlain(p.body);
+  }
+  for (final att in p.attachments) {
+    if (att.isInline && att.contentId != null) {
+      final part = builder.addBinary(
+        att.bytes,
+        MediaType.fromText(att.mimeType),
+        filename: att.name,
+        disposition: ContentDispositionHeader.from(ContentDisposition.inline),
+      );
+      part.setHeader('Content-Id', '<${att.contentId}>');
+    } else {
+      builder.addBinary(
+        att.bytes,
+        MediaType.fromText(att.mimeType),
+        filename: att.name,
+      );
+    }
+  }
+  return builder.buildMimeMessage().renderMessage();
 }

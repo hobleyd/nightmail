@@ -78,6 +78,15 @@ class HtmlViewController {
   Future<String?> eval(String js) =>
       _channel!.invokeMethod<String>('eval', js);
 
+  Future<void> setVisible(bool visible) async {
+    if (_channel == null) return;
+    try {
+      await _channel!.invokeMethod('setVisible', visible);
+    } catch (_) {
+      // Not supported on this platform — ignore.
+    }
+  }
+
   Future<void> setPosition(double x, double y, double dpr) {
     if (_channel == null) {
       _pendingPos = [x, y, dpr];

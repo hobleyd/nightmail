@@ -399,6 +399,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
                               onEmailDoubleTapped: widget.onEmailDoubleTapped,
                               expandedConversationIds: expandedConversationIds,
                               spamEmailIds: spamEmailIds,
+                              isDesktop: _isDesktop,
                               onToggleConversation: (id) => context
                                   .read<EmailListBloc>()
                                   .add(EmailListToggleConversation(conversationId: id)),
@@ -727,6 +728,7 @@ class _EmailListView extends StatelessWidget {
     required this.onEmailTapped,
     required this.expandedConversationIds,
     required this.onToggleConversation,
+    required this.isDesktop,
     this.spamEmailIds = const {},
     this.onEmailLongPressed,
     this.onEmailDoubleTapped,
@@ -738,6 +740,7 @@ class _EmailListView extends StatelessWidget {
   final String? selectedEmailId;
   final Set<String> selectedEmailIds;
   final bool showCheckboxes;
+  final bool isDesktop;
   final ScrollController scrollController;
   final void Function(Email email, int index) onEmailTapped;
   final void Function(Email email, int index)? onEmailLongPressed;
@@ -765,70 +768,114 @@ class _EmailListView extends StatelessWidget {
           );
         }
         final item = items[i];
-        return switch (item) {
-          _SingleEmailItem(:final email, :final isChild) => _DraggableEmailItem(
+        if (item is _SingleEmailItem) {
+          final email = item.email;
+          final isChild = item.isChild;
+          void onDelete() {
+            if (email.id == selectedEmailId) {
+              final nextEmail = _findNextEmail(items, email.id);
+              if (nextEmail != null) {
+                onAutoSelectEmail?.call(nextEmail);
+              } else {
+                context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+                context.read<HomeCubit>().clearEmail();
+              }
+            }
+            context.read<EmailListBloc>().add(EmailListEmailDeleted(emailId: email.id));
+          }
+          void onFlag(DateTime? date) => _createTaskFromEmail(context, email, dueDate: date);
+          final child = EmailListItem(
+            key: ValueKey('item_${email.id}'),
+            email: email,
+            isDesktop: isDesktop,
+            isSelected: email.id == selectedEmailId,
+            isMultiSelected: selectedEmailIds.contains(email.id),
+            showCheckbox: showCheckboxes,
+            indent: isChild ? 20.0 : 0.0,
+            isSpam: spamEmailIds.contains(email.id),
+            onTap: () => onEmailTapped(email, i),
+            onDoubleTap: onEmailDoubleTapped != null ? () => onEmailDoubleTapped!(email) : null,
+            onLongPress: () => onEmailLongPressed?.call(email, i),
+            onDelete: onDelete,
+            onFlag: onFlag,
+          );
+          if (isDesktop) {
+            return _DraggableEmailItem(
               key: ValueKey('drag_${email.id}'),
               emailIds: [email.id],
               selectedEmailIds: selectedEmailIds,
               dragLabel: email.subject.isNotEmpty ? email.subject : email.from.displayName,
-              child: EmailListItem(
-                email: email,
-                isSelected: email.id == selectedEmailId,
-                isMultiSelected: selectedEmailIds.contains(email.id),
-                showCheckbox: showCheckboxes,
-                indent: isChild ? 20.0 : 0.0,
-                isSpam: spamEmailIds.contains(email.id),
-                onTap: () => onEmailTapped(email, i),
-                onDoubleTap: onEmailDoubleTapped != null ? () => onEmailDoubleTapped!(email) : null,
-                onLongPress: () => onEmailLongPressed?.call(email, i),
-                onDelete: () {
-                  if (email.id == selectedEmailId) {
-                    final nextEmail = _findNextEmail(items, email.id);
-                    if (nextEmail != null) {
-                      onAutoSelectEmail?.call(nextEmail);
-                    } else {
-                      context.read<EmailDetailBloc>().add(const EmailDetailCleared());
-                      context.read<HomeCubit>().clearEmail();
-                    }
-                  }
-                  context.read<EmailListBloc>().add(EmailListEmailDeleted(emailId: email.id));
-                },
-                onFlag: (date) => _createTaskFromEmail(context, email, dueDate: date),
+              child: child,
+            );
+          }
+          return _SwipeableEmailItem(
+            key: ValueKey('swipe_${email.id}'),
+            onDelete: onDelete,
+            onFlag: onFlag,
+            onMarkUnread: () => context.read<EmailListBloc>().add(
+                  EmailListMarkReadRequested(emailId: email.id, isRead: false),
+                ),
+            onMarkJunk: () => context.read<EmailListBloc>().add(
+                  EmailListJunkReported(emailIds: [email.id]),
+                ),
+            child: child,
+          );
+        }
+        // _ConversationHeaderItem
+        final conv = item as _ConversationHeaderItem;
+        void onConvDelete() {
+          if (conv.latestEmail.id == selectedEmailId) {
+            final nextEmail = _findNextEmail(items, conv.latestEmail.id);
+            if (nextEmail != null) {
+              onAutoSelectEmail?.call(nextEmail);
+            } else {
+              context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+              context.read<HomeCubit>().clearEmail();
+            }
+          }
+          context.read<EmailListBloc>().add(EmailListEmailDeleted(emailId: conv.latestEmail.id));
+        }
+        void onConvFlag(DateTime? date) =>
+            _createTaskFromEmail(context, conv.latestEmail, dueDate: date);
+        final convChild = _ConversationHeader(
+          key: ValueKey('conv_${conv.conversationId}'),
+          latestEmail: conv.latestEmail,
+          totalCount: conv.totalCount,
+          isExpanded: conv.isExpanded,
+          hasUnread: conv.hasUnread,
+          isDesktop: isDesktop,
+          isSelected: conv.latestEmail.id == selectedEmailId,
+          isMultiSelected: selectedEmailIds.contains(conv.latestEmail.id),
+          showCheckbox: showCheckboxes,
+          onTap: () => onEmailTapped(conv.latestEmail, i),
+          onLongPress: () => onEmailLongPressed?.call(conv.latestEmail, i),
+          onToggleExpand: () => onToggleConversation(conv.conversationId),
+          onDelete: onConvDelete,
+          onFlag: onConvFlag,
+        );
+        if (isDesktop) {
+          return _DraggableEmailItem(
+            key: ValueKey('drag_conv_${conv.conversationId}'),
+            emailIds: conv.allEmailIds,
+            conversationId: conv.conversationId,
+            selectedEmailIds: selectedEmailIds,
+            dragLabel: '${conv.totalCount} emails – ${conv.latestEmail.subject}',
+            child: convChild,
+          );
+        }
+        return _SwipeableEmailItem(
+          key: ValueKey('swipe_conv_${conv.conversationId}'),
+          onDelete: onConvDelete,
+          onFlag: onConvFlag,
+          onMarkUnread: () => context.read<EmailListBloc>().add(
+                EmailListMarkReadRequested(
+                    emailId: conv.latestEmail.id, isRead: false),
               ),
-            ),
-          _ConversationHeaderItem() => _DraggableEmailItem(
-              key: ValueKey('drag_conv_${item.conversationId}'),
-              emailIds: item.allEmailIds,
-              conversationId: item.conversationId,
-              selectedEmailIds: selectedEmailIds,
-              dragLabel: '${item.totalCount} emails – ${item.latestEmail.subject}',
-              child: _ConversationHeader(
-                latestEmail: item.latestEmail,
-                totalCount: item.totalCount,
-                isExpanded: item.isExpanded,
-                hasUnread: item.hasUnread,
-                isSelected: item.latestEmail.id == selectedEmailId,
-                isMultiSelected: selectedEmailIds.contains(item.latestEmail.id),
-                showCheckbox: showCheckboxes,
-                onTap: () => onEmailTapped(item.latestEmail, i),
-                onLongPress: () => onEmailLongPressed?.call(item.latestEmail, i),
-                onToggleExpand: () => onToggleConversation(item.conversationId),
-                onDelete: () {
-                  if (item.latestEmail.id == selectedEmailId) {
-                    final nextEmail = _findNextEmail(items, item.latestEmail.id);
-                    if (nextEmail != null) {
-                      onAutoSelectEmail?.call(nextEmail);
-                    } else {
-                      context.read<EmailDetailBloc>().add(const EmailDetailCleared());
-                      context.read<HomeCubit>().clearEmail();
-                    }
-                  }
-                  context.read<EmailListBloc>().add(EmailListEmailDeleted(emailId: item.latestEmail.id));
-                },
-                onFlag: (date) => _createTaskFromEmail(context, item.latestEmail, dueDate: date),
+          onMarkJunk: () => context.read<EmailListBloc>().add(
+                EmailListJunkReported(emailIds: conv.allEmailIds),
               ),
-            ),
-        };
+          child: convChild,
+        );
       },
     );
   }
@@ -836,6 +883,7 @@ class _EmailListView extends StatelessWidget {
 
 class _ConversationHeader extends StatefulWidget {
   const _ConversationHeader({
+    super.key,
     required this.latestEmail,
     required this.totalCount,
     required this.isExpanded,
@@ -845,6 +893,7 @@ class _ConversationHeader extends StatefulWidget {
     required this.onToggleExpand,
     required this.onDelete,
     required this.onFlag,
+    this.isDesktop = true,
     this.isMultiSelected = false,
     this.showCheckbox = false,
     this.onLongPress,
@@ -857,6 +906,7 @@ class _ConversationHeader extends StatefulWidget {
   final bool isSelected;
   final bool isMultiSelected;
   final bool showCheckbox;
+  final bool isDesktop;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
   final VoidCallback onToggleExpand;
@@ -1017,23 +1067,25 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
                       ],
                     ),
                   ),
-                  const SizedBox(width: 4),
-                  Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      FlagIconButton(
-                        color: c.textMuted,
-                        onTap: () => widget.onFlag(null),
-                        onSchedule: (date) => widget.onFlag(date),
-                      ),
-                      const SizedBox(height: 2),
-                      _ActionIcon(
-                        icon: Icons.delete_outline_rounded,
-                        color: c.textMuted,
-                        onTap: widget.onDelete,
-                      ),
-                    ],
-                  ),
+                  if (widget.isDesktop) ...[
+                    const SizedBox(width: 4),
+                    Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        FlagIconButton(
+                          color: c.textMuted,
+                          onTap: () => widget.onFlag(null),
+                          onSchedule: (date) => widget.onFlag(date),
+                        ),
+                        const SizedBox(height: 2),
+                        _ActionIcon(
+                          icon: Icons.delete_outline_rounded,
+                          color: c.textMuted,
+                          onTap: widget.onDelete,
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -1205,6 +1257,158 @@ class _DragFeedback extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _SwipeableEmailItem extends StatefulWidget {
+  const _SwipeableEmailItem({
+    super.key,
+    required this.child,
+    required this.onDelete,
+    required this.onFlag,
+    required this.onMarkUnread,
+    required this.onMarkJunk,
+  });
+
+  final Widget child;
+  final VoidCallback onDelete;
+  final void Function(DateTime?) onFlag;
+  final VoidCallback onMarkUnread;
+  final VoidCallback onMarkJunk;
+
+  @override
+  State<_SwipeableEmailItem> createState() => _SwipeableEmailItemState();
+}
+
+class _SwipeableEmailItemState extends State<_SwipeableEmailItem>
+    with SingleTickerProviderStateMixin {
+  static const double _actionWidth = 160.0;
+
+  double _offset = 0.0;
+  late AnimationController _snapController;
+  late Animation<double> _snapAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _snapController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    )..addListener(() => setState(() => _offset = _snapAnim.value));
+  }
+
+  @override
+  void dispose() {
+    _snapController.dispose();
+    super.dispose();
+  }
+
+  void _onDragUpdate(DragUpdateDetails d) {
+    _snapController.stop();
+    setState(() => _offset = (_offset - d.delta.dx).clamp(0.0, _actionWidth));
+  }
+
+  void _onDragEnd(DragEndDetails d) {
+    final velocity = -(d.primaryVelocity ?? 0);
+    final target =
+        (velocity > 300 || _offset > _actionWidth / 2) ? _actionWidth : 0.0;
+    _snapTo(target);
+  }
+
+  void _snapTo(double target) {
+    _snapAnim = Tween<double>(begin: _offset, end: target)
+        .animate(CurvedAnimation(parent: _snapController, curve: Curves.easeOut));
+    _snapController
+      ..reset()
+      ..forward();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onHorizontalDragUpdate: _onDragUpdate,
+      onHorizontalDragEnd: _onDragEnd,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final w = constraints.maxWidth;
+          return Stack(
+            clipBehavior: Clip.hardEdge,
+            children: [
+              Transform.translate(
+                offset: Offset(-_offset, 0),
+                child: SizedBox(width: w, child: widget.child),
+              ),
+              Positioned(
+                left: w - _offset,
+                top: 0,
+                bottom: 0,
+                width: _actionWidth,
+                child: _buildActions(context),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildActions(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: GestureDetector(
+            onTap: () {
+              widget.onMarkUnread();
+              _snapTo(0);
+            },
+            child: Container(
+              color: Colors.blue.shade600,
+              alignment: Alignment.center,
+              child: const Icon(Icons.mark_email_unread_outlined, color: Colors.white, size: 22),
+            ),
+          ),
+        ),
+        Expanded(
+          child: GestureDetector(
+            onTap: () {
+              widget.onMarkJunk();
+              _snapTo(0);
+            },
+            child: Container(
+              color: Colors.orange.shade700,
+              alignment: Alignment.center,
+              child: const Icon(Icons.report_outlined, color: Colors.white, size: 22),
+            ),
+          ),
+        ),
+        Expanded(
+          child: GestureDetector(
+            onTap: () {
+              widget.onFlag(null);
+              _snapTo(0);
+            },
+            child: Container(
+              color: AppColors.accent,
+              alignment: Alignment.center,
+              child: const Icon(Icons.flag_rounded, color: Colors.white, size: 22),
+            ),
+          ),
+        ),
+        Expanded(
+          child: GestureDetector(
+            onTap: () {
+              widget.onDelete();
+              _snapTo(0);
+            },
+            child: Container(
+              color: Colors.red.shade600,
+              alignment: Alignment.center,
+              child: const Icon(Icons.delete_outline_rounded, color: Colors.white, size: 22),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

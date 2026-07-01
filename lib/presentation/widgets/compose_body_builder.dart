@@ -94,7 +94,8 @@ class ComposeBodyBuilder {
           '<div>Date: $dateEsc</div>'
           '<div>Subject: $subjectEsc</div>'
           '<div><br></div>'
-          '<div spellcheck="false" style="contain:layout style">$htmlBody</div>';
+          '<div spellcheck="false" '
+          'style="content-visibility:auto;contain-intrinsic-size:500px">$htmlBody</div>';
     }
 
     if (mode != ComposeMode.reply && mode != ComposeMode.replyAll) {
@@ -115,7 +116,8 @@ class ComposeBodyBuilder {
         '<div>Date: $dateEsc</div>'
         '<div><br></div>'
         '<blockquote spellcheck="false" '
-        'style="margin:0 0 0 0;border-left:2px solid #ccc;padding-left:12px;color:#666;contain:layout style">'
+        'style="margin:0 0 0 0;border-left:2px solid #ccc;padding-left:12px;color:#666;'
+        'content-visibility:auto;contain-intrinsic-size:500px">'
         '$htmlBody'
         '</blockquote>';
   }

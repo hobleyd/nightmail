@@ -16,6 +16,7 @@ import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/calendar/calendar_bloc.dart';
 import '../blocs/calendar/calendar_event.dart';
+import '../blocs/calendar/calendar_state.dart';
 import '../blocs/tasks/tasks_bloc.dart';
 import '../blocs/tasks/tasks_event.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
@@ -36,6 +37,11 @@ import '../widgets/folder_panel.dart';
 import '../widgets/reading_pane.dart';
 import 'calendar_page.dart';
 import 'tasks_page.dart';
+
+DateTime _mondayOfWeek(DateTime date) {
+  final daysFromMonday = (date.weekday - 1) % 7;
+  return DateTime(date.year, date.month, date.day - daysFromMonday);
+}
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -96,6 +102,17 @@ class _HomeView extends StatelessWidget {
             context.read<EmailListBloc>().add(const EmailListCleared());
             context.read<EmailDetailBloc>().add(const EmailDetailCleared());
             context.read<CalendarBloc>().add(const CalendarCleared());
+          },
+        ),
+        BlocListener<HomeCubit, HomeState>(
+          listenWhen: (prev, curr) =>
+              curr.view == HomeView.calendar && prev.view != curr.view,
+          listener: (context, _) {
+            final bloc = context.read<CalendarBloc>();
+            if (bloc.state is CalendarInitial) {
+              bloc.add(CalendarWeekLoadRequested(
+                  weekStart: _mondayOfWeek(DateTime.now())));
+            }
           },
         ),
         BlocListener<FolderListBloc, FolderListState>(
@@ -749,11 +766,6 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
             );
           },
         );
-  }
-
-  static DateTime _mondayOfWeek(DateTime date) {
-    final daysFromMonday = (date.weekday - 1) % 7;
-    return DateTime(date.year, date.month, date.day - daysFromMonday);
   }
 
   EmailFolder? _resolveFolder(HomeState homeState, FolderListState folderListState) {

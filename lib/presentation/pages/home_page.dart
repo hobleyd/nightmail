@@ -278,9 +278,82 @@ class _MobileLayoutState extends State<_MobileLayout> {
                           );
                       setState(() => _step = _MobileStep.emailList);
                     },
-                    onCalendarTapped: () {},
-                    onTasksTapped: () {},
-                    onAiTapped: () {},
+                    onCalendarTapped: () {
+                      final calendarBloc = context.read<CalendarBloc>();
+                      calendarBloc.add(CalendarWeekLoadRequested(
+                        weekStart: _mondayOfWeek(DateTime.now()),
+                      ));
+                      Navigator.of(context).push<void>(
+                        MaterialPageRoute(
+                          fullscreenDialog: true,
+                          builder: (ctx) => Scaffold(
+                            body: SafeArea(
+                              child: BlocProvider.value(
+                                value: calendarBloc,
+                                child: CalendarDayPanel(
+                                  onClose: () => Navigator.of(ctx).pop(),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                    onTasksTapped: () {
+                      final tasksBloc = context.read<TasksBloc>();
+                      final emailDetailBloc = context.read<EmailDetailBloc>();
+                      final accountCubit = context.read<AccountCubit>();
+                      Navigator.of(context).push<void>(
+                        MaterialPageRoute(
+                          fullscreenDialog: true,
+                          builder: (ctx) => Scaffold(
+                            body: SafeArea(
+                              child: MultiBlocProvider(
+                                providers: [
+                                  BlocProvider.value(value: tasksBloc),
+                                  BlocProvider.value(value: emailDetailBloc),
+                                  BlocProvider.value(value: accountCubit),
+                                ],
+                                child: TasksDayPanel(
+                                  onClose: () => Navigator.of(ctx).pop(),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                    onAiTapped: () {
+                      final aiFolderCubit = context.read<AiFolderCubit>();
+                      final emailListBloc = context.read<EmailListBloc>();
+                      Navigator.of(context).push<void>(
+                        MaterialPageRoute(
+                          fullscreenDialog: true,
+                          builder: (ctx) => Scaffold(
+                            body: SafeArea(
+                              child: BlocProvider.value(
+                                value: aiFolderCubit,
+                                child: AiDayPanel(
+                                  onClose: () => Navigator.of(ctx).pop(),
+                                  folderIdProvider: () {
+                                    final s = emailListBloc.state;
+                                    return s is EmailListLoaded
+                                        ? s.currentFolderId
+                                        : null;
+                                  },
+                                  contextProvider: () {
+                                    final s = emailListBloc.state;
+                                    if (s is! EmailListLoaded ||
+                                        s.emails.isEmpty) return null;
+                                    return _formatFolderEmailsForAi(s.emails);
+                                  },
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 _MobileStep.emailList => EmailListPanel(
                     folderName: selectedFolder?.displayName ?? 'Inbox',

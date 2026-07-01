@@ -1256,6 +1256,13 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   }
 
   Exception _mapException(DioException e) {
+    // AuthInterceptor.onRequest can throw AuthException directly (e.g. no
+    // stored token, or a failed proactive refresh) before any HTTP request
+    // is sent. Dio wraps that throw in a DioException with no response, so
+    // it must be unwrapped here or it falls through to a generic
+    // ServerException and the UI never learns re-authentication is needed.
+    if (e.error is AuthException) return e.error as AuthException;
+
     final statusCode = e.response?.statusCode;
     if (e.type == DioExceptionType.connectionError ||
         e.type == DioExceptionType.connectionTimeout ||

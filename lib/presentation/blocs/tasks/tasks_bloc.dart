@@ -1,5 +1,6 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../core/error/failures.dart';
 import '../../../core/usecases/usecase.dart';
 import '../../../domain/entities/todo_task.dart';
 import '../../../domain/usecases/attach_email_to_task.dart';
@@ -50,7 +51,10 @@ class TasksBloc extends Bloc<TasksBlocEvent, TasksState> {
 
     final listsResult = await _getTaskLists(const NoParams());
     await listsResult.fold(
-      (failure) async => emit(TasksError(message: failure.message)),
+      (failure) async => emit(TasksError(
+        message: failure.message,
+        requiresReauth: failure is AuthFailure,
+      )),
       (lists) async {
         if (lists.isEmpty) {
           emit(const TasksLoaded(lists: [], tasks: [], selectedListId: ''));
@@ -63,7 +67,10 @@ class TasksBloc extends Bloc<TasksBlocEvent, TasksState> {
         final tasksResult =
             await _getTasks(GetTasksParams(listId: defaultList.id));
         tasksResult.fold(
-          (failure) => emit(TasksError(message: failure.message)),
+          (failure) => emit(TasksError(
+            message: failure.message,
+            requiresReauth: failure is AuthFailure,
+          )),
           (tasks) => emit(TasksLoaded(
             lists: lists,
             tasks: tasks,
@@ -85,7 +92,10 @@ class TasksBloc extends Bloc<TasksBlocEvent, TasksState> {
 
     final result = await _getTasks(GetTasksParams(listId: event.listId));
     result.fold(
-      (failure) => emit(TasksError(message: failure.message)),
+      (failure) => emit(TasksError(
+        message: failure.message,
+        requiresReauth: failure is AuthFailure,
+      )),
       (tasks) => emit(current.copyWith(
         selectedListId: event.listId,
         tasks: tasks,

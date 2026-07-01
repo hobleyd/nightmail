@@ -55,9 +55,10 @@ final class TasksLoaded extends TasksState {
 }
 
 final class TasksError extends TasksState {
-  const TasksError({required this.message});
+  const TasksError({required this.message, this.requiresReauth = false});
   final String message;
+  final bool requiresReauth;
 
   @override
-  List<Object?> get props => [message];
+  List<Object?> get props => [message, requiresReauth];
 }

@@ -5,7 +5,7 @@ import 'auth_interceptor.dart';
 
 /// Dio instance pre-configured for the Google Calendar REST API.
 class GoogleCalendarHttpClient {
-  GoogleCalendarHttpClient({required AuthService authService}) {
+  GoogleCalendarHttpClient({required AuthService authService, void Function()? onAuthFailure}) {
     _dio = Dio(BaseOptions(
       baseUrl: 'https://www.googleapis.com/calendar/v3',
       headers: {
@@ -16,7 +16,8 @@ class GoogleCalendarHttpClient {
       receiveTimeout: const Duration(seconds: 30),
     ));
 
-    _dio.interceptors.add(AuthInterceptor(authService: authService, dio: _dio));
+    _dio.interceptors.add(AuthInterceptor(
+        authService: authService, dio: _dio, onAuthFailure: onAuthFailure));
   }
 
   late final Dio _dio;

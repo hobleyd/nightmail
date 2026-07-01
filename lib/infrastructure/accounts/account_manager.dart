@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -58,6 +59,13 @@ class AccountManager {
   TasksRemoteDatasource? _tasksDatasource;
   AuthService? _authService;
 
+  // Fired by AuthInterceptor (the single choke point every Graph/Gmail/
+  // Calendar/Tasks/People request passes through) whenever a token refresh
+  // fails for an account, so the UI can flag it as needing re-authentication
+  // regardless of which call site triggered the failing request.
+  final _authFailureController = StreamController<String>.broadcast();
+  Stream<String> get authFailures => _authFailureController.stream;
+
   // Lazily built and cached per Gmail account ID so contact search works for
   // any account regardless of which one is currently active.
   final Map<String, GmailContactsDatasourceImpl> _contactsDatasourceCache = {};
@@ -109,7 +117,10 @@ class AccountManager {
       tokenStorage: tokenStorage,
     );
     final ds = GmailContactsDatasourceImpl(
-      client: GooglePeopleHttpClient(authService: authSvc),
+      client: GooglePeopleHttpClient(
+        authService: authSvc,
+        onAuthFailure: () => _authFailureController.add(accountId),
+      ),
     );
     _contactsDatasourceCache[accountId] = ds;
     return ds;
@@ -135,7 +146,10 @@ class AccountManager {
       tokenStorage: tokenStorage,
     );
     final ds = GraphApiDatasourceImpl(
-      client: GraphHttpClient(authService: authSvc),
+      client: GraphHttpClient(
+        authService: authSvc,
+        onAuthFailure: () => _authFailureController.add(accountId),
+      ),
     );
     _directoryDatasourceCache[accountId] = ds;
     return ds;
@@ -342,7 +356,10 @@ class AccountManager {
           tokenStorage: tokenStorage,
         );
         return GraphApiDatasourceImpl(
-            client: GraphHttpClient(authService: authSvc));
+            client: GraphHttpClient(
+          authService: authSvc,
+          onAuthFailure: () => _authFailureController.add(account.id),
+        ));
 
       case GmailAccount():
         final tokenStorage = TokenStorage(
@@ -356,7 +373,10 @@ class AccountManager {
           tokenStorage: tokenStorage,
         );
         return GmailDatasourceImpl(
-            client: GmailHttpClient(authService: authSvc));
+            client: GmailHttpClient(
+          authService: authSvc,
+          onAuthFailure: () => _authFailureController.add(account.id),
+        ));
 
       case ImapAccount():
         final credStorage = ImapCredentialStorage(_secureStorage);
@@ -418,7 +438,10 @@ class AccountManager {
           redirectUri: AppConfig.microsoftRedirectUri,
           tokenStorage: tokenStorage,
         );
-        final httpClient = GraphHttpClient(authService: authSvc);
+        final httpClient = GraphHttpClient(
+          authService: authSvc,
+          onAuthFailure: () => _authFailureController.add(account.id),
+        );
         final ds = GraphApiDatasourceImpl(client: httpClient);
         _authService = authSvc;
         _emailDatasource = ds;
@@ -435,9 +458,19 @@ class AccountManager {
           redirectUri: AppConfig.gmailRedirectUri,
           tokenStorage: tokenStorage,
         );
-        final gmailClient = GmailHttpClient(authService: authSvc);
-        final calendarClient = GoogleCalendarHttpClient(authService: authSvc);
-        final tasksClient = GoogleTasksHttpClient(authService: authSvc);
+        void onGmailAuthFailure() => _authFailureController.add(account.id);
+        final gmailClient = GmailHttpClient(
+          authService: authSvc,
+          onAuthFailure: onGmailAuthFailure,
+        );
+        final calendarClient = GoogleCalendarHttpClient(
+          authService: authSvc,
+          onAuthFailure: onGmailAuthFailure,
+        );
+        final tasksClient = GoogleTasksHttpClient(
+          authService: authSvc,
+          onAuthFailure: onGmailAuthFailure,
+        );
         _authService = authSvc;
         _emailDatasource = GmailDatasourceImpl(client: gmailClient);
         _calendarDatasource =

@@ -177,9 +177,20 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
 <style>
 * { box-sizing: border-box !important; }
-body { margin: 0; padding: 20px 28px 40px; }
+body {
+  margin: 0;
+  padding: 20px 28px 40px;
+  overflow-wrap: anywhere;
+  word-wrap: break-word;
+}
 img { max-width: 100% !important; height: auto !important; }
 img[data-blocked-src] { display: none !important; }
+pre {
+  white-space: pre-wrap !important;
+  word-wrap: break-word !important;
+  overflow-wrap: anywhere !important;
+}
+table { max-width: 100% !important; }
 a[href]:hover::after {
   content: attr(href);
   display: block;

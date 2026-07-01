@@ -316,8 +316,15 @@ editor.addEventListener('keydown', function(e) {
   }
 });
 
-// Update toolbar button active states and colour swatch on selection change
-document.addEventListener('selectionchange', function() {
+// Update toolbar button active states and colour swatch on selection change.
+// document.queryCommandState()/queryCommandValue() do synchronous style
+// computation that scales with DOM size/complexity, and selectionchange
+// fires on every keystroke (typing moves the caret). With a large quoted
+// reply body in the editor, calling these unthrottled froze the UI while
+// typing. Coalesce to at most once per animation frame instead.
+let toolbarUpdateScheduled = false;
+function updateToolbarState() {
+  toolbarUpdateScheduled = false;
   ['bold','italic','underline','strikeThrough'].forEach(function(cmd) {
     const id = {'bold':'btn-bold','italic':'btn-italic','underline':'btn-underline','strikeThrough':'btn-strike'}[cmd];
     const btn = document.getElementById(id);
@@ -333,6 +340,11 @@ document.addEventListener('selectionchange', function() {
       colorInput.value = hex;
     }
   }
+}
+document.addEventListener('selectionchange', function() {
+  if (toolbarUpdateScheduled) return;
+  toolbarUpdateScheduled = true;
+  requestAnimationFrame(updateToolbarState);
 });
 
 // Converts CSS rgb(...) or #rrggbb strings returned by queryCommandValue to #rrggbb

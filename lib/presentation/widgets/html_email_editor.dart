@@ -112,6 +112,9 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
   }
 
   Future<void> focus() async {
+    // OS focus first (so the WebView2 HWND actually receives keystrokes),
+    // then the DOM-level focus that places the caret in the editor.
+    await _controller.focus();
     await _controller.eval('focusEditor()');
   }
 

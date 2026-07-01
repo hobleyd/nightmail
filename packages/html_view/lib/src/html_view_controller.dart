@@ -78,6 +78,12 @@ class HtmlViewController {
   Future<String?> eval(String js) =>
       _channel!.invokeMethod<String>('eval', js);
 
+  /// Gives the native WebView2 control OS-level keyboard focus. Calling
+  /// `element.focus()` in JS alone only focuses within the web content —
+  /// the host HWND still needs to be told to take focus for a caret to show
+  /// or for keystrokes to route there instead of the Flutter window.
+  Future<void> focus() => _channel!.invokeMethod('focus');
+
   Future<void> setPosition(double x, double y, double dpr) {
     if (_channel == null) {
       _pendingPos = [x, y, dpr];

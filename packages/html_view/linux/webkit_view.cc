@@ -118,7 +118,7 @@ static void on_eval_done(GObject* source,
   }
 
   GError* error = nullptr;
-  WebKitJavascriptResult* js_result =
+  JSCValue* jv =
       webkit_web_view_evaluate_javascript_finish(WEBKIT_WEB_VIEW(source),
                                                  result, &error);
   if (error) {
@@ -126,12 +126,11 @@ static void on_eval_done(GObject* source,
                                  nullptr, nullptr);
     g_error_free(error);
   } else {
-    JSCValue* jv = webkit_javascript_result_get_js_value(js_result);
     char* str = jsc_value_to_string(jv);
     g_autoptr(FlValue) resp = fl_value_new_string(str ? str : "null");
     fl_method_call_respond_success(call, resp, nullptr);
     g_free(str);
-    webkit_javascript_result_unref(js_result);
+    g_object_unref(jv);
   }
   g_object_unref(call);
 }
@@ -144,7 +143,6 @@ WebkitView::WebkitView(gint64 id_, GtkOverlay* overlay_,
                        FlBinaryMessenger* messenger)
     : id(id_),
       overlay(overlay_),
-      event_sink(nullptr),
       pending_eval(nullptr),
       pos_x(0), pos_y(0), width(0), height(0),
       alive(TRUE) {
@@ -200,14 +198,12 @@ WebkitView::WebkitView(gint64 id_, GtkOverlay* overlay_,
   std::string ev_name = "html_view/" + std::to_string(id) + "_events";
   event_channel = fl_event_channel_new(messenger, ev_name.c_str(),
                                        FL_METHOD_CODEC(codec));
-  fl_event_channel_set_stream_handler(
+  fl_event_channel_set_stream_handlers(
       event_channel,
-      [](FlEventChannel*, FlValue*, FlEventSink* sink, gpointer data) -> FlValue* {
-        static_cast<WebkitView*>(data)->event_sink = sink;
+      [](FlEventChannel*, FlValue*, gpointer) -> FlMethodErrorResponse* {
         return nullptr;
       },
-      [](FlEventChannel*, FlValue*, gpointer data) -> FlValue* {
-        static_cast<WebkitView*>(data)->event_sink = nullptr;
+      [](FlEventChannel*, FlValue*, gpointer) -> FlMethodErrorResponse* {
         return nullptr;
       },
       this, nullptr);
@@ -224,7 +220,6 @@ WebkitView::~WebkitView() {
     g_object_unref(event_channel);
     event_channel = nullptr;
   }
-  event_sink = nullptr;
   if (web_view) {
     // Remove from overlay.
     gtk_container_remove(GTK_CONTAINER(overlay), GTK_WIDGET(web_view));
@@ -319,11 +314,11 @@ void WebkitView::UpdatePosition() {
 }
 
 void WebkitView::EmitEvent(const char* type, const char* value) {
-  if (!event_sink) return;
+  if (!event_channel) return;
   g_autoptr(FlValue) map = fl_value_new_map();
   fl_value_set_string_take(map, "type",  fl_value_new_string(type));
   fl_value_set_string_take(map, "value", fl_value_new_string(value));
-  fl_event_sink_success(event_sink, map, nullptr);
+  fl_event_channel_send(event_channel, map, nullptr, nullptr);
 }
 
 // ---------------------------------------------------------------------------

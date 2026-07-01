@@ -13,7 +13,7 @@ extern gboolean html_view_get_child_position(GtkOverlay*, GtkWidget*,
                                               GdkRectangle*, gpointer);
 
 struct _HtmlViewPlugin {
-  FlPlugin parent_instance;
+  GObject parent_instance;
 
   GtkOverlay* overlay;
   FlBinaryMessenger* messenger;
@@ -21,7 +21,7 @@ struct _HtmlViewPlugin {
   gint64 next_id;
 };
 
-G_DEFINE_TYPE(HtmlViewPlugin, html_view_plugin, fl_plugin_get_type())
+G_DEFINE_TYPE(HtmlViewPlugin, html_view_plugin, G_TYPE_OBJECT)
 
 // ---------------------------------------------------------------------------
 // Overlay setup (run once on first createView)

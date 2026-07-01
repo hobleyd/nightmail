@@ -13,7 +13,6 @@ struct WebkitView {
 
   FlMethodChannel* channel;
   FlEventChannel* event_channel;
-  FlEventSink* event_sink;
 
   // Pending method call waiting for async result (eval)
   FlMethodCall* pending_eval;

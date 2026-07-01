@@ -351,6 +351,10 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
       child: BlocBuilder<CalendarBloc, CalendarState>(
       builder: (context, state) {
         final isLoading = state is CalendarLoading;
+        final errorMessage = switch (state) {
+          CalendarError(:final message) => message,
+          _ => null,
+        };
         final allDayEvents = switch (state) {
           CalendarLoaded(:final events) =>
             events.where((e) => e.isAllDay && _isSameDay(e.start, _selectedDay)).toList(),
@@ -375,6 +379,7 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
                 onClose: widget.onClose,
               ),
               Divider(height: 1, color: c.separatorStrong),
+              if (errorMessage != null) _ErrorBanner(message: errorMessage),
               if (allDayEvents.isNotEmpty) ...[
                 _DayPanelAllDayStrip(events: allDayEvents),
                 Divider(height: 1, color: c.separatorStrong),

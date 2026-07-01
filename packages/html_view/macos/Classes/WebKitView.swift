@@ -171,6 +171,13 @@ class WebKitView: NSObject, WKScriptMessageHandler, FlutterStreamHandler, WKNavi
       updateFrame()
       result(nil)
 
+    case "setVisible":
+      guard let visible = call.arguments as? Bool else {
+        result(FlutterError(code: "bad_args", message: nil, details: nil)); return
+      }
+      webView.isHidden = !visible
+      result(nil)
+
     default:
       result(FlutterMethodNotImplemented)
     }

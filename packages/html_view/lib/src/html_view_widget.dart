@@ -26,6 +26,12 @@ class _HtmlViewWidgetState extends State<HtmlViewWidget>
     with WindowListener {
   final _key = GlobalKey();
 
+  // Tracks whether the native WebView2 HWND is currently visible.
+  // WebView2 (a native Win32 child window) always paints over Flutter's
+  // DirectX surface, so we hide it whenever a Flutter overlay route
+  // (dialog, bottom sheet, etc.) is shown on top of this widget's route.
+  bool _nativeVisible = true;
+
   @override
   void initState() {
     super.initState();
@@ -34,6 +40,20 @@ class _HtmlViewWidgetState extends State<HtmlViewWidget>
       _reportPosition();
       _reportSize();
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // ModalRoute.of() registers a dependency on _ModalScopeStatus so this
+    // method is called whenever a route is pushed/popped above this widget.
+    final isCurrent = ModalRoute.of(context)?.isCurrent ?? true;
+    if (isCurrent != _nativeVisible) {
+      _nativeVisible = isCurrent;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(widget.controller.setVisible(_nativeVisible));
+      });
+    }
   }
 
   @override

@@ -275,6 +275,11 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     // (including cross-folder display emails not in emailIds). This prevents
     // the thread stub from reappearing after the optimistic update.
     final movedIds = event.emailIds.toSet();
+    final removedEmails = event.conversationId != null
+        ? current.emails
+            .where((e) => e.conversationId == event.conversationId)
+            .toList()
+        : current.emails.where((e) => movedIds.contains(e.id)).toList();
     final filteredEmails = event.conversationId != null
         ? current.emails
             .where((e) => e.conversationId != event.conversationId)
@@ -282,12 +287,33 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         : current.emails.where((e) => !movedIds.contains(e.id)).toList();
     emit(current.copyWith(emails: filteredEmails));
 
-    await Future.wait(
+    final results = await Future.wait(
       event.emailIds.map((id) => _moveEmail(MoveEmailParams(
             id: id,
             destinationFolderId: event.destinationFolderId,
           ))),
     );
+
+    final failedIds = {
+      for (var i = 0; i < event.emailIds.length; i++)
+        if (results[i].isLeft()) event.emailIds[i],
+    };
+    if (failedIds.isNotEmpty) {
+      final after = state;
+      if (after is EmailListLoaded) {
+        // For conversation moves, restore everything removed if any item
+        // failed (the thread stub is still on the server). For individual
+        // moves, restore only the ones that failed.
+        final toRestore = event.conversationId != null
+            ? removedEmails
+            : removedEmails.where((e) => failedIds.contains(e.id)).toList();
+        if (toRestore.isNotEmpty) {
+          emit(after.copyWith(
+            emails: [...after.emails, ...toRestore],
+          ));
+        }
+      }
+    }
   }
 
   Future<void> _onEmailDeleted(

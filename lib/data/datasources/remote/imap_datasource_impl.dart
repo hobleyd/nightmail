@@ -798,14 +798,32 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       final client = await _getConnectedClient();
       await _selectMailboxPath(client, mailboxPath);
 
+      // Apply INBOX prefix normalization to the destination path using the
+      // same logic as getMailFolders(). On abbreviated-namespace servers
+      // (Courier, some Dovecot), the folder list may return "Archive" but
+      // UID COPY / UID MOVE require the full path "INBOX.Archive".
+      final resolvedDest =
+          (_inboxFolderPrefix.isNotEmpty &&
+                  !destinationFolderId.toUpperCase().startsWith('INBOX'))
+              ? '$_inboxFolderPrefix$destinationFolderId'
+              : destinationFolderId;
+
       final sequence = MessageSequence.fromId(uid, isUid: true);
-      await client.uidCopy(sequence, targetMailboxPath: destinationFolderId);
-      await client.uidStore(
-        sequence,
-        [MessageFlags.deleted],
-        action: StoreAction.add,
-      );
-      await client.expunge();
+      if (client.serverInfo.supportsMove) {
+        await client.uidMove(sequence, targetMailboxPath: resolvedDest);
+      } else {
+        await client.uidCopy(sequence, targetMailboxPath: resolvedDest);
+        await client.uidStore(
+          sequence,
+          [MessageFlags.deleted],
+          action: StoreAction.add,
+        );
+        if (client.serverInfo.supportsUidPlus) {
+          await client.uidExpunge(sequence);
+        } else {
+          await client.expunge();
+        }
+      }
     } on ImapException catch (e) {
       throw ServerException(message: e.message ?? 'IMAP error');
     }

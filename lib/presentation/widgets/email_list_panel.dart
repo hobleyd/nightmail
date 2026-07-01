@@ -208,13 +208,42 @@ class _EmailListPanelState extends State<EmailListPanel> {
     });
   }
 
+  List<Email> _emailsById(Iterable<String> ids) {
+    final state = context.read<EmailListBloc>().state;
+    if (state is! EmailListLoaded) return [];
+    final idSet = ids.toSet();
+    return state.emails.where((e) => idSet.contains(e.id)).toList();
+  }
+
+  bool get _isInboxFolder =>
+      widget.folder?.displayName.toLowerCase() == 'inbox';
+
+  /// Applies the folder-panel and badge deltas for emails leaving
+  /// [widget.folder] (delete, bulk delete, report junk).
+  void _applyRemovalCountChange(List<Email> removed) {
+    if (removed.isEmpty || widget.folder == null) return;
+    final unreadRemoved = removed.where((e) => !e.isRead).length;
+    context.read<FolderListBloc>().add(FolderListUnreadCountChanged(
+      folderId: widget.folder!.id,
+      unreadCountDelta: -unreadRemoved,
+      totalCountDelta: -removed.length,
+    ));
+    if (_isInboxFolder) {
+      for (var i = 0; i < unreadRemoved; i++) {
+        context.read<MailPollerCubit>().decrementUnreadCount();
+      }
+    }
+  }
+
   void _deleteSelected() {
     final ids = List.of(_selectedEmailIds);
+    final removed = _emailsById(ids);
     if (widget.selectedEmailId != null && ids.contains(widget.selectedEmailId)) {
       context.read<EmailDetailBloc>().add(const EmailDetailCleared());
       context.read<HomeCubit>().clearEmail();
     }
     context.read<EmailListBloc>().add(EmailListEmailsBulkDeleted(emailIds: ids));
+    _applyRemovalCountChange(removed);
     _clearSelection();
   }
 
@@ -223,6 +252,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
       _deleteSelected();
     } else if (widget.selectedEmailId != null) {
       final deletedId = widget.selectedEmailId!;
+      final removed = _emailsById([deletedId]);
       final nextEmail = _findNextEmail(_currentFlatItems(), deletedId);
       if (nextEmail != null) {
         widget.onEmailSelected(nextEmail);
@@ -231,6 +261,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
         context.read<HomeCubit>().clearEmail();
       }
       context.read<EmailListBloc>().add(EmailListEmailDeleted(emailId: deletedId));
+      _applyRemovalCountChange(removed);
     }
   }
 
@@ -239,6 +270,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
         ? List.of(_selectedEmailIds)
         : [if (widget.selectedEmailId != null) widget.selectedEmailId!];
     if (ids.isEmpty) return;
+    final removed = _emailsById(ids);
     if (ids.contains(widget.selectedEmailId)) {
       context.read<EmailDetailBloc>().add(const EmailDetailCleared());
       context.read<HomeCubit>().clearEmail();
@@ -246,6 +278,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
     context
         .read<EmailListBloc>()
         .add(EmailListJunkReported(emailIds: ids));
+    _applyRemovalCountChange(removed);
     _clearSelection();
   }
 

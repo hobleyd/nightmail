@@ -486,8 +486,9 @@ void main() {
       expect(cubit.state.pollGeneration, 0);
     });
 
-    test('pollGeneration does NOT increment when unread count decreases',
-        () async {
+    test('pollGeneration increments when unread count decreases', () async {
+      // A decrease (e.g. read/deleted on another client) must also refresh
+      // the UI — otherwise a stale, too-high count never self-heals.
       var callCount = 0;
       when(mockGmailDs.getMailFolders()).thenAnswer((_) async {
         callCount++;
@@ -499,11 +500,12 @@ void main() {
 
       await cubit.initialize();
       await pumpEventQueue();
+      expect(cubit.state.pollGeneration, 0);
 
       await cubit.updatePollInterval(9999);
       await pumpEventQueue();
 
-      expect(cubit.state.pollGeneration, 0);
+      expect(cubit.state.pollGeneration, 1);
     });
   });
 
@@ -643,6 +645,74 @@ void main() {
       cubit.markAccountViewed(_msId);
 
       expect(cubit.state.accountsWithNewMail, isNot(contains(_msId)));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Auth failures must surface instead of being silently swallowed
+  // ---------------------------------------------------------------------------
+
+  group('MailPollerCubit — auth failure handling', () {
+    late MockEmailRemoteDatasource mockGmailDs;
+
+    setUp(() {
+      mockGmailDs = MockEmailRemoteDatasource();
+      when(mockAccountManager.accounts).thenReturn([_gmailAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(_gmailAccount);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(mockGmailDs);
+    });
+
+    test('flags the account in accountsNeedingReauth on AuthException',
+        () async {
+      when(mockGmailDs.getMailFolders())
+          .thenThrow(const AuthException(message: 'Session expired'));
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      expect(cubit.state.accountsNeedingReauth, contains(_gmailAccount.id));
+    });
+
+    test('does not crash the cubit on AuthException', () async {
+      when(mockGmailDs.getMailFolders())
+          .thenThrow(const AuthException(message: 'Session expired'));
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      expect(() async {
+        await cubit.initialize();
+        await pumpEventQueue();
+      }, returnsNormally);
+    });
+
+    test('clears accountsNeedingReauth once polling succeeds again',
+        () async {
+      var callCount = 0;
+      when(mockGmailDs.getMailFolders()).thenAnswer((_) async {
+        callCount++;
+        if (callCount == 1) {
+          throw const AuthException(message: 'Session expired');
+        }
+        return [_inbox(unread: 2)];
+      });
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+      expect(cubit.state.accountsNeedingReauth, contains(_gmailAccount.id));
+
+      await cubit.updatePollInterval(9999);
+      await pumpEventQueue();
+
+      expect(
+          cubit.state.accountsNeedingReauth, isNot(contains(_gmailAccount.id)));
     });
   });
 }

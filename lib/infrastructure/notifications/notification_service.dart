@@ -91,6 +91,36 @@ class NotificationService {
     );
   }
 
+  /// Shows a local "new mail" alert. Used from the background mail-check
+  /// isolate (Android WorkManager / iOS BGTaskScheduler) — those platforms'
+  /// headless engines can reach flutter_local_notifications (it registers via
+  /// GeneratedPluginRegistrant), unlike this app's ad-hoc native badge
+  /// channel, which is only wired up on the foreground engine.
+  Future<void> showNewMailNotification({
+    required String accountLabel,
+    required int newCount,
+  }) async {
+    if (!Platform.isAndroid && !Platform.isIOS) return;
+    await _initLocalNotifications();
+    try {
+      await _localPlugin.show(
+        id: accountLabel.hashCode.abs() % 0x7FFFFFFF,
+        title: newCount == 1 ? 'New email' : '$newCount new emails',
+        body: accountLabel,
+        notificationDetails: const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'new_mail',
+            'New Mail',
+            channelDescription: 'Notifies when new mail arrives',
+            importance: Importance.high,
+            priority: Priority.high,
+          ),
+          iOS: DarwinNotificationDetails(sound: 'default'),
+        ),
+      );
+    } catch (_) {}
+  }
+
   Future<bool> requestPermission() async {
     if (Platform.isMacOS) {
       try {

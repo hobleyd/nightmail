@@ -4,7 +4,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:workmanager/workmanager.dart';
 
+import '../../data/datasources/local/folder_local_datasource.dart';
 import '../../infrastructure/accounts/account_manager.dart';
+import '../../infrastructure/notifications/notification_service.dart';
 import '../../injection_container.dart';
 
 const _periodicTaskName = 'au.com.sharpblue.nightmail.mailCheck';
@@ -86,6 +88,15 @@ void _callbackDispatcher() {
 /// shared SQLite token, which causes the foreground [MailPollerCubit] to see
 /// hasChanges=false on its next run and never trigger a UI refresh.  Folder
 /// polling is enough to keep OAuth tokens from expiring.
+///
+/// The fetched inbox unread count is written into the same folder cache the
+/// foreground app reads on launch, so the OS badge is correct the moment the
+/// app is opened rather than waiting for the first live poll. This isolate
+/// cannot reach the app's ad-hoc native badge channel directly — that channel
+/// is only registered on the foreground engine (see MainActivity.kt /
+/// SceneDelegate.swift) — so a local notification via flutter_local_notifications
+/// (a real registered plugin, reachable here) is used instead to surface new
+/// mail while the app is backgrounded.
 Future<void> _runBackgroundPoll() async {
   WidgetsFlutterBinding.ensureInitialized();
   await configureDependencies();
@@ -96,10 +107,41 @@ Future<void> _runBackgroundPoll() async {
   final accounts = accountManager.accounts;
   if (accounts.isEmpty) return;
 
+  final folderLocalDs = sl<FolderLocalDatasource>();
+  final notifications = sl<NotificationService>();
+
   for (final account in accounts) {
     try {
       final ds = accountManager.buildEmailDatasourceForAccount(account);
-      await ds.getMailFolders();
+      final freshFolders = await ds.getMailFolders();
+      final freshInbox = freshFolders
+          .where((f) => f.displayName.toLowerCase() == 'inbox')
+          .firstOrNull;
+      if (freshInbox == null) continue;
+
+      final cached = await folderLocalDs.getCachedFolders(account.id);
+      final cachedInbox =
+          cached.where((f) => f.displayName.toLowerCase() == 'inbox').firstOrNull;
+
+      // Preserve the rest of the cached tree (subfolders etc.) and only
+      // refresh the Inbox entry — a background poll only fetches top-level
+      // folders, so overwriting the whole cache would drop known subfolders.
+      final toCache = cached.isNotEmpty
+          ? cached
+              .map((f) => f.displayName.toLowerCase() == 'inbox' ? freshInbox : f)
+              .toList()
+          : freshFolders;
+      await folderLocalDs.clearFoldersForAccount(account.id);
+      await folderLocalDs.cacheFolders(accountId: account.id, folders: toCache);
+
+      if (cachedInbox != null &&
+          freshInbox.unreadItemCount > cachedInbox.unreadItemCount) {
+        final delta = freshInbox.unreadItemCount - cachedInbox.unreadItemCount;
+        await notifications.showNewMailNotification(
+          accountLabel: account.displayName,
+          newCount: delta,
+        );
+      }
     } catch (_) {
       // Silently skip accounts that fail; the foreground poller will retry.
     }

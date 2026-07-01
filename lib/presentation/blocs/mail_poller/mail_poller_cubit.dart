@@ -44,6 +44,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   final Map<String, int> _latestPolledUnread = {};
   final Set<String> _newMailAccounts = {};
   final Set<String> _bootstrapping = {};
+  final Set<String> _reauthAccounts = {};
 
   Future<void> initialize() async {
     // Remove before add to guard against multiple initialize() calls (e.g.
@@ -102,6 +103,9 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
 
       for (final account in accounts) {
         try {
+          // Optimistically assume this round will succeed; the AuthException
+          // handler below re-flags the account if it doesn't.
+          if (_reauthAccounts.remove(account.id)) changed = true;
           final ds = _accountManager.buildEmailDatasourceForAccount(account);
 
           if (account is MicrosoftAccount && ds is GraphDeltaDatasource) {
@@ -203,8 +207,12 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
             if (account.id == activeId) {
               final prevUnread = _baselineUnread[account.id];
               final prevTotal = _baselineTotal[account.id];
-              if ((prevUnread != null && unreadCount > prevUnread) ||
-                  (prevTotal != null && totalCount > prevTotal)) {
+              // Any change — not just an increase — must refresh the UI: a
+              // decrease can come from reading/deleting mail on another
+              // client, or from an in-app action whose optimistic local
+              // update was missed, and would otherwise never self-heal.
+              if ((prevUnread != null && unreadCount != prevUnread) ||
+                  (prevTotal != null && totalCount != prevTotal)) {
                 activeInboxChanged = true;
               }
               _baselineUnread[account.id] = unreadCount;
@@ -222,8 +230,13 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
             // the next poll bootstraps a fresh one.
             await _database.clearDeltaTokensForAccount(account.id);
           }
+        } on AuthException catch (_) {
+          // Refresh token rejected/revoked — surface this account as needing
+          // re-authentication instead of silently freezing its counts forever.
+          if (_reauthAccounts.add(account.id)) changed = true;
         } catch (_) {
-          // Silently skip accounts that fail to poll.
+          // Silently skip accounts that fail to poll for other reasons
+          // (network blips, etc.) — the next poll cycle will retry.
         }
       }
 
@@ -237,6 +250,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
           pollGeneration: activeInboxChanged
               ? state.pollGeneration + 1
               : state.pollGeneration,
+          accountsNeedingReauth: Set.of(_reauthAccounts),
         ));
       }
     } finally {

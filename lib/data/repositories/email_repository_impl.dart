@@ -46,19 +46,11 @@ class EmailRepositoryImpl implements EmailRepository {
       final accountId = _accountManager.activeAccount?.id;
       if (accountId != null && emails.isNotEmpty) {
         final effectiveFolderId = folderId ?? _defaultFolderKey;
-        unawaited(() async {
-          if (skip == 0) {
-            await _localDatasource.clearCacheForFolder(
-              accountId: accountId,
-              folderId: effectiveFolderId,
-            );
-          }
-          await _localDatasource.cacheEmails(
-            accountId: accountId,
-            folderId: effectiveFolderId,
-            emails: emails,
-          );
-        }());
+        unawaited(_localDatasource.cacheEmails(
+          accountId: accountId,
+          folderId: effectiveFolderId,
+          emails: emails,
+        ));
       }
     });
 
@@ -337,6 +329,24 @@ class EmailRepositoryImpl implements EmailRepository {
   Future<Either<Failure, Unit>> clearCacheForAccount(String accountId) async {
     try {
       await _localDatasource.clearCacheForAccount(accountId);
+      return const Right(unit);
+    } on CacheException catch (e) {
+      return Left(CacheFailure(message: e.message));
+    } catch (e) {
+      return Left(CacheFailure(message: e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, Unit>> clearCacheForFolder({
+    required String accountId,
+    required String folderId,
+  }) async {
+    try {
+      await _localDatasource.clearCacheForFolder(
+        accountId: accountId,
+        folderId: folderId,
+      );
       return const Right(unit);
     } on CacheException catch (e) {
       return Left(CacheFailure(message: e.message));

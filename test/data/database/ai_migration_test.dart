@@ -39,8 +39,11 @@ void main() {
   });
 
   group('AI subsystem schema (v8)', () {
-    test('schemaVersion is 8', () {
-      expect(db.schemaVersion, 8);
+    test('schemaVersion is at least 8', () {
+      // Not pinned to exactly 8 — later migrations (e.g. v9's
+      // ScheduledReminders table) legitimately bump this further; this test
+      // only asserts the v8 AI tables exist and round-trip correctly below.
+      expect(db.schemaVersion, greaterThanOrEqualTo(8));
     });
 
     test('the three new AI tables exist after createAll/onUpgrade', () async {

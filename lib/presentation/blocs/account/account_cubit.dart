@@ -6,6 +6,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../domain/repositories/email_repository.dart';
 import '../../../infrastructure/accounts/account.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
+import '../../../infrastructure/notifications/calendar_reminder_service.dart';
 
 // ---------------------------------------------------------------------------
 // State
@@ -68,12 +69,14 @@ class AccountCubit extends Cubit<AccountState> {
   AccountCubit({
     required this._accountManager,
     required this._emailRepository,
+    required this._calendarReminderService,
   }) : super(const AccountLoading()) {
     _authFailureSub = _accountManager.authFailures.listen(_onAuthFailure);
   }
 
   final AccountManager _accountManager;
   final EmailRepository _emailRepository;
+  final CalendarReminderService _calendarReminderService;
   late final StreamSubscription<String> _authFailureSub;
 
   // Reacts to AuthInterceptor reporting a failed token refresh for
@@ -145,6 +148,7 @@ class AccountCubit extends Cubit<AccountState> {
   Future<void> removeAccount(String accountId) async {
     await _accountManager.removeAccount(accountId);
     await _emailRepository.clearCacheForAccount(accountId);
+    await _calendarReminderService.clearAccount(accountId);
     if (_accountManager.hasAccounts) {
       await _emitLoaded();
     } else {

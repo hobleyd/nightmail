@@ -11,6 +11,7 @@ class EventEditBloc extends Bloc<EventEditBlocEvent, EventEditState> {
     required CreateCalendarEvent createCalendarEvent,
     required UpdateCalendarEvent updateCalendarEvent,
     required NotificationService notificationService,
+    this.accountId,
   })  : _createCalendarEvent = createCalendarEvent,
         _updateCalendarEvent = updateCalendarEvent,
         _notificationService = notificationService,
@@ -21,6 +22,10 @@ class EventEditBloc extends Bloc<EventEditBlocEvent, EventEditState> {
   final CreateCalendarEvent _createCalendarEvent;
   final UpdateCalendarEvent _updateCalendarEvent;
   final NotificationService _notificationService;
+
+  /// The account this event belongs to. Needed to namespace scheduled
+  /// reminder notification ids; reminder scheduling is skipped if null.
+  final String? accountId;
 
   Future<void> _onSubmitted(
     EventEditSubmitted event,
@@ -47,8 +52,10 @@ class EventEditBloc extends Bloc<EventEditBlocEvent, EventEditState> {
       result.fold(
         (f) => emit(EventEditError(message: f.message)),
         (e) {
-          if (event.reminderMinutes != null) {
+          final id = accountId;
+          if (id != null && event.reminderMinutes != null) {
             _notificationService.scheduleEventReminder(
+              accountId: id,
               eventId: e.id,
               eventTitle: e.subject,
               startUtc: e.start,
@@ -78,15 +85,20 @@ class EventEditBloc extends Bloc<EventEditBlocEvent, EventEditState> {
       result.fold(
         (f) => emit(EventEditError(message: f.message)),
         (e) {
-          _notificationService.cancelEventReminder(e.id);
-          if (event.reminderMinutes != null) {
-            _notificationService.scheduleEventReminder(
-              eventId: e.id,
-              eventTitle: e.subject,
-              startUtc: e.start,
-              reminderMinutes: event.reminderMinutes!,
-              startIso: e.start.toIso8601String(),
-            );
+          final id = accountId;
+          if (id != null) {
+            _notificationService.cancelEventReminder(
+                accountId: id, eventId: e.id);
+            if (event.reminderMinutes != null) {
+              _notificationService.scheduleEventReminder(
+                accountId: id,
+                eventId: e.id,
+                eventTitle: e.subject,
+                startUtc: e.start,
+                reminderMinutes: event.reminderMinutes!,
+                startIso: e.start.toIso8601String(),
+              );
+            }
           }
           emit(EventEditSaved(event: e));
         },

@@ -10,6 +10,7 @@ import 'data/datasources/local/delta_token_datasource.dart';
 import 'data/datasources/local/email_local_datasource.dart';
 import 'data/datasources/local/email_local_datasource_impl.dart';
 import 'data/datasources/local/folder_local_datasource.dart';
+import 'data/datasources/local/reminder_schedule_local_datasource.dart';
 import 'data/datasources/local/sender_local_datasource.dart';
 import 'data/datasources/local/sender_local_datasource_impl.dart';
 import 'data/repositories/calendar_repository_impl.dart';
@@ -97,6 +98,7 @@ import 'infrastructure/accounts/account_manager.dart';
 import 'infrastructure/accounts/account_storage.dart';
 import 'infrastructure/badge/badge_service.dart';
 import 'infrastructure/cache/cache_encryption_service.dart';
+import 'infrastructure/notifications/calendar_reminder_service.dart';
 import 'infrastructure/notifications/notification_service.dart';
 import 'presentation/blocs/account/account_cubit.dart';
 import 'presentation/blocs/calendar/calendar_bloc.dart';
@@ -149,6 +151,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton<AppDatabase>(() => AppDatabase());
   sl.registerLazySingleton<DeltaTokenDatasource>(() => sl<AppDatabase>());
   sl.registerLazySingleton<FolderLocalDatasource>(() => sl<AppDatabase>());
+  sl.registerLazySingleton<ReminderScheduleLocalDatasource>(() => sl<AppDatabase>());
   sl.registerLazySingleton<EmailLocalDatasource>(
     () => EmailLocalDatasourceImpl(
       database: sl<AppDatabase>(),
@@ -245,6 +248,13 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => AppSettings());
   sl.registerLazySingleton(() => BadgeService());
   sl.registerLazySingleton(() => NotificationService());
+  sl.registerLazySingleton(
+    () => CalendarReminderService(
+      accountManager: sl<AccountManager>(),
+      notificationService: sl<NotificationService>(),
+      database: sl<ReminderScheduleLocalDatasource>(),
+    ),
+  );
 
   // Presentation — singletons
   sl.registerLazySingleton(() => ThemeCubit());
@@ -252,6 +262,7 @@ Future<void> configureDependencies() async {
     () => AccountCubit(
       accountManager: sl<AccountManager>(),
       emailRepository: sl<EmailRepository>(),
+      calendarReminderService: sl<CalendarReminderService>(),
     ),
   );
   sl.registerLazySingleton(
@@ -302,6 +313,8 @@ Future<void> configureDependencies() async {
           declineCalendarEvent: sl<DeclineCalendarEvent>(),
           proposeNewTime: sl<ProposeNewTime>(),
           updateCalendarEvent: sl<UpdateCalendarEvent>(),
+          notificationService: sl<NotificationService>(),
+          accountManager: sl<AccountManager>(),
         ),
   );
   sl.registerFactory(() => ComposeBloc(sendEmail: sl<SendEmail>()));

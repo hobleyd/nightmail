@@ -12,6 +12,7 @@ import '../../domain/entities/email_folder.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/usecases/get_email.dart';
 import '../../core/settings/app_settings.dart';
+import '../../infrastructure/notifications/calendar_reminder_service.dart';
 import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/calendar/calendar_bloc.dart';
@@ -48,6 +49,10 @@ class HomePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Not tied to any Bloc lifecycle — a plain periodic reconciler, started
+    // once the home shell mounts alongside mail polling. startPeriodic()
+    // cancels any existing timer first, so repeated builds are safe.
+    sl<CalendarReminderService>().startPeriodic();
     return MultiBlocProvider(
       providers: [
         BlocProvider.value(value: sl<AccountCubit>()),

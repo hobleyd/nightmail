@@ -217,6 +217,7 @@ class EventKitCalendarDatasourceImpl implements CalendarRemoteDatasource {
       location: map['location'] as String?,
       bodyPreview: map['notes'] as String?,
       isOrganizer: true,
+      reminderMinutes: map['reminderMinutes'] as int?,
     );
   }
 

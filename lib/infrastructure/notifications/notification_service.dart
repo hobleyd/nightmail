@@ -19,6 +19,7 @@ class NotificationService {
   // Linux: flutter_local_notifications doesn't support zonedSchedule on Linux,
   // so we use in-process Dart timers and call show() when they fire.
   // Reminders only fire while the app is running on Linux.
+  // Keyed by the same composite accountId::eventId string as _notifId.
   final _linuxTimers = <String, Timer>{};
 
   NotificationService() {
@@ -151,6 +152,7 @@ class NotificationService {
   }
 
   Future<void> scheduleEventReminder({
+    required String accountId,
     required String eventId,
     required String eventTitle,
     required DateTime startUtc,
@@ -160,10 +162,12 @@ class NotificationService {
     final triggerTime = startUtc.subtract(Duration(minutes: reminderMinutes));
     if (!triggerTime.isAfter(DateTime.now().toUtc())) return;
 
+    final key = _key(accountId, eventId);
+
     if (Platform.isMacOS) {
       try {
         await _macChannel.invokeMethod<void>('scheduleReminder', {
-          'id': eventId,
+          'id': key,
           'title': eventTitle,
           'body': 'Starting in ${_minutesLabel(reminderMinutes)}',
           'triggerMs': triggerTime.millisecondsSinceEpoch,
@@ -175,7 +179,7 @@ class NotificationService {
 
     if (Platform.isLinux) {
       _scheduleLinux(
-        eventId: eventId,
+        key: key,
         eventTitle: eventTitle,
         triggerTime: triggerTime,
         reminderMinutes: reminderMinutes,
@@ -191,7 +195,7 @@ class NotificationService {
         triggerTime.millisecondsSinceEpoch,
       );
       await _localPlugin.zonedSchedule(
-        id: _notifId(eventId),
+        id: _notifId(accountId, eventId),
         title: eventTitle,
         body: 'Starting in ${_minutesLabel(reminderMinutes)}',
         scheduledDate: scheduled,
@@ -202,17 +206,17 @@ class NotificationService {
   }
 
   void _scheduleLinux({
-    required String eventId,
+    required String key,
     required String eventTitle,
     required DateTime triggerTime,
     required int reminderMinutes,
   }) {
-    _linuxTimers[eventId]?.cancel();
+    _linuxTimers[key]?.cancel();
     final delay = triggerTime.toUtc().difference(DateTime.now().toUtc());
-    _linuxTimers[eventId] = Timer(delay, () {
-      _linuxTimers.remove(eventId);
+    _linuxTimers[key] = Timer(delay, () {
+      _linuxTimers.remove(key);
       _localPlugin.show(
-        id: _notifId(eventId),
+        id: key.hashCode.abs() % 0x7FFFFFFF,
         title: eventTitle,
         body: 'Starting in ${_minutesLabel(reminderMinutes)}',
         notificationDetails: const NotificationDetails(
@@ -222,15 +226,19 @@ class NotificationService {
     });
   }
 
-  Future<void> cancelEventReminder(String eventId) async {
+  Future<void> cancelEventReminder({
+    required String accountId,
+    required String eventId,
+  }) async {
+    final key = _key(accountId, eventId);
     if (Platform.isMacOS) {
       try {
-        await _macChannel.invokeMethod<void>('cancelReminder', {'id': eventId});
+        await _macChannel.invokeMethod<void>('cancelReminder', {'id': key});
       } catch (_) {}
       return;
     }
-    _linuxTimers.remove(eventId)?.cancel();
-    await _localPlugin.cancel(id: _notifId(eventId));
+    _linuxTimers.remove(key)?.cancel();
+    await _localPlugin.cancel(id: _notifId(accountId, eventId));
   }
 
   static NotificationDetails _details() => const NotificationDetails(
@@ -246,7 +254,10 @@ class NotificationService {
         windows: WindowsNotificationDetails(),
       );
 
-  static int _notifId(String eventId) => eventId.hashCode.abs() % 0x7FFFFFFF;
+  static String _key(String accountId, String eventId) => '$accountId::$eventId';
+
+  static int _notifId(String accountId, String eventId) =>
+      _key(accountId, eventId).hashCode.abs() % 0x7FFFFFFF;
 
   static String _minutesLabel(int minutes) {
     if (minutes < 60) return '$minutes minute${minutes == 1 ? '' : 's'}';

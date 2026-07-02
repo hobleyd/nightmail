@@ -6,6 +6,7 @@ import 'package:workmanager/workmanager.dart';
 
 import '../../data/datasources/local/folder_local_datasource.dart';
 import '../../infrastructure/accounts/account_manager.dart';
+import '../../infrastructure/notifications/calendar_reminder_service.dart';
 import '../../infrastructure/notifications/notification_service.dart';
 import '../../injection_container.dart';
 
@@ -97,6 +98,11 @@ void _callbackDispatcher() {
 /// SceneDelegate.swift) — so a local notification via flutter_local_notifications
 /// (a real registered plugin, reachable here) is used instead to surface new
 /// mail while the app is backgrounded.
+///
+/// Also reconciles calendar reminders for every account (see
+/// [CalendarReminderService]) on this same cycle, so reminders keep getting
+/// (re)scheduled even when the app is fully backgrounded/killed on mobile —
+/// no second WorkManager/BGTaskScheduler task is registered for this.
 Future<void> _runBackgroundPoll() async {
   WidgetsFlutterBinding.ensureInitialized();
   await configureDependencies();
@@ -145,5 +151,12 @@ Future<void> _runBackgroundPoll() async {
     } catch (_) {
       // Silently skip accounts that fail; the foreground poller will retry.
     }
+  }
+
+  try {
+    await sl<CalendarReminderService>().reconcileAll();
+  } catch (_) {
+    // Never let a calendar failure break the mail-poll return-true/false
+    // contract above.
   }
 }

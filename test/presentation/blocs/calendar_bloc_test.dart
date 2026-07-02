@@ -9,6 +9,9 @@ import 'package:nightmail/domain/usecases/decline_calendar_event.dart';
 import 'package:nightmail/domain/usecases/get_calendar_events.dart';
 import 'package:nightmail/domain/usecases/propose_new_time.dart';
 import 'package:nightmail/domain/usecases/update_calendar_event.dart';
+import 'package:nightmail/infrastructure/accounts/account.dart';
+import 'package:nightmail/infrastructure/accounts/account_manager.dart';
+import 'package:nightmail/infrastructure/notifications/notification_service.dart';
 import 'package:nightmail/presentation/blocs/calendar/calendar_bloc.dart';
 import 'package:nightmail/presentation/blocs/calendar/calendar_event.dart';
 import 'package:nightmail/presentation/blocs/calendar/calendar_state.dart';
@@ -31,13 +34,23 @@ final _tEvents = <CalendarEvent>[
   ),
 ];
 
-@GenerateMocks([GetCalendarEvents, CancelCalendarEvent, DeclineCalendarEvent, ProposeNewTime, UpdateCalendarEvent])
+@GenerateMocks([
+  GetCalendarEvents,
+  CancelCalendarEvent,
+  DeclineCalendarEvent,
+  ProposeNewTime,
+  UpdateCalendarEvent,
+  NotificationService,
+  AccountManager,
+])
 void main() {
   late MockGetCalendarEvents mockGetCalendarEvents;
   late MockCancelCalendarEvent mockCancelCalendarEvent;
   late MockDeclineCalendarEvent mockDeclineCalendarEvent;
   late MockProposeNewTime mockProposeNewTime;
   late MockUpdateCalendarEvent mockUpdateCalendarEvent;
+  late MockNotificationService mockNotificationService;
+  late MockAccountManager mockAccountManager;
 
   CalendarBloc makeBloc() => CalendarBloc(
         getCalendarEvents: mockGetCalendarEvents,
@@ -45,6 +58,8 @@ void main() {
         declineCalendarEvent: mockDeclineCalendarEvent,
         proposeNewTime: mockProposeNewTime,
         updateCalendarEvent: mockUpdateCalendarEvent,
+        notificationService: mockNotificationService,
+        accountManager: mockAccountManager,
       );
 
   setUp(() {
@@ -53,6 +68,25 @@ void main() {
     mockDeclineCalendarEvent = MockDeclineCalendarEvent();
     mockProposeNewTime = MockProposeNewTime();
     mockUpdateCalendarEvent = MockUpdateCalendarEvent();
+    mockNotificationService = MockNotificationService();
+    mockAccountManager = MockAccountManager();
+    when(mockAccountManager.activeAccount).thenReturn(const GmailAccount(
+      id: 'acct1',
+      displayName: 'Test',
+      emailAddress: 'test@example.com',
+    ));
+    when(mockNotificationService.cancelEventReminder(
+      accountId: anyNamed('accountId'),
+      eventId: anyNamed('eventId'),
+    )).thenAnswer((_) async {});
+    when(mockNotificationService.scheduleEventReminder(
+      accountId: anyNamed('accountId'),
+      eventId: anyNamed('eventId'),
+      eventTitle: anyNamed('eventTitle'),
+      startUtc: anyNamed('startUtc'),
+      reminderMinutes: anyNamed('reminderMinutes'),
+      startIso: anyNamed('startIso'),
+    )).thenAnswer((_) async {});
     provideDummy<Either<Failure, List<CalendarEvent>>>(_emptyRight);
     provideDummy<Either<Failure, void>>(_voidRight);
   });

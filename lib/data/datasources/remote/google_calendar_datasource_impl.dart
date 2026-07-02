@@ -19,12 +19,43 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
 
   final Dio _dio;
 
+  // Cached popup-reminder minutes from the primary calendar's settings, used
+  // when an event has reminders.useDefault == true (events.list carries no
+  // minutes value for that case — the default lives on the CalendarList
+  // resource, not the Events resource). Refreshed at most once per hour.
+  List<int>? _defaultReminderMinutes;
+  DateTime? _defaultReminderFetchedAt;
+
+  Future<List<int>> _getDefaultReminderMinutes() async {
+    final now = DateTime.now();
+    if (_defaultReminderMinutes != null &&
+        _defaultReminderFetchedAt != null &&
+        now.difference(_defaultReminderFetchedAt!) < const Duration(hours: 1)) {
+      return _defaultReminderMinutes!;
+    }
+    try {
+      final resp = await _dio
+          .get<Map<String, dynamic>>('/users/me/calendarList/primary');
+      final defaults = (resp.data?['defaultReminders'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>()
+          .where((r) => r['method'] == 'popup')
+          .map((r) => r['minutes'] as int)
+          .toList();
+      _defaultReminderMinutes = defaults;
+      _defaultReminderFetchedAt = now;
+      return defaults;
+    } catch (_) {
+      return _defaultReminderMinutes ?? const [];
+    }
+  }
+
   @override
   Future<List<CalendarEventModel>> getCalendarEvents({
     required DateTime startDateTime,
     required DateTime endDateTime,
   }) async {
     try {
+      final defaultReminderMinutes = await _getDefaultReminderMinutes();
       final response = await _dio.get<Map<String, dynamic>>(
         '/calendars/primary/events',
         queryParameters: {
@@ -34,7 +65,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
           'orderBy': 'startTime',
           'maxResults': 250,
           'fields':
-              'items(id,summary,start,end,description,location,status,organizer,attendees,hangoutLink,conferenceData)',
+              'items(id,summary,start,end,description,location,status,organizer,attendees,hangoutLink,conferenceData,reminders)',
         },
       );
 
@@ -43,7 +74,8 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
 
       final items = data['items'] as List<dynamic>? ?? [];
       return items
-          .map((e) => _parseEvent(e as Map<String, dynamic>))
+          .map((e) => _parseEvent(
+              e as Map<String, dynamic>, defaultReminderMinutes))
           .toList();
     } on DioException catch (e) {
       throw _mapException(e);
@@ -65,6 +97,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
         description: params.description,
         attendeeEmails: params.attendeeEmails,
         recurrence: params.recurrence,
+        reminderMinutes: params.reminderMinutes,
       );
 
       final response = await _dio.post<Map<String, dynamic>>(
@@ -75,7 +108,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       if (response.data == null) {
         throw const ServerException(message: 'Empty response from server');
       }
-      return _parseEvent(response.data!);
+      return _parseEvent(response.data!, const []);
     } on DioException catch (e) {
       throw _mapException(e);
     }
@@ -96,6 +129,8 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
         description: params.description,
         attendeeEmails: params.attendeeEmails,
         recurrence: params.recurrence,
+        reminderMinutes: params.reminderMinutes,
+        isUpdate: true,
       );
 
       final response = await _dio.patch<Map<String, dynamic>>(
@@ -106,7 +141,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       if (response.data == null) {
         throw const ServerException(message: 'Empty response from server');
       }
-      return _parseEvent(response.data!);
+      return _parseEvent(response.data!, const []);
     } on DioException catch (e) {
       throw _mapException(e);
     }
@@ -319,6 +354,8 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     String? description,
     List<String> attendeeEmails = const [],
     CalendarRecurrence? recurrence,
+    int? reminderMinutes,
+    bool isUpdate = false,
   }) {
     final body = <String, dynamic>{
       'summary': subject,
@@ -348,6 +385,22 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
 
     if (recurrence != null) {
       body['recurrence'] = [_buildRRule(recurrence)];
+    }
+
+    // On create, omitting `reminders` when unset just means "use the
+    // calendar's default" — an acceptable default for a fresh event. On
+    // update, always send it explicitly: omitting a field on PATCH means
+    // "leave unchanged", so clearing a reminder in the edit dialog would
+    // otherwise silently fail to take effect server-side.
+    if (reminderMinutes != null) {
+      body['reminders'] = {
+        'useDefault': false,
+        'overrides': [
+          {'method': 'popup', 'minutes': reminderMinutes},
+        ],
+      };
+    } else if (isUpdate) {
+      body['reminders'] = {'useDefault': false, 'overrides': []};
     }
 
     return body;
@@ -409,7 +462,10 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     return '$y$m${d}T000000Z';
   }
 
-  CalendarEventModel _parseEvent(Map<String, dynamic> json) {
+  CalendarEventModel _parseEvent(
+    Map<String, dynamic> json,
+    List<int> defaultReminderMinutes,
+  ) {
     final startMap = json['start'] as Map<String, dynamic>? ?? {};
     final endMap = json['end'] as Map<String, dynamic>? ?? {};
 
@@ -468,7 +524,31 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       isOrganizer: isOrganizer,
       timezone: startMap['timeZone'] as String?,
       attendees: attendees,
+      reminderMinutes:
+          _parseReminderMinutes(json['reminders'], defaultReminderMinutes),
     );
+  }
+
+  /// Resolves a single reminder-minutes value from Google's `reminders`
+  /// object. NightMail's domain model holds one reminder per event, so when
+  /// several are present the earliest (minimum minutes) wins.
+  static int? _parseReminderMinutes(
+    dynamic remindersJson,
+    List<int> defaultReminderMinutes,
+  ) {
+    if (remindersJson is! Map<String, dynamic>) return null;
+    final useDefault = remindersJson['useDefault'] as bool? ?? false;
+    if (useDefault) {
+      if (defaultReminderMinutes.isEmpty) return null;
+      return defaultReminderMinutes.reduce((a, b) => a < b ? a : b);
+    }
+    final overrides = (remindersJson['overrides'] as List<dynamic>? ?? [])
+        .cast<Map<String, dynamic>>()
+        .where((o) => o['method'] == 'popup')
+        .map((o) => o['minutes'] as int)
+        .toList();
+    if (overrides.isEmpty) return null;
+    return overrides.reduce((a, b) => a < b ? a : b);
   }
 
   /// Extracts the video join URL from `conferenceData.entryPoints`

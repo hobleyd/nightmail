@@ -487,7 +487,58 @@ class AccountManager {
           credentialStorage: credStorage,
         );
         _tasksDatasource = null;
-        _calendarDatasource = _buildImapCalendarDatasource(account);
+        _calendarDatasource = buildCalendarDatasourceForAccount(account);
+    }
+  }
+
+  /// Build a [CalendarRemoteDatasource] for [account] without changing the
+  /// active account or touching [_emailDatasource]/[_tasksDatasource].
+  ///
+  /// Used by background/periodic reminder reconciliation, which needs every
+  /// configured account's calendar, not just the active one (mirrors
+  /// [buildEmailDatasourceForAccount]). Deliberately NOT used by
+  /// [_buildDatasourcesForActiveAccount]'s Microsoft/Gmail branches, which
+  /// share a single client instance across email/calendar/tasks for the
+  /// active account already — routing them through this method too would
+  /// construct a second, redundant auth/client pipeline for the same account.
+  CalendarRemoteDatasource? buildCalendarDatasourceForAccount(Account account) {
+    switch (account) {
+      case MicrosoftAccount():
+        final tokenStorage = TokenStorage(
+          _secureStorage,
+          storageKey: 'token_${account.id}',
+        );
+        final authSvc = MicrosoftAuthService(
+          clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
+          tenantId: account.tenantId,
+          redirectUri: AppConfig.microsoftRedirectUri,
+          tokenStorage: tokenStorage,
+        );
+        return GraphApiDatasourceImpl(
+          client: GraphHttpClient(
+            authService: authSvc,
+            onAuthFailure: () => _authFailureController.add(account.id),
+          ),
+        );
+      case GmailAccount():
+        final tokenStorage = TokenStorage(
+          _secureStorage,
+          storageKey: 'token_${account.id}',
+        );
+        final authSvc = GmailAuthService(
+          clientId: _googleClientId ?? AppConfig.gmailClientId,
+          clientSecret: _googleClientSecret ?? '',
+          redirectUri: AppConfig.gmailRedirectUri,
+          tokenStorage: tokenStorage,
+        );
+        return GoogleCalendarDatasourceImpl(
+          client: GoogleCalendarHttpClient(
+            authService: authSvc,
+            onAuthFailure: () => _authFailureController.add(account.id),
+          ),
+        );
+      case ImapAccount():
+        return _buildImapCalendarDatasource(account);
     }
   }
 

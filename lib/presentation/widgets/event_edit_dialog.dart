@@ -179,6 +179,7 @@ class _EventEditFormState extends State<EventEditForm> {
   bool _isTeamsMeeting = false;
   bool _showSchedulePane = false;
   String? _organizerEmail;
+  String? _hoveredLocationUrl;
 
   @override
   void initState() {
@@ -485,6 +486,8 @@ class _EventEditFormState extends State<EventEditForm> {
                       ? _LinkifiedText(
                           text: _locationController.text,
                           style: TextStyle(color: c.textPrimary, fontSize: 13),
+                          onHoverUrl: (u) =>
+                              setState(() => _hoveredLocationUrl = u),
                         )
                       : Row(
                           children: [
@@ -596,6 +599,7 @@ class _EventEditFormState extends State<EventEditForm> {
           readOnly: _readOnly,
           onSave: _submit,
           onClose: widget.onClose,
+          hoveredUrl: _hoveredLocationUrl,
         ),
       ],
     );
@@ -1888,9 +1892,12 @@ class _ScheduleGridState extends State<_ScheduleGrid> {
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
 class _LinkifiedText extends StatefulWidget {
-  const _LinkifiedText({required this.text, required this.style});
+  const _LinkifiedText({required this.text, required this.style, this.onHoverUrl});
   final String text;
   final TextStyle style;
+  /// Called with the real (unshortened) URL while the pointer hovers a link,
+  /// and with `null` when it leaves.
+  final ValueChanged<String?>? onHoverUrl;
 
   @override
   State<_LinkifiedText> createState() => _LinkifiedTextState();
@@ -1898,6 +1905,16 @@ class _LinkifiedText extends StatefulWidget {
 
 class _LinkifiedTextState extends State<_LinkifiedText> {
   static final _urlPattern = RegExp(r'https?://[^\s<>"{}|\\^`\[\]]+');
+
+  /// Teams meetup-join URLs carry a long opaque meeting-id/context token
+  /// that's meaningless to display; show a clean stand-in for the label
+  /// while the tap recognizer still opens the real [url].
+  static String _displayUrl(String url) {
+    if (url.startsWith('https://teams.microsoft.com')) {
+      return 'https://teams.microsoft.com/join-meeting';
+    }
+    return url;
+  }
 
   final List<TapGestureRecognizer> _recognizers = [];
 
@@ -1934,13 +1951,16 @@ class _LinkifiedTextState extends State<_LinkifiedText> {
             );
       _recognizers.add(recognizer);
       spans.add(TextSpan(
-        text: url,
+        text: _displayUrl(url),
         style: widget.style.copyWith(
           color: AppColors.accent,
           decoration: TextDecoration.underline,
           decorationColor: AppColors.accent,
         ),
         recognizer: recognizer,
+        mouseCursor: SystemMouseCursors.click,
+        onEnter: (_) => widget.onHoverUrl?.call(url),
+        onExit: (_) => widget.onHoverUrl?.call(null),
       ));
       last = match.end;
     }
@@ -2125,11 +2145,27 @@ class _Footer extends StatelessWidget {
     required this.onSave,
     required this.onClose,
     this.readOnly = false,
+    this.hoveredUrl,
   });
   final bool isEditing;
   final VoidCallback onSave;
   final VoidCallback onClose;
   final bool readOnly;
+  /// The real URL under the pointer while hovering a link in the dialog,
+  /// shown at the bottom of the window alongside Close/Save/Cancel.
+  final String? hoveredUrl;
+
+  Widget _hoveredUrlLabel(BuildContext context) {
+    final c = context.colors;
+    return Expanded(
+      child: Text(
+        hoveredUrl ?? '',
+        style: TextStyle(color: c.textMuted, fontSize: 12),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2138,8 +2174,8 @@ class _Footer extends StatelessWidget {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.end,
           children: [
+            _hoveredUrlLabel(context),
             TextButton(
               onPressed: onClose,
               child: Text('Close', style: TextStyle(color: c.textMuted, fontSize: 13)),
@@ -2154,8 +2190,8 @@ class _Footer extends StatelessWidget {
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
             children: [
+              _hoveredUrlLabel(context),
               TextButton(
                 onPressed: isSaving ? null : onClose,
                 child: Text(

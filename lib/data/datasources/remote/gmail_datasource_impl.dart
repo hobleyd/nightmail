@@ -28,6 +28,10 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   final Dio _dio;
   String? _cachedUserEmail;
 
+  /// Stores the Gmail API nextPageToken per label/folder ID.
+  /// Cleared on skip==0 (new list load); used on skip>0 (load-more).
+  final Map<String?, String> _pageTokens = {};
+
   @override
   Future<List<EmailFolderModel>> getMailFolders() async {
     try {
@@ -175,9 +179,15 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       // labelIds filters *which threads* to show (threads that have at least
       // one message with that label), but every message in each thread is
       // returned regardless of which label it carries.
+      if (skip == 0) {
+        // Fresh load: discard any stored page token for this folder.
+        _pageTokens.remove(folderId);
+      }
+
       final queryParams = <String, dynamic>{
         'maxResults': top,
         'labelIds': ?folderId,
+        'pageToken': ?_pageTokens[folderId],
       };
 
       final listResp = await _dio.get<Map<String, dynamic>>(
@@ -187,6 +197,14 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
 
       final data = listResp.data;
       if (data == null) return [];
+
+      // Store the next page token so the next load-more call can advance.
+      final nextToken = data['nextPageToken'] as String?;
+      if (nextToken != null) {
+        _pageTokens[folderId] = nextToken;
+      } else {
+        _pageTokens.remove(folderId);
+      }
 
       final threads = data['threads'] as List<dynamic>? ?? [];
       if (threads.isEmpty) return [];
@@ -1135,21 +1153,15 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   }) async {
     try {
       final fromEmail = await _getUserEmail();
-      final builder = MessageBuilder()
-        ..from = [MailAddress(null, fromEmail)]
-        ..to = toAddresses.map((a) => MailAddress(null, a)).toList()
-        ..cc = ccAddresses.map((a) => MailAddress(null, a)).toList()
-        ..subject = subject;
-      if (bodyType == EmailBodyType.html) {
-        builder.addTextHtml(body);
-      } else {
-        builder.addTextPlain(body);
-      }
-      await _addAttachmentsToBuilder(builder, newAttachments);
-      final mime = builder.buildMimeMessage();
-      final encoded = base64Url
-          .encode(utf8.encode(mime.renderMessage()))
-          .replaceAll('=', '');
+      final encoded = await compute(_buildDraftRawBase64, _DraftMimeParams(
+        fromAddress: fromEmail,
+        toAddresses: toAddresses,
+        ccAddresses: ccAddresses,
+        subject: subject,
+        body: body,
+        isHtml: bodyType == EmailBodyType.html,
+        attachments: newAttachments,
+      ));
       final resp = await _dio.post<Map<String, dynamic>>(
         '/users/me/drafts',
         data: {'message': {'raw': encoded}},
@@ -1174,21 +1186,15 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   }) async {
     try {
       final fromEmail = await _getUserEmail();
-      final builder = MessageBuilder()
-        ..from = [MailAddress(null, fromEmail)]
-        ..to = toAddresses.map((a) => MailAddress(null, a)).toList()
-        ..cc = ccAddresses.map((a) => MailAddress(null, a)).toList()
-        ..subject = subject;
-      if (bodyType == EmailBodyType.html) {
-        builder.addTextHtml(body);
-      } else {
-        builder.addTextPlain(body);
-      }
-      await _addAttachmentsToBuilder(builder, newAttachments);
-      final mime = builder.buildMimeMessage();
-      final encoded = base64Url
-          .encode(utf8.encode(mime.renderMessage()))
-          .replaceAll('=', '');
+      final encoded = await compute(_buildDraftRawBase64, _DraftMimeParams(
+        fromAddress: fromEmail,
+        toAddresses: toAddresses,
+        ccAddresses: ccAddresses,
+        subject: subject,
+        body: body,
+        isHtml: bodyType == EmailBodyType.html,
+        attachments: newAttachments,
+      ));
 
       // The Drafts folder email list returns message IDs, but the drafts
       // endpoint requires the draft ID (r…). Try the ID as-is; if Gmail
@@ -1268,6 +1274,13 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   }
 
   Exception _mapException(DioException e) {
+    // AuthInterceptor.onRequest can throw AuthException directly (e.g. no
+    // stored token, or a failed proactive refresh) before any HTTP request
+    // is sent. Dio wraps that throw in a DioException with no response, so
+    // it must be unwrapped here or it falls through to a generic
+    // ServerException and the UI never learns re-authentication is needed.
+    if (e.error is AuthException) return e.error as AuthException;
+
     final statusCode = e.response?.statusCode;
     if (e.type == DioExceptionType.connectionError ||
         e.type == DioExceptionType.connectionTimeout ||
@@ -1301,4 +1314,68 @@ class _GmailAttachment {
   final bool isInline;
   final String? contentId;
   final String? inlineData;
+}
+
+/// Inputs for [_buildDraftRawBase64]. Kept as plain, isolate-transferable
+/// data (no [MessageBuilder]/[MimeMessage] instances) since [compute] runs
+/// the builder on a background isolate.
+class _DraftMimeParams {
+  const _DraftMimeParams({
+    required this.fromAddress,
+    required this.toAddresses,
+    required this.ccAddresses,
+    required this.subject,
+    required this.body,
+    required this.isHtml,
+    required this.attachments,
+  });
+
+  final String fromAddress;
+  final List<String> toAddresses;
+  final List<String> ccAddresses;
+  final String subject;
+  final String body;
+  final bool isHtml;
+  final List<LocalAttachment> attachments;
+}
+
+/// Builds, renders and base64url-encodes a draft MIME message off the main
+/// isolate.
+///
+/// Encoding a large HTML body (a long quoted reply can be hundreds of KB)
+/// via [MessageBuilder.buildMimeMessage], [MimeMessage.renderMessage] and
+/// then base64 is synchronous CPU work; running it on the main isolate
+/// froze the compose UI every time the draft autosave timer fired.
+/// [compute] moves it to a worker isolate so only the network request
+/// touches the main isolate.
+String _buildDraftRawBase64(_DraftMimeParams p) {
+  final builder = MessageBuilder()
+    ..from = [MailAddress(null, p.fromAddress)]
+    ..to = p.toAddresses.map((a) => MailAddress(null, a)).toList()
+    ..cc = p.ccAddresses.map((a) => MailAddress(null, a)).toList()
+    ..subject = p.subject;
+  if (p.isHtml) {
+    builder.addTextHtml(p.body);
+  } else {
+    builder.addTextPlain(p.body);
+  }
+  for (final att in p.attachments) {
+    if (att.isInline && att.contentId != null) {
+      final part = builder.addBinary(
+        att.bytes,
+        MediaType.fromText(att.mimeType),
+        filename: att.name,
+        disposition: ContentDispositionHeader.from(ContentDisposition.inline),
+      );
+      part.setHeader('Content-Id', '<${att.contentId}>');
+    } else {
+      builder.addBinary(
+        att.bytes,
+        MediaType.fromText(att.mimeType),
+        filename: att.name,
+      );
+    }
+  }
+  final mime = builder.buildMimeMessage();
+  return base64Url.encode(utf8.encode(mime.renderMessage())).replaceAll('=', '');
 }

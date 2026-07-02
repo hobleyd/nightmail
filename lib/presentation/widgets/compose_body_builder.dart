@@ -94,7 +94,8 @@ class ComposeBodyBuilder {
           '<div>Date: $dateEsc</div>'
           '<div>Subject: $subjectEsc</div>'
           '<div><br></div>'
-          '$htmlBody';
+          '<div spellcheck="false" '
+          'style="content-visibility:auto;contain-intrinsic-size:500px">$htmlBody</div>';
     }
 
     if (mode != ComposeMode.reply && mode != ComposeMode.replyAll) {
@@ -114,7 +115,9 @@ class ComposeBodyBuilder {
         '${ccEsc.isNotEmpty ? '<div>Cc: $ccEsc</div>' : ''}'
         '<div>Date: $dateEsc</div>'
         '<div><br></div>'
-        '<blockquote style="margin:0 0 0 0;border-left:2px solid #ccc;padding-left:12px;color:#666">'
+        '<blockquote spellcheck="false" '
+        'style="margin:0 0 0 0;border-left:2px solid #ccc;padding-left:12px;color:#666;'
+        'content-visibility:auto;contain-intrinsic-size:500px">'
         '$htmlBody'
         '</blockquote>';
   }

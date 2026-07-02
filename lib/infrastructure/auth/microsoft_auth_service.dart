@@ -76,6 +76,7 @@ class MicrosoftAuthService implements AuthService {
     'https://graph.microsoft.com/MailboxSettings.Read',
     'https://graph.microsoft.com/Calendars.ReadWrite',
     'https://graph.microsoft.com/Tasks.ReadWrite',
+    'https://graph.microsoft.com/User.Read.All',
   ];
 
   String get _baseUrl =>
@@ -203,8 +204,8 @@ class MicrosoftAuthService implements AuthService {
       await _tokenStorage.saveToken(token);
       return token;
     } on DioException catch (e) {
-      throw AuthException(
-          message: 'Token refresh failed: ${e.message ?? e.toString()}');
+      final message = _extractErrorMessage(e) ?? e.message ?? e.toString();
+      throw AuthException(message: 'Token refresh failed: $message');
     }
   }
 

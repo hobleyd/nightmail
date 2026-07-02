@@ -237,6 +237,32 @@ void main() {
     expect(homeHardware.messagesExists, equals(40));
   });
 
+  test(
+      'ImapClient listMailboxes does not double-quote a path containing '
+      'parentheses', () async {
+    // Regression: callers must NOT pre-quote the `path` argument —
+    // _encodeMailboxPath() already quotes it when needed (e.g. because it
+    // contains '(' or ')'). Pre-quoting resulted in a doubled-quote LIST
+    // command such as `LIST ""INBOX.Financial.Audit(s).""` "%" ...`, which
+    // servers reject with "BAD ... Invalid characters in atom".
+    mockServer.response = '* LIST (\\HasNoChildren) "." '
+        '"INBOX.Financial.Audit(s).Receipts"\r\n'
+        '<tag> OK List completed (0.001 + 0.000 secs).';
+    await client.listMailboxes(
+      path: 'INBOX.Financial.Audit(s).',
+      recursive: false,
+    );
+
+    final sentCommand = mockServer.lastRequest;
+    expect(sentCommand, isNotNull);
+    expect(
+      sentCommand,
+      isNot(contains('""INBOX')),
+      reason: 'path must not be quoted twice',
+    );
+    expect(sentCommand, contains('"INBOX.Financial.Audit(s)."'));
+  });
+
   test('ImapClient LSUB', () async {
     mockServer.response = '* LSUB (\\HasChildren \\Marked) "/" INBOX\r\n'
         '* LSUB (\\HasChildren \\Noselect) "/" Public\r\n'

@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
+import '../../../domain/entities/contact_details.dart';
 import '../../../domain/entities/contact_suggestion.dart';
 import '../../../infrastructure/http/google_people_http_client.dart';
 
@@ -12,6 +13,9 @@ class GmailContactsDatasourceImpl {
   GmailContactsDatasourceImpl.withDio(this._dio);
 
   final Dio _dio;
+
+  static const _detailsReadMask =
+      'emailAddresses,names,phoneNumbers,organizations,photos';
 
   Future<List<ContactSuggestion>> searchContacts(String query) async {
     final seen = <String>{};
@@ -154,5 +158,144 @@ class GmailContactsDatasourceImpl {
         ));
       }
     }
+  }
+
+  /// Looks up full contact details (job title, org, phone, photo) for a
+  /// single email address, checking personal contacts, the Workspace
+  /// directory, and auto-saved "other contacts" in parallel. Returns the
+  /// richest match, or null if the address isn't found anywhere.
+  Future<ContactDetails?> getContactDetails(String email) async {
+    final results = await Future.wait([
+      _lookupPersonalDetails(email),
+      _lookupDirectoryDetails(email),
+      _lookupOtherContactsDetails(email),
+    ]);
+    final matches = results.whereType<ContactDetails>().toList();
+    if (matches.isEmpty) return null;
+    return matches.firstWhere((d) => d.hasAnyDetail, orElse: () => matches.first);
+  }
+
+  Future<ContactDetails?> _lookupPersonalDetails(String email) async {
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '/people:searchContacts',
+        queryParameters: {
+          'query': email,
+          'readMask': _detailsReadMask,
+          'pageSize': 10,
+        },
+      );
+      return _findMatchingPersonWrapped(resp.data, email);
+    } catch (e) {
+      final body = e is DioException ? e.response?.data : null;
+      debugPrint('[Contacts] details personal error: $e${body != null ? '\n  body: $body' : ''}');
+      return null;
+    }
+  }
+
+  Future<ContactDetails?> _lookupDirectoryDetails(String email) async {
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '/people:searchDirectoryPeople',
+        queryParameters: {
+          'query': email,
+          'readMask': _detailsReadMask,
+          'sources': 'DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE',
+          'pageSize': 10,
+        },
+      );
+      return _findMatchingPersonUnwrapped(resp.data, email);
+    } catch (e) {
+      final body = e is DioException ? e.response?.data : null;
+      debugPrint('[Contacts] details directory error: $e${body != null ? '\n  body: $body' : ''}');
+      return null;
+    }
+  }
+
+  Future<ContactDetails?> _lookupOtherContactsDetails(String email) async {
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '/otherContacts:search',
+        queryParameters: {
+          'query': email,
+          'readMask': _detailsReadMask,
+          'pageSize': 10,
+        },
+      );
+      return _findMatchingPersonWrapped(resp.data, email);
+    } catch (e) {
+      final body = e is DioException ? e.response?.data : null;
+      debugPrint('[Contacts] details otherContacts error: $e${body != null ? '\n  body: $body' : ''}');
+      return null;
+    }
+  }
+
+  ContactDetails? _findMatchingPersonWrapped(
+      Map<String, dynamic>? data, String email) {
+    if (data == null) return null;
+    final raw =
+        (data['results'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+    for (final r in raw) {
+      final person = r['person'] as Map<String, dynamic>?;
+      if (person == null) continue;
+      final details = _parsePersonDetails(person, email);
+      if (details != null) return details;
+    }
+    return null;
+  }
+
+  ContactDetails? _findMatchingPersonUnwrapped(
+      Map<String, dynamic>? data, String email) {
+    if (data == null) return null;
+    final raw =
+        (data['people'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+    for (final person in raw) {
+      final details = _parsePersonDetails(person, email);
+      if (details != null) return details;
+    }
+    return null;
+  }
+
+  ContactDetails? _parsePersonDetails(
+      Map<String, dynamic> person, String targetEmail) {
+    final target = targetEmail.toLowerCase();
+    final emails = (person['emailAddresses'] as List<dynamic>? ?? [])
+        .cast<Map<String, dynamic>>();
+    final matchedAddress = emails
+        .map((e) => e['value'] as String?)
+        .firstWhere(
+          (a) => a != null && a.toLowerCase() == target,
+          orElse: () => null,
+        );
+    if (matchedAddress == null) return null;
+
+    final names = (person['names'] as List<dynamic>? ?? [])
+        .cast<Map<String, dynamic>>();
+    final name = names.firstOrNull?['displayName'] as String?;
+
+    final orgs = (person['organizations'] as List<dynamic>? ?? [])
+        .cast<Map<String, dynamic>>();
+    final org = orgs.firstOrNull;
+
+    final phones = (person['phoneNumbers'] as List<dynamic>? ?? [])
+        .cast<Map<String, dynamic>>()
+        .map((p) => p['value'] as String?)
+        .whereType<String>()
+        .where((p) => p.isNotEmpty)
+        .toList();
+
+    final photos = (person['photos'] as List<dynamic>? ?? [])
+        .cast<Map<String, dynamic>>();
+    final photoUrl = photos.firstOrNull?['url'] as String?;
+
+    return ContactDetails(
+      address: matchedAddress,
+      name: (name == null || name.isEmpty) ? null : name,
+      jobTitle: org?['title'] as String?,
+      department: org?['department'] as String?,
+      companyName: org?['name'] as String?,
+      phoneNumbers: phones,
+      photoUrl: (photoUrl == null || photoUrl.isEmpty) ? null : photoUrl,
+    );
   }
 }

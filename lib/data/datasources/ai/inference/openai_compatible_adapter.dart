@@ -636,11 +636,11 @@ class OpenAiCompatibleAdapter implements AiAdapter {
     final status = e.response?.statusCode;
 
     switch (e.type) {
-      case DioExceptionType.connectionTimeout:
-      case DioExceptionType.sendTimeout:
-      case DioExceptionType.receiveTimeout:
-      case DioExceptionType.connectionError:
-      case DioExceptionType.badCertificate:
+      case DioExceptionType.cancel:
+        return const ProviderUnreachable(message: 'AI request was cancelled.');
+      case DioExceptionType.badResponse:
+        break;
+      default:
         // L12: log the raw cause for diagnostics; surface a fixed, user-safe
         // message (never the raw `e.message`, which can leak URLs/details).
         debugPrint('OpenAiCompatibleAdapter transport error: ${e.type.name}: '
@@ -649,11 +649,6 @@ class OpenAiCompatibleAdapter implements AiAdapter {
           message: 'Could not reach the AI provider. '
               'Check your connection and try again.',
         );
-      case DioExceptionType.cancel:
-        return const ProviderUnreachable(message: 'AI request was cancelled.');
-      case DioExceptionType.badResponse:
-      case DioExceptionType.unknown:
-        break;
     }
 
     if (status == null) {

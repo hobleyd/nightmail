@@ -161,6 +161,7 @@ class _EventEditWindowPage extends StatelessWidget {
         createCalendarEvent: sl<CreateCalendarEvent>(),
         updateCalendarEvent: sl<UpdateCalendarEvent>(),
         notificationService: sl<NotificationService>(),
+        accountId: accountId,
       ),
       child: Scaffold(
         body: BlocListener<EventEditBloc, EventEditState>(

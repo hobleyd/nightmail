@@ -10,9 +10,11 @@ import 'data/datasources/local/delta_token_datasource.dart';
 import 'data/datasources/local/email_local_datasource.dart';
 import 'data/datasources/local/email_local_datasource_impl.dart';
 import 'data/datasources/local/folder_local_datasource.dart';
+import 'data/datasources/local/reminder_schedule_local_datasource.dart';
 import 'data/datasources/local/sender_local_datasource.dart';
 import 'data/datasources/local/sender_local_datasource_impl.dart';
 import 'data/repositories/calendar_repository_impl.dart';
+import 'data/repositories/contact_details_repository_impl.dart';
 import 'data/repositories/directory_contacts_repository_impl.dart';
 import 'data/repositories/email_repository_impl.dart';
 import 'data/repositories/sender_repository_impl.dart';
@@ -42,6 +44,7 @@ import 'presentation/blocs/ai/ai_compose_cubit.dart';
 import 'presentation/blocs/ai/ai_folder_cubit.dart';
 import 'presentation/blocs/ai/ai_settings_cubit.dart';
 import 'domain/repositories/calendar_repository.dart';
+import 'domain/repositories/contact_details_repository.dart';
 import 'domain/repositories/directory_contacts_repository.dart';
 import 'domain/repositories/email_repository.dart';
 import 'domain/repositories/sender_repository.dart';
@@ -67,6 +70,7 @@ import 'domain/usecases/create_folder.dart';
 import 'domain/usecases/rename_folder.dart';
 import 'domain/usecases/empty_folder.dart';
 import 'domain/usecases/get_calendar_events.dart';
+import 'domain/usecases/get_contact_details.dart';
 import 'domain/usecases/get_email.dart';
 import 'domain/usecases/get_emails.dart';
 import 'domain/usecases/get_mail_folders.dart';
@@ -89,11 +93,13 @@ import 'domain/usecases/update_calendar_event.dart';
 import 'domain/usecases/update_task_due_date.dart';
 import 'domain/usecases/update_task_status.dart';
 import 'domain/usecases/get_cached_emails.dart';
+import 'domain/usecases/clear_email_cache_for_folder.dart';
 import 'domain/usecases/get_cached_folders.dart';
 import 'infrastructure/accounts/account_manager.dart';
 import 'infrastructure/accounts/account_storage.dart';
 import 'infrastructure/badge/badge_service.dart';
 import 'infrastructure/cache/cache_encryption_service.dart';
+import 'infrastructure/notifications/calendar_reminder_service.dart';
 import 'infrastructure/notifications/notification_service.dart';
 import 'presentation/blocs/account/account_cubit.dart';
 import 'presentation/blocs/calendar/calendar_bloc.dart';
@@ -146,6 +152,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton<AppDatabase>(() => AppDatabase());
   sl.registerLazySingleton<DeltaTokenDatasource>(() => sl<AppDatabase>());
   sl.registerLazySingleton<FolderLocalDatasource>(() => sl<AppDatabase>());
+  sl.registerLazySingleton<ReminderScheduleLocalDatasource>(() => sl<AppDatabase>());
   sl.registerLazySingleton<EmailLocalDatasource>(
     () => EmailLocalDatasourceImpl(
       database: sl<AppDatabase>(),
@@ -172,6 +179,9 @@ Future<void> configureDependencies() async {
   );
   sl.registerLazySingleton<DirectoryContactsRepository>(
     () => DirectoryContactsRepositoryImpl(accountManager: sl<AccountManager>()),
+  );
+  sl.registerLazySingleton<ContactDetailsRepository>(
+    () => ContactDetailsRepositoryImpl(accountManager: sl<AccountManager>()),
   );
   sl.registerLazySingleton<CalendarRepository>(
     () => CalendarRepositoryImpl(accountManager: sl<AccountManager>()),
@@ -202,6 +212,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => RenameFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => DownloadAttachment(sl<EmailRepository>()));
   sl.registerLazySingleton(() => GetCachedEmails(sl<EmailRepository>()));
+  sl.registerLazySingleton(() => ClearEmailCacheForFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => GetCachedFolders(sl<EmailRepository>()));
   sl.registerLazySingleton(() => RecordKnownSenders(sl<SenderRepository>()));
   sl.registerLazySingleton(() => CheckSenderAnomaly(sl<SenderRepository>()));
@@ -211,6 +222,7 @@ Future<void> configureDependencies() async {
         systemContactsRepository: sl<SystemContactsRepository>(),
         directoryContactsRepository: sl<DirectoryContactsRepository>(),
       ));
+  sl.registerLazySingleton(() => GetContactDetails(sl<ContactDetailsRepository>()));
   sl.registerLazySingleton(() => GetCalendarEvents(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => CreateCalendarEvent(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => UpdateCalendarEvent(sl<CalendarRepository>()));
@@ -238,6 +250,13 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => AppSettings());
   sl.registerLazySingleton(() => BadgeService());
   sl.registerLazySingleton(() => NotificationService());
+  sl.registerLazySingleton(
+    () => CalendarReminderService(
+      accountManager: sl<AccountManager>(),
+      notificationService: sl<NotificationService>(),
+      database: sl<ReminderScheduleLocalDatasource>(),
+    ),
+  );
 
   // Presentation — singletons
   sl.registerLazySingleton(() => ThemeCubit());
@@ -245,6 +264,7 @@ Future<void> configureDependencies() async {
     () => AccountCubit(
       accountManager: sl<AccountManager>(),
       emailRepository: sl<EmailRepository>(),
+      calendarReminderService: sl<CalendarReminderService>(),
     ),
   );
   sl.registerLazySingleton(
@@ -270,6 +290,7 @@ Future<void> configureDependencies() async {
   sl.registerFactory(() => EmailListBloc(
         getEmails: sl<GetEmails>(),
         getCachedEmails: sl<GetCachedEmails>(),
+        clearEmailCacheForFolder: sl<ClearEmailCacheForFolder>(),
         markEmailAsRead: sl<MarkEmailAsRead>(),
         moveEmail: sl<MoveEmail>(),
         reportJunk: sl<ReportJunk>(),
@@ -295,6 +316,8 @@ Future<void> configureDependencies() async {
           declineCalendarEvent: sl<DeclineCalendarEvent>(),
           proposeNewTime: sl<ProposeNewTime>(),
           updateCalendarEvent: sl<UpdateCalendarEvent>(),
+          notificationService: sl<NotificationService>(),
+          accountManager: sl<AccountManager>(),
         ),
   );
   sl.registerFactory(() => ComposeBloc(sendEmail: sl<SendEmail>()));

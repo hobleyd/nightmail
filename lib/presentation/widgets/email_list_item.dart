@@ -17,6 +17,7 @@ class EmailListItem extends StatefulWidget {
     this.isMultiSelected = false,
     this.showCheckbox = false,
     this.isSpam = false,
+    this.isDesktop = true,
     this.onLongPress,
     this.onDoubleTap,
   });
@@ -26,6 +27,7 @@ class EmailListItem extends StatefulWidget {
   final bool isMultiSelected;
   final bool showCheckbox;
   final bool isSpam;
+  final bool isDesktop;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
   final VoidCallback? onDoubleTap;
@@ -174,23 +176,25 @@ class _EmailListItemState extends State<EmailListItem> {
                   ],
                 ),
               ),
-              const SizedBox(width: 4),
-              Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  FlagIconButton(
-                    color: c.textMuted,
-                    onTap: () => widget.onFlag(null),
-                    onSchedule: (date) => widget.onFlag(date),
-                  ),
-                  const SizedBox(height: 2),
-                  _ActionIcon(
-                    icon: Icons.delete_outline_rounded,
-                    color: c.textMuted,
-                    onTap: widget.onDelete,
-                  ),
-                ],
-              ),
+              if (widget.isDesktop) ...[
+                const SizedBox(width: 4),
+                Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    FlagIconButton(
+                      color: c.textMuted,
+                      onTap: () => widget.onFlag(null),
+                      onSchedule: (date) => widget.onFlag(date),
+                    ),
+                    const SizedBox(height: 2),
+                    _ActionIcon(
+                      icon: Icons.delete_outline_rounded,
+                      color: c.textMuted,
+                      onTap: widget.onDelete,
+                    ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),

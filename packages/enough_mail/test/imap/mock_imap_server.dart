@@ -21,8 +21,12 @@ class MockImapServer {
   String? response;
   String? _overrideTag;
 
+  /// The raw text of the most recently received client command.
+  String? lastRequest;
+
   void parseRequest(Uint8List data) {
     final line = String.fromCharCodes(data);
+    lastRequest = line;
     // print('C: $line');
     final firstSpaceIndex = line.indexOf(' ');
     String? tag =

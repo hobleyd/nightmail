@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/timezone_utils.dart';
@@ -351,6 +352,10 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
       child: BlocBuilder<CalendarBloc, CalendarState>(
       builder: (context, state) {
         final isLoading = state is CalendarLoading;
+        final errorMessage = switch (state) {
+          CalendarError(:final message) => message,
+          _ => null,
+        };
         final allDayEvents = switch (state) {
           CalendarLoaded(:final events) =>
             events.where((e) => e.isAllDay && _isSameDay(e.start, _selectedDay)).toList(),
@@ -375,6 +380,7 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
                 onClose: widget.onClose,
               ),
               Divider(height: 1, color: c.separatorStrong),
+              if (errorMessage != null) _ErrorBanner(message: errorMessage),
               if (allDayEvents.isNotEmpty) ...[
                 _DayPanelAllDayStrip(events: allDayEvents),
                 Divider(height: 1, color: c.separatorStrong),
@@ -1447,6 +1453,7 @@ class _EventTile extends StatelessWidget {
     return Opacity(
       opacity: isDragging ? 0.75 : 1.0,
       child: Container(
+        clipBehavior: Clip.hardEdge,
         padding: EdgeInsets.symmetric(
           horizontal: 4,
           vertical: compact ? 1 : 3,
@@ -1480,7 +1487,7 @@ class _EventTile extends StatelessWidget {
             if (!compact && event.location != null) ...[
               const SizedBox(height: 1),
               Text(
-                event.location!,
+                _displayLocation(event.location!),
                 style: TextStyle(
                   color: color.withAlpha(180),
                   fontSize: 10,
@@ -1563,6 +1570,16 @@ Future<void> _confirmAndDeleteSelected(
       .add(const CalendarSelectedEventsDeleteRequested());
 }
 
+/// Teams meetup-join URLs carry a long opaque meeting-id/context token that's
+/// meaningless to display; show a clean stand-in while the real URL (used for
+/// "Join Meeting" and editing) stays in [CalendarEvent.location].
+String _displayLocation(String location) {
+  if (location.startsWith('https://teams.microsoft.com')) {
+    return 'https://teams.microsoft.com/join-meeting';
+  }
+  return location;
+}
+
 // ─── Context menu ─────────────────────────────────────────────────────────────
 
 void _showEventContextMenu(
@@ -1577,12 +1594,22 @@ void _showEventContextMenu(
     position.dy,
   );
 
+  final meetingUrl = event.location;
+  final hasMeetingLink =
+      meetingUrl != null && meetingUrl.startsWith('https://');
+
   if (event.isOrganizer) {
     showMenu<_EventMenuAction>(
       context: context,
       position: rect,
-      items: const [
-        PopupMenuItem(
+      items: [
+        if (hasMeetingLink)
+          const PopupMenuItem(
+            value: _EventMenuAction.joinMeeting,
+            height: 36,
+            child: Text('Join Meeting', style: TextStyle(fontSize: 13)),
+          ),
+        const PopupMenuItem(
           value: _EventMenuAction.cancel,
           height: 36,
           child: Text('Cancel Meeting', style: TextStyle(fontSize: 13)),
@@ -1590,6 +1617,11 @@ void _showEventContextMenu(
       ],
     ).then((action) async {
       if (action == null || !context.mounted) return;
+      if (action == _EventMenuAction.joinMeeting) {
+        unawaited(launchUrl(Uri.parse(meetingUrl!),
+            mode: LaunchMode.externalApplication));
+        return;
+      }
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -1622,13 +1654,21 @@ void _showEventContextMenu(
   showMenu<_EventMenuAction>(
     context: context,
     position: rect,
-    items: const [
-      PopupMenuItem(
+    items: [
+      if (hasMeetingLink) ...[
+        const PopupMenuItem(
+          value: _EventMenuAction.joinMeeting,
+          height: 36,
+          child: Text('Join Meeting', style: TextStyle(fontSize: 13)),
+        ),
+        const PopupMenuDivider(height: 1),
+      ],
+      const PopupMenuItem(
         value: _EventMenuAction.decline,
         height: 36,
         child: Text('Decline', style: TextStyle(fontSize: 13)),
       ),
-      PopupMenuItem(
+      const PopupMenuItem(
         value: _EventMenuAction.proposeNewTime,
         height: 36,
         child: Text('Propose New Time…', style: TextStyle(fontSize: 13)),
@@ -1639,6 +1679,9 @@ void _showEventContextMenu(
     switch (action) {
       case _EventMenuAction.cancel:
         break;
+      case _EventMenuAction.joinMeeting:
+        unawaited(launchUrl(Uri.parse(meetingUrl!),
+            mode: LaunchMode.externalApplication));
       case _EventMenuAction.decline:
         context
             .read<CalendarBloc>()
@@ -1656,7 +1699,7 @@ void _showEventContextMenu(
   });
 }
 
-enum _EventMenuAction { cancel, decline, proposeNewTime }
+enum _EventMenuAction { cancel, joinMeeting, decline, proposeNewTime }
 
 // ─── Propose New Time dialog ──────────────────────────────────────────────────
 

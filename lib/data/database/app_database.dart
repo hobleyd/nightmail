@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../../domain/entities/email_folder.dart';
 import '../datasources/local/delta_token_datasource.dart';
 import '../datasources/local/folder_local_datasource.dart';
+import '../datasources/local/reminder_schedule_local_datasource.dart';
 
 part 'app_database.g.dart';
 
@@ -137,9 +138,25 @@ class CapabilityRouting extends Table {
   Set<Column> get primaryKey => {capability};
 }
 
-@DriftDatabase(tables: [CachedEmails, KnownSenders, SenderAliases, DeltaSyncTokens, CachedFolders, LocalDrafts, CatalogCache, AiConfig, CapabilityRouting])
+/// Tracks which calendar events currently have an OS-level reminder
+/// notification scheduled, so the reconciliation pass in
+/// [CalendarReminderService] can tell new/changed events (need scheduling)
+/// apart from unchanged ones (skip) and detect events that disappeared or
+/// lost their reminder (need cancelling), across app restarts.
+class ScheduledReminders extends Table {
+  TextColumn get accountId => text()();
+  TextColumn get eventId => text()();
+  IntColumn get triggerAtMs => integer()();
+  IntColumn get reminderMinutes => integer()();
+  IntColumn get eventStartMs => integer()();
+
+  @override
+  Set<Column> get primaryKey => {accountId, eventId};
+}
+
+@DriftDatabase(tables: [CachedEmails, KnownSenders, SenderAliases, DeltaSyncTokens, CachedFolders, LocalDrafts, CatalogCache, AiConfig, CapabilityRouting, ScheduledReminders])
 class AppDatabase extends _$AppDatabase
-    implements DeltaTokenDatasource, FolderLocalDatasource {
+    implements DeltaTokenDatasource, FolderLocalDatasource, ReminderScheduleLocalDatasource {
   AppDatabase() : super(_openConnection());
 
   /// Test-only constructor: lets a unit test open the schema on an in-memory
@@ -149,7 +166,7 @@ class AppDatabase extends _$AppDatabase
   AppDatabase.forTesting(QueryExecutor executor) : super(executor);
 
   @override
-  int get schemaVersion => 8;
+  int get schemaVersion => 9;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -193,6 +210,9 @@ class AppDatabase extends _$AppDatabase
             await m.createTable(catalogCache);
             await m.createTable(aiConfig);
             await m.createTable(capabilityRouting);
+          }
+          if (from < 9) {
+            await m.createTable(scheduledReminders);
           }
         },
       );
@@ -294,6 +314,56 @@ class AppDatabase extends _$AppDatabase
 
   Future<void> deleteDraft(String draftId) =>
       (delete(localDrafts)..where((t) => t.draftId.equals(draftId))).go();
+
+  // ReminderScheduleLocalDatasource implementation
+
+  @override
+  Future<List<ScheduledReminderRecord>> getScheduledReminders(
+      String accountId) async {
+    final rows = await (select(scheduledReminders)
+          ..where((t) => t.accountId.equals(accountId)))
+        .get();
+    return rows
+        .map((r) => ScheduledReminderRecord(
+              accountId: r.accountId,
+              eventId: r.eventId,
+              triggerAtMs: r.triggerAtMs,
+              reminderMinutes: r.reminderMinutes,
+              eventStartMs: r.eventStartMs,
+            ))
+        .toList();
+  }
+
+  @override
+  Future<void> upsertScheduledReminder({
+    required String accountId,
+    required String eventId,
+    required int triggerAtMs,
+    required int reminderMinutes,
+    required int eventStartMs,
+  }) =>
+      into(scheduledReminders).insertOnConflictUpdate(
+        ScheduledRemindersCompanion(
+          accountId: Value(accountId),
+          eventId: Value(eventId),
+          triggerAtMs: Value(triggerAtMs),
+          reminderMinutes: Value(reminderMinutes),
+          eventStartMs: Value(eventStartMs),
+        ),
+      );
+
+  @override
+  Future<void> deleteScheduledReminder(String accountId, String eventId) =>
+      (delete(scheduledReminders)
+            ..where((t) =>
+                t.accountId.equals(accountId) & t.eventId.equals(eventId)))
+          .go();
+
+  @override
+  Future<void> clearScheduledRemindersForAccount(String accountId) =>
+      (delete(scheduledReminders)
+            ..where((t) => t.accountId.equals(accountId)))
+          .go();
 
   static QueryExecutor _openConnection() {
     return driftDatabase(name: 'nightmail_cache');

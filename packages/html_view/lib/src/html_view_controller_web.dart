@@ -112,6 +112,10 @@ class HtmlViewController {
     }
   }
 
+  Future<void> focus() async {
+    _iframe?.focus();
+  }
+
   Future<String?> eval(String js) async {
     final win = _iframe?.contentWindow;
     if (win == null) return null;

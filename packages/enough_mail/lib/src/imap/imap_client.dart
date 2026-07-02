@@ -1307,7 +1307,13 @@ class ImapClient extends ClientBase {
     }
     final pathSeparator = serverInfo.pathSeparator ?? '/';
     var encodedPath = Mailbox.encode(path, pathSeparator);
+    // RFC 3501: parens, curly brace, and percent/asterisk are atom-specials
+    // and may not appear in an unquoted IMAP atom. Folder names that contain
+    // characters such as '(' or ')' (e.g. "Audit(s)") must be quoted.
     if (encodedPath.contains(' ') ||
+        encodedPath.contains('(') ||
+        encodedPath.contains(')') ||
+        encodedPath.contains('{') ||
         (alwaysQuote && !encodedPath.startsWith('"'))) {
       encodedPath = '"$encodedPath"';
     }

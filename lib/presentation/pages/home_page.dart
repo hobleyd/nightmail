@@ -12,10 +12,12 @@ import '../../domain/entities/email_folder.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/usecases/get_email.dart';
 import '../../core/settings/app_settings.dart';
+import '../../infrastructure/notifications/calendar_reminder_service.dart';
 import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/calendar/calendar_bloc.dart';
 import '../blocs/calendar/calendar_event.dart';
+import '../blocs/calendar/calendar_state.dart';
 import '../blocs/tasks/tasks_bloc.dart';
 import '../blocs/tasks/tasks_event.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
@@ -37,11 +39,20 @@ import '../widgets/reading_pane.dart';
 import 'calendar_page.dart';
 import 'tasks_page.dart';
 
+DateTime _mondayOfWeek(DateTime date) {
+  final daysFromMonday = (date.weekday - 1) % 7;
+  return DateTime(date.year, date.month, date.day - daysFromMonday);
+}
+
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
   @override
   Widget build(BuildContext context) {
+    // Not tied to any Bloc lifecycle — a plain periodic reconciler, started
+    // once the home shell mounts alongside mail polling. startPeriodic()
+    // cancels any existing timer first, so repeated builds are safe.
+    sl<CalendarReminderService>().startPeriodic();
     return MultiBlocProvider(
       providers: [
         BlocProvider.value(value: sl<AccountCubit>()),
@@ -86,7 +97,13 @@ class _HomeView extends StatelessWidget {
             context.read<FolderListBloc>().add(const FolderListLoadRequested());
             context.read<EmailListBloc>().add(const EmailListCleared());
             context.read<EmailDetailBloc>().add(const EmailDetailCleared());
-            context.read<CalendarBloc>().add(const CalendarCleared());
+            final calendarBloc = context.read<CalendarBloc>();
+            calendarBloc.add(const CalendarCleared());
+            if (context.read<HomeCubit>().state.view == HomeView.calendar) {
+              calendarBloc.add(
+                CalendarWeekLoadRequested(weekStart: _mondayOfWeek(DateTime.now())),
+              );
+            }
           },
         ),
         BlocListener<AccountCubit, AccountState>(
@@ -96,6 +113,17 @@ class _HomeView extends StatelessWidget {
             context.read<EmailListBloc>().add(const EmailListCleared());
             context.read<EmailDetailBloc>().add(const EmailDetailCleared());
             context.read<CalendarBloc>().add(const CalendarCleared());
+          },
+        ),
+        BlocListener<HomeCubit, HomeState>(
+          listenWhen: (prev, curr) =>
+              curr.view == HomeView.calendar && prev.view != curr.view,
+          listener: (context, _) {
+            final bloc = context.read<CalendarBloc>();
+            if (bloc.state is CalendarInitial) {
+              bloc.add(CalendarWeekLoadRequested(
+                  weekStart: _mondayOfWeek(DateTime.now())));
+            }
           },
         ),
         BlocListener<FolderListBloc, FolderListState>(
@@ -261,9 +289,82 @@ class _MobileLayoutState extends State<_MobileLayout> {
                           );
                       setState(() => _step = _MobileStep.emailList);
                     },
-                    onCalendarTapped: () {},
-                    onTasksTapped: () {},
-                    onAiTapped: () {},
+                    onCalendarTapped: () {
+                      final calendarBloc = context.read<CalendarBloc>();
+                      calendarBloc.add(CalendarWeekLoadRequested(
+                        weekStart: _mondayOfWeek(DateTime.now()),
+                      ));
+                      Navigator.of(context).push<void>(
+                        MaterialPageRoute(
+                          fullscreenDialog: true,
+                          builder: (ctx) => Scaffold(
+                            body: SafeArea(
+                              child: BlocProvider.value(
+                                value: calendarBloc,
+                                child: CalendarDayPanel(
+                                  onClose: () => Navigator.of(ctx).pop(),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                    onTasksTapped: () {
+                      final tasksBloc = context.read<TasksBloc>();
+                      final emailDetailBloc = context.read<EmailDetailBloc>();
+                      final accountCubit = context.read<AccountCubit>();
+                      Navigator.of(context).push<void>(
+                        MaterialPageRoute(
+                          fullscreenDialog: true,
+                          builder: (ctx) => Scaffold(
+                            body: SafeArea(
+                              child: MultiBlocProvider(
+                                providers: [
+                                  BlocProvider.value(value: tasksBloc),
+                                  BlocProvider.value(value: emailDetailBloc),
+                                  BlocProvider.value(value: accountCubit),
+                                ],
+                                child: TasksDayPanel(
+                                  onClose: () => Navigator.of(ctx).pop(),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                    onAiTapped: () {
+                      final aiFolderCubit = context.read<AiFolderCubit>();
+                      final emailListBloc = context.read<EmailListBloc>();
+                      Navigator.of(context).push<void>(
+                        MaterialPageRoute(
+                          fullscreenDialog: true,
+                          builder: (ctx) => Scaffold(
+                            body: SafeArea(
+                              child: BlocProvider.value(
+                                value: aiFolderCubit,
+                                child: AiDayPanel(
+                                  onClose: () => Navigator.of(ctx).pop(),
+                                  folderIdProvider: () {
+                                    final s = emailListBloc.state;
+                                    return s is EmailListLoaded
+                                        ? s.currentFolderId
+                                        : null;
+                                  },
+                                  contextProvider: () {
+                                    final s = emailListBloc.state;
+                                    if (s is! EmailListLoaded ||
+                                        s.emails.isEmpty) return null;
+                                    return _formatFolderEmailsForAi(s.emails);
+                                  },
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 _MobileStep.emailList => EmailListPanel(
                     folderName: selectedFolder?.displayName ?? 'Inbox',
@@ -749,11 +850,6 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
             );
           },
         );
-  }
-
-  static DateTime _mondayOfWeek(DateTime date) {
-    final daysFromMonday = (date.weekday - 1) % 7;
-    return DateTime(date.year, date.month, date.day - daysFromMonday);
   }
 
   EmailFolder? _resolveFolder(HomeState homeState, FolderListState folderListState) {

@@ -6,6 +6,7 @@ import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/domain/entities/email.dart';
 import 'package:nightmail/domain/entities/email_address.dart';
 import 'package:nightmail/domain/usecases/classify_emails.dart';
+import 'package:nightmail/domain/usecases/clear_email_cache_for_folder.dart';
 import 'package:nightmail/domain/usecases/delete_email.dart';
 import 'package:nightmail/domain/usecases/empty_folder.dart';
 import 'package:nightmail/domain/usecases/get_cached_emails.dart';
@@ -68,6 +69,7 @@ class _FakeAccountManager extends Fake implements AccountManager {
   ClassifyEmails,
   TrainSpamFilter,
   SearchEmails,
+  ClearEmailCacheForFolder,
 ])
 void main() {
   late EmailListBloc bloc;
@@ -90,6 +92,7 @@ void main() {
     bloc = EmailListBloc(
       getEmails: mockGetEmails,
       getCachedEmails: mockGetCachedEmails,
+      clearEmailCacheForFolder: MockClearEmailCacheForFolder(),
       markEmailAsRead: MockMarkEmailAsRead(),
       moveEmail: mockMoveEmail,
       reportJunk: MockReportJunk(),

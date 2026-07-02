@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:equatable/equatable.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../domain/repositories/email_repository.dart';
 import '../../../infrastructure/accounts/account.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
+import '../../../infrastructure/notifications/calendar_reminder_service.dart';
 
 // ---------------------------------------------------------------------------
 // State
@@ -66,10 +69,41 @@ class AccountCubit extends Cubit<AccountState> {
   AccountCubit({
     required this._accountManager,
     required this._emailRepository,
-  }) : super(const AccountLoading());
+    required this._calendarReminderService,
+  }) : super(const AccountLoading()) {
+    _authFailureSub = _accountManager.authFailures.listen(_onAuthFailure);
+  }
 
   final AccountManager _accountManager;
   final EmailRepository _emailRepository;
+  final CalendarReminderService _calendarReminderService;
+  late final StreamSubscription<String> _authFailureSub;
+
+  // Reacts to AuthInterceptor reporting a failed token refresh for
+  // [accountId] (e.g. revoked/expired refresh token, missing admin consent)
+  // so the reauth banner appears immediately, regardless of which code path
+  // triggered the failing request.
+  void _onAuthFailure(String accountId) {
+    final current = state;
+    if (current is! AccountsLoaded ||
+        current.unauthenticatedAccountIds.contains(accountId)) {
+      return;
+    }
+    emit(AccountsLoaded(
+      accounts: current.accounts,
+      activeIndex: current.activeIndex,
+      unauthenticatedAccountIds: {
+        ...current.unauthenticatedAccountIds,
+        accountId,
+      },
+    ));
+  }
+
+  @override
+  Future<void> close() {
+    unawaited(_authFailureSub.cancel());
+    return super.close();
+  }
 
   Future<void> _emitLoaded() async {
     final unauthIds = await _accountManager.getUnauthenticatedAccountIds();
@@ -114,6 +148,7 @@ class AccountCubit extends Cubit<AccountState> {
   Future<void> removeAccount(String accountId) async {
     await _accountManager.removeAccount(accountId);
     await _emailRepository.clearCacheForAccount(accountId);
+    await _calendarReminderService.clearAccount(accountId);
     if (_accountManager.hasAccounts) {
       await _emitLoaded();
     } else {

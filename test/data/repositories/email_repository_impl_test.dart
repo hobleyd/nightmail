@@ -85,7 +85,7 @@ void main() {
       expect(emails.first.id, 'email-1');
     });
 
-    test('clears folder cache before caching on first page (skip=0)', () async {
+    test('caches without clearing on first page (skip=0)', () async {
       when(mockRemoteDatasource.getEmails(
         folderId: anyNamed('folderId'),
         top: anyNamed('top'),
@@ -93,10 +93,6 @@ void main() {
         filter: anyNamed('filter'),
         orderBy: anyNamed('orderBy'),
       )).thenAnswer((_) async => [tEmailModel]);
-      when(mockLocalDatasource.clearCacheForFolder(
-        accountId: anyNamed('accountId'),
-        folderId: anyNamed('folderId'),
-      )).thenAnswer((_) async {});
       when(mockLocalDatasource.cacheEmails(
         accountId: anyNamed('accountId'),
         folderId: anyNamed('folderId'),
@@ -105,14 +101,15 @@ void main() {
       when(mockAccountManager.activeAccount).thenReturn(tAccount);
 
       await repository.getEmails(folderId: 'folder-1', skip: 0);
-      // Two ticks: one for clearCacheForFolder, one for cacheEmails
-      await Future.delayed(Duration.zero);
       await Future.delayed(Duration.zero);
 
-      verify(mockLocalDatasource.clearCacheForFolder(
-        accountId: 'account-1',
-        folderId: 'folder-1',
-      )).called(1);
+      // Cache is cleared only via the explicit ClearEmailCacheForFolder use
+      // case on refresh, not implicitly by getEmails — otherwise load-more
+      // pagination would wipe out the pages fetched just before it.
+      verifyNever(mockLocalDatasource.clearCacheForFolder(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+      ));
       verify(mockLocalDatasource.cacheEmails(
         accountId: 'account-1',
         folderId: 'folder-1',

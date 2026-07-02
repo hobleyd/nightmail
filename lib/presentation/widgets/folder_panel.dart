@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../domain/entities/email.dart';
 import '../../domain/entities/email_folder.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../blocs/account/account_cubit.dart';
@@ -93,8 +94,14 @@ class _FolderPanelState extends State<FolderPanel> {
                     .add(const FolderListLoadRequested());
               },
               builder: (context, accountState) {
+                final pollerReauthAccounts = context
+                    .watch<MailPollerCubit>()
+                    .state
+                    .accountsNeedingReauth;
                 final needsReauth = accountState is AccountsLoaded &&
-                    accountState.activeAccountNeedsReauth;
+                    (accountState.activeAccountNeedsReauth ||
+                        pollerReauthAccounts
+                            .contains(accountState.activeAccount.id));
 
                 final folderArea = BlocBuilder<FolderListBloc, FolderListState>(
                   builder: (context, state) {
@@ -412,11 +419,59 @@ class _FolderItemState extends State<_FolderItem>
     return DragTarget<EmailDragData>(
       onWillAcceptWithDetails: (_) => true,
       onAcceptWithDetails: (details) {
+        final listState = context.read<EmailListBloc>().state;
+        final sourceFolderId =
+            listState is EmailListLoaded ? listState.currentFolderId : null;
+        final moved = listState is EmailListLoaded
+            ? listState.emails
+                .where((e) => details.data.emailIds.contains(e.id))
+                .toList()
+            : const <Email>[];
+
         context.read<EmailListBloc>().add(EmailListEmailsMoved(
               emailIds: details.data.emailIds,
               destinationFolderId: widget.folder.id,
               conversationId: details.data.conversationId,
             ));
+
+        if (moved.isNotEmpty &&
+            sourceFolderId != null &&
+            sourceFolderId != widget.folder.id) {
+          final unreadMoved = moved.where((e) => !e.isRead).length;
+          final folderListBloc = context.read<FolderListBloc>();
+          folderListBloc.add(FolderListUnreadCountChanged(
+            folderId: sourceFolderId,
+            unreadCountDelta: -unreadMoved,
+            totalCountDelta: -moved.length,
+          ));
+          folderListBloc.add(FolderListUnreadCountChanged(
+            folderId: widget.folder.id,
+            unreadCountDelta: unreadMoved,
+            totalCountDelta: moved.length,
+          ));
+          if (unreadMoved > 0) {
+            final folderListState = folderListBloc.state;
+            final sourceFolder = folderListState is FolderListLoaded
+                ? folderListState.folders
+                    .where((f) => f.id == sourceFolderId)
+                    .firstOrNull
+                : null;
+            final sourceIsInbox =
+                sourceFolder?.displayName.toLowerCase() == 'inbox';
+            final destIsInbox =
+                widget.folder.displayName.toLowerCase() == 'inbox';
+            final mailPoller = context.read<MailPollerCubit>();
+            if (sourceIsInbox && !destIsInbox) {
+              for (var i = 0; i < unreadMoved; i++) {
+                mailPoller.decrementUnreadCount();
+              }
+            } else if (destIsInbox && !sourceIsInbox) {
+              for (var i = 0; i < unreadMoved; i++) {
+                mailPoller.incrementUnreadCount();
+              }
+            }
+          }
+        }
       },
       builder: (context, candidateData, _) =>
           _buildContent(context, candidateData.isNotEmpty),
@@ -653,6 +708,10 @@ class _FolderItemState extends State<_FolderItem>
       context.read<FolderListBloc>().add(
             FolderListFolderEmptied(folderId: widget.folder.id),
           );
+      if (widget.folder.displayName.toLowerCase() == 'inbox' &&
+          widget.folder.unreadItemCount > 0) {
+        context.read<MailPollerCubit>().updateBadgeFromFolders(0);
+      }
     }
   }
 
@@ -835,6 +894,7 @@ class _SettingsFooter extends StatelessWidget {
     final accountState = context.watch<AccountCubit>().state;
     final pollerState = context.watch<MailPollerCubit>().state;
     final hasNewMail = pollerState.accountsWithNewMail.isNotEmpty;
+    final hasReauthIssue = pollerState.accountsNeedingReauth.isNotEmpty;
 
     return SizedBox(
       height: 28,
@@ -843,7 +903,9 @@ class _SettingsFooter extends StatelessWidget {
         child: Row(
         children: [
           PopupMenuButton<int>(
-            tooltip: 'Accounts',
+            tooltip: hasReauthIssue
+                ? 'Accounts (re-authorization needed)'
+                : 'Accounts',
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
             icon: Stack(
@@ -851,7 +913,14 @@ class _SettingsFooter extends StatelessWidget {
               children: [
                 Icon(Icons.manage_accounts_outlined,
                     size: 16, color: c.textMuted),
-                if (hasNewMail)
+                if (hasReauthIssue)
+                  const Positioned(
+                    top: -3,
+                    right: -3,
+                    child: Icon(Icons.error_rounded,
+                        size: 12, color: Color(0xFFE57373)),
+                  )
+                else if (hasNewMail)
                   Positioned(
                     top: -2,
                     right: -2,
@@ -924,8 +993,9 @@ class _SettingsFooter extends StatelessWidget {
               }
             },
             itemBuilder: (context) {
-              final newMailAccounts =
-                  context.read<MailPollerCubit>().state.accountsWithNewMail;
+              final pollerState = context.read<MailPollerCubit>().state;
+              final newMailAccounts = pollerState.accountsWithNewMail;
+              final reauthAccounts = pollerState.accountsNeedingReauth;
               final items = <PopupMenuEntry<int>>[];
               if (accountState is AccountsLoaded) {
                 for (int i = 0; i < accountState.accounts.length; i++) {
@@ -933,6 +1003,7 @@ class _SettingsFooter extends StatelessWidget {
                   final isActive = i == accountState.activeIndex;
                   final hasNewMailForAccount =
                       newMailAccounts.contains(acc.id);
+                  final needsReauthForAccount = reauthAccounts.contains(acc.id);
                   items.add(
                     PopupMenuItem(
                       value: i,
@@ -949,6 +1020,12 @@ class _SettingsFooter extends StatelessWidget {
                               ),
                             ),
                           ),
+                          if (needsReauthForAccount)
+                            const Padding(
+                              padding: EdgeInsets.only(left: 8),
+                              child: Icon(Icons.error_rounded,
+                                  size: 14, color: Color(0xFFE57373)),
+                            ),
                           if (isActive)
                             Icon(Icons.check, size: 14, color: AppColors.accent)
                           else if (hasNewMailForAccount)

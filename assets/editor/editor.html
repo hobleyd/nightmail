@@ -205,8 +205,18 @@ function scheduleChange() {
   changeTimer = setTimeout(fireChange, 300);
 }
 
+// Serialising editor.innerHTML is O(DOM size) — with a large quoted reply
+// body this can block the main thread for a while. Defer it to an idle
+// slot so it doesn't compete with the next keystroke if the user resumes
+// typing right as the debounce timer fires.
 function fireChange() {
-  _flutterNotify('onContentChanged', editor.innerHTML);
+  if (window.requestIdleCallback) {
+    requestIdleCallback(function() {
+      _flutterNotify('onContentChanged', editor.innerHTML);
+    }, {timeout: 500});
+  } else {
+    _flutterNotify('onContentChanged', editor.innerHTML);
+  }
 }
 
 function setContent(html) {
@@ -223,6 +233,22 @@ function setContent(html) {
 
 function getContent() {
   return editor.innerHTML;
+}
+
+function focusEditor() {
+  editor.focus();
+  const sel = window.getSelection();
+  if (sel.rangeCount === 0 || !_rangeInEditor(sel.getRangeAt(0))) {
+    const range = document.createRange();
+    if (editor.firstChild) {
+      range.setStart(editor, 0);
+    } else {
+      range.selectNodeContents(editor);
+    }
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
 }
 
 function insertImage(dataUri, contentId) {
@@ -316,8 +342,15 @@ editor.addEventListener('keydown', function(e) {
   }
 });
 
-// Update toolbar button active states and colour swatch on selection change
-document.addEventListener('selectionchange', function() {
+// Update toolbar button active states and colour swatch on selection change.
+// document.queryCommandState()/queryCommandValue() do synchronous style
+// computation that scales with DOM size/complexity, and selectionchange
+// fires on every keystroke (typing moves the caret). With a large quoted
+// reply body in the editor, calling these unthrottled froze the UI while
+// typing. Coalesce to at most once per animation frame instead.
+let toolbarUpdateScheduled = false;
+function updateToolbarState() {
+  toolbarUpdateScheduled = false;
   ['bold','italic','underline','strikeThrough'].forEach(function(cmd) {
     const id = {'bold':'btn-bold','italic':'btn-italic','underline':'btn-underline','strikeThrough':'btn-strike'}[cmd];
     const btn = document.getElementById(id);
@@ -333,6 +366,11 @@ document.addEventListener('selectionchange', function() {
       colorInput.value = hex;
     }
   }
+}
+document.addEventListener('selectionchange', function() {
+  if (toolbarUpdateScheduled) return;
+  toolbarUpdateScheduled = true;
+  requestAnimationFrame(updateToolbarState);
 });
 
 // Converts CSS rgb(...) or #rrggbb strings returned by queryCommandValue to #rrggbb

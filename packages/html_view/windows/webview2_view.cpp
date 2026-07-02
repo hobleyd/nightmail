@@ -400,6 +400,21 @@ void WebView2View::HandleMethod(
             std::get<double>((*list)[2]));
     result->Success();
 
+  } else if (name == "focus") {
+    // JS-side element.focus() only moves focus within the web content; the
+    // WebView2 HWND itself also needs OS-level keyboard focus, or neither a
+    // visible caret nor keystrokes reach it while the host Flutter window
+    // still holds focus. MoveFocus grants that at the OS level.
+    auto shared = std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>>(
+        std::move(result));
+    auto do_focus = [this, shared]() {
+      if (controller_) {
+        controller_->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+      }
+      shared->Success();
+    };
+    if (ready_) do_focus(); else pending_.push(std::move(do_focus));
+
   } else if (name == "setVisible") {
     const auto* v = std::get_if<bool>(call.arguments());
     if (!v) { result->Error("bad_args"); return; }

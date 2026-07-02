@@ -330,7 +330,48 @@ class CalDavCalendarDatasourceImpl implements CalendarRemoteDatasource {
       location: e.location,
       bodyPreview: e.description,
       isOrganizer: true,
+      // Read-only: the caldav package's CalendarEvent.toIcalendar() emits no
+      // VALARM block, so a reminder set on a CalDAV event from another
+      // client (Nextcloud web UI, etc.) is picked up here, but a reminder
+      // set through NightMail's own edit dialog would not persist server-side.
+      reminderMinutes: _parseValarmMinutes(e.rawIcalendar),
     );
+  }
+
+  /// Parses minutes-before-start out of the first `VALARM` block in
+  /// [rawIcalendar], if any. Only handles a negative duration TRIGGER
+  /// relative to the event start (e.g. "-PT15M", "-P1D") — the common case
+  /// for a simple reminder; TRIGGER relative to DTEND or an absolute
+  /// DATE-TIME trigger are not handled.
+  int? _parseValarmMinutes(String? rawIcalendar) {
+    if (rawIcalendar == null) return null;
+    final unfolded = rawIcalendar.replaceAll(RegExp(r'\r?\n[ \t]'), '');
+
+    bool inValarm = false;
+    for (final rawLine in unfolded.split(RegExp(r'\r?\n'))) {
+      final line = rawLine.trim();
+      if (line.isEmpty) continue;
+
+      if (line.toUpperCase() == 'BEGIN:VALARM') { inValarm = true; continue; }
+      if (line.toUpperCase() == 'END:VALARM') break; // first VALARM only
+      if (!inValarm) continue;
+
+      final colonIdx = line.indexOf(':');
+      if (colonIdx == -1) continue;
+
+      final namePart = line.substring(0, colonIdx).toUpperCase();
+      final value = line.substring(colonIdx + 1);
+      if (!namePart.startsWith('TRIGGER')) continue;
+
+      final match =
+          RegExp(r'^-P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?$').firstMatch(value);
+      if (match == null) continue;
+      final days = int.tryParse(match.group(1) ?? '') ?? 0;
+      final hours = int.tryParse(match.group(2) ?? '') ?? 0;
+      final minutes = int.tryParse(match.group(3) ?? '') ?? 0;
+      return days * 24 * 60 + hours * 60 + minutes;
+    }
+    return null;
   }
 
   String _buildRRule(CalendarRecurrence r) {

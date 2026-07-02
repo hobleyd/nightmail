@@ -5,7 +5,7 @@ import 'auth_interceptor.dart';
 
 /// Dio instance pre-configured for the Google People REST API.
 class GooglePeopleHttpClient {
-  GooglePeopleHttpClient({required AuthService authService}) {
+  GooglePeopleHttpClient({required AuthService authService, void Function()? onAuthFailure}) {
     _dio = Dio(BaseOptions(
       baseUrl: 'https://people.googleapis.com/v1',
       headers: {
@@ -16,7 +16,8 @@ class GooglePeopleHttpClient {
       receiveTimeout: const Duration(seconds: 15),
     ));
 
-    _dio.interceptors.add(AuthInterceptor(authService: authService, dio: _dio));
+    _dio.interceptors.add(AuthInterceptor(
+        authService: authService, dio: _dio, onAuthFailure: onAuthFailure));
   }
 
   late final Dio _dio;

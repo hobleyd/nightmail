@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../domain/entities/email.dart';
 import '../../../domain/usecases/classify_emails.dart';
+import '../../../domain/usecases/clear_email_cache_for_folder.dart';
 import '../../../domain/usecases/delete_email.dart';
 import '../../../domain/usecases/report_junk.dart';
 import '../../../domain/usecases/search_emails.dart';
@@ -26,6 +27,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   EmailListBloc({
     required GetEmails getEmails,
     required GetCachedEmails getCachedEmails,
+    required ClearEmailCacheForFolder clearEmailCacheForFolder,
     required MarkEmailAsRead markEmailAsRead,
     required MoveEmail moveEmail,
     required ReportJunk reportJunk,
@@ -38,6 +40,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     required SearchEmails searchEmails,
   })  : _getEmails = getEmails,
         _getCachedEmails = getCachedEmails,
+        _clearEmailCacheForFolder = clearEmailCacheForFolder,
         _markEmailAsRead = markEmailAsRead,
         _moveEmail = moveEmail,
         _reportJunk = reportJunk,
@@ -67,6 +70,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
 
   final GetEmails _getEmails;
   final GetCachedEmails _getCachedEmails;
+  final ClearEmailCacheForFolder _clearEmailCacheForFolder;
   final MarkEmailAsRead _markEmailAsRead;
   final MoveEmail _moveEmail;
   final ReportJunk _reportJunk;
@@ -78,13 +82,19 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   final TrainSpamFilter _trainSpamFilter;
   final SearchEmails _searchEmails;
 
+  /// Tracks the server-side skip offset for the current folder independently
+  /// of the in-memory email count, which may be inflated by cross-folder
+  /// conversation expansion on Graph accounts.
+  int _serverOffset = 0;
+
   Future<void> _onLoadRequested(
     EmailListLoadRequested event,
     Emitter<EmailListState> emit,
   ) async {
+    _serverOffset = 0;
     final accountId = _accountManager.activeAccount?.id;
     final folderKey = event.folderId ?? _defaultFolderKey;
-    bool hasCachedData = false;
+    List<Email> cachedEmails = [];
 
     // Phase 1: serve cache immediately so the UI has content with no spinner
     if (accountId != null) {
@@ -98,7 +108,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
           if (cached.isEmpty) {
             emit(const EmailListLoading());
           } else {
-            hasCachedData = true;
+            cachedEmails = cached;
             emit(EmailListLoaded(
               emails: cached,
               hasMore: true,
@@ -122,7 +132,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     List<Email>? loaded;
     result.fold(
       (failure) {
-        if (hasCachedData) {
+        if (cachedEmails.isNotEmpty) {
           // Keep cached emails visible; just clear the refresh indicator
           final s = state;
           if (s is EmailListLoaded) emit(s.copyWith(isLoadingFresh: false));
@@ -130,16 +140,23 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
           emit(EmailListError(message: failure.message));
         }
       },
-      (emails) {
-        loaded = emails;
+      (freshEmails) {
+        _serverOffset = _pageSize;
+        loaded = freshEmails;
+        // Merge: use fresh data for page-1 emails, keep cached beyond page 1.
+        final freshIds = freshEmails.map((e) => e.id).toSet();
+        final merged = [
+          ...freshEmails,
+          ...cachedEmails.where((e) => !freshIds.contains(e.id)),
+        ];
         emit(EmailListLoaded(
-          emails: emails,
-          hasMore: emails.length == _pageSize,
+          emails: merged,
+          hasMore: freshEmails.length >= _pageSize,
           isLoadingFresh: false,
           currentFolderId: event.folderId,
           currentFolderName: event.folderDisplayName,
         ));
-        _recordSenders(emails, event.folderDisplayName);
+        _recordSenders(freshEmails, event.folderDisplayName);
       },
     );
     if (loaded != null) {
@@ -161,20 +178,24 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     final result = await _getEmails(GetEmailsParams(
       folderId: current.currentFolderId,
       top: _pageSize,
-      skip: current.emails.length,
+      skip: _serverOffset,
     ));
 
     List<Email>? loadedMore;
     result.fold(
       (failure) => emit(EmailListError(message: failure.message)),
       (newEmails) {
-        loadedMore = newEmails;
+        _serverOffset += _pageSize;
+        // Dedup: cross-folder expansion can return messages already in the list.
+        final existingIds = current.emails.map((e) => e.id).toSet();
+        final uniqueNew = newEmails.where((e) => !existingIds.contains(e.id)).toList();
+        loadedMore = uniqueNew;
         emit(current.copyWith(
-          emails: [...current.emails, ...newEmails],
-          hasMore: newEmails.length == _pageSize,
+          emails: [...current.emails, ...uniqueNew],
+          hasMore: newEmails.length >= _pageSize,
           isLoadingMore: false,
         ));
-        _recordSenders(newEmails, current.currentFolderName);
+        _recordSenders(uniqueNew, current.currentFolderName);
       },
     );
     if (loadedMore != null) {
@@ -186,12 +207,22 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     EmailListRefreshRequested event,
     Emitter<EmailListState> emit,
   ) async {
+    _serverOffset = 0;
     final prior = state is EmailListLoaded ? state as EmailListLoaded : null;
     final folderId = event.folderId ?? prior?.currentFolderId;
     final folderName = prior?.currentFolderName;
+    final accountId = _accountManager.activeAccount?.id;
 
     if (prior != null) {
       emit(prior.copyWith(isLoadingFresh: true));
+    }
+
+    // Clear stale cache before fetching so deleted/moved emails don't persist.
+    if (accountId != null) {
+      await _clearEmailCacheForFolder(ClearEmailCacheForFolderParams(
+        accountId: accountId,
+        folderId: folderId ?? _defaultFolderKey,
+      ));
     }
 
     final result = await _getEmails(GetEmailsParams(
@@ -210,10 +241,11 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         }
       },
       (emails) {
+        _serverOffset = _pageSize;
         refreshed = emails;
         emit(EmailListLoaded(
           emails: emails,
-          hasMore: emails.length == _pageSize,
+          hasMore: emails.length >= _pageSize,
           currentFolderId: folderId,
           currentFolderName: folderName,
         ));
@@ -275,6 +307,11 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     // (including cross-folder display emails not in emailIds). This prevents
     // the thread stub from reappearing after the optimistic update.
     final movedIds = event.emailIds.toSet();
+    final removedEmails = event.conversationId != null
+        ? current.emails
+            .where((e) => e.conversationId == event.conversationId)
+            .toList()
+        : current.emails.where((e) => movedIds.contains(e.id)).toList();
     final filteredEmails = event.conversationId != null
         ? current.emails
             .where((e) => e.conversationId != event.conversationId)
@@ -282,12 +319,33 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         : current.emails.where((e) => !movedIds.contains(e.id)).toList();
     emit(current.copyWith(emails: filteredEmails));
 
-    await Future.wait(
+    final results = await Future.wait(
       event.emailIds.map((id) => _moveEmail(MoveEmailParams(
             id: id,
             destinationFolderId: event.destinationFolderId,
           ))),
     );
+
+    final failedIds = {
+      for (var i = 0; i < event.emailIds.length; i++)
+        if (results[i].isLeft()) event.emailIds[i],
+    };
+    if (failedIds.isNotEmpty) {
+      final after = state;
+      if (after is EmailListLoaded) {
+        // For conversation moves, restore everything removed if any item
+        // failed (the thread stub is still on the server). For individual
+        // moves, restore only the ones that failed.
+        final toRestore = event.conversationId != null
+            ? removedEmails
+            : removedEmails.where((e) => failedIds.contains(e.id)).toList();
+        if (toRestore.isNotEmpty) {
+          emit(after.copyWith(
+            emails: [...after.emails, ...toRestore],
+          ));
+        }
+      }
+    }
   }
 
   Future<void> _onEmailDeleted(

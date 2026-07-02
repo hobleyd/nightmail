@@ -234,14 +234,26 @@ class _ComposeFormState extends State<ComposeForm> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final isReply = widget.mode == ComposeMode.reply ||
           widget.mode == ComposeMode.replyAll;
-      if (isReply && _bodyType == EmailBodyType.text) {
-        _bodyFocus.requestFocus();
-        _bodyController.selection = const TextSelection.collapsed(offset: 0);
+      if (isReply) {
+        if (_bodyType == EmailBodyType.text) {
+          _bodyFocus.requestFocus();
+          _bodyController.selection = const TextSelection.collapsed(offset: 0);
+        }
+        // Else: the HTML editor autofocuses itself once its content finishes
+        // loading (see HtmlEmailEditor.autofocus in _buildBodyEditor).
       } else {
         _toFieldKey.currentState?.requestFocus();
       }
       widget.onTitleChanged?.call(_title);
     });
+  }
+
+  void _focusBodyEditor() {
+    if (_bodyType == EmailBodyType.html) {
+      _htmlEditorKey.currentState?.focus();
+    } else {
+      _bodyFocus.requestFocus();
+    }
   }
 
   EmailBodyType _determineInitialBodyType() {
@@ -1074,6 +1086,7 @@ class _ComposeFormState extends State<ComposeForm> {
           hintText: 'recipient@example.com',
           accountId: accountId,
           accountDomain: widget.accountDomain,
+          onTabToNext: () => _ccFieldKey.currentState?.requestFocus(),
         ),
         const SizedBox(height: 8),
         RecipientInputField(
@@ -1091,6 +1104,7 @@ class _ComposeFormState extends State<ComposeForm> {
           hintText: 'cc@example.com',
           accountId: accountId,
           accountDomain: widget.accountDomain,
+          onTabToNext: _focusBodyEditor,
         ),
         const SizedBox(height: 8),
         _FieldRow(
@@ -1156,6 +1170,8 @@ class _ComposeFormState extends State<ComposeForm> {
       return HtmlEmailEditor(
         key: _htmlEditorKey,
         initialHtml: _htmlBodyCache,
+        autofocus: widget.mode == ComposeMode.reply ||
+            widget.mode == ComposeMode.replyAll,
         onContentChanged: (html) {
           _htmlBodyCache = html;
           _scheduleDraftSave();

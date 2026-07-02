@@ -5,6 +5,8 @@ import '../../../domain/usecases/decline_calendar_event.dart';
 import '../../../domain/usecases/get_calendar_events.dart';
 import '../../../domain/usecases/propose_new_time.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
+import '../../../infrastructure/accounts/account_manager.dart';
+import '../../../infrastructure/notifications/notification_service.dart';
 import 'calendar_event.dart';
 import 'calendar_state.dart';
 
@@ -15,11 +17,15 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
     required DeclineCalendarEvent declineCalendarEvent,
     required ProposeNewTime proposeNewTime,
     required UpdateCalendarEvent updateCalendarEvent,
+    required NotificationService notificationService,
+    required AccountManager accountManager,
   })  : _getCalendarEvents = getCalendarEvents,
         _cancelCalendarEvent = cancelCalendarEvent,
         _declineCalendarEvent = declineCalendarEvent,
         _proposeNewTime = proposeNewTime,
         _updateCalendarEvent = updateCalendarEvent,
+        _notificationService = notificationService,
+        _accountManager = accountManager,
         super(CalendarInitial(weekStart: _mondayOfWeek(DateTime.now()))) {
     on<CalendarWeekLoadRequested>(_onLoadRequested);
     on<CalendarWeekNavigated>(_onWeekNavigated);
@@ -38,6 +44,8 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
   final DeclineCalendarEvent _declineCalendarEvent;
   final ProposeNewTime _proposeNewTime;
   final UpdateCalendarEvent _updateCalendarEvent;
+  final NotificationService _notificationService;
+  final AccountManager _accountManager;
 
   Future<void> _onLoadRequested(
     CalendarWeekLoadRequested event,
@@ -67,7 +75,10 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
       (failure) => emit(CalendarError(weekStart: weekStart, message: failure.message)),
       (_) {},
     );
-    if (result.isRight()) await _fetchWeek(weekStart, emit);
+    if (result.isRight()) {
+      await _cancelReminder(event.eventId);
+      await _fetchWeek(weekStart, emit);
+    }
   }
 
   Future<void> _onDeclineRequested(
@@ -82,7 +93,10 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
       (failure) => emit(CalendarError(weekStart: weekStart, message: failure.message)),
       (_) {},
     );
-    if (result.isRight()) await _fetchWeek(weekStart, emit);
+    if (result.isRight()) {
+      await _cancelReminder(event.eventId);
+      await _fetchWeek(weekStart, emit);
+    }
   }
 
   Future<void> _onNewTimeProposed(
@@ -123,7 +137,17 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
       description: e.bodyPreview,
       attendeeEmails: e.attendees.map((a) => a.email).toList(),
       recurrence: e.recurrence,
+      reminderMinutes: e.reminderMinutes,
     ));
+    if (result.isRight() && e.reminderMinutes != null) {
+      await _cancelReminder(e.id);
+      await _scheduleReminder(
+        eventId: e.id,
+        eventTitle: e.subject,
+        startUtc: blocEvent.newStart,
+        reminderMinutes: e.reminderMinutes!,
+      );
+    }
     result.fold(
       (failure) => emit(CalendarError(weekStart: weekStart, message: failure.message)),
       (_) {},
@@ -178,6 +202,7 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
       } else {
         await _declineCalendarEvent(DeclineCalendarEventParams(eventId: e.id));
       }
+      await _cancelReminder(e.id);
     }
     await _fetchWeek(weekStart, emit);
   }
@@ -207,5 +232,37 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
     final local = date.toLocal();
     final daysFromMonday = (local.weekday - 1) % 7;
     return DateTime(local.year, local.month, local.day - daysFromMonday);
+  }
+
+  // Fast-path cancellation for the app's own cancel/decline/delete/reschedule
+  // actions — the periodic CalendarReminderService reconciliation is the
+  // safety net that also catches changes made from other clients, but it
+  // runs on a ~15min cadence, which would otherwise let a just-cancelled
+  // meeting's reminder fire before the next cycle catches it.
+  Future<void> _cancelReminder(String eventId) async {
+    final accountId = _accountManager.activeAccount?.id;
+    if (accountId == null) return;
+    await _notificationService.cancelEventReminder(
+      accountId: accountId,
+      eventId: eventId,
+    );
+  }
+
+  Future<void> _scheduleReminder({
+    required String eventId,
+    required String eventTitle,
+    required DateTime startUtc,
+    required int reminderMinutes,
+  }) async {
+    final accountId = _accountManager.activeAccount?.id;
+    if (accountId == null) return;
+    await _notificationService.scheduleEventReminder(
+      accountId: accountId,
+      eventId: eventId,
+      eventTitle: eventTitle,
+      startUtc: startUtc,
+      reminderMinutes: reminderMinutes,
+      startIso: startUtc.toIso8601String(),
+    );
   }
 }

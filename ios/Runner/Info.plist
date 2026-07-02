@@ -13,6 +13,8 @@
 	<array>
 		<string>au.com.sharpblue.nightmail.mailCheck</string>
 	</array>
+	<key>NSCalendarsUsageDescription</key>
+	<string>NightMail needs calendar access to show and manage events from your local calendars.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

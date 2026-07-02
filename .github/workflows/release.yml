@@ -67,11 +67,6 @@ jobs:
       - run: flutter create --platforms=macos .
       - run: flutter pub get
 
-      - name: Patch flutter_inappwebview_macos Package.swift (10.14 → 10.15)
-        run: |
-          sed -i '' 's/\.macOS("10.14")/.macOS("10.15")/' \
-            ~/.pub-cache/hosted/pub.dev/flutter_inappwebview_macos-1.2.0-beta.3/macos/flutter_inappwebview_macos/Package.swift
-
       - run: dart run build_runner build --delete-conflicting-outputs
       - name: Generate code for enough_mail sub-package
         working-directory: packages/enough_mail
@@ -162,40 +157,6 @@ jobs:
       - run: flutter create --platforms=linux .
       - run: flutter pub get
 
-      - name: Patch flutter_inappwebview_linux CMakeLists (GCC compat + library name)
-        run: |
-          python3 - <<'EOF'
-          import pathlib
-          p = pathlib.Path.home() / '.pub-cache/hosted/pub.dev/flutter_inappwebview_linux-0.1.0-beta.1/linux/CMakeLists.txt'
-          t = p.read_text()
-
-          # fix: CMakeLists hardcodes libWPEWebKit-2.0 but wpewebkit-1.0 pkg-config
-          # resolves to WPEWebKit-1.0, so derive the name dynamically instead.
-          if 'find_and_add_library("libWPEWebKit-2.0"' in t:
-            t = t.replace(
-              'find_and_add_library("libWPEWebKit-2.0" "${WPE_LIB_DIRS}" WPE_BUNDLED_LIBS)',
-              'list(GET WPE_WEBKIT_LIBRARIES 0 _wpe_webkit_libname)\nfind_and_add_library("lib${_wpe_webkit_libname}" "${WPE_LIB_DIRS}" WPE_BUNDLED_LIBS)'
-            )
-
-          # fix: -Wno-deprecated-literal-operator is Clang-only; GCC rejects it.
-          CHECK_BLOCK = (
-            'check_cxx_compiler_flag("-Wno-deprecated-literal-operator" _WNO_DEPRECATED_LITERAL_OP)\n'
-            'if(_WNO_DEPRECATED_LITERAL_OP)\n'
-            '  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-literal-operator")\n'
-            'endif()'
-          )
-          if 'check_cxx_compiler_flag("-Wno-deprecated-literal-operator"' not in t:
-            t = t.replace(
-              'if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")\n  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-literal-operator")\nendif()',
-              CHECK_BLOCK
-            )
-            t = t.replace(
-              'set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-literal-operator")',
-              CHECK_BLOCK
-            )
-          p.write_text(t)
-          EOF
-
       - run: dart run build_runner build --delete-conflicting-outputs
       - name: Generate code for enough_mail sub-package
         working-directory: packages/enough_mail
@@ -253,29 +214,6 @@ jobs:
           done
           rm -rf "$PROCESSED"
 
-      - name: Upload Linux bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-bundle
-          path: build/linux/x64/release/bundle/
-
-  snap-linux:
-    needs: [prepare, build-linux]
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download Linux bundle
-        uses: actions/download-artifact@v4
-        with:
-          name: linux-bundle
-          path: build/linux/x64/release/bundle/
-
-      - name: Restore executable permissions on bundle
-        run: |
-          chmod +x build/linux/x64/release/bundle/nightmail
-          find build/linux/x64/release/bundle/lib -name "*.so*" -exec chmod +x {} \;
-
       - name: Install Snapcraft
         run: sudo snap install snapcraft --classic
 
@@ -304,9 +242,6 @@ jobs:
           cache: false
 
       - run: flutter pub get
-
-      - name: Patch desktop_drop compileSdk (0.4.4 hardcodes 33, needs 34+)
-        run: sed -i 's/compileSdk 33/compileSdk 36/' ~/.pub-cache/hosted/pub.dev/desktop_drop-0.4.4/android/build.gradle
 
       - run: dart run build_runner build --delete-conflicting-outputs
       - name: Generate code for enough_mail sub-package

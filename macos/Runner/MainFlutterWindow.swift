@@ -314,6 +314,7 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
         ]
         if let loc = e.location, !loc.isEmpty  { m["location"] = loc }
         if let notes = e.notes, !notes.isEmpty { m["notes"]    = notes }
+        if let minutes = self.reminderMinutes(for: e) { m["reminderMinutes"] = minutes }
         return m
       }
       DispatchQueue.main.async { result(maps) }
@@ -410,7 +411,20 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     ]
     if let loc   = e.location, !loc.isEmpty   { m["location"] = loc }
     if let notes = e.notes,    !notes.isEmpty { m["notes"]    = notes }
+    if let minutes = reminderMinutes(for: e)  { m["reminderMinutes"] = minutes }
     return m
+  }
+
+  /// Minutes before start of the earliest-firing alarm on [e], if any.
+  /// EKAlarm.relativeOffset is negative for "before start", in seconds.
+  private func reminderMinutes(for e: EKEvent) -> Int? {
+    guard let alarms = e.alarms, !alarms.isEmpty else { return nil }
+    let minutesValues = alarms.compactMap { alarm -> Int? in
+      let offset = alarm.relativeOffset
+      guard offset < 0 else { return nil }
+      return Int((-offset / 60.0).rounded())
+    }
+    return minutesValues.max()
   }
 
   // MARK: - Contacts channel

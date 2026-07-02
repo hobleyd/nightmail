@@ -147,8 +147,8 @@ class GmailAuthService implements AuthService {
       await _tokenStorage.saveToken(token);
       return token;
     } on DioException catch (e) {
-      throw AuthException(
-          message: 'Token refresh failed: ${e.message ?? e.toString()}');
+      final message = _extractErrorMessage(e) ?? e.message ?? e.toString();
+      throw AuthException(message: 'Token refresh failed: $message');
     }
   }
 

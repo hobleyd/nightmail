@@ -26,20 +26,6 @@ flutter run
 
 Always `flutter clean` after changing entitlements or code signing settings.
 
-### desktop_drop Android patch (compileSdk 33 + androidx.fragment 1.7.1)
-
-`desktop_drop 0.4.4` sets `compileSdk 33` but `androidx.fragment:fragment:1.7.1`
-requires `compileSdk 34+`. The fix is a one-line patch in the pub cache:
-
-```bash
-# File: ~/.pub-cache/hosted/pub.dev/desktop_drop-0.4.4/android/build.gradle
-# Change: compileSdk 33 → compileSdk 36
-sed -i '' 's/compileSdk 33/compileSdk 36/' \
-  ~/.pub-cache/hosted/pub.dev/desktop_drop-0.4.4/android/build.gradle
-```
-
-Re-apply after `flutter pub cache repair`. Drop when desktop_drop publishes a fix.
-
 ## macOS Native Channels
 
 Custom platform channels live in `macos/Runner/MainFlutterWindow.swift`.

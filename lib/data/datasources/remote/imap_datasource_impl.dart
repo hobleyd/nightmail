@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:enough_mail/enough_mail.dart';
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart' show compute, visibleForTesting;
 
 import '../../../core/error/exceptions.dart';
 import '../../../core/utils/html_entities.dart';
@@ -236,7 +236,11 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       final supportsListStatus = client.serverInfo.supports('LIST-STATUS');
       final supportsChildren = client.serverInfo.supports('CHILDREN');
       final mailboxes = await client.listMailboxes(
-        path: '"$parentFolderId$sep"',
+        // Don't pre-quote here — _encodeMailboxPath() quotes as needed and
+        // would otherwise double-quote paths containing '(' or ')'
+        // (e.g. "Audit(s)"), which servers reject with "Invalid characters
+        // in atom".
+        path: '$parentFolderId$sep',
         recursive: false,
         returnOptions: supportsListStatus
             ? [
@@ -620,17 +624,68 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
   }
 
   Future<void> _sendMime(MimeMessage message) async {
-    final client = await _getSmtpClient();
+    final smtpClient = await _getSmtpClient();
     try {
-      final response = await client.sendMessage(message);
+      final response = await smtpClient.sendMessage(message);
       if (!response.isOkStatus) {
         throw ServerException(message: 'SMTP error: ${response.code}');
       }
     } on SmtpException catch (e) {
       throw ServerException(message: e.message ?? 'SMTP error');
     } finally {
-      await client.quit();
+      await smtpClient.quit();
     }
+
+    // Plain SMTP has no concept of a Sent folder — unlike the Gmail/Graph
+    // API paths, which save a Sent copy server-side, IMAP accounts need an
+    // explicit APPEND after a successful send. Best-effort: a missing Sent
+    // folder or a failed APPEND must not surface as a send failure, since
+    // the message has already been delivered.
+    try {
+      final imapClient = await _getConnectedClient();
+      final sentPath = await _findSentPath(imapClient);
+      if (sentPath != null) {
+        await imapClient.appendMessageText(
+          message.renderMessage(),
+          targetMailboxPath: sentPath,
+          flags: [MessageFlags.seen],
+        );
+      }
+    } catch (_) {}
+  }
+
+  Future<String?> _findSentPath(ImapClient client) async {
+    try {
+      final mailboxes = await client.listMailboxes(recursive: true);
+      final sentMailbox = mailboxes.where((mb) => mb.isSent).firstOrNull ??
+          _wellKnownSentMailbox(mailboxes);
+      if (sentMailbox == null) return null;
+      return (_inboxFolderPrefix.isNotEmpty &&
+              !sentMailbox.path.toUpperCase().startsWith('INBOX'))
+          ? '$_inboxFolderPrefix${sentMailbox.path}'
+          : sentMailbox.path;
+    } on ImapException {
+      return null;
+    }
+  }
+
+  Mailbox? _wellKnownSentMailbox(List<Mailbox> mailboxes) {
+    const wellKnown = ['Sent', 'Sent Items', 'Sent Mail', 'Sent Messages'];
+    for (final name in wellKnown) {
+      final fullName =
+          _inboxFolderPrefix.isNotEmpty ? '$_inboxFolderPrefix$name' : name;
+      final match = mailboxes
+          .where(
+            (mb) =>
+                mb.path.toLowerCase() == fullName.toLowerCase() ||
+                mb.path.toLowerCase() == name.toLowerCase() ||
+                mb.path.split(_pathSeparator).last.toLowerCase() ==
+                    name.toLowerCase(),
+          )
+          .firstOrNull;
+      if (match != null) return match;
+    }
+    return null;
   }
 
   @override
@@ -798,14 +853,32 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       final client = await _getConnectedClient();
       await _selectMailboxPath(client, mailboxPath);
 
+      // Apply INBOX prefix normalization to the destination path using the
+      // same logic as getMailFolders(). On abbreviated-namespace servers
+      // (Courier, some Dovecot), the folder list may return "Archive" but
+      // UID COPY / UID MOVE require the full path "INBOX.Archive".
+      final resolvedDest =
+          (_inboxFolderPrefix.isNotEmpty &&
+                  !destinationFolderId.toUpperCase().startsWith('INBOX'))
+              ? '$_inboxFolderPrefix$destinationFolderId'
+              : destinationFolderId;
+
       final sequence = MessageSequence.fromId(uid, isUid: true);
-      await client.uidCopy(sequence, targetMailboxPath: destinationFolderId);
-      await client.uidStore(
-        sequence,
-        [MessageFlags.deleted],
-        action: StoreAction.add,
-      );
-      await client.expunge();
+      if (client.serverInfo.supportsMove) {
+        await client.uidMove(sequence, targetMailboxPath: resolvedDest);
+      } else {
+        await client.uidCopy(sequence, targetMailboxPath: resolvedDest);
+        await client.uidStore(
+          sequence,
+          [MessageFlags.deleted],
+          action: StoreAction.add,
+        );
+        if (client.serverInfo.supportsUidPlus) {
+          await client.uidExpunge(sequence);
+        } else {
+          await client.expunge();
+        }
+      }
     } on ImapException catch (e) {
       throw ServerException(message: e.message ?? 'IMAP error');
     }
@@ -1004,21 +1077,22 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       if (draftsPath == null) {
         throw const ServerException(message: 'Drafts mailbox not found');
       }
-      final builder = MessageBuilder()
-        ..from = [MailAddress(_account.displayName, _account.emailAddress)]
-        ..to = toAddresses.map((a) => MailAddress(null, a)).toList()
-        ..cc = ccAddresses.map((a) => MailAddress(null, a)).toList()
-        ..subject = subject;
-      if (bodyType == EmailBodyType.html) {
-        builder.addTextHtml(body);
-      } else {
-        builder.addTextPlain(body);
-      }
-      await _addAttachmentsToBuilder(builder, newAttachments);
-      final message = builder.buildMimeMessage();
-      final msgId = message.getHeaderValue('message-id') ?? '';
-      await client.appendMessage(
-        message,
+      final msgId = MessageBuilder.createMessageId(
+        _account.emailAddress.split('@').last,
+      );
+      final mimeText = await compute(_buildDraftMimeText, _DraftMimeParams(
+        fromName: _account.displayName,
+        fromAddress: _account.emailAddress,
+        toAddresses: toAddresses,
+        ccAddresses: ccAddresses,
+        subject: subject,
+        body: body,
+        isHtml: bodyType == EmailBodyType.html,
+        attachments: newAttachments,
+        messageId: msgId,
+      ));
+      await client.appendMessageText(
+        mimeText,
         targetMailboxPath: draftsPath,
         flags: [MessageFlags.draft],
       );
@@ -1052,21 +1126,22 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     final oldUid = int.tryParse(draftId.substring(separatorIdx + 1)) ?? 0;
     try {
       final client = await _getConnectedClient();
-      final builder = MessageBuilder()
-        ..from = [MailAddress(_account.displayName, _account.emailAddress)]
-        ..to = toAddresses.map((a) => MailAddress(null, a)).toList()
-        ..cc = ccAddresses.map((a) => MailAddress(null, a)).toList()
-        ..subject = subject;
-      if (bodyType == EmailBodyType.html) {
-        builder.addTextHtml(body);
-      } else {
-        builder.addTextPlain(body);
-      }
-      await _addAttachmentsToBuilder(builder, newAttachments);
-      final message = builder.buildMimeMessage();
-      final msgId = message.getHeaderValue('message-id') ?? '';
-      await client.appendMessage(
-        message,
+      final msgId = MessageBuilder.createMessageId(
+        _account.emailAddress.split('@').last,
+      );
+      final mimeText = await compute(_buildDraftMimeText, _DraftMimeParams(
+        fromName: _account.displayName,
+        fromAddress: _account.emailAddress,
+        toAddresses: toAddresses,
+        ccAddresses: ccAddresses,
+        subject: subject,
+        body: body,
+        isHtml: bodyType == EmailBodyType.html,
+        attachments: newAttachments,
+        messageId: msgId,
+      ));
+      await client.appendMessageText(
+        mimeText,
         targetMailboxPath: draftsPath,
         flags: [MessageFlags.draft],
       );
@@ -1243,4 +1318,71 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       rethrow;
     }
   }
+}
+
+/// Inputs for [_buildDraftMimeText]. Kept as plain, isolate-transferable
+/// data (no [MessageBuilder]/[MimeMessage] instances) since [compute] runs
+/// the builder on a background isolate.
+class _DraftMimeParams {
+  const _DraftMimeParams({
+    required this.fromName,
+    required this.fromAddress,
+    required this.toAddresses,
+    required this.ccAddresses,
+    required this.subject,
+    required this.body,
+    required this.isHtml,
+    required this.attachments,
+    required this.messageId,
+  });
+
+  final String fromName;
+  final String fromAddress;
+  final List<String> toAddresses;
+  final List<String> ccAddresses;
+  final String subject;
+  final String body;
+  final bool isHtml;
+  final List<LocalAttachment> attachments;
+  final String messageId;
+}
+
+/// Builds and renders a draft MIME message off the main isolate.
+///
+/// Encoding a large HTML body (a long quoted reply can be hundreds of KB)
+/// via [MessageBuilder.buildMimeMessage] and [MimeMessage.renderMessage] is
+/// synchronous CPU work; running it on the main isolate froze the compose
+/// UI every time the draft autosave timer fired. [compute] moves it to a
+/// worker isolate so only the cheap network I/O (APPEND) touches the
+/// account's connection back on the caller's isolate.
+String _buildDraftMimeText(_DraftMimeParams p) {
+  final builder = MessageBuilder()
+    ..from = [MailAddress(p.fromName, p.fromAddress)]
+    ..to = p.toAddresses.map((a) => MailAddress(null, a)).toList()
+    ..cc = p.ccAddresses.map((a) => MailAddress(null, a)).toList()
+    ..subject = p.subject
+    ..messageId = p.messageId;
+  if (p.isHtml) {
+    builder.addTextHtml(p.body);
+  } else {
+    builder.addTextPlain(p.body);
+  }
+  for (final att in p.attachments) {
+    if (att.isInline && att.contentId != null) {
+      final part = builder.addBinary(
+        att.bytes,
+        MediaType.fromText(att.mimeType),
+        filename: att.name,
+        disposition: ContentDispositionHeader.from(ContentDisposition.inline),
+      );
+      part.setHeader('Content-Id', '<${att.contentId}>');
+    } else {
+      builder.addBinary(
+        att.bytes,
+        MediaType.fromText(att.mimeType),
+        filename: att.name,
+      );
+    }
+  }
+  return builder.buildMimeMessage().renderMessage();
 }

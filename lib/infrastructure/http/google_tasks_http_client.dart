@@ -5,7 +5,7 @@ import 'auth_interceptor.dart';
 
 /// Dio instance pre-configured for the Google Tasks REST API.
 class GoogleTasksHttpClient {
-  GoogleTasksHttpClient({required AuthService authService}) {
+  GoogleTasksHttpClient({required AuthService authService, void Function()? onAuthFailure}) {
     _dio = Dio(BaseOptions(
       baseUrl: 'https://tasks.googleapis.com/tasks/v1',
       headers: {
@@ -16,7 +16,8 @@ class GoogleTasksHttpClient {
       receiveTimeout: const Duration(seconds: 30),
     ));
 
-    _dio.interceptors.add(AuthInterceptor(authService: authService, dio: _dio));
+    _dio.interceptors.add(AuthInterceptor(
+        authService: authService, dio: _dio, onAuthFailure: onAuthFailure));
   }
 
   late final Dio _dio;

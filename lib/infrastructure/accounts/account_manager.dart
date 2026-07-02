@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -58,9 +59,22 @@ class AccountManager {
   TasksRemoteDatasource? _tasksDatasource;
   AuthService? _authService;
 
+  // Fired by AuthInterceptor (the single choke point every Graph/Gmail/
+  // Calendar/Tasks/People request passes through) whenever a token refresh
+  // fails for an account, so the UI can flag it as needing re-authentication
+  // regardless of which call site triggered the failing request.
+  final _authFailureController = StreamController<String>.broadcast();
+  Stream<String> get authFailures => _authFailureController.stream;
+
   // Lazily built and cached per Gmail account ID so contact search works for
   // any account regardless of which one is currently active.
   final Map<String, GmailContactsDatasourceImpl> _contactsDatasourceCache = {};
+
+  // Lazily built and cached per Microsoft account ID so directory profile
+  // lookups (contact hover card) work for any account, not just the active
+  // one. Reuses GraphApiDatasourceImpl since directory lookups hit the same
+  // Graph host/auth as email.
+  final Map<String, GraphApiDatasourceImpl> _directoryDatasourceCache = {};
 
   List<Account> get accounts => List.unmodifiable(_accounts);
   bool get hasAccounts => _accounts.isNotEmpty;
@@ -103,9 +117,41 @@ class AccountManager {
       tokenStorage: tokenStorage,
     );
     final ds = GmailContactsDatasourceImpl(
-      client: GooglePeopleHttpClient(authService: authSvc),
+      client: GooglePeopleHttpClient(
+        authService: authSvc,
+        onAuthFailure: () => _authFailureController.add(accountId),
+      ),
     );
     _contactsDatasourceCache[accountId] = ds;
+    return ds;
+  }
+
+  GraphApiDatasourceImpl? directoryDatasourceForAccount(String accountId) {
+    if (_directoryDatasourceCache.containsKey(accountId)) {
+      return _directoryDatasourceCache[accountId];
+    }
+    final account = _accounts.cast<Account?>().firstWhere(
+      (a) => a?.id == accountId,
+      orElse: () => null,
+    );
+    if (account is! MicrosoftAccount) return null;
+    final tokenStorage = TokenStorage(
+      _secureStorage,
+      storageKey: 'token_${account.id}',
+    );
+    final authSvc = MicrosoftAuthService(
+      clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
+      tenantId: account.tenantId,
+      redirectUri: AppConfig.microsoftRedirectUri,
+      tokenStorage: tokenStorage,
+    );
+    final ds = GraphApiDatasourceImpl(
+      client: GraphHttpClient(
+        authService: authSvc,
+        onAuthFailure: () => _authFailureController.add(accountId),
+      ),
+    );
+    _directoryDatasourceCache[accountId] = ds;
     return ds;
   }
 
@@ -239,6 +285,7 @@ class AccountManager {
 
     await _clearCredentials(_accounts[idx]);
     _contactsDatasourceCache.remove(accountId);
+    _directoryDatasourceCache.remove(accountId);
 
     final updated = [..._accounts]..removeAt(idx);
     _accounts = updated;
@@ -247,6 +294,7 @@ class AccountManager {
       _emailDatasource = null;
       _calendarDatasource = null;
       _contactsDatasourceCache.clear();
+      _directoryDatasourceCache.clear();
       _authService = null;
     } else {
       _activeIndex = _activeIndex.clamp(0, _accounts.length - 1);
@@ -308,7 +356,10 @@ class AccountManager {
           tokenStorage: tokenStorage,
         );
         return GraphApiDatasourceImpl(
-            client: GraphHttpClient(authService: authSvc));
+            client: GraphHttpClient(
+          authService: authSvc,
+          onAuthFailure: () => _authFailureController.add(account.id),
+        ));
 
       case GmailAccount():
         final tokenStorage = TokenStorage(
@@ -322,7 +373,10 @@ class AccountManager {
           tokenStorage: tokenStorage,
         );
         return GmailDatasourceImpl(
-            client: GmailHttpClient(authService: authSvc));
+            client: GmailHttpClient(
+          authService: authSvc,
+          onAuthFailure: () => _authFailureController.add(account.id),
+        ));
 
       case ImapAccount():
         final credStorage = ImapCredentialStorage(_secureStorage);
@@ -384,7 +438,10 @@ class AccountManager {
           redirectUri: AppConfig.microsoftRedirectUri,
           tokenStorage: tokenStorage,
         );
-        final httpClient = GraphHttpClient(authService: authSvc);
+        final httpClient = GraphHttpClient(
+          authService: authSvc,
+          onAuthFailure: () => _authFailureController.add(account.id),
+        );
         final ds = GraphApiDatasourceImpl(client: httpClient);
         _authService = authSvc;
         _emailDatasource = ds;
@@ -401,9 +458,19 @@ class AccountManager {
           redirectUri: AppConfig.gmailRedirectUri,
           tokenStorage: tokenStorage,
         );
-        final gmailClient = GmailHttpClient(authService: authSvc);
-        final calendarClient = GoogleCalendarHttpClient(authService: authSvc);
-        final tasksClient = GoogleTasksHttpClient(authService: authSvc);
+        void onGmailAuthFailure() => _authFailureController.add(account.id);
+        final gmailClient = GmailHttpClient(
+          authService: authSvc,
+          onAuthFailure: onGmailAuthFailure,
+        );
+        final calendarClient = GoogleCalendarHttpClient(
+          authService: authSvc,
+          onAuthFailure: onGmailAuthFailure,
+        );
+        final tasksClient = GoogleTasksHttpClient(
+          authService: authSvc,
+          onAuthFailure: onGmailAuthFailure,
+        );
         _authService = authSvc;
         _emailDatasource = GmailDatasourceImpl(client: gmailClient);
         _calendarDatasource =
@@ -420,7 +487,58 @@ class AccountManager {
           credentialStorage: credStorage,
         );
         _tasksDatasource = null;
-        _calendarDatasource = _buildImapCalendarDatasource(account);
+        _calendarDatasource = buildCalendarDatasourceForAccount(account);
+    }
+  }
+
+  /// Build a [CalendarRemoteDatasource] for [account] without changing the
+  /// active account or touching [_emailDatasource]/[_tasksDatasource].
+  ///
+  /// Used by background/periodic reminder reconciliation, which needs every
+  /// configured account's calendar, not just the active one (mirrors
+  /// [buildEmailDatasourceForAccount]). Deliberately NOT used by
+  /// [_buildDatasourcesForActiveAccount]'s Microsoft/Gmail branches, which
+  /// share a single client instance across email/calendar/tasks for the
+  /// active account already — routing them through this method too would
+  /// construct a second, redundant auth/client pipeline for the same account.
+  CalendarRemoteDatasource? buildCalendarDatasourceForAccount(Account account) {
+    switch (account) {
+      case MicrosoftAccount():
+        final tokenStorage = TokenStorage(
+          _secureStorage,
+          storageKey: 'token_${account.id}',
+        );
+        final authSvc = MicrosoftAuthService(
+          clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
+          tenantId: account.tenantId,
+          redirectUri: AppConfig.microsoftRedirectUri,
+          tokenStorage: tokenStorage,
+        );
+        return GraphApiDatasourceImpl(
+          client: GraphHttpClient(
+            authService: authSvc,
+            onAuthFailure: () => _authFailureController.add(account.id),
+          ),
+        );
+      case GmailAccount():
+        final tokenStorage = TokenStorage(
+          _secureStorage,
+          storageKey: 'token_${account.id}',
+        );
+        final authSvc = GmailAuthService(
+          clientId: _googleClientId ?? AppConfig.gmailClientId,
+          clientSecret: _googleClientSecret ?? '',
+          redirectUri: AppConfig.gmailRedirectUri,
+          tokenStorage: tokenStorage,
+        );
+        return GoogleCalendarDatasourceImpl(
+          client: GoogleCalendarHttpClient(
+            authService: authSvc,
+            onAuthFailure: () => _authFailureController.add(account.id),
+          ),
+        );
+      case ImapAccount():
+        return _buildImapCalendarDatasource(account);
     }
   }
 

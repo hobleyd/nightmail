@@ -624,17 +624,68 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
   }
 
   Future<void> _sendMime(MimeMessage message) async {
-    final client = await _getSmtpClient();
+    final smtpClient = await _getSmtpClient();
     try {
-      final response = await client.sendMessage(message);
+      final response = await smtpClient.sendMessage(message);
       if (!response.isOkStatus) {
         throw ServerException(message: 'SMTP error: ${response.code}');
       }
     } on SmtpException catch (e) {
       throw ServerException(message: e.message ?? 'SMTP error');
     } finally {
-      await client.quit();
+      await smtpClient.quit();
     }
+
+    // Plain SMTP has no concept of a Sent folder — unlike the Gmail/Graph
+    // API paths, which save a Sent copy server-side, IMAP accounts need an
+    // explicit APPEND after a successful send. Best-effort: a missing Sent
+    // folder or a failed APPEND must not surface as a send failure, since
+    // the message has already been delivered.
+    try {
+      final imapClient = await _getConnectedClient();
+      final sentPath = await _findSentPath(imapClient);
+      if (sentPath != null) {
+        await imapClient.appendMessageText(
+          message.renderMessage(),
+          targetMailboxPath: sentPath,
+          flags: [MessageFlags.seen],
+        );
+      }
+    } catch (_) {}
+  }
+
+  Future<String?> _findSentPath(ImapClient client) async {
+    try {
+      final mailboxes = await client.listMailboxes(recursive: true);
+      final sentMailbox = mailboxes.where((mb) => mb.isSent).firstOrNull ??
+          _wellKnownSentMailbox(mailboxes);
+      if (sentMailbox == null) return null;
+      return (_inboxFolderPrefix.isNotEmpty &&
+              !sentMailbox.path.toUpperCase().startsWith('INBOX'))
+          ? '$_inboxFolderPrefix${sentMailbox.path}'
+          : sentMailbox.path;
+    } on ImapException {
+      return null;
+    }
+  }
+
+  Mailbox? _wellKnownSentMailbox(List<Mailbox> mailboxes) {
+    const wellKnown = ['Sent', 'Sent Items', 'Sent Mail', 'Sent Messages'];
+    for (final name in wellKnown) {
+      final fullName =
+          _inboxFolderPrefix.isNotEmpty ? '$_inboxFolderPrefix$name' : name;
+      final match = mailboxes
+          .where(
+            (mb) =>
+                mb.path.toLowerCase() == fullName.toLowerCase() ||
+                mb.path.toLowerCase() == name.toLowerCase() ||
+                mb.path.split(_pathSeparator).last.toLowerCase() ==
+                    name.toLowerCase(),
+          )
+          .firstOrNull;
+      if (match != null) return match;
+    }
+    return null;
   }
 
   @override

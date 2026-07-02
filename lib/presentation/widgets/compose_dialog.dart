@@ -262,7 +262,9 @@ class _ComposeFormState extends State<ComposeForm> {
   void _focusBodyEditor() {
     if (_bodyType == EmailBodyType.html) {
       FocusManager.instance.primaryFocus?.unfocus();
-      _htmlEditorKey.currentState?.focus();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _htmlEditorKey.currentState?.focus();
+      });
     } else {
       _bodyFocus.requestFocus();
     }

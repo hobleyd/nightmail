@@ -15,6 +15,7 @@ confinement: classic
 apps:
   nightmail:
     command: nightmail
+    desktop: meta/gui/nightmail.desktop
 
 parts:
   nightmail:

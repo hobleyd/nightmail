@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../injection_container.dart';
@@ -172,6 +173,7 @@ class _ComposeFormState extends State<ComposeForm> {
   late final TextEditingController _fromController;
   late final TextEditingController _subjectController;
   late final TextEditingController _bodyController;
+  final FocusNode _subjectFocus = FocusNode();
   final FocusNode _bodyFocus = FocusNode();
   List<String> _excludedAttachmentIds = [];
   List<LocalAttachment> _localAttachments = [];
@@ -224,6 +226,15 @@ class _ComposeFormState extends State<ComposeForm> {
     } else {
       _bodyController = TextEditingController(text: _buildInitialPlainBody());
     }
+
+    _subjectFocus.onKeyEvent = (_, event) {
+      if (event is KeyDownEvent &&
+          event.logicalKey == LogicalKeyboardKey.tab) {
+        _focusBodyEditor();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    };
 
     _subjectController.addListener(_onSubjectChanged);
     _bodyController.addListener(_scheduleDraftSave);
@@ -367,6 +378,7 @@ class _ComposeFormState extends State<ComposeForm> {
     _fromController.dispose();
     _subjectController.dispose();
     _bodyController.dispose();
+    _subjectFocus.dispose();
     _bodyFocus.dispose();
     super.dispose();
 
@@ -1104,7 +1116,7 @@ class _ComposeFormState extends State<ComposeForm> {
           hintText: 'cc@example.com',
           accountId: accountId,
           accountDomain: widget.accountDomain,
-          onTabToNext: _focusBodyEditor,
+          onTabToNext: () => _subjectFocus.requestFocus(),
         ),
         const SizedBox(height: 8),
         _FieldRow(
@@ -1112,6 +1124,7 @@ class _ComposeFormState extends State<ComposeForm> {
           controller: _subjectController,
           enabled: true,
           hintText: 'Subject',
+          focusNode: _subjectFocus,
         ),
         const SizedBox(height: 12),
         Divider(height: 1, color: c.border),
@@ -1447,12 +1460,14 @@ class _FieldRow extends StatelessWidget {
     required this.controller,
     required this.enabled,
     required this.hintText,
+    this.focusNode,
   });
 
   final String label;
   final TextEditingController controller;
   final bool enabled;
   final String hintText;
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
@@ -1478,6 +1493,7 @@ class _FieldRow extends StatelessWidget {
           child: TextField(
             controller: controller,
             enabled: enabled,
+            focusNode: focusNode,
             maxLines: null,
             style: TextStyle(
               color: enabled ? c.textPrimary : c.textTertiary,

@@ -82,7 +82,11 @@ class HtmlViewController {
   /// `element.focus()` in JS alone only focuses within the web content —
   /// the host HWND still needs to be told to take focus for a caret to show
   /// or for keystrokes to route there instead of the Flutter window.
-  Future<void> focus() => _channel!.invokeMethod('focus');
+  Future<void> focus() async {
+    try {
+      await _channel!.invokeMethod('focus');
+    } catch (_) {}
+  }
 
   Future<void> setPosition(double x, double y, double dpr) {
     if (_channel == null) {

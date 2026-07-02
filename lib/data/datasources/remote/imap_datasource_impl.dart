@@ -236,7 +236,11 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       final supportsListStatus = client.serverInfo.supports('LIST-STATUS');
       final supportsChildren = client.serverInfo.supports('CHILDREN');
       final mailboxes = await client.listMailboxes(
-        path: '"$parentFolderId$sep"',
+        // Don't pre-quote here — _encodeMailboxPath() quotes as needed and
+        // would otherwise double-quote paths containing '(' or ')'
+        // (e.g. "Audit(s)"), which servers reject with "Invalid characters
+        // in atom".
+        path: '$parentFolderId$sep',
         recursive: false,
         returnOptions: supportsListStatus
             ? [

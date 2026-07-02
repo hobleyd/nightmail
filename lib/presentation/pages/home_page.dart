@@ -97,7 +97,13 @@ class _HomeView extends StatelessWidget {
             context.read<FolderListBloc>().add(const FolderListLoadRequested());
             context.read<EmailListBloc>().add(const EmailListCleared());
             context.read<EmailDetailBloc>().add(const EmailDetailCleared());
-            context.read<CalendarBloc>().add(const CalendarCleared());
+            final calendarBloc = context.read<CalendarBloc>();
+            calendarBloc.add(const CalendarCleared());
+            if (context.read<HomeCubit>().state.view == HomeView.calendar) {
+              calendarBloc.add(
+                CalendarWeekLoadRequested(weekStart: _mondayOfWeek(DateTime.now())),
+              );
+            }
           },
         ),
         BlocListener<AccountCubit, AccountState>(

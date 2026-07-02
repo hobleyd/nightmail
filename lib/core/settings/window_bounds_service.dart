@@ -38,8 +38,11 @@ class WindowBoundsService {
   /// Returns the best restore state given currently connected displays, or
   /// null to let the platform use its default position/size.
   ///
-  /// Selection priority: external displays before built-in.
-  /// Within each tier the first candidate whose state is restorable wins:
+  /// Selection priority: most recently saved entry first (falling back to
+  /// external-before-built-in only to break exact-timestamp ties), so a
+  /// stale save from a display that hasn't been used in months can't
+  /// outrank the position the window was actually last closed at.
+  /// The first candidate (in that order) whose state is restorable wins:
   ///   - fullScreen / maximized entries: pass if the display is connected.
   ///   - Normal entries: pass if the title bar is reachable on-screen.
   Future<WindowRestoreState?> loadValidatedBounds() async {
@@ -79,9 +82,15 @@ class WindowBoundsService {
 
       if (candidates.isEmpty) return null;
 
-      // External displays first, built-in last.
-      candidates.sort((a, b) =>
-          (_isLikelyBuiltIn(a.$1) ? 1 : 0) - (_isLikelyBuiltIn(b.$1) ? 1 : 0));
+      // Most recently saved entry wins — this reflects whichever display the
+      // window actually last lived on. Ties (e.g. legacy entries with no
+      // timestamp) fall back to external-before-built-in.
+      candidates.sort((a, b) {
+        final byRecency = b.$2.savedAt.compareTo(a.$2.savedAt);
+        if (byRecency != 0) return byRecency;
+        return (_isLikelyBuiltIn(a.$1) ? 1 : 0) -
+            (_isLikelyBuiltIn(b.$1) ? 1 : 0);
+      });
 
       for (final (_, entry) in candidates) {
         if (entry.fullScreen) {
@@ -121,6 +130,7 @@ class WindowBoundsService {
         bounds: (fullScreen || maximized) ? null : bounds,
         fullScreen: fullScreen,
         maximized: maximized,
+        savedAt: DateTime.now().millisecondsSinceEpoch,
       );
       await _saveMap(saved);
     } catch (_) {}
@@ -151,6 +161,7 @@ class WindowBoundsService {
           bounds: bounds,
           fullScreen: v['fullScreen'] as bool? ?? false,
           maximized: v['maximized'] as bool? ?? false,
+          savedAt: (v['savedAt'] as num?)?.toInt() ?? 0,
         );
       }
       return result;
@@ -173,6 +184,7 @@ class WindowBoundsService {
             },
             'fullScreen': e.value.fullScreen,
             'maximized': e.value.maximized,
+            'savedAt': e.value.savedAt,
           },
       }));
     } catch (_) {}
@@ -271,8 +283,16 @@ class _DisplayEntry {
     required this.bounds,
     required this.fullScreen,
     required this.maximized,
+    this.savedAt = 0,
   });
   final Rect? bounds;
   final bool fullScreen;
   final bool maximized;
+
+  /// Epoch millis when this entry was written. Used to pick the most
+  /// recently used display when multiple have saved state (e.g. a stale
+  /// entry from a monitor that hasn't been connected in months shouldn't
+  /// outrank one from the session that just closed). 0 for legacy entries
+  /// saved before this field existed.
+  final int savedAt;
 }

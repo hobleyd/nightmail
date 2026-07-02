@@ -8,6 +8,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   desktop_webview_window
   file_selector_linux
   flutter_secure_storage_linux
+  gtk
   html_view
   open_file_linux
   screen_retriever_linux

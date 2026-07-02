@@ -56,6 +56,7 @@ dependencies:
   window_manager: ^0.5.1
   screen_retriever: ^0.2.1
   url_launcher: ^6.3.2
+  app_links: ^6.3.4
   caldav: ^1.5.0
   desktop_drop: ^0.7.1
 

@@ -1452,6 +1452,7 @@ class _EventTile extends StatelessWidget {
     return Opacity(
       opacity: isDragging ? 0.75 : 1.0,
       child: Container(
+        clipBehavior: Clip.hardEdge,
         padding: EdgeInsets.symmetric(
           horizontal: 4,
           vertical: compact ? 1 : 3,

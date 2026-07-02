@@ -34,7 +34,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
           'orderBy': 'startTime',
           'maxResults': 250,
           'fields':
-              'items(id,summary,start,end,description,location,status,organizer,attendees)',
+              'items(id,summary,start,end,description,location,status,organizer,attendees,hangoutLink,conferenceData)',
         },
       );
 
@@ -458,7 +458,11 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       start: start,
       end: end,
       isAllDay: isAllDay,
-      location: _parseLocation(json['location'] as String?, description),
+      location: _parseLocation(
+        json['location'] as String?,
+        description,
+        _conferenceJoinUrl(json),
+      ),
       bodyPreview: description,
       status: status,
       isOrganizer: isOrganizer,
@@ -467,11 +471,35 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     );
   }
 
-  static String? _parseLocation(String? location, String? description) {
+  /// Extracts the video join URL from `conferenceData.entryPoints`
+  /// (falls back to the deprecated top-level `hangoutLink`).
+  static String? _conferenceJoinUrl(Map<String, dynamic> json) {
+    final conferenceData = json['conferenceData'] as Map<String, dynamic>?;
+    final entryPoints =
+        conferenceData?['entryPoints'] as List<dynamic>?;
+    if (entryPoints != null) {
+      final video = entryPoints
+          .cast<Map<String, dynamic>>()
+          .where((e) => e['entryPointType'] == 'video')
+          .firstOrNull;
+      final uri = video?['uri'] as String?;
+      if (uri != null && uri.isNotEmpty) return uri;
+    }
+    return json['hangoutLink'] as String?;
+  }
+
+  static String? _parseLocation(
+    String? location,
+    String? description,
+    String? conferenceJoinUrl,
+  ) {
+    if (conferenceJoinUrl != null && conferenceJoinUrl.isNotEmpty) {
+      return conferenceJoinUrl;
+    }
     if (location != null && location.startsWith('https://')) return location;
     if (description != null) {
       final match = RegExp(
-        r'https://teams\.microsoft\.com/l/meetup-join/[^\s<>"]*',
+        r'https://(?:teams\.microsoft\.com/l/meetup-join|meet\.google\.com)/[^\s<>"]*',
       ).firstMatch(description);
       if (match != null) return match.group(0);
     }

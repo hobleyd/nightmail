@@ -28,6 +28,10 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   final Dio _dio;
   String? _cachedUserEmail;
 
+  /// Stores the Gmail API nextPageToken per label/folder ID.
+  /// Cleared on skip==0 (new list load); used on skip>0 (load-more).
+  final Map<String?, String> _pageTokens = {};
+
   @override
   Future<List<EmailFolderModel>> getMailFolders() async {
     try {
@@ -175,9 +179,15 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       // labelIds filters *which threads* to show (threads that have at least
       // one message with that label), but every message in each thread is
       // returned regardless of which label it carries.
+      if (skip == 0) {
+        // Fresh load: discard any stored page token for this folder.
+        _pageTokens.remove(folderId);
+      }
+
       final queryParams = <String, dynamic>{
         'maxResults': top,
         'labelIds': ?folderId,
+        'pageToken': ?_pageTokens[folderId],
       };
 
       final listResp = await _dio.get<Map<String, dynamic>>(
@@ -187,6 +197,14 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
 
       final data = listResp.data;
       if (data == null) return [];
+
+      // Store the next page token so the next load-more call can advance.
+      final nextToken = data['nextPageToken'] as String?;
+      if (nextToken != null) {
+        _pageTokens[folderId] = nextToken;
+      } else {
+        _pageTokens.remove(folderId);
+      }
 
       final threads = data['threads'] as List<dynamic>? ?? [];
       if (threads.isEmpty) return [];

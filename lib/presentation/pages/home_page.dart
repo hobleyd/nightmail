@@ -1,15 +1,20 @@
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:app_links/app_links.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 
 import '../../core/platform/window_utils.dart';
+import '../../core/utils/mailto_parser.dart';
+import '../../domain/entities/email.dart';
+import '../../domain/entities/email_address.dart';
+import '../../domain/usecases/send_email.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email_folder.dart';
-import '../../domain/entities/email.dart';
 import '../../domain/usecases/get_email.dart';
 import '../../core/settings/app_settings.dart';
 import '../../infrastructure/notifications/calendar_reminder_service.dart';
@@ -37,6 +42,7 @@ import '../widgets/email_list_panel.dart';
 import '../widgets/folder_panel.dart';
 import '../widgets/reading_pane.dart';
 import 'calendar_page.dart';
+import 'compose_window.dart';
 import 'tasks_page.dart';
 
 DateTime _mondayOfWeek(DateTime date) {
@@ -78,8 +84,53 @@ class HomePage extends StatelessWidget {
   }
 }
 
-class _HomeView extends StatelessWidget {
+class _HomeView extends StatefulWidget {
   const _HomeView();
+
+  @override
+  State<_HomeView> createState() => _HomeViewState();
+}
+
+class _HomeViewState extends State<_HomeView> {
+  final _appLinks = AppLinks();
+  StreamSubscription<Uri>? _mailtoSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _appLinks.getInitialLink().then((uri) {
+      if (uri?.scheme == 'mailto' && mounted) _handleMailto(uri!);
+    });
+    _mailtoSub = _appLinks.uriLinkStream
+        .where((uri) => uri.scheme == 'mailto')
+        .listen((uri) {
+      if (mounted) _handleMailto(uri);
+    });
+  }
+
+  @override
+  void dispose() {
+    _mailtoSub?.cancel();
+    super.dispose();
+  }
+
+  void _handleMailto(Uri uri) {
+    final data = MailtoParser.parse(uri);
+    final draft = Email(
+      id: '',
+      subject: data.subject,
+      from: const EmailAddress(address: ''),
+      toRecipients: data.to.map((a) => EmailAddress(address: a)).toList(),
+      ccRecipients: data.cc.map((a) => EmailAddress(address: a)).toList(),
+      bodyPreview: '',
+      body: data.body,
+      bodyType: EmailBodyType.text,
+      isRead: false,
+      receivedDateTime: DateTime.now(),
+      importance: EmailImportance.normal,
+    );
+    ComposeWindowApp.open(context, mode: ComposeMode.newEmail, draftEmail: draft);
+  }
 
   @override
   Widget build(BuildContext context) {

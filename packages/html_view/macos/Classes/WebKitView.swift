@@ -178,6 +178,10 @@ class WebKitView: NSObject, WKScriptMessageHandler, FlutterStreamHandler, WKNavi
       webView.isHidden = !visible
       result(nil)
 
+    case "focus":
+      webView.window?.makeFirstResponder(webView)
+      result(nil)
+
     default:
       result(FlutterMethodNotImplemented)
     }

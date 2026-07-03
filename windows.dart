@@ -41,6 +41,13 @@ Name: "{group}\\NightMail"; Filename: "{app}\\nightmail.exe"
 Name: "{group}\\Uninstall NightMail"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\\NightMail"; Filename: "{app}\\nightmail.exe"; Tasks: desktopicon
 
+[Registry]
+; Register NightMail as a mailto: protocol handler under HKCU (no admin required).
+Root: HKCU; Subkey: "Software\\Classes\\mailto"; ValueType: string; ValueName: ""; ValueData: "URL:MailTo Protocol"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\\Classes\\mailto"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKCU; Subkey: "Software\\Classes\\mailto\\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\\nightmail.exe,0"
+Root: HKCU; Subkey: "Software\\Classes\\mailto\\shell\\open\\command"; ValueType: string; ValueName: ""; ValueData: """{app}\\nightmail.exe"" ""%1"""
+
 [Run]
 Filename: "{app}\\nightmail.exe"; Description: "{cm:LaunchProgram,NightMail}"; Flags: nowait postinstall skipifsilent
 ''';

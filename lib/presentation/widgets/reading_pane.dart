@@ -208,7 +208,7 @@ class _ReadingPaneToolbar extends StatelessWidget {
   final VoidCallback? onBack;
 
   Future<void> _openComposeWindow(BuildContext context, ComposeMode mode) async {
-    await ComposeWindowApp.open(context, mode: mode, originalEmail: email);
+    await ComposeWindowApp.open(context, mode: mode, originalEmail: email, onSent: onBack);
   }
 
   Future<void> _confirmAndDelete(BuildContext context) async {

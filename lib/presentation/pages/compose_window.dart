@@ -39,6 +39,7 @@ class ComposeWindowApp extends StatelessWidget {
     Email? originalEmail,
     Email? draftEmail,
     String? existingDraftId,
+    VoidCallback? onSent,
   }) async {
     final isMobile = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
     if (isMobile) {
@@ -49,6 +50,7 @@ class ComposeWindowApp extends StatelessWidget {
             originalEmail: originalEmail,
             draftEmail: draftEmail,
             existingDraftId: existingDraftId,
+            onSent: onSent,
           ),
           fullscreenDialog: true,
         ),
@@ -306,12 +308,14 @@ class _MobileComposePage extends StatefulWidget {
     this.originalEmail,
     this.draftEmail,
     this.existingDraftId,
+    this.onSent,
   });
 
   final ComposeMode mode;
   final Email? originalEmail;
   final Email? draftEmail;
   final String? existingDraftId;
+  final VoidCallback? onSent;
 
   @override
   State<_MobileComposePage> createState() => _MobileComposePageState();
@@ -361,7 +365,10 @@ class _MobileComposePageState extends State<_MobileComposePage> {
                     ),
                   );
                 }
-                if (state is ComposeSent) Navigator.of(context).pop();
+                if (state is ComposeSent) {
+                  Navigator.of(context).pop();
+                  widget.onSent?.call();
+                }
               }
             },
             child: ComposeForm(

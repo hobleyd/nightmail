@@ -130,3 +130,10 @@ endif()
 # Install app icon.
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/app_icon.png"
   DESTINATION "${INSTALL_BUNDLE_DATA_DIR}" COMPONENT Runtime)
+
+# Install .desktop file for mailto: protocol handler registration.
+# Package maintainers should also run:
+#   xdg-mime install --novendor nightmail.desktop
+#   update-desktop-database
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/nightmail.desktop"
+  DESTINATION "share/applications" COMPONENT Runtime)

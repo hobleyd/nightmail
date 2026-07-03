@@ -15,12 +15,17 @@ confinement: classic
 apps:
   nightmail:
     command: nightmail
-    desktop: meta/gui/nightmail.desktop
+    desktop: usr/share/applications/nightmail.desktop
 
 parts:
   nightmail:
     plugin: dump
     source: build/linux/x64/release/bundle
+  desktop:
+    plugin: dump
+    source: linux/packaging
+    organize:
+      nightmail.desktop: usr/share/applications/nightmail.desktop
     build-packages:
       - patchelf
     override-prime: |

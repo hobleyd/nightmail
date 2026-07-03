@@ -27,8 +27,9 @@ static const wchar_t* kJsBridge = LR"JS(
     };
   }
   // Channels editor.html calls via window[name].postMessage(value)
-  window['onContentChanged'] = makeChannel('onContentChanged');
-  window['onLinkRequest']    = makeChannel('onLinkRequest');
+  window['onContentChanged']  = makeChannel('onContentChanged');
+  window['onLinkRequest']     = makeChannel('onLinkRequest');
+  window['onAttachRequest']   = makeChannel('onAttachRequest');
 
   // Tell Dart when the page DOM is ready so setContent() can be called.
   document.addEventListener('DOMContentLoaded', function() {

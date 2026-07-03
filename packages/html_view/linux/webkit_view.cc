@@ -19,8 +19,9 @@ static const char* kJsBridge = R"JS(
       }
     };
   }
-  window['onContentChanged'] = makeChannel('onContentChanged');
-  window['onLinkRequest']    = makeChannel('onLinkRequest');
+  window['onContentChanged']  = makeChannel('onContentChanged');
+  window['onLinkRequest']     = makeChannel('onLinkRequest');
+  window['onAttachRequest']   = makeChannel('onAttachRequest');
   document.addEventListener('DOMContentLoaded', function() {
     window.webkit.messageHandlers.HtmlView.postMessage('pageLoaded' + SEP);
   });

@@ -152,6 +152,7 @@ body { display: flex; flex-direction: column; }
   <span class="sep"></span>
   <button title="Insert link" onmousedown="event.preventDefault(); requestLink()">&#x1F517;</button>
   <button title="Remove formatting" onmousedown="event.preventDefault(); fmt('removeFormat')">&#x2715;</button>
+  <button title="Attach file" style="margin-left:auto" onmousedown="event.preventDefault(); requestAttach()">&#x1F4CE;</button>
 </div>
 <input type="color" id="color-input" style="position:fixed; opacity:0; width:0; height:0; pointer-events:none;" value="#cc0000">
 <div class="editor" id="editor" contenteditable="true" spellcheck="true" data-placeholder="Write your message here…"></div>
@@ -192,6 +193,10 @@ colorInput.addEventListener('input', function(e) {
 });
 function requestLink() {
   _flutterNotify('onLinkRequest');
+}
+
+function requestAttach() {
+  _flutterNotify('onAttachRequest');
 }
 
 function insertLink(url) {

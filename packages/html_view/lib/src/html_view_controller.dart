@@ -13,18 +13,21 @@ class HtmlViewController {
   List<double>? _pendingPos;
   List<double>? _pendingSize;
 
-  final _onContentChanged = StreamController<String>.broadcast();
-  final _onLinkRequest = StreamController<void>.broadcast();
-  final _onPageLoaded = StreamController<void>.broadcast();
-  final _onLinkOpened = StreamController<String>.broadcast();
+  final _onContentChanged   = StreamController<String>.broadcast();
+  final _onLinkRequest      = StreamController<void>.broadcast();
+  final _onPageLoaded       = StreamController<void>.broadcast();
+  final _onLinkOpened       = StreamController<String>.broadcast();
+  final _onAttachRequested  = StreamController<void>.broadcast();
 
-  Stream<String> get onContentChanged => _onContentChanged.stream;
-  Stream<void>   get onLinkRequest    => _onLinkRequest.stream;
+  Stream<String> get onContentChanged  => _onContentChanged.stream;
+  Stream<void>   get onLinkRequest     => _onLinkRequest.stream;
   /// Fires once when the page DOM is ready (DOMContentLoaded).
-  Stream<void>   get onPageLoaded     => _onPageLoaded.stream;
+  Stream<void>   get onPageLoaded      => _onPageLoaded.stream;
   /// Fires when the user clicks an http/https/mailto link; navigation is
   /// cancelled by the native side so the caller can open it externally.
-  Stream<String> get onLinkOpened     => _onLinkOpened.stream;
+  Stream<String> get onLinkOpened      => _onLinkOpened.stream;
+  /// Fires when the user clicks the attachment button in the toolbar.
+  Stream<void>   get onAttachRequested => _onAttachRequested.stream;
 
   bool get isInitialized => _viewId != null;
 
@@ -62,6 +65,9 @@ class HtmlViewController {
         break;
       case 'onLinkOpened':
         _onLinkOpened.add(map['value'] as String? ?? '');
+        break;
+      case 'onAttachRequest':
+        _onAttachRequested.add(null);
         break;
     }
   }
@@ -120,6 +126,7 @@ class HtmlViewController {
     _onLinkRequest.close();
     _onPageLoaded.close();
     _onLinkOpened.close();
+    _onAttachRequested.close();
     if (_viewId != null) {
       final id = _viewId;
       _viewId = null;

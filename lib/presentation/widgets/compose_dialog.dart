@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:desktop_drop/desktop_drop.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -1021,6 +1022,21 @@ class _ComposeFormState extends State<ComposeForm> {
     );
   }
 
+  Future<void> _pickAttachments() async {
+    final picked = await openFiles();
+    if (!mounted || picked.isEmpty) return;
+    final attachments = await Future.wait(
+      picked.map((f) async => LocalAttachment(
+        path: f.path,
+        name: f.name,
+        mimeType: LocalAttachment.mimeTypeFromName(f.name),
+        bytes: await f.readAsBytes(),
+      )),
+    );
+    setState(() => _localAttachments = [..._localAttachments, ...attachments]);
+    _scheduleDraftSave();
+  }
+
   Future<void> _onLinkRequested(BuildContext context) async {
     final urlController = TextEditingController();
     final editorState = _htmlEditorKey.currentState;
@@ -1193,6 +1209,7 @@ class _ComposeFormState extends State<ComposeForm> {
           _scheduleDraftSave();
         },
         onLinkRequested: () => _onLinkRequested(context),
+        onAttachRequested: _pickAttachments,
       );
     }
 

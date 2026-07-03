@@ -10,6 +10,7 @@ class HtmlEmailEditor extends StatefulWidget {
     required this.initialHtml,
     required this.onContentChanged,
     required this.onLinkRequested,
+    required this.onAttachRequested,
     this.autofocus = false,
   });
 
@@ -18,6 +19,9 @@ class HtmlEmailEditor extends StatefulWidget {
   /// Called when the user taps the link button in the editor toolbar.
   /// The caller should prompt for a URL and call [insertLink].
   final VoidCallback onLinkRequested;
+  /// Called when the user taps the paperclip button in the editor toolbar.
+  /// The caller should open a file picker and attach the selected files.
+  final VoidCallback onAttachRequested;
   /// Focuses the editor as soon as its content finishes loading. The webview
   /// loads asynchronously, so this can't be done with a synchronous
   /// `requestFocus()` call from the parent the way the plain-text body works.
@@ -32,6 +36,7 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
   StreamSubscription<String>? _contentSub;
   StreamSubscription<void>?   _linkSub;
   StreamSubscription<void>?   _loadedSub;
+  StreamSubscription<void>?   _attachSub;
 
   String _pendingHtml = '';
   bool   _disposed    = false;
@@ -49,6 +54,9 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
       });
       _linkSub = _controller.onLinkRequest.listen((_) {
         if (mounted) widget.onLinkRequested();
+      });
+      _attachSub = _controller.onAttachRequested.listen((_) {
+        if (mounted) widget.onAttachRequested();
       });
       _loadedSub = _controller.onPageLoaded.listen((_) async {
         if (_disposed) return;
@@ -69,6 +77,7 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
     _contentSub?.cancel();
     _linkSub?.cancel();
     _loadedSub?.cancel();
+    _attachSub?.cancel();
     _controller.dispose();
     super.dispose();
   }

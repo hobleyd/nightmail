@@ -1,10 +1,9 @@
 [Desktop Entry]
 Name=NightMail
-Comment=A cross-platform email client for Microsoft 365, Gmail, and IMAP/SMTP
-Exec=nightmail %U
+Comment=Cross-platform email client for Microsoft 365, Gmail and IMAP
+Exec=nightmail %u
 Icon=nightmail
 Type=Application
 Categories=Network;Email;
 MimeType=x-scheme-handler/mailto;
 StartupNotify=true
-StartupWMClass=au.com.sharpblue.nightmail

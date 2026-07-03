@@ -209,13 +209,17 @@ function scheduleChange() {
 // body this can block the main thread for a while. Defer it to an idle
 // slot so it doesn't compete with the next keystroke if the user resumes
 // typing right as the debounce timer fires.
+function _cleanHtml() {
+  return editor.innerHTML.replace(/​/g, '');
+}
+
 function fireChange() {
   if (window.requestIdleCallback) {
     requestIdleCallback(function() {
-      _flutterNotify('onContentChanged', editor.innerHTML);
+      _flutterNotify('onContentChanged', _cleanHtml());
     }, {timeout: 500});
   } else {
-    _flutterNotify('onContentChanged', editor.innerHTML);
+    _flutterNotify('onContentChanged', _cleanHtml());
   }
 }
 
@@ -232,7 +236,7 @@ function setContent(html) {
 }
 
 function getContent() {
-  return editor.innerHTML;
+  return _cleanHtml();
 }
 
 function focusEditor() {
@@ -354,9 +358,15 @@ function _checkOrdinalSuffix() {
   node.parentNode.insertBefore(sup, afterNode);
   sup.appendChild(supText);
 
-  // Place cursor in afterNode (outside the <sup>) so the next character is normal
+  // WebKit inherits the superscript "typing attributes" from the character
+  // immediately before the cursor. Inserting a zero-width space into afterNode
+  // gives WebKit a non-superscript character to the left of the cursor, so the
+  // next typed character is rendered in normal (baseline) text. The ZWS is
+  // stripped from HTML output in fireChange/getContent so it never reaches the
+  // email body.
+  afterNode.textContent = '​' + afterNode.textContent;
   const newRange = document.createRange();
-  newRange.setStart(afterNode, 0);
+  newRange.setStart(afterNode, 1); // after the ZWS, outside <sup>
   newRange.collapse(true);
   sel.removeAllRanges();
   sel.addRange(newRange);

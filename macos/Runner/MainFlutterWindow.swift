@@ -289,8 +289,6 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       break
     }
 
-    NSApp.activate(ignoringOtherApps: true)
-
     if #available(macOS 14.0, *) {
       eventStore.requestFullAccessToEvents { granted, _ in
         DispatchQueue.main.async { result(granted ? "granted" : "denied") }

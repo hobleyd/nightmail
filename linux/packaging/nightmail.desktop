@@ -1,9 +1,0 @@
-[Desktop Entry]
-Name=NightMail
-Comment=Cross-platform email client for Microsoft 365, Gmail and IMAP
-Exec=nightmail %u
-Icon=nightmail
-Type=Application
-Categories=Network;Email;
-MimeType=x-scheme-handler/mailto;
-StartupNotify=true

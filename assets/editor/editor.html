@@ -340,6 +340,50 @@ editor.addEventListener('keydown', function(e) {
     document.execCommand('insertHTML', false, '    ');
     scheduleChange();
   }
+
+  if (e.key === ' ') {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    if (!range.collapsed) return;
+
+    const node = range.startContainer;
+    const offset = range.startOffset;
+    if (node.nodeType !== Node.TEXT_NODE || offset < 1) return;
+
+    // Only trigger when the text before the cursor is exactly '-'
+    if (node.textContent.slice(0, offset) !== '-') return;
+
+    // Find the containing block (P, DIV, LI, BLOCKQUOTE, or the editor itself)
+    let block = node.parentElement;
+    while (block && block !== editor &&
+           !['P','DIV','LI','BLOCKQUOTE'].includes(block.tagName)) {
+      block = block.parentElement;
+    }
+    const searchRoot = (block && block !== editor) ? block : editor;
+
+    // Confirm nothing precedes this text node in the block
+    let textBeforeNode = '';
+    const walker = document.createTreeWalker(searchRoot, NodeFilter.SHOW_TEXT);
+    let t;
+    while ((t = walker.nextNode()) !== null) {
+      if (t === node) break;
+      textBeforeNode += t.textContent;
+    }
+    if (textBeforeNode !== '') return;
+
+    e.preventDefault();
+    // Select and delete the '-' character
+    const delRange = document.createRange();
+    delRange.setStart(node, 0);
+    delRange.setEnd(node, 1);
+    sel.removeAllRanges();
+    sel.addRange(delRange);
+    document.execCommand('delete', false, null);
+    // Convert the current block into a bullet list item
+    document.execCommand('insertUnorderedList', false, null);
+    scheduleChange();
+  }
 });
 
 // Update toolbar button active states and colour swatch on selection change.

@@ -280,7 +280,15 @@ class _MobileLayoutState extends State<_MobileLayout> {
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _back();
       },
-      child: BlocBuilder<HomeCubit, HomeState>(
+      child: BlocListener<HomeCubit, HomeState>(
+        listenWhen: (prev, curr) =>
+            prev.selectedEmailId != null && curr.selectedEmailId == null,
+        listener: (context, _) {
+          if (_step == _MobileStep.readingPane) {
+            setState(() => _step = _MobileStep.emailList);
+          }
+        },
+        child: BlocBuilder<HomeCubit, HomeState>(
         builder: (context, homeState) {
           return BlocBuilder<FolderListBloc, FolderListState>(
             builder: (context, folderState) {
@@ -429,6 +437,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
             },
           );
         },
+        ),
       ),
     );
   }

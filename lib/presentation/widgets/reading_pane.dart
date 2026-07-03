@@ -68,7 +68,7 @@ class ReadingPane extends StatelessWidget {
               ),
             EmailDetailLoaded(:final email, :final senderAnomaly) =>
               _EmailView(key: ValueKey(email.id), email: email, senderAnomaly: senderAnomaly, onBack: onBack),
-            EmailDetailError(:final message) => _ErrorState(message: message),
+            EmailDetailError(:final message) => _ErrorState(message: message, onBack: onBack),
           };
         },
       ),
@@ -100,28 +100,42 @@ class _EmptyState extends StatelessWidget {
 }
 
 class _ErrorState extends StatelessWidget {
-  const _ErrorState({required this.message});
+  const _ErrorState({required this.message, this.onBack});
   final String message;
+  final VoidCallback? onBack;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.error_outline_rounded, color: c.textMuted, size: 36),
-            const SizedBox(height: 12),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: c.textMuted, fontSize: 13),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (onBack != null)
+          IconButton(
+            icon: Icon(Icons.arrow_back_ios_new_rounded, size: 16, color: c.textMuted),
+            tooltip: 'Back',
+            onPressed: onBack,
+          ),
+        Expanded(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.error_outline_rounded, color: c.textMuted, size: 36),
+                  const SizedBox(height: 12),
+                  Text(
+                    message,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: c.textMuted, fontSize: 13),
+                  ),
+                ],
+              ),
             ),
-          ],
+          ),
         ),
-      ),
+      ],
     );
   }
 }

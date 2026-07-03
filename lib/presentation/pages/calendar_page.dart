@@ -56,14 +56,50 @@ class CalendarPage extends StatelessWidget {
   }
 }
 
-class _WeekNavBar extends StatelessWidget {
+class _WeekNavBar extends StatefulWidget {
   const _WeekNavBar({required this.state});
   final CalendarState state;
 
   @override
+  State<_WeekNavBar> createState() => _WeekNavBarState();
+}
+
+class _WeekNavBarState extends State<_WeekNavBar> {
+  Timer? _midnightTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleMidnightRollover();
+  }
+
+  @override
+  void dispose() {
+    _midnightTimer?.cancel();
+    super.dispose();
+  }
+
+  void _scheduleMidnightRollover() {
+    final now = DateTime.now();
+    final nextMidnight = DateTime(now.year, now.month, now.day + 1);
+    _midnightTimer = Timer(nextMidnight.difference(now), () {
+      if (!mounted) return;
+      // Auto-advance only if the user was viewing the week that just ended.
+      final now2 = DateTime.now();
+      final yesterday = now2.subtract(const Duration(days: 1));
+      final previousWeekMonday = _mondayOfWeek(yesterday);
+      final currentState = context.read<CalendarBloc>().state;
+      if (currentState.weekStart == previousWeekMonday) {
+        _goToToday(context);
+      }
+      _scheduleMidnightRollover();
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final weekStart = state.weekStart;
+    final weekStart = widget.state.weekStart;
     final weekEnd = weekStart.add(const Duration(days: 6));
     final isCurrentWeek = _isCurrentWeek(weekStart);
 
@@ -89,7 +125,7 @@ class _WeekNavBar extends StatelessWidget {
               onTap: () => _goToToday(context),
             ),
           const Spacer(),
-          if (state case final CalendarLoaded loaded when loaded.selectedEventIds.isNotEmpty) ...[
+          if (widget.state case final CalendarLoaded loaded when loaded.selectedEventIds.isNotEmpty) ...[
             Tooltip(
               message: 'Remove selected event${loaded.selectedEventIds.length > 1 ? 's' : ''}',
               child: InkWell(
@@ -150,7 +186,7 @@ class _WeekNavBar extends StatelessWidget {
   }
 
   void _navigate(BuildContext context, int days) {
-    final newWeekStart = state.weekStart.add(Duration(days: days));
+    final newWeekStart = widget.state.weekStart.add(Duration(days: days));
     context.read<CalendarBloc>().add(CalendarWeekNavigated(weekStart: newWeekStart));
   }
 }
@@ -290,7 +326,15 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
     final now = DateTime.now();
     _selectedDay = DateTime(now.year, now.month, now.day);
     _timer = Timer.periodic(const Duration(minutes: 1), (_) {
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final yesterday = today.subtract(const Duration(days: 1));
+      if (_isSameDay(_selectedDay, yesterday)) {
+        _goToToday(context);
+      } else {
+        setState(() {});
+      }
     });
   }
 

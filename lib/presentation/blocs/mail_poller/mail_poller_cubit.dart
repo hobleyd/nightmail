@@ -132,20 +132,28 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                   .where((f) => f.displayName.toLowerCase() == 'inbox');
               if (inboxes.isEmpty) continue;
               final unreadCount = inboxes.first.unreadItemCount;
+              final totalCount = inboxes.first.totalItemCount;
               _latestPolledUnread[account.id] = unreadCount;
 
               if (!_initialized || !_baselineUnread.containsKey(account.id)) {
                 _baselineUnread[account.id] = unreadCount;
+                _baselineTotal[account.id] = totalCount;
                 if (account.id != activeId && unreadCount > 0) {
                   if (_newMailAccounts.add(account.id)) changed = true;
                 }
               } else {
                 if (account.id == activeId) {
-                  final prev = _baselineUnread[account.id];
-                  if (prev != null && unreadCount > prev) {
+                  final prevUnread = _baselineUnread[account.id];
+                  final prevTotal = _baselineTotal[account.id];
+                  // Mirror Gmail/IMAP: any change (increase or decrease) must
+                  // refresh the UI. A decrease means mail was deleted or read
+                  // on another client and would otherwise never self-heal.
+                  if ((prevUnread != null && unreadCount != prevUnread) ||
+                      (prevTotal != null && totalCount != prevTotal)) {
                     activeInboxChanged = true;
                   }
                   _baselineUnread[account.id] = unreadCount;
+                  _baselineTotal[account.id] = totalCount;
                   if (_newMailAccounts.remove(account.id)) changed = true;
                 } else if (unreadCount > 0) {
                   if (_newMailAccounts.add(account.id)) changed = true;
@@ -280,6 +288,12 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     try {
       final result = await ds.syncMailDelta('inbox');
       await _database.saveDeltaToken(accountId, 'inbox', result.deltaLink);
+      // The fresh delta snapshot reflects the inbox at this moment. The email
+      // list cache may be stale (e.g. emails deleted before/during bootstrap),
+      // so force a UI refresh now that we have a reliable baseline.
+      if (!isClosed && accountId == _accountManager.activeAccount?.id) {
+        emit(state.copyWith(pollGeneration: state.pollGeneration + 1));
+      }
     } catch (_) {
       // Bootstrap failed; next poll cycle will retry when savedToken is null.
     } finally {

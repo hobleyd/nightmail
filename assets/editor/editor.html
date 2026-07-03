@@ -332,7 +332,42 @@ function insertAtSaved(text) {
   scheduleChange();
 }
 
-editor.addEventListener('input', scheduleChange);
+function _checkOrdinalSuffix() {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  const range = sel.getRangeAt(0);
+  if (!range.collapsed) return;
+
+  const node = range.startContainer;
+  const offset = range.startOffset;
+  if (node.nodeType !== Node.TEXT_NODE || offset < 3) return;
+  if (node.parentElement && node.parentElement.tagName === 'SUP') return;
+
+  const textBefore = node.textContent.slice(0, offset);
+  if (!/\d(st|nd|rd|th)$/.test(textBefore)) return;
+
+  // Split: node → beforeSuffix, suffix → supText, text after cursor → afterNode
+  const afterNode = node.splitText(offset);
+  const supText   = node.splitText(offset - 2);
+
+  const sup = document.createElement('sup');
+  node.parentNode.insertBefore(sup, afterNode);
+  sup.appendChild(supText);
+
+  // Place cursor in afterNode (outside the <sup>) so the next character is normal
+  const newRange = document.createRange();
+  newRange.setStart(afterNode, 0);
+  newRange.collapse(true);
+  sel.removeAllRanges();
+  sel.addRange(newRange);
+
+  scheduleChange();
+}
+
+editor.addEventListener('input', function() {
+  _checkOrdinalSuffix();
+  scheduleChange();
+});
 
 editor.addEventListener('keydown', function(e) {
   if (e.key === 'Tab') {

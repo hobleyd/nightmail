@@ -502,6 +502,8 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
   static const double _handleWidth = 8;
   static const _calendarRefreshChannel =
       MethodChannel('au.com.sharpblue.nightmail/calendar_refresh');
+  static const _draftsRefreshChannel =
+      MethodChannel('au.com.sharpblue.nightmail/drafts_refresh');
 
   @override
   void initState() {
@@ -512,11 +514,17 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
         bloc.add(CalendarWeekNavigated(weekStart: bloc.state.weekStart));
       }
     });
+    _draftsRefreshChannel.setMethodCallHandler((call) async {
+      if (call.method == 'draftChanged' && mounted) {
+        context.read<EmailListBloc>().add(const EmailListRefreshRequested());
+      }
+    });
   }
 
   @override
   void dispose() {
     _calendarRefreshChannel.setMethodCallHandler(null);
+    _draftsRefreshChannel.setMethodCallHandler(null);
     super.dispose();
   }
 
@@ -586,6 +594,14 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                     .toList(),
                 'body': full.body,
                 'bodyType': full.bodyType.name,
+                'attachments': full.attachments
+                    .map((a) => {
+                          'id': a.id,
+                          'name': a.name,
+                          'contentType': a.contentType,
+                          'size': a.size,
+                        })
+                    .toList(),
               },
             }),
           ),

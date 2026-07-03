@@ -1137,6 +1137,55 @@ class GraphApiDatasourceImpl
     }
   }
 
+  /// Reconciles the draft's server-side attachments with [desired].
+  /// Uploads attachments missing from the server; deletes ones no longer
+  /// wanted. Attachments are matched by name + size so unchanged files are
+  /// not re-uploaded on every auto-save.
+  Future<void> _syncDraftAttachments(
+      String draftId, List<LocalAttachment> desired) async {
+    if (desired.isEmpty) return;
+
+    // $select must use only base attachment properties (id, name, size);
+    // derived-type fields like isInline/contentId are not valid on the base
+    // attachment type and cause a 400 from Graph.
+    final resp = await _dio.get<Map<String, dynamic>>(
+      '/me/messages/$draftId/attachments',
+      queryParameters: {'\$select': 'id,name,size'},
+    );
+    final existing = (resp.data?['value'] as List<dynamic>?)
+            ?.cast<Map<String, dynamic>>() ??
+        [];
+
+    for (final e in existing) {
+      final eName = e['name'] as String? ?? '';
+      final eSize = (e['size'] as int?) ?? 0;
+      final stillWanted = desired.any((a) =>
+          a.name == eName && a.bytes.length == eSize);
+      if (!stillWanted) {
+        final id = e['id'] as String?;
+        if (id != null) {
+          await _dio.delete<void>('/me/messages/$draftId/attachments/$id');
+        }
+      }
+    }
+
+    for (final att in desired) {
+      final alreadyThere = existing.any((e) =>
+          (e['name'] as String? ?? '') == att.name &&
+          ((e['size'] as int?) ?? 0) == att.bytes.length);
+      if (!alreadyThere) {
+        await _dio.post<void>('/me/messages/$draftId/attachments', data: {
+          '@odata.type': '#microsoft.graph.fileAttachment',
+          'name': att.name,
+          'contentType': att.mimeType,
+          'contentBytes': base64.encode(att.bytes),
+          if (att.isInline) 'isInline': true,
+          if (att.isInline && att.contentId != null) 'contentId': att.contentId,
+        });
+      }
+    }
+  }
+
   @override
   Future<void> moveEmail(String id, String destinationFolderId) async {
     try {
@@ -1773,7 +1822,7 @@ class GraphApiDatasourceImpl
                 .toList(),
         },
       );
-      if (newAttachments.isNotEmpty) await _addAttachmentsToDraft(draftId, newAttachments);
+      await _syncDraftAttachments(draftId, newAttachments);
       return draftId;
     } on DioException catch (e) {
       throw _mapDioException(e);

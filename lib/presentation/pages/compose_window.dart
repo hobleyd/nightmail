@@ -173,6 +173,14 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage> {
     sl<AppSettings>().loadDefaultComposeFormat().then((format) {
       if (mounted) setState(() => _defaultComposeFormat = format);
     });
+    // The compose window is a separate engine. If the account email wasn't
+    // persisted (legacy migration), backfill it now and rebuild once done.
+    final account = sl<AccountManager>().activeAccount;
+    if (account != null && account.emailAddress.isEmpty) {
+      sl<AccountManager>().ensureEmailPopulated().then((_) {
+        if (mounted) setState(() {});
+      });
+    }
   }
 
   void _close() => windowManager.close();
@@ -225,6 +233,7 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage> {
     EmailAddress parseAddress(Map<String, dynamic> m) =>
         EmailAddress(address: m['address'] as String, name: m['name'] as String?);
     final bodyTypeStr = map['bodyType'] as String? ?? 'text';
+    final attachmentsJson = map['attachments'] as List<dynamic>? ?? [];
     return Email(
       id: '',
       subject: map['subject'] as String? ?? '',
@@ -241,6 +250,15 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage> {
       isRead: true,
       receivedDateTime: DateTime.now(),
       importance: EmailImportance.normal,
+      attachments: attachmentsJson.map((a) {
+        final aMap = a as Map<String, dynamic>;
+        return EmailAttachment(
+          id: aMap['id'] as String,
+          name: aMap['name'] as String,
+          contentType: aMap['contentType'] as String,
+          size: (aMap['size'] as num).toInt(),
+        );
+      }).toList(),
     );
   }
 

@@ -42,6 +42,16 @@ class EmailListItem extends StatefulWidget {
 class _EmailListItemState extends State<EmailListItem> {
   bool _isHovered = false;
 
+  // When the from address is empty (e.g. unsent drafts from Graph API), fall
+  // back to showing the recipients so the Drafts list is useful.
+  static String _senderLabel(Email email) {
+    if (email.from.address.isNotEmpty) return email.from.displayName;
+    final recipients = email.toRecipients;
+    if (recipients.isEmpty) return '';
+    final names = recipients.take(2).map((r) => r.displayName).join(', ');
+    return 'To: $names${recipients.length > 2 ? '…' : ''}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -111,7 +121,7 @@ class _EmailListItemState extends State<EmailListItem> {
                       children: [
                         Expanded(
                           child: Text(
-                            widget.email.from.displayName,
+                            _senderLabel(widget.email),
                             style: TextStyle(
                               color: c.textPrimary,
                               fontSize: 13,

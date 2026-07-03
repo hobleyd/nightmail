@@ -387,6 +387,10 @@ class AccountManager {
     }
   }
 
+  /// Public trigger for the email backfill, called from secondary windows where
+  /// the stored account might still have an empty email from legacy migration.
+  Future<void> ensureEmailPopulated() => _backfillActiveAccountEmailIfNeeded();
+
   /// If the active Microsoft account has no stored email address, fetch it from
   /// the Graph API profile endpoint and persist it. Fails silently.
   Future<void> _backfillActiveAccountEmailIfNeeded() async {

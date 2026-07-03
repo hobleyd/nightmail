@@ -13,6 +13,7 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
   // removes the handler and causes MissingPluginException.
   private var allChannels: [FlutterMethodChannel] = []
   private var calendarNotifyChannels: [FlutterMethodChannel] = []
+  private var draftsRefreshChannels: [FlutterMethodChannel] = []
   private var badgeChannel: FlutterMethodChannel?
   private var mainNotificationChannel: FlutterMethodChannel?
   private var systemEventsChannel: FlutterMethodChannel?
@@ -63,6 +64,14 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     calendarNotifyChannels.append(mainCalendarChannel)
     allChannels.append(mainCalendarChannel)
 
+    // Register the main window's drafts refresh channel for broadcasting draftChanged into Flutter.
+    let mainDraftsChannel = FlutterMethodChannel(
+      name: "au.com.sharpblue.nightmail/drafts_refresh",
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
+    draftsRefreshChannels.append(mainDraftsChannel)
+    allChannels.append(mainDraftsChannel)
+
     registerWindowUtilsChannel(messenger: flutterViewController.engine.binaryMessenger) { [weak self] in self }
 
     // Register contacts + plugins for every secondary window too.
@@ -71,6 +80,7 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       self?.registerContactsChannel(messenger: controller.engine.binaryMessenger)
       self?.registerEventKitChannel(messenger: controller.engine.binaryMessenger)
       self?.registerCalendarRefreshRelay(messenger: controller.engine.binaryMessenger)
+      self?.registerDraftsRefreshRelay(messenger: controller.engine.binaryMessenger)
       self?.registerNotificationRelay(messenger: controller.engine.binaryMessenger)
       self?.registerWindowUtilsChannel(
         messenger: controller.engine.binaryMessenger,
@@ -210,6 +220,26 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       }
     }
     calendarNotifyChannels.append(channel)
+    allChannels.append(channel)
+  }
+
+  // MARK: - Drafts refresh relay
+
+  private func registerDraftsRefreshRelay(messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(
+      name: "au.com.sharpblue.nightmail/drafts_refresh",
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { [weak self] call, result in
+      if call.method == "notifyDraftChanged" {
+        // Broadcast draftChanged to all registered Flutter engines.
+        self?.draftsRefreshChannels.forEach { $0.invokeMethod("draftChanged", arguments: nil) }
+        result(nil)
+      } else {
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    draftsRefreshChannels.append(channel)
     allChannels.append(channel)
   }
 

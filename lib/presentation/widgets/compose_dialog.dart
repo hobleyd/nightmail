@@ -16,6 +16,7 @@ import '../../domain/entities/email.dart';
 import '../../domain/entities/email_attachment.dart';
 import '../../domain/entities/local_attachment.dart';
 import '../../domain/usecases/delete_server_draft.dart';
+import '../../domain/usecases/download_attachment.dart';
 import '../../domain/usecases/save_server_draft.dart';
 import '../../domain/usecases/send_email.dart';
 import '../blocs/account/account_cubit.dart';
@@ -211,6 +212,9 @@ class _ComposeFormState extends State<ComposeForm> {
   // collect the ID of any draft created after _sent was set to true.
   Completer<String?>? _saveCompleter;
 
+  static const _kDraftsRefreshChannel =
+      MethodChannel('au.com.sharpblue.nightmail/drafts_refresh');
+
   @override
   void initState() {
     super.initState();
@@ -243,6 +247,13 @@ class _ComposeFormState extends State<ComposeForm> {
     _serverDraftId = widget.existingDraftId;
     _pendingOldDraftId = widget.existingDraftId;
 
+    if (widget.existingDraftId != null &&
+        widget.draftEmail != null &&
+        widget.draftEmail!.attachments.isNotEmpty) {
+      _loadDraftAttachments(
+          widget.existingDraftId!, widget.draftEmail!.attachments);
+    }
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final isReply = widget.mode == ComposeMode.reply ||
           widget.mode == ComposeMode.replyAll;
@@ -258,6 +269,18 @@ class _ComposeFormState extends State<ComposeForm> {
       }
       widget.onTitleChanged?.call(_title);
     });
+  }
+
+  @override
+  void didUpdateWidget(ComposeForm oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // If the parent resolved the from-address after initial build (e.g. account
+    // email backfill), push the updated value — but only if the user hasn't
+    // edited the field themselves.
+    if (widget.fromAddress != oldWidget.fromAddress &&
+        _fromController.text == oldWidget.fromAddress) {
+      _fromController.text = widget.fromAddress;
+    }
   }
 
   void _focusBodyEditor() {
@@ -464,6 +487,27 @@ class _ComposeFormState extends State<ComposeForm> {
     }
   }
 
+  Future<void> _loadDraftAttachments(
+      String draftId, List<EmailAttachment> attachments) async {
+    final loaded = <LocalAttachment>[];
+    for (final att in attachments) {
+      final result = await sl<DownloadAttachment>()(
+        DownloadAttachmentParams(messageId: draftId, attachmentId: att.id),
+      );
+      result.fold(
+        (_) {},
+        (bytes) => loaded.add(LocalAttachment(
+          name: att.name,
+          mimeType: att.contentType,
+          bytes: bytes,
+        )),
+      );
+    }
+    if (mounted && loaded.isNotEmpty) {
+      setState(() => _localAttachments = [..._localAttachments, ...loaded]);
+    }
+  }
+
   Future<void> _deleteDraft() async {
     if (_serverDraftId == null) return;
     await sl<DeleteServerDraft>()(_serverDraftId!);
@@ -519,6 +563,9 @@ class _ComposeFormState extends State<ComposeForm> {
         }
       case _CloseAction.delete:
         await _deleteDraft();
+        unawaited(_kDraftsRefreshChannel
+            .invokeMethod<void>('notifyDraftChanged')
+            .catchError((_) {}));
         if (mounted) widget.onClose();
       case null:
         if (editorState != null) await editorState.show();
@@ -988,6 +1035,9 @@ class _ComposeFormState extends State<ComposeForm> {
           } catch (_) {}
         }),
       );
+      unawaited(_kDraftsRefreshChannel
+          .invokeMethod<void>('notifyDraftChanged')
+          .catchError((_) {}));
     }
 
     if (!mounted) return;

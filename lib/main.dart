@@ -174,11 +174,13 @@ await configureDependencies();
           await windowManager.maximize();
         } else if (restored.bounds != null) {
           await windowManager.setBounds(restored.bounds!);
-          // On Windows, moving the window to a monitor with a different DPI
-          // triggers WM_DPICHANGED which rescales the window size. Re-apply
-          // after the first frame; by then devicePixelRatio reflects the
-          // target display's DPI so setBounds lands at the correct size.
-          if (Platform.isWindows) {
+          // Re-apply bounds after the first frame on Windows and Linux.
+          // Windows: WM_DPICHANGED rescales after setBounds when moving to a
+          //   monitor with different DPI; re-apply once devicePixelRatio settles.
+          // Linux: the compositor overrides position when the window is first
+          //   mapped (before the first frame). Re-applying after the frame is
+          //   rendered gives the WM a chance to honour our requested position.
+          if (Platform.isWindows || Platform.isLinux) {
             final bounds = restored.bounds!;
             WidgetsBinding.instance.addPostFrameCallback((_) async {
               try {
@@ -204,6 +206,10 @@ class NightMailApp extends StatefulWidget {
 class _NightMailAppState extends State<NightMailApp> with WindowListener {
   final _windowBoundsService = WindowBoundsService();
   Timer? _boundsDebounce;
+  // Suppress saves triggered by the compositor repositioning the window during
+  // startup (Linux/Wayland places the window after it is mapped, firing
+  // onWindowMove before the user has touched anything).
+  bool _suppressBoundsSave = Platform.isLinux;
 
   static bool get _isDesktop =>
       !kIsWeb && (Platform.isMacOS || Platform.isLinux || Platform.isWindows);
@@ -226,6 +232,16 @@ class _NightMailAppState extends State<NightMailApp> with WindowListener {
       windowManager.addListener(this);
       windowManager.setPreventClose(true);
     }
+    if (_suppressBoundsSave) {
+      Timer(const Duration(milliseconds: 1500), () {
+        if (!mounted) return;
+        setState(() => _suppressBoundsSave = false);
+        // Save the compositor-settled position so subsequent restarts are
+        // stable. On Wayland the compositor can override our setBounds request,
+        // so without this save the window shifts every restart.
+        _scheduleBoundsSave();
+      });
+    }
   }
 
   @override
@@ -236,6 +252,7 @@ class _NightMailAppState extends State<NightMailApp> with WindowListener {
   }
 
   void _scheduleBoundsSave() {
+    if (_suppressBoundsSave) return;
     _boundsDebounce?.cancel();
     _boundsDebounce = Timer(
       const Duration(milliseconds: 500),

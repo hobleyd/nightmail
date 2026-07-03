@@ -192,7 +192,7 @@ class WindowBoundsService {
 
   // ── Display helpers ──────────────────────────────────────────────────────
 
-  /// Stable per-display key: identifier + native resolution.
+  /// Stable per-display key: identifier + (optional position) + native resolution.
   ///
   /// macOS:   name = NSScreen.localizedName (stable, descriptive)
   /// Linux:   id   = "" always; name = EDID model from gdk_monitor_get_model
@@ -200,6 +200,12 @@ class WindowBoundsService {
   ///          "\\.\DISPLAY2") as display.name and the STABLE hardware
   ///          DeviceID (PnP instance path) as display.id.  On Windows we
   ///          therefore prefer id over name.
+  ///
+  /// When two displays share the same identifier and resolution (identical
+  /// monitors), their visiblePosition is appended to disambiguate them.
+  /// The fallback lookup in [loadValidatedBounds] uses `endsWith('_WxH')`
+  /// which still matches both the legacy format (name_WxH) and the new
+  /// format (name_PxPy_WxH).
   static String _displayKey(Display display) {
     final String identifier;
     if (Platform.isWindows) {
@@ -208,7 +214,14 @@ class WindowBoundsService {
       identifier =
           (display.name?.isNotEmpty == true) ? display.name! : display.id;
     }
-    return '${identifier}_${_sizeKey(display)}';
+    final sizeKey = _sizeKey(display);
+    final pos = display.visiblePosition;
+    if (pos != null) {
+      final px = pos.dx.toInt();
+      final py = pos.dy.toInt();
+      return '${identifier}_${px}x${py}_$sizeKey';
+    }
+    return '${identifier}_$sizeKey';
   }
 
   /// Resolution-only portion of the key ("WxH").  Used by the fallback

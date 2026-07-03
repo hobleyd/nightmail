@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../core/config/oauth_client_id_storage.dart';
 import '../../core/settings/app_settings.dart';
@@ -191,8 +192,25 @@ class _SettingsDialogState extends State<SettingsDialog> {
   }
 }
 
-class _AboutSection extends StatelessWidget {
+class _AboutSection extends StatefulWidget {
   const _AboutSection();
+
+  @override
+  State<_AboutSection> createState() => _AboutSectionState();
+}
+
+class _AboutSectionState extends State<_AboutSection> {
+  String? _version;
+
+  @override
+  void initState() {
+    super.initState();
+    PackageInfo.fromPlatform().then((info) {
+      if (mounted) {
+        setState(() => _version = '${info.version}+${info.buildNumber}');
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -217,6 +235,16 @@ class _AboutSection extends StatelessWidget {
               letterSpacing: -0.5,
             ),
           ),
+          if (_version != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              '($_version)',
+              style: TextStyle(
+                color: c.textMuted,
+                fontSize: 13,
+              ),
+            ),
+          ],
           const SizedBox(height: 4),
           Text(
             'by SharpBlue',

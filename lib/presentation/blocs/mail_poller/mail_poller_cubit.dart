@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -46,11 +49,19 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   final Set<String> _bootstrapping = {};
   final Set<String> _reauthAccounts = {};
 
+  static const _systemEventsChannel =
+      MethodChannel('au.com.sharpblue.nightmail/system_events');
+
   Future<void> initialize() async {
     // Remove before add to guard against multiple initialize() calls (e.g.
     // BlocProvider.value rebuilds) registering duplicate observers.
     WidgetsBinding.instance.removeObserver(this);
     WidgetsBinding.instance.addObserver(this);
+    if (!kIsWeb && Platform.isMacOS) {
+      _systemEventsChannel.setMethodCallHandler((call) async {
+        if (call.method == 'systemDidWake') _poll();
+      });
+    }
     final interval = await _appSettings.loadPollIntervalSeconds();
     if (!isClosed) emit(state.copyWith(pollIntervalSeconds: interval));
     await _primeBadgeFromCache();

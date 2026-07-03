@@ -15,6 +15,7 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
   private var calendarNotifyChannels: [FlutterMethodChannel] = []
   private var badgeChannel: FlutterMethodChannel?
   private var mainNotificationChannel: FlutterMethodChannel?
+  private var systemEventsChannel: FlutterMethodChannel?
   private let eventStore = EKEventStore()
 
   override func awakeFromNib() {
@@ -90,6 +91,18 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       } else {
         result(FlutterMethodNotImplemented)
       }
+    }
+
+    systemEventsChannel = FlutterMethodChannel(
+      name: "au.com.sharpblue.nightmail/system_events",
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
+    NSWorkspace.shared.notificationCenter.addObserver(
+      forName: NSWorkspace.didWakeNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      self?.systemEventsChannel?.invokeMethod("systemDidWake", arguments: nil)
     }
 
     super.awakeFromNib()

@@ -191,6 +191,10 @@ pre {
   overflow-wrap: anywhere !important;
 }
 table { max-width: 100% !important; }
+@media only screen and (max-width: 650px) {
+  table { width: 100% !important; }
+  td, th { width: auto !important; min-width: 0 !important; }
+}
 a[href]:hover::after {
   content: attr(href);
   display: block;

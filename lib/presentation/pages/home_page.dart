@@ -258,6 +258,33 @@ class _MobileLayout extends StatefulWidget {
 
 class _MobileLayoutState extends State<_MobileLayout> {
   _MobileStep _step = _MobileStep.folders;
+  Timer? _emailListForegroundTimer;
+
+  /// Sets [_step] and maintains the foreground refresh timer so the email list
+  /// stays current while the user is actively viewing it. Call inside setState.
+  void _setStep(_MobileStep newStep) {
+    if (newStep == _MobileStep.emailList) {
+      _emailListForegroundTimer?.cancel();
+      _emailListForegroundTimer = Timer.periodic(
+        const Duration(seconds: 15),
+        (_) {
+          if (!mounted) return;
+          context.read<EmailListBloc>().add(const EmailListRefreshRequested());
+          context.read<FolderListBloc>().add(const FolderListLoadRequested());
+        },
+      );
+    } else {
+      _emailListForegroundTimer?.cancel();
+      _emailListForegroundTimer = null;
+    }
+    _step = newStep;
+  }
+
+  @override
+  void dispose() {
+    _emailListForegroundTimer?.cancel();
+    super.dispose();
+  }
 
   void _back() {
     setState(() {
@@ -265,9 +292,9 @@ class _MobileLayoutState extends State<_MobileLayout> {
         case _MobileStep.folders:
           break;
         case _MobileStep.emailList:
-          _step = _MobileStep.folders;
+          _setStep(_MobileStep.folders);
         case _MobileStep.readingPane:
-          _step = _MobileStep.emailList;
+          _setStep(_MobileStep.emailList);
           context.read<HomeCubit>().clearEmail();
       }
     });
@@ -285,7 +312,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
             prev.selectedEmailId != null && curr.selectedEmailId == null,
         listener: (context, _) {
           if (_step == _MobileStep.readingPane) {
-            setState(() => _step = _MobileStep.emailList);
+            setState(() => _setStep(_MobileStep.emailList));
           }
         },
         child: BlocBuilder<HomeCubit, HomeState>(
@@ -319,7 +346,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
                   }
                   context.read<MailPollerCubit>().decrementUnreadCount();
                 }
-                setState(() => _step = _MobileStep.readingPane);
+                setState(() => _setStep(_MobileStep.readingPane));
               }
 
               return switch (_step) {
@@ -346,7 +373,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
                               folderDisplayName: folder.displayName,
                             ),
                           );
-                      setState(() => _step = _MobileStep.emailList);
+                      setState(() => _setStep(_MobileStep.emailList));
                     },
                     onCalendarTapped: () {
                       final calendarBloc = context.read<CalendarBloc>();

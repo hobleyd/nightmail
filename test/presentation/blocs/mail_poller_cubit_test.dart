@@ -519,17 +519,23 @@ void main() {
       'pollGeneration triggered by unread increase',
       () {
     setUp(() {
+      // No delta token: both polls stay in the folder-polling path.
+      // syncMailDelta succeeds once (bootstrap after poll 1), then throws so
+      // the second bootstrap attempt fails silently and does not add a
+      // spurious pollGeneration increment — isolating the unread-change signal.
+      var syncCallCount = 0;
       when(mockAccountManager.accounts).thenReturn([_msAccount]);
       when(mockAccountManager.activeAccount).thenReturn(_msAccount);
       when(mockAccountManager.buildEmailDatasourceForAccount(any))
           .thenReturn(mockGraphDs);
-      // No delta token saved — stays in folder-polling path across both polls.
-      // saveDeltaToken is stubbed as a no-op so loadDeltaToken keeps returning
-      // null even after the async bootstrap completes.
       when(mockDatabase.loadDeltaToken(any, any))
           .thenAnswer((_) async => null);
       when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
-          .thenAnswer((_) async => _emptyDelta());
+          .thenAnswer((_) async {
+        syncCallCount++;
+        if (syncCallCount > 1) throw Exception('second bootstrap not expected');
+        return _emptyDelta();
+      });
     });
 
     test('pollGeneration increments when unread count rises', () async {
@@ -542,16 +548,17 @@ void main() {
       final cubit = _makeCubit();
       addTearDown(cubit.close);
 
-      // Poll 1: sets baseline (2 unread).
+      // Poll 1: sets baseline (2 unread). Bootstrap completes and emits
+      // pollGeneration+1 to flush any stale cache after initial delta sync.
       await cubit.initialize();
       await pumpEventQueue();
-      expect(cubit.state.pollGeneration, 0);
+      expect(cubit.state.pollGeneration, 1);
 
-      // Poll 2: unread jumped to 5 — must increment.
+      // Poll 2: unread jumped to 5 — must increment again.
       await cubit.updatePollInterval(9999);
       await pumpEventQueue();
 
-      expect(cubit.state.pollGeneration, 1);
+      expect(cubit.state.pollGeneration, 2);
     });
 
     test('pollGeneration does NOT increment when unread count is unchanged',
@@ -562,13 +569,16 @@ void main() {
       final cubit = _makeCubit();
       addTearDown(cubit.close);
 
+      // Bootstrap emits pollGeneration+1 once after poll 1.
       await cubit.initialize();
       await pumpEventQueue();
 
       await cubit.updatePollInterval(9999);
       await pumpEventQueue();
 
-      expect(cubit.state.pollGeneration, 0);
+      // Second bootstrap fails silently; unread unchanged → no additional
+      // increment beyond the initial bootstrap.
+      expect(cubit.state.pollGeneration, 1);
     });
   });
 

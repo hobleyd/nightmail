@@ -1,7 +1,11 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:equatable/equatable.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../../domain/repositories/email_repository.dart';
 import '../../../infrastructure/accounts/account.dart';
@@ -84,6 +88,10 @@ class AccountCubit extends Cubit<AccountState> {
   // alive across timeouts; cleared on success or non-timeout failure.
   Future<void>? _inFlight;
 
+  // Counts automatic retries triggered by iOS errSecInteractionNotAllowed
+  // (-25308). Reset to 0 on success or after exhausting retries.
+  int _keychainRetries = 0;
+
   // Reacts to AuthInterceptor reporting a failed token refresh for
   // [accountId] (e.g. revoked/expired refresh token, missing admin consent)
   // so the reauth banner appears immediately, regardless of which code path
@@ -125,12 +133,45 @@ class AccountCubit extends Cubit<AccountState> {
     try {
       await _inFlight!.timeout(const Duration(seconds: 10));
       _inFlight = null;
+      _keychainRetries = 0;
     } on TimeoutException {
+      _keychainRetries = 0;
       emit(const AccountError(message: 'Unable to load accounts. Please retry.'));
     } catch (e) {
       _inFlight = null;
+      // iOS errSecInteractionNotAllowed (-25308): keychain temporarily
+      // inaccessible during the brief background execution phase of a
+      // notification-tap cold launch. Wait for protected data to become
+      // available, then retry (up to 2 times) before showing an error.
+      if (_isKeychainInteractionError(e) && _keychainRetries < 2) {
+        _keychainRetries++;
+        await _waitForProtectedData();
+        return initialize();
+      }
+      _keychainRetries = 0;
       emit(AccountError(message: e.toString()));
     }
+  }
+
+  static bool _isKeychainInteractionError(Object e) =>
+      !kIsWeb &&
+      Platform.isIOS &&
+      e is PlatformException &&
+      e.details == -25308;
+
+  // Waits until iOS protected data is available (i.e. the device has been
+  // unlocked). If already available, returns immediately. Times out after 3 s
+  // so a retry always occurs even when the stream never fires.
+  static Future<void> _waitForProtectedData() async {
+    try {
+      const storage = FlutterSecureStorage();
+      final available = await storage.isCupertinoProtectedDataAvailable();
+      if (available != false) return;
+      await storage.onCupertinoProtectedDataAvailabilityChanged
+          ?.where((v) => v)
+          .first
+          .timeout(const Duration(seconds: 3));
+    } catch (_) {}
   }
 
   Future<void> _doInitialize() async {

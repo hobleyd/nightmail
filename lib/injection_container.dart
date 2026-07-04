@@ -1,5 +1,8 @@
+import 'dart:io' show Platform;
+
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart' show kReleaseMode;
+import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode;
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:get_it/get_it.dart';
 
@@ -119,12 +122,31 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton<FlutterSecureStorage>(
     () => FlutterSecureStorage(
       aOptions: const AndroidOptions(encryptedSharedPreferences: true),
+      // kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly: accessible after first
+      // unlock since reboot (including background execution contexts). Prevents
+      // errSecInteractionNotAllowed (-25308) when the app cold-starts via a
+      // notification tap and briefly runs in a background execution context
+      // before reaching foreground. kSecAttrAccessibleWhenUnlocked (the default)
+      // is not accessible during that brief background window.
+      iOptions: const IOSOptions(
+        accessibility: KeychainAccessibility.first_unlock_this_device,
+      ),
       // Debug/profile builds are non-sandboxed and have no provisioning profile,
       // so kSecUseDataProtectionKeychain would fail with -34018. Release builds
       // have the sandbox + keychain-access-groups entitlement so can use it.
       mOptions: MacOsOptions(usesDataProtectionKeychain: kReleaseMode),
     ),
   );
+
+  // iOS: one-time bulk migration from kSecAttrAccessibleWhenUnlocked to
+  // kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly. Items written before this
+  // update use the old class and won't be found by reads that specify the new
+  // class. This migrates all items in one shot on the first normal launch;
+  // notification-tap launches where migration fails (-25308) are handled by
+  // AccountCubit's auto-retry combined with lazy migration in AccountStorage.
+  if (!kIsWeb && Platform.isIOS) {
+    await _migrateIosKeychainAccessibility(sl<FlutterSecureStorage>());
+  }
 
   sl.registerLazySingleton<AccountStorage>(
     () => AccountStorage(sl<FlutterSecureStorage>()),
@@ -456,4 +478,54 @@ Future<void> configureDependencies() async {
       settingsRepository: sl<AiSettingsRepository>(),
     ),
   );
+}
+
+// Sentinel key written with the new accessibility once migration is complete.
+// On subsequent launches this is readable in background (AfterFirstUnlock) so
+// the migration check is always fast.
+const _kMigrationSentinel = 'nightmail_keychain_migration_v1';
+
+// Migration storage: no accessibility filter in reads, so SecItemCopyMatching
+// returns items regardless of their kSecAttrAccessible attribute.
+const _kMigrationStorage = FlutterSecureStorage(
+  iOptions: IOSOptions(accessibility: null),
+  aOptions: AndroidOptions(encryptedSharedPreferences: true),
+);
+
+// Migrates all iOS keychain items from kSecAttrAccessibleWhenUnlocked (the
+// plugin's default) to kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly.
+//
+// Strategy: readAll() from a no-accessibility-filter storage finds items of any
+// class; delete() + write() (the plugin's delete nils the accessibility before
+// querying, so it removes any class variant) re-stores each item with the new
+// class. A sentinel key (written with the new class) guards against re-running.
+//
+// If readAll() throws -25308 (device locked / protected data unavailable, which
+// can happen during a notification-tap background launch), migration is skipped
+// without writing the sentinel so it retries on the next launch. The startup
+// path handles this via AccountCubit auto-retry + AccountStorage lazy migration.
+Future<void> _migrateIosKeychainAccessibility(
+  FlutterSecureStorage newStorage,
+) async {
+  try {
+    if (await newStorage.read(key: _kMigrationSentinel) != null) return;
+
+    final Map<String, String> all;
+    try {
+      all = await _kMigrationStorage.readAll();
+    } on PlatformException catch (e) {
+      if (e.details == -25308) return; // Protected data unavailable — retry next launch
+      return;
+    }
+
+    for (final entry in all.entries) {
+      if (entry.key == _kMigrationSentinel) continue;
+      try {
+        await newStorage.delete(key: entry.key);
+        await newStorage.write(key: entry.key, value: entry.value);
+      } catch (_) {}
+    }
+
+    await newStorage.write(key: _kMigrationSentinel, value: '1');
+  } catch (_) {}
 }

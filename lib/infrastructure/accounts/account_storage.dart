@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io' show File, Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -11,6 +12,14 @@ class AccountStorage {
   AccountStorage(this._storage);
 
   final FlutterSecureStorage _storage;
+
+  // No accessibility filter: reads items regardless of their kSecAttrAccessible
+  // attribute. Used on iOS to find items stored with the old WhenUnlocked class
+  // so they can be lazily migrated to AfterFirstUnlockThisDeviceOnly.
+  static const _migrationStorage = FlutterSecureStorage(
+    iOptions: IOSOptions(accessibility: null),
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+  );
 
   static const _accountsKey = 'nightmail_accounts';
   static const _activeIndexKey = 'nightmail_active_index';
@@ -25,12 +34,44 @@ class AccountStorage {
   Future<List<Account>> loadAccounts() async {
     await _migrateLegacyFiles();
     try {
-      final json = await _storage.read(key: _accountsKey);
+      var json = await _storage.read(key: _accountsKey);
+
+      // iOS lazy migration: if the item isn't found under the new accessibility
+      // class (AfterFirstUnlock), check whether it exists under any class. This
+      // handles the window between an app update (which changes iOptions) and the
+      // first successful bulk migration (which runs at startup but may be skipped
+      // if protected data is unavailable during a notification-tap launch).
+      if (json == null && !kIsWeb && Platform.isIOS) {
+        // This read uses no accessibility filter. If the item has WhenUnlocked
+        // accessibility and the device is in a background execution context,
+        // iOS returns -25308 (errSecInteractionNotAllowed). We let that error
+        // propagate so AccountCubit can retry once protected data is available.
+        final legacyJson = await _migrationStorage.read(key: _accountsKey);
+        if (legacyJson != null) {
+          // Migrate: delete (accessibility-blind) then write with new class.
+          await _storage.delete(key: _accountsKey);
+          await _storage.write(key: _accountsKey, value: legacyJson);
+          final legacyIndex =
+              await _migrationStorage.read(key: _activeIndexKey);
+          if (legacyIndex != null) {
+            await _storage.delete(key: _activeIndexKey);
+            await _storage.write(key: _activeIndexKey, value: legacyIndex);
+          }
+          json = legacyJson;
+        }
+      }
+
       if (json == null) return [];
       final list = jsonDecode(json) as List<dynamic>;
       return list
           .map((e) => Account.fromJson(e as Map<String, dynamic>))
           .toList();
+    } on PlatformException catch (e) {
+      // -25308 errSecInteractionNotAllowed: keychain inaccessible in background
+      // execution context (e.g. notification-tap cold launch). Propagate so
+      // AccountCubit can wait for protected data and retry.
+      if (!kIsWeb && Platform.isIOS && e.details == -25308) rethrow;
+      return [];
     } catch (_) {
       return [];
     }

@@ -364,8 +364,7 @@ class _AccountGate extends StatelessWidget {
             AccountLoading() => const _SplashScreen(),
             AccountNoAccounts() => const AccountSelectionPage(),
             AccountsLoaded() => const HomePage(),
-            AccountError(:final message) =>
-              AccountSelectionPage(errorMessage: message),
+            AccountError(:final message) => _ErrorRetryScreen(message: message),
           },
         );
       },
@@ -384,6 +383,45 @@ class _SplashScreen extends StatelessWidget {
         child: CircularProgressIndicator(
           color: Color(0xFF7C83FD),
           strokeWidth: 2,
+        ),
+      ),
+    );
+  }
+}
+
+class _ErrorRetryScreen extends StatelessWidget {
+  const _ErrorRetryScreen({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.error_outline_rounded,
+                size: 48,
+                color: Color(0xFF7C83FD),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 24),
+              FilledButton(
+                onPressed: () => context.read<AccountCubit>().initialize(),
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
         ),
       ),
     );

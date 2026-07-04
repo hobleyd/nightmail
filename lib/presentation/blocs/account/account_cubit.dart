@@ -79,6 +79,11 @@ class AccountCubit extends Cubit<AccountState> {
   final CalendarReminderService _calendarReminderService;
   late final StreamSubscription<String> _authFailureSub;
 
+  // Cached future for the in-progress initialize so that a retry re-attaches
+  // to the same operation rather than starting a second concurrent one.  Kept
+  // alive across timeouts; cleared on success or non-timeout failure.
+  Future<void>? _inFlight;
+
   // Reacts to AuthInterceptor reporting a failed token refresh for
   // [accountId] (e.g. revoked/expired refresh token, missing admin consent)
   // so the reauth banner appears immediately, regardless of which code path
@@ -115,9 +120,33 @@ class AccountCubit extends Cubit<AccountState> {
   }
 
   Future<void> initialize() async {
+    emit(const AccountLoading());
+    _inFlight ??= _doInitialize();
+    try {
+      await _inFlight!.timeout(const Duration(seconds: 10));
+      _inFlight = null;
+    } on TimeoutException {
+      emit(const AccountError(message: 'Unable to load accounts. Please retry.'));
+    } catch (e) {
+      _inFlight = null;
+      emit(AccountError(message: e.toString()));
+    }
+  }
+
+  Future<void> _doInitialize() async {
     await _accountManager.initialize();
     if (_accountManager.hasAccounts) {
       await _emitLoaded();
+      // Best-effort email backfill for legacy-migrated Microsoft accounts that
+      // were recorded without an email address.  Runs after the loaded state is
+      // emitted so a slow/failing network request does not block startup.
+      unawaited(
+        _accountManager.ensureEmailPopulated().then((_) async {
+          try {
+            if (!isClosed) await _emitLoaded();
+          } catch (_) {}
+        }).catchError((_) {}),
+      );
     } else {
       emit(const AccountNoAccounts());
     }

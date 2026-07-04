@@ -1803,7 +1803,7 @@ class _DropOverlay extends StatelessWidget {
   }
 }
 
-class _Footer extends StatelessWidget {
+class _Footer extends StatefulWidget {
   const _Footer({
     required this.onSend,
     required this.onClose,
@@ -1819,6 +1819,48 @@ class _Footer extends StatelessWidget {
   final ValueChanged<EmailBodyType> onBodyTypeChanged;
   // Opens the AI draft prompt. Null while a generation is already in flight.
   final VoidCallback? onAiCompose;
+
+  @override
+  State<_Footer> createState() => _FooterState();
+}
+
+class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
+  late final AnimationController _shimmer;
+  StreamSubscription<ComposeState>? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    _shimmer = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _sub?.cancel();
+    final bloc = context.read<ComposeBloc>();
+    _syncShimmer(bloc.state);
+    _sub = bloc.stream.listen(_syncShimmer);
+  }
+
+  void _syncShimmer(ComposeState state) {
+    if (state is ComposeSending) {
+      _shimmer.repeat();
+    } else {
+      _shimmer.stop();
+      _shimmer.reset();
+    }
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    _shimmer.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1840,7 +1882,7 @@ class _Footer extends StatelessWidget {
                 ),
                 child: DropdownButtonHideUnderline(
                   child: DropdownButton<EmailBodyType>(
-                    value: bodyType,
+                    value: widget.bodyType,
                     isDense: true,
                     dropdownColor: c.surfacePanel,
                     style: TextStyle(color: c.textSecondary, fontSize: 11),
@@ -1857,12 +1899,12 @@ class _Footer extends StatelessWidget {
                     onChanged: isSending
                         ? null
                         : (val) {
-                            if (val != null) onBodyTypeChanged(val);
+                            if (val != null) widget.onBodyTypeChanged(val);
                           },
                   ),
                 ),
               ),
-              if (draftSavedAt != null) ...[
+              if (widget.draftSavedAt != null) ...[
                 const SizedBox(width: 8),
                 Text(
                   'Draft saved',
@@ -1871,7 +1913,7 @@ class _Footer extends StatelessWidget {
               ],
               const Spacer(),
               TextButton.icon(
-                onPressed: isSending ? null : onAiCompose,
+                onPressed: isSending ? null : widget.onAiCompose,
                 icon: const Icon(Icons.auto_awesome_rounded, size: 16),
                 label: const Text('AI', style: TextStyle(fontSize: 13)),
                 style: TextButton.styleFrom(
@@ -1884,37 +1926,64 @@ class _Footer extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               TextButton(
-                onPressed: isSending ? null : onClose,
+                onPressed: isSending ? null : widget.onClose,
                 child: Text(
                   'Cancel',
                   style: TextStyle(color: c.textMuted, fontSize: 13),
                 ),
               ),
               const SizedBox(width: 8),
-              FilledButton.icon(
-                onPressed: isSending ? null : onSend,
-                style: FilledButton.styleFrom(
-                  backgroundColor: AppColors.accent,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 8),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                icon: isSending
-                    ? const SizedBox(
-                        width: 12,
-                        height: 12,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 1.5,
-                          color: Colors.white,
+              if (isSending)
+                AnimatedBuilder(
+                  animation: _shimmer,
+                  builder: (context, child) {
+                    final t = _shimmer.value;
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment(-2 + t * 4, 0),
+                          end: Alignment(-1 + t * 4, 0),
+                          colors: [
+                            AppColors.accent,
+                            Colors.white.withValues(alpha: 0.30),
+                            AppColors.accent,
+                          ],
                         ),
-                      )
-                    : const Icon(Icons.send_rounded, size: 14),
-                label: Text(
-                  isSending ? 'Sending…' : 'Send',
-                  style: const TextStyle(fontSize: 13),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: child,
+                    );
+                  },
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.send_rounded, size: 14, color: Colors.white),
+                      SizedBox(width: 8),
+                      Text(
+                        'Sending…',
+                        style: TextStyle(fontSize: 13, color: Colors.white),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                FilledButton.icon(
+                  onPressed: widget.onSend,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.accent,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 8),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  icon: const Icon(Icons.send_rounded, size: 14),
+                  label: const Text(
+                    'Send',
+                    style: TextStyle(fontSize: 13),
+                  ),
                 ),
-              ),
             ],
           ),
         );

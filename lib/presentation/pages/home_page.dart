@@ -18,6 +18,8 @@ import '../../domain/entities/email_folder.dart';
 import '../../domain/usecases/get_email.dart';
 import '../../core/settings/app_settings.dart';
 import '../../infrastructure/notifications/calendar_reminder_service.dart';
+import '../../infrastructure/notifications/notification_action.dart';
+import '../../infrastructure/notifications/notification_service.dart';
 import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/calendar/calendar_bloc.dart';
@@ -94,6 +96,7 @@ class _HomeView extends StatefulWidget {
 class _HomeViewState extends State<_HomeView> {
   final _appLinks = AppLinks();
   StreamSubscription<Uri>? _mailtoSub;
+  StreamSubscription<NotificationAction>? _notifSub;
 
   @override
   void initState() {
@@ -106,12 +109,102 @@ class _HomeViewState extends State<_HomeView> {
         .listen((uri) {
       if (mounted) _handleMailto(uri);
     });
+
+    // Subscribe to notification taps (real-time) and drain any cold-start action.
+    final notifService = sl<NotificationService>();
+    _notifSub = notifService.actions.listen((action) {
+      if (mounted) _handleNotificationAction(action);
+    });
+    final pending = notifService.takePendingAction();
+    if (pending != null) {
+      // Defer to allow BLoCs to finish their first build cycle.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _handleNotificationAction(pending);
+      });
+    }
   }
 
   @override
   void dispose() {
     _mailtoSub?.cancel();
+    _notifSub?.cancel();
     super.dispose();
+  }
+
+  void _handleNotificationAction(NotificationAction action) {
+    switch (action) {
+      case OpenEmailAction(:final emailId, :final accountId):
+        _openEmailFromNotification(emailId, accountId);
+      case OpenCalendarEventAction(:final eventId, :final startIso):
+        _openCalendarEventFromNotification(eventId, startIso);
+    }
+  }
+
+  void _openEmailFromNotification(String emailId, String accountId) {
+    final accountCubit = context.read<AccountCubit>();
+    final accountState = accountCubit.state;
+
+    void loadEmail() {
+      context
+          .read<EmailDetailBloc>()
+          .add(EmailDetailLoadRequested(emailId: emailId));
+      context.read<HomeCubit>().openEmailFromNotification(emailId);
+    }
+
+    if (accountState is AccountsLoaded) {
+      final idx = accountState.accounts.indexWhere((a) => a.id == accountId);
+      if (idx >= 0 && idx != accountState.activeIndex) {
+        // Switch account first. The switch emits AccountsLoaded which triggers
+        // the BlocListener cascade (EmailDetailCleared, EmailListCleared, etc.).
+        // We defer loadEmail by two post-frame callbacks so those clear events
+        // are processed before EmailDetailLoadRequested is dispatched.
+        accountCubit.switchToAccount(idx).then((_) {
+          if (!mounted) return;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) loadEmail();
+            });
+          });
+        });
+        return;
+      }
+    }
+    loadEmail();
+  }
+
+  void _openCalendarEventFromNotification(String eventId, String? startIso) {
+    DateTime targetDate = DateTime.now();
+    if (startIso != null) {
+      try {
+        targetDate = DateTime.parse(startIso).toLocal();
+      } catch (_) {}
+    }
+    final weekStart = _mondayOfWeek(targetDate);
+    context.read<HomeCubit>().showCalendar();
+    context
+        .read<CalendarBloc>()
+        .add(CalendarWeekLoadRequested(weekStart: weekStart));
+
+    // On mobile, also push the calendar route so it's visible.
+    if (MediaQuery.of(context).size.width < 600) {
+      final calendarBloc = context.read<CalendarBloc>();
+      Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (ctx) => Scaffold(
+            body: SafeArea(
+              child: BlocProvider.value(
+                value: calendarBloc,
+                child: CalendarDayPanel(
+                  onClose: () => Navigator.of(ctx).pop(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
   }
 
   void _handleMailto(Uri uri) {
@@ -183,6 +276,10 @@ class _HomeViewState extends State<_HomeView> {
             if (state is FolderListLoaded) {
               final homeCubit = context.read<HomeCubit>();
               if (homeCubit.state.selectedFolderId != null) return;
+              // Also skip auto-select when an email is already selected via a
+              // notification tap — selectFolder() constructs a new HomeState
+              // that zeroes selectedEmailId, which would unload the email view.
+              if (homeCubit.state.selectedEmailId != null) return;
 
               final inbox = state.folders.firstWhere(
                 (f) => f.displayName.toLowerCase() == 'inbox',
@@ -200,8 +297,10 @@ class _HomeViewState extends State<_HomeView> {
           },
         ),
         BlocListener<FolderListBloc, FolderListState>(
-          listenWhen: (_, curr) =>
-              curr is FolderListLoaded && !curr.isRefreshing,
+          listenWhen: (prev, curr) =>
+              curr is FolderListLoaded &&
+              !curr.isRefreshing &&
+              (prev is! FolderListLoaded || prev.isRefreshing),
           listener: (context, state) {
             if (state is! FolderListLoaded) return;
             final inboxes = state.folders.where(
@@ -307,14 +406,27 @@ class _MobileLayoutState extends State<_MobileLayout> {
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _back();
       },
-      child: BlocListener<HomeCubit, HomeState>(
-        listenWhen: (prev, curr) =>
-            prev.selectedEmailId != null && curr.selectedEmailId == null,
-        listener: (context, _) {
-          if (_step == _MobileStep.readingPane) {
-            setState(() => _setStep(_MobileStep.emailList));
-          }
-        },
+      child: MultiBlocListener(
+        listeners: [
+          BlocListener<HomeCubit, HomeState>(
+            listenWhen: (prev, curr) =>
+                prev.selectedEmailId != null && curr.selectedEmailId == null,
+            listener: (context, _) {
+              if (_step == _MobileStep.readingPane) {
+                setState(() => _setStep(_MobileStep.emailList));
+              }
+            },
+          ),
+          BlocListener<HomeCubit, HomeState>(
+            listenWhen: (prev, curr) =>
+                curr.notificationEmailId != null &&
+                prev.notificationEmailId != curr.notificationEmailId,
+            listener: (context, state) {
+              context.read<HomeCubit>().clearNotificationNavigation();
+              setState(() => _setStep(_MobileStep.readingPane));
+            },
+          ),
+        ],
         child: BlocBuilder<HomeCubit, HomeState>(
         builder: (context, homeState) {
           return BlocBuilder<FolderListBloc, FolderListState>(
@@ -441,7 +553,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
                                   contextProvider: () {
                                     final s = emailListBloc.state;
                                     if (s is! EmailListLoaded ||
-                                        s.emails.isEmpty) return null;
+                                        s.emails.isEmpty) { return null; }
                                     return _formatFolderEmailsForAi(s.emails);
                                   },
                                 ),

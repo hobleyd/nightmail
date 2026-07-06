@@ -40,6 +40,9 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       switch call.method {
       case "requestPermission":
         self.handleNotificationPermission(result: result)
+      case "showMailNotification":
+        let args = call.arguments as? [String: Any] ?? [:]
+        self.handleShowMailNotification(args: args, result: result)
       case "scheduleReminder":
         let args = call.arguments as? [String: Any] ?? [:]
         self.handleScheduleReminder(args: args, result: result)
@@ -126,12 +129,39 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     }
   }
 
+  private func handleShowMailNotification(args: [String: Any], result: @escaping FlutterResult) {
+    let id        = args["id"]        as? String ?? ""
+    let title     = args["title"]     as? String ?? ""
+    let body      = args["body"]      as? String ?? ""
+    let emailId   = args["emailId"]   as? String ?? id
+    let accountId = args["accountId"] as? String ?? ""
+
+    let content       = UNMutableNotificationContent()
+    content.title     = title
+    content.body      = body
+    content.sound     = .default
+    content.userInfo  = ["type": "email", "emailId": emailId, "accountId": accountId]
+
+    // Use a time-interval trigger of 0.1s — UNUserNotificationCenter requires
+    // a trigger; immediate display is not supported.
+    let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
+    let request = UNNotificationRequest(
+      identifier: "new_email_\(emailId)",
+      content: content,
+      trigger: trigger
+    )
+    UNUserNotificationCenter.current().add(request) { _ in
+      DispatchQueue.main.async { result(nil) }
+    }
+  }
+
   private func handleScheduleReminder(args: [String: Any], result: @escaping FlutterResult) {
     let id        = args["id"]       as? String ?? ""
     let title     = args["title"]    as? String ?? ""
     let body      = args["body"]     as? String ?? ""
     let triggerMs = (args["triggerMs"] as? NSNumber)?.int64Value ?? 0
     let startIso  = args["startIso"] as? String
+    let eventId   = args["eventId"]  as? String ?? id
 
     let triggerDate = Date(timeIntervalSince1970: Double(triggerMs) / 1000.0)
     let interval    = triggerDate.timeIntervalSinceNow
@@ -141,7 +171,7 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     content.title     = title
     content.body      = body
     content.sound     = .default
-    var userInfo: [String: Any] = ["eventId": id, "eventTitle": title]
+    var userInfo: [String: Any] = ["type": "reminder", "eventId": eventId, "eventTitle": title]
     if let iso = startIso { userInfo["startIso"] = iso }
     content.userInfo  = userInfo
 
@@ -169,22 +199,26 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     result(nil)
   }
 
-  private func sendReminderToFlutter(userInfo: [AnyHashable: Any]) {
-    let eventId    = userInfo["eventId"]    as? String ?? ""
-    let eventTitle = userInfo["eventTitle"] as? String ?? ""
-    let startIso   = userInfo["startIso"]   as? String
-    var args: [String: Any] = ["eventId": eventId, "eventTitle": eventTitle]
-    if let iso = startIso { args["startIso"] = iso }
-    mainNotificationChannel?.invokeMethod("showReminderPopup", arguments: args)
-  }
-
   // Called when a notification is delivered while the app is in the foreground.
   func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     willPresent notification: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
-    sendReminderToFlutter(userInfo: notification.request.content.userInfo)
+    let userInfo = notification.request.content.userInfo
+    let type = userInfo["type"] as? String
+
+    if type == "reminder" {
+      // For calendar reminders fired in-app, show the existing popup so the
+      // user can dismiss it without leaving what they're doing.
+      let eventId    = userInfo["eventId"]    as? String ?? ""
+      let eventTitle = userInfo["eventTitle"] as? String ?? ""
+      let startIso   = userInfo["startIso"]   as? String
+      var args: [String: Any] = ["eventId": eventId, "eventTitle": eventTitle]
+      if let iso = startIso { args["startIso"] = iso }
+      mainNotificationChannel?.invokeMethod("showReminderPopup", arguments: args)
+    }
+
     if #available(macOS 11.0, *) {
       completionHandler([.banner, .sound])
     } else {
@@ -199,7 +233,24 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
     NSApp.activate(ignoringOtherApps: true)
-    sendReminderToFlutter(userInfo: response.notification.request.content.userInfo)
+    let userInfo = response.notification.request.content.userInfo
+    let type = userInfo["type"] as? String
+
+    if type == "email" {
+      let emailId   = userInfo["emailId"]   as? String ?? ""
+      let accountId = userInfo["accountId"] as? String ?? ""
+      mainNotificationChannel?.invokeMethod(
+        "openEmail",
+        arguments: ["emailId": emailId, "accountId": accountId]
+      )
+    } else {
+      // Calendar reminder tap (or legacy notification without a type).
+      let eventId  = userInfo["eventId"]  as? String ?? ""
+      let startIso = userInfo["startIso"] as? String
+      var args: [String: Any] = ["eventId": eventId]
+      if let iso = startIso { args["startIso"] = iso }
+      mainNotificationChannel?.invokeMethod("openCalendarEvent", arguments: args)
+    }
     completionHandler()
   }
 
@@ -257,6 +308,9 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     channel.setMethodCallHandler { [weak self] call, result in
       guard let self else { result(FlutterMethodNotImplemented); return }
       switch call.method {
+      case "showMailNotification":
+        let args = call.arguments as? [String: Any] ?? [:]
+        self.handleShowMailNotification(args: args, result: result)
       case "scheduleReminder":
         let args = call.arguments as? [String: Any] ?? [:]
         self.handleScheduleReminder(args: args, result: result)

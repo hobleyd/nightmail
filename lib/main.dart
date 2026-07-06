@@ -160,8 +160,11 @@ void main(List<String> args) async {
 await configureDependencies();
   await BackgroundMailService.initialize();
   await BackgroundMailService.schedulePeriodicCheck();
-  // Eagerly initialize NotificationService (installs method-call handlers and
-  // local-notifications plugin), then request permission without blocking startup.
+  // Initialize the notification plugin and check whether the app was launched
+  // by a notification tap (handles iOS/Android terminated-state cold starts).
+  // Must complete before runApp so that _pendingAction is set before
+  // _HomeViewState.initState() calls takePendingAction().
+  await sl<NotificationService>().initializeAndCheckLaunch();
   unawaited(sl<NotificationService>().requestPermission());
 
   if (!kIsWeb && (Platform.isMacOS || Platform.isLinux || Platform.isWindows)) {

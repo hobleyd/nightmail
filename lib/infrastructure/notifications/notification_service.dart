@@ -8,34 +8,59 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
+import 'notification_action.dart';
+
+// Top-level callback — required for background isolate on Android when the
+// app is killed and the user taps a notification.
+@pragma('vm:entry-point')
+void _onBackgroundNotificationResponse(NotificationResponse details) {
+  // Background isolate: no DI, no UI. Nothing to do here — the action will
+  // be picked up via getNotificationAppLaunchDetails when the app restarts.
+}
+
 class NotificationService {
   static const _macChannel =
       MethodChannel('au.com.sharpblue.nightmail/notifications');
 
-  // Singleton plugin instance shared across all calls.
   static final _localPlugin = FlutterLocalNotificationsPlugin();
   static bool _localInitialized = false;
 
-  // Linux: flutter_local_notifications doesn't support zonedSchedule on Linux,
-  // so we use in-process Dart timers and call show() when they fire.
-  // Reminders only fire while the app is running on Linux.
-  // Keyed by the same composite accountId::eventId string as _notifId.
   final _linuxTimers = <String, Timer>{};
+  final _actionController = StreamController<NotificationAction>.broadcast();
+  NotificationAction? _pendingAction;
+
+  Stream<NotificationAction> get actions => _actionController.stream;
+
+  // Stored so callers can await initialization before calling the plugin.
+  Future<void>? _initFuture;
 
   NotificationService() {
     if (Platform.isMacOS) {
-      // macOS uses a native Swift channel → UNUserNotificationCenter.
       _macChannel.setMethodCallHandler(_handleNativeCall);
     } else {
-      _initLocalNotifications();
+      _initFuture = _initLocalNotifications();
     }
+  }
+
+  /// Awaits plugin initialization and checks whether the app was launched by
+  /// a notification tap (iOS/Android terminated-state). Call once in main()
+  /// before runApp so that _pendingAction is populated for cold launches.
+  Future<void> initializeAndCheckLaunch() async {
+    if (Platform.isMacOS) return;
+    await (_initFuture ?? _initLocalNotifications());
+    try {
+      final details = await _localPlugin.getNotificationAppLaunchDetails();
+      if (details?.didNotificationLaunchApp == true) {
+        final action = _parsePayload(details?.notificationResponse?.payload);
+        if (action != null) _pendingAction = action;
+      }
+    } catch (_) {}
   }
 
   Future<void> _initLocalNotifications() async {
     if (_localInitialized) return;
     _localInitialized = true;
 
-    // timezone data is only needed for zonedSchedule (Android/iOS/Windows).
     if (!Platform.isLinux) {
       tz_data.initializeTimeZones();
     }
@@ -50,7 +75,6 @@ class NotificationService {
     const windows = WindowsInitializationSettings(
       appName: 'NightMail',
       appUserModelId: 'au.com.sharpblue.NightMail',
-      // Stable GUID for NightMail Windows notification activator (COM CLSID).
       guid: '6e452e7a-3c45-4b9e-8f1d-2a7b8c3d9e1f',
     );
 
@@ -61,18 +85,80 @@ class NotificationService {
         linux: linux,
         windows: windows,
       ),
+      onDidReceiveNotificationResponse: _onNotificationResponse,
+      onDidReceiveBackgroundNotificationResponse:
+          _onBackgroundNotificationResponse,
     );
+  }
+
+  void _onNotificationResponse(NotificationResponse details) {
+    final action = _parsePayload(details.payload);
+    if (action == null) return;
+    _setAction(action);
+  }
+
+  NotificationAction? _parsePayload(String? payload) {
+    if (payload == null) return null;
+    try {
+      final json = jsonDecode(payload) as Map<String, dynamic>;
+      final type = json['type'] as String?;
+      if (type == 'email') {
+        final emailId = json['emailId'] as String?;
+        final accountId = json['accountId'] as String?;
+        if (emailId != null && accountId != null) {
+          return OpenEmailAction(emailId: emailId, accountId: accountId);
+        }
+      } else if (type == 'reminder') {
+        final eventId = json['eventId'] as String?;
+        final startIso = json['startIso'] as String?;
+        if (eventId != null) {
+          return OpenCalendarEventAction(eventId: eventId, startIso: startIso);
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  void _setAction(NotificationAction action) {
+    if (_actionController.hasListener) {
+      _actionController.add(action);
+    } else {
+      _pendingAction = action;
+    }
+  }
+
+  NotificationAction? takePendingAction() {
+    final action = _pendingAction;
+    _pendingAction = null;
+    return action;
   }
 
   // macOS only: called from Swift via the native channel.
   Future<dynamic> _handleNativeCall(MethodCall call) async {
-    if (call.method != 'showReminderPopup') return;
-    final args = Map<String, dynamic>.from(call.arguments as Map);
-    await _openReminderPopup(
-      eventId: args['eventId'] as String? ?? '',
-      eventTitle: args['eventTitle'] as String? ?? '',
-      startIso: args['startIso'] as String?,
-    );
+    switch (call.method) {
+      case 'showReminderPopup':
+        final args = Map<String, dynamic>.from(call.arguments as Map);
+        await _openReminderPopup(
+          eventId: args['eventId'] as String? ?? '',
+          eventTitle: args['eventTitle'] as String? ?? '',
+          startIso: args['startIso'] as String?,
+        );
+      case 'openEmail':
+        final args = Map<String, dynamic>.from(call.arguments as Map);
+        final emailId = args['emailId'] as String?;
+        final accountId = args['accountId'] as String?;
+        if (emailId != null && accountId != null) {
+          _setAction(OpenEmailAction(emailId: emailId, accountId: accountId));
+        }
+      case 'openCalendarEvent':
+        final args = Map<String, dynamic>.from(call.arguments as Map);
+        final eventId = args['eventId'] as String?;
+        final startIso = args['startIso'] as String?;
+        if (eventId != null) {
+          _setAction(
+              OpenCalendarEventAction(eventId: eventId, startIso: startIso));
+        }
+    }
   }
 
   Future<void> _openReminderPopup({
@@ -92,22 +178,44 @@ class NotificationService {
     );
   }
 
-  /// Shows a local "new mail" alert. Used from the background mail-check
-  /// isolate (Android WorkManager / iOS BGTaskScheduler) — those platforms'
-  /// headless engines can reach flutter_local_notifications (it registers via
-  /// GeneratedPluginRegistrant), unlike this app's ad-hoc native badge
-  /// channel, which is only wired up on the foreground engine.
-  Future<void> showNewMailNotification({
+  /// Shows a per-email notification. On macOS goes via the native channel;
+  /// on iOS/Android uses flutter_local_notifications directly.
+  Future<void> showEmailNotification({
+    required String emailId,
+    required String accountId,
+    required String subject,
+    required String senderName,
     required String accountLabel,
-    required int newCount,
   }) async {
-    if (!Platform.isAndroid && !Platform.isIOS) return;
+    final title = subject.isNotEmpty ? subject : '(No Subject)';
+    final body = senderName.isNotEmpty ? '$senderName · $accountLabel' : accountLabel;
+    final notifId = emailId.hashCode.abs() % 0x7FFFFFFF;
+
+    if (Platform.isMacOS) {
+      try {
+        await _macChannel.invokeMethod<void>('showMailNotification', {
+          'id': emailId,
+          'title': title,
+          'body': body,
+          'emailId': emailId,
+          'accountId': accountId,
+        });
+      } catch (_) {}
+      return;
+    }
+
     await _initLocalNotifications();
+    final payload = jsonEncode({
+      'type': 'email',
+      'emailId': emailId,
+      'accountId': accountId,
+    });
     try {
       await _localPlugin.show(
-        id: accountLabel.hashCode.abs() % 0x7FFFFFFF,
-        title: newCount == 1 ? 'New email' : '$newCount new emails',
-        body: accountLabel,
+        id: notifId,
+        title: title,
+        body: body,
+        payload: payload,
         notificationDetails: const NotificationDetails(
           android: AndroidNotificationDetails(
             'new_mail',
@@ -117,6 +225,8 @@ class NotificationService {
             priority: Priority.high,
           ),
           iOS: DarwinNotificationDetails(sound: 'default'),
+          linux: LinuxNotificationDetails(),
+          windows: WindowsNotificationDetails(),
         ),
       );
     } catch (_) {}
@@ -147,7 +257,6 @@ class NotificationService {
           ) ??
           false;
     }
-    // Linux and Windows do not require a runtime permission request.
     return true;
   }
 
@@ -172,6 +281,7 @@ class NotificationService {
           'body': 'Starting in ${_minutesLabel(reminderMinutes)}',
           'triggerMs': triggerTime.millisecondsSinceEpoch,
           'startIso': startIso ?? startUtc.toIso8601String(),
+          'eventId': eventId,
         });
       } catch (_) {}
       return;
@@ -187,8 +297,11 @@ class NotificationService {
       return;
     }
 
-    // Android, iOS, Windows: delegate to the OS scheduler so reminders fire
-    // even when the app is closed.
+    final payload = jsonEncode({
+      'type': 'reminder',
+      'eventId': eventId,
+      'startIso': startIso ?? startUtc.toIso8601String(),
+    });
     try {
       final scheduled = tz.TZDateTime.fromMillisecondsSinceEpoch(
         tz.UTC,
@@ -199,7 +312,8 @@ class NotificationService {
         title: eventTitle,
         body: 'Starting in ${_minutesLabel(reminderMinutes)}',
         scheduledDate: scheduled,
-        notificationDetails: _details(),
+        payload: payload,
+        notificationDetails: _reminderDetails(),
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
       );
     } catch (_) {}
@@ -241,7 +355,7 @@ class NotificationService {
     await _localPlugin.cancel(id: _notifId(accountId, eventId));
   }
 
-  static NotificationDetails _details() => const NotificationDetails(
+  static NotificationDetails _reminderDetails() => const NotificationDetails(
         android: AndroidNotificationDetails(
           'event_reminders',
           'Event Reminders',

@@ -112,7 +112,8 @@ class _FolderPanelState extends State<FolderPanel> {
                             strokeWidth: 2,
                           ),
                         ),
-                      FolderListLoaded(:final folders) => _buildTree(folders),
+                      FolderListLoaded(:final folders, :final isRefreshing) =>
+                        _buildTree(folders, showUnreadCounts: !isRefreshing),
                       // Auth failures (expired/revoked token) show the sign-in
                       // prompt so the user can re-authenticate in one tap.
                       FolderListError(isAuthFailure: true)
@@ -149,7 +150,7 @@ class _FolderPanelState extends State<FolderPanel> {
     );
   }
 
-  Widget _buildTree(List<EmailFolder> folders) {
+  Widget _buildTree(List<EmailFolder> folders, {bool showUnreadCounts = true}) {
     final items = _buildDisplayList(folders);
     return ListView.builder(
       padding: const EdgeInsets.symmetric(vertical: 8),
@@ -194,6 +195,7 @@ class _FolderPanelState extends State<FolderPanel> {
           isSelected: item.folder.id == widget.selectedFolderId,
           isExpanded: _expandedIds.contains(item.folder.id),
           hasChildren: item.folder.childFolderCount > 0,
+          showUnreadCount: showUnreadCounts,
           onTap: () => widget.onFolderSelected(item.folder),
           onExpandTap: () {
             setState(() {
@@ -351,6 +353,7 @@ class _FolderItem extends StatefulWidget {
     required this.onExpandTap,
     required this.onAddFolder,
     required this.onRename,
+    this.showUnreadCount = true,
   });
 
   final EmailFolder folder;
@@ -358,6 +361,7 @@ class _FolderItem extends StatefulWidget {
   final bool isSelected;
   final bool isExpanded;
   final bool hasChildren;
+  final bool showUnreadCount;
   final VoidCallback onTap;
   final VoidCallback onExpandTap;
   final VoidCallback onAddFolder;
@@ -526,7 +530,7 @@ class _FolderItemState extends State<_FolderItem>
             overflow: TextOverflow.ellipsis,
           ),
         ),
-        if (widget.folder.unreadItemCount > 0)
+        if (widget.showUnreadCount && widget.folder.unreadItemCount > 0)
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
             decoration: BoxDecoration(

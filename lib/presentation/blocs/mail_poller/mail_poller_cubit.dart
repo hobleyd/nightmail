@@ -14,6 +14,7 @@ import '../../../domain/usecases/get_cached_folders.dart';
 import '../../../infrastructure/accounts/account.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
 import '../../../infrastructure/badge/badge_service.dart';
+import '../../../infrastructure/notifications/notification_service.dart';
 import 'mail_poller_state.dart';
 
 class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver {
@@ -23,11 +24,13 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     required BadgeService badgeService,
     required DeltaTokenDatasource database,
     required GetCachedFolders getCachedFolders,
+    required NotificationService notificationService,
   })  : _accountManager = accountManager,
         _appSettings = appSettings,
         _badgeService = badgeService,
         _database = database,
         _getCachedFolders = getCachedFolders,
+        _notificationService = notificationService,
         super(const MailPollerState(
           accountsWithNewMail: {},
           pollIntervalSeconds: AppSettings.defaultPollIntervalSeconds,
@@ -38,6 +41,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   final BadgeService _badgeService;
   final DeltaTokenDatasource _database;
   final GetCachedFolders _getCachedFolders;
+  final NotificationService _notificationService;
 
   Timer? _timer;
   bool _polling = false;
@@ -187,6 +191,18 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                   activeInboxChanged = true;
                 } else if (hasNewUnread) {
                   if (_newMailAccounts.add(account.id)) changed = true;
+                  // Send one notification per new unread email (capped at 5).
+                  final newEmails =
+                      result.upserted.where((e) => !e.isRead).take(5);
+                  for (final email in newEmails) {
+                    unawaited(_notificationService.showEmailNotification(
+                      emailId: email.id,
+                      accountId: account.id,
+                      subject: email.subject,
+                      senderName: email.from.displayName,
+                      accountLabel: account.displayName,
+                    ));
+                  }
                 } else if (unreadCount == 0) {
                   if (_newMailAccounts.remove(account.id)) changed = true;
                 }

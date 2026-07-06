@@ -142,6 +142,7 @@ WebView2View::~WebView2View() {
   // WebView2 COM operations do not need a valid parent HWND.
   if (webview_) {
     webview_->remove_NavigationStarting(nav_starting_token_);
+    webview_->remove_NewWindowRequested(new_window_token_);
     webview_->remove_WebMessageReceived(web_message_token_);
     webview_ = nullptr;
   }
@@ -169,6 +170,7 @@ LRESULT CALLBACK WebView2View::SubclassProc(HWND hwnd, UINT msg, WPARAM wp,
     // Close the WebView2 controller while the host HWND is still valid.
     if (self->webview_) {
       self->webview_->remove_NavigationStarting(self->nav_starting_token_);
+      self->webview_->remove_NewWindowRequested(self->new_window_token_);
       self->webview_->remove_WebMessageReceived(self->web_message_token_);
       self->webview_ = nullptr;
     }
@@ -290,6 +292,29 @@ void WebView2View::SetupWebView() {
             return S_OK;
           }).Get(),
       &nav_starting_token_);
+
+  // Intercept target="_blank" / window.open() links (very common in HTML
+  // newsletters/marketing email). Unhandled, WebView2's default action is to
+  // spawn its own unmanaged popup window to host the URL — which looks like
+  // a stray "new browser instance" and bypasses url_launcher entirely. Route
+  // it through the same onLinkOpened path as NavigationStarting instead.
+  auto alive_new_win = alive_;
+  webview_->add_NewWindowRequested(
+      Microsoft::WRL::Callback<ICoreWebView2NewWindowRequestedEventHandler>(
+          [this, alive_new_win](ICoreWebView2*,
+                                ICoreWebView2NewWindowRequestedEventArgs* args) -> HRESULT {
+            if (!*alive_new_win) return S_OK;
+            args->put_Handled(TRUE);
+            LPWSTR uri_raw = nullptr;
+            args->get_Uri(&uri_raw);
+            if (uri_raw) {
+              std::wstring uri(uri_raw);
+              CoTaskMemFree(uri_raw);
+              EmitEvent("onLinkOpened", WideToUtf8(uri.c_str()));
+            }
+            return S_OK;
+          }).Get(),
+      &new_window_token_);
 
   // Receive messages from JS (channel\x01payload)
   auto alive = alive_;

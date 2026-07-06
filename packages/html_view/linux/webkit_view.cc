@@ -36,7 +36,12 @@ static void on_decide_policy(WebKitWebView*,
                              WebKitPolicyDecision* decision,
                              WebKitPolicyDecisionType type,
                              gpointer user_data) {
-  if (type == WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION) {
+  // NEW_WINDOW_ACTION covers target="_blank" / window.open() links. Without
+  // handling it here too, they fall through to webkit_policy_decision_use()
+  // with no "create" signal connected, so WebKitGTK silently drops them
+  // instead of routing to onLinkOpened like a normal link click.
+  if (type == WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION ||
+      type == WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION) {
     auto* nav = WEBKIT_NAVIGATION_POLICY_DECISION(decision);
     WebKitNavigationAction* action =
         webkit_navigation_policy_decision_get_navigation_action(nav);

@@ -1012,6 +1012,14 @@ class _ComposeFormState extends State<ComposeForm> {
       if (freshHtml != null) _htmlBodyCache = freshHtml;
       effectiveBody = _substituteInlineImageSrcs(_htmlBodyCache);
       effectiveBodyType = EmailBodyType.html;
+
+      if (_hasOrphanedInlineImages(effectiveBody)) {
+        _sent = false;
+        if (!mounted) return;
+        final sendAnyway = await _confirmSendWithBrokenImages(context);
+        if (sendAnyway != true) return;
+        _sent = true;
+      }
     } else {
       effectiveBody = _bodyController.text.trim();
       effectiveBodyType = EmailBodyType.text;
@@ -1052,6 +1060,67 @@ class _ComposeFormState extends State<ComposeForm> {
           bodyType: effectiveBodyType,
           newAttachments: _localAttachments,
         ));
+  }
+
+  // True if the HTML references an inline image (cid:...) with no matching
+  // local attachment — e.g. HTML pasted from another mail client that kept
+  // the source's cid reference without the image bytes. Sending as-is bakes
+  // a permanently broken image into the message.
+  bool _hasOrphanedInlineImages(String html) {
+    final knownCids = _localAttachments
+        .where((a) => a.isInline && a.contentId != null)
+        .map((a) => a.contentId!)
+        .toSet();
+    final matches = RegExp(r'<img\b[^>]*\bsrc="cid:([^"]+)"', caseSensitive: false)
+        .allMatches(html);
+    for (final match in matches) {
+      final cid = match.group(1)!;
+      if (!knownCids.contains(cid)) return true;
+    }
+    return false;
+  }
+
+  Future<bool?> _confirmSendWithBrokenImages(BuildContext context) {
+    return showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: context.colors.surfacePanel,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        title: Text(
+          'Broken Image in Message',
+          style: TextStyle(
+            color: context.colors.textPrimary,
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        content: Text(
+          'This message references an inline image that isn\'t attached — likely '
+          'from content pasted in from another app. The recipient (and you, when '
+          'viewing this later) will see a broken image icon instead.',
+          style: TextStyle(color: context.colors.textSecondary, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(
+              'Go Back',
+              style: TextStyle(color: context.colors.textMuted, fontSize: 13),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.red.shade600,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('Send Anyway', style: TextStyle(fontSize: 13)),
+          ),
+        ],
+      ),
+    );
   }
 
   // Replace data: URI src attrs with cid: references for inline images.

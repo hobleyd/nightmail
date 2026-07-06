@@ -689,27 +689,31 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   void _collectAttachmentParts(
       Map<String, dynamic> part, List<_GmailAttachment> out) {
     final filename = (part['filename'] as String? ?? '').trim();
+    final headers = (part['headers'] as List<dynamic>? ?? [])
+        .cast<Map<String, dynamic>>();
 
-    if (filename.isNotEmpty) {
+    String? contentId;
+    bool hasAttachmentDisposition = false;
+    for (final h in headers) {
+      final name = (h['name'] as String? ?? '').toLowerCase();
+      final value = h['value'] as String? ?? '';
+      if (name == 'content-id' && value.isNotEmpty) contentId = value.trim();
+      if (name == 'content-disposition' &&
+          value.toLowerCase().startsWith('attachment')) {
+        hasAttachmentDisposition = true;
+      }
+    }
+
+    // A part is worth extracting if it has a filename (a normal attachment)
+    // or a Content-Id (an inline image referenced by cid:) — Gmail hoists
+    // inline images embedded as data: URIs into their own part without ever
+    // assigning a filename, so filename alone isn't a reliable signal.
+    if (filename.isNotEmpty || contentId != null) {
       final mimeType = part['mimeType'] as String? ?? 'application/octet-stream';
       final body = part['body'] as Map<String, dynamic>? ?? {};
       final attachmentId = body['attachmentId'] as String? ?? '';
       final inlineData = body['data'] as String?;
       final size = body['size'] as int? ?? 0;
-      final headers = (part['headers'] as List<dynamic>? ?? [])
-          .cast<Map<String, dynamic>>();
-
-      String? contentId;
-      bool hasAttachmentDisposition = false;
-      for (final h in headers) {
-        final name = (h['name'] as String? ?? '').toLowerCase();
-        final value = h['value'] as String? ?? '';
-        if (name == 'content-id' && value.isNotEmpty) contentId = value.trim();
-        if (name == 'content-disposition' &&
-            value.toLowerCase().startsWith('attachment')) {
-          hasAttachmentDisposition = true;
-        }
-      }
 
       final isInline = contentId != null && !hasAttachmentDisposition;
       out.add(_GmailAttachment(

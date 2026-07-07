@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../../core/error/exceptions.dart';
 import '../../../core/utils/ics_parser.dart';
@@ -612,6 +613,10 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     // ServerException and the UI never learns re-authentication is needed.
     if (e.error is AuthException) return e.error as AuthException;
 
+    debugPrint('[GoogleCalendar] ${e.requestOptions.method} '
+        '${e.requestOptions.path} failed: status=${e.response?.statusCode} '
+        'body=${e.response?.data} requestBody=${e.requestOptions.data}');
+
     final statusCode = e.response?.statusCode;
     if (e.type == DioExceptionType.connectionError ||
         e.type == DioExceptionType.connectionTimeout ||
@@ -619,11 +624,28 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       return NetworkException(message: e.message ?? 'Network error');
     }
     if (statusCode == 401) {
-      return const AuthException(message: 'Authentication required');
+      final msg = _extractGoogleErrorMessage(e) ?? 'Authentication required';
+      return AuthException(message: msg);
     }
-    return ServerException(
-        message: e.message ?? 'Server error ($statusCode)',
-        statusCode: statusCode);
+    // Deliberately do not fall back to e.message here: for a bad HTTP
+    // response Dio's default message is its own internal boilerplate
+    // ("...RequestOptions.validateStatus was configured to throw..."),
+    // which is meaningless to a user and must never reach the UI.
+    final msg = _extractGoogleErrorMessage(e) ??
+        (statusCode != null ? 'Server error ($statusCode)' : e.message) ??
+        'Unknown server error';
+    return ServerException(message: msg, statusCode: statusCode);
+  }
+
+  String? _extractGoogleErrorMessage(DioException e) {
+    try {
+      final data = e.response?.data;
+      if (data is Map) {
+        final error = data['error'];
+        if (error is Map) return error['message'] as String?;
+      }
+    } catch (_) {}
+    return null;
   }
 }
 

@@ -1859,9 +1859,13 @@ class GraphApiDatasourceImpl
       return AuthException(message: msg);
     }
 
+    // Deliberately do not fall back to e.message here: for a bad HTTP
+    // response Dio's default message is its own internal boilerplate
+    // ("...RequestOptions.validateStatus was configured to throw..."),
+    // which is meaningless to a user and must never reach the UI.
     final msg = _extractGraphErrorMessage(e) ??
-        e.message ??
-        'Server error ($statusCode)';
+        (statusCode != null ? 'Server error ($statusCode)' : e.message) ??
+        'Unknown server error';
     return ServerException(message: msg, statusCode: statusCode);
   }
 

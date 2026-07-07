@@ -16,6 +16,7 @@ import 'contact_hover_card.dart';
 
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
+import '../../data/services/eml_parser.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_address.dart';
 import '../../domain/entities/email_attachment.dart';
@@ -47,6 +48,12 @@ import '../blocs/folder_list/folder_list_event.dart';
 import '../blocs/home/home_cubit.dart';
 import '../pages/compose_window.dart';
 import 'email_date_formatter.dart';
+
+/// Attachment names can contain characters (e.g. `:` from a forwarded
+/// subject line) that are illegal in Windows file paths. Strip them before
+/// writing to disk so temp-file/save-as writes don't throw.
+String _sanitizedFileName(String name) =>
+    name.replaceAll(RegExp(r'[<>:"/\\|?*\x00-\x1F]'), '_');
 
 class ReadingPane extends StatelessWidget {
   const ReadingPane({super.key, this.onBack});
@@ -140,6 +147,8 @@ class _ErrorState extends StatelessWidget {
   }
 }
 
+enum _AttachmentPreviewKind { pdf, image, eml }
+
 class _EmailView extends StatefulWidget {
   const _EmailView({super.key, required this.email, this.senderAnomaly, this.onBack});
   final Email email;
@@ -151,23 +160,27 @@ class _EmailView extends StatefulWidget {
 }
 
 class _EmailViewState extends State<_EmailView> {
-  String? _pdfPreviewPath;
-  String? _pdfPreviewName;
-  String? _pdfPreviewAttachmentId;
+  String? _previewPath;
+  String? _previewName;
+  String? _previewAttachmentId;
+  _AttachmentPreviewKind? _previewKind;
 
-  void _showPdfPreview(String path, String name, String attachmentId) {
+  void _showPreview(
+      _AttachmentPreviewKind kind, String path, String name, String attachmentId) {
     setState(() {
-      _pdfPreviewPath = path;
-      _pdfPreviewName = name;
-      _pdfPreviewAttachmentId = attachmentId;
+      _previewKind = kind;
+      _previewPath = path;
+      _previewName = name;
+      _previewAttachmentId = attachmentId;
     });
   }
 
-  void _closePdfPreview() {
+  void _closePreview() {
     setState(() {
-      _pdfPreviewPath = null;
-      _pdfPreviewName = null;
-      _pdfPreviewAttachmentId = null;
+      _previewKind = null;
+      _previewPath = null;
+      _previewName = null;
+      _previewAttachmentId = null;
     });
   }
 
@@ -185,8 +198,8 @@ class _EmailViewState extends State<_EmailView> {
         _EmailHeader(
           email: widget.email,
           senderAnomaly: widget.senderAnomaly,
-          onPdfPreview: _showPdfPreview,
-          activePdfAttachmentId: _pdfPreviewAttachmentId,
+          onAttachmentPreview: _showPreview,
+          activePreviewAttachmentId: _previewAttachmentId,
         ),
         Divider(height: 1, color: c.border),
         if (calendarAvailable && meetingType == MeetingEmailType.invitation) ...[
@@ -202,14 +215,27 @@ class _EmailViewState extends State<_EmailView> {
           Divider(height: 1, color: c.border),
         ],
         Expanded(
-          child: _pdfPreviewPath != null
-              ? _PdfPreview(
-                  key: ValueKey(_pdfPreviewPath),
-                  filePath: _pdfPreviewPath!,
-                  fileName: _pdfPreviewName!,
-                  onClose: _closePdfPreview,
-                )
-              : _EmailBody(email: widget.email),
+          child: switch (_previewKind) {
+            _AttachmentPreviewKind.pdf => _PdfPreview(
+                key: ValueKey(_previewPath),
+                filePath: _previewPath!,
+                fileName: _previewName!,
+                onClose: _closePreview,
+              ),
+            _AttachmentPreviewKind.image => _ImagePreview(
+                key: ValueKey(_previewPath),
+                filePath: _previewPath!,
+                fileName: _previewName!,
+                onClose: _closePreview,
+              ),
+            _AttachmentPreviewKind.eml => _EmlPreview(
+                key: ValueKey(_previewPath),
+                filePath: _previewPath!,
+                fileName: _previewName!,
+                onClose: _closePreview,
+              ),
+            null => _EmailBody(email: widget.email),
+          },
         ),
       ],
     );
@@ -1361,13 +1387,14 @@ class _EmailHeader extends StatelessWidget {
   const _EmailHeader({
     required this.email,
     this.senderAnomaly,
-    this.onPdfPreview,
-    this.activePdfAttachmentId,
+    this.onAttachmentPreview,
+    this.activePreviewAttachmentId,
   });
   final Email email;
   final SenderAnomalyResult? senderAnomaly;
-  final void Function(String path, String name, String attachmentId)? onPdfPreview;
-  final String? activePdfAttachmentId;
+  final void Function(_AttachmentPreviewKind kind, String path, String name, String attachmentId)?
+      onAttachmentPreview;
+  final String? activePreviewAttachmentId;
 
   static Color? _anomalyColor(double? score) {
     if (score == null) return null;
@@ -1426,8 +1453,8 @@ class _EmailHeader extends StatelessWidget {
             _AttachmentsSection(
               emailId: email.id,
               attachments: email.attachments,
-              onPdfPreview: onPdfPreview,
-              activePdfAttachmentId: activePdfAttachmentId,
+              onAttachmentPreview: onAttachmentPreview,
+              activePreviewAttachmentId: activePreviewAttachmentId,
             ),
           ],
         ],
@@ -1661,13 +1688,14 @@ class _AttachmentsSection extends StatelessWidget {
   const _AttachmentsSection({
     required this.emailId,
     required this.attachments,
-    this.onPdfPreview,
-    this.activePdfAttachmentId,
+    this.onAttachmentPreview,
+    this.activePreviewAttachmentId,
   });
   final String emailId;
   final List<EmailAttachment> attachments;
-  final void Function(String path, String name, String attachmentId)? onPdfPreview;
-  final String? activePdfAttachmentId;
+  final void Function(_AttachmentPreviewKind kind, String path, String name, String attachmentId)?
+      onAttachmentPreview;
+  final String? activePreviewAttachmentId;
 
   @override
   Widget build(BuildContext context) {
@@ -1699,8 +1727,8 @@ class _AttachmentsSection extends StatelessWidget {
                     .map((a) => _AttachmentChip(
                           emailId: emailId,
                           attachment: a,
-                          onPdfPreview: onPdfPreview,
-                          isActive: a.id == activePdfAttachmentId,
+                          onAttachmentPreview: onAttachmentPreview,
+                          isActive: a.id == activePreviewAttachmentId,
                         ))
                     .toList(),
               ),
@@ -1777,7 +1805,8 @@ class _SaveAllButtonState extends State<_SaveAllButton> {
         (f) async => errors.add('${attachment.name}: ${f.message}'),
         (bytes) async {
           try {
-            await File('$directory/${attachment.name}').writeAsBytes(bytes);
+            await File('$directory/${_sanitizedFileName(attachment.name)}')
+                .writeAsBytes(bytes);
           } catch (e) {
             errors.add('${attachment.name}: $e');
           }
@@ -1808,7 +1837,7 @@ class _SaveAllButtonState extends State<_SaveAllButton> {
       await result.fold(
         (f) async => errors.add(attachment.name),
         (bytes) async {
-          final path = '${dir.path}/${attachment.name}';
+          final path = '${dir.path}/${_sanitizedFileName(attachment.name)}';
           await File(path).writeAsBytes(bytes);
           xFiles.add(XFile(path, mimeType: attachment.contentType));
         },
@@ -1899,12 +1928,13 @@ class _AttachmentChip extends StatefulWidget {
   const _AttachmentChip({
     required this.emailId,
     required this.attachment,
-    this.onPdfPreview,
+    this.onAttachmentPreview,
     this.isActive = false,
   });
   final String emailId;
   final EmailAttachment attachment;
-  final void Function(String path, String name, String attachmentId)? onPdfPreview;
+  final void Function(_AttachmentPreviewKind kind, String path, String name, String attachmentId)?
+      onAttachmentPreview;
   final bool isActive;
 
   @override
@@ -1912,18 +1942,28 @@ class _AttachmentChip extends StatefulWidget {
 }
 
 class _AttachmentChipState extends State<_AttachmentChip> {
+  static const _previewableImageExts = {
+    'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'
+  };
+
   bool _isLoading = false;
 
   bool get _isMobile =>
       defaultTargetPlatform == TargetPlatform.android ||
       defaultTargetPlatform == TargetPlatform.iOS;
 
-  bool get _isPdf {
+  _AttachmentPreviewKind? get _previewKind {
     final ct = widget.attachment.contentType.toLowerCase();
     final ext = widget.attachment.name.contains('.')
         ? widget.attachment.name.split('.').last.toLowerCase()
         : '';
-    return ct.contains('pdf') || ext == 'pdf';
+    if (ct.contains('pdf') || ext == 'pdf') return _AttachmentPreviewKind.pdf;
+    if (ct.contains('rfc822') || ext == 'eml') return _AttachmentPreviewKind.eml;
+    if ((ct.startsWith('image/') && !ct.contains('svg')) ||
+        _previewableImageExts.contains(ext)) {
+      return _AttachmentPreviewKind.image;
+    }
+    return null;
   }
 
   static IconData _iconFor(String contentType, String name) {
@@ -1932,6 +1972,7 @@ class _AttachmentChipState extends State<_AttachmentChip> {
         name.contains('.') ? name.split('.').last.toLowerCase() : '';
     if (ct.startsWith('image/')) { return Icons.image_rounded; }
     if (ct.contains('pdf') || ext == 'pdf') { return Icons.picture_as_pdf_rounded; }
+    if (ct.contains('rfc822') || ext == 'eml') { return Icons.mail_outline_rounded; }
     if (ct.contains('word') || ext == 'doc' || ext == 'docx') { return Icons.description_rounded; }
     if (ct.contains('excel') || ct.contains('spreadsheet') ||
         ext == 'xls' || ext == 'xlsx' || ext == 'csv') { return Icons.table_chart_rounded; }
@@ -1968,16 +2009,20 @@ class _AttachmentChipState extends State<_AttachmentChip> {
 
   Future<void> _open() => _withBytes((bytes) async {
         final dir = await getTemporaryDirectory();
-        final file = File('${dir.path}/${widget.attachment.name}');
+        final file = File(
+            '${dir.path}/${_sanitizedFileName(widget.attachment.name)}');
         await file.writeAsBytes(bytes);
         await OpenFile.open(file.path);
       });
 
-  Future<void> _previewPdf() => _withBytes((bytes) async {
+  Future<void> _previewAttachment(_AttachmentPreviewKind kind) =>
+      _withBytes((bytes) async {
         final dir = await getTemporaryDirectory();
-        final file = File('${dir.path}/${widget.attachment.name}');
+        final file = File(
+            '${dir.path}/${_sanitizedFileName(widget.attachment.name)}');
         await file.writeAsBytes(bytes);
-        widget.onPdfPreview?.call(
+        widget.onAttachmentPreview?.call(
+          kind,
           file.path,
           widget.attachment.name,
           widget.attachment.id,
@@ -1988,7 +2033,8 @@ class _AttachmentChipState extends State<_AttachmentChip> {
         if (_isMobile) {
           // Mobile: share sheet lets the user pick Files / Downloads
           final dir = await getTemporaryDirectory();
-          final tmp = File('${dir.path}/${widget.attachment.name}');
+          final tmp = File(
+              '${dir.path}/${_sanitizedFileName(widget.attachment.name)}');
           await tmp.writeAsBytes(bytes);
           await SharePlus.instance.share(ShareParams(
             files: [XFile(tmp.path, mimeType: widget.attachment.contentType)],
@@ -2007,9 +2053,13 @@ class _AttachmentChipState extends State<_AttachmentChip> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final isPdf = _isPdf;
+    final previewKind = _previewKind;
     return GestureDetector(
-      onTap: _isMobile ? _open : isPdf ? _previewPdf : null,
+      onTap: _isMobile
+          ? _open
+          : previewKind != null
+              ? () => _previewAttachment(previewKind)
+              : null,
       onDoubleTap: _isMobile ? null : _open,
       onLongPress: _isMobile ? _saveAs : null,
       onSecondaryTap: _isMobile ? null : _saveAs,
@@ -2132,42 +2182,218 @@ class _PdfPreviewState extends State<_PdfPreview> {
 
   @override
   Widget build(BuildContext context) {
-    final c = context.colors;
     final ctrl = _htmlController;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          child: Row(
-            children: [
-              Icon(Icons.picture_as_pdf_rounded, size: 14, color: c.textMuted),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  widget.fileName,
-                  style: TextStyle(
-                    color: c.textSecondary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: widget.onClose,
-                child: Icon(Icons.close_rounded, size: 16, color: c.textMuted),
-              ),
-            ],
-          ),
+        _PreviewHeader(
+          icon: Icons.picture_as_pdf_rounded,
+          fileName: widget.fileName,
+          onClose: widget.onClose,
         ),
-        Divider(height: 1, color: c.border),
+        Divider(height: 1, color: context.colors.border),
         Expanded(
           child: ctrl != null
               ? HtmlViewWidget(controller: ctrl)
               : const SizedBox.shrink(),
         ),
+      ],
+    );
+  }
+}
+
+class _PreviewHeader extends StatelessWidget {
+  const _PreviewHeader({
+    required this.icon,
+    required this.fileName,
+    required this.onClose,
+  });
+  final IconData icon;
+  final String fileName;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: c.textMuted),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              fileName,
+              style: TextStyle(
+                color: c.textSecondary,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: onClose,
+            child: Icon(Icons.close_rounded, size: 16, color: c.textMuted),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ImagePreview extends StatelessWidget {
+  const _ImagePreview({
+    super.key,
+    required this.filePath,
+    required this.fileName,
+    required this.onClose,
+  });
+  final String filePath;
+  final String fileName;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _PreviewHeader(
+          icon: Icons.image_rounded,
+          fileName: fileName,
+          onClose: onClose,
+        ),
+        Divider(height: 1, color: c.border),
+        Expanded(
+          child: ColoredBox(
+            color: c.surfacePanel,
+            child: InteractiveViewer(
+              minScale: 0.1,
+              maxScale: 6,
+              child: Center(
+                child: Image.file(
+                  File(filePath),
+                  errorBuilder: (context, error, stackTrace) => Text(
+                    'Could not preview image',
+                    style: TextStyle(color: c.textMuted, fontSize: 12),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _EmlPreview extends StatefulWidget {
+  const _EmlPreview({
+    super.key,
+    required this.filePath,
+    required this.fileName,
+    required this.onClose,
+  });
+  final String filePath;
+  final String fileName;
+  final VoidCallback onClose;
+
+  @override
+  State<_EmlPreview> createState() => _EmlPreviewState();
+}
+
+class _EmlPreviewState extends State<_EmlPreview> {
+  Email? _email;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final bytes = await File(widget.filePath).readAsBytes();
+      final email = sl<EmlParser>().parse(bytes, id: widget.filePath);
+      if (!mounted) return;
+      setState(() => _email = email);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = 'Could not open email: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final email = _email;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _PreviewHeader(
+          icon: Icons.mail_outline_rounded,
+          fileName: widget.fileName,
+          onClose: widget.onClose,
+        ),
+        Divider(height: 1, color: c.border),
+        Expanded(
+          child: _error != null
+              ? Center(
+                  child: Text(
+                    _error!,
+                    style: TextStyle(color: c.textMuted, fontSize: 12),
+                  ),
+                )
+              : email != null
+                  ? _EmlBodyView(email: email)
+                  : const Center(
+                      child: CircularProgressIndicator(
+                          strokeWidth: 1.5, color: AppColors.accent),
+                    ),
+        ),
+      ],
+    );
+  }
+}
+
+class _EmlBodyView extends StatelessWidget {
+  const _EmlBodyView({required this.email});
+  final Email email;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                email.subject,
+                style: TextStyle(
+                  color: c.textPrimary,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '${email.from.displayName} <${email.from.address}>  ·  '
+                '${formatEmailDateLong(email.receivedDateTime)}',
+                style: TextStyle(color: c.textTertiary, fontSize: 11),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+        Divider(height: 1, color: c.border),
+        Expanded(child: _EmailBody(email: email)),
       ],
     );
   }

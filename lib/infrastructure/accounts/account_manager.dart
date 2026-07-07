@@ -76,6 +76,14 @@ class AccountManager {
   // Graph host/auth as email.
   final Map<String, GraphApiDatasourceImpl> _directoryDatasourceCache = {};
 
+  // Lazily built and cached per IMAP account ID. Unlike the Graph/Gmail
+  // branches of buildEmailDatasourceForAccount (stateless HTTP clients — a
+  // fresh one each call is harmless), ImapDatasourceImpl holds a persistent
+  // ImapClient/TCP connection. Building a new instance on every poll leaked a
+  // connection per cycle with no disconnect(), eventually hitting the
+  // server's per-user connection cap.
+  final Map<String, ImapDatasourceImpl> _imapDatasourceCache = {};
+
   List<Account> get accounts => List.unmodifiable(_accounts);
   bool get hasAccounts => _accounts.isNotEmpty;
   int get activeIndex => _activeIndex;
@@ -286,6 +294,7 @@ class AccountManager {
     await _clearCredentials(_accounts[idx]);
     _contactsDatasourceCache.remove(accountId);
     _directoryDatasourceCache.remove(accountId);
+    await _imapDatasourceCache.remove(accountId)?.disconnect();
 
     final updated = [..._accounts]..removeAt(idx);
     _accounts = updated;
@@ -295,6 +304,10 @@ class AccountManager {
       _calendarDatasource = null;
       _contactsDatasourceCache.clear();
       _directoryDatasourceCache.clear();
+      for (final ds in _imapDatasourceCache.values) {
+        await ds.disconnect();
+      }
+      _imapDatasourceCache.clear();
       _authService = null;
     } else {
       _activeIndex = _activeIndex.clamp(0, _accounts.length - 1);
@@ -379,11 +392,15 @@ class AccountManager {
         ));
 
       case ImapAccount():
+        final cached = _imapDatasourceCache[account.id];
+        if (cached != null) return cached;
         final credStorage = ImapCredentialStorage(_secureStorage);
-        return ImapDatasourceImpl(
+        final ds = ImapDatasourceImpl(
           account: account,
           credentialStorage: credStorage,
         );
+        _imapDatasourceCache[account.id] = ds;
+        return ds;
     }
   }
 

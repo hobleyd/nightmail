@@ -7,6 +7,7 @@
 #include "flutter/generated_plugin_registrant.h"
 #include "flutter_window.h"
 #include "utils.h"
+#include "window_relay.h"
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
@@ -23,6 +24,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   DesktopMultiWindowSetWindowCreatedCallback([](void* controller) {
     auto* c = reinterpret_cast<flutter::FlutterViewController*>(controller);
     RegisterPlugins(c->engine());
+    RegisterCalendarRefreshChannel(c->engine()->messenger());
+    RegisterDraftsRefreshChannel(c->engine()->messenger());
   });
 
   flutter::DartProject project(L"data");

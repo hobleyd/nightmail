@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest.dart' as tz_data;
@@ -14,7 +15,7 @@ class NotificationService {
 
   // Singleton plugin instance shared across all calls.
   static final _localPlugin = FlutterLocalNotificationsPlugin();
-  static bool _localInitialized = false;
+  static Future<void>? _localInitFuture;
 
   // Linux: flutter_local_notifications doesn't support zonedSchedule on Linux,
   // so we use in-process Dart timers and call show() when they fire.
@@ -31,10 +32,15 @@ class NotificationService {
     }
   }
 
-  Future<void> _initLocalNotifications() async {
-    if (_localInitialized) return;
-    _localInitialized = true;
+  // Memoized as a Future (not a bool flag) so concurrent callers await the
+  // same in-flight initialization instead of racing ahead of it — on Windows
+  // the native plugin does COM/registry setup that can outlast the
+  // constructor's fire-and-forget call, so a bool flag let scheduleEventReminder
+  // call zonedSchedule before the plugin had actually finished initializing.
+  Future<void> _initLocalNotifications() =>
+      _localInitFuture ??= _doInitLocalNotifications();
 
+  Future<void> _doInitLocalNotifications() async {
     // timezone data is only needed for zonedSchedule (Android/iOS/Windows).
     if (!Platform.isLinux) {
       tz_data.initializeTimeZones();
@@ -92,16 +98,23 @@ class NotificationService {
     );
   }
 
-  /// Shows a local "new mail" alert. Used from the background mail-check
-  /// isolate (Android WorkManager / iOS BGTaskScheduler) — those platforms'
-  /// headless engines can reach flutter_local_notifications (it registers via
-  /// GeneratedPluginRegistrant), unlike this app's ad-hoc native badge
-  /// channel, which is only wired up on the foreground engine.
+  /// Shows a local "new mail" alert.
+  ///
+  /// Used from the background mail-check isolate on Android/iOS (WorkManager
+  /// / BGTaskScheduler) — those platforms' headless engines can reach
+  /// flutter_local_notifications (it registers via GeneratedPluginRegistrant),
+  /// unlike this app's ad-hoc native badge channel, which is only wired up on
+  /// the foreground engine. Also called from the foreground `MailPollerCubit`
+  /// on Windows/Linux, which have no OS-level badge equivalent to fall back on.
+  ///
+  /// macOS is not supported here: its reminders go through a bespoke
+  /// UNUserNotificationCenter channel (_macChannel) instead of this plugin,
+  /// which is never initialized on macOS.
   Future<void> showNewMailNotification({
     required String accountLabel,
     required int newCount,
   }) async {
-    if (!Platform.isAndroid && !Platform.isIOS) return;
+    if (Platform.isMacOS) return;
     await _initLocalNotifications();
     try {
       await _localPlugin.show(
@@ -117,9 +130,13 @@ class NotificationService {
             priority: Priority.high,
           ),
           iOS: DarwinNotificationDetails(sound: 'default'),
+          linux: LinuxNotificationDetails(),
+          windows: WindowsNotificationDetails(),
         ),
       );
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('NotificationService.showNewMailNotification failed: $e');
+    }
   }
 
   Future<bool> requestPermission() async {
@@ -202,7 +219,9 @@ class NotificationService {
         notificationDetails: _details(),
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
       );
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('NotificationService.scheduleEventReminder failed: $e');
+    }
   }
 
   void _scheduleLinux({

@@ -14,6 +14,7 @@ import '../../../domain/usecases/get_cached_folders.dart';
 import '../../../infrastructure/accounts/account.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
 import '../../../infrastructure/badge/badge_service.dart';
+import '../../../infrastructure/notifications/notification_service.dart';
 import 'mail_poller_state.dart';
 
 class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver {
@@ -23,11 +24,13 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     required BadgeService badgeService,
     required DeltaTokenDatasource database,
     required GetCachedFolders getCachedFolders,
+    required NotificationService notificationService,
   })  : _accountManager = accountManager,
         _appSettings = appSettings,
         _badgeService = badgeService,
         _database = database,
         _getCachedFolders = getCachedFolders,
+        _notificationService = notificationService,
         super(const MailPollerState(
           accountsWithNewMail: {},
           pollIntervalSeconds: AppSettings.defaultPollIntervalSeconds,
@@ -38,6 +41,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   final BadgeService _badgeService;
   final DeltaTokenDatasource _database;
   final GetCachedFolders _getCachedFolders;
+  final NotificationService _notificationService;
 
   Timer? _timer;
   bool _polling = false;
@@ -103,6 +107,12 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   Future<void> _poll() async {
     if (_polling || isClosed) return;
     _polling = true;
+    // Captured so we can notify only for accounts that newly gained unread
+    // mail *this cycle* — not ones already flagged from a previous poll, and
+    // not the very first poll, which just establishes the baseline from
+    // whatever unread mail already existed before NightMail was opened.
+    final wasInitialized = _initialized;
+    final previousNewMailAccounts = Set<String>.of(_newMailAccounts);
 
     try {
       final accounts = _accountManager.accounts;
@@ -274,6 +284,28 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
       }
     } finally {
       _polling = false;
+    }
+
+    // Windows/Linux have no OS-level badge/dock affordance for background
+    // accounts the way macOS (dock badge) and mobile (background isolate +
+    // WorkManager notification) do, so the foreground poller raises a toast
+    // itself here.
+    if (wasInitialized && (Platform.isWindows || Platform.isLinux)) {
+      final newlyFlagged = _newMailAccounts.difference(previousNewMailAccounts);
+      for (final accountId in newlyFlagged) {
+        Account? account;
+        for (final a in _accountManager.accounts) {
+          if (a.id == accountId) {
+            account = a;
+            break;
+          }
+        }
+        if (account == null) continue;
+        unawaited(_notificationService.showNewMailNotification(
+          accountLabel: account.emailAddress,
+          newCount: _latestPolledUnread[accountId] ?? 0,
+        ));
+      }
     }
   }
 

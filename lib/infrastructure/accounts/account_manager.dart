@@ -182,7 +182,6 @@ class AccountManager {
     if (_accounts.isNotEmpty) {
       _buildDatasourcesForActiveAccount();
       await _migrateLegacyTokenIfNeeded();
-      await _backfillActiveAccountEmailIfNeeded();
     }
   }
 

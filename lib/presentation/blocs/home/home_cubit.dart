@@ -53,6 +53,20 @@ class HomeCubit extends Cubit<HomeState> {
     emit(state.copyWith(selectedEmailId: emailId));
   }
 
+  /// Navigate to an email opened via a notification tap. On mobile this also
+  /// triggers the reading pane step transition in _MobileLayout.
+  void openEmailFromNotification(String emailId) {
+    emit(state.copyWith(
+      selectedEmailId: emailId,
+      view: HomeView.email,
+      notificationEmailId: emailId,
+    ));
+  }
+
+  void clearNotificationNavigation() {
+    emit(state.copyWith(clearNotificationNav: true));
+  }
+
   void clearEmail() {
     emit(state.copyWith(clearEmail: true));
   }
@@ -88,6 +102,7 @@ class HomeState extends Equatable {
     this.selectedEmailId,
     this.view = HomeView.email,
     this.accountLabel = '',
+    this.notificationEmailId,
   });
 
   final String? selectedFolderId;
@@ -97,12 +112,18 @@ class HomeState extends Equatable {
   /// Display name of the active account (shown in folder panel header).
   final String accountLabel;
 
+  /// Set transiently when a notification tap triggers email navigation.
+  /// _MobileLayout listens for this to advance to the reading pane step.
+  final String? notificationEmailId;
+
   HomeState copyWith({
     String? selectedFolderId,
     String? selectedEmailId,
     bool clearEmail = false,
     HomeView? view,
     String? accountLabel,
+    String? notificationEmailId,
+    bool clearNotificationNav = false,
   }) {
     return HomeState(
       selectedFolderId: selectedFolderId ?? this.selectedFolderId,
@@ -110,9 +131,12 @@ class HomeState extends Equatable {
           clearEmail ? null : (selectedEmailId ?? this.selectedEmailId),
       view: view ?? this.view,
       accountLabel: accountLabel ?? this.accountLabel,
+      notificationEmailId:
+          clearNotificationNav ? null : (notificationEmailId ?? this.notificationEmailId),
     );
   }
 
   @override
-  List<Object?> get props => [selectedFolderId, selectedEmailId, view, accountLabel];
+  List<Object?> get props =>
+      [selectedFolderId, selectedEmailId, view, accountLabel, notificationEmailId];
 }

@@ -197,6 +197,18 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                   activeInboxChanged = true;
                 } else if (hasNewUnread) {
                   if (_newMailAccounts.add(account.id)) changed = true;
+                  // Send one notification per new unread email (capped at 5).
+                  final newEmails =
+                      result.upserted.where((e) => !e.isRead).take(5);
+                  for (final email in newEmails) {
+                    unawaited(_notificationService.showEmailNotification(
+                      emailId: email.id,
+                      accountId: account.id,
+                      subject: email.subject,
+                      senderName: email.from.displayName,
+                      accountLabel: account.displayName,
+                    ));
+                  }
                 } else if (unreadCount == 0) {
                   if (_newMailAccounts.remove(account.id)) changed = true;
                 }
@@ -289,7 +301,9 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     // Windows/Linux have no OS-level badge/dock affordance for background
     // accounts the way macOS (dock badge) and mobile (background isolate +
     // WorkManager notification) do, so the foreground poller raises a toast
-    // itself here.
+    // itself here. Excludes MicrosoftAccount: once it has a delta token, the
+    // per-account loop above already calls showEmailNotification with actual
+    // message detail for it — this aggregate fallback would double-notify.
     if (wasInitialized && (Platform.isWindows || Platform.isLinux)) {
       final newlyFlagged = _newMailAccounts.difference(previousNewMailAccounts);
       for (final accountId in newlyFlagged) {
@@ -300,7 +314,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
             break;
           }
         }
-        if (account == null) continue;
+        if (account == null || account is MicrosoftAccount) continue;
         unawaited(_notificationService.showNewMailNotification(
           accountLabel: account.emailAddress,
           newCount: _latestPolledUnread[accountId] ?? 0,

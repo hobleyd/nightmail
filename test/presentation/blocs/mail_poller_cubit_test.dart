@@ -126,6 +126,13 @@ void main() {
       accountLabel: anyNamed('accountLabel'),
       newCount: anyNamed('newCount'),
     )).thenAnswer((_) async {});
+    when(mockNotificationService.showEmailNotification(
+      emailId: anyNamed('emailId'),
+      accountId: anyNamed('accountId'),
+      subject: anyNamed('subject'),
+      senderName: anyNamed('senderName'),
+      accountLabel: anyNamed('accountLabel'),
+    )).thenAnswer((_) async {});
   }
 
   setUp(() {

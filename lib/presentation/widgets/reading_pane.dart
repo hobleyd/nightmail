@@ -1546,24 +1546,55 @@ class _AnomalousFromRow extends StatelessWidget {
       value: '${email.from.displayName} <${email.from.address}>',
     );
 
-    if (highlightColor == null) return row;
+    void openCompose() {
+      ComposeWindowApp.open(
+        context,
+        mode: ComposeMode.newEmail,
+        draftEmail: Email(
+          id: '',
+          subject: '',
+          from: const EmailAddress(address: '', name: null),
+          toRecipients: [email.from],
+          ccRecipients: const [],
+          bodyPreview: '',
+          body: '',
+          bodyType: EmailBodyType.text,
+          isRead: true,
+          receivedDateTime: DateTime.now(),
+          importance: EmailImportance.normal,
+        ),
+      );
+    }
 
-    final highlighted = DecoratedBox(
-      decoration: BoxDecoration(
-        color: highlightColor!.withAlpha(60),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-        child: row,
-      ),
-    );
+    final Widget core;
+    if (highlightColor == null) {
+      core = GestureDetector(onTap: openCompose, child: row);
+    } else {
+      final highlighted = DecoratedBox(
+        decoration: BoxDecoration(
+          color: highlightColor!.withAlpha(60),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          child: row,
+        ),
+      );
 
-    if (anomalyMatches == null || anomalyMatches!.isEmpty) return highlighted;
+      if (anomalyMatches == null || anomalyMatches!.isEmpty) {
+        core = GestureDetector(onTap: openCompose, child: highlighted);
+      } else {
+        core = GestureDetector(
+          onTap: openCompose,
+          onSecondaryTapUp: (d) => _showMatchesMenu(context, d.globalPosition),
+          child: highlighted,
+        );
+      }
+    }
 
-    return GestureDetector(
-      onSecondaryTapUp: (d) => _showMatchesMenu(context, d.globalPosition),
-      child: highlighted,
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: core,
     );
   }
 }

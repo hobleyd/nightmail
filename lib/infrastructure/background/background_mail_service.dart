@@ -140,13 +140,32 @@ Future<void> _runBackgroundPoll() async {
       await folderLocalDs.clearFoldersForAccount(account.id);
       await folderLocalDs.cacheFolders(accountId: account.id, folders: toCache);
 
+      // Use totalItemCount to detect new arrivals: unreadItemCount alone fails
+      // when emails are read elsewhere AND new ones arrive simultaneously
+      // (net unread can decrease even though new mail landed).
       if (cachedInbox != null &&
-          freshInbox.unreadItemCount > cachedInbox.unreadItemCount) {
-        final delta = freshInbox.unreadItemCount - cachedInbox.unreadItemCount;
-        await notifications.showNewMailNotification(
-          accountLabel: account.displayName,
-          newCount: delta,
-        );
+          freshInbox.totalItemCount > cachedInbox.totalItemCount) {
+        final delta = freshInbox.totalItemCount - cachedInbox.totalItemCount;
+        // Fetch the actual new emails so we can send one notification per email.
+        // getEmails does NOT advance the shared delta token, so this is safe.
+        try {
+          final newEmails = await ds.getEmails(
+            folderId: freshInbox.id,
+            top: delta.clamp(1, 5),
+            orderBy: 'receivedDateTime desc',
+          );
+          for (final email in newEmails.where((e) => !e.isRead).take(5)) {
+            await notifications.showEmailNotification(
+              emailId: email.id,
+              accountId: account.id,
+              subject: email.subject,
+              senderName: email.from.displayName,
+              accountLabel: account.displayName,
+            );
+          }
+        } catch (_) {
+          // Fall back silently — the foreground poller will notify on next wake.
+        }
       }
     } catch (_) {
       // Silently skip accounts that fail; the foreground poller will retry.

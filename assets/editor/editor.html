@@ -115,6 +115,11 @@ body { display: flex; flex-direction: column; }
   cursor: crosshair;
 }
 
+#btn-format-painter {
+  font-size: 20px;
+  -webkit-text-stroke: 0.4px currentColor;
+}
+
 .editor {
   flex: 1;
   padding: 12px 16px;
@@ -148,6 +153,8 @@ body { display: flex; flex-direction: column; }
 </head>
 <body>
 <div class="toolbar" id="toolbar">
+  <button title="Format Painter — copy formatting, then apply it to the next selection" id="btn-format-painter" onmousedown="event.preventDefault(); toggleFormatPainter()">&#x1F58C;</button>
+  <span class="sep"></span>
   <button title="Bold" id="btn-bold" onmousedown="event.preventDefault(); fmt('bold')"><b>B</b></button>
   <button title="Italic" id="btn-italic" onmousedown="event.preventDefault(); fmt('italic')"><i>I</i></button>
   <button title="Underline" id="btn-underline" onmousedown="event.preventDefault(); fmt('underline')"><u>U</u></button>
@@ -172,8 +179,6 @@ body { display: flex; flex-direction: column; }
     <option value="36">36</option>
     <option value="48">48</option>
   </select>
-  <span class="sep"></span>
-  <button title="Format Painter — copy formatting, then apply it to the next selection" id="btn-format-painter" onmousedown="event.preventDefault(); toggleFormatPainter()">&#x1F58C;</button>
   <span class="sep"></span>
   <button title="Bullet list" onmousedown="event.preventDefault(); fmt('insertUnorderedList')">&#x2022;&#x2261;</button>
   <button title="Numbered list" onmousedown="event.preventDefault(); fmt('insertOrderedList')">1&#x2261;</button>

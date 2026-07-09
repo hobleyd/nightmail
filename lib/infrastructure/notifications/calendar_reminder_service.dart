@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import '../../data/datasources/local/reminder_schedule_local_datasource.dart';
 import '../accounts/account.dart';
 import '../accounts/account_manager.dart';
@@ -52,11 +54,17 @@ class CalendarReminderService {
     _reconciling = true;
     try {
       for (final account in _accountManager.accounts) {
+        debugPrint(
+            'CalendarReminderService: reconciling account ${account.id} (${account.runtimeType}) ${account.emailAddress}');
         try {
           await _reconcileAccount(account);
-        } catch (_) {
+          debugPrint(
+              'CalendarReminderService: reconcile OK for account ${account.id}');
+        } catch (e) {
           // Skip accounts that fail (auth error, network blip, calendar not
           // supported for this account type) — the next cycle retries.
+          debugPrint(
+              'CalendarReminderService: reconcile failed for account ${account.id}: $e');
         }
       }
     } finally {
@@ -76,7 +84,11 @@ class CalendarReminderService {
     final ds = account.id == _accountManager.activeAccount?.id
         ? _accountManager.calendarDatasource
         : _accountManager.buildCalendarDatasourceForAccount(account);
-    if (ds == null) return;
+    if (ds == null) {
+      debugPrint(
+          'CalendarReminderService: no calendar datasource for account ${account.id}, skipping');
+      return;
+    }
 
     final now = DateTime.now().toUtc();
     final events = await ds.getCalendarEvents(

@@ -45,7 +45,8 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       _defaultReminderMinutes = defaults;
       _defaultReminderFetchedAt = now;
       return defaults;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('GoogleCalendarDatasourceImpl: _getDefaultReminderMinutes failed: $e');
       return _defaultReminderMinutes ?? const [];
     }
   }

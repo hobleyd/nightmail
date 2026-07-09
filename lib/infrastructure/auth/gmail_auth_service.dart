@@ -39,6 +39,13 @@ class GmailAuthService implements AuthService {
     'email',
     'https://www.googleapis.com/auth/gmail.modify',
     'https://www.googleapis.com/auth/calendar.events',
+    // Read-only access to calendarList entries (calendarList.get), needed to
+    // resolve an event's reminders.useDefault into actual minutes — that
+    // value lives on the CalendarList resource, not the Events resource
+    // calendar.events grants access to. Without it, calendarList.get 403s
+    // and every event using the calendar's default reminder (i.e. any event
+    // without an explicit per-event override) silently gets no reminder.
+    'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
     'https://www.googleapis.com/auth/tasks',
     'https://www.googleapis.com/auth/contacts.readonly',
     'https://www.googleapis.com/auth/contacts.other.readonly',

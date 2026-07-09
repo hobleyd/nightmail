@@ -101,6 +101,20 @@ body { display: flex; flex-direction: column; }
   flex-shrink: 0;
 }
 
+.toolbar select {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--toolbar-border);
+  border-radius: 4px;
+  height: 26px;
+  font-size: 12px;
+  padding: 0 2px;
+}
+
+.editor.format-painter-active {
+  cursor: crosshair;
+}
+
 .editor {
   flex: 1;
   padding: 12px 16px;
@@ -143,6 +157,23 @@ body { display: flex; flex-direction: column; }
     <span class="color-letter">A</span>
     <span class="color-swatch" id="color-swatch"></span>
   </button>
+  <span class="sep"></span>
+  <select id="font-size-select" title="Font size">
+    <option value="">Size</option>
+    <option value="10">10</option>
+    <option value="12">12</option>
+    <option value="14">14</option>
+    <option value="16">16</option>
+    <option value="18">18</option>
+    <option value="20">20</option>
+    <option value="24">24</option>
+    <option value="28">28</option>
+    <option value="32">32</option>
+    <option value="36">36</option>
+    <option value="48">48</option>
+  </select>
+  <span class="sep"></span>
+  <button title="Format Painter — copy formatting, then apply it to the next selection" id="btn-format-painter" onmousedown="event.preventDefault(); toggleFormatPainter()">&#x1F58C;</button>
   <span class="sep"></span>
   <button title="Bullet list" onmousedown="event.preventDefault(); fmt('insertUnorderedList')">&#x2022;&#x2261;</button>
   <button title="Numbered list" onmousedown="event.preventDefault(); fmt('insertOrderedList')">1&#x2261;</button>
@@ -191,6 +222,125 @@ colorInput.addEventListener('input', function(e) {
   document.execCommand('foreColor', false, color);
   scheduleChange();
 });
+// --- Font size -------------------------------------------------------------
+// execCommand has no direct way to set an arbitrary pixel font size, so we
+// use the legacy 1-7 'fontSize' command with the out-of-range value 7 as a
+// marker: it always wraps the affected content (or, for a collapsed
+// selection, an empty node at the caret so future typing inherits it) in a
+// single predictable <font size="7"> element that we then rewrite in place.
+const fontSizeSelect = document.getElementById('font-size-select');
+
+function setFontSize(px) {
+  document.execCommand('fontSize', false, '7');
+  editor.querySelectorAll('font[size="7"]').forEach(function(f) {
+    f.removeAttribute('size');
+    f.style.fontSize = px + 'px';
+  });
+  scheduleChange();
+}
+
+function restoreSavedSelection() {
+  editor.focus();
+  if (savedRange && _rangeInEditor(savedRange)) {
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(savedRange);
+  }
+}
+
+// The <select> steals focus (and with it, the editor's selection) the moment
+// it's opened, so the caret/range must be captured beforehand and restored
+// before applying the size.
+fontSizeSelect.addEventListener('mousedown', function() {
+  saveSelection();
+});
+fontSizeSelect.addEventListener('change', function() {
+  const px = this.value;
+  restoreSavedSelection();
+  if (px) setFontSize(px);
+  this.blur();
+});
+
+function updateFontSizeSelect() {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  let node = sel.getRangeAt(0).startContainer;
+  if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
+  if (!node || !editor.contains(node)) return;
+  const size = Math.round(parseFloat(getComputedStyle(node).fontSize));
+  const match = Array.from(fontSizeSelect.options)
+      .find(function(o) { return parseInt(o.value, 10) === size; });
+  fontSizeSelect.value = match ? match.value : '';
+}
+
+// --- Format painter ----------------------------------------------------
+// Captures the formatting of the current selection, then applies it to
+// whatever the user selects next (one shot), like the "format painter" tool
+// in desktop word processors.
+let paintedFormat = null;
+
+function toggleFormatPainter() {
+  if (paintedFormat) {
+    cancelFormatPainter();
+    return;
+  }
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+  let node = sel.getRangeAt(0).startContainer;
+  if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
+  if (!node) return;
+
+  const cs = getComputedStyle(node);
+  paintedFormat = {
+    bold: parseInt(cs.fontWeight, 10) >= 600,
+    italic: cs.fontStyle === 'italic',
+    underline: cs.textDecorationLine.indexOf('underline') !== -1,
+    strike: cs.textDecorationLine.indexOf('line-through') !== -1,
+    color: cssColorToHex(cs.color),
+    fontSize: Math.round(parseFloat(cs.fontSize)),
+  };
+  document.getElementById('btn-format-painter').classList.add('active');
+  editor.classList.add('format-painter-active');
+}
+
+function cancelFormatPainter() {
+  paintedFormat = null;
+  document.getElementById('btn-format-painter').classList.remove('active');
+  editor.classList.remove('format-painter-active');
+}
+
+function applyPaintedFormat() {
+  if (!paintedFormat) return;
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+
+  document.execCommand('removeFormat', false, null);
+  if (paintedFormat.bold) document.execCommand('bold', false, null);
+  if (paintedFormat.italic) document.execCommand('italic', false, null);
+  if (paintedFormat.underline) document.execCommand('underline', false, null);
+  if (paintedFormat.strike) document.execCommand('strikeThrough', false, null);
+  if (paintedFormat.color) document.execCommand('foreColor', false, paintedFormat.color);
+  if (paintedFormat.fontSize) setFontSize(paintedFormat.fontSize);
+
+  cancelFormatPainter();
+  scheduleChange();
+}
+
+function _maybeApplyFormatPainter() {
+  if (!paintedFormat) return;
+  const sel = window.getSelection();
+  if (sel && !sel.isCollapsed && editor.contains(sel.anchorNode)) {
+    applyPaintedFormat();
+  }
+}
+editor.addEventListener('mouseup', _maybeApplyFormatPainter);
+editor.addEventListener('keyup', function(e) {
+  if (e.shiftKey) _maybeApplyFormatPainter();
+});
+editor.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape' && paintedFormat) cancelFormatPainter();
+});
+
 function requestLink() {
   _flutterNotify('onLinkRequest');
 }
@@ -460,6 +610,8 @@ function updateToolbarState() {
       colorInput.value = hex;
     }
   }
+
+  updateFontSizeSelect();
 }
 document.addEventListener('selectionchange', function() {
   if (toolbarUpdateScheduled) return;

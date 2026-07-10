@@ -29,6 +29,19 @@ static const char* kJsBridge = R"JS(
 )JS";
 
 // ---------------------------------------------------------------------------
+// Print signal — handles Ctrl-P and window.print() inside the web view
+// ---------------------------------------------------------------------------
+
+static gboolean on_print_requested(WebKitWebView* view,
+                                   WebKitPrintOperation*,
+                                   gpointer) {
+  WebKitPrintOperation* op = webkit_print_operation_new(view);
+  webkit_print_operation_run_dialog(op, nullptr);
+  g_object_unref(op);
+  return TRUE; // signal handled
+}
+
+// ---------------------------------------------------------------------------
 // Navigation policy — intercept http/https/mailto link clicks
 // ---------------------------------------------------------------------------
 
@@ -180,6 +193,10 @@ WebkitView::WebkitView(gint64 id_, GtkOverlay* overlay_,
   g_signal_connect(web_view, "decide-policy",
                    G_CALLBACK(on_decide_policy), this);
 
+  // Handle Ctrl-P / window.print() via the WebKit print signal.
+  g_signal_connect(web_view, "print",
+                   G_CALLBACK(on_print_requested), this);
+
   // Position this widget via the overlay's get-child-position signal.
   // The signal uses an accumulator that stops on the first TRUE return, so
   // each view's handler only fires for its own web_view widget.
@@ -295,6 +312,14 @@ void WebkitView::HandleMethod(FlMethodCall* method_call) {
     width  = static_cast<gint>(w);
     height = static_cast<gint>(h);
     UpdatePosition();
+    fl_method_call_respond_success(method_call, nullptr, nullptr);
+
+  } else if (strcmp(name, "printCurrent") == 0) {
+    if (web_view) {
+      WebKitPrintOperation* op = webkit_print_operation_new(web_view);
+      webkit_print_operation_run_dialog(op, nullptr);
+      g_object_unref(op);
+    }
     fl_method_call_respond_success(method_call, nullptr, nullptr);
 
   } else if (strcmp(name, "setVisible") == 0 &&

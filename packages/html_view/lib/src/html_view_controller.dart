@@ -72,6 +72,9 @@ class HtmlViewController {
     }
   }
 
+  Future<void> printCurrent() =>
+      _channel!.invokeMethod('printCurrent');
+
   Future<void> loadAsset(String assetKey) =>
       _channel!.invokeMethod('loadAsset', assetKey);
 

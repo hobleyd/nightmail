@@ -30,6 +30,7 @@ class WebKitView: NSObject, WKScriptMessageHandler, FlutterStreamHandler, WKNavi
   private let channel: FlutterMethodChannel
   private let eventChannel: FlutterEventChannel
   private var eventSink: FlutterEventSink?
+  private var printKeyMonitor: Any?
 
   // Logical-pixel position/size from Dart (AppKit uses points = logical pixels).
   private var posX: CGFloat = 0
@@ -68,6 +69,24 @@ class WebKitView: NSObject, WKScriptMessageHandler, FlutterStreamHandler, WKNavi
       self?.handleMethod(call, result: result)
     }
     eventChannel.setStreamHandler(self)
+
+    // Intercept Cmd-P when this webview is visible in the key window,
+    // even when the WKWebView itself has native keyboard focus.
+    printKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+      guard let self = self,
+            !self.webView.isHidden,
+            let win = self.webView.window,
+            win == NSApplication.shared.keyWindow,
+            event.modifierFlags.contains(.command),
+            event.charactersIgnoringModifiers == "p" else { return event }
+      if #available(macOS 11.0, *) {
+        let op = self.webView.printOperation(with: NSPrintInfo.shared)
+        op.showsPrintPanel = true
+        op.showsProgressPanel = true
+        op.runModal(for: win, delegate: nil, didRun: nil, contextInfo: nil)
+      }
+      return nil // consume — prevents double-firing with Flutter shortcuts
+    }
   }
 
   // MARK: - WKNavigationDelegate
@@ -179,6 +198,15 @@ class WebKitView: NSObject, WKScriptMessageHandler, FlutterStreamHandler, WKNavi
       webView.isHidden = !visible
       result(nil)
 
+    case "printCurrent":
+      if #available(macOS 11.0, *), let win = webView.window {
+        let op = webView.printOperation(with: NSPrintInfo.shared)
+        op.showsPrintPanel = true
+        op.showsProgressPanel = true
+        op.runModal(for: win, delegate: nil, didRun: nil, contextInfo: nil)
+      }
+      result(nil)
+
     case "focus":
       webView.window?.makeFirstResponder(webView)
       result(nil)
@@ -227,6 +255,10 @@ class WebKitView: NSObject, WKScriptMessageHandler, FlutterStreamHandler, WKNavi
   }
 
   func dispose() {
+    if let monitor = printKeyMonitor {
+      NSEvent.removeMonitor(monitor)
+      printKeyMonitor = nil
+    }
     channel.setMethodCallHandler(nil)
     eventChannel.setStreamHandler(nil)
     webView.configuration.userContentController.removeScriptMessageHandler(forName: "HtmlView")

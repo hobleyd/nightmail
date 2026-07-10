@@ -18,10 +18,12 @@ class HtmlBodyView extends StatefulWidget {
     required this.html,
     required this.inlineAttachments,
     required this.senderDomain,
+    this.onControllerReady,
   });
   final String html;
   final List<InlineAttachment> inlineAttachments;
   final String senderDomain;
+  final void Function(HtmlViewController)? onControllerReady;
 
   @override
   State<HtmlBodyView> createState() => _HtmlBodyViewState();
@@ -65,6 +67,7 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
       if (uri != null) unawaited(launchUrl(uri, mode: LaunchMode.externalApplication));
     });
     setState(() => _htmlController = ctrl);
+    widget.onControllerReady?.call(ctrl);
     unawaited(ctrl.loadHtml(_pendingHtml));
   }
 

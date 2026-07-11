@@ -33,6 +33,21 @@ final class CalendarEventCancelRequested extends CalendarBlocEvent {
   List<Object?> get props => [eventId];
 }
 
+final class CalendarEventCancelSeriesRequested extends CalendarBlocEvent {
+  const CalendarEventCancelSeriesRequested({
+    required this.eventId,
+    this.seriesMasterId,
+    required this.occurrenceStart,
+  });
+
+  final String eventId;
+  final String? seriesMasterId;
+  final DateTime occurrenceStart;
+
+  @override
+  List<Object?> get props => [eventId, seriesMasterId, occurrenceStart];
+}
+
 final class CalendarEventDeclineRequested extends CalendarBlocEvent {
   const CalendarEventDeclineRequested({required this.eventId});
   final String eventId;

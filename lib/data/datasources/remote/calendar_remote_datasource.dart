@@ -50,6 +50,12 @@ abstract interface class CalendarRemoteDatasource {
 
   Future<void> cancelCalendarEvent({required String eventId});
 
+  Future<void> cancelCalendarEventSeries({
+    required String eventId,
+    String? seriesMasterId,
+    required DateTime occurrenceStart,
+  });
+
   Future<void> declineCalendarEvent({
     required String eventId,
     String? userEmail,

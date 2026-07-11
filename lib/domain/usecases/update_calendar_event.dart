@@ -32,6 +32,7 @@ class UpdateCalendarEventParams extends Equatable {
     this.description,
     this.attendeeEmails = const [],
     this.recurrence,
+    this.isTeamsMeeting = false,
     this.reminderMinutes,
   });
 
@@ -47,6 +48,7 @@ class UpdateCalendarEventParams extends Equatable {
   final String? description;
   final List<String> attendeeEmails;
   final CalendarRecurrence? recurrence;
+  final bool isTeamsMeeting;
 
   /// Minutes before start to fire a reminder. Null means no reminder.
   final int? reminderMinutes;
@@ -63,6 +65,7 @@ class UpdateCalendarEventParams extends Equatable {
         description,
         attendeeEmails,
         recurrence,
+        isTeamsMeeting,
         reminderMinutes,
       ];
 }

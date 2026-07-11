@@ -1,6 +1,11 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../../../domain/usecases/cancel_calendar_event.dart';
+import '../../../domain/usecases/cancel_calendar_event.dart'
+    show
+        CancelCalendarEvent,
+        CancelCalendarEventParams,
+        CancelCalendarEventSeries,
+        CancelCalendarEventSeriesParams;
 import '../../../domain/usecases/decline_calendar_event.dart';
 import '../../../domain/usecases/get_calendar_events.dart';
 import '../../../domain/usecases/propose_new_time.dart';
@@ -14,6 +19,7 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
   CalendarBloc({
     required GetCalendarEvents getCalendarEvents,
     required CancelCalendarEvent cancelCalendarEvent,
+    required CancelCalendarEventSeries cancelCalendarEventSeries,
     required DeclineCalendarEvent declineCalendarEvent,
     required ProposeNewTime proposeNewTime,
     required UpdateCalendarEvent updateCalendarEvent,
@@ -21,6 +27,7 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
     required AccountManager accountManager,
   })  : _getCalendarEvents = getCalendarEvents,
         _cancelCalendarEvent = cancelCalendarEvent,
+        _cancelCalendarEventSeries = cancelCalendarEventSeries,
         _declineCalendarEvent = declineCalendarEvent,
         _proposeNewTime = proposeNewTime,
         _updateCalendarEvent = updateCalendarEvent,
@@ -30,6 +37,7 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
     on<CalendarWeekLoadRequested>(_onLoadRequested);
     on<CalendarWeekNavigated>(_onWeekNavigated);
     on<CalendarEventCancelRequested>(_onCancelRequested);
+    on<CalendarEventCancelSeriesRequested>(_onCancelSeriesRequested);
     on<CalendarEventDeclineRequested>(_onDeclineRequested);
     on<CalendarEventNewTimeProposed>(_onNewTimeProposed);
     on<CalendarEventRescheduleRequested>(_onRescheduleRequested);
@@ -41,6 +49,7 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
 
   final GetCalendarEvents _getCalendarEvents;
   final CancelCalendarEvent _cancelCalendarEvent;
+  final CancelCalendarEventSeries _cancelCalendarEventSeries;
   final DeclineCalendarEvent _declineCalendarEvent;
   final ProposeNewTime _proposeNewTime;
   final UpdateCalendarEvent _updateCalendarEvent;
@@ -70,6 +79,28 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
     final weekStart = state.weekStart;
     final result = await _cancelCalendarEvent(
       CancelCalendarEventParams(eventId: event.eventId),
+    );
+    result.fold(
+      (failure) => emit(CalendarError(weekStart: weekStart, message: failure.message)),
+      (_) {},
+    );
+    if (result.isRight()) {
+      await _cancelReminder(event.eventId);
+      await _fetchWeek(weekStart, emit);
+    }
+  }
+
+  Future<void> _onCancelSeriesRequested(
+    CalendarEventCancelSeriesRequested event,
+    Emitter<CalendarState> emit,
+  ) async {
+    final weekStart = state.weekStart;
+    final result = await _cancelCalendarEventSeries(
+      CancelCalendarEventSeriesParams(
+        eventId: event.eventId,
+        seriesMasterId: event.seriesMasterId,
+        occurrenceStart: event.occurrenceStart,
+      ),
     );
     result.fold(
       (failure) => emit(CalendarError(weekStart: weekStart, message: failure.message)),

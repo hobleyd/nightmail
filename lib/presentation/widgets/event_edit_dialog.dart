@@ -509,7 +509,14 @@ class _EventEditFormState extends State<EventEditForm> {
                               const SizedBox(width: 8),
                               _TeamsMeetingButton(
                                 active: _isTeamsMeeting,
-                                onToggle: (v) => setState(() => _isTeamsMeeting = v),
+                                onToggle: (v) {
+                                  setState(() => _isTeamsMeeting = v);
+                                  if (v && _locationController.text.trim().isEmpty) {
+                                    _locationController.text = 'Microsoft Teams Meeting';
+                                  } else if (!v && _locationController.text.trim() == 'Microsoft Teams Meeting') {
+                                    _locationController.text = '';
+                                  }
+                                },
                               ),
                             ],
                           ],

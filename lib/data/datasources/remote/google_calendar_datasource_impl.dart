@@ -67,7 +67,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
           'orderBy': 'startTime',
           'maxResults': 250,
           'fields':
-              'items(id,summary,start,end,description,location,status,organizer,attendees,hangoutLink,conferenceData,reminders)',
+              'items(id,summary,start,end,description,location,status,organizer,attendees,hangoutLink,conferenceData,reminders,recurringEventId)',
         },
       );
 
@@ -276,6 +276,59 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     } on DioException catch (e) {
       throw _mapException(e);
     }
+  }
+
+  @override
+  Future<void> cancelCalendarEventSeries({
+    required String eventId,
+    String? seriesMasterId,
+    required DateTime occurrenceStart,
+  }) async {
+    final masterId = seriesMasterId ?? eventId;
+    try {
+      // GET the series master to read the existing recurrence rules.
+      final masterResp = await _dio.get<Map<String, dynamic>>(
+        '/calendars/primary/events/$masterId',
+      );
+      final recurrenceList =
+          (masterResp.data?['recurrence'] as List<dynamic>?)?.cast<String>();
+      if (recurrenceList == null || recurrenceList.isEmpty) {
+        // Not a recurring event — delete the single event.
+        await _dio.delete<void>(
+          '/calendars/primary/events/$eventId',
+          queryParameters: {'sendUpdates': 'all'},
+        );
+        return;
+      }
+
+      // Set UNTIL to one second before the occurrence start, truncating the series.
+      final until = occurrenceStart.toUtc().subtract(const Duration(seconds: 1));
+      final updatedRecurrence = recurrenceList.map((rule) {
+        if (!rule.startsWith('RRULE:')) return rule;
+        var r = rule.replaceAll(RegExp(r';?UNTIL=[^;]*'), '');
+        r = r.replaceAll(RegExp(r';?COUNT=\d+'), '');
+        return '$r;UNTIL=${_formatRRuleUntil(until)}';
+      }).toList();
+
+      await _dio.patch<void>(
+        '/calendars/primary/events/$masterId',
+        data: {'recurrence': updatedRecurrence},
+        queryParameters: {'sendUpdates': 'all'},
+      );
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  String _formatRRuleUntil(DateTime dt) {
+    final utc = dt.toUtc();
+    final y = utc.year.toString().padLeft(4, '0');
+    final mo = utc.month.toString().padLeft(2, '0');
+    final d = utc.day.toString().padLeft(2, '0');
+    final h = utc.hour.toString().padLeft(2, '0');
+    final mi = utc.minute.toString().padLeft(2, '0');
+    final s = utc.second.toString().padLeft(2, '0');
+    return '${y}${mo}${d}T${h}${mi}${s}Z';
   }
 
   @override
@@ -528,6 +581,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       attendees: attendees,
       reminderMinutes:
           _parseReminderMinutes(json['reminders'], defaultReminderMinutes),
+      seriesMasterId: json['recurringEventId'] as String?,
     );
   }
 

@@ -350,6 +350,9 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       case "deleteEvent":
         let id = (call.arguments as? [String: Any])?["id"] as? String ?? ""
         self.handleDeleteEvent(id: id, result: result)
+      case "deleteEventSeries":
+        let id = (call.arguments as? [String: Any])?["id"] as? String ?? ""
+        self.handleDeleteEventSeries(id: id, result: result)
       case "deleteEventByUID":
         let uid = (call.arguments as? [String: Any])?["uid"] as? String ?? ""
         self.handleDeleteEventByUID(uid: uid, result: result)
@@ -474,6 +477,19 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     }
     do {
       try eventStore.remove(event, span: .thisEvent)
+      result(nil)
+    } catch {
+      result(FlutterError(code: "DELETE_ERROR", message: error.localizedDescription, details: nil))
+    }
+  }
+
+  private func handleDeleteEventSeries(id: String, result: @escaping FlutterResult) {
+    guard let event = eventStore.event(withIdentifier: id) else {
+      result(nil)  // already gone
+      return
+    }
+    do {
+      try eventStore.remove(event, span: .futureEvents)
       result(nil)
     } catch {
       result(FlutterError(code: "DELETE_ERROR", message: error.localizedDescription, details: nil))

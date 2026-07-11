@@ -53,6 +53,12 @@ abstract interface class CalendarRepository {
     required String eventId,
   });
 
+  Future<Either<Failure, void>> cancelCalendarEventSeries({
+    required String eventId,
+    String? seriesMasterId,
+    required DateTime occurrenceStart,
+  });
+
   Future<Either<Failure, void>> declineCalendarEvent({
     required String eventId,
   });

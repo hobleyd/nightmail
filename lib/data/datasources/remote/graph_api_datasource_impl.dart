@@ -316,7 +316,7 @@ class GraphApiDatasourceImpl
           'startDateTime': startDateTime.toUtc().toIso8601String(),
           'endDateTime': endDateTime.toUtc().toIso8601String(),
           '\$select':
-              'id,subject,start,end,isAllDay,location,onlineMeeting,bodyPreview,showAs,isOrganizer,attendees,recurrence,isReminderOn,reminderMinutesBeforeStart',
+              'id,subject,start,end,isAllDay,location,onlineMeeting,bodyPreview,showAs,isOrganizer,attendees,recurrence,isReminderOn,reminderMinutesBeforeStart,seriesMasterId',
           '\$top': 100,
         },
         options: Options(
@@ -384,6 +384,7 @@ class GraphApiDatasourceImpl
         description: params.description,
         attendeeEmails: params.attendeeEmails,
         recurrence: params.recurrence,
+        isTeamsMeeting: params.isTeamsMeeting,
         reminderMinutes: params.reminderMinutes,
       );
 
@@ -717,6 +718,28 @@ class GraphApiDatasourceImpl
   }
 
   @override
+  Future<void> cancelCalendarEventSeries({
+    required String eventId,
+    String? seriesMasterId,
+    required DateTime occurrenceStart,
+  }) async {
+    // Graph API has no "cancel this and future" primitive that sends a proper
+    // cancellation notice. PATCH-ing the recurrence end-date sends an Exchange
+    // update, which recipients receive as a new invitation — not a cancellation.
+    // Cancelling the series master via POST /cancel sends the correct
+    // cancellation message to all attendees.
+    final masterId = seriesMasterId ?? eventId;
+    try {
+      await _dio.post<void>(
+        '/me/events/$masterId/cancel',
+        data: {'comment': ''},
+      );
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
   Future<void> declineCalendarEvent({
     required String eventId,
     String? userEmail,
@@ -787,6 +810,7 @@ class GraphApiDatasourceImpl
       'isReminderOn': reminderMinutes != null,
       if (reminderMinutes != null) 'reminderMinutesBeforeStart': reminderMinutes,
       if (isTeamsMeeting) 'isOnlineMeeting': true,
+      if (isTeamsMeeting) 'onlineMeetingProvider': 'teamsForBusiness',
     };
 
     if (description != null && description.isNotEmpty) {

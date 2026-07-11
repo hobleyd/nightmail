@@ -17,6 +17,7 @@ class CalendarEventModel extends CalendarEvent {
     super.attendees,
     super.recurrence,
     super.reminderMinutes,
+    super.seriesMasterId,
   });
 
   factory CalendarEventModel.fromJson(Map<String, dynamic> json) {
@@ -39,6 +40,7 @@ class CalendarEventModel extends CalendarEvent {
       reminderMinutes: (json['isReminderOn'] as bool? ?? false)
           ? json['reminderMinutesBeforeStart'] as int?
           : null,
+      seriesMasterId: json['seriesMasterId'] as String?,
     );
   }
 

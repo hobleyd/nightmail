@@ -253,6 +253,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => RemoveCancelledMeeting(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => CancelMeetingFromEmail(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => CancelCalendarEvent(sl<CalendarRepository>()));
+  sl.registerLazySingleton(() => CancelCalendarEventSeries(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => DeclineCalendarEvent(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => ProposeNewTime(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => ProposeNewTimeFromEmail(sl<CalendarRepository>()));
@@ -336,6 +337,7 @@ Future<void> configureDependencies() async {
     () => CalendarBloc(
           getCalendarEvents: sl<GetCalendarEvents>(),
           cancelCalendarEvent: sl<CancelCalendarEvent>(),
+          cancelCalendarEventSeries: sl<CancelCalendarEventSeries>(),
           declineCalendarEvent: sl<DeclineCalendarEvent>(),
           proposeNewTime: sl<ProposeNewTime>(),
           updateCalendarEvent: sl<UpdateCalendarEvent>(),

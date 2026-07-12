@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../domain/usecases/cancel_calendar_event.dart'
@@ -56,6 +57,13 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
   final NotificationService _notificationService;
   final AccountManager _accountManager;
 
+  static const _calendarRefreshChannel =
+      MethodChannel('au.com.sharpblue.nightmail/calendar_refresh');
+
+  Future<void> _notifyOtherWindows() async {
+    await _calendarRefreshChannel.invokeMethod('notifyEventSaved');
+  }
+
   Future<void> _onLoadRequested(
     CalendarWeekLoadRequested event,
     Emitter<CalendarState> emit,
@@ -86,6 +94,7 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
     );
     if (result.isRight()) {
       await _cancelReminder(event.eventId);
+      await _notifyOtherWindows();
       await _fetchWeek(weekStart, emit);
     }
   }
@@ -108,6 +117,7 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
     );
     if (result.isRight()) {
       await _cancelReminder(event.eventId);
+      await _notifyOtherWindows();
       await _fetchWeek(weekStart, emit);
     }
   }
@@ -126,6 +136,7 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
     );
     if (result.isRight()) {
       await _cancelReminder(event.eventId);
+      await _notifyOtherWindows();
       await _fetchWeek(weekStart, emit);
     }
   }
@@ -148,7 +159,10 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
       (failure) => emit(CalendarError(weekStart: weekStart, message: failure.message)),
       (_) {},
     );
-    if (result.isRight()) await _fetchWeek(weekStart, emit);
+    if (result.isRight()) {
+      await _notifyOtherWindows();
+      await _fetchWeek(weekStart, emit);
+    }
   }
 
   Future<void> _onRescheduleRequested(
@@ -183,7 +197,10 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
       (failure) => emit(CalendarError(weekStart: weekStart, message: failure.message)),
       (_) {},
     );
-    if (result.isRight()) await _fetchWeek(weekStart, emit);
+    if (result.isRight()) {
+      await _notifyOtherWindows();
+      await _fetchWeek(weekStart, emit);
+    }
   }
 
   void _onSelectionToggled(
@@ -235,6 +252,7 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
       }
       await _cancelReminder(e.id);
     }
+    await _notifyOtherWindows();
     await _fetchWeek(weekStart, emit);
   }
 

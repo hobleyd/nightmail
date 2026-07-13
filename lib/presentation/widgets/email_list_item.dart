@@ -20,6 +20,8 @@ class EmailListItem extends StatefulWidget {
     this.isDesktop = true,
     this.onLongPress,
     this.onDoubleTap,
+    this.flagFocusNode,
+    this.deleteFocusNode,
   });
 
   final Email email;
@@ -34,6 +36,8 @@ class EmailListItem extends StatefulWidget {
   final VoidCallback onDelete;
   final void Function(DateTime? dueDate) onFlag;
   final double indent;
+  final FocusNode? flagFocusNode;
+  final FocusNode? deleteFocusNode;
 
   @override
   State<EmailListItem> createState() => _EmailListItemState();
@@ -41,6 +45,15 @@ class EmailListItem extends StatefulWidget {
 
 class _EmailListItemState extends State<EmailListItem> {
   bool _isHovered = false;
+  late final FocusNode _localFlagFn = FocusNode(skipTraversal: true);
+  late final FocusNode _localDeleteFn = FocusNode(skipTraversal: true);
+
+  @override
+  void dispose() {
+    _localFlagFn.dispose();
+    _localDeleteFn.dispose();
+    super.dispose();
+  }
 
   // When the from address is empty (e.g. unsent drafts from Graph API), fall
   // back to showing the recipients so the Drafts list is useful.
@@ -192,6 +205,7 @@ class _EmailListItemState extends State<EmailListItem> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     FlagIconButton(
+                      focusNode: widget.flagFocusNode ?? _localFlagFn,
                       color: c.textMuted,
                       onTap: () => widget.onFlag(null),
                       onSchedule: (date) => widget.onFlag(date),
@@ -200,6 +214,7 @@ class _EmailListItemState extends State<EmailListItem> {
                     _ActionIcon(
                       icon: Icons.delete_outline_rounded,
                       color: c.textMuted,
+                      focusNode: widget.deleteFocusNode ?? _localDeleteFn,
                       onTap: widget.onDelete,
                     ),
                   ],
@@ -218,15 +233,18 @@ class _ActionIcon extends StatelessWidget {
     required this.icon,
     required this.color,
     required this.onTap,
+    this.focusNode,
   });
 
   final IconData icon;
   final Color color;
   final VoidCallback onTap;
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
     return IconButton(
+      focusNode: focusNode,
       icon: Icon(icon, size: 15, color: color),
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(minWidth: 28, minHeight: 28),

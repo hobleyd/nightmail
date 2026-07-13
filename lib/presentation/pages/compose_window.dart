@@ -9,6 +9,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../../core/platform/window_utils.dart';
 import '../../core/settings/app_settings.dart';
+import '../../core/signature/signature_merge_engine.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_address.dart';
@@ -166,6 +167,7 @@ class _ComposeWindowPage extends StatefulWidget {
 
 class _ComposeWindowPageState extends State<_ComposeWindowPage> {
   EmailBodyType _defaultComposeFormat = AppSettings.defaultComposeFormat;
+  String _signatureHtml = '';
 
   @override
   void initState() {
@@ -173,6 +175,11 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage> {
     sl<AppSettings>().loadDefaultComposeFormat().then((format) {
       if (mounted) setState(() => _defaultComposeFormat = format);
     });
+    final signatureAccount = sl<AccountManager>().activeAccount;
+    if (signatureAccount != null) {
+      _signatureHtml = SignatureMergeEngine.merge(
+          signatureAccount.signatureHtml, signatureAccount);
+    }
     // The compose window is a separate engine. If the account email wasn't
     // persisted (legacy migration), backfill it now and rebuild once done.
     final account = sl<AccountManager>().activeAccount;
@@ -268,8 +275,8 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage> {
     final account = sl<AccountManager>().activeAccount;
     final fromAddress = account == null
         ? ''
-        : account.displayName.isNotEmpty
-            ? '${account.displayName} <${account.emailAddress}>'
+        : account.senderName.isNotEmpty
+            ? '${account.senderName} <${account.emailAddress}>'
             : account.emailAddress;
     final accountId = account?.id;
     final accountDomain = _domainOf(account?.emailAddress);
@@ -298,10 +305,12 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage> {
             fromAddress: fromAddress,
             accountId: accountId,
             accountDomain: accountDomain,
+            accounts: sl<AccountManager>().accounts,
             scrollable: true,
             existingDraftId: widget.arguments['existingDraftId'] as String?,
             onTitleChanged: (title) => windowManager.setTitle(title),
             defaultComposeFormat: _defaultComposeFormat,
+            signatureHtml: _signatureHtml,
           ),
         ),
       ),
@@ -341,6 +350,7 @@ class _MobileComposePage extends StatefulWidget {
 
 class _MobileComposePageState extends State<_MobileComposePage> {
   EmailBodyType _defaultComposeFormat = AppSettings.defaultComposeFormat;
+  String _signatureHtml = '';
 
   @override
   void initState() {
@@ -348,6 +358,11 @@ class _MobileComposePageState extends State<_MobileComposePage> {
     sl<AppSettings>().loadDefaultComposeFormat().then((format) {
       if (mounted) setState(() => _defaultComposeFormat = format);
     });
+    final signatureAccount = sl<AccountManager>().activeAccount;
+    if (signatureAccount != null) {
+      _signatureHtml = SignatureMergeEngine.merge(
+          signatureAccount.signatureHtml, signatureAccount);
+    }
   }
 
   static String? _domainOf(String? email) {
@@ -363,8 +378,8 @@ class _MobileComposePageState extends State<_MobileComposePage> {
     final account = sl<AccountManager>().activeAccount;
     final fromAddress = account == null
         ? ''
-        : account.displayName.isNotEmpty
-            ? '${account.displayName} <${account.emailAddress}>'
+        : account.senderName.isNotEmpty
+            ? '${account.senderName} <${account.emailAddress}>'
             : account.emailAddress;
 
     return BlocProvider(
@@ -397,9 +412,11 @@ class _MobileComposePageState extends State<_MobileComposePage> {
               fromAddress: fromAddress,
               accountId: account?.id,
               accountDomain: _domainOf(account?.emailAddress),
+              accounts: sl<AccountManager>().accounts,
               scrollable: true,
               existingDraftId: widget.existingDraftId,
               defaultComposeFormat: _defaultComposeFormat,
+              signatureHtml: _signatureHtml,
             ),
           ),
         ),

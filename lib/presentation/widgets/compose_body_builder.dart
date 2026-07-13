@@ -13,14 +13,18 @@ class ComposeBodyBuilder {
     required Email? originalEmail,
     required Email? draftEmail,
     required ComposeMode mode,
+    String signature = '',
   }) {
     if (draftEmail != null) {
       return draftEmail.bodyType == EmailBodyType.html
           ? stripHtml(draftEmail.body)
           : draftEmail.body;
     }
+    // A leading blank line above the signature gives the cursor somewhere to
+    // land (offset 0) that isn't inside the signature text itself.
+    final sigBlock = signature.isEmpty ? '' : '\n\n$signature';
     final email = originalEmail;
-    if (email == null) return '';
+    if (email == null) return sigBlock;
 
     final from = formatAddress(email.from);
 
@@ -30,7 +34,7 @@ class ComposeBodyBuilder {
           : email.body;
       final to = formatAddressList(email.toRecipients);
       final cc = formatAddressList(email.ccRecipients);
-      return '\n\n$_forwardSeparator\n'
+      return '$sigBlock\n\n$_forwardSeparator\n'
           'From: $from\n'
           '${to.isNotEmpty ? 'To: $to\n' : ''}'
           '${cc.isNotEmpty ? 'Cc: $cc\n' : ''}'
@@ -40,7 +44,7 @@ class ComposeBodyBuilder {
     }
 
     if (mode != ComposeMode.reply && mode != ComposeMode.replyAll) {
-      return '';
+      return sigBlock;
     }
 
     final to = formatAddressList(email.toRecipients);
@@ -50,13 +54,13 @@ class ComposeBodyBuilder {
         '${cc.isNotEmpty ? 'Cc: $cc\n' : ''}';
     if (email.bodyType == EmailBodyType.html) {
       final bodyText = stripHtml(email.body);
-      return '\n\n---\n\n$header\n$bodyText';
+      return '$sigBlock\n\n---\n\n$header\n$bodyText';
     } else {
       final quoted = email.body
           .split('\n')
           .map((line) => '> $line')
           .join('\n');
-      return '\n\n$header$quoted';
+      return '$sigBlock\n\n$header$quoted';
     }
   }
 
@@ -64,14 +68,19 @@ class ComposeBodyBuilder {
     required Email? originalEmail,
     required Email? draftEmail,
     required ComposeMode mode,
+    String signature = '',
   }) {
     if (draftEmail != null) {
       return draftEmail.bodyType == EmailBodyType.html
           ? draftEmail.body
           : plainToHtml(draftEmail.body);
     }
+    // A leading blank div above the signature gives the cursor somewhere to
+    // land (setContent always places the caret at the very start) that isn't
+    // inside the signature itself.
+    final sigBlock = signature.isEmpty ? '' : '<div><br></div>$signature';
     final email = originalEmail;
-    if (email == null) return '';
+    if (email == null) return sigBlock;
 
     final from = formatAddress(email.from);
     final dateStr = formatDate(email.receivedDateTime);
@@ -86,7 +95,8 @@ class ComposeBodyBuilder {
       final fromHeaderEsc = const HtmlEscape().convert(from);
       final toEsc = const HtmlEscape().convert(formatAddressList(email.toRecipients));
       final ccEsc = const HtmlEscape().convert(formatAddressList(email.ccRecipients));
-      return '<div><br></div>'
+      return '$sigBlock'
+          '<div><br></div>'
           '<div>---------- Forwarded message ---------</div>'
           '<div>From: $fromHeaderEsc</div>'
           '${toEsc.isNotEmpty ? '<div>To: $toEsc</div>' : ''}'
@@ -99,7 +109,7 @@ class ComposeBodyBuilder {
     }
 
     if (mode != ComposeMode.reply && mode != ComposeMode.replyAll) {
-      return '';
+      return sigBlock;
     }
 
     final htmlBody = email.bodyType == EmailBodyType.html
@@ -108,7 +118,8 @@ class ComposeBodyBuilder {
 
     final toEsc = const HtmlEscape().convert(formatAddressList(email.toRecipients));
     final ccEsc = const HtmlEscape().convert(formatAddressList(email.ccRecipients));
-    return '<div><br></div>'
+    return '$sigBlock'
+        '<div><br></div>'
         '<div>---------- Original Message ----------</div>'
         '<div>From: $fromEsc</div>'
         '${toEsc.isNotEmpty ? '<div>To: $toEsc</div>' : ''}'

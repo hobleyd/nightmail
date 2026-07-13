@@ -168,6 +168,39 @@ class AccountManager {
     return _authService!;
   }
 
+  /// Best-effort fetch of the account holder's own profile fields (name, job
+  /// title, phone numbers) from the account's directory API, to prefill the
+  /// Settings "Profile" section. Returns null for IMAP accounts, an unknown
+  /// account ID, or if the underlying API call fails (e.g. scope not granted).
+  Future<
+      ({
+        String firstName,
+        String lastName,
+        String jobTitle,
+        String phone,
+        String mobile
+      })?> fetchOwnProfileFields(String accountId) async {
+    final account = _accounts.cast<Account?>().firstWhere(
+      (a) => a?.id == accountId,
+      orElse: () => null,
+    );
+    try {
+      switch (account) {
+        case MicrosoftAccount():
+          return await directoryDatasourceForAccount(accountId)
+              ?.fetchOwnSignatureProfile();
+        case GmailAccount():
+          return await contactsDatasourceForAccount(accountId)
+              ?.fetchOwnSignatureProfile();
+        case ImapAccount():
+        case null:
+          return null;
+      }
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Load persisted accounts and run legacy token migration if needed.
   Future<void> initialize() async {
     await _loadAndMigrateClientIds();
@@ -385,10 +418,12 @@ class AccountManager {
           tokenStorage: tokenStorage,
         );
         return GmailDatasourceImpl(
-            client: GmailHttpClient(
-          authService: authSvc,
-          onAuthFailure: () => _authFailureController.add(account.id),
-        ));
+          client: GmailHttpClient(
+            authService: authSvc,
+            onAuthFailure: () => _authFailureController.add(account.id),
+          ),
+          displayName: account.senderName,
+        );
 
       case ImapAccount():
         final cached = _imapDatasourceCache[account.id];
@@ -492,7 +527,10 @@ class AccountManager {
           onAuthFailure: onGmailAuthFailure,
         );
         _authService = authSvc;
-        _emailDatasource = GmailDatasourceImpl(client: gmailClient);
+        _emailDatasource = GmailDatasourceImpl(
+          client: gmailClient,
+          displayName: account.senderName,
+        );
         _calendarDatasource =
             GoogleCalendarDatasourceImpl(client: calendarClient);
         _tasksDatasource = GoogleTasksDatasourceImpl(client: tasksClient);

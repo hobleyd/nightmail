@@ -11,7 +11,9 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../injection_container.dart';
 import '../../core/settings/app_settings.dart';
+import '../../core/signature/signature_merge_engine.dart';
 import '../../core/theme/app_colors.dart';
+import '../../infrastructure/accounts/account.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_attachment.dart';
 import '../../domain/entities/local_attachment.dart';
@@ -27,6 +29,7 @@ import '../blocs/compose/compose_event.dart';
 import '../blocs/compose/compose_state.dart';
 import 'compose_body_builder.dart';
 import 'html_email_editor.dart';
+import 'insert_link_dialog.dart';
 import 'recipient_input_field.dart';
 
 class ComposeDialog extends StatelessWidget {
@@ -38,7 +41,9 @@ class ComposeDialog extends StatelessWidget {
     required this.fromAddress,
     this.accountId,
     this.accountDomain,
+    this.accounts = const [],
     required this.defaultComposeFormat,
+    this.signatureHtml = '',
   });
 
   final ComposeMode mode;
@@ -47,7 +52,9 @@ class ComposeDialog extends StatelessWidget {
   final String fromAddress;
   final String? accountId;
   final String? accountDomain;
+  final List<Account> accounts;
   final EmailBodyType defaultComposeFormat;
+  final String signatureHtml;
 
   static Future<void> show(
     BuildContext context, {
@@ -59,7 +66,7 @@ class ComposeDialog extends StatelessWidget {
     final fromAddress = accountState is AccountsLoaded
         ? () {
             final account = accountState.activeAccount;
-            final name = account.displayName;
+            final name = account.senderName;
             final email = account.emailAddress;
             return name.isNotEmpty ? '$name <$email>' : email;
           }()
@@ -69,7 +76,13 @@ class ComposeDialog extends StatelessWidget {
     final accountDomain = accountState is AccountsLoaded
         ? _domainOf(accountState.activeAccount.emailAddress)
         : null;
+    final accounts =
+        accountState is AccountsLoaded ? accountState.accounts : const <Account>[];
     final defaultFormat = await sl<AppSettings>().loadDefaultComposeFormat();
+    final signatureHtml = accountState is AccountsLoaded
+        ? SignatureMergeEngine.merge(
+            accountState.activeAccount.signatureHtml, accountState.activeAccount)
+        : '';
     if (!context.mounted) return;
     return showDialog<void>(
       context: context,
@@ -83,7 +96,9 @@ class ComposeDialog extends StatelessWidget {
           fromAddress: fromAddress,
           accountId: accountId,
           accountDomain: accountDomain,
+          accounts: accounts,
           defaultComposeFormat: defaultFormat,
+          signatureHtml: signatureHtml,
         ),
       ),
     );
@@ -122,7 +137,9 @@ class ComposeDialog extends StatelessWidget {
           fromAddress: fromAddress,
           accountId: accountId,
           accountDomain: accountDomain,
+          accounts: accounts,
           defaultComposeFormat: defaultComposeFormat,
+          signatureHtml: signatureHtml,
         ),
       ),
     );
@@ -145,10 +162,12 @@ class ComposeForm extends StatefulWidget {
     required this.fromAddress,
     this.accountId,
     this.accountDomain,
+    this.accounts = const [],
     this.scrollable = false,
     this.existingDraftId,
     this.onTitleChanged,
     required this.defaultComposeFormat,
+    this.signatureHtml = '',
   });
 
   final ComposeMode mode;
@@ -158,10 +177,12 @@ class ComposeForm extends StatefulWidget {
   final String fromAddress;
   final String? accountId;
   final String? accountDomain;
+  final List<Account> accounts;
   final bool scrollable;
   final String? existingDraftId;
   final ValueChanged<String>? onTitleChanged;
   final EmailBodyType defaultComposeFormat;
+  final String signatureHtml;
 
   @override
   State<ComposeForm> createState() => _ComposeFormState();
@@ -172,7 +193,7 @@ class _ComposeFormState extends State<ComposeForm> {
   late List<String> _ccRecipients;
   final _toFieldKey = GlobalKey<RecipientInputFieldState>();
   final _ccFieldKey = GlobalKey<RecipientInputFieldState>();
-  late final TextEditingController _fromController;
+  late String? _selectedAccountId;
   late final TextEditingController _subjectController;
   late final TextEditingController _bodyController;
   final FocusNode _subjectFocus = FocusNode();
@@ -221,7 +242,8 @@ class _ComposeFormState extends State<ComposeForm> {
     _aiCubit = sl<AiComposeCubit>();
     _toRecipients = _parseAddresses(_initialTo());
     _ccRecipients = _parseAddresses(_initialCc());
-    _fromController = TextEditingController(text: widget.fromAddress);
+    _selectedAccountId = widget.accountId ??
+        (widget.accounts.isNotEmpty ? widget.accounts.first.id : null);
     _subjectController = TextEditingController(text: _initialSubject());
 
     _bodyType = _determineInitialBodyType();
@@ -257,10 +279,14 @@ class _ComposeFormState extends State<ComposeForm> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final isReply = widget.mode == ComposeMode.reply ||
           widget.mode == ComposeMode.replyAll;
+      // Leading quoted text and/or a signature put the cursor's natural home
+      // at the very start of the body, not wherever the controller defaults to.
+      if (_bodyType == EmailBodyType.text && _bodyController.text.isNotEmpty) {
+        _bodyController.selection = const TextSelection.collapsed(offset: 0);
+      }
       if (isReply) {
         if (_bodyType == EmailBodyType.text) {
           _bodyFocus.requestFocus();
-          _bodyController.selection = const TextSelection.collapsed(offset: 0);
         }
         // Else: the HTML editor autofocuses itself once its content finishes
         // loading (see HtmlEmailEditor.autofocus in _buildBodyEditor).
@@ -274,12 +300,12 @@ class _ComposeFormState extends State<ComposeForm> {
   @override
   void didUpdateWidget(ComposeForm oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // If the parent resolved the from-address after initial build (e.g. account
-    // email backfill), push the updated value — but only if the user hasn't
-    // edited the field themselves.
-    if (widget.fromAddress != oldWidget.fromAddress &&
-        _fromController.text == oldWidget.fromAddress) {
-      _fromController.text = widget.fromAddress;
+    // If the parent resolved the initial account after first build (e.g.
+    // account email backfill), push the updated default — but only if the
+    // user hasn't already picked a different account themselves.
+    if (widget.accountId != oldWidget.accountId &&
+        _selectedAccountId == oldWidget.accountId) {
+      _selectedAccountId = widget.accountId;
     }
   }
 
@@ -304,12 +330,14 @@ class _ComposeFormState extends State<ComposeForm> {
         originalEmail: widget.originalEmail,
         draftEmail: widget.draftEmail,
         mode: widget.mode,
+        signature: ComposeBodyBuilder.stripHtml(widget.signatureHtml),
       );
 
   String _buildInitialHtmlBody() => ComposeBodyBuilder.buildInitialHtmlBody(
         originalEmail: widget.originalEmail,
         draftEmail: widget.draftEmail,
         mode: widget.mode,
+        signature: widget.signatureHtml,
       );
 
   List<String> _parseAddresses(String text) {
@@ -320,6 +348,18 @@ class _ComposeFormState extends State<ComposeForm> {
   String _bareAddress(String address) {
     final match = RegExp(r'<([^>]+)>').firstMatch(address);
     return (match?.group(1) ?? address).trim();
+  }
+
+  Account? get _selectedAccount => widget.accounts
+      .cast<Account?>()
+      .firstWhere((a) => a?.id == _selectedAccountId, orElse: () => null);
+
+  String? get _selectedAccountDomain {
+    final email = _selectedAccount?.emailAddress;
+    if (email == null) return widget.accountDomain;
+    final at = email.lastIndexOf('@');
+    if (at < 0 || at == email.length - 1) return widget.accountDomain;
+    return email.substring(at + 1).toLowerCase();
   }
 
   static List<String> _dedupAddresses(List<String> addresses) {
@@ -402,7 +442,6 @@ class _ComposeFormState extends State<ComposeForm> {
     _subjectController.removeListener(_onSubjectChanged);
     _bodyController.removeListener(_scheduleDraftSave);
     unawaited(_aiCubit.close());
-    _fromController.dispose();
     _subjectController.dispose();
     _bodyController.dispose();
     _subjectFocus.dispose();
@@ -1059,6 +1098,7 @@ class _ComposeFormState extends State<ComposeForm> {
           excludedAttachmentIds: _excludedAttachmentIds,
           bodyType: effectiveBodyType,
           newAttachments: _localAttachments,
+          fromAccountId: _selectedAccountId,
         ));
   }
 
@@ -1157,68 +1197,23 @@ class _ComposeFormState extends State<ComposeForm> {
   }
 
   Future<void> _onLinkRequested(BuildContext context) async {
-    final urlController = TextEditingController();
     final editorState = _htmlEditorKey.currentState;
     if (editorState != null) await editorState.hide();
 
-    final url = await showDialog<String>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: context.colors.surfacePanel,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        title: Text(
-          'Insert Link',
-          style: TextStyle(
-            color: context.colors.textPrimary,
-            fontSize: 15,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        content: TextField(
-          controller: urlController,
-          autofocus: true,
-          style: TextStyle(color: context.colors.textPrimary, fontSize: 13),
-          decoration: InputDecoration(
-            hintText: 'https://example.com',
-            hintStyle: TextStyle(color: context.colors.textMuted, fontSize: 13),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
-          ),
-          onSubmitted: (v) => Navigator.of(context).pop(v.trim()),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(
-              'Cancel',
-              style: TextStyle(color: context.colors.textMuted, fontSize: 13),
-            ),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(urlController.text.trim()),
-            style: FilledButton.styleFrom(
-              backgroundColor: AppColors.accent,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              minimumSize: Size.zero,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            child: const Text('Insert', style: TextStyle(fontSize: 13)),
-          ),
-        ],
-      ),
-    );
-    urlController.dispose();
+    final url = await showInsertLinkDialog(context);
+
     if (mounted && editorState != null) await editorState.show();
     if (url != null && url.isNotEmpty) {
       _htmlEditorKey.currentState?.insertLink(url);
     }
   }
 
-  List<Widget> _buildFields(AppColors c, String? accountId) => [
-        _FieldRow(
-          label: 'From',
-          controller: _fromController,
-          enabled: false,
-          hintText: '',
+  List<Widget> _buildFields(AppColors c) => [
+        _FromFieldRow(
+          accounts: widget.accounts,
+          selectedAccountId: _selectedAccountId,
+          fallbackText: widget.fromAddress,
+          onChanged: (id) => setState(() => _selectedAccountId = id),
         ),
         const SizedBox(height: 8),
         RecipientInputField(
@@ -1234,8 +1229,8 @@ class _ComposeFormState extends State<ComposeForm> {
               _handleDrop(address, fromFieldId, 'to'),
           showInput: true,
           hintText: 'recipient@example.com',
-          accountId: accountId,
-          accountDomain: widget.accountDomain,
+          accountId: _selectedAccountId,
+          accountDomain: _selectedAccountDomain,
           onTabToNext: () => _ccFieldKey.currentState?.requestFocus(),
         ),
         const SizedBox(height: 8),
@@ -1252,8 +1247,8 @@ class _ComposeFormState extends State<ComposeForm> {
               _handleDrop(address, fromFieldId, 'cc'),
           showInput: true,
           hintText: 'cc@example.com',
-          accountId: accountId,
-          accountDomain: widget.accountDomain,
+          accountId: _selectedAccountId,
+          accountDomain: _selectedAccountDomain,
           onTabToNext: () => _subjectFocus.requestFocus(),
         ),
         const SizedBox(height: 8),
@@ -1355,7 +1350,6 @@ class _ComposeFormState extends State<ComposeForm> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final accountId = widget.accountId;
 
     return BlocListener<ComposeBloc, ComposeState>(
       listenWhen: (_, curr) => curr is ComposeSent,
@@ -1367,13 +1361,13 @@ class _ComposeFormState extends State<ComposeForm> {
           onDragDone: _addDroppedFiles,
           onDragEntered: (_) => setState(() => _isDragOver = true),
           onDragExited: (_) => setState(() => _isDragOver = false),
-          child: _buildContent(context, c, accountId),
+          child: _buildContent(context, c),
         ),
       ),
     );
   }
 
-  Widget _buildContent(BuildContext context, AppColors c, String? accountId) {
+  Widget _buildContent(BuildContext context, AppColors c) {
     final forwardEmail =
         widget.mode == ComposeMode.forward ? widget.originalEmail : null;
     final visibleAttachments =
@@ -1389,7 +1383,7 @@ class _ComposeFormState extends State<ComposeForm> {
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: _buildFields(c, accountId),
+              children: _buildFields(c),
             ),
           ),
           Expanded(
@@ -1462,7 +1456,7 @@ class _ComposeFormState extends State<ComposeForm> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                ..._buildFields(c, accountId),
+                ..._buildFields(c),
                 if (forwardEmail != null && forwardEmail.attachments.isNotEmpty)
                   _ForwardAttachmentChips(
                     attachments: forwardEmail.attachments,
@@ -1589,6 +1583,86 @@ class _TitleBar extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _FromFieldRow extends StatelessWidget {
+  const _FromFieldRow({
+    required this.accounts,
+    required this.selectedAccountId,
+    required this.fallbackText,
+    required this.onChanged,
+  });
+
+  final List<Account> accounts;
+  final String? selectedAccountId;
+  final String fallbackText;
+  final ValueChanged<String?> onChanged;
+
+  static String _labelFor(Account a) => a.senderName.isNotEmpty
+      ? '${a.senderName} <${a.emailAddress}>'
+      : a.emailAddress;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final label = Padding(
+      padding: const EdgeInsets.only(top: 2),
+      child: SizedBox(
+        width: 52,
+        child: Text(
+          'From',
+          style: TextStyle(
+            color: c.textDimmed,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ),
+    );
+
+    if (accounts.length <= 1) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          label,
+          Expanded(
+            child: Text(
+              accounts.isNotEmpty ? _labelFor(accounts.first) : fallbackText,
+              style: TextStyle(color: c.textTertiary, fontSize: 13),
+            ),
+          ),
+        ],
+      );
+    }
+
+    final value =
+        accounts.any((a) => a.id == selectedAccountId) ? selectedAccountId : accounts.first.id;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        label,
+        Expanded(
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: value,
+              isDense: true,
+              isExpanded: true,
+              dropdownColor: c.surfacePanel,
+              style: TextStyle(color: c.textPrimary, fontSize: 13),
+              items: accounts
+                  .map((a) => DropdownMenuItem(
+                        value: a.id,
+                        child: Text(_labelFor(a), overflow: TextOverflow.ellipsis),
+                      ))
+                  .toList(),
+              onChanged: onChanged,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

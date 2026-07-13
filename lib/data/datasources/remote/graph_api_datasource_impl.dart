@@ -944,6 +944,47 @@ class GraphApiDatasourceImpl
     }
   }
 
+  /// Fetches profile fields useful for prefilling the Settings "Profile"
+  /// section (and email signature merge tags): given/family name, job title,
+  /// and phone numbers, via Graph's `/me`. Returns null on 403 (the
+  /// `User.Read`/`User.Read.All` scope hasn't been granted) — a silent,
+  /// expected case for a best-effort prefill.
+  Future<
+      ({
+        String firstName,
+        String lastName,
+        String jobTitle,
+        String phone,
+        String mobile
+      })?> fetchOwnSignatureProfile() async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/me',
+        queryParameters: {
+          '\$select': 'givenName,surname,jobTitle,mobilePhone,businessPhones',
+        },
+      );
+      final data = response.data;
+      if (data == null) return null;
+
+      final businessPhones = (data['businessPhones'] as List<dynamic>? ?? [])
+          .whereType<String>()
+          .where((p) => p.isNotEmpty)
+          .toList();
+
+      return (
+        firstName: data['givenName'] as String? ?? '',
+        lastName: data['surname'] as String? ?? '',
+        jobTitle: data['jobTitle'] as String? ?? '',
+        phone: businessPhones.isNotEmpty ? businessPhones.first : '',
+        mobile: data['mobilePhone'] as String? ?? '',
+      );
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 403) return null;
+      throw _mapDioException(e);
+    }
+  }
+
   /// Best-effort photo fetch — any failure (no photo set, no permission)
   /// resolves to null rather than surfacing an error, since the photo is
   /// purely decorative in the contact-details card.

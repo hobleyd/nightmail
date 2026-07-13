@@ -33,7 +33,8 @@ abstract interface class EmailRepository {
   Future<Either<Failure, List<EmailFolder>>> getChildFolders(
       String parentFolderId);
 
-  /// Sends a new email.
+  /// Sends a new email. If [accountId] is set and differs from the active
+  /// account, the message is sent through that account's datasource instead.
   Future<Either<Failure, Unit>> sendEmail({
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
@@ -41,9 +42,12 @@ abstract interface class EmailRepository {
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
+    String? accountId,
   });
 
   /// Replies to an existing email. Set [replyAll] to reply to all recipients.
+  /// If [accountId] is set and differs from the active account, the reply is
+  /// sent through that account's datasource instead.
   Future<Either<Failure, Unit>> replyToEmail({
     required String messageId,
     required String comment,
@@ -52,9 +56,12 @@ abstract interface class EmailRepository {
     List<String> ccAddresses = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
+    String? accountId,
   });
 
-  /// Forwards an existing email.
+  /// Forwards an existing email. If [accountId] is set and differs from the
+  /// active account, the forward is sent through that account's datasource
+  /// instead.
   Future<Either<Failure, Unit>> forwardEmail({
     required String messageId,
     required List<String> toAddresses,
@@ -63,6 +70,7 @@ abstract interface class EmailRepository {
     List<String> excludedAttachmentIds = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
+    String? accountId,
   });
 
   /// Moves an email to [destinationFolderId].

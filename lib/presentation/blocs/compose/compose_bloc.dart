@@ -27,6 +27,7 @@ class ComposeBloc extends Bloc<ComposeEvent, ComposeState> {
       excludedAttachmentIds: event.excludedAttachmentIds,
       bodyType: event.bodyType,
       newAttachments: event.newAttachments,
+      fromAccountId: event.fromAccountId,
     ));
     result.fold(
       (failure) => emit(ComposeError(message: failure.message)),

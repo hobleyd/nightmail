@@ -698,7 +698,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     List<LocalAttachment> newAttachments = const [],
   }) async {
     final builder = MessageBuilder()
-      ..from = [MailAddress(_account.displayName, _account.emailAddress)]
+      ..from = [MailAddress(_account.senderName, _account.emailAddress)]
       ..to = toAddresses.map((e) => MailAddress(null, e)).toList()
       ..cc = ccAddresses.map((e) => MailAddress(null, e)).toList()
       ..subject = subject;
@@ -752,7 +752,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     final original = await _fetchOriginal(messageId);
     final builder = MessageBuilder.prepareReplyToMessage(
       original,
-      MailAddress(_account.displayName, _account.emailAddress),
+      MailAddress(_account.senderName, _account.emailAddress),
       replyAll: replyAll,
     );
     if (toAddresses.isNotEmpty) {
@@ -790,7 +790,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
     // Build a plain message — compose body already contains the quoted content
     // the user can edit, so we don't auto-append via prepareForwardMessage.
     final builder = MessageBuilder()
-      ..from = [MailAddress(_account.displayName, _account.emailAddress)]
+      ..from = [MailAddress(_account.senderName, _account.emailAddress)]
       ..to = toAddresses.map((e) => MailAddress(null, e)).toList()
       ..subject = fwdSubject;
 
@@ -1081,7 +1081,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
         _account.emailAddress.split('@').last,
       );
       final mimeText = await compute(_buildDraftMimeText, _DraftMimeParams(
-        fromName: _account.displayName,
+        fromName: _account.senderName,
         fromAddress: _account.emailAddress,
         toAddresses: toAddresses,
         ccAddresses: ccAddresses,
@@ -1130,7 +1130,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
         _account.emailAddress.split('@').last,
       );
       final mimeText = await compute(_buildDraftMimeText, _DraftMimeParams(
-        fromName: _account.displayName,
+        fromName: _account.senderName,
         fromAddress: _account.emailAddress,
         toAddresses: toAddresses,
         ccAddresses: ccAddresses,

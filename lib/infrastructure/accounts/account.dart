@@ -37,15 +37,49 @@ sealed class Account extends Equatable {
     required this.id,
     required this.displayName,
     required this.emailAddress,
+    this.firstName = '',
+    this.lastName = '',
+    this.jobTitle = '',
+    this.phone = '',
+    this.mobile = '',
+    this.address = '',
+    this.signatureHtml = '',
   });
 
   final String id;
   final String displayName;
   final String emailAddress;
+  // Profile fields used as email signature merge tags ({{first_name}} etc.)
+  // and the raw signature template (with merge tags unresolved) — both
+  // allocated per account rather than globally.
+  final String firstName;
+  final String lastName;
+  final String jobTitle;
+  final String phone;
+  final String mobile;
+  final String address;
+  final String signatureHtml;
+
+  /// The name to show as the sender when sending mail (the `From:` header
+  /// display name). [displayName] is just this account's label in the
+  /// account switcher/settings UI (e.g. an organization name) and is not
+  /// necessarily the account holder's own name, so prefer the Profile
+  /// first/last name when set.
+  String get senderName {
+    final full = '$firstName $lastName'.trim();
+    return full.isNotEmpty ? full : displayName;
+  }
 
   Account copyWith({
     String? displayName,
     String? emailAddress,
+    String? firstName,
+    String? lastName,
+    String? jobTitle,
+    String? phone,
+    String? mobile,
+    String? address,
+    String? signatureHtml,
   });
 
   Map<String, dynamic> toJson();
@@ -66,6 +100,13 @@ final class MicrosoftAccount extends Account {
     required super.displayName,
     required super.emailAddress,
     required this.tenantId,
+    super.firstName,
+    super.lastName,
+    super.jobTitle,
+    super.phone,
+    super.mobile,
+    super.address,
+    super.signatureHtml,
   });
 
   final String tenantId;
@@ -74,12 +115,26 @@ final class MicrosoftAccount extends Account {
   MicrosoftAccount copyWith({
     String? displayName,
     String? emailAddress,
+    String? firstName,
+    String? lastName,
+    String? jobTitle,
+    String? phone,
+    String? mobile,
+    String? address,
+    String? signatureHtml,
     String? tenantId,
   }) {
     return MicrosoftAccount(
       id: id,
       displayName: displayName ?? this.displayName,
       emailAddress: emailAddress ?? this.emailAddress,
+      firstName: firstName ?? this.firstName,
+      lastName: lastName ?? this.lastName,
+      jobTitle: jobTitle ?? this.jobTitle,
+      phone: phone ?? this.phone,
+      mobile: mobile ?? this.mobile,
+      address: address ?? this.address,
+      signatureHtml: signatureHtml ?? this.signatureHtml,
       tenantId: tenantId ?? this.tenantId,
     );
   }
@@ -90,6 +145,13 @@ final class MicrosoftAccount extends Account {
       displayName: json['displayName'] as String,
       emailAddress: json['emailAddress'] as String,
       tenantId: json['tenantId'] as String? ?? 'common',
+      firstName: json['firstName'] as String? ?? '',
+      lastName: json['lastName'] as String? ?? '',
+      jobTitle: json['jobTitle'] as String? ?? '',
+      phone: json['phone'] as String? ?? '',
+      mobile: json['mobile'] as String? ?? '',
+      address: json['address'] as String? ?? '',
+      signatureHtml: json['signatureHtml'] as String? ?? '',
     );
   }
 
@@ -100,10 +162,29 @@ final class MicrosoftAccount extends Account {
         'displayName': displayName,
         'emailAddress': emailAddress,
         'tenantId': tenantId,
+        'firstName': firstName,
+        'lastName': lastName,
+        'jobTitle': jobTitle,
+        'phone': phone,
+        'mobile': mobile,
+        'address': address,
+        'signatureHtml': signatureHtml,
       };
 
   @override
-  List<Object?> get props => [id, displayName, emailAddress, tenantId];
+  List<Object?> get props => [
+        id,
+        displayName,
+        emailAddress,
+        tenantId,
+        firstName,
+        lastName,
+        jobTitle,
+        phone,
+        mobile,
+        address,
+        signatureHtml,
+      ];
 }
 
   final class GmailAccount extends Account {
@@ -111,17 +192,38 @@ final class MicrosoftAccount extends Account {
     required super.id,
     required super.displayName,
     required super.emailAddress,
+    super.firstName,
+    super.lastName,
+    super.jobTitle,
+    super.phone,
+    super.mobile,
+    super.address,
+    super.signatureHtml,
   });
 
   @override
   GmailAccount copyWith({
     String? displayName,
     String? emailAddress,
+    String? firstName,
+    String? lastName,
+    String? jobTitle,
+    String? phone,
+    String? mobile,
+    String? address,
+    String? signatureHtml,
   }) {
     return GmailAccount(
       id: id,
       displayName: displayName ?? this.displayName,
       emailAddress: emailAddress ?? this.emailAddress,
+      firstName: firstName ?? this.firstName,
+      lastName: lastName ?? this.lastName,
+      jobTitle: jobTitle ?? this.jobTitle,
+      phone: phone ?? this.phone,
+      mobile: mobile ?? this.mobile,
+      address: address ?? this.address,
+      signatureHtml: signatureHtml ?? this.signatureHtml,
     );
   }
 
@@ -130,6 +232,13 @@ final class MicrosoftAccount extends Account {
       id: json['id'] as String,
       displayName: json['displayName'] as String,
       emailAddress: json['emailAddress'] as String,
+      firstName: json['firstName'] as String? ?? '',
+      lastName: json['lastName'] as String? ?? '',
+      jobTitle: json['jobTitle'] as String? ?? '',
+      phone: json['phone'] as String? ?? '',
+      mobile: json['mobile'] as String? ?? '',
+      address: json['address'] as String? ?? '',
+      signatureHtml: json['signatureHtml'] as String? ?? '',
     );
   }
 
@@ -139,10 +248,28 @@ final class MicrosoftAccount extends Account {
         'id': id,
         'displayName': displayName,
         'emailAddress': emailAddress,
+        'firstName': firstName,
+        'lastName': lastName,
+        'jobTitle': jobTitle,
+        'phone': phone,
+        'mobile': mobile,
+        'address': address,
+        'signatureHtml': signatureHtml,
       };
 
   @override
-  List<Object?> get props => [id, displayName, emailAddress];
+  List<Object?> get props => [
+        id,
+        displayName,
+        emailAddress,
+        firstName,
+        lastName,
+        jobTitle,
+        phone,
+        mobile,
+        address,
+        signatureHtml,
+      ];
 }
 
 final class ImapAccount extends Account {
@@ -157,6 +284,13 @@ final class ImapAccount extends Account {
     required this.smtpPort,
     required this.smtpUseSsl,
     this.nextcloudCalendarConfig,
+    super.firstName,
+    super.lastName,
+    super.jobTitle,
+    super.phone,
+    super.mobile,
+    super.address,
+    super.signatureHtml,
   });
 
   final String host;
@@ -171,6 +305,13 @@ final class ImapAccount extends Account {
   ImapAccount copyWith({
     String? displayName,
     String? emailAddress,
+    String? firstName,
+    String? lastName,
+    String? jobTitle,
+    String? phone,
+    String? mobile,
+    String? address,
+    String? signatureHtml,
     String? host,
     int? port,
     bool? useSsl,
@@ -183,6 +324,13 @@ final class ImapAccount extends Account {
       id: id,
       displayName: displayName ?? this.displayName,
       emailAddress: emailAddress ?? this.emailAddress,
+      firstName: firstName ?? this.firstName,
+      lastName: lastName ?? this.lastName,
+      jobTitle: jobTitle ?? this.jobTitle,
+      phone: phone ?? this.phone,
+      mobile: mobile ?? this.mobile,
+      address: address ?? this.address,
+      signatureHtml: signatureHtml ?? this.signatureHtml,
       host: host ?? this.host,
       port: port ?? this.port,
       useSsl: useSsl ?? this.useSsl,
@@ -212,6 +360,13 @@ final class ImapAccount extends Account {
       nextcloudCalendarConfig: calendarJson != null
           ? NextcloudCalendarConfig.fromJson(calendarJson)
           : null,
+      firstName: json['firstName'] as String? ?? '',
+      lastName: json['lastName'] as String? ?? '',
+      jobTitle: json['jobTitle'] as String? ?? '',
+      phone: json['phone'] as String? ?? '',
+      mobile: json['mobile'] as String? ?? '',
+      address: json['address'] as String? ?? '',
+      signatureHtml: json['signatureHtml'] as String? ?? '',
     );
   }
 
@@ -229,6 +384,13 @@ final class ImapAccount extends Account {
         'smtpUseSsl': smtpUseSsl,
         if (nextcloudCalendarConfig != null)
           'nextcloudCalendarConfig': nextcloudCalendarConfig!.toJson(),
+        'firstName': firstName,
+        'lastName': lastName,
+        'jobTitle': jobTitle,
+        'phone': phone,
+        'mobile': mobile,
+        'address': address,
+        'signatureHtml': signatureHtml,
       };
 
   @override
@@ -243,6 +405,13 @@ final class ImapAccount extends Account {
         smtpPort,
         smtpUseSsl,
         nextcloudCalendarConfig,
+        firstName,
+        lastName,
+        jobTitle,
+        phone,
+        mobile,
+        address,
+        signatureHtml,
       ];
 }
 

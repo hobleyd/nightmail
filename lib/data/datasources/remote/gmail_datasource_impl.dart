@@ -20,12 +20,14 @@ import '../../models/email_model.dart';
 import 'email_remote_datasource.dart';
 
 class GmailDatasourceImpl implements EmailRemoteDatasource {
-  GmailDatasourceImpl({required GmailHttpClient client}) : _dio = client.dio;
+  GmailDatasourceImpl({required GmailHttpClient client, this.displayName = ''})
+      : _dio = client.dio;
 
   @visibleForTesting
-  GmailDatasourceImpl.withDio(this._dio);
+  GmailDatasourceImpl.withDio(this._dio, {this.displayName = ''});
 
   final Dio _dio;
+  final String displayName;
   String? _cachedUserEmail;
 
   /// Stores the Gmail API nextPageToken per label/folder ID.
@@ -810,7 +812,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     try {
       final fromEmail = await _getUserEmail();
       final builder = MessageBuilder()
-        ..from = [MailAddress(null, fromEmail)]
+        ..from = [MailAddress(displayName.isEmpty ? null : displayName, fromEmail)]
         ..to = toAddresses.map((a) => MailAddress(null, a)).toList()
         ..cc = ccAddresses.map((a) => MailAddress(null, a)).toList()
         ..subject = subject;
@@ -860,7 +862,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       final fromEmail = await _getUserEmail();
       final builder = MessageBuilder.prepareReplyToMessage(
         original,
-        MailAddress(null, fromEmail),
+        MailAddress(displayName.isEmpty ? null : displayName, fromEmail),
         replyAll: replyAll,
       );
       if (toAddresses.isNotEmpty) {
@@ -936,7 +938,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       }
 
       if (fromEmail.isNotEmpty) {
-        builder.from = [MailAddress(null, fromEmail)];
+        builder.from = [MailAddress(displayName.isEmpty ? null : displayName, fromEmail)];
       }
 
       // Compose body already contains the full forwarded content the user can edit;
@@ -1159,6 +1161,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       final fromEmail = await _getUserEmail();
       final encoded = await compute(_buildDraftRawBase64, _DraftMimeParams(
         fromAddress: fromEmail,
+        fromDisplayName: displayName,
         toAddresses: toAddresses,
         ccAddresses: ccAddresses,
         subject: subject,
@@ -1192,6 +1195,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       final fromEmail = await _getUserEmail();
       final encoded = await compute(_buildDraftRawBase64, _DraftMimeParams(
         fromAddress: fromEmail,
+        fromDisplayName: displayName,
         toAddresses: toAddresses,
         ccAddresses: ccAddresses,
         subject: subject,
@@ -1326,6 +1330,7 @@ class _GmailAttachment {
 class _DraftMimeParams {
   const _DraftMimeParams({
     required this.fromAddress,
+    this.fromDisplayName = '',
     required this.toAddresses,
     required this.ccAddresses,
     required this.subject,
@@ -1335,6 +1340,7 @@ class _DraftMimeParams {
   });
 
   final String fromAddress;
+  final String fromDisplayName;
   final List<String> toAddresses;
   final List<String> ccAddresses;
   final String subject;
@@ -1354,7 +1360,7 @@ class _DraftMimeParams {
 /// touches the main isolate.
 String _buildDraftRawBase64(_DraftMimeParams p) {
   final builder = MessageBuilder()
-    ..from = [MailAddress(null, p.fromAddress)]
+    ..from = [MailAddress(p.fromDisplayName.isEmpty ? null : p.fromDisplayName, p.fromAddress)]
     ..to = p.toAddresses.map((a) => MailAddress(null, a)).toList()
     ..cc = p.ccAddresses.map((a) => MailAddress(null, a)).toList()
     ..subject = p.subject;

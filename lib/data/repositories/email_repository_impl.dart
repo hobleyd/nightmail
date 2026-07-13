@@ -9,9 +9,11 @@ import '../../domain/entities/email.dart';
 import '../../domain/entities/email_folder.dart';
 import '../../domain/entities/local_attachment.dart';
 import '../../domain/repositories/email_repository.dart';
+import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../datasources/local/email_local_datasource.dart';
 import '../datasources/local/folder_local_datasource.dart';
+import '../datasources/remote/email_remote_datasource.dart';
 
 class EmailRepositoryImpl implements EmailRepository {
   const EmailRepositoryImpl({
@@ -25,6 +27,21 @@ class EmailRepositoryImpl implements EmailRepository {
   final FolderLocalDatasource _folderLocalDatasource;
 
   static const _defaultFolderKey = '__DEFAULT__';
+
+  /// Returns the datasource to send through for [accountId]. Falls back to
+  /// the active account's datasource when [accountId] is null, matches the
+  /// active account, or doesn't resolve to a configured account.
+  EmailRemoteDatasource _datasourceFor(String? accountId) {
+    if (accountId == null || accountId == _accountManager.activeAccount?.id) {
+      return _accountManager.emailDatasource;
+    }
+    final account = _accountManager.accounts
+        .cast<Account?>()
+        .firstWhere((a) => a?.id == accountId, orElse: () => null);
+    return account == null
+        ? _accountManager.emailDatasource
+        : _accountManager.buildEmailDatasourceForAccount(account);
+  }
 
   @override
   Future<Either<Failure, List<Email>>> getEmails({
@@ -157,9 +174,10 @@ class EmailRepositoryImpl implements EmailRepository {
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
+    String? accountId,
   }) async {
     return _execute(() async {
-      await _accountManager.emailDatasource.sendEmail(
+      await _datasourceFor(accountId).sendEmail(
         toAddresses: toAddresses,
         ccAddresses: ccAddresses,
         subject: subject,
@@ -180,9 +198,10 @@ class EmailRepositoryImpl implements EmailRepository {
     List<String> ccAddresses = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
+    String? accountId,
   }) async {
     return _execute(() async {
-      await _accountManager.emailDatasource.replyToEmail(
+      await _datasourceFor(accountId).replyToEmail(
         messageId: messageId,
         comment: comment,
         replyAll: replyAll,
@@ -204,9 +223,10 @@ class EmailRepositoryImpl implements EmailRepository {
     List<String> excludedAttachmentIds = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
+    String? accountId,
   }) async {
     return _execute(() async {
-      await _accountManager.emailDatasource.forwardEmail(
+      await _datasourceFor(accountId).forwardEmail(
         messageId: messageId,
         toAddresses: toAddresses,
         ccAddresses: ccAddresses,

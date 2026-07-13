@@ -19,6 +19,9 @@ import '../blocs/mail_poller/mail_poller_cubit.dart';
 import '../blocs/mail_poller/mail_poller_state.dart';
 import '../blocs/theme/theme_cubit.dart';
 import '../blocs/theme/theme_state.dart';
+import '../widgets/compose_body_builder.dart';
+import '../widgets/html_email_editor.dart';
+import '../widgets/insert_link_dialog.dart';
 
 bool get _isApplePlatform => !kIsWeb && (Platform.isMacOS || Platform.isIOS);
 
@@ -666,6 +669,116 @@ class _ComposeFormatSettingState extends State<_ComposeFormatSetting> {
   }
 }
 
+/// Signature editor for one account. A controlled component: the parent
+/// (`_AccountsSectionState`) owns the persisted value and is notified of
+/// every change via [onChanged]; this widget just renders whichever editor
+/// matches the app's Compose Format preference.
+class _SignatureEditor extends StatefulWidget {
+  const _SignatureEditor({
+    super.key,
+    required this.initialHtml,
+    required this.composeFormat,
+    required this.onChanged,
+  });
+
+  final String initialHtml;
+  final EmailBodyType composeFormat;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_SignatureEditor> createState() => _SignatureEditorState();
+}
+
+class _SignatureEditorState extends State<_SignatureEditor> {
+  final _htmlEditorKey = GlobalKey<HtmlEmailEditorState>();
+  late final TextEditingController _plainController;
+
+  @override
+  void initState() {
+    super.initState();
+    _plainController =
+        TextEditingController(text: ComposeBodyBuilder.stripHtml(widget.initialHtml));
+  }
+
+  @override
+  void dispose() {
+    _plainController.dispose();
+    super.dispose();
+  }
+
+  void _savePlainText(String text) {
+    widget.onChanged(ComposeBodyBuilder.plainToHtml(text));
+  }
+
+  Future<void> _onLinkRequested(BuildContext context) async {
+    final editorState = _htmlEditorKey.currentState;
+    if (editorState != null) await editorState.hide();
+
+    final url = await showInsertLinkDialog(context);
+
+    if (mounted && editorState != null) await editorState.show();
+    if (url != null && url.isNotEmpty) {
+      _htmlEditorKey.currentState?.insertLink(url);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Signature',
+          style: TextStyle(color: c.textSecondary, fontSize: 13),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          height: 160,
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: c.surfaceBase,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: c.separatorStrong),
+          ),
+          child: widget.composeFormat == EmailBodyType.html
+              ? HtmlEmailEditor(
+                  key: _htmlEditorKey,
+                  initialHtml: widget.initialHtml,
+                  onContentChanged: widget.onChanged,
+                  onLinkRequested: () => _onLinkRequested(context),
+                  onAttachRequested: () {},
+                )
+              : Padding(
+                  padding: const EdgeInsets.all(10),
+                  child: TextField(
+                    controller: _plainController,
+                    maxLines: null,
+                    expands: true,
+                    textAlignVertical: TextAlignVertical.top,
+                    style: TextStyle(color: c.textPrimary, fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'e.g.\n\n--\nJohn Smith',
+                      hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
+                      border: InputBorder.none,
+                      isCollapsed: true,
+                    ),
+                    onChanged: _savePlainText,
+                  ),
+                ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Merge tags: {{first_name}} {{last_name}} {{job_title}} {{phone}} '
+          '{{mobile}} {{email}} {{address}} — also supports '
+          'IFEXISTS(cond, then, else).',
+          style: TextStyle(color: c.textMuted, fontSize: 11),
+        ),
+      ],
+    );
+  }
+}
+
 class _AccountsSection extends StatefulWidget {
   const _AccountsSection();
 
@@ -695,6 +808,15 @@ class _AccountsSectionState extends State<_AccountsSection> {
   late TextEditingController _msClientIdController;
   late TextEditingController _googleClientIdController;
 
+  // Profile fields, used as email signature merge tags.
+  late TextEditingController _firstNameController;
+  late TextEditingController _lastNameController;
+  late TextEditingController _jobTitleController;
+  late TextEditingController _phoneController;
+  late TextEditingController _mobileController;
+  late TextEditingController _addressController;
+
+  EmailBodyType _composeFormat = AppSettings.defaultComposeFormat;
 
   @override
   void initState() {
@@ -710,7 +832,16 @@ class _AccountsSectionState extends State<_AccountsSection> {
     _caldavPasswordController = TextEditingController();
     _msClientIdController = TextEditingController();
     _googleClientIdController = TextEditingController();
+    _firstNameController = TextEditingController();
+    _lastNameController = TextEditingController();
+    _jobTitleController = TextEditingController();
+    _phoneController = TextEditingController();
+    _mobileController = TextEditingController();
+    _addressController = TextEditingController();
     _loadClientIds();
+    sl<AppSettings>().loadDefaultComposeFormat().then((format) {
+      if (mounted) setState(() => _composeFormat = format);
+    });
   }
 
   @override
@@ -726,12 +857,24 @@ class _AccountsSectionState extends State<_AccountsSection> {
     _caldavPasswordController.dispose();
     _msClientIdController.dispose();
     _googleClientIdController.dispose();
+    _firstNameController.dispose();
+    _lastNameController.dispose();
+    _jobTitleController.dispose();
+    _phoneController.dispose();
+    _mobileController.dispose();
+    _addressController.dispose();
     super.dispose();
   }
 
   void _syncControllers(Account account) {
     _nameController.text = account.displayName;
     _emailController.text = account.emailAddress;
+    _firstNameController.text = account.firstName;
+    _lastNameController.text = account.lastName;
+    _jobTitleController.text = account.jobTitle;
+    _phoneController.text = account.phone;
+    _mobileController.text = account.mobile;
+    _addressController.text = account.address;
     if (account is ImapAccount) {
       _hostController.text = account.host;
       _portController.text = account.port.toString();
@@ -744,6 +887,40 @@ class _AccountsSectionState extends State<_AccountsSection> {
       _caldavUrlController.text = caldav?.serverUrl ?? '';
       _caldavUsernameController.text = caldav?.username ?? '';
       _caldavPasswordController.text = '';
+    }
+  }
+
+  void _onSignatureChanged(String html) {
+    final account = _selectedAccount;
+    if (account == null || html == account.signatureHtml) return;
+    context.read<AccountCubit>().updateAccount(account.copyWith(signatureHtml: html));
+  }
+
+  bool _fetchingProfile = false;
+
+  Future<void> _fetchProfileFromDirectory() async {
+    final account = _selectedAccount;
+    if (account == null) return;
+    setState(() => _fetchingProfile = true);
+    final profile = await sl<AccountManager>().fetchOwnProfileFields(account.id);
+    if (!mounted) return;
+    setState(() {
+      _fetchingProfile = false;
+      if (profile != null) {
+        if (profile.firstName.isNotEmpty) _firstNameController.text = profile.firstName;
+        if (profile.lastName.isNotEmpty) _lastNameController.text = profile.lastName;
+        if (profile.jobTitle.isNotEmpty) _jobTitleController.text = profile.jobTitle;
+        if (profile.phone.isNotEmpty) _phoneController.text = profile.phone;
+        if (profile.mobile.isNotEmpty) _mobileController.text = profile.mobile;
+      }
+    });
+    if (profile == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              'Could not fetch profile fields — check account permissions and try again.'),
+        ),
+      );
     }
   }
 
@@ -814,14 +991,32 @@ class _AccountsSectionState extends State<_AccountsSection> {
       MicrosoftAccount a => a.copyWith(
           displayName: _nameController.text,
           emailAddress: _emailController.text,
+          firstName: _firstNameController.text,
+          lastName: _lastNameController.text,
+          jobTitle: _jobTitleController.text,
+          phone: _phoneController.text,
+          mobile: _mobileController.text,
+          address: _addressController.text,
         ),
       GmailAccount a => a.copyWith(
           displayName: _nameController.text,
           emailAddress: _emailController.text,
+          firstName: _firstNameController.text,
+          lastName: _lastNameController.text,
+          jobTitle: _jobTitleController.text,
+          phone: _phoneController.text,
+          mobile: _mobileController.text,
+          address: _addressController.text,
         ),
       ImapAccount a => a.copyWith(
           displayName: _nameController.text,
           emailAddress: _emailController.text,
+          firstName: _firstNameController.text,
+          lastName: _lastNameController.text,
+          jobTitle: _jobTitleController.text,
+          phone: _phoneController.text,
+          mobile: _mobileController.text,
+          address: _addressController.text,
           host: _hostController.text,
           port: int.tryParse(_portController.text) ?? a.port,
           useSsl: _useSsl,
@@ -959,10 +1154,21 @@ class _AccountsSectionState extends State<_AccountsSection> {
             const SizedBox(height: 32),
             if (_selectedAccount != null)
               Expanded(
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // The signature editor embeds a native platform view
+                    // (WebView2/WKWebView) whose screen position is only
+                    // recalculated on layout/window-resize, never on scroll
+                    // deltas — nested in a SingleChildScrollView it visually
+                    // detaches from the rest of the form as soon as you
+                    // scroll. It gets its own fixed, non-scrolling area below
+                    // instead (matching how compose_dialog.dart places it).
+                    Expanded(
+                      child: SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
                       _AccountDetailRow(
                         label: 'Name',
                         value: _selectedAccount!.displayName,
@@ -974,6 +1180,65 @@ class _AccountsSectionState extends State<_AccountsSection> {
                         value: _selectedAccount!.emailAddress,
                         isEditing: _isEditing,
                         controller: _emailController,
+                      ),
+                      Row(
+                        children: [
+                          _SectionSubheader(label: 'Profile'),
+                          const Spacer(),
+                          if (_isEditing &&
+                              (_selectedAccount is MicrosoftAccount ||
+                                  _selectedAccount is GmailAccount))
+                            TextButton(
+                              onPressed: _fetchingProfile
+                                  ? null
+                                  : _fetchProfileFromDirectory,
+                              style: TextButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                textStyle: const TextStyle(fontSize: 11),
+                              ),
+                              child: Text(_fetchingProfile
+                                  ? 'Fetching…'
+                                  : 'Fetch from ${_selectedAccount is MicrosoftAccount ? 'Microsoft' : 'Google'}'),
+                            ),
+                        ],
+                      ),
+                      _AccountDetailRow(
+                        label: 'First Name',
+                        value: _selectedAccount!.firstName,
+                        isEditing: _isEditing,
+                        controller: _firstNameController,
+                      ),
+                      _AccountDetailRow(
+                        label: 'Last Name',
+                        value: _selectedAccount!.lastName,
+                        isEditing: _isEditing,
+                        controller: _lastNameController,
+                      ),
+                      _AccountDetailRow(
+                        label: 'Job Title',
+                        value: _selectedAccount!.jobTitle,
+                        isEditing: _isEditing,
+                        controller: _jobTitleController,
+                      ),
+                      _AccountDetailRow(
+                        label: 'Phone',
+                        value: _selectedAccount!.phone,
+                        isEditing: _isEditing,
+                        controller: _phoneController,
+                      ),
+                      _AccountDetailRow(
+                        label: 'Mobile',
+                        value: _selectedAccount!.mobile,
+                        isEditing: _isEditing,
+                        controller: _mobileController,
+                      ),
+                      _AccountDetailRow(
+                        label: 'Address',
+                        value: _selectedAccount!.address,
+                        isEditing: _isEditing,
+                        controller: _addressController,
                       ),
                       _AccountDetailRow(
                         label: 'Type',
@@ -1098,8 +1363,18 @@ class _AccountsSectionState extends State<_AccountsSection> {
                             ),
                         ],
                       ],
-                    ],
-                  ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _SignatureEditor(
+                      key: ValueKey(_selectedAccount!.id),
+                      initialHtml: _selectedAccount!.signatureHtml,
+                      composeFormat: _composeFormat,
+                      onChanged: _onSignatureChanged,
+                    ),
+                  ],
                 ),
               ),
             const SizedBox(height: 16),

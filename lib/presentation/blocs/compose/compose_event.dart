@@ -22,6 +22,7 @@ final class ComposeSubmitted extends ComposeEvent {
     this.excludedAttachmentIds = const [],
     this.bodyType = EmailBodyType.text,
     this.newAttachments = const [],
+    this.fromAccountId,
   });
 
   final ComposeMode mode;
@@ -33,8 +34,19 @@ final class ComposeSubmitted extends ComposeEvent {
   final List<String> excludedAttachmentIds;
   final EmailBodyType bodyType;
   final List<LocalAttachment> newAttachments;
+  final String? fromAccountId;
 
   @override
-  List<Object?> get props =>
-      [mode, originalMessageId, toAddresses, ccAddresses, subject, body, excludedAttachmentIds, bodyType, newAttachments];
+  List<Object?> get props => [
+        mode,
+        originalMessageId,
+        toAddresses,
+        ccAddresses,
+        subject,
+        body,
+        excludedAttachmentIds,
+        bodyType,
+        newAttachments,
+        fromAccountId,
+      ];
 }

@@ -256,6 +256,61 @@ class GmailContactsDatasourceImpl {
     return null;
   }
 
+  /// Fetches the signed-in user's own profile fields (name, job title, phone
+  /// numbers) from People API's `people/me`, for prefilling the Settings
+  /// "Profile" section (and email signature merge tags). Best-effort —
+  /// returns null on any failure.
+  Future<
+      ({
+        String firstName,
+        String lastName,
+        String jobTitle,
+        String phone,
+        String mobile
+      })?> fetchOwnSignatureProfile() async {
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '/people/me',
+        queryParameters: {'personFields': 'names,phoneNumbers,organizations'},
+      );
+      final data = resp.data;
+      if (data == null) return null;
+
+      final name = (data['names'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>()
+          .firstOrNull;
+
+      final org = (data['organizations'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>()
+          .firstOrNull;
+
+      final phones = (data['phoneNumbers'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      final mobile = phones.firstWhere(
+            (p) => (p['type'] as String?)?.toLowerCase() == 'mobile',
+            orElse: () => const {},
+          )['value'] as String? ??
+          '';
+      final phone = phones
+              .map((p) => p['value'] as String?)
+              .whereType<String>()
+              .where((p) => p.isNotEmpty && p != mobile)
+              .firstOrNull ??
+          '';
+
+      return (
+        firstName: name?['givenName'] as String? ?? '',
+        lastName: name?['familyName'] as String? ?? '',
+        jobTitle: org?['title'] as String? ?? '',
+        phone: phone,
+        mobile: mobile,
+      );
+    } catch (e) {
+      debugPrint('[Contacts] own profile fetch error: $e');
+      return null;
+    }
+  }
+
   ContactDetails? _parsePersonDetails(
       Map<String, dynamic> person, String targetEmail) {
     final target = targetEmail.toLowerCase();

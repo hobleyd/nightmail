@@ -22,6 +22,7 @@ class SendEmail {
           body: params.body,
           bodyType: params.bodyType,
           newAttachments: params.newAttachments,
+          accountId: params.fromAccountId,
         ),
       ComposeMode.reply => _repository.replyToEmail(
           messageId: params.originalMessageId!,
@@ -31,6 +32,7 @@ class SendEmail {
           ccAddresses: params.ccAddresses,
           bodyType: params.bodyType,
           newAttachments: params.newAttachments,
+          accountId: params.fromAccountId,
         ),
       ComposeMode.replyAll => _repository.replyToEmail(
           messageId: params.originalMessageId!,
@@ -40,6 +42,7 @@ class SendEmail {
           ccAddresses: params.ccAddresses,
           bodyType: params.bodyType,
           newAttachments: params.newAttachments,
+          accountId: params.fromAccountId,
         ),
       ComposeMode.forward => _repository.forwardEmail(
           messageId: params.originalMessageId!,
@@ -49,6 +52,7 @@ class SendEmail {
           excludedAttachmentIds: params.excludedAttachmentIds,
           bodyType: params.bodyType,
           newAttachments: params.newAttachments,
+          accountId: params.fromAccountId,
         ),
     };
   }
@@ -65,6 +69,7 @@ class SendEmailParams extends Equatable {
     this.excludedAttachmentIds = const [],
     this.bodyType = EmailBodyType.text,
     this.newAttachments = const [],
+    this.fromAccountId,
   });
 
   final ComposeMode mode;
@@ -76,8 +81,19 @@ class SendEmailParams extends Equatable {
   final List<String> excludedAttachmentIds;
   final EmailBodyType bodyType;
   final List<LocalAttachment> newAttachments;
+  final String? fromAccountId;
 
   @override
-  List<Object?> get props =>
-      [mode, originalMessageId, toAddresses, ccAddresses, subject, body, excludedAttachmentIds, bodyType, newAttachments];
+  List<Object?> get props => [
+        mode,
+        originalMessageId,
+        toAddresses,
+        ccAddresses,
+        subject,
+        body,
+        excludedAttachmentIds,
+        bodyType,
+        newAttachments,
+        fromAccountId,
+      ];
 }

@@ -1829,6 +1829,7 @@ class _ProposeNewTimeDialogState extends State<_ProposeNewTimeDialog> {
                 final picked = await showTimePicker(
                   context: context,
                   initialTime: _startTime,
+                  initialEntryMode: TimePickerEntryMode.input,
                 );
                 if (picked != null) setState(() => _startTime = picked);
               },
@@ -1841,6 +1842,7 @@ class _ProposeNewTimeDialogState extends State<_ProposeNewTimeDialog> {
                 final picked = await showTimePicker(
                   context: context,
                   initialTime: _endTime,
+                  initialEntryMode: TimePickerEntryMode.input,
                 );
                 if (picked != null) setState(() => _endTime = picked);
               },

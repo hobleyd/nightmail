@@ -642,6 +642,7 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
     final time = await showTimePicker(
       context: context,
       initialTime: TimeOfDay.fromDateTime(base.toLocal()),
+      initialEntryMode: TimePickerEntryMode.input,
     );
     if (time == null || !mounted) return;
     final combined = DateTime(

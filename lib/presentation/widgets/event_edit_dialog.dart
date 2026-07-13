@@ -726,7 +726,11 @@ class _DateTimeSection extends StatelessWidget {
   }
 
   Future<void> _pickStartTime(BuildContext context) async {
-    final t = await showTimePicker(context: context, initialTime: startTime);
+    final t = await showTimePicker(
+      context: context,
+      initialTime: startTime,
+      initialEntryMode: TimePickerEntryMode.input,
+    );
     if (t != null) onStartTimeChanged(t);
   }
 
@@ -741,7 +745,11 @@ class _DateTimeSection extends StatelessWidget {
   }
 
   Future<void> _pickEndTime(BuildContext context) async {
-    final t = await showTimePicker(context: context, initialTime: endTime);
+    final t = await showTimePicker(
+      context: context,
+      initialTime: endTime,
+      initialEntryMode: TimePickerEntryMode.input,
+    );
     if (t != null) onEndTimeChanged(t);
   }
 }

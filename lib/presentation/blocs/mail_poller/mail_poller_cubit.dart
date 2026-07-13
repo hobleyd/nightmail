@@ -315,11 +315,43 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
           }
         }
         if (account == null || account is MicrosoftAccount) continue;
-        unawaited(_notificationService.showNewMailNotification(
-          accountLabel: account.emailAddress,
-          newCount: _latestPolledUnread[accountId] ?? 0,
-        ));
+        unawaited(_notifyNewMail(account));
       }
+    }
+  }
+
+  /// Gmail/IMAP have no delta sync, so unlike the Graph path above this has
+  /// no upserted-message list to read a real subject/sender from — only an
+  /// aggregate unread count. Fetches the inbox's most recent unread message
+  /// for real notification content, falling back to the generic aggregate
+  /// alert if that fails (no inbox, empty result, network error, etc.).
+  Future<void> _notifyNewMail(Account account) async {
+    final newCount = _latestPolledUnread[account.id] ?? 0;
+    try {
+      final ds = _accountManager.buildEmailDatasourceForAccount(account);
+      final folders = await ds.getMailFolders();
+      final inbox = folders
+          .where((f) => f.displayName.toLowerCase() == 'inbox')
+          .firstOrNull;
+      if (inbox == null) throw StateError('no inbox folder');
+      final emails = await ds.getEmails(folderId: inbox.id, top: 10);
+      final latestUnread = emails.where((e) => !e.isRead).firstOrNull;
+      if (latestUnread == null) throw StateError('no unread message found');
+      final senderName = newCount > 1
+          ? '${latestUnread.from.displayName} and ${newCount - 1} more'
+          : latestUnread.from.displayName;
+      await _notificationService.showEmailNotification(
+        emailId: latestUnread.id,
+        accountId: account.id,
+        subject: latestUnread.subject,
+        senderName: senderName,
+        accountLabel: account.displayName,
+      );
+    } catch (_) {
+      await _notificationService.showNewMailNotification(
+        accountLabel: account.emailAddress,
+        newCount: newCount,
+      );
     }
   }
 

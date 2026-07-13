@@ -445,6 +445,90 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
+  // Gmail non-active account — new unread mail should show a real
+  // subject/sender (fetched from the inbox) rather than the generic
+  // aggregate alert, with a graceful fallback if that fetch fails.
+  // ---------------------------------------------------------------------------
+
+  group('MailPollerCubit — Gmail non-active account, new unread mail', () {
+    late MockEmailRemoteDatasource mockGmailDs;
+
+    setUp(() {
+      mockGmailDs = MockEmailRemoteDatasource();
+      when(mockAccountManager.accounts).thenReturn([_gmailAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(null);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(mockGmailDs);
+    });
+
+    test('shows the real subject/sender when the inbox fetch succeeds',
+        () async {
+      var callCount = 0;
+      when(mockGmailDs.getMailFolders()).thenAnswer((_) async {
+        callCount++;
+        return [_inbox(unread: callCount == 1 ? 0 : 2)];
+      });
+      when(mockGmailDs.getEmails(
+              folderId: anyNamed('folderId'), top: anyNamed('top')))
+          .thenAnswer((_) async => [_email('new-1', isRead: false)]);
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      await cubit.updatePollInterval(9999);
+      await pumpEventQueue();
+
+      verify(mockNotificationService.showEmailNotification(
+        emailId: 'new-1',
+        accountId: _gmailAccount.id,
+        subject: 'Subj',
+        senderName: 'S and 1 more',
+        accountLabel: 'Gmail',
+      )).called(1);
+      verifyNever(mockNotificationService.showNewMailNotification(
+        accountLabel: anyNamed('accountLabel'),
+        newCount: anyNamed('newCount'),
+      ));
+    });
+
+    test('falls back to the generic alert when the inbox fetch fails',
+        () async {
+      var callCount = 0;
+      when(mockGmailDs.getMailFolders()).thenAnswer((_) async {
+        callCount++;
+        return [_inbox(unread: callCount == 1 ? 0 : 2)];
+      });
+      when(mockGmailDs.getEmails(
+              folderId: anyNamed('folderId'), top: anyNamed('top')))
+          .thenThrow(Exception('network blip'));
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      await cubit.updatePollInterval(9999);
+      await pumpEventQueue();
+
+      verify(mockNotificationService.showNewMailNotification(
+        accountLabel: _gmailAccount.emailAddress,
+        newCount: 2,
+      )).called(1);
+      verifyNever(mockNotificationService.showEmailNotification(
+        emailId: anyNamed('emailId'),
+        accountId: anyNamed('accountId'),
+        subject: anyNamed('subject'),
+        senderName: anyNamed('senderName'),
+        accountLabel: anyNamed('accountLabel'),
+      ));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Gmail active account — pollGeneration must increment on unread increase
   // (regression: was never set in the non-delta path)
   // ---------------------------------------------------------------------------

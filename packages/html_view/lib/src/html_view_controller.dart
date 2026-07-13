@@ -18,6 +18,7 @@ class HtmlViewController {
   final _onPageLoaded       = StreamController<void>.broadcast();
   final _onLinkOpened       = StreamController<String>.broadcast();
   final _onAttachRequested  = StreamController<void>.broadcast();
+  final _onClickFocus       = StreamController<void>.broadcast();
 
   Stream<String> get onContentChanged  => _onContentChanged.stream;
   Stream<void>   get onLinkRequest     => _onLinkRequest.stream;
@@ -28,6 +29,12 @@ class HtmlViewController {
   Stream<String> get onLinkOpened      => _onLinkOpened.stream;
   /// Fires when the user clicks the attachment button in the toolbar.
   Stream<void>   get onAttachRequested => _onAttachRequested.stream;
+  /// Fires when a raw click forces native OS focus onto the webview (macOS
+  /// only — WKWebView is a plain sibling NSView there, so a click steals
+  /// first-responder status without Flutter's own FocusNode tree finding
+  /// out). Callers should unfocus whatever Flutter field currently thinks
+  /// it's focused so its cursor doesn't linger.
+  Stream<void>   get onClickFocus      => _onClickFocus.stream;
 
   bool get isInitialized => _viewId != null;
 
@@ -68,6 +75,9 @@ class HtmlViewController {
         break;
       case 'onAttachRequest':
         _onAttachRequested.add(null);
+        break;
+      case 'onClickFocus':
+        _onClickFocus.add(null);
         break;
     }
   }
@@ -130,6 +140,7 @@ class HtmlViewController {
     _onPageLoaded.close();
     _onLinkOpened.close();
     _onAttachRequested.close();
+    _onClickFocus.close();
     if (_viewId != null) {
       final id = _viewId;
       _viewId = null;

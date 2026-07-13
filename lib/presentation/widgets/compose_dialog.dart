@@ -1324,6 +1324,7 @@ class _ComposeFormState extends State<ComposeForm> {
         },
         onLinkRequested: () => _onLinkRequested(context),
         onAttachRequested: _pickAttachments,
+        onClickFocus: () => FocusManager.instance.primaryFocus?.unfocus(),
       );
     }
 

@@ -22,10 +22,36 @@ private let kJsBridge = """
 })();
 """
 
+// WKWebView is added here as a plain sibling NSView (not a Flutter platform
+// view), so nothing in Flutter's focus system ever calls makeFirstResponder
+// on it, and WKWebView's own mouseDown handling doesn't reliably claim first
+// responder either — clicking it left whatever Flutter text field (e.g. the
+// To: field) was previously focused still as firstResponder (confirmed
+// empirically: unchanged before/after super.mouseDown).
+//
+// Forcing makeFirstResponder directly from mouseDown raced with Flutter:
+// unfocusing the Flutter field (needed so its cursor stops showing) also
+// makes Flutter's text input plugin reassert itself as firstResponder,
+// which can clobber our forced focus if that round trip lands after it.
+// So mouseDown only *signals* the click via onClickFocus; the Dart side
+// unfocuses its own field first, then calls back to focus() (same native
+// makeFirstResponder + DOM focus path Tab already uses) — guaranteeing our
+// focus grab is always the last word.
+private class FocusableWebView: WKWebView {
+  var onClickFocus: (() -> Void)?
+
+  override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+  override func mouseDown(with event: NSEvent) {
+    onClickFocus?()
+    super.mouseDown(with: event)
+  }
+}
+
 class WebKitView: NSObject, WKScriptMessageHandler, FlutterStreamHandler, WKNavigationDelegate {
 
   private let id: Int64
-  private let webView: WKWebView
+  private let webView: FocusableWebView
   private weak var parentView: NSView?
   private let channel: FlutterMethodChannel
   private let eventChannel: FlutterEventChannel
@@ -51,7 +77,7 @@ class WebKitView: NSObject, WKScriptMessageHandler, FlutterStreamHandler, WKNavi
     contentController.addUserScript(script)
     config.userContentController = contentController
 
-    webView = WKWebView(frame: .zero, configuration: config)
+    webView = FocusableWebView(frame: .zero, configuration: config)
     webView.isHidden = false
 
     channel = FlutterMethodChannel(name: "html_view/\(id)",
@@ -64,6 +90,10 @@ class WebKitView: NSObject, WKScriptMessageHandler, FlutterStreamHandler, WKNavi
     webView.navigationDelegate = self
     contentController.add(self, name: "HtmlView")
     parentView.addSubview(webView)
+
+    webView.onClickFocus = { [weak self] in
+      self?.emitEvent(type: "onClickFocus", value: "")
+    }
 
     channel.setMethodCallHandler { [weak self] call, result in
       self?.handleMethod(call, result: result)

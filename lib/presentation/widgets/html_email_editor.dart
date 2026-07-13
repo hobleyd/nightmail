@@ -11,6 +11,7 @@ class HtmlEmailEditor extends StatefulWidget {
     required this.onContentChanged,
     required this.onLinkRequested,
     required this.onAttachRequested,
+    this.onClickFocus,
     this.autofocus = false,
   });
 
@@ -22,6 +23,11 @@ class HtmlEmailEditor extends StatefulWidget {
   /// Called when the user taps the paperclip button in the editor toolbar.
   /// The caller should open a file picker and attach the selected files.
   final VoidCallback onAttachRequested;
+  /// Called when a raw click forces native OS focus onto the editor. The
+  /// caller should drop focus from whatever Flutter field currently has it
+  /// (e.g. `FocusManager.instance.primaryFocus?.unfocus()`), since a native
+  /// focus steal doesn't otherwise reach Flutter's own FocusNode tree.
+  final VoidCallback? onClickFocus;
   /// Focuses the editor as soon as its content finishes loading. The webview
   /// loads asynchronously, so this can't be done with a synchronous
   /// `requestFocus()` call from the parent the way the plain-text body works.
@@ -37,6 +43,7 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
   StreamSubscription<void>?   _linkSub;
   StreamSubscription<void>?   _loadedSub;
   StreamSubscription<void>?   _attachSub;
+  StreamSubscription<void>?   _clickFocusSub;
 
   String _pendingHtml = '';
   bool   _disposed    = false;
@@ -58,6 +65,17 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
       _attachSub = _controller.onAttachRequested.listen((_) {
         if (mounted) widget.onAttachRequested();
       });
+      _clickFocusSub = _controller.onClickFocus.listen((_) {
+        if (!mounted) return;
+        // Unfocus the Flutter side first — calling focus() (native
+        // makeFirstResponder) before this can otherwise be undone when
+        // Flutter's text input plugin reasserts itself as firstResponder
+        // while resigning the old field.
+        widget.onClickFocus?.call();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) focus();
+        });
+      });
       _loadedSub = _controller.onPageLoaded.listen((_) async {
         if (_disposed) return;
         if (_pendingHtml.isNotEmpty) {
@@ -78,6 +96,7 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
     _linkSub?.cancel();
     _loadedSub?.cancel();
     _attachSub?.cancel();
+    _clickFocusSub?.cancel();
     _controller.dispose();
     super.dispose();
   }

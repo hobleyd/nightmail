@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fpdart/fpdart.dart';
 import 'package:mockito/annotations.dart';
@@ -76,6 +78,7 @@ void main() {
   late MockGetEmails mockGetEmails;
   late MockGetCachedEmails mockGetCachedEmails;
   late MockMoveEmail mockMoveEmail;
+  late MockEmptyFolder mockEmptyFolder;
 
   setUpAll(() {
     // Mockito needs dummy values for sealed/generic types it can't construct.
@@ -88,6 +91,7 @@ void main() {
     mockGetEmails = MockGetEmails();
     mockGetCachedEmails = MockGetCachedEmails();
     mockMoveEmail = MockMoveEmail();
+    mockEmptyFolder = MockEmptyFolder();
 
     bloc = EmailListBloc(
       getEmails: mockGetEmails,
@@ -97,7 +101,7 @@ void main() {
       moveEmail: mockMoveEmail,
       reportJunk: MockReportJunk(),
       deleteEmail: MockDeleteEmail(),
-      emptyFolder: MockEmptyFolder(),
+      emptyFolder: mockEmptyFolder,
       accountManager: _FakeAccountManager(),
       recordKnownSenders: MockRecordKnownSenders(),
       classifyEmails: MockClassifyEmails(),
@@ -214,6 +218,87 @@ void main() {
       await Future.delayed(const Duration(milliseconds: 50));
 
       verify(mockMoveEmail(any)).called(3);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // EmailListFolderEmptied
+  // ---------------------------------------------------------------------------
+
+  group('EmailListFolderEmptied', () {
+    // Regression: a Delete All that fails partway through (e.g. throttled by
+    // the server on a large folder) must not leave the optimistic "folder is
+    // empty" view standing — whatever the server never actually deleted has
+    // to reappear.
+    test('re-fetches the folder when emptyFolder fails, restoring emails '
+        'the server never actually deleted', () async {
+      when(mockGetCachedEmails(any)).thenAnswer((_) async => const Right([]));
+      when(mockGetEmails(any)).thenAnswer((_) async => Right([_email('id1'), _email('id2')]));
+      bloc.add(const EmailListLoadRequested(folderId: 'folder-1'));
+      await bloc.stream.firstWhere((s) => s is EmailListLoaded);
+
+      when(mockEmptyFolder(any)).thenAnswer(
+          (_) async => const Left(ServerFailure(message: 'throttled')));
+      // Server only actually deleted id1 before failing.
+      when(mockGetEmails(any)).thenAnswer((_) async => Right([_email('id2')]));
+
+      bloc.add(const EmailListFolderEmptied(folderId: 'folder-1'));
+
+      final state = await bloc.stream
+          .firstWhere((s) => s is EmailListLoaded && s.emails.isNotEmpty)
+          as EmailListLoaded;
+
+      expect(state.emails.map((e) => e.id), contains('id2'));
+    });
+
+    test('does not re-fetch when emptyFolder succeeds', () async {
+      when(mockGetCachedEmails(any)).thenAnswer((_) async => const Right([]));
+      when(mockGetEmails(any)).thenAnswer((_) async => Right([_email('id1'), _email('id2')]));
+      bloc.add(const EmailListLoadRequested(folderId: 'folder-1'));
+      await bloc.stream.firstWhere((s) => s is EmailListLoaded);
+
+      when(mockEmptyFolder(any)).thenAnswer((_) async => const Right(unit));
+      clearInteractions(mockGetEmails);
+
+      bloc.add(const EmailListFolderEmptied(folderId: 'folder-1'));
+      await bloc.stream.firstWhere(
+          (s) => s is EmailListLoaded && s.emptyingFolderIds.isEmpty);
+
+      verifyNever(mockGetEmails(any));
+    });
+
+    // Regression: the folder-row shimmer is driven by emptyingFolderIds, which
+    // is keyed by folder id, not by whichever folder is on screen. Navigating
+    // to another folder while a large Delete All is still running server-side
+    // used to overwrite emptyingFolderIds with a fresh empty set, killing the
+    // shimmer for a delete that hadn't actually finished.
+    test('navigating to another folder mid-delete keeps the emptying folder tracked',
+        () async {
+      when(mockGetCachedEmails(any)).thenAnswer((_) async => const Right([]));
+      when(mockGetEmails(any)).thenAnswer((_) async => Right([_email('id1')]));
+      bloc.add(const EmailListLoadRequested(folderId: 'folder-1'));
+      await bloc.stream.firstWhere((s) => s is EmailListLoaded);
+
+      final emptyCompleter = Completer<Either<Failure, Unit>>();
+      when(mockEmptyFolder(any)).thenAnswer((_) => emptyCompleter.future);
+
+      bloc.add(const EmailListFolderEmptied(folderId: 'folder-2'));
+      final emptying = await bloc.stream.firstWhere((s) =>
+          s is EmailListLoaded &&
+          s.emptyingFolderIds.contains('folder-2')) as EmailListLoaded;
+      expect(emptying.emptyingFolderIds, contains('folder-2'));
+
+      // User navigates to a different folder while folder-2 is still being emptied.
+      when(mockGetEmails(any)).thenAnswer((_) async => Right([_email('id3')]));
+      bloc.add(const EmailListLoadRequested(folderId: 'folder-3'));
+
+      final loaded = await bloc.stream.firstWhere((s) =>
+          s is EmailListLoaded && s.currentFolderId == 'folder-3') as EmailListLoaded;
+      expect(loaded.emptyingFolderIds, contains('folder-2'));
+
+      emptyCompleter.complete(const Right(unit));
+      await bloc.stream.firstWhere(
+          (s) => s is EmailListLoaded && s.emptyingFolderIds.isEmpty);
     });
   });
 }

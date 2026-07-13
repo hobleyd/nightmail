@@ -95,6 +95,11 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     final accountId = _accountManager.activeAccount?.id;
     final folderKey = event.folderId ?? _defaultFolderKey;
     List<Email> cachedEmails = [];
+    // Preserve in-flight Delete All tracking across a folder switch — it is
+    // keyed by folder id, not tied to whichever folder happens to be on
+    // screen, so navigating away must not make its shimmer vanish.
+    final priorEmptyingIds =
+        state is EmailListLoaded ? (state as EmailListLoaded).emptyingFolderIds : const <String>{};
 
     // Phase 1: serve cache immediately so the UI has content with no spinner
     if (accountId != null) {
@@ -115,6 +120,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
               isLoadingFresh: true,
               currentFolderId: event.folderId,
               currentFolderName: event.folderDisplayName,
+              emptyingFolderIds: priorEmptyingIds,
             ));
           }
         },
@@ -149,12 +155,14 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
           ...freshEmails,
           ...cachedEmails.where((e) => !freshIds.contains(e.id)),
         ];
+        final s = state;
         emit(EmailListLoaded(
           emails: merged,
           hasMore: freshEmails.length >= _pageSize,
           isLoadingFresh: false,
           currentFolderId: event.folderId,
           currentFolderName: event.folderDisplayName,
+          emptyingFolderIds: s is EmailListLoaded ? s.emptyingFolderIds : priorEmptyingIds,
         ));
         _recordSenders(freshEmails, event.folderDisplayName);
       },
@@ -243,11 +251,13 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       (emails) {
         _serverOffset = _pageSize;
         refreshed = emails;
+        final s = state;
         emit(EmailListLoaded(
           emails: emails,
           hasMore: emails.length >= _pageSize,
           currentFolderId: folderId,
           currentFolderName: folderName,
+          emptyingFolderIds: s is EmailListLoaded ? s.emptyingFolderIds : const {},
         ));
         _recordSenders(emails, folderName);
       },
@@ -431,7 +441,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       ));
     }
 
-    await _emptyFolder(EmptyFolderParams(
+    final result = await _emptyFolder(EmptyFolderParams(
       folderId: event.folderId,
       permanentDelete: event.permanentDelete,
     ));
@@ -441,6 +451,29 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       emit(after.copyWith(
         emptyingFolderIds: after.emptyingFolderIds.difference({event.folderId}),
       ));
+    }
+
+    // A failed/partial empty (e.g. throttled partway through a large folder)
+    // must not leave the optimistic "folder is empty" view above standing —
+    // re-fetch so whatever is actually still on the server reappears.
+    final afterClear = state;
+    if (result.isLeft() &&
+        afterClear is EmailListLoaded &&
+        afterClear.currentFolderId == event.folderId) {
+      final fetchResult = await _getEmails(GetEmailsParams(
+        folderId: event.folderId,
+        top: _pageSize,
+      ));
+      fetchResult.fold(
+        (_) {},
+        (emails) {
+          _serverOffset = _pageSize;
+          final s = state;
+          if (s is EmailListLoaded) {
+            emit(s.copyWith(emails: emails, hasMore: emails.length >= _pageSize));
+          }
+        },
+      );
     }
   }
 
@@ -547,6 +580,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
           hasMore: emails.length == _pageSize,
           currentFolderId: folderId,
           currentFolderName: folderName,
+          emptyingFolderIds: current.emptyingFolderIds,
         ));
         _recordSenders(emails, folderName);
       },

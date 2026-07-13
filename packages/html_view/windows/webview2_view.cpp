@@ -441,6 +441,17 @@ void WebView2View::HandleMethod(
     };
     if (ready_) do_focus(); else pending_.push(std::move(do_focus));
 
+  } else if (name == "printCurrent") {
+    auto shared = std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>>(
+        std::move(result));
+    auto do_print = [this, shared]() {
+      if (webview_) {
+        webview_->ExecuteScript(L"window.print()", nullptr);
+      }
+      shared->Success();
+    };
+    if (ready_) do_print(); else pending_.push(std::move(do_print));
+
   } else if (name == "setVisible") {
     const auto* v = std::get_if<bool>(call.arguments());
     if (!v) { result->Error("bad_args"); return; }

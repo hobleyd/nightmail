@@ -4,11 +4,14 @@ PODS:
   - FlutterMacOS (1.0.0)
   - html_view (0.1.0):
     - FlutterMacOS
+  - printing (1.0.0):
+    - FlutterMacOS
 
 DEPENDENCIES:
   - desktop_multi_window (from `Flutter/ephemeral/.symlinks/plugins/desktop_multi_window/macos`)
   - FlutterMacOS (from `Flutter/ephemeral`)
   - html_view (from `Flutter/ephemeral/.symlinks/plugins/html_view/macos`)
+  - printing (from `Flutter/ephemeral/.symlinks/plugins/printing/macos`)
 
 EXTERNAL SOURCES:
   desktop_multi_window:
@@ -17,11 +20,14 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral
   html_view:
     :path: Flutter/ephemeral/.symlinks/plugins/html_view/macos
+  printing:
+    :path: Flutter/ephemeral/.symlinks/plugins/printing/macos
 
 SPEC CHECKSUMS:
   desktop_multi_window: 93667594ccc4b88d91a97972fd3b1b89667fa80a
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
   html_view: 1376e269413b6ecca59529943dfed88290ea8cb4
+  printing: c4cf83c78fd684f9bc318e6aadc18972aa48f617
 
 PODFILE CHECKSUM: 54d867c82ac51cbd61b565781b9fada492027009
 

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:html_view/html_view.dart';
@@ -9,6 +10,9 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:open_file/open_file.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'html_body_view.dart';
@@ -164,6 +168,7 @@ class _EmailViewState extends State<_EmailView> {
   String? _previewName;
   String? _previewAttachmentId;
   _AttachmentPreviewKind? _previewKind;
+  HtmlViewController? _bodyController;
 
   void _showPreview(
       _AttachmentPreviewKind kind, String path, String name, String attachmentId) {
@@ -172,6 +177,7 @@ class _EmailViewState extends State<_EmailView> {
       _previewPath = path;
       _previewName = name;
       _previewAttachmentId = attachmentId;
+      _bodyController = null; // HtmlBodyView leaves the tree
     });
   }
 
@@ -184,16 +190,85 @@ class _EmailViewState extends State<_EmailView> {
     });
   }
 
+  Future<void> _doPrint(BuildContext context) async {
+    final ctrl = _bodyController;
+    if (ctrl != null) {
+      try {
+        await ctrl.printCurrent();
+      } catch (_) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Print failed')),
+        );
+      }
+      return;
+    }
+
+    // Fallback: plain text email, mobile, or preview-mode HTML.
+    await Printing.layoutPdf(
+      name: widget.email.subject,
+      onLayout: (_) async => _buildPlainTextPdf(widget.email),
+    );
+  }
+
+  static Future<Uint8List> _buildPlainTextPdf(Email email) async {
+    final doc = pw.Document();
+    doc.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        build: (ctx) => [
+          pw.Text(
+            email.subject,
+            style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 16),
+          ),
+          pw.SizedBox(height: 6),
+          pw.Text(
+            'From: ${email.from.displayName} <${email.from.address}>',
+            style: const pw.TextStyle(fontSize: 10),
+          ),
+          pw.Text(
+            'Date: ${formatEmailDateLong(email.receivedDateTime)}',
+            style: const pw.TextStyle(fontSize: 10),
+          ),
+          pw.SizedBox(height: 8),
+          pw.Divider(),
+          pw.SizedBox(height: 8),
+          pw.Text(
+            email.body,
+            style: const pw.TextStyle(fontSize: 11),
+          ),
+        ],
+      ),
+    );
+    return doc.save();
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final calendarAvailable =
         sl<AccountManager>().calendarDatasource != null;
     final meetingType = widget.email.meetingInvite?.type;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _ReadingPaneToolbar(email: widget.email, onBack: widget.onBack),
+    // CallbackShortcuts handles Cmd-P / Ctrl-P when the WKWebView overlay
+    // does not hold native keyboard focus (plain text emails, or when focus
+    // is on the email list / toolbar). For HTML emails where the WebView
+    // HAS native focus, the NSEvent monitor in WebKitView.swift intercepts
+    // instead (and consumes the event so this path never fires in that case).
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.keyP, meta: true):
+            () => _doPrint(context),
+        const SingleActivator(LogicalKeyboardKey.keyP, control: true):
+            () => _doPrint(context),
+      },
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+        _ReadingPaneToolbar(
+          email: widget.email,
+          onBack: widget.onBack,
+          onPrint: () => _doPrint(context),
+        ),
         Divider(height: 1, color: c.border),
         _EmailHeader(
           email: widget.email,
@@ -234,18 +309,25 @@ class _EmailViewState extends State<_EmailView> {
                 fileName: _previewName!,
                 onClose: _closePreview,
               ),
-            null => _EmailBody(email: widget.email),
+            null => _EmailBody(
+                email: widget.email,
+                onControllerReady: (ctrl) {
+                  if (mounted) setState(() => _bodyController = ctrl);
+                },
+              ),
           },
         ),
       ],
+    ),
     );
   }
 }
 
 class _ReadingPaneToolbar extends StatelessWidget {
-  const _ReadingPaneToolbar({required this.email, this.onBack});
+  const _ReadingPaneToolbar({required this.email, this.onBack, this.onPrint});
   final Email email;
   final VoidCallback? onBack;
+  final VoidCallback? onPrint;
 
   Future<void> _openComposeWindow(BuildContext context, ComposeMode mode) async {
     await ComposeWindowApp.open(context, mode: mode, originalEmail: email, onSent: onBack);
@@ -411,6 +493,14 @@ class _ReadingPaneToolbar extends StatelessWidget {
             color: c.textMuted,
             onPressed: () => _copyToClipboard(context),
           ),
+          if (onPrint != null)
+            _ToolbarButton(
+              icon: Icons.print_outlined,
+              tooltip: 'Print',
+              color: c.textMuted,
+              iconSize: 20,
+              onPressed: onPrint!,
+            ),
           _ToolbarButton(
             icon: Icons.delete_outline_rounded,
             tooltip: 'Delete',
@@ -2139,8 +2229,9 @@ class _AttachmentChipState extends State<_AttachmentChip> {
 }
 
 class _EmailBody extends StatelessWidget {
-  const _EmailBody({required this.email});
+  const _EmailBody({required this.email, this.onControllerReady});
   final Email email;
+  final void Function(HtmlViewController)? onControllerReady;
 
   static String _senderDomain(String address) {
     final at = address.lastIndexOf('@');
@@ -2157,6 +2248,7 @@ class _EmailBody extends StatelessWidget {
         html: email.body,
         inlineAttachments: email.inlineAttachments,
         senderDomain: _senderDomain(email.from.address),
+        onControllerReady: onControllerReady,
       );
     }
 

@@ -350,6 +350,9 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       case "deleteEvent":
         let id = (call.arguments as? [String: Any])?["id"] as? String ?? ""
         self.handleDeleteEvent(id: id, result: result)
+      case "deleteEventSeries":
+        let id = (call.arguments as? [String: Any])?["id"] as? String ?? ""
+        self.handleDeleteEventSeries(id: id, result: result)
       case "deleteEventByUID":
         let uid = (call.arguments as? [String: Any])?["uid"] as? String ?? ""
         self.handleDeleteEventByUID(uid: uid, result: result)
@@ -480,6 +483,19 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     }
   }
 
+  private func handleDeleteEventSeries(id: String, result: @escaping FlutterResult) {
+    guard let event = eventStore.event(withIdentifier: id) else {
+      result(nil)  // already gone
+      return
+    }
+    do {
+      try eventStore.remove(event, span: .futureEvents)
+      result(nil)
+    } catch {
+      result(FlutterError(code: "DELETE_ERROR", message: error.localizedDescription, details: nil))
+    }
+  }
+
   private func handleDeleteEventByUID(uid: String, result: @escaping FlutterResult) {
     let items = eventStore.calendarItems(withExternalIdentifier: uid)
     var deleted = false
@@ -567,10 +583,9 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       NSApp.activate(ignoringOtherApps: true)
 
       let store = CNContactStore()
-      // Explicit cast selects the completion-handler overload. The async/await form
-      // throws CNError.authorizationDenied on macOS 15 for notDetermined apps.
-      let requestAccess = store.requestAccess as (CNEntityType, @escaping (Bool, Error?) -> Void) -> Void
-      requestAccess(.contacts) { granted, error in
+      // Named completionHandler: label selects the completion-handler overload without a cast.
+      // The async/await form throws CNError.authorizationDenied on macOS 15 for notDetermined apps.
+      store.requestAccess(for: .contacts, completionHandler: { granted, error in
         DispatchQueue.main.async {
           let after = CNContactStore.authorizationStatus(for: .contacts)
           if let e = error as? NSError {
@@ -581,7 +596,7 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
                 granted ? 1 : 0, after.rawValue)
           result(granted ? "granted" : "denied")
         }
-      }
+      })
     }
   }
 

@@ -149,6 +149,21 @@ class EventKitCalendarDatasourceImpl implements CalendarRemoteDatasource {
   }
 
   @override
+  Future<void> cancelCalendarEventSeries({
+    required String eventId,
+    String? seriesMasterId,
+    required DateTime occurrenceStart,
+  }) async {
+    try {
+      // EventKit handles "this and future" natively via EKSpan.futureEvents.
+      // Use the occurrence ID (eventId) — span semantics are applied by EventKit.
+      await _channel.invokeMethod<void>('deleteEventSeries', {'id': eventId});
+    } on PlatformException catch (e) {
+      throw ServerException(message: e.message ?? 'EventKit error');
+    }
+  }
+
+  @override
   Future<void> declineCalendarEvent({
     required String eventId,
     String? userEmail,

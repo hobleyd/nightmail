@@ -262,6 +262,37 @@ class CalendarRepositoryImpl implements CalendarRepository {
   }
 
   @override
+  Future<Either<Failure, void>> cancelCalendarEventSeries({
+    required String eventId,
+    String? seriesMasterId,
+    required DateTime occurrenceStart,
+  }) async {
+    final ds = _accountManager.calendarDatasource;
+    if (ds == null) {
+      return const Left(
+        ServerFailure(message: 'Calendar is not available for this account type'),
+      );
+    }
+
+    try {
+      await ds.cancelCalendarEventSeries(
+        eventId: eventId,
+        seriesMasterId: seriesMasterId,
+        occurrenceStart: occurrenceStart,
+      );
+      return const Right(null);
+    } on AuthException catch (e) {
+      return Left(AuthFailure(message: e.message));
+    } on NetworkException catch (e) {
+      return Left(NetworkFailure(message: e.message));
+    } on ServerException catch (e) {
+      return Left(ServerFailure(message: e.message, statusCode: e.statusCode));
+    } catch (e) {
+      return Left(ServerFailure(message: e.toString()));
+    }
+  }
+
+  @override
   Future<Either<Failure, void>> declineCalendarEvent({
     required String eventId,
   }) async {

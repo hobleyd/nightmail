@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fpdart/fpdart.dart';
 import 'package:mockito/annotations.dart';
@@ -37,6 +38,7 @@ final _tEvents = <CalendarEvent>[
 @GenerateMocks([
   GetCalendarEvents,
   CancelCalendarEvent,
+  CancelCalendarEventSeries,
   DeclineCalendarEvent,
   ProposeNewTime,
   UpdateCalendarEvent,
@@ -44,8 +46,11 @@ final _tEvents = <CalendarEvent>[
   AccountManager,
 ])
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late MockGetCalendarEvents mockGetCalendarEvents;
   late MockCancelCalendarEvent mockCancelCalendarEvent;
+  late MockCancelCalendarEventSeries mockCancelCalendarEventSeries;
   late MockDeclineCalendarEvent mockDeclineCalendarEvent;
   late MockProposeNewTime mockProposeNewTime;
   late MockUpdateCalendarEvent mockUpdateCalendarEvent;
@@ -55,6 +60,7 @@ void main() {
   CalendarBloc makeBloc() => CalendarBloc(
         getCalendarEvents: mockGetCalendarEvents,
         cancelCalendarEvent: mockCancelCalendarEvent,
+        cancelCalendarEventSeries: mockCancelCalendarEventSeries,
         declineCalendarEvent: mockDeclineCalendarEvent,
         proposeNewTime: mockProposeNewTime,
         updateCalendarEvent: mockUpdateCalendarEvent,
@@ -65,6 +71,7 @@ void main() {
   setUp(() {
     mockGetCalendarEvents = MockGetCalendarEvents();
     mockCancelCalendarEvent = MockCancelCalendarEvent();
+    mockCancelCalendarEventSeries = MockCancelCalendarEventSeries();
     mockDeclineCalendarEvent = MockDeclineCalendarEvent();
     mockProposeNewTime = MockProposeNewTime();
     mockUpdateCalendarEvent = MockUpdateCalendarEvent();
@@ -87,6 +94,11 @@ void main() {
       reminderMinutes: anyNamed('reminderMinutes'),
       startIso: anyNamed('startIso'),
     )).thenAnswer((_) async {});
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+      const MethodChannel('au.com.sharpblue.nightmail/calendar_refresh'),
+      (_) async => null,
+    );
     provideDummy<Either<Failure, List<CalendarEvent>>>(_emptyRight);
     provideDummy<Either<Failure, void>>(_voidRight);
   });

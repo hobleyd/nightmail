@@ -1642,6 +1642,8 @@ void _showEventContextMenu(
   final hasMeetingLink =
       meetingUrl != null && meetingUrl.startsWith('https://');
 
+  final isRecurring = event.isRecurringOccurrence;
+
   if (event.isOrganizer) {
     showMenu<_EventMenuAction>(
       context: context,
@@ -1658,12 +1660,49 @@ void _showEventContextMenu(
           height: 36,
           child: Text('Cancel Meeting', style: TextStyle(fontSize: 13)),
         ),
+        if (isRecurring)
+          const PopupMenuItem(
+            value: _EventMenuAction.cancelSeries,
+            height: 36,
+            child: Text('Cancel Series', style: TextStyle(fontSize: 13)),
+          ),
       ],
     ).then((action) async {
       if (action == null || !context.mounted) return;
       if (action == _EventMenuAction.joinMeeting) {
         unawaited(launchUrl(Uri.parse(meetingUrl!),
             mode: LaunchMode.externalApplication));
+        return;
+      }
+      if (action == _EventMenuAction.cancelSeries) {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Cancel Series'),
+            content: Text(
+              'Cancel all occurrences of "${event.subject}"? '
+              'Cancellation notices will be sent to all attendees.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('Keep'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Cancel Series',
+                    style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true || !context.mounted) return;
+        context.read<CalendarBloc>().add(CalendarEventCancelSeriesRequested(
+              eventId: event.id,
+              seriesMasterId: event.seriesMasterId,
+              occurrenceStart: event.start,
+            ));
         return;
       }
       final confirmed = await showDialog<bool>(
@@ -1710,7 +1749,7 @@ void _showEventContextMenu(
       const PopupMenuItem(
         value: _EventMenuAction.decline,
         height: 36,
-        child: Text('Decline', style: TextStyle(fontSize: 13)),
+        child: Text('Decline Meeting', style: TextStyle(fontSize: 13)),
       ),
       const PopupMenuItem(
         value: _EventMenuAction.proposeNewTime,
@@ -1722,6 +1761,7 @@ void _showEventContextMenu(
     if (action == null || !context.mounted) return;
     switch (action) {
       case _EventMenuAction.cancel:
+      case _EventMenuAction.cancelSeries:
         break;
       case _EventMenuAction.joinMeeting:
         unawaited(launchUrl(Uri.parse(meetingUrl!),
@@ -1743,7 +1783,7 @@ void _showEventContextMenu(
   });
 }
 
-enum _EventMenuAction { cancel, joinMeeting, decline, proposeNewTime }
+enum _EventMenuAction { cancel, cancelSeries, joinMeeting, decline, proposeNewTime }
 
 // ─── Propose New Time dialog ──────────────────────────────────────────────────
 

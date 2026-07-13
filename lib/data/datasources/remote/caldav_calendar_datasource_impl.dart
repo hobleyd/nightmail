@@ -262,6 +262,17 @@ class CalDavCalendarDatasourceImpl implements CalendarRemoteDatasource {
   }
 
   @override
+  Future<void> cancelCalendarEventSeries({
+    required String eventId,
+    String? seriesMasterId,
+    required DateTime occurrenceStart,
+  }) async {
+    // CalDAV series truncation requires raw ICS RRULE rewriting, which is not
+    // currently supported. Delete the occurrence as a best-effort fallback.
+    await cancelCalendarEvent(eventId: seriesMasterId ?? eventId);
+  }
+
+  @override
   Future<void> declineCalendarEvent({
     required String eventId,
     String? userEmail,

@@ -20,6 +20,7 @@ class CalendarEvent extends Equatable {
     this.attendees = const [],
     this.recurrence,
     this.reminderMinutes,
+    this.seriesMasterId,
   });
 
   final String id;
@@ -40,6 +41,12 @@ class CalendarEvent extends Equatable {
 
   /// Minutes before the event start to fire a reminder. Null means no reminder.
   final int? reminderMinutes;
+
+  /// Non-null when this event is an occurrence within a recurring series.
+  /// Holds the ID of the series master event (Graph: seriesMasterId, Google: recurringEventId).
+  final String? seriesMasterId;
+
+  bool get isRecurringOccurrence => seriesMasterId != null;
 
   Duration get duration => end.difference(start);
 

@@ -61,6 +61,10 @@ class _EmailListPanelState extends State<EmailListPanel> {
   late final bool _isDesktop;
   late final bool _isMac;
 
+  final _listFocusNode = FocusNode();
+  final _flagFocusNode = FocusNode(skipTraversal: true);
+  final _deleteFocusNode = FocusNode(skipTraversal: true);
+
   @override
   void initState() {
     super.initState();
@@ -71,12 +75,128 @@ class _EmailListPanelState extends State<EmailListPanel> {
     _isDesktop = platform == TargetPlatform.macOS ||
         platform == TargetPlatform.windows ||
         platform == TargetPlatform.linux;
+
+    _listFocusNode.onKeyEvent = (node, event) {
+      if (event is KeyUpEvent) return KeyEventResult.ignored;
+      switch (event.logicalKey) {
+        case LogicalKeyboardKey.arrowDown:
+          _selectNextEmail();
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.arrowUp:
+          _selectPrevEmail();
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.arrowRight:
+          if (widget.selectedEmailId != null) _flagFocusNode.requestFocus();
+          return KeyEventResult.handled;
+        default:
+          return KeyEventResult.ignored;
+      }
+    };
+
+    _listFocusNode.addListener(_onListFocusChanged);
+
+    _flagFocusNode.onKeyEvent = (node, event) {
+      if (event is KeyUpEvent) return KeyEventResult.ignored;
+      switch (event.logicalKey) {
+        case LogicalKeyboardKey.arrowUp:
+          _selectPrevEmail();
+          _listFocusNode.requestFocus();
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.arrowDown:
+          _deleteFocusNode.requestFocus();
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.arrowLeft:
+          _listFocusNode.requestFocus();
+          return KeyEventResult.handled;
+        default:
+          return KeyEventResult.ignored;
+      }
+    };
+
+    _deleteFocusNode.onKeyEvent = (node, event) {
+      if (event is KeyUpEvent) return KeyEventResult.ignored;
+      switch (event.logicalKey) {
+        case LogicalKeyboardKey.arrowUp:
+          _flagFocusNode.requestFocus();
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.arrowDown:
+          _selectNextEmail();
+          _listFocusNode.requestFocus();
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.arrowLeft:
+          _listFocusNode.requestFocus();
+          return KeyEventResult.handled;
+        default:
+          return KeyEventResult.ignored;
+      }
+    };
+  }
+
+  void _onListFocusChanged() {
+    if (_listFocusNode.hasFocus && widget.selectedEmailId == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final items = _currentFlatItems();
+        if (items.isNotEmpty) {
+          _selectEmailAtIndex(items, 0);
+        }
+      });
+    }
+  }
+
+  void _selectNextEmail() {
+    final items = _currentFlatItems();
+    if (items.isEmpty) return;
+    final currentId = widget.selectedEmailId;
+    if (currentId == null) {
+      _selectEmailAtIndex(items, 0);
+      return;
+    }
+    final idx = _indexOfEmail(items, currentId);
+    if (idx == -1 || idx >= items.length - 1) return;
+    _selectEmailAtIndex(items, idx + 1);
+  }
+
+  void _selectPrevEmail() {
+    final items = _currentFlatItems();
+    if (items.isEmpty) return;
+    final currentId = widget.selectedEmailId;
+    if (currentId == null) return;
+    final idx = _indexOfEmail(items, currentId);
+    if (idx <= 0) return;
+    _selectEmailAtIndex(items, idx - 1);
+  }
+
+  int _indexOfEmail(List<_ListItem> items, String emailId) =>
+      items.indexWhere((item) => switch (item) {
+            _SingleEmailItem(:final email) => email.id == emailId,
+            _ConversationHeaderItem(:final latestEmail) =>
+              latestEmail.id == emailId,
+          });
+
+  void _selectEmailAtIndex(List<_ListItem> items, int index) {
+    if (_selectedEmailIds.isNotEmpty || _isMultiSelectMode) {
+      setState(() {
+        _selectedEmailIds = {};
+        _isMultiSelectMode = false;
+      });
+    }
+    _lastSelectedIndex = index;
+    final email = switch (items[index]) {
+      _SingleEmailItem(:final email) => email,
+      _ConversationHeaderItem(:final latestEmail) => latestEmail,
+    };
+    widget.onEmailSelected(email);
   }
 
   @override
   void dispose() {
     _scrollController.dispose();
     _searchController.dispose();
+    _listFocusNode.removeListener(_onListFocusChanged);
+    _listFocusNode.dispose();
+    _flagFocusNode.dispose();
+    _deleteFocusNode.dispose();
     super.dispose();
   }
 
@@ -362,53 +482,58 @@ class _EmailListPanelState extends State<EmailListPanel> {
             ),
             Divider(height: 1, color: c.separator),
             Expanded(
-              child: BlocBuilder<EmailListBloc, EmailListState>(
-                builder: (context, state) {
-                  return switch (state) {
-                    EmailListInitial() => const _EmptyStateView(
-                        message: 'Select a folder to view emails',
-                      ),
-                    EmailListLoading() => Center(
-                        child: CircularProgressIndicator(
-                          color: AppColors.accent,
-                          strokeWidth: 2,
+              child: Focus(
+                focusNode: _listFocusNode,
+                child: BlocBuilder<EmailListBloc, EmailListState>(
+                  builder: (context, state) {
+                    return switch (state) {
+                      EmailListInitial() => const _EmptyStateView(
+                          message: 'Select a folder to view emails',
                         ),
-                      ),
-                    EmailListLoaded(
-                      :final emails,
-                      :final isLoadingMore,
-                      :final expandedConversationIds,
-                      :final spamEmailIds,
-                      :final activeSearchQuery,
-                    ) =>
-                      emails.isEmpty
-                          ? _EmptyStateView(
-                              message: activeSearchQuery != null
-                                  ? 'No results found'
-                                  : 'No emails here',
-                            )
-                          : _EmailListView(
-                              emails: emails,
-                              isLoadingMore: isLoadingMore,
-                              selectedEmailId: widget.selectedEmailId,
-                              selectedEmailIds: _selectedEmailIds,
-                              showCheckboxes: _showCheckboxes,
-                              scrollController: _scrollController,
-                              onEmailTapped: _handleEmailTap,
-                              onEmailLongPressed: _handleEmailLongPress,
-                              onEmailDoubleTapped: widget.onEmailDoubleTapped,
-                              expandedConversationIds: expandedConversationIds,
-                              spamEmailIds: spamEmailIds,
-                              isDesktop: _isDesktop,
-                              onToggleConversation: (id) => context
-                                  .read<EmailListBloc>()
-                                  .add(EmailListToggleConversation(conversationId: id)),
-                              onAutoSelectEmail: widget.onEmailSelected,
-                            ),
-                    EmailListError(:final message) =>
-                      _ErrorView(message: message),
-                  };
-                },
+                      EmailListLoading() => Center(
+                          child: CircularProgressIndicator(
+                            color: AppColors.accent,
+                            strokeWidth: 2,
+                          ),
+                        ),
+                      EmailListLoaded(
+                        :final emails,
+                        :final isLoadingMore,
+                        :final expandedConversationIds,
+                        :final spamEmailIds,
+                        :final activeSearchQuery,
+                      ) =>
+                        emails.isEmpty
+                            ? _EmptyStateView(
+                                message: activeSearchQuery != null
+                                    ? 'No results found'
+                                    : 'No emails here',
+                              )
+                            : _EmailListView(
+                                emails: emails,
+                                isLoadingMore: isLoadingMore,
+                                selectedEmailId: widget.selectedEmailId,
+                                selectedEmailIds: _selectedEmailIds,
+                                showCheckboxes: _showCheckboxes,
+                                scrollController: _scrollController,
+                                onEmailTapped: _handleEmailTap,
+                                onEmailLongPressed: _handleEmailLongPress,
+                                onEmailDoubleTapped: widget.onEmailDoubleTapped,
+                                expandedConversationIds: expandedConversationIds,
+                                spamEmailIds: spamEmailIds,
+                                isDesktop: _isDesktop,
+                                flagFocusNode: _flagFocusNode,
+                                deleteFocusNode: _deleteFocusNode,
+                                onToggleConversation: (id) => context
+                                    .read<EmailListBloc>()
+                                    .add(EmailListToggleConversation(conversationId: id)),
+                                onAutoSelectEmail: widget.onEmailSelected,
+                              ),
+                      EmailListError(:final message) =>
+                        _ErrorView(message: message),
+                    };
+                  },
+                ),
               ),
             ),
             if (widget.folder != null) ...[
@@ -733,6 +858,8 @@ class _EmailListView extends StatelessWidget {
     this.onEmailLongPressed,
     this.onEmailDoubleTapped,
     this.onAutoSelectEmail,
+    this.flagFocusNode,
+    this.deleteFocusNode,
   });
 
   final List<Email> emails;
@@ -747,6 +874,8 @@ class _EmailListView extends StatelessWidget {
   final ValueChanged<Email>? onEmailDoubleTapped;
   final Set<String> expandedConversationIds;
   final Set<String> spamEmailIds;
+  final FocusNode? flagFocusNode;
+  final FocusNode? deleteFocusNode;
   final ValueChanged<String> onToggleConversation;
   final ValueChanged<Email>? onAutoSelectEmail;
 
@@ -784,11 +913,12 @@ class _EmailListView extends StatelessWidget {
             context.read<EmailListBloc>().add(EmailListEmailDeleted(emailId: email.id));
           }
           void onFlag(DateTime? date) => _createTaskFromEmail(context, email, dueDate: date);
+          final isSelected = email.id == selectedEmailId;
           final child = EmailListItem(
             key: ValueKey('item_${email.id}'),
             email: email,
             isDesktop: isDesktop,
-            isSelected: email.id == selectedEmailId,
+            isSelected: isSelected,
             isMultiSelected: selectedEmailIds.contains(email.id),
             showCheckbox: showCheckboxes,
             indent: isChild ? 20.0 : 0.0,
@@ -798,6 +928,8 @@ class _EmailListView extends StatelessWidget {
             onLongPress: () => onEmailLongPressed?.call(email, i),
             onDelete: onDelete,
             onFlag: onFlag,
+            flagFocusNode: isSelected ? flagFocusNode : null,
+            deleteFocusNode: isSelected ? deleteFocusNode : null,
           );
           if (isDesktop) {
             return _DraggableEmailItem(
@@ -837,6 +969,7 @@ class _EmailListView extends StatelessWidget {
         }
         void onConvFlag(DateTime? date) =>
             _createTaskFromEmail(context, conv.latestEmail, dueDate: date);
+        final isConvSelected = conv.latestEmail.id == selectedEmailId;
         final convChild = _ConversationHeader(
           key: ValueKey('conv_${conv.conversationId}'),
           latestEmail: conv.latestEmail,
@@ -844,7 +977,7 @@ class _EmailListView extends StatelessWidget {
           isExpanded: conv.isExpanded,
           hasUnread: conv.hasUnread,
           isDesktop: isDesktop,
-          isSelected: conv.latestEmail.id == selectedEmailId,
+          isSelected: isConvSelected,
           isMultiSelected: selectedEmailIds.contains(conv.latestEmail.id),
           showCheckbox: showCheckboxes,
           onTap: () => onEmailTapped(conv.latestEmail, i),
@@ -852,6 +985,8 @@ class _EmailListView extends StatelessWidget {
           onToggleExpand: () => onToggleConversation(conv.conversationId),
           onDelete: onConvDelete,
           onFlag: onConvFlag,
+          flagFocusNode: isConvSelected ? flagFocusNode : null,
+          deleteFocusNode: isConvSelected ? deleteFocusNode : null,
         );
         if (isDesktop) {
           return _DraggableEmailItem(
@@ -897,6 +1032,8 @@ class _ConversationHeader extends StatefulWidget {
     this.isMultiSelected = false,
     this.showCheckbox = false,
     this.onLongPress,
+    this.flagFocusNode,
+    this.deleteFocusNode,
   });
 
   final Email latestEmail;
@@ -912,6 +1049,8 @@ class _ConversationHeader extends StatefulWidget {
   final VoidCallback onToggleExpand;
   final VoidCallback onDelete;
   final void Function(DateTime? dueDate) onFlag;
+  final FocusNode? flagFocusNode;
+  final FocusNode? deleteFocusNode;
 
   @override
   State<_ConversationHeader> createState() => _ConversationHeaderState();
@@ -919,6 +1058,15 @@ class _ConversationHeader extends StatefulWidget {
 
 class _ConversationHeaderState extends State<_ConversationHeader> {
   bool _isHovered = false;
+  late final FocusNode _localFlagFn = FocusNode(skipTraversal: true);
+  late final FocusNode _localDeleteFn = FocusNode(skipTraversal: true);
+
+  @override
+  void dispose() {
+    _localFlagFn.dispose();
+    _localDeleteFn.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1073,6 +1221,7 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         FlagIconButton(
+                          focusNode: widget.flagFocusNode ?? _localFlagFn,
                           color: c.textMuted,
                           onTap: () => widget.onFlag(null),
                           onSchedule: (date) => widget.onFlag(date),
@@ -1081,6 +1230,7 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
                         _ActionIcon(
                           icon: Icons.delete_outline_rounded,
                           color: c.textMuted,
+                          focusNode: widget.deleteFocusNode ?? _localDeleteFn,
                           onTap: widget.onDelete,
                         ),
                       ],
@@ -1167,15 +1317,18 @@ class _ActionIcon extends StatelessWidget {
     required this.icon,
     required this.color,
     required this.onTap,
+    this.focusNode,
   });
 
   final IconData icon;
   final Color color;
   final VoidCallback onTap;
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
     return IconButton(
+      focusNode: focusNode,
       icon: Icon(icon, size: 15, color: color),
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(minWidth: 28, minHeight: 28),

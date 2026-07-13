@@ -14,12 +14,14 @@ class FlagIconButton extends StatelessWidget {
     required this.onSchedule,
     this.color,
     this.size = 15,
+    this.focusNode,
   });
 
   final VoidCallback onTap;
   final void Function(DateTime dueDate) onSchedule;
   final Color? color;
   final double size;
+  final FocusNode? focusNode;
 
   @override
   Widget build(BuildContext context) {
@@ -27,6 +29,7 @@ class FlagIconButton extends StatelessWidget {
       onSecondaryTapUp: (details) =>
           _showMenu(context, details.globalPosition),
       child: IconButton(
+        focusNode: focusNode,
         icon: Icon(
           Icons.flag_outlined,
           size: size,

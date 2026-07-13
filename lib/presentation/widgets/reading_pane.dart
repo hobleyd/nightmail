@@ -649,12 +649,14 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
     ).toUtc();
     setState(() {
       if (isStart) {
+        final oldStart = _proposedStart;
+        final oldEnd = _proposedEnd;
+        // Preserve the meeting's current duration when the start moves.
+        final duration = (oldStart != null && oldEnd != null)
+            ? oldEnd.difference(oldStart)
+            : const Duration(hours: 1);
         _proposedStart = combined;
-        // Keep end after start; nudge it if needed.
-        final end = _proposedEnd;
-        if (end != null && !end.isAfter(combined)) {
-          _proposedEnd = combined.add(const Duration(hours: 1));
-        }
+        _proposedEnd = combined.add(duration);
       } else {
         _proposedEnd = combined;
       }

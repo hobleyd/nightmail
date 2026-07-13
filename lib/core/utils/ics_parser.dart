@@ -28,6 +28,7 @@ class IcsParser {
     String? uid;
     DateTime? start;
     DateTime? end;
+    Duration? duration;
     bool isAllDay = false;
     String? location;
     final attendees = <String>[];
@@ -63,6 +64,8 @@ class IcsParser {
       } else if (namePart.startsWith('DTEND')) {
         final (dt, _) = parseDateTime(namePart, value);
         if (dt != null) end = dt;
+      } else if (namePart == 'DURATION') {
+        duration = parseDuration(value);
       } else if (namePart == 'LOCATION') {
         location = value.isNotEmpty ? value : null;
       } else if (namePart.startsWith('ATTENDEE')) {
@@ -78,7 +81,10 @@ class IcsParser {
       uid: uid,
       start: start ?? DateTime.now().toUtc(),
       end: end ??
-          (start ?? DateTime.now().toUtc()).add(const Duration(hours: 1)),
+          (start != null && duration != null
+              ? start.add(duration)
+              : (start ?? DateTime.now().toUtc())
+                  .add(const Duration(hours: 1))),
       isAllDay: isAllDay,
       location: location,
       attendees: attendees,
@@ -124,5 +130,26 @@ class IcsParser {
       }
     }
     return (null, false);
+  }
+
+  /// Parses an RFC 5545 DURATION value, e.g. "PT1H30M", "P1DT2H", "-P1D".
+  static Duration? parseDuration(String value) {
+    final match = RegExp(
+      r'^([+-]?)P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$',
+    ).firstMatch(value.trim());
+    if (match == null) return null;
+
+    final weeks = int.tryParse(match.group(2) ?? '') ?? 0;
+    final days = int.tryParse(match.group(3) ?? '') ?? 0;
+    final hours = int.tryParse(match.group(4) ?? '') ?? 0;
+    final minutes = int.tryParse(match.group(5) ?? '') ?? 0;
+    final seconds = int.tryParse(match.group(6) ?? '') ?? 0;
+    final total = Duration(
+      days: weeks * 7 + days,
+      hours: hours,
+      minutes: minutes,
+      seconds: seconds,
+    );
+    return match.group(1) == '-' ? -total : total;
   }
 }

@@ -5,6 +5,7 @@ import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/error/exceptions.dart';
 import 'package:nightmail/core/settings/app_settings.dart';
 import 'package:nightmail/data/datasources/local/delta_token_datasource.dart';
+import 'package:nightmail/data/datasources/local/email_local_datasource.dart';
 import 'package:nightmail/data/datasources/remote/email_remote_datasource.dart';
 import 'package:nightmail/data/datasources/remote/graph_api_datasource_impl.dart';
 import 'package:nightmail/core/error/failures.dart';
@@ -88,6 +89,7 @@ MailDeltaResult _emptyDelta() => MailDeltaResult(
   AppSettings,
   BadgeService,
   DeltaTokenDatasource,
+  EmailLocalDatasource,
   GraphApiDatasourceImpl,
   EmailRemoteDatasource,
   GetCachedFolders,
@@ -100,6 +102,7 @@ void main() {
   late MockAppSettings mockAppSettings;
   late MockBadgeService mockBadgeService;
   late MockDeltaTokenDatasource mockDatabase;
+  late MockEmailLocalDatasource mockEmailLocalDatasource;
   late MockGraphApiDatasourceImpl mockGraphDs;
   late MockGetCachedFolders mockGetCachedFolders;
   late MockNotificationService mockNotificationService;
@@ -109,6 +112,7 @@ void main() {
         appSettings: mockAppSettings,
         badgeService: mockBadgeService,
         database: mockDatabase,
+        emailLocalDatasource: mockEmailLocalDatasource,
         getCachedFolders: mockGetCachedFolders,
         notificationService: mockNotificationService,
       );
@@ -122,6 +126,15 @@ void main() {
         .thenAnswer((_) async {});
     when(mockGetCachedFolders(any))
         .thenAnswer((_) async => const Right([]));
+    when(mockEmailLocalDatasource.cacheEmails(
+      accountId: anyNamed('accountId'),
+      folderId: anyNamed('folderId'),
+      emails: anyNamed('emails'),
+    )).thenAnswer((_) async {});
+    when(mockEmailLocalDatasource.deleteEmailFromCache(
+      accountId: anyNamed('accountId'),
+      emailId: anyNamed('emailId'),
+    )).thenAnswer((_) async {});
     when(mockNotificationService.showNewMailNotification(
       accountLabel: anyNamed('accountLabel'),
       newCount: anyNamed('newCount'),
@@ -140,6 +153,7 @@ void main() {
     mockAppSettings = MockAppSettings();
     mockBadgeService = MockBadgeService();
     mockDatabase = MockDeltaTokenDatasource();
+    mockEmailLocalDatasource = MockEmailLocalDatasource();
     mockGraphDs = MockGraphApiDatasourceImpl();
     mockGetCachedFolders = MockGetCachedFolders();
     mockNotificationService = MockNotificationService();

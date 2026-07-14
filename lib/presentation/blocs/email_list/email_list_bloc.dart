@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../domain/entities/email.dart';
+import '../../../domain/usecases/cache_emails.dart';
 import '../../../domain/usecases/classify_emails.dart';
 import '../../../domain/usecases/clear_email_cache_for_folder.dart';
 import '../../../domain/usecases/delete_email.dart';
@@ -27,6 +28,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   EmailListBloc({
     required GetEmails getEmails,
     required GetCachedEmails getCachedEmails,
+    required CacheEmails cacheEmails,
     required ClearEmailCacheForFolder clearEmailCacheForFolder,
     required MarkEmailAsRead markEmailAsRead,
     required MoveEmail moveEmail,
@@ -40,6 +42,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     required SearchEmails searchEmails,
   })  : _getEmails = getEmails,
         _getCachedEmails = getCachedEmails,
+        _cacheEmails = cacheEmails,
         _clearEmailCacheForFolder = clearEmailCacheForFolder,
         _markEmailAsRead = markEmailAsRead,
         _moveEmail = moveEmail,
@@ -55,6 +58,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     on<EmailListLoadRequested>(_onLoadRequested);
     on<EmailListLoadMoreRequested>(_onLoadMoreRequested);
     on<EmailListRefreshRequested>(_onRefreshRequested);
+    on<EmailListCacheRefreshRequested>(_onCacheRefreshRequested);
     on<EmailListMarkReadRequested>(_onMarkReadRequested);
     on<EmailListToggleConversation>(_onToggleConversation);
     on<EmailListEmailsMoved>(_onEmailsMoved);
@@ -70,6 +74,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
 
   final GetEmails _getEmails;
   final GetCachedEmails _getCachedEmails;
+  final CacheEmails _cacheEmails;
   final ClearEmailCacheForFolder _clearEmailCacheForFolder;
   final MarkEmailAsRead _markEmailAsRead;
   final MoveEmail _moveEmail;
@@ -225,22 +230,16 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       emit(prior.copyWith(isLoadingFresh: true));
     }
 
-    // Clear stale cache before fetching so deleted/moved emails don't persist.
-    if (accountId != null) {
-      await _clearEmailCacheForFolder(ClearEmailCacheForFolderParams(
-        accountId: accountId,
-        folderId: folderId ?? _defaultFolderKey,
-      ));
-    }
-
     final result = await _getEmails(GetEmailsParams(
       folderId: folderId,
       top: _pageSize,
     ));
 
     List<Email>? refreshed;
-    result.fold(
-      (failure) {
+    await result.fold(
+      (failure) async {
+        // Network failed — leave the existing (possibly cache-sourced) list
+        // on screen untouched rather than wiping it out.
         final s = state;
         if (s is EmailListLoaded) {
           emit(s.copyWith(isLoadingFresh: false));
@@ -248,7 +247,25 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
           emit(EmailListError(message: failure.message));
         }
       },
-      (emails) {
+      (emails) async {
+        // Only clear stale cache rows once we have confirmed fresh data to
+        // replace them with, so deleted/moved emails don't persist without
+        // ever risking wiping the cache out from under an offline retry.
+        // Clear then explicitly re-write the fresh page ourselves — the
+        // repository's own cache write inside getEmails() above is a fire-
+        // and-forget side effect that isn't ordered against this clear, so
+        // relying on it here would race and could leave the folder's cache
+        // empty after a successful refresh.
+        if (accountId != null) {
+          final key = folderId ?? _defaultFolderKey;
+          await _clearEmailCacheForFolder(
+              ClearEmailCacheForFolderParams(accountId: accountId, folderId: key));
+          await _cacheEmails(CacheEmailsParams(
+            accountId: accountId,
+            folderId: key,
+            emails: emails,
+          ));
+        }
         _serverOffset = _pageSize;
         refreshed = emails;
         final s = state;
@@ -265,6 +282,32 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     if (refreshed != null) {
       await _classifyAndTrainIfImap(emit, refreshed!);
     }
+  }
+
+  Future<void> _onCacheRefreshRequested(
+    EmailListCacheRefreshRequested event,
+    Emitter<EmailListState> emit,
+  ) async {
+    final s = state;
+    if (s is! EmailListLoaded) return;
+    final accountId = _accountManager.activeAccount?.id;
+    if (accountId == null) return;
+
+    final result = await _getCachedEmails(GetCachedEmailsParams(
+      accountId: accountId,
+      folderId: s.currentFolderId ?? _defaultFolderKey,
+    ));
+    result.fold((_) {}, (cached) {
+      // Re-check after the await: the user may have switched folders while
+      // this was in flight, and a stale repaint would flash the previous
+      // folder's content over the one now on screen.
+      final current = state;
+      if (current is! EmailListLoaded ||
+          current.currentFolderId != s.currentFolderId) {
+        return;
+      }
+      emit(current.copyWith(emails: cached));
+    });
   }
 
   Future<void> _onMarkReadRequested(

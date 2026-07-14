@@ -51,9 +51,14 @@ class EmailModel extends Email {
       body: bodyContent,
       bodyType: bodyTypeStr == 'html' ? EmailBodyType.html : EmailBodyType.text,
       isRead: json['isRead'] as bool? ?? false,
-      receivedDateTime: DateTime.parse(
-        json['receivedDateTime'] as String,
-      ),
+      // Some delta-sync items (e.g. transient system-generated messages)
+      // arrive without receivedDateTime populated yet — falling back instead
+      // of throwing keeps one such item from discarding an entire poll's
+      // worth of otherwise-valid results.
+      receivedDateTime: DateTime.tryParse(
+            json['receivedDateTime'] as String? ?? '',
+          ) ??
+          DateTime.fromMillisecondsSinceEpoch(0),
       sentDateTime: json['sentDateTime'] != null
           ? DateTime.tryParse(json['sentDateTime'] as String)
           : null,

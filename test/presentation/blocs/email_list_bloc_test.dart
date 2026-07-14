@@ -7,6 +7,7 @@ import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/domain/entities/email.dart';
 import 'package:nightmail/domain/entities/email_address.dart';
+import 'package:nightmail/domain/usecases/cache_emails.dart';
 import 'package:nightmail/domain/usecases/classify_emails.dart';
 import 'package:nightmail/domain/usecases/clear_email_cache_for_folder.dart';
 import 'package:nightmail/domain/usecases/delete_email.dart';
@@ -62,6 +63,7 @@ class _FakeAccountManager extends Fake implements AccountManager {
 @GenerateMocks([
   GetEmails,
   GetCachedEmails,
+  CacheEmails,
   MarkEmailAsRead,
   MoveEmail,
   ReportJunk,
@@ -96,6 +98,7 @@ void main() {
     bloc = EmailListBloc(
       getEmails: mockGetEmails,
       getCachedEmails: mockGetCachedEmails,
+      cacheEmails: MockCacheEmails(),
       clearEmailCacheForFolder: MockClearEmailCacheForFolder(),
       markEmailAsRead: MockMarkEmailAsRead(),
       moveEmail: mockMoveEmail,
@@ -301,4 +304,71 @@ void main() {
           (s) => s is EmailListLoaded && s.emptyingFolderIds.isEmpty);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // EmailListRefreshRequested — cache ordering
+  // ---------------------------------------------------------------------------
+
+  group('EmailListRefreshRequested cache ordering (active account)', () {
+    // Regression: the folder cache must be cleared and then explicitly
+    // re-written with the fresh page, strictly in that order. The repository
+    // also fires its own unawaited cache write as a side effect of
+    // getEmails() succeeding; if the clear ran after that write (or nothing
+    // re-wrote the cache after the clear), the folder's on-disk cache would
+    // be left empty after a successful refresh — a poll-triggered
+    // EmailListCacheRefreshRequested right after would then show a blank
+    // inbox. Asserting the explicit clear-then-write order here is what
+    // guarantees the final cache state is correct regardless of how the
+    // repository's own fire-and-forget write happens to interleave.
+    test('clears the folder cache before re-writing the fresh page', () async {
+      final mockCacheEmails = MockCacheEmails();
+      final mockClearEmailCacheForFolder = MockClearEmailCacheForFolder();
+      final mockRecordKnownSenders = MockRecordKnownSenders();
+      final orderedBloc = EmailListBloc(
+        getEmails: mockGetEmails,
+        getCachedEmails: mockGetCachedEmails,
+        cacheEmails: mockCacheEmails,
+        clearEmailCacheForFolder: mockClearEmailCacheForFolder,
+        markEmailAsRead: MockMarkEmailAsRead(),
+        moveEmail: mockMoveEmail,
+        reportJunk: MockReportJunk(),
+        deleteEmail: MockDeleteEmail(),
+        emptyFolder: mockEmptyFolder,
+        accountManager: _FakeActiveAccountManager(),
+        recordKnownSenders: mockRecordKnownSenders,
+        classifyEmails: MockClassifyEmails(),
+        trainSpamFilter: MockTrainSpamFilter(),
+        searchEmails: MockSearchEmails(),
+      );
+      addTearDown(orderedBloc.close);
+
+      when(mockGetCachedEmails(any)).thenAnswer((_) async => const Right([]));
+      when(mockGetEmails(any))
+          .thenAnswer((_) async => Right([_email('id1')]));
+      when(mockClearEmailCacheForFolder(any))
+          .thenAnswer((_) async => const Right(unit));
+      when(mockCacheEmails(any)).thenAnswer((_) async => const Right(unit));
+      when(mockRecordKnownSenders(any))
+          .thenAnswer((_) async => const Right(unit));
+
+      orderedBloc
+          .add(const EmailListRefreshRequested(folderId: 'folder-1'));
+      await orderedBloc.stream.firstWhere((s) => s is EmailListLoaded);
+
+      verifyInOrder([
+        mockClearEmailCacheForFolder(any),
+        mockCacheEmails(any),
+      ]);
+    });
+  });
+}
+
+class _FakeActiveAccountManager extends Fake implements AccountManager {
+  @override
+  Account? get activeAccount => const MicrosoftAccount(
+        id: 'account-1',
+        displayName: 'Test',
+        emailAddress: 'test@example.com',
+        tenantId: 'common',
+      );
 }

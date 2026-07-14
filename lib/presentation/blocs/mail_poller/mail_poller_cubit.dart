@@ -9,7 +9,9 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../core/error/exceptions.dart';
 import '../../../core/settings/app_settings.dart';
 import '../../../data/datasources/local/delta_token_datasource.dart';
+import '../../../data/datasources/local/email_local_datasource.dart';
 import '../../../data/datasources/remote/graph_delta_datasource.dart';
+import '../../../domain/entities/email.dart';
 import '../../../domain/usecases/get_cached_folders.dart';
 import '../../../infrastructure/accounts/account.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
@@ -23,12 +25,14 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     required AppSettings appSettings,
     required BadgeService badgeService,
     required DeltaTokenDatasource database,
+    required EmailLocalDatasource emailLocalDatasource,
     required GetCachedFolders getCachedFolders,
     required NotificationService notificationService,
   })  : _accountManager = accountManager,
         _appSettings = appSettings,
         _badgeService = badgeService,
         _database = database,
+        _emailLocalDatasource = emailLocalDatasource,
         _getCachedFolders = getCachedFolders,
         _notificationService = notificationService,
         super(const MailPollerState(
@@ -40,6 +44,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   final AppSettings _appSettings;
   final BadgeService _badgeService;
   final DeltaTokenDatasource _database;
+  final EmailLocalDatasource _emailLocalDatasource;
   final GetCachedFolders _getCachedFolders;
   final NotificationService _notificationService;
 
@@ -181,6 +186,19 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                   account.id, 'inbox', result.deltaLink);
 
               if (result.hasChanges) {
+                // Mirror the delta straight into the cache so the message
+                // list can repaint from disk without waiting on a second,
+                // separate network round-trip. Awaited: pollGeneration bumps
+                // right after this loop and the list repaints from cache, so
+                // the write must land first.
+                await _cacheUpserted(account.id, result.upserted);
+                for (final removedId in result.removedIds) {
+                  unawaited(_emailLocalDatasource.deleteEmailFromCache(
+                    accountId: account.id,
+                    emailId: removedId,
+                  ));
+                }
+
                 // Refresh unread count only when something actually changed.
                 final folders = await ds.getMailFolders();
                 final inboxes = folders
@@ -255,6 +273,19 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
               if ((prevUnread != null && unreadCount != prevUnread) ||
                   (prevTotal != null && totalCount != prevTotal)) {
                 activeInboxChanged = true;
+                // Gmail/IMAP have no delta feed, so unlike the Graph branch
+                // above there's no upserted-message list — fetch the inbox
+                // page directly and cache it (awaited: pollGeneration bumps
+                // right after this loop and the list repaints from cache,
+                // so the write must land first) instead of showing stale
+                // data until a manual refresh.
+                final freshEmails =
+                    await ds.getEmails(folderId: inboxes.first.id, top: 25);
+                await _emailLocalDatasource.cacheEmails(
+                  accountId: account.id,
+                  folderId: inboxes.first.id,
+                  emails: freshEmails,
+                );
               }
               _baselineUnread[account.id] = unreadCount;
               _baselineTotal[account.id] = totalCount;
@@ -335,6 +366,11 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
           .firstOrNull;
       if (inbox == null) throw StateError('no inbox folder');
       final emails = await ds.getEmails(folderId: inbox.id, top: 10);
+      unawaited(_emailLocalDatasource.cacheEmails(
+        accountId: account.id,
+        folderId: inbox.id,
+        emails: emails,
+      ));
       final latestUnread = emails.where((e) => !e.isRead).firstOrNull;
       if (latestUnread == null) throw StateError('no unread message found');
       final senderName = newCount > 1
@@ -366,6 +402,10 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     try {
       final result = await ds.syncMailDelta('inbox');
       await _database.saveDeltaToken(accountId, 'inbox', result.deltaLink);
+      // The bootstrap fetch already pulled the last 30 days of messages to
+      // establish the delta token — cache them now instead of discarding,
+      // so a fresh account is usable offline without a separate fetch.
+      await _cacheUpserted(accountId, result.upserted);
       // The fresh delta snapshot reflects the inbox at this moment. The email
       // list cache may be stale (e.g. emails deleted before/during bootstrap),
       // so force a UI refresh now that we have a reliable baseline.
@@ -376,6 +416,28 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
       // Bootstrap failed; next poll cycle will retry when savedToken is null.
     } finally {
       _bootstrapping.remove(accountId);
+    }
+  }
+
+  /// Groups [upserted] by their real server folder id (Graph messages carry
+  /// `parentFolderId`) and writes each group into the cache. Delta syncs are
+  /// scoped to a single well-known folder name (e.g. 'inbox'), which is not
+  /// the same string as that folder's actual id used elsewhere for cache
+  /// lookups/UI navigation — grouping by parentFolderId keeps cache keys
+  /// consistent with what the email list reads.
+  Future<void> _cacheUpserted(String accountId, List<Email> upserted) async {
+    if (upserted.isEmpty) return;
+    final byFolder = <String, List<Email>>{};
+    for (final email in upserted) {
+      final folderId = email.parentFolderId ?? 'inbox';
+      byFolder.putIfAbsent(folderId, () => []).add(email);
+    }
+    for (final entry in byFolder.entries) {
+      await _emailLocalDatasource.cacheEmails(
+        accountId: accountId,
+        folderId: entry.key,
+        emails: entry.value,
+      );
     }
   }
 

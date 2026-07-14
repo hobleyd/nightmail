@@ -28,6 +28,13 @@ final class EmailListRefreshRequested extends EmailListEvent {
   List<Object?> get props => [folderId];
 }
 
+/// Re-reads the current folder from the local cache only — no network call.
+/// Dispatched when something else (background poll, delta sync) has already
+/// written fresh data into the cache, so the list can repaint instantly.
+final class EmailListCacheRefreshRequested extends EmailListEvent {
+  const EmailListCacheRefreshRequested();
+}
+
 final class EmailListMarkReadRequested extends EmailListEvent {
   const EmailListMarkReadRequested({required this.emailId, required this.isRead});
   final String emailId;

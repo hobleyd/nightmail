@@ -183,6 +183,111 @@ void main() {
     });
   });
 
+  group('getEmail', () {
+    // Regression: list/delta fetches only request a preview select
+    // (bodyPreview, no attachments) to keep folder loads and polling cheap,
+    // so rows they cache have an empty body. If getEmail() served those rows
+    // cache-first without checking, opening a message that was only ever
+    // seen via a folder load or background poll (the common case) would
+    // show a permanently blank body/no attachments — never falling through
+    // to the network fetch that actually has the full content.
+    test('falls through to network when the cached row is a thin '
+        'list-projection (empty body)', () async {
+      final thinCached = EmailModel(
+        id: 'email-1',
+        subject: 'Test',
+        from: const EmailAddressModel(address: 'a@b.com'),
+        toRecipients: const [],
+        ccRecipients: const [],
+        bodyPreview: 'preview only',
+        body: '', // list/delta select never includes 'body'
+        bodyType: EmailBodyType.text,
+        isRead: false,
+        receivedDateTime: DateTime(2026, 6, 1),
+        importance: EmailImportance.normal,
+      );
+      final fullFromNetwork = EmailModel(
+        id: 'email-1',
+        subject: 'Test',
+        from: const EmailAddressModel(address: 'a@b.com'),
+        toRecipients: const [],
+        ccRecipients: const [],
+        bodyPreview: 'preview only',
+        body: '<p>the real content</p>',
+        bodyType: EmailBodyType.html,
+        isRead: false,
+        receivedDateTime: DateTime(2026, 6, 1),
+        importance: EmailImportance.normal,
+      );
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      when(mockLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => thinCached);
+      when(mockRemoteDatasource.getEmail(any))
+          .thenAnswer((_) async => fullFromNetwork);
+      when(mockLocalDatasource.cacheEmails(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+        emails: anyNamed('emails'),
+      )).thenAnswer((_) async {});
+
+      final result = await repository.getEmail('email-1');
+
+      expect(result.isRight(), isTrue);
+      expect((result as Right).value.body, '<p>the real content</p>');
+      verify(mockRemoteDatasource.getEmail('email-1')).called(1);
+    });
+
+    test('returns the cached copy without hitting network when it already '
+        'has a full body', () async {
+      final fullCached = EmailModel(
+        id: 'email-1',
+        subject: 'Test',
+        from: const EmailAddressModel(address: 'a@b.com'),
+        toRecipients: const [],
+        ccRecipients: const [],
+        bodyPreview: 'preview',
+        body: '<p>already fetched</p>',
+        bodyType: EmailBodyType.html,
+        isRead: false,
+        receivedDateTime: DateTime(2026, 6, 1),
+        importance: EmailImportance.normal,
+      );
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      when(mockLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => fullCached);
+
+      final result = await repository.getEmail('email-1');
+
+      expect(result.isRight(), isTrue);
+      expect((result as Right).value.body, '<p>already fetched</p>');
+      verifyNever(mockRemoteDatasource.getEmail(any));
+    });
+
+    test('falls through to network when nothing is cached', () async {
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      when(mockLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => null);
+      when(mockRemoteDatasource.getEmail(any))
+          .thenAnswer((_) async => tEmailModel);
+      when(mockLocalDatasource.cacheEmails(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+        emails: anyNamed('emails'),
+      )).thenAnswer((_) async {});
+
+      final result = await repository.getEmail('email-1');
+
+      expect(result.isRight(), isTrue);
+      verify(mockRemoteDatasource.getEmail('email-1')).called(1);
+    });
+  });
+
   group('getMailFolders', () {
     test('returns Right(folders) on datasource success', () async {
       when(mockRemoteDatasource.getMailFolders())

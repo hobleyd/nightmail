@@ -316,9 +316,12 @@ class _HomeViewState extends State<_HomeView> {
           listenWhen: (prev, curr) =>
               prev.pollGeneration != curr.pollGeneration,
           listener: (context, _) {
+            // The poller already wrote fresh data into the cache before
+            // bumping pollGeneration — repaint from cache instantly rather
+            // than triggering a second, redundant network fetch.
             context
                 .read<EmailListBloc>()
-                .add(const EmailListRefreshRequested());
+                .add(const EmailListCacheRefreshRequested());
             context
                 .read<FolderListBloc>()
                 .add(const FolderListLoadRequested());

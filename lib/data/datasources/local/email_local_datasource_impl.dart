@@ -76,6 +76,21 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
   }
 
   @override
+  Future<Email?> getCachedEmailById({
+    required String accountId,
+    required String emailId,
+  }) async {
+    final row = await (_database.select(_database.cachedEmails)
+          ..where((t) => t.accountId.equals(accountId) & t.emailId.equals(emailId)))
+        .getSingleOrNull();
+    if (row == null) return null;
+
+    final plaintext = await _encryption.decrypt(row.encryptedData);
+    final json = jsonDecode(plaintext) as Map<String, dynamic>;
+    return _emailFromJson(json);
+  }
+
+  @override
   Future<void> clearCacheForAccount(String accountId) async {
     await (_database.delete(_database.cachedEmails)
           ..where((t) => t.accountId.equals(accountId)))

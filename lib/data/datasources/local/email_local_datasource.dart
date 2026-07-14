@@ -17,6 +17,13 @@ abstract interface class EmailLocalDatasource {
     required List<Email> emails,
   });
 
+  /// Returns the cached email with [emailId] for [accountId], regardless of
+  /// which folder it's filed under, or null if it isn't cached.
+  Future<Email?> getCachedEmailById({
+    required String accountId,
+    required String emailId,
+  });
+
   /// Deletes all cached emails belonging to [accountId].
   /// Call when an account is removed so no stale data lingers on disk.
   Future<void> clearCacheForAccount(String accountId);

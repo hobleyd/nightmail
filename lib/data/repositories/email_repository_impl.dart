@@ -76,7 +76,35 @@ class EmailRepositoryImpl implements EmailRepository {
 
   @override
   Future<Either<Failure, Email>> getEmail(String id) async {
-    return _execute(() => _accountManager.emailDatasource.getEmail(id));
+    final accountId = _accountManager.activeAccount?.id;
+    if (accountId != null) {
+      final cached = await _localDatasource.getCachedEmailById(
+        accountId: accountId,
+        emailId: id,
+      );
+      // List/delta fetches only request a preview select (bodyPreview, no
+      // attachment payloads) to keep folder loads and polling cheap, so a
+      // row cached from one of those has an empty body — not a real message
+      // with a blank body (vanishingly rare in practice). Only trust the
+      // cache for rows a prior single-message fetch actually filled in;
+      // otherwise fall through to network below, which will also upgrade
+      // the cached row to a full copy.
+      if (cached != null && cached.body.isNotEmpty) return Right(cached);
+    }
+
+    final result =
+        await _execute(() => _accountManager.emailDatasource.getEmail(id));
+    result.fold((_) {}, (email) {
+      if (accountId != null) {
+        final effectiveFolderId = email.parentFolderId ?? _defaultFolderKey;
+        unawaited(_localDatasource.cacheEmails(
+          accountId: accountId,
+          folderId: effectiveFolderId,
+          emails: [email],
+        ));
+      }
+    });
+    return result;
   }
 
   @override
@@ -291,11 +319,21 @@ class EmailRepositoryImpl implements EmailRepository {
     String folderId, {
     bool permanentDelete = false,
   }) async {
-    return _execute(() async {
+    final result = await _execute(() async {
       await _accountManager.emailDatasource
           .emptyFolder(folderId, permanentDelete: permanentDelete);
       return unit;
     });
+    result.fold((_) {}, (_) {
+      final accountId = _accountManager.activeAccount?.id;
+      if (accountId != null) {
+        unawaited(_localDatasource.clearCacheForFolder(
+          accountId: accountId,
+          folderId: folderId,
+        ));
+      }
+    });
+    return result;
   }
 
   @override

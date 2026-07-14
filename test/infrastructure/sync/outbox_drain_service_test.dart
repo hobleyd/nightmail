@@ -1,0 +1,237 @@
+import 'dart:convert';
+
+import 'package:drift/native.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mockito/annotations.dart';
+import 'package:mockito/mockito.dart';
+import 'package:nightmail/data/database/app_database.dart';
+import 'package:nightmail/data/datasources/local/email_local_datasource_impl.dart';
+import 'package:nightmail/data/datasources/local/pending_operations_datasource.dart';
+import 'package:nightmail/data/datasources/remote/email_remote_datasource.dart';
+import 'package:nightmail/data/models/email_address_model.dart';
+import 'package:nightmail/data/models/email_model.dart';
+import 'package:nightmail/domain/entities/email.dart';
+import 'package:nightmail/infrastructure/accounts/account.dart';
+import 'package:nightmail/infrastructure/accounts/account_manager.dart';
+import 'package:nightmail/infrastructure/cache/cache_encryption_service.dart';
+import 'package:nightmail/infrastructure/sync/outbox_drain_service.dart';
+
+import 'outbox_drain_service_test.mocks.dart';
+
+// Bypasses secure-storage platform channels — tests only need round-trip
+// fidelity of the cache, not real encryption.
+class _PlaintextEncryption extends CacheEncryptionService {
+  _PlaintextEncryption() : super(const FlutterSecureStorage());
+
+  @override
+  Future<void> initialize() async {}
+
+  @override
+  Future<String> encrypt(String plaintext) async => plaintext;
+
+  @override
+  Future<String> decrypt(String stored) async => stored;
+}
+
+const _account = MicrosoftAccount(
+  id: 'acct-1',
+  displayName: 'Test',
+  emailAddress: 'test@example.com',
+  tenantId: 'common',
+);
+
+EmailModel _email(String id, {String folderId = 'folder-1'}) => EmailModel(
+      id: id,
+      subject: 'Subject $id',
+      from: const EmailAddressModel(address: 'a@b.com'),
+      toRecipients: const [],
+      ccRecipients: const [],
+      bodyPreview: '',
+      body: '',
+      bodyType: EmailBodyType.text,
+      isRead: false,
+      receivedDateTime: DateTime(2026, 6, 1),
+      importance: EmailImportance.normal,
+      parentFolderId: folderId,
+    );
+
+@GenerateMocks([AccountManager, EmailRemoteDatasource])
+void main() {
+  late AppDatabase db;
+  late EmailLocalDatasourceImpl localDatasource;
+  late MockAccountManager mockAccountManager;
+  late MockEmailRemoteDatasource mockRemoteDatasource;
+  late OutboxDrainService service;
+
+  setUp(() {
+    db = AppDatabase.forTesting(NativeDatabase.memory());
+    localDatasource = EmailLocalDatasourceImpl(
+      database: db,
+      encryption: _PlaintextEncryption(),
+    );
+    mockAccountManager = MockAccountManager();
+    mockRemoteDatasource = MockEmailRemoteDatasource();
+    when(mockAccountManager.accounts).thenReturn([_account]);
+    when(mockAccountManager.buildEmailDatasourceForAccount(any))
+        .thenReturn(mockRemoteDatasource);
+
+    service = OutboxDrainService(
+      pendingOperations: db,
+      localDatasource: localDatasource,
+      accountManager: mockAccountManager,
+    );
+  });
+
+  tearDown(() async => db.close());
+
+  group('move (server assigns a new id — Graph)', () {
+    test('renames the cache row, remaps queued ops, and removes the op',
+        () async {
+      await localDatasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('old-id')],
+      );
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'old-id',
+        opType: PendingOperationType.move,
+        payload: jsonEncode({'destinationFolderId': 'folder-2'}),
+      );
+      // A second op queued behind it for the same (pre-move) message.
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'old-id',
+        opType: PendingOperationType.markRead,
+        payload: jsonEncode({'isRead': true}),
+      );
+      when(mockRemoteDatasource.moveEmail('old-id', 'folder-2'))
+          .thenAnswer((_) async => 'new-id');
+      when(mockRemoteDatasource.updateEmailReadStatus(
+        id: anyNamed('id'),
+        isRead: anyNamed('isRead'),
+      )).thenAnswer((_) async => _email('new-id'));
+
+      await service.drainForAccount('acct-1');
+
+      // Cache row moved to the new id/folder, old id gone.
+      final renamed = await localDatasource.getCachedEmailById(
+          accountId: 'acct-1', emailId: 'new-id');
+      expect(renamed, isNotNull);
+      final stale = await localDatasource.getCachedEmailById(
+          accountId: 'acct-1', emailId: 'old-id');
+      expect(stale, isNull);
+
+      // The second op must have been sent against the remapped id.
+      verify(mockRemoteDatasource.updateEmailReadStatus(
+        id: 'new-id',
+        isRead: true,
+      )).called(1);
+
+      // Outbox drained clean.
+      expect(await db.getPendingOperations('acct-1'), isEmpty);
+    });
+  });
+
+  group('move (id stable — Gmail label change)', () {
+    test('relocates the cache row to the new folder without remapping ids',
+        () async {
+      await localDatasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('same-id')],
+      );
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'same-id',
+        opType: PendingOperationType.move,
+        payload: jsonEncode({'destinationFolderId': 'folder-2'}),
+      );
+      when(mockRemoteDatasource.moveEmail('same-id', 'folder-2'))
+          .thenAnswer((_) async => 'same-id');
+
+      await service.drainForAccount('acct-1');
+
+      final row = await localDatasource.getCachedEmailById(
+          accountId: 'acct-1', emailId: 'same-id');
+      expect(row, isNotNull);
+      expect(row!.parentFolderId, 'folder-2');
+      expect(await db.getPendingOperations('acct-1'), isEmpty);
+    });
+  });
+
+  group('move (server id unknown — IMAP)', () {
+    test('removes the op without touching the cache row', () async {
+      await localDatasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('imap-id')],
+      );
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'imap-id',
+        opType: PendingOperationType.move,
+        payload: jsonEncode({'destinationFolderId': 'folder-2'}),
+      );
+      when(mockRemoteDatasource.moveEmail('imap-id', 'folder-2'))
+          .thenAnswer((_) async => null);
+
+      await service.drainForAccount('acct-1');
+
+      final row = await localDatasource.getCachedEmailById(
+          accountId: 'acct-1', emailId: 'imap-id');
+      expect(row, isNotNull);
+      expect(row!.parentFolderId, 'folder-1'); // untouched
+      expect(await db.getPendingOperations('acct-1'), isEmpty);
+    });
+  });
+
+  group('ordering and failure handling', () {
+    test('stops draining on the first failure and leaves the rest queued',
+        () async {
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+        opType: PendingOperationType.delete,
+        payload: '{}',
+      );
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'email-2',
+        opType: PendingOperationType.delete,
+        payload: '{}',
+      );
+      when(mockRemoteDatasource.deleteEmail('email-1'))
+          .thenThrow(Exception('throttled'));
+
+      await service.drainForAccount('acct-1');
+
+      verifyNever(mockRemoteDatasource.deleteEmail('email-2'));
+      final remaining = await db.getPendingOperations('acct-1');
+      expect(remaining, hasLength(2));
+      expect(remaining.first.retryCount, 1);
+      expect(remaining.first.lastError, contains('throttled'));
+    });
+  });
+
+  group('emptyFolder', () {
+    test('passes folderId and permanentDelete from the payload', () async {
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: '__folder__',
+        folderId: 'folder-1',
+        opType: PendingOperationType.emptyFolder,
+        payload: jsonEncode({'permanentDelete': true}),
+      );
+      when(mockRemoteDatasource.emptyFolder('folder-1', permanentDelete: true))
+          .thenAnswer((_) async {});
+
+      await service.drainForAccount('acct-1');
+
+      verify(mockRemoteDatasource.emptyFolder('folder-1', permanentDelete: true))
+          .called(1);
+      expect(await db.getPendingOperations('acct-1'), isEmpty);
+    });
+  });
+}

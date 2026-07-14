@@ -91,6 +91,52 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
   }
 
   @override
+  Future<void> renameCachedEmailId({
+    required String accountId,
+    required String oldEmailId,
+    required String newEmailId,
+    required String newFolderId,
+  }) async {
+    await _database.transaction(() async {
+      final row = await (_database.select(_database.cachedEmails)
+            ..where((t) =>
+                t.accountId.equals(accountId) & t.emailId.equals(oldEmailId)))
+          .getSingleOrNull();
+      if (row == null) return;
+
+      final plaintext = await _encryption.decrypt(row.encryptedData);
+      final json = jsonDecode(plaintext) as Map<String, dynamic>;
+      json['id'] = newEmailId;
+      json['parentFolderId'] = newFolderId;
+      final encryptedData = await _encryption.encrypt(jsonEncode(json));
+
+      // A row may already exist at newEmailId (e.g. a delta sync landed it
+      // first) — clear it so the rename doesn't collide on the primary key.
+      await (_database.delete(_database.cachedEmails)
+            ..where((t) =>
+                t.accountId.equals(accountId) & t.emailId.equals(newEmailId)))
+          .go();
+      await (_database.delete(_database.cachedEmails)
+            ..where((t) =>
+                t.accountId.equals(accountId) & t.emailId.equals(oldEmailId)))
+          .go();
+      await _database.into(_database.cachedEmails).insert(
+            CachedEmailsCompanion.insert(
+              emailId: newEmailId,
+              accountId: accountId,
+              folderId: newFolderId,
+              isRead: row.isRead,
+              hasAttachments: row.hasAttachments,
+              receivedDateTimeMs: row.receivedDateTimeMs,
+              conversationId: Value(row.conversationId),
+              cachedAtMs: DateTime.now().millisecondsSinceEpoch,
+              encryptedData: encryptedData,
+            ),
+          );
+    });
+  }
+
+  @override
   Future<void> clearCacheForAccount(String accountId) async {
     await (_database.delete(_database.cachedEmails)
           ..where((t) => t.accountId.equals(accountId)))

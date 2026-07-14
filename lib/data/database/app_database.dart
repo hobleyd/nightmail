@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../../domain/entities/email_folder.dart';
 import '../datasources/local/delta_token_datasource.dart';
 import '../datasources/local/folder_local_datasource.dart';
+import '../datasources/local/pending_operations_datasource.dart';
 import '../datasources/local/reminder_schedule_local_datasource.dart';
 
 part 'app_database.g.dart';
@@ -154,9 +155,30 @@ class ScheduledReminders extends Table {
   Set<Column> get primaryKey => {accountId, eventId};
 }
 
-@DriftDatabase(tables: [CachedEmails, KnownSenders, SenderAliases, DeltaSyncTokens, CachedFolders, LocalDrafts, CatalogCache, AiConfig, CapabilityRouting, ScheduledReminders])
+/// Queued mutations awaiting a server round-trip — the outbox that lets a
+/// mutation apply to the cache and appear in the UI immediately (even
+/// offline), replayed against the server later. [emailId] is rewritten in
+/// place if an earlier queued op for the same message moves it and the
+/// server assigns a new id (see [AppDatabase.remapEmailId]).
+class PendingOperations extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get accountId => text()();
+  TextColumn get emailId => text()();
+  TextColumn get folderId => text().nullable()();
+  TextColumn get opType => text()();
+  TextColumn get payload => text()();
+  IntColumn get createdAtMs => integer()();
+  IntColumn get retryCount => integer().withDefault(const Constant(0))();
+  TextColumn get lastError => text().nullable()();
+}
+
+@DriftDatabase(tables: [CachedEmails, KnownSenders, SenderAliases, DeltaSyncTokens, CachedFolders, LocalDrafts, CatalogCache, AiConfig, CapabilityRouting, ScheduledReminders, PendingOperations])
 class AppDatabase extends _$AppDatabase
-    implements DeltaTokenDatasource, FolderLocalDatasource, ReminderScheduleLocalDatasource {
+    implements
+        DeltaTokenDatasource,
+        FolderLocalDatasource,
+        ReminderScheduleLocalDatasource,
+        PendingOperationsDatasource {
   AppDatabase() : super(_openConnection());
 
   /// Test-only constructor: lets a unit test open the schema on an in-memory
@@ -166,7 +188,7 @@ class AppDatabase extends _$AppDatabase
   AppDatabase.forTesting(QueryExecutor executor) : super(executor);
 
   @override
-  int get schemaVersion => 9;
+  int get schemaVersion => 10;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -179,6 +201,10 @@ class AppDatabase extends _$AppDatabase
           await customStatement(
             'CREATE INDEX idx_known_senders_account '
             'ON known_senders(account_id)',
+          );
+          await customStatement(
+            'CREATE INDEX idx_pending_operations_account_email_created '
+            'ON pending_operations(account_id, email_id, created_at_ms)',
           );
         },
         onUpgrade: (m, from, to) async {
@@ -213,6 +239,13 @@ class AppDatabase extends _$AppDatabase
           }
           if (from < 9) {
             await m.createTable(scheduledReminders);
+          }
+          if (from < 10) {
+            await m.createTable(pendingOperations);
+            await customStatement(
+              'CREATE INDEX idx_pending_operations_account_email_created '
+              'ON pending_operations(account_id, email_id, created_at_ms)',
+            );
           }
         },
       );
@@ -364,6 +397,77 @@ class AppDatabase extends _$AppDatabase
       (delete(scheduledReminders)
             ..where((t) => t.accountId.equals(accountId)))
           .go();
+
+  // PendingOperationsDatasource implementation (the mutation outbox)
+
+  @override
+  Future<int> enqueue({
+    required String accountId,
+    required String emailId,
+    String? folderId,
+    required PendingOperationType opType,
+    required String payload,
+  }) =>
+      into(pendingOperations).insert(
+        PendingOperationsCompanion.insert(
+          accountId: accountId,
+          emailId: emailId,
+          folderId: Value(folderId),
+          opType: opType.name,
+          payload: payload,
+          createdAtMs: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
+
+  @override
+  Future<List<PendingOperationRecord>> getPendingOperations(
+      String accountId) async {
+    final rows = await (select(pendingOperations)
+          ..where((t) => t.accountId.equals(accountId))
+          ..orderBy([(t) => OrderingTerm.asc(t.createdAtMs)]))
+        .get();
+    return rows
+        .map((r) => PendingOperationRecord(
+              id: r.id,
+              accountId: r.accountId,
+              emailId: r.emailId,
+              folderId: r.folderId,
+              opType: PendingOperationType.values.byName(r.opType),
+              payload: r.payload,
+              createdAtMs: r.createdAtMs,
+              retryCount: r.retryCount,
+              lastError: r.lastError,
+            ))
+        .toList();
+  }
+
+  @override
+  Future<void> remapEmailId({
+    required String accountId,
+    required String oldEmailId,
+    required String newEmailId,
+  }) =>
+      (update(pendingOperations)
+            ..where((t) =>
+                t.accountId.equals(accountId) & t.emailId.equals(oldEmailId)))
+          .write(PendingOperationsCompanion(emailId: Value(newEmailId)));
+
+  @override
+  Future<void> removeOperation(int id) =>
+      (delete(pendingOperations)..where((t) => t.id.equals(id))).go();
+
+  @override
+  Future<void> recordFailure({required int id, required String error}) async {
+    final row = await (select(pendingOperations)..where((t) => t.id.equals(id)))
+        .getSingleOrNull();
+    if (row == null) return;
+    await (update(pendingOperations)..where((t) => t.id.equals(id))).write(
+      PendingOperationsCompanion(
+        retryCount: Value(row.retryCount + 1),
+        lastError: Value(error),
+      ),
+    );
+  }
 
   static QueryExecutor _openConnection() {
     return driftDatabase(name: 'nightmail_cache');

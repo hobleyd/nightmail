@@ -1023,7 +1023,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
 
 
   @override
-  Future<void> moveEmail(String id, String destinationFolderId) async {
+  Future<String?> moveEmail(String id, String destinationFolderId) async {
     // Fetch current labels so we know what to remove. Using metadata format
     // with a field mask avoids downloading the full message body.
     final metaResp = await _dio.get<Map<String, dynamic>>(
@@ -1053,11 +1053,12 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         if (toRemove.isNotEmpty) 'removeLabelIds': toRemove,
       },
     );
+    // Gmail's "move" is a label change — the message id is stable.
+    return id;
   }
 
   @override
-  @override
-  Future<void> reportJunk(String id) async {
+  Future<String?> reportJunk(String id) async {
     await _dio.post<void>(
       '/users/me/messages/$id/modify',
       data: {
@@ -1065,6 +1066,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         'removeLabelIds': ['INBOX'],
       },
     );
+    return id;
   }
 
   Future<void> deleteEmail(String id) async {

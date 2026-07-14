@@ -54,9 +54,17 @@ abstract interface class EmailRemoteDatasource {
     List<LocalAttachment> newAttachments = const [],
   });
 
-  Future<void> moveEmail(String id, String destinationFolderId);
+  /// Moves [id] to [destinationFolderId]. Returns the message's new id when
+  /// the server assigns one (Graph and IMAP both mint a new id/UID on a
+  /// folder move; Gmail's ids are stable across label changes so it may
+  /// return the same id), or null if the server response doesn't include it
+  /// — callers that need to keep referencing this message afterward (e.g.
+  /// the outbox drain engine) must treat a non-null differing id as a rename.
+  Future<String?> moveEmail(String id, String destinationFolderId);
 
-  Future<void> reportJunk(String id);
+  /// Reports [id] as junk (moves it to the junk folder). Same new-id
+  /// semantics as [moveEmail].
+  Future<String?> reportJunk(String id);
 
   Future<void> deleteEmail(String id);
 

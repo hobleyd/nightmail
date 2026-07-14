@@ -843,7 +843,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
   }
 
   @override
-  Future<void> moveEmail(String id, String destinationFolderId) async {
+  Future<String?> moveEmail(String id, String destinationFolderId) async {
     final separatorIdx = id.lastIndexOf(':');
     final mailboxPath =
         separatorIdx > 0 ? id.substring(0, separatorIdx) : 'INBOX';
@@ -879,13 +879,18 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
           await client.expunge();
         }
       }
+      // The destination mailbox assigns its own UID (via the untagged
+      // COPYUID response on UIDPLUS servers), which this wrapper doesn't
+      // currently capture — returning null rather than guessing avoids
+      // remapping the outbox to an id that doesn't exist.
+      return null;
     } on ImapException catch (e) {
       throw ServerException(message: e.message ?? 'IMAP error');
     }
   }
 
   @override
-  Future<void> reportJunk(String id) async {
+  Future<String?> reportJunk(String id) async {
     final separatorIdx = id.lastIndexOf(':');
     final mailboxPath =
         separatorIdx > 0 ? id.substring(0, separatorIdx) : 'INBOX';
@@ -906,6 +911,7 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
         action: StoreAction.add,
       );
       await client.expunge();
+      return null;
     } on ServerException {
       rethrow;
     } on ImapException catch (e) {

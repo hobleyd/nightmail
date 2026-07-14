@@ -1252,24 +1252,29 @@ class GraphApiDatasourceImpl
   }
 
   @override
-  Future<void> moveEmail(String id, String destinationFolderId) async {
+  Future<String?> moveEmail(String id, String destinationFolderId) async {
     try {
-      await _dio.post<void>(
+      // Graph returns 201 Created with the moved message resource — moving
+      // creates a new copy in the destination folder and removes the
+      // original, so the response's id differs from [id].
+      final response = await _dio.post<Map<String, dynamic>>(
         '/me/messages/$id/move',
         data: {'destinationId': destinationFolderId},
       );
+      return response.data?['id'] as String?;
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
   }
 
   @override
-  Future<void> reportJunk(String id) async {
+  Future<String?> reportJunk(String id) async {
     try {
-      await _dio.post<void>(
+      final response = await _dio.post<Map<String, dynamic>>(
         '/me/messages/$id/move',
         data: {'destinationId': 'junkemail'},
       );
+      return response.data?['id'] as String?;
     } on DioException catch (e) {
       throw _mapDioException(e);
     }

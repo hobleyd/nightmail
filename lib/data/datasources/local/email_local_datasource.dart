@@ -49,4 +49,17 @@ abstract interface class EmailLocalDatasource {
     required String emailId,
     required bool isRead,
   });
+
+  /// Renames the cached row for [oldEmailId] to [newEmailId] and re-files it
+  /// under [newFolderId] — called by the outbox drain engine once the server
+  /// confirms a move/junk assigned the message a new id. No-ops silently when
+  /// [oldEmailId] isn't cached. If a row already exists at [newEmailId] (e.g.
+  /// a delta sync already landed it), that row is replaced by the rename
+  /// rather than left to collide with it.
+  Future<void> renameCachedEmailId({
+    required String accountId,
+    required String oldEmailId,
+    required String newEmailId,
+    required String newFolderId,
+  });
 }

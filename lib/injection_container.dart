@@ -13,6 +13,7 @@ import 'data/datasources/local/delta_token_datasource.dart';
 import 'data/datasources/local/email_local_datasource.dart';
 import 'data/datasources/local/email_local_datasource_impl.dart';
 import 'data/datasources/local/folder_local_datasource.dart';
+import 'data/datasources/local/pending_operations_datasource.dart';
 import 'data/datasources/local/reminder_schedule_local_datasource.dart';
 import 'data/datasources/local/sender_local_datasource.dart';
 import 'data/datasources/local/sender_local_datasource_impl.dart';
@@ -106,6 +107,7 @@ import 'infrastructure/badge/badge_service.dart';
 import 'infrastructure/cache/cache_encryption_service.dart';
 import 'infrastructure/notifications/calendar_reminder_service.dart';
 import 'infrastructure/notifications/notification_service.dart';
+import 'infrastructure/sync/outbox_drain_service.dart';
 import 'presentation/blocs/account/account_cubit.dart';
 import 'presentation/blocs/calendar/calendar_bloc.dart';
 import 'presentation/blocs/compose/compose_bloc.dart';
@@ -177,6 +179,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton<DeltaTokenDatasource>(() => sl<AppDatabase>());
   sl.registerLazySingleton<FolderLocalDatasource>(() => sl<AppDatabase>());
   sl.registerLazySingleton<ReminderScheduleLocalDatasource>(() => sl<AppDatabase>());
+  sl.registerLazySingleton<PendingOperationsDatasource>(() => sl<AppDatabase>());
   sl.registerLazySingleton<EmailLocalDatasource>(
     () => EmailLocalDatasourceImpl(
       database: sl<AppDatabase>(),
@@ -185,6 +188,13 @@ Future<void> configureDependencies() async {
   );
   sl.registerLazySingleton<SenderLocalDatasource>(
     () => SenderLocalDatasourceImpl(database: sl<AppDatabase>()),
+  );
+  sl.registerLazySingleton(
+    () => OutboxDrainService(
+      pendingOperations: sl<PendingOperationsDatasource>(),
+      localDatasource: sl<EmailLocalDatasource>(),
+      accountManager: sl<AccountManager>(),
+    ),
   );
 
   // Data — repositories delegate to AccountManager for the live active datasource.

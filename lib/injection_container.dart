@@ -1,6 +1,5 @@
 import 'dart:io' show Platform;
 
-import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode;
 import 'package:flutter/services.dart' show PlatformException;
@@ -191,10 +190,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton<SenderLocalDatasource>(
     () => SenderLocalDatasourceImpl(database: sl<AppDatabase>()),
   );
-  sl.registerLazySingleton(() => Connectivity());
-  sl.registerLazySingleton<ConnectivityService>(
-    () => ConnectivityServiceImpl(sl<Connectivity>()),
-  );
+  sl.registerLazySingleton<ConnectivityService>(() => ConnectivityServiceImpl());
   sl.registerLazySingleton(
     () => OutboxDrainService(
       pendingOperations: sl<PendingOperationsDatasource>(),

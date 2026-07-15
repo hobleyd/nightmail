@@ -135,7 +135,7 @@ class EmailRepositoryImpl implements EmailRepository {
           .updateEmailReadStatus(id: id, isRead: isRead));
     }
 
-    return _execute(() async {
+    return _executeLocal(() async {
       // Enqueue before mutating the cache: if the app dies in between, a
       // queued op with no local change just replays against server state
       // that already reflects it (server wins, harmless) — the reverse
@@ -311,7 +311,7 @@ class EmailRepositoryImpl implements EmailRepository {
         return unit;
       });
     }
-    return _execute(() async {
+    return _executeLocal(() async {
       await _pendingOperations.enqueue(
         accountId: accountId,
         emailId: id,
@@ -339,7 +339,7 @@ class EmailRepositoryImpl implements EmailRepository {
         return unit;
       });
     }
-    return _execute(() async {
+    return _executeLocal(() async {
       await _pendingOperations.enqueue(
         accountId: accountId,
         emailId: id,
@@ -364,7 +364,7 @@ class EmailRepositoryImpl implements EmailRepository {
         return unit;
       });
     }
-    return _execute(() async {
+    return _executeLocal(() async {
       await _pendingOperations.enqueue(
         accountId: accountId,
         emailId: id,
@@ -581,12 +581,20 @@ class EmailRepositoryImpl implements EmailRepository {
     });
   }
 
+  /// Wraps a call that actually reaches the network. Fails fast instead of
+  /// waiting on an HTTP client's connect timeout (tens of seconds) before
+  /// the caller can fall back to the cache.
   Future<Either<Failure, T>> _execute<T>(Future<T> Function() fn) async {
-    // Fails fast instead of waiting on an HTTP client's connect timeout
-    // (tens of seconds) before the caller can fall back to the cache.
     if (!await _connectivityService.isOnline) {
       return const Left(NetworkFailure(message: 'No network connection'));
     }
+    return _executeLocal(fn);
+  }
+
+  /// Same exception-to-Failure mapping as [_execute], but for bodies that
+  /// only touch the outbox/cache (no network call) — an offline gate here
+  /// would wrongly block the very thing that's supposed to work offline.
+  Future<Either<Failure, T>> _executeLocal<T>(Future<T> Function() fn) async {
     try {
       return Right(await fn());
     } on AuthException catch (e) {

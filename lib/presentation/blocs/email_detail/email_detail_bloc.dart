@@ -33,13 +33,23 @@ class EmailDetailBloc extends Bloc<EmailDetailEvent, EmailDetailState> {
   final MergeSenderAddresses _mergeSenderAddresses;
   final AccountManager _accountManager;
 
+  // flutter_bloc runs on<Event> handlers concurrently by default: opening an
+  // email that needs a slow/failing network fetch, then immediately opening
+  // a second (cached, fast) one, starts two overlapping _onLoadRequested
+  // calls. Without this guard, whichever finishes last wins regardless of
+  // which the user is actually looking at — so the first email's late
+  // failure could overwrite the second email's already-displayed content.
+  String? _latestRequestedEmailId;
+
   Future<void> _onLoadRequested(
     EmailDetailLoadRequested event,
     Emitter<EmailDetailState> emit,
   ) async {
+    _latestRequestedEmailId = event.emailId;
     emit(const EmailDetailInitial());
     emit(const EmailDetailLoading());
     final result = await _getEmail(GetEmailParams(id: event.emailId));
+    if (_latestRequestedEmailId != event.emailId) return;
     await result.fold(
       (failure) async => emit(EmailDetailError(message: failure.message)),
       (email) async {
@@ -56,6 +66,7 @@ class EmailDetailBloc extends Bloc<EmailDetailEvent, EmailDetailState> {
                 fromName: name,
               )).then((r) => r.fold((_) => null, (s) => s))
             : null;
+        if (_latestRequestedEmailId != event.emailId) return;
         emit(EmailDetailLoaded(email: email, senderAnomaly: senderAnomaly));
       },
     );

@@ -29,6 +29,7 @@ import '../blocs/tasks/tasks_bloc.dart';
 import '../blocs/tasks/tasks_event.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
 import '../blocs/email_detail/email_detail_event.dart';
+import '../blocs/email_detail/email_detail_state.dart';
 import '../blocs/email_list/email_list_bloc.dart';
 import '../blocs/email_list/email_list_event.dart';
 import '../blocs/folder_list/folder_list_bloc.dart';
@@ -447,19 +448,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
                       EmailDetailLoadRequested(emailId: email.id),
                     );
                 if (!email.isRead) {
-                  context.read<EmailListBloc>().add(
-                        EmailListMarkReadRequested(
-                            emailId: email.id, isRead: true),
-                      );
-                  if (selectedFolder != null) {
-                    context.read<FolderListBloc>().add(
-                          FolderListUnreadCountChanged(
-                            folderId: selectedFolder.id,
-                            unreadCountDelta: -1,
-                          ),
-                        );
-                  }
-                  context.read<MailPollerCubit>().decrementUnreadCount();
+                  _markReadOnceLoaded(context, email, selectedFolder);
                 }
                 setState(() => _setStep(_MobileStep.readingPane));
               }
@@ -669,18 +658,7 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
             EmailDetailLoadRequested(emailId: email.id),
           );
       if (!email.isRead) {
-        context.read<EmailListBloc>().add(
-              EmailListMarkReadRequested(emailId: email.id, isRead: true),
-            );
-        if (selectedFolder != null) {
-          context.read<FolderListBloc>().add(
-                FolderListUnreadCountChanged(
-                  folderId: selectedFolder.id,
-                  unreadCountDelta: -1,
-                ),
-              );
-        }
-        context.read<MailPollerCubit>().decrementUnreadCount();
+        _markReadOnceLoaded(context, email, selectedFolder);
       }
     }
 
@@ -1117,6 +1095,39 @@ class _ResizeHandleState extends State<_ResizeHandle> {
       ),
     );
   }
+}
+
+/// Marks [email] read only once its content actually finishes loading, not
+/// the instant it's tapped. Firing the mark-read/unread-count side effects
+/// eagerly meant an unread email that fails to open offline (never cached
+/// with a full body, no network to fall back to) got marked read anyway —
+/// the user could no longer tell it was still unseen once they went back
+/// online, even though they'd never actually read it.
+void _markReadOnceLoaded(
+  BuildContext context,
+  Email email,
+  EmailFolder? selectedFolder,
+) {
+  context
+      .read<EmailDetailBloc>()
+      .stream
+      .firstWhere((s) => s is EmailDetailLoaded || s is EmailDetailError)
+      .then((state) {
+    if (state is! EmailDetailLoaded || state.email.id != email.id) return;
+    if (!context.mounted) return;
+    context.read<EmailListBloc>().add(
+          EmailListMarkReadRequested(emailId: email.id, isRead: true),
+        );
+    if (selectedFolder != null) {
+      context.read<FolderListBloc>().add(
+            FolderListUnreadCountChanged(
+              folderId: selectedFolder.id,
+              unreadCountDelta: -1,
+            ),
+          );
+    }
+    context.read<MailPollerCubit>().decrementUnreadCount();
+  });
 }
 
 /// Formats up to 25 emails from the current folder into a compact text block

@@ -49,8 +49,35 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
 
     // Encrypt all emails concurrently before opening the batch transaction
     final companions = await Future.wait(emails.map((email) async {
-      final encryptedData =
-          await _encryption.encrypt(jsonEncode(_emailToJson(email)));
+      var json = _emailToJson(email);
+
+      // List/poll fetches only carry a preview (empty body, no attachments)
+      // to stay cheap. A message already cached with a full body — from a
+      // prior single-message open — must not have that body clobbered back
+      // to empty just because it showed up again in a later folder/delta
+      // sync; blind insertOrReplace would do exactly that.
+      if (email.body.isEmpty) {
+        final existing = await (_database.select(_database.cachedEmails)
+              ..where((t) =>
+                  t.accountId.equals(accountId) & t.emailId.equals(email.id)))
+            .getSingleOrNull();
+        if (existing != null) {
+          final oldJson =
+              jsonDecode(await _encryption.decrypt(existing.encryptedData))
+                  as Map<String, dynamic>;
+          final oldBody = oldJson['body'] as String? ?? '';
+          if (oldBody.isNotEmpty) {
+            json = {
+              ...json,
+              'body': oldJson['body'],
+              'bodyType': oldJson['bodyType'],
+              'attachments': oldJson['attachments'],
+            };
+          }
+        }
+      }
+
+      final encryptedData = await _encryption.encrypt(jsonEncode(json));
       return CachedEmailsCompanion.insert(
         emailId: email.id,
         accountId: accountId,

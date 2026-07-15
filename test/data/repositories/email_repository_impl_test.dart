@@ -469,6 +469,25 @@ void main() {
       )).called(1);
     });
 
+    test('still succeeds while offline', () async {
+      when(mockLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => tEmailModel);
+      when(mockLocalDatasource.updateEmailReadStatusInCache(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+        isRead: anyNamed('isRead'),
+      )).thenAnswer((_) async {});
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      when(mockConnectivityService.isOnline).thenAnswer((_) async => false);
+
+      final result = await repository.markAsRead(id: 'email-1', isRead: true);
+
+      expect(result.isRight(), isTrue);
+      expect((result as Right).value.isRead, isTrue);
+    });
+
     test('falls back to the network when the email is not cached', () async {
       when(mockLocalDatasource.getCachedEmailById(
         accountId: anyNamed('accountId'),
@@ -533,6 +552,31 @@ void main() {
       verify(mockLocalDatasource.deleteEmailFromCache(
         accountId: 'account-1',
         emailId: 'email-1',
+      )).called(1);
+    });
+
+    // Regression: the outbox path enqueues + updates the cache only — no
+    // network call — so it must not be gated behind the same "are we
+    // online" check that protects real network calls from a long connect
+    // timeout. That check briefly leaked onto this path and made every
+    // offline delete/move/junk/mark-read fail immediately instead of
+    // queuing.
+    test('still succeeds while offline', () async {
+      when(mockLocalDatasource.deleteEmailFromCache(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async {});
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      when(mockConnectivityService.isOnline).thenAnswer((_) async => false);
+
+      final result = await repository.deleteEmail('email-1');
+
+      expect(result.isRight(), isTrue);
+      verify(mockPendingOperations.enqueue(
+        accountId: 'account-1',
+        emailId: 'email-1',
+        opType: PendingOperationType.delete,
+        payload: anyNamed('payload'),
       )).called(1);
     });
 
@@ -681,6 +725,25 @@ void main() {
       verify(mockLocalDatasource.deleteEmailFromCache(
         accountId: 'account-1',
         emailId: 'email-1',
+      )).called(1);
+    });
+
+    test('still succeeds while offline', () async {
+      when(mockLocalDatasource.deleteEmailFromCache(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async {});
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      when(mockConnectivityService.isOnline).thenAnswer((_) async => false);
+
+      final result = await repository.moveEmail('email-1', 'folder-2');
+
+      expect(result.isRight(), isTrue);
+      verify(mockPendingOperations.enqueue(
+        accountId: 'account-1',
+        emailId: 'email-1',
+        opType: PendingOperationType.move,
+        payload: anyNamed('payload'),
       )).called(1);
     });
 

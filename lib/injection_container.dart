@@ -320,6 +320,7 @@ Future<void> configureDependencies() async {
       getCachedFolders: sl<GetCachedFolders>(),
       notificationService: sl<NotificationService>(),
       outboxDrainService: sl<OutboxDrainService>(),
+      pendingOperations: sl<PendingOperationsDatasource>(),
     ),
   );
 

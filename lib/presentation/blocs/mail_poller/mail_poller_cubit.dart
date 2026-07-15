@@ -10,6 +10,7 @@ import '../../../core/error/exceptions.dart';
 import '../../../core/settings/app_settings.dart';
 import '../../../data/datasources/local/delta_token_datasource.dart';
 import '../../../data/datasources/local/email_local_datasource.dart';
+import '../../../data/datasources/local/pending_operations_datasource.dart';
 import '../../../data/datasources/remote/graph_delta_datasource.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/usecases/get_cached_folders.dart';
@@ -32,6 +33,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     required GetCachedFolders getCachedFolders,
     required NotificationService notificationService,
     required OutboxDrainService outboxDrainService,
+    required PendingOperationsDatasource pendingOperations,
   })  : _accountManager = accountManager,
         _appSettings = appSettings,
         _badgeService = badgeService,
@@ -41,6 +43,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
         _getCachedFolders = getCachedFolders,
         _notificationService = notificationService,
         _outboxDrainService = outboxDrainService,
+        _pendingOperations = pendingOperations,
         super(const MailPollerState(
           accountsWithNewMail: {},
           pollIntervalSeconds: AppSettings.defaultPollIntervalSeconds,
@@ -55,6 +58,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   final GetCachedFolders _getCachedFolders;
   final NotificationService _notificationService;
   final OutboxDrainService _outboxDrainService;
+  final PendingOperationsDatasource _pendingOperations;
 
   Timer? _timer;
   bool _polling = false;
@@ -144,13 +148,17 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     final wasInitialized = _initialized;
     final previousNewMailAccounts = Set<String>.of(_newMailAccounts);
 
-    // Replays any queued offline mutations. This is the baseline sync
-    // trigger for the outbox — it guarantees a queued delete/move/mark-read
-    // reaches the server within one poll interval regardless of network
-    // state when it was made; a connectivity-triggered drain (faster than
-    // waiting for the next tick) is a responsiveness improvement on top of
-    // this, not a correctness dependency.
-    unawaited(_outboxDrainService.drainAll());
+    // Replays any queued offline mutations, and awaits it before syncing
+    // server state below — draining first means a locally-queued delete or
+    // mark-read has already reached the server by the time the delta/list
+    // fetch below asks "what changed", so the fetch naturally reflects our
+    // own mutations instead of racing them. This is the baseline sync
+    // trigger for the outbox — it guarantees a queued mutation reaches the
+    // server within one poll interval regardless of network state when it
+    // was made; a connectivity-triggered drain (faster than waiting for the
+    // next tick) is a responsiveness improvement on top of this, not a
+    // correctness dependency.
+    await _outboxDrainService.drainAll();
 
     try {
       final accounts = _accountManager.accounts;
@@ -314,10 +322,12 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                 // data until a manual refresh.
                 final freshEmails =
                     await ds.getEmails(folderId: inboxes.first.id, top: 25);
+                final reconciled = await _reconcileAgainstPendingOps(
+                    account.id, freshEmails);
                 await _emailLocalDatasource.cacheEmails(
                   accountId: account.id,
                   folderId: inboxes.first.id,
-                  emails: freshEmails,
+                  emails: reconciled,
                 );
               }
               _baselineUnread[account.id] = unreadCount;
@@ -399,11 +409,14 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
           .firstOrNull;
       if (inbox == null) throw StateError('no inbox folder');
       final emails = await ds.getEmails(folderId: inbox.id, top: 10);
-      unawaited(_emailLocalDatasource.cacheEmails(
-        accountId: account.id,
-        folderId: inbox.id,
-        emails: emails,
-      ));
+      unawaited(
+        _reconcileAgainstPendingOps(account.id, emails).then((reconciled) =>
+            _emailLocalDatasource.cacheEmails(
+              accountId: account.id,
+              folderId: inbox.id,
+              emails: reconciled,
+            )),
+      );
       final latestUnread = emails.where((e) => !e.isRead).firstOrNull;
       if (latestUnread == null) throw StateError('no unread message found');
       final senderName = newCount > 1
@@ -460,8 +473,9 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   /// consistent with what the email list reads.
   Future<void> _cacheUpserted(String accountId, List<Email> upserted) async {
     if (upserted.isEmpty) return;
+    final reconciled = await _reconcileAgainstPendingOps(accountId, upserted);
     final byFolder = <String, List<Email>>{};
-    for (final email in upserted) {
+    for (final email in reconciled) {
       final folderId = email.parentFolderId ?? 'inbox';
       byFolder.putIfAbsent(folderId, () => []).add(email);
     }
@@ -472,6 +486,57 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
         emails: entry.value,
       );
     }
+  }
+
+  /// Reconciles freshly-synced server data against mutations still sitting
+  /// in the outbox for this account. drainAll() runs before every poll
+  /// cycle, so this mainly guards a narrow window — a mutation queued after
+  /// that drain but before this fetch completed — rather than the common
+  /// case, but a stale server snapshot winning that race would otherwise
+  /// resurrect a message the user just deleted/moved, or flip a just-marked
+  /// -read message back to unread, until the next poll tick papers over it.
+  ///
+  /// - A message with a pending delete/move/junk op is dropped outright
+  ///   (tombstoned) — it's being removed from this view and re-caching it
+  ///   would put it right back.
+  /// - A message with a pending markRead op keeps whatever isRead value is
+  ///   already in the cache rather than the server's (not-yet-updated) one.
+  Future<List<Email>> _reconcileAgainstPendingOps(
+    String accountId,
+    List<Email> emails,
+  ) async {
+    final pendingOps = await _pendingOperations.getPendingOperations(accountId);
+    if (pendingOps.isEmpty) return emails;
+
+    final tombstoned = <String>{
+      for (final op in pendingOps)
+        if (op.opType == PendingOperationType.delete ||
+            op.opType == PendingOperationType.move ||
+            op.opType == PendingOperationType.junk)
+          op.emailId,
+    };
+    final pendingReadIds = <String>{
+      for (final op in pendingOps)
+        if (op.opType == PendingOperationType.markRead) op.emailId,
+    };
+    if (tombstoned.isEmpty && pendingReadIds.isEmpty) return emails;
+
+    final reconciled = <Email>[];
+    for (final email in emails) {
+      if (tombstoned.contains(email.id)) continue;
+      if (pendingReadIds.contains(email.id)) {
+        final cached = await _emailLocalDatasource.getCachedEmailById(
+          accountId: accountId,
+          emailId: email.id,
+        );
+        if (cached != null && cached.isRead != email.isRead) {
+          reconciled.add(email.copyWith(isRead: cached.isRead));
+          continue;
+        }
+      }
+      reconciled.add(email);
+    }
+    return reconciled;
   }
 
   void decrementUnreadCount() {

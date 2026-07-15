@@ -8,6 +8,7 @@ import 'package:nightmail/core/error/exceptions.dart';
 import 'package:nightmail/core/settings/app_settings.dart';
 import 'package:nightmail/data/datasources/local/delta_token_datasource.dart';
 import 'package:nightmail/data/datasources/local/email_local_datasource.dart';
+import 'package:nightmail/data/datasources/local/pending_operations_datasource.dart';
 import 'package:nightmail/data/datasources/remote/email_remote_datasource.dart';
 import 'package:nightmail/data/datasources/remote/graph_api_datasource_impl.dart';
 import 'package:nightmail/core/error/failures.dart';
@@ -100,6 +101,7 @@ MailDeltaResult _emptyDelta() => MailDeltaResult(
   GetCachedFolders,
   NotificationService,
   OutboxDrainService,
+  PendingOperationsDatasource,
 ])
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -114,6 +116,7 @@ void main() {
   late MockGetCachedFolders mockGetCachedFolders;
   late MockNotificationService mockNotificationService;
   late MockOutboxDrainService mockOutboxDrainService;
+  late MockPendingOperationsDatasource mockPendingOperations;
 
   MailPollerCubit _makeCubit() => MailPollerCubit(
         accountManager: mockAccountManager,
@@ -125,6 +128,7 @@ void main() {
         getCachedFolders: mockGetCachedFolders,
         notificationService: mockNotificationService,
         outboxDrainService: mockOutboxDrainService,
+        pendingOperations: mockPendingOperations,
       );
 
   void _stubInfra() {
@@ -161,12 +165,17 @@ void main() {
     when(mockConnectivityService.isOnline).thenAnswer((_) async => true);
     when(mockConnectivityService.onReconnected)
         .thenAnswer((_) => const Stream<void>.empty());
+    // No pending outbox ops by default — tests exercising reconciliation
+    // override this.
+    when(mockPendingOperations.getPendingOperations(any))
+        .thenAnswer((_) async => []);
   }
 
   setUp(() {
     mockAccountManager = MockAccountManager();
     mockAppSettings = MockAppSettings();
     mockBadgeService = MockBadgeService();
+    mockPendingOperations = MockPendingOperationsDatasource();
     mockConnectivityService = MockConnectivityService();
     mockDatabase = MockDeltaTokenDatasource();
     mockEmailLocalDatasource = MockEmailLocalDatasource();
@@ -442,6 +451,103 @@ void main() {
       for (final s in states) {
         expect(s.accountsWithNewMail, isNot(contains(_msId)));
       }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Reconciliation against pending outbox ops
+  // ---------------------------------------------------------------------------
+
+  group('MailPollerCubit — reconciliation against pending outbox ops', () {
+    setUp(() {
+      when(mockAccountManager.accounts).thenReturn([_msAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(null);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(mockGraphDs);
+      when(mockDatabase.loadDeltaToken(any, any))
+          .thenAnswer((_) async => _savedToken);
+      when(mockGraphDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: 1)]);
+    });
+
+    test('drops a message from the cache write when a delete/move/junk op '
+        'is still pending for it (tombstone)', () async {
+      when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
+          .thenAnswer((_) async => MailDeltaResult(
+                upserted: [_email('deleted-msg'), _email('kept-msg')],
+                removedIds: [],
+                deltaLink: _newToken,
+              ));
+      when(mockPendingOperations.getPendingOperations(_msId))
+          .thenAnswer((_) async => [
+                const PendingOperationRecord(
+                  id: 1,
+                  accountId: _msId,
+                  emailId: 'deleted-msg',
+                  folderId: null,
+                  opType: PendingOperationType.delete,
+                  payload: '{}',
+                  createdAtMs: 0,
+                  retryCount: 0,
+                  lastError: null,
+                ),
+              ]);
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      final cached = verify(mockEmailLocalDatasource.cacheEmails(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+        emails: captureAnyNamed('emails'),
+      )).captured.single as List<dynamic>;
+      final cachedIds = cached.map((e) => (e as dynamic).id).toSet();
+      expect(cachedIds, isNot(contains('deleted-msg')));
+      expect(cachedIds, contains('kept-msg'));
+    });
+
+    test('keeps the locally-cached isRead value when a markRead op is '
+        'still pending for that message (local wins)', () async {
+      // Server still reports it unread — the local mark-as-read hasn't
+      // drained yet.
+      when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
+          .thenAnswer((_) async => MailDeltaResult(
+                upserted: [_email('msg-1', isRead: false)],
+                removedIds: [],
+                deltaLink: _newToken,
+              ));
+      when(mockPendingOperations.getPendingOperations(_msId))
+          .thenAnswer((_) async => [
+                const PendingOperationRecord(
+                  id: 1,
+                  accountId: _msId,
+                  emailId: 'msg-1',
+                  folderId: null,
+                  opType: PendingOperationType.markRead,
+                  payload: '{"isRead":true}',
+                  createdAtMs: 0,
+                  retryCount: 0,
+                  lastError: null,
+                ),
+              ]);
+      when(mockEmailLocalDatasource.getCachedEmailById(
+        accountId: _msId,
+        emailId: 'msg-1',
+      )).thenAnswer((_) async => _email('msg-1', isRead: true));
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      final cached = verify(mockEmailLocalDatasource.cacheEmails(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+        emails: captureAnyNamed('emails'),
+      )).captured.single as List<dynamic>;
+      expect((cached.single as dynamic).isRead, isTrue);
     });
   });
 

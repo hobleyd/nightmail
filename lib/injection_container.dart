@@ -25,6 +25,7 @@ import 'data/repositories/spam_filter_repository_impl.dart';
 import 'data/repositories/system_contacts_repository_impl.dart';
 import 'data/repositories/tasks_repository_impl.dart';
 import 'data/services/eml_parser.dart';
+import 'data/services/office_preview_service.dart';
 // AI subsystem
 import 'data/datasources/ai/ai_adapter_factory.dart';
 import 'data/datasources/ai/ai_catalog_cache_datasource.dart';
@@ -258,6 +259,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => ProposeNewTime(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => ProposeNewTimeFromEmail(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => EmlParser());
+  sl.registerLazySingleton(() => OfficePreviewService());
   sl.registerLazySingleton(() => GetTaskLists(sl<TasksRepository>()));
   sl.registerLazySingleton(() => GetTasks(sl<TasksRepository>()));
   sl.registerLazySingleton(() => CreateTask(sl<TasksRepository>()));

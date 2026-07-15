@@ -21,6 +21,7 @@ import 'contact_hover_card.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/services/eml_parser.dart';
+import '../../data/services/office_preview_service.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_address.dart';
 import '../../domain/entities/email_attachment.dart';
@@ -151,7 +152,9 @@ class _ErrorState extends StatelessWidget {
   }
 }
 
-enum _AttachmentPreviewKind { pdf, image, eml }
+// A `webFile` preview is anything loaded into the native webview via a file
+// URL: a PDF, or a LibreOffice-produced PDF, or a generated office viewer.html.
+enum _AttachmentPreviewKind { webFile, image, eml }
 
 class _EmailView extends StatefulWidget {
   const _EmailView({super.key, required this.email, this.senderAnomaly, this.onBack});
@@ -168,15 +171,17 @@ class _EmailViewState extends State<_EmailView> {
   String? _previewName;
   String? _previewAttachmentId;
   _AttachmentPreviewKind? _previewKind;
+  IconData _previewIcon = Icons.insert_drive_file_rounded;
   HtmlViewController? _bodyController;
 
-  void _showPreview(
-      _AttachmentPreviewKind kind, String path, String name, String attachmentId) {
+  void _showPreview(_AttachmentPreviewKind kind, String path, String name,
+      String attachmentId, IconData icon) {
     setState(() {
       _previewKind = kind;
       _previewPath = path;
       _previewName = name;
       _previewAttachmentId = attachmentId;
+      _previewIcon = icon;
       _bodyController = null; // HtmlBodyView leaves the tree
     });
   }
@@ -291,10 +296,11 @@ class _EmailViewState extends State<_EmailView> {
         ],
         Expanded(
           child: switch (_previewKind) {
-            _AttachmentPreviewKind.pdf => _PdfPreview(
+            _AttachmentPreviewKind.webFile => _WebFilePreview(
                 key: ValueKey(_previewPath),
                 filePath: _previewPath!,
                 fileName: _previewName!,
+                icon: _previewIcon,
                 onClose: _closePreview,
               ),
             _AttachmentPreviewKind.image => _ImagePreview(
@@ -1485,8 +1491,8 @@ class _EmailHeader extends StatelessWidget {
   });
   final Email email;
   final SenderAnomalyResult? senderAnomaly;
-  final void Function(_AttachmentPreviewKind kind, String path, String name, String attachmentId)?
-      onAttachmentPreview;
+  final void Function(_AttachmentPreviewKind kind, String path, String name,
+      String attachmentId, IconData icon)? onAttachmentPreview;
   final String? activePreviewAttachmentId;
 
   static Color? _anomalyColor(double? score) {
@@ -1817,8 +1823,8 @@ class _AttachmentsSection extends StatelessWidget {
   });
   final String emailId;
   final List<EmailAttachment> attachments;
-  final void Function(_AttachmentPreviewKind kind, String path, String name, String attachmentId)?
-      onAttachmentPreview;
+  final void Function(_AttachmentPreviewKind kind, String path, String name,
+      String attachmentId, IconData icon)? onAttachmentPreview;
   final String? activePreviewAttachmentId;
 
   @override
@@ -2057,8 +2063,8 @@ class _AttachmentChip extends StatefulWidget {
   });
   final String emailId;
   final EmailAttachment attachment;
-  final void Function(_AttachmentPreviewKind kind, String path, String name, String attachmentId)?
-      onAttachmentPreview;
+  final void Function(_AttachmentPreviewKind kind, String path, String name,
+      String attachmentId, IconData icon)? onAttachmentPreview;
   final bool isActive;
 
   @override
@@ -2081,13 +2087,32 @@ class _AttachmentChipState extends State<_AttachmentChip> {
     final ext = widget.attachment.name.contains('.')
         ? widget.attachment.name.split('.').last.toLowerCase()
         : '';
-    if (ct.contains('pdf') || ext == 'pdf') return _AttachmentPreviewKind.pdf;
+    if (ct.contains('pdf') || ext == 'pdf') return _AttachmentPreviewKind.webFile;
     if (ct.contains('rfc822') || ext == 'eml') return _AttachmentPreviewKind.eml;
     if ((ct.startsWith('image/') && !ct.contains('svg')) ||
         _previewableImageExts.contains(ext)) {
       return _AttachmentPreviewKind.image;
     }
     return null;
+  }
+
+  /// OOXML office format (docx/xlsx/pptx) this attachment can preview as, or
+  /// null. Legacy binary .doc/.xls/.ppt are intentionally excluded — the JS
+  /// libraries can't read them and they keep the open-externally behaviour.
+  OfficeFormat? get _officeFormat {
+    final ext = widget.attachment.name.contains('.')
+        ? widget.attachment.name.split('.').last.toLowerCase()
+        : '';
+    switch (ext) {
+      case 'docx':
+        return OfficeFormat.docx;
+      case 'xlsx':
+        return OfficeFormat.xlsx;
+      case 'pptx':
+        return OfficeFormat.pptx;
+      default:
+        return null;
+    }
   }
 
   static IconData _iconFor(String contentType, String name) {
@@ -2150,6 +2175,38 @@ class _AttachmentChipState extends State<_AttachmentChip> {
           file.path,
           widget.attachment.name,
           widget.attachment.id,
+          _iconFor(widget.attachment.contentType, widget.attachment.name),
+        );
+      });
+
+  /// Office (docx/xlsx/pptx) preview. Word always uses the JS viewer; Excel and
+  /// PowerPoint use LibreOffice → PDF when available and fall back to the JS
+  /// viewer otherwise. The download spinner (`_isLoading`) stays up across the
+  /// whole download-and-render/convert wait.
+  Future<void> _previewOffice(OfficeFormat fmt) => _withBytes((bytes) async {
+        final dir = await getTemporaryDirectory();
+        final docFile = File(
+            '${dir.path}/${_sanitizedFileName(widget.attachment.name)}');
+        await docFile.writeAsBytes(bytes);
+
+        final svc = sl<OfficePreviewService>();
+        String previewPath;
+        if (fmt == OfficeFormat.docx) {
+          previewPath = await svc.buildJsViewer(docFile.path, fmt);
+        } else if (svc.libreOfficeAvailable) {
+          previewPath = await svc.convertToPdf(docFile.path) ??
+              await svc.buildJsViewer(docFile.path, fmt);
+        } else {
+          previewPath = await svc.buildJsViewer(docFile.path, fmt);
+        }
+
+        if (!mounted) return;
+        widget.onAttachmentPreview?.call(
+          _AttachmentPreviewKind.webFile,
+          previewPath,
+          widget.attachment.name,
+          widget.attachment.id,
+          _iconFor(widget.attachment.contentType, widget.attachment.name),
         );
       });
 
@@ -2178,12 +2235,15 @@ class _AttachmentChipState extends State<_AttachmentChip> {
   Widget build(BuildContext context) {
     final c = context.colors;
     final previewKind = _previewKind;
+    final officeFormat = _officeFormat;
     return GestureDetector(
       onTap: _isMobile
           ? _open
           : previewKind != null
               ? () => _previewAttachment(previewKind)
-              : null,
+              : officeFormat != null
+                  ? () => _previewOffice(officeFormat)
+                  : null,
       onDoubleTap: _isMobile ? null : _open,
       onLongPress: _isMobile ? _saveAs : null,
       onSecondaryTap: _isMobile ? null : _saveAs,
@@ -2266,22 +2326,24 @@ class _EmailBody extends StatelessWidget {
   }
 }
 
-class _PdfPreview extends StatefulWidget {
-  const _PdfPreview({
+class _WebFilePreview extends StatefulWidget {
+  const _WebFilePreview({
     super.key,
     required this.filePath,
     required this.fileName,
+    required this.icon,
     required this.onClose,
   });
   final String filePath;
   final String fileName;
+  final IconData icon;
   final VoidCallback onClose;
 
   @override
-  State<_PdfPreview> createState() => _PdfPreviewState();
+  State<_WebFilePreview> createState() => _WebFilePreviewState();
 }
 
-class _PdfPreviewState extends State<_PdfPreview> {
+class _WebFilePreviewState extends State<_WebFilePreview> {
   HtmlViewController? _htmlController;
   bool _disposed = false;
 
@@ -2313,7 +2375,7 @@ class _PdfPreviewState extends State<_PdfPreview> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _PreviewHeader(
-          icon: Icons.picture_as_pdf_rounded,
+          icon: widget.icon,
           fileName: widget.fileName,
           onClose: widget.onClose,
         ),

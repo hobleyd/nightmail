@@ -149,11 +149,14 @@ class _ContactDetailsCard extends StatelessWidget {
           builder: (ctx, snapshot) {
             if (future == null ||
                 snapshot.connectionState == ConnectionState.waiting) {
-              return const SizedBox(
-                width: 24,
-                height: 24,
-                child: Padding(
-                  padding: EdgeInsets.all(4),
+              // Center loosens the card's minWidth:220 constraint before it
+              // reaches the SizedBox — otherwise the spinner is forced to the
+              // full card width and renders as an elongated ellipse.
+              return const Center(
+                heightFactor: 1,
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
                   child: CircularProgressIndicator(
                       color: AppColors.accent, strokeWidth: 2),
                 ),

@@ -7,7 +7,11 @@ import 'retry_interceptor.dart';
 /// Dio instance pre-configured for Microsoft Graph API calls.
 /// Automatically injects the Bearer token and refreshes it on 401.
 class GraphHttpClient {
-  GraphHttpClient({required AuthService authService, void Function()? onAuthFailure}) {
+  GraphHttpClient({
+    required AuthService authService,
+    void Function()? onAuthFailure,
+    void Function()? onAuthSuccess,
+  }) {
     _dio = Dio(BaseOptions(
       baseUrl: 'https://graph.microsoft.com/v1.0',
       headers: {
@@ -19,7 +23,10 @@ class GraphHttpClient {
     ));
 
     _dio.interceptors.add(AuthInterceptor(
-        authService: authService, dio: _dio, onAuthFailure: onAuthFailure));
+        authService: authService,
+        dio: _dio,
+        onAuthFailure: onAuthFailure,
+        onAuthSuccess: onAuthSuccess));
     _dio.interceptors.add(RetryInterceptor(dio: _dio));
   }
 

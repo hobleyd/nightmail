@@ -7,7 +7,12 @@ import '../auth/auth_token.dart';
 /// Dio interceptor that injects Bearer tokens and handles 401 by refreshing.
 /// Shared by all HTTP clients (Graph, Gmail, Google Calendar).
 class AuthInterceptor extends Interceptor {
-  AuthInterceptor({required this.authService, required this.dio, this.onAuthFailure});
+  AuthInterceptor({
+    required this.authService,
+    required this.dio,
+    this.onAuthFailure,
+    this.onAuthSuccess,
+  });
 
   final AuthService authService;
   final Dio dio;
@@ -18,6 +23,14 @@ class AuthInterceptor extends Interceptor {
   /// surface "needs re-authentication" to the UI — relying on every caller of
   /// the datasource to individually catch AuthException is easy to miss.
   final void Function()? onAuthFailure;
+
+  /// Notified whenever a token refresh succeeds. The mirror of [onAuthFailure]:
+  /// it lets the UI clear a stale "needs re-authentication" flag that a
+  /// *transient* refresh failure (e.g. a lost refresh-token rotation race)
+  /// latched, so the flag self-heals the next time a refresh works. Fires only
+  /// on an actual refresh — not on every request that reuses a still-valid
+  /// token — since a plain request proves nothing new about the credentials.
+  final void Function()? onAuthSuccess;
 
   @override
   Future<void> onRequest(
@@ -44,6 +57,7 @@ class AuthInterceptor extends Interceptor {
         final storedToken = await authService.getStoredToken();
         if (storedToken?.refreshToken != null) {
           final fresh = await authService.refreshToken(storedToken!);
+          onAuthSuccess?.call();
           final opts = err.requestOptions;
           opts.headers['Authorization'] =
               '${fresh.tokenType} ${fresh.accessToken}';
@@ -66,7 +80,9 @@ class AuthInterceptor extends Interceptor {
     }
 
     if (stored.isAboutToExpire && stored.refreshToken != null) {
-      return authService.refreshToken(stored);
+      final refreshed = await authService.refreshToken(stored);
+      onAuthSuccess?.call();
+      return refreshed;
     }
 
     if (stored.isExpired) {

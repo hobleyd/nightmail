@@ -76,12 +76,14 @@ class AccountCubit extends Cubit<AccountState> {
     required this._calendarReminderService,
   }) : super(const AccountLoading()) {
     _authFailureSub = _accountManager.authFailures.listen(_onAuthFailure);
+    _authSuccessSub = _accountManager.authSuccesses.listen(_onAuthSuccess);
   }
 
   final AccountManager _accountManager;
   final EmailRepository _emailRepository;
   final CalendarReminderService _calendarReminderService;
   late final StreamSubscription<String> _authFailureSub;
+  late final StreamSubscription<String> _authSuccessSub;
 
   // Cached future for the in-progress initialize so that a retry re-attaches
   // to the same operation rather than starting a second concurrent one.  Kept
@@ -112,9 +114,29 @@ class AccountCubit extends Cubit<AccountState> {
     ));
   }
 
+  // Reacts to AuthInterceptor obtaining a usable token for [accountId]. Clears
+  // any stale reauth flag so the banner self-heals: a transient failure (e.g. a
+  // lost refresh-token rotation race) can flag an account whose credentials are
+  // in fact still valid, and without this the flag would persist until the next
+  // explicit account action even though every request now succeeds.
+  void _onAuthSuccess(String accountId) {
+    final current = state;
+    if (current is! AccountsLoaded ||
+        !current.unauthenticatedAccountIds.contains(accountId)) {
+      return;
+    }
+    emit(AccountsLoaded(
+      accounts: current.accounts,
+      activeIndex: current.activeIndex,
+      unauthenticatedAccountIds: {...current.unauthenticatedAccountIds}
+        ..remove(accountId),
+    ));
+  }
+
   @override
   Future<void> close() {
     unawaited(_authFailureSub.cancel());
+    unawaited(_authSuccessSub.cancel());
     return super.close();
   }
 

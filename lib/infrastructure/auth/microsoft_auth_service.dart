@@ -10,6 +10,7 @@ import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import '../../core/error/exceptions.dart';
 import 'auth_service.dart';
 import 'auth_token.dart';
+import 'token_refresh_coordinator.dart';
 import 'token_storage.dart';
 import 'web_auth_stub.dart' if (dart.library.html) 'web_auth_web.dart';
 
@@ -168,8 +169,27 @@ class MicrosoftAuthService implements AuthService {
   }
 
   @override
-  Future<AuthToken> refreshToken(AuthToken currentToken) async {
-    if (currentToken.refreshToken == null) {
+  Future<AuthToken> refreshToken(AuthToken currentToken) {
+    // Coalesce with any concurrent refresh for this account so a rotated
+    // refresh token is never spent twice (see TokenRefreshCoordinator).
+    return TokenRefreshCoordinator.coalesce(
+      _tokenStorage.storageKey,
+      () => _performRefresh(currentToken),
+    );
+  }
+
+  Future<AuthToken> _performRefresh(AuthToken currentToken) async {
+    // Another instance may have refreshed while this call was queued behind it.
+    // If storage now holds a token that is no longer about to expire, reuse it
+    // rather than spending our (now-stale) refresh token.
+    final latest = await _tokenStorage.loadToken();
+    if (latest != null &&
+        latest.refreshToken != null &&
+        !latest.isAboutToExpire) {
+      return latest;
+    }
+    final effective = latest ?? currentToken;
+    if (effective.refreshToken == null) {
       throw const AuthException(message: 'No refresh token available');
     }
 
@@ -179,7 +199,7 @@ class MicrosoftAuthService implements AuthService {
         data: {
           'client_id': clientId,
           'grant_type': 'refresh_token',
-          'refresh_token': currentToken.refreshToken,
+          'refresh_token': effective.refreshToken,
           'scope': _scopes.join(' '),
           'redirect_uri': _effectiveRedirectUri,
           if (clientSecret != null && clientSecret!.isNotEmpty)
@@ -197,7 +217,7 @@ class MicrosoftAuthService implements AuthService {
           : AuthToken(
               accessToken: raw.accessToken,
               expiresAt: raw.expiresAt,
-              refreshToken: currentToken.refreshToken,
+              refreshToken: effective.refreshToken,
               tokenType: raw.tokenType,
               scope: raw.scope,
             );

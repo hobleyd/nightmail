@@ -18,6 +18,11 @@ class TokenStorage {
   final String _tokenKey;
   final String _legacyFileName;
 
+  /// The secure-storage key this instance reads/writes. Unique per account
+  /// (`token_{id}`), so it doubles as the coalescing key for concurrent
+  /// refreshes across the several datasources that share one account's token.
+  String get storageKey => _tokenKey;
+
   Future<void> saveToken(AuthToken token) async {
     final json = jsonEncode(token.toJson());
     await _storage.write(key: _tokenKey, value: json);

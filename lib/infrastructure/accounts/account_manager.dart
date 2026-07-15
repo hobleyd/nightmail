@@ -66,6 +66,12 @@ class AccountManager {
   final _authFailureController = StreamController<String>.broadcast();
   Stream<String> get authFailures => _authFailureController.stream;
 
+  // Mirror of [authFailures]: fired by AuthInterceptor whenever a usable token
+  // is obtained for an account, so the UI can clear a stale "needs reauth" flag
+  // that a transient failure latched (see AccountCubit._onAuthSuccess).
+  final _authSuccessController = StreamController<String>.broadcast();
+  Stream<String> get authSuccesses => _authSuccessController.stream;
+
   // Lazily built and cached per Gmail account ID so contact search works for
   // any account regardless of which one is currently active.
   final Map<String, GmailContactsDatasourceImpl> _contactsDatasourceCache = {};
@@ -128,6 +134,7 @@ class AccountManager {
       client: GooglePeopleHttpClient(
         authService: authSvc,
         onAuthFailure: () => _authFailureController.add(accountId),
+        onAuthSuccess: () => _authSuccessController.add(accountId),
       ),
     );
     _contactsDatasourceCache[accountId] = ds;
@@ -157,6 +164,7 @@ class AccountManager {
       client: GraphHttpClient(
         authService: authSvc,
         onAuthFailure: () => _authFailureController.add(accountId),
+        onAuthSuccess: () => _authSuccessController.add(accountId),
       ),
     );
     _directoryDatasourceCache[accountId] = ds;
@@ -404,6 +412,7 @@ class AccountManager {
             client: GraphHttpClient(
           authService: authSvc,
           onAuthFailure: () => _authFailureController.add(account.id),
+          onAuthSuccess: () => _authSuccessController.add(account.id),
         ));
 
       case GmailAccount():
@@ -421,6 +430,7 @@ class AccountManager {
           client: GmailHttpClient(
             authService: authSvc,
             onAuthFailure: () => _authFailureController.add(account.id),
+            onAuthSuccess: () => _authSuccessController.add(account.id),
           ),
           displayName: account.senderName,
         );
@@ -496,6 +506,7 @@ class AccountManager {
         final httpClient = GraphHttpClient(
           authService: authSvc,
           onAuthFailure: () => _authFailureController.add(account.id),
+          onAuthSuccess: () => _authSuccessController.add(account.id),
         );
         final ds = GraphApiDatasourceImpl(client: httpClient);
         _authService = authSvc;
@@ -514,17 +525,21 @@ class AccountManager {
           tokenStorage: tokenStorage,
         );
         void onGmailAuthFailure() => _authFailureController.add(account.id);
+        void onGmailAuthSuccess() => _authSuccessController.add(account.id);
         final gmailClient = GmailHttpClient(
           authService: authSvc,
           onAuthFailure: onGmailAuthFailure,
+          onAuthSuccess: onGmailAuthSuccess,
         );
         final calendarClient = GoogleCalendarHttpClient(
           authService: authSvc,
           onAuthFailure: onGmailAuthFailure,
+          onAuthSuccess: onGmailAuthSuccess,
         );
         final tasksClient = GoogleTasksHttpClient(
           authService: authSvc,
           onAuthFailure: onGmailAuthFailure,
+          onAuthSuccess: onGmailAuthSuccess,
         );
         _authService = authSvc;
         _emailDatasource = GmailDatasourceImpl(
@@ -576,6 +591,7 @@ class AccountManager {
           client: GraphHttpClient(
             authService: authSvc,
             onAuthFailure: () => _authFailureController.add(account.id),
+            onAuthSuccess: () => _authSuccessController.add(account.id),
           ),
         );
       case GmailAccount():
@@ -593,6 +609,7 @@ class AccountManager {
           client: GoogleCalendarHttpClient(
             authService: authSvc,
             onAuthFailure: () => _authFailureController.add(account.id),
+            onAuthSuccess: () => _authSuccessController.add(account.id),
           ),
         );
       case ImapAccount():

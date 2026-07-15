@@ -5,7 +5,11 @@ import 'auth_interceptor.dart';
 
 /// Dio instance pre-configured for the Gmail REST API.
 class GmailHttpClient {
-  GmailHttpClient({required AuthService authService, void Function()? onAuthFailure}) {
+  GmailHttpClient({
+    required AuthService authService,
+    void Function()? onAuthFailure,
+    void Function()? onAuthSuccess,
+  }) {
     _dio = Dio(BaseOptions(
       baseUrl: 'https://gmail.googleapis.com/gmail/v1',
       headers: {
@@ -17,7 +21,10 @@ class GmailHttpClient {
     ));
 
     _dio.interceptors.add(AuthInterceptor(
-        authService: authService, dio: _dio, onAuthFailure: onAuthFailure));
+        authService: authService,
+        dio: _dio,
+        onAuthFailure: onAuthFailure,
+        onAuthSuccess: onAuthSuccess));
   }
 
   late final Dio _dio;

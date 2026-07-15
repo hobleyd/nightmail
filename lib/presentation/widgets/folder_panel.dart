@@ -20,6 +20,7 @@ import '../blocs/email_detail/email_detail_event.dart';
 import '../blocs/email_list/email_list_bloc.dart';
 import '../blocs/email_list/email_list_event.dart';
 import 'email_drag_data.dart';
+import 'folder_drag_data.dart';
 import '../blocs/email_list/email_list_state.dart';
 import '../blocs/folder_list/folder_list_bloc.dart';
 import '../blocs/folder_list/folder_list_event.dart';
@@ -152,6 +153,25 @@ class _FolderPanelState extends State<FolderPanel> {
 
   Widget _buildTree(List<EmailFolder> folders, {bool showUnreadCounts = true}) {
     final items = _buildDisplayList(folders);
+    final folderById = {for (final f in folders) f.id: f};
+
+    // A folder may be dropped onto [targetId] unless it would create a cycle
+    // (target is the dragged folder itself or one of its descendants) or be a
+    // no-op (target is already the dragged folder's parent).
+    bool canDrop(String draggedId, String targetId) {
+      if (draggedId == targetId) return false;
+      final dragged = folderById[draggedId];
+      if (dragged == null) return false;
+      if (dragged.parentFolderId == targetId) return false;
+      String? cursor = targetId;
+      final seen = <String>{};
+      while (cursor != null && seen.add(cursor)) {
+        if (cursor == draggedId) return false;
+        cursor = folderById[cursor]?.parentFolderId;
+      }
+      return true;
+    }
+
     return ListView.builder(
       padding: const EdgeInsets.symmetric(vertical: 8),
       itemCount: items.length,
@@ -196,6 +216,15 @@ class _FolderPanelState extends State<FolderPanel> {
           isExpanded: _expandedIds.contains(item.folder.id),
           hasChildren: item.folder.childFolderCount > 0,
           showUnreadCount: showUnreadCounts,
+          isDraggable: !_isSystemFolder(item.folder),
+          canAcceptFolderDrop: (draggedId) =>
+              canDrop(draggedId, item.folder.id),
+          onFolderDropped: (draggedId) {
+            context.read<FolderListBloc>().add(FolderListMoveFolderRequested(
+                  folderId: draggedId,
+                  newParentFolderId: item.folder.id,
+                ));
+          },
           onTap: () => widget.onFolderSelected(item.folder),
           onExpandTap: () {
             setState(() {
@@ -276,6 +305,9 @@ class _FolderPanelState extends State<FolderPanel> {
       _ => 99,
     };
   }
+
+  // System folders (Inbox, Sent, etc.) can be dropped onto but not dragged.
+  static bool _isSystemFolder(EmailFolder f) => _systemOrder(f.displayName) != 99;
 }
 
 class _DisplayItem {
@@ -353,6 +385,9 @@ class _FolderItem extends StatefulWidget {
     required this.onExpandTap,
     required this.onAddFolder,
     required this.onRename,
+    required this.isDraggable,
+    required this.canAcceptFolderDrop,
+    required this.onFolderDropped,
     this.showUnreadCount = true,
   });
 
@@ -362,6 +397,9 @@ class _FolderItem extends StatefulWidget {
   final bool isExpanded;
   final bool hasChildren;
   final bool showUnreadCount;
+  final bool isDraggable;
+  final bool Function(String draggedFolderId) canAcceptFolderDrop;
+  final void Function(String draggedFolderId) onFolderDropped;
   final VoidCallback onTap;
   final VoidCallback onExpandTap;
   final VoidCallback onAddFolder;
@@ -420,6 +458,36 @@ class _FolderItemState extends State<_FolderItem>
 
   @override
   Widget build(BuildContext context) {
+    // Outer target accepts folders dragged onto this row (reparent); the inner
+    // target keeps the existing email-move behaviour. Nested DragTargets of
+    // different payload types coexist without interfering.
+    Widget row = DragTarget<FolderDragData>(
+      onWillAcceptWithDetails: (d) =>
+          widget.canAcceptFolderDrop(d.data.folderId),
+      onAcceptWithDetails: (d) => widget.onFolderDropped(d.data.folderId),
+      builder: (context, folderCandidates, _) =>
+          _buildEmailDropTarget(context, folderCandidates.isNotEmpty),
+    );
+
+    if (widget.isDraggable) {
+      row = Draggable<FolderDragData>(
+        data: FolderDragData(
+          folderId: widget.folder.id,
+          displayName: widget.folder.displayName,
+        ),
+        dragAnchorStrategy: childDragAnchorStrategy,
+        feedback: _folderDragFeedback(context),
+        childWhenDragging: Opacity(
+          opacity: 0.4,
+          child: _buildContent(context, false),
+        ),
+        child: row,
+      );
+    }
+    return row;
+  }
+
+  Widget _buildEmailDropTarget(BuildContext context, bool folderHovering) {
     return DragTarget<EmailDragData>(
       onWillAcceptWithDetails: (_) => true,
       onAcceptWithDetails: (details) {
@@ -478,7 +546,45 @@ class _FolderItemState extends State<_FolderItem>
         }
       },
       builder: (context, candidateData, _) =>
-          _buildContent(context, candidateData.isNotEmpty),
+          _buildContent(context, candidateData.isNotEmpty || folderHovering),
+    );
+  }
+
+  Widget _folderDragFeedback(BuildContext context) {
+    final c = context.colors;
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: c.surfacePanel,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.accent, width: 1),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.2),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(_iconFor(widget.folder.displayName),
+                size: 14, color: AppColors.accent),
+            const SizedBox(width: 6),
+            Text(
+              widget.folder.displayName,
+              style: TextStyle(
+                color: c.textSecondary,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

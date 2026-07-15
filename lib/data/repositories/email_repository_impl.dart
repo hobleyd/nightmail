@@ -532,6 +532,20 @@ class EmailRepositoryImpl implements EmailRepository {
   }
 
   @override
+  Future<Either<Failure, Unit>> moveFolder({
+    required String folderId,
+    required String newParentFolderId,
+  }) async {
+    return _execute(() async {
+      await _accountManager.emailDatasource.moveFolder(
+        folderId: folderId,
+        newParentFolderId: newParentFolderId,
+      );
+      return unit;
+    });
+  }
+
+  @override
   Future<Either<Failure, List<Email>>> searchEmails({
     String? folderId,
     required String query,

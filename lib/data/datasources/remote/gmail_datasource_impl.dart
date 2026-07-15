@@ -1150,6 +1150,63 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   }
 
   @override
+  Future<void> moveFolder({
+    required String folderId,
+    required String newParentFolderId,
+  }) async {
+    try {
+      // List all labels once — we resolve names, find descendants, and rename.
+      final listResp =
+          await _dio.get<Map<String, dynamic>>('/users/me/labels');
+      final labels = (listResp.data?['labels'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      final nameById = <String, String>{};
+      for (final l in labels) {
+        final id = l['id'] as String?;
+        final name = l['name'] as String?;
+        if (id != null && name != null) nameById[id] = name;
+      }
+
+      // Virtual folders have no real label — their id encodes their full path.
+      String? nameFor(String id) => id.startsWith('__virtual__')
+          ? id.substring('__virtual__'.length)
+          : nameById[id];
+
+      final oldName = nameFor(folderId);
+      final destName = nameFor(newParentFolderId);
+      if (oldName == null || destName == null) {
+        throw ServerException(message: 'Folder not found.');
+      }
+      final leaf = oldName.contains('/')
+          ? oldName.substring(oldName.lastIndexOf('/') + 1)
+          : oldName;
+      final newName = '$destName/$leaf';
+
+      // Rename the moved label (if it is a real one) and every descendant
+      // label, replacing the old path prefix with the new one.
+      for (final l in labels) {
+        final id = l['id'] as String?;
+        final name = l['name'] as String?;
+        if (id == null || name == null) continue;
+        if (name == oldName) {
+          await _dio.patch<void>(
+            '/users/me/labels/$id',
+            data: {'name': newName},
+          );
+        } else if (name.startsWith('$oldName/')) {
+          final renamed = '$newName${name.substring(oldName.length)}';
+          await _dio.patch<void>(
+            '/users/me/labels/$id',
+            data: {'name': renamed},
+          );
+        }
+      }
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  @override
   Future<String> createServerDraft({
     required List<String> toAddresses,
     List<String> ccAddresses = const [],

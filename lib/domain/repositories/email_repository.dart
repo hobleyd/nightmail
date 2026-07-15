@@ -139,6 +139,13 @@ abstract interface class EmailRepository {
     required String newDisplayName,
   });
 
+  /// Reparents [folderId] so it becomes a child of [newParentFolderId].
+  /// Any sub-folders of [folderId] move with it.
+  Future<Either<Failure, Unit>> moveFolder({
+    required String folderId,
+    required String newParentFolderId,
+  });
+
   /// Searches [folderId] (and its immediate children where supported) for
   /// emails matching [query].  Supports `from:`, `to:`, `subject:`, and
   /// `has:attachment` notation.  Results are NOT cached.

@@ -72,6 +72,7 @@ import 'domain/usecases/download_task_attachment.dart';
 import 'domain/usecases/move_email.dart';
 import 'domain/usecases/download_attachment.dart';
 import 'domain/usecases/create_folder.dart';
+import 'domain/usecases/move_folder.dart';
 import 'domain/usecases/rename_folder.dart';
 import 'domain/usecases/empty_folder.dart';
 import 'domain/usecases/get_calendar_events.dart';
@@ -258,6 +259,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => EmptyFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => CreateFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => RenameFolder(sl<EmailRepository>()));
+  sl.registerLazySingleton(() => MoveFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => DownloadAttachment(sl<EmailRepository>()));
   sl.registerLazySingleton(() => GetCachedEmails(sl<EmailRepository>()));
   sl.registerLazySingleton(() => CacheEmails(sl<EmailRepository>()));
@@ -341,6 +343,7 @@ Future<void> configureDependencies() async {
       getCachedFolders: sl<GetCachedFolders>(),
       createFolder: sl<CreateFolder>(),
       renameFolder: sl<RenameFolder>(),
+      moveFolder: sl<MoveFolder>(),
       accountManager: sl<AccountManager>(),
     ),
   );

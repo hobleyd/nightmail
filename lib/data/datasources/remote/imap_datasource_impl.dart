@@ -1402,6 +1402,32 @@ class ImapDatasourceImpl
     }
   }
 
+  @override
+  Future<void> moveFolder({
+    required String folderId,
+    required String newParentFolderId,
+  }) async {
+    try {
+      final client = await _getConnectedClient();
+      final sep = _pathSeparator;
+      // Keep the leaf name; move it under the destination path. RFC 3501
+      // requires RENAME to also relocate any inferior (child) mailboxes.
+      final lastSep = folderId.lastIndexOf(sep);
+      final leafName =
+          lastSep >= 0 ? folderId.substring(lastSep + sep.length) : folderId;
+      final newPath = '$newParentFolderId$sep$leafName';
+      final mailbox = Mailbox(
+        encodedName: leafName,
+        encodedPath: folderId,
+        flags: [],
+        pathSeparator: sep,
+      );
+      await client.renameMailbox(mailbox, newPath);
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    }
+  }
+
   /// Returns the path of the Trash mailbox, or null if the message is already
   /// in Trash or no Trash folder can be located on this server.
   Future<String?> _findTrashPath(

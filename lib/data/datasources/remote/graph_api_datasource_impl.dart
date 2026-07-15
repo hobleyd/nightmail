@@ -1825,6 +1825,22 @@ class GraphApiDatasourceImpl
     }
   }
 
+  @override
+  Future<void> moveFolder({
+    required String folderId,
+    required String newParentFolderId,
+  }) async {
+    try {
+      // Graph's native move preserves the folder id and moves all sub-folders.
+      await _dio.post<void>(
+        '/me/mailFolders/$folderId/move',
+        data: {'destinationId': newParentFolderId},
+      );
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
   static final _angleEmail = RegExp(r'<([^>]+)>\s*$');
 
   /// Extracts a bare email address from an optionally formatted string like

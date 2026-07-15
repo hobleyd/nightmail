@@ -13,10 +13,11 @@ import '../accounts/account_manager.dart';
 /// followed by another op on the same message (e.g. mark-read-then-move)
 /// must see the first op's outcome — including a possible id change — before
 /// the second is sent. Draining out of order, or in parallel, risks sending
-/// a later op against an id the server has already replaced. On the first
-/// failure, draining for that account stops for this pass; the remaining
-/// queue (unchanged) will be retried on the next drain call rather than
-/// skipped ahead of.
+/// a later op against an id the server has already replaced. On a failure,
+/// only the remaining queued ops *for that same message* are skipped this
+/// pass (left queued, retried next call) — a single permanently-failing op
+/// (e.g. a move to a folder that no longer exists) must not head-of-line
+/// block every other message's unrelated mutations.
 class OutboxDrainService {
   OutboxDrainService({
     required PendingOperationsDatasource pendingOperations,
@@ -59,7 +60,13 @@ class OutboxDrainService {
     // drained this pass.
     final idRemap = <String, String>{};
 
+    // Messages whose op chain hit a failure this pass — keyed by the
+    // *original* queued emailId, same as [idRemap]. Remaining ops for that
+    // message are skipped (left queued) without touching other messages.
+    final quarantined = <String>{};
+
     for (final op in ops) {
+      if (quarantined.contains(op.emailId)) continue;
       final emailId = idRemap[op.emailId] ?? op.emailId;
       try {
         switch (op.opType) {
@@ -99,7 +106,7 @@ class OutboxDrainService {
         await _pendingOperations.removeOperation(op.id);
       } catch (e) {
         await _pendingOperations.recordFailure(id: op.id, error: e.toString());
-        return;
+        quarantined.add(op.emailId);
       }
     }
   }

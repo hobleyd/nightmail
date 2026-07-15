@@ -188,8 +188,32 @@ void main() {
   });
 
   group('ordering and failure handling', () {
-    test('stops draining on the first failure and leaves the rest queued',
-        () async {
+    test(
+        'a failure quarantines only the remaining ops for that message, '
+        'leaving it queued for retry', () async {
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+        opType: PendingOperationType.delete,
+        payload: '{}',
+      );
+      when(mockRemoteDatasource.deleteEmail('email-1'))
+          .thenThrow(Exception('throttled'));
+
+      await service.drainForAccount('acct-1');
+
+      final remaining = await db.getPendingOperations('acct-1');
+      expect(remaining, hasLength(1));
+      expect(remaining.first.retryCount, 1);
+      expect(remaining.first.lastError, contains('throttled'));
+    });
+
+    // Regression: a single permanently-failing op used to stop draining for
+    // the *whole account*, silently blocking every other queued message's
+    // mutations behind it indefinitely. A failure must only quarantine the
+    // remaining ops for its own message.
+    test('a failing message does not block an unrelated message from '
+        'draining in the same pass', () async {
       await db.enqueue(
         accountId: 'acct-1',
         emailId: 'email-1',
@@ -204,14 +228,45 @@ void main() {
       );
       when(mockRemoteDatasource.deleteEmail('email-1'))
           .thenThrow(Exception('throttled'));
+      when(mockRemoteDatasource.deleteEmail('email-2'))
+          .thenAnswer((_) async {});
 
       await service.drainForAccount('acct-1');
 
-      verifyNever(mockRemoteDatasource.deleteEmail('email-2'));
+      verify(mockRemoteDatasource.deleteEmail('email-2')).called(1);
+      final remaining = await db.getPendingOperations('acct-1');
+      expect(remaining, hasLength(1));
+      expect(remaining.first.emailId, 'email-1');
+    });
+
+    // Regression: ops for the same message must still stop in order after
+    // a failure for that message — quarantine must not accidentally let a
+    // later op for the *same* email through.
+    test('a failing message still blocks its own later queued ops',
+        () async {
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+        opType: PendingOperationType.move,
+        payload: jsonEncode({'destinationFolderId': 'folder-2'}),
+      );
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+        opType: PendingOperationType.markRead,
+        payload: jsonEncode({'isRead': true}),
+      );
+      when(mockRemoteDatasource.moveEmail('email-1', 'folder-2'))
+          .thenThrow(Exception('throttled'));
+
+      await service.drainForAccount('acct-1');
+
+      verifyNever(mockRemoteDatasource.updateEmailReadStatus(
+        id: anyNamed('id'),
+        isRead: anyNamed('isRead'),
+      ));
       final remaining = await db.getPendingOperations('acct-1');
       expect(remaining, hasLength(2));
-      expect(remaining.first.retryCount, 1);
-      expect(remaining.first.lastError, contains('throttled'));
     });
   });
 

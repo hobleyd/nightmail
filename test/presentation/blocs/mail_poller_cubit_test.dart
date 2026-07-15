@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fpdart/fpdart.dart';
 import 'package:mockito/annotations.dart';
@@ -17,7 +19,9 @@ import 'package:nightmail/data/models/mail_delta_result.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 import 'package:nightmail/infrastructure/badge/badge_service.dart';
+import 'package:nightmail/infrastructure/network/connectivity_service.dart';
 import 'package:nightmail/infrastructure/notifications/notification_service.dart';
+import 'package:nightmail/infrastructure/sync/outbox_drain_service.dart';
 import 'package:nightmail/presentation/blocs/mail_poller/mail_poller_cubit.dart';
 import 'package:nightmail/presentation/blocs/mail_poller/mail_poller_state.dart';
 
@@ -88,12 +92,14 @@ MailDeltaResult _emptyDelta() => MailDeltaResult(
   AccountManager,
   AppSettings,
   BadgeService,
+  ConnectivityService,
   DeltaTokenDatasource,
   EmailLocalDatasource,
   GraphApiDatasourceImpl,
   EmailRemoteDatasource,
   GetCachedFolders,
   NotificationService,
+  OutboxDrainService,
 ])
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -101,20 +107,24 @@ void main() {
   late MockAccountManager mockAccountManager;
   late MockAppSettings mockAppSettings;
   late MockBadgeService mockBadgeService;
+  late MockConnectivityService mockConnectivityService;
   late MockDeltaTokenDatasource mockDatabase;
   late MockEmailLocalDatasource mockEmailLocalDatasource;
   late MockGraphApiDatasourceImpl mockGraphDs;
   late MockGetCachedFolders mockGetCachedFolders;
   late MockNotificationService mockNotificationService;
+  late MockOutboxDrainService mockOutboxDrainService;
 
   MailPollerCubit _makeCubit() => MailPollerCubit(
         accountManager: mockAccountManager,
         appSettings: mockAppSettings,
         badgeService: mockBadgeService,
+        connectivityService: mockConnectivityService,
         database: mockDatabase,
         emailLocalDatasource: mockEmailLocalDatasource,
         getCachedFolders: mockGetCachedFolders,
         notificationService: mockNotificationService,
+        outboxDrainService: mockOutboxDrainService,
       );
 
   void _stubInfra() {
@@ -146,16 +156,23 @@ void main() {
       senderName: anyNamed('senderName'),
       accountLabel: anyNamed('accountLabel'),
     )).thenAnswer((_) async {});
+    when(mockOutboxDrainService.drainAll()).thenAnswer((_) async {});
+    // Online by default — tests that need offline behavior override this.
+    when(mockConnectivityService.isOnline).thenAnswer((_) async => true);
+    when(mockConnectivityService.onReconnected)
+        .thenAnswer((_) => const Stream<void>.empty());
   }
 
   setUp(() {
     mockAccountManager = MockAccountManager();
     mockAppSettings = MockAppSettings();
     mockBadgeService = MockBadgeService();
+    mockConnectivityService = MockConnectivityService();
     mockDatabase = MockDeltaTokenDatasource();
     mockEmailLocalDatasource = MockEmailLocalDatasource();
     mockGraphDs = MockGraphApiDatasourceImpl();
     mockGetCachedFolders = MockGetCachedFolders();
+    mockOutboxDrainService = MockOutboxDrainService();
     mockNotificationService = MockNotificationService();
     provideDummy<Either<Failure, List<EmailFolder>>>(const Right([]));
     _stubInfra();
@@ -210,6 +227,57 @@ void main() {
       await pumpEventQueue();
 
       verify(mockDatabase.saveDeltaToken(_msId, 'inbox', _newToken)).called(1);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Offline — skip the cycle rather than run out each account's HTTP
+  // connect timeout in turn.
+  // ---------------------------------------------------------------------------
+
+  group('MailPollerCubit — offline', () {
+    test('skips the poll cycle entirely without touching the datasource',
+        () async {
+      when(mockAccountManager.accounts).thenReturn([_msAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(_msAccount);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(mockGraphDs);
+      when(mockConnectivityService.isOnline).thenAnswer((_) async => false);
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      verifyNever(mockGraphDs.getMailFolders());
+      verifyNever(mockDatabase.loadDeltaToken(any, any));
+    });
+
+    test('onReconnected triggers an immediate drain and poll', () async {
+      when(mockAccountManager.accounts).thenReturn([_msAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(_msAccount);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(mockGraphDs);
+      when(mockDatabase.loadDeltaToken(any, any))
+          .thenAnswer((_) async => null);
+      when(mockGraphDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: 0)]);
+      final reconnectController = StreamController<void>.broadcast();
+      when(mockConnectivityService.onReconnected)
+          .thenAnswer((_) => reconnectController.stream);
+      addTearDown(reconnectController.close);
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+      await cubit.initialize();
+      await pumpEventQueue();
+      clearInteractions(mockOutboxDrainService);
+
+      reconnectController.add(null);
+      await pumpEventQueue();
+
+      verify(mockOutboxDrainService.drainAll()).called(1);
     });
   });
 

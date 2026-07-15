@@ -1,5 +1,6 @@
 import 'dart:io' show Platform;
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode;
 import 'package:flutter/services.dart' show PlatformException;
@@ -105,6 +106,7 @@ import 'infrastructure/accounts/account_manager.dart';
 import 'infrastructure/accounts/account_storage.dart';
 import 'infrastructure/badge/badge_service.dart';
 import 'infrastructure/cache/cache_encryption_service.dart';
+import 'infrastructure/network/connectivity_service.dart';
 import 'infrastructure/notifications/calendar_reminder_service.dart';
 import 'infrastructure/notifications/notification_service.dart';
 import 'infrastructure/sync/outbox_drain_service.dart';
@@ -189,6 +191,10 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton<SenderLocalDatasource>(
     () => SenderLocalDatasourceImpl(database: sl<AppDatabase>()),
   );
+  sl.registerLazySingleton(() => Connectivity());
+  sl.registerLazySingleton<ConnectivityService>(
+    () => ConnectivityServiceImpl(sl<Connectivity>()),
+  );
   sl.registerLazySingleton(
     () => OutboxDrainService(
       pendingOperations: sl<PendingOperationsDatasource>(),
@@ -203,6 +209,9 @@ Future<void> configureDependencies() async {
       accountManager: sl<AccountManager>(),
       localDatasource: sl<EmailLocalDatasource>(),
       folderLocalDatasource: sl<FolderLocalDatasource>(),
+      pendingOperations: sl<PendingOperationsDatasource>(),
+      outboxDrainService: sl<OutboxDrainService>(),
+      connectivityService: sl<ConnectivityService>(),
     ),
   );
   sl.registerLazySingleton<SenderRepository>(
@@ -309,10 +318,12 @@ Future<void> configureDependencies() async {
       accountManager: sl<AccountManager>(),
       appSettings: sl<AppSettings>(),
       badgeService: sl<BadgeService>(),
+      connectivityService: sl<ConnectivityService>(),
       database: sl<DeltaTokenDatasource>(),
       emailLocalDatasource: sl<EmailLocalDatasource>(),
       getCachedFolders: sl<GetCachedFolders>(),
       notificationService: sl<NotificationService>(),
+      outboxDrainService: sl<OutboxDrainService>(),
     ),
   );
 

@@ -16,7 +16,9 @@ import '../../../domain/usecases/get_cached_folders.dart';
 import '../../../infrastructure/accounts/account.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
 import '../../../infrastructure/badge/badge_service.dart';
+import '../../../infrastructure/network/connectivity_service.dart';
 import '../../../infrastructure/notifications/notification_service.dart';
+import '../../../infrastructure/sync/outbox_drain_service.dart';
 import 'mail_poller_state.dart';
 
 class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver {
@@ -24,17 +26,21 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     required AccountManager accountManager,
     required AppSettings appSettings,
     required BadgeService badgeService,
+    required ConnectivityService connectivityService,
     required DeltaTokenDatasource database,
     required EmailLocalDatasource emailLocalDatasource,
     required GetCachedFolders getCachedFolders,
     required NotificationService notificationService,
+    required OutboxDrainService outboxDrainService,
   })  : _accountManager = accountManager,
         _appSettings = appSettings,
         _badgeService = badgeService,
+        _connectivityService = connectivityService,
         _database = database,
         _emailLocalDatasource = emailLocalDatasource,
         _getCachedFolders = getCachedFolders,
         _notificationService = notificationService,
+        _outboxDrainService = outboxDrainService,
         super(const MailPollerState(
           accountsWithNewMail: {},
           pollIntervalSeconds: AppSettings.defaultPollIntervalSeconds,
@@ -43,10 +49,12 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   final AccountManager _accountManager;
   final AppSettings _appSettings;
   final BadgeService _badgeService;
+  final ConnectivityService _connectivityService;
   final DeltaTokenDatasource _database;
   final EmailLocalDatasource _emailLocalDatasource;
   final GetCachedFolders _getCachedFolders;
   final NotificationService _notificationService;
+  final OutboxDrainService _outboxDrainService;
 
   Timer? _timer;
   bool _polling = false;
@@ -57,6 +65,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   final Set<String> _newMailAccounts = {};
   final Set<String> _bootstrapping = {};
   final Set<String> _reauthAccounts = {};
+  StreamSubscription<void>? _reconnectSub;
 
   static const _systemEventsChannel =
       MethodChannel('au.com.sharpblue.nightmail/system_events');
@@ -75,6 +84,17 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     if (!isClosed) emit(state.copyWith(pollIntervalSeconds: interval));
     await _primeBadgeFromCache();
     _startTimer(interval);
+
+    // Drains the outbox (and refreshes) the moment connectivity returns,
+    // rather than waiting up to a full poll interval — the poll-tick drain
+    // in _poll() is the correctness baseline, this is the responsiveness
+    // improvement on top of it.
+    _reconnectSub?.cancel();
+    _reconnectSub = _connectivityService.onReconnected.listen((_) {
+      // _poll() already drains the outbox at its top — no need to also call
+      // it directly here.
+      _poll();
+    });
   }
 
   @override
@@ -111,6 +131,11 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
 
   Future<void> _poll() async {
     if (_polling || isClosed) return;
+    // Skip the cycle outright while offline rather than let each account's
+    // network call run out its connect timeout (tens of seconds) in turn —
+    // there's nothing to sync, and onReconnected already triggers a poll the
+    // moment connectivity returns.
+    if (!await _connectivityService.isOnline) return;
     _polling = true;
     // Captured so we can notify only for accounts that newly gained unread
     // mail *this cycle* — not ones already flagged from a previous poll, and
@@ -118,6 +143,14 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     // whatever unread mail already existed before NightMail was opened.
     final wasInitialized = _initialized;
     final previousNewMailAccounts = Set<String>.of(_newMailAccounts);
+
+    // Replays any queued offline mutations. This is the baseline sync
+    // trigger for the outbox — it guarantees a queued delete/move/mark-read
+    // reaches the server within one poll interval regardless of network
+    // state when it was made; a connectivity-triggered drain (faster than
+    // waiting for the next tick) is a responsiveness improvement on top of
+    // this, not a correctness dependency.
+    unawaited(_outboxDrainService.drainAll());
 
     try {
       final accounts = _accountManager.accounts;
@@ -485,6 +518,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   Future<void> close() {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
+    _reconnectSub?.cancel();
     return super.close();
   }
 }

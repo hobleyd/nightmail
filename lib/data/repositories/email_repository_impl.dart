@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:fpdart/fpdart.dart';
@@ -11,8 +12,11 @@ import '../../domain/entities/local_attachment.dart';
 import '../../domain/repositories/email_repository.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/accounts/account_manager.dart';
+import '../../infrastructure/network/connectivity_service.dart';
+import '../../infrastructure/sync/outbox_drain_service.dart';
 import '../datasources/local/email_local_datasource.dart';
 import '../datasources/local/folder_local_datasource.dart';
+import '../datasources/local/pending_operations_datasource.dart';
 import '../datasources/remote/email_remote_datasource.dart';
 
 class EmailRepositoryImpl implements EmailRepository {
@@ -20,11 +24,17 @@ class EmailRepositoryImpl implements EmailRepository {
     required this._accountManager,
     required this._localDatasource,
     required this._folderLocalDatasource,
+    required this._pendingOperations,
+    required this._outboxDrainService,
+    required this._connectivityService,
   });
 
   final AccountManager _accountManager;
   final EmailLocalDatasource _localDatasource;
   final FolderLocalDatasource _folderLocalDatasource;
+  final PendingOperationsDatasource _pendingOperations;
+  final OutboxDrainService _outboxDrainService;
+  final ConnectivityService _connectivityService;
 
   static const _defaultFolderKey = '__DEFAULT__';
 
@@ -112,23 +122,47 @@ class EmailRepositoryImpl implements EmailRepository {
     required String id,
     required bool isRead,
   }) async {
-    final result = await _execute(() => _accountManager.emailDatasource
-        .updateEmailReadStatus(id: id, isRead: isRead));
-    result.fold((_) {}, (_) {
-      final accountId = _accountManager.activeAccount?.id;
-      if (accountId != null) {
-        unawaited(_localDatasource.updateEmailReadStatusInCache(
-          accountId: accountId,
-          emailId: id,
-          isRead: isRead,
-        ));
-      }
+    final accountId = _accountManager.activeAccount?.id;
+    final cached = accountId == null
+        ? null
+        : await _localDatasource.getCachedEmailById(
+            accountId: accountId, emailId: id);
+    // No cached copy to update in place (e.g. acting on a search result that
+    // was never cached) — fall back to the old network-first path rather
+    // than fabricate a return value.
+    if (accountId == null || cached == null) {
+      return _execute(() => _accountManager.emailDatasource
+          .updateEmailReadStatus(id: id, isRead: isRead));
+    }
+
+    return _execute(() async {
+      // Enqueue before mutating the cache: if the app dies in between, a
+      // queued op with no local change just replays against server state
+      // that already reflects it (server wins, harmless) — the reverse
+      // (a cache change with nothing queued to replay) would silently lose
+      // the mutation forever.
+      await _pendingOperations.enqueue(
+        accountId: accountId,
+        emailId: id,
+        opType: PendingOperationType.markRead,
+        payload: jsonEncode({'isRead': isRead}),
+      );
+      final updated = cached.copyWith(isRead: isRead);
+      await _localDatasource.updateEmailReadStatusInCache(
+        accountId: accountId,
+        emailId: id,
+        isRead: isRead,
+      );
+      unawaited(_outboxDrainService.drainForAccount(accountId));
+      return updated;
     });
-    return result;
   }
 
   @override
   Future<Either<Failure, List<EmailFolder>>> getMailFolders() async {
+    if (!await _connectivityService.isOnline) {
+      return const Left(NetworkFailure(message: 'No network connection'));
+    }
     try {
       final remote = _accountManager.emailDatasource;
       final topLevel = await remote.getMailFolders();
@@ -270,51 +304,91 @@ class EmailRepositoryImpl implements EmailRepository {
   @override
   Future<Either<Failure, Unit>> moveEmail(
       String id, String destinationFolderId) async {
+    final accountId = _accountManager.activeAccount?.id;
+    if (accountId == null) {
+      return _execute(() async {
+        await _accountManager.emailDatasource.moveEmail(id, destinationFolderId);
+        return unit;
+      });
+    }
     return _execute(() async {
-      await _accountManager.emailDatasource
-          .moveEmail(id, destinationFolderId);
-      final accountId = _accountManager.activeAccount?.id;
-      if (accountId != null) {
-        unawaited(_localDatasource.deleteEmailFromCache(
-          accountId: accountId,
-          emailId: id,
-        ));
-      }
+      await _pendingOperations.enqueue(
+        accountId: accountId,
+        emailId: id,
+        opType: PendingOperationType.move,
+        payload: jsonEncode({'destinationFolderId': destinationFolderId}),
+      );
+      // The message leaves the folder currently being viewed; the drain
+      // engine re-files it into the destination folder's cache once the
+      // server confirms (and learns its possibly-new id in the process).
+      await _localDatasource.deleteEmailFromCache(
+        accountId: accountId,
+        emailId: id,
+      );
+      unawaited(_outboxDrainService.drainForAccount(accountId));
       return unit;
     });
   }
 
   @override
   Future<Either<Failure, Unit>> reportJunk(String id) async {
+    final accountId = _accountManager.activeAccount?.id;
+    if (accountId == null) {
+      return _execute(() async {
+        await _accountManager.emailDatasource.reportJunk(id);
+        return unit;
+      });
+    }
     return _execute(() async {
-      await _accountManager.emailDatasource.reportJunk(id);
-      final accountId = _accountManager.activeAccount?.id;
-      if (accountId != null) {
-        unawaited(_localDatasource.deleteEmailFromCache(
-          accountId: accountId,
-          emailId: id,
-        ));
-      }
+      await _pendingOperations.enqueue(
+        accountId: accountId,
+        emailId: id,
+        opType: PendingOperationType.junk,
+        payload: '{}',
+      );
+      await _localDatasource.deleteEmailFromCache(
+        accountId: accountId,
+        emailId: id,
+      );
+      unawaited(_outboxDrainService.drainForAccount(accountId));
       return unit;
     });
   }
 
   @override
   Future<Either<Failure, Unit>> deleteEmail(String id) async {
+    final accountId = _accountManager.activeAccount?.id;
+    if (accountId == null) {
+      return _execute(() async {
+        await _accountManager.emailDatasource.deleteEmail(id);
+        return unit;
+      });
+    }
     return _execute(() async {
-      await _accountManager.emailDatasource.deleteEmail(id);
-      final accountId = _accountManager.activeAccount?.id;
-      if (accountId != null) {
-        unawaited(_localDatasource.deleteEmailFromCache(
-          accountId: accountId,
-          emailId: id,
-        ));
-      }
+      await _pendingOperations.enqueue(
+        accountId: accountId,
+        emailId: id,
+        opType: PendingOperationType.delete,
+        payload: '{}',
+      );
+      await _localDatasource.deleteEmailFromCache(
+        accountId: accountId,
+        emailId: id,
+      );
+      unawaited(_outboxDrainService.drainForAccount(accountId));
       return unit;
     });
   }
 
   @override
+  // Deliberately NOT outbox-first, unlike the other mutations above.
+  // Emptying a folder can touch hundreds of messages server-side and has no
+  // partial-progress visibility; going optimistic here would make the
+  // "Delete All" shimmer always report success immediately and silently
+  // strand a failed drain with no way for the UI to notice or recover — the
+  // exact class of bug commit 7d29563 fixed on the network-first path
+  // (re-fetch and restore on failure). Revisit once the outbox has failure
+  // surfacing (see the delta-reconciliation/tombstone work), not before.
   Future<Either<Failure, Unit>> emptyFolder(
     String folderId, {
     bool permanentDelete = false,
@@ -508,6 +582,11 @@ class EmailRepositoryImpl implements EmailRepository {
   }
 
   Future<Either<Failure, T>> _execute<T>(Future<T> Function() fn) async {
+    // Fails fast instead of waiting on an HTTP client's connect timeout
+    // (tens of seconds) before the caller can fall back to the cache.
+    if (!await _connectivityService.isOnline) {
+      return const Left(NetworkFailure(message: 'No network connection'));
+    }
     try {
       return Right(await fn());
     } on AuthException catch (e) {

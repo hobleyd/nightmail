@@ -6,6 +6,7 @@ import 'package:nightmail/core/error/exceptions.dart';
 import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/data/datasources/local/email_local_datasource.dart';
 import 'package:nightmail/data/datasources/local/folder_local_datasource.dart';
+import 'package:nightmail/data/datasources/local/pending_operations_datasource.dart';
 import 'package:nightmail/data/datasources/remote/email_remote_datasource.dart';
 import 'package:nightmail/data/models/email_address_model.dart';
 import 'package:nightmail/data/models/email_folder_model.dart';
@@ -14,31 +15,61 @@ import 'package:nightmail/data/repositories/email_repository_impl.dart';
 import 'package:nightmail/domain/entities/email.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
+import 'package:nightmail/infrastructure/network/connectivity_service.dart';
+import 'package:nightmail/infrastructure/sync/outbox_drain_service.dart';
 
 import 'email_repository_impl_test.mocks.dart';
 
-@GenerateMocks([AccountManager, EmailLocalDatasource, FolderLocalDatasource, EmailRemoteDatasource])
+@GenerateMocks([
+  AccountManager,
+  EmailLocalDatasource,
+  FolderLocalDatasource,
+  EmailRemoteDatasource,
+  PendingOperationsDatasource,
+  OutboxDrainService,
+  ConnectivityService,
+])
 void main() {
   late EmailRepositoryImpl repository;
   late MockAccountManager mockAccountManager;
   late MockEmailLocalDatasource mockLocalDatasource;
   late MockFolderLocalDatasource mockFolderLocalDatasource;
   late MockEmailRemoteDatasource mockRemoteDatasource;
+  late MockPendingOperationsDatasource mockPendingOperations;
+  late MockOutboxDrainService mockOutboxDrainService;
+  late MockConnectivityService mockConnectivityService;
 
   setUp(() {
     mockAccountManager = MockAccountManager();
     mockLocalDatasource = MockEmailLocalDatasource();
     mockFolderLocalDatasource = MockFolderLocalDatasource();
     mockRemoteDatasource = MockEmailRemoteDatasource();
+    mockPendingOperations = MockPendingOperationsDatasource();
+    mockOutboxDrainService = MockOutboxDrainService();
+    mockConnectivityService = MockConnectivityService();
 
     when(mockAccountManager.emailDatasource).thenReturn(mockRemoteDatasource);
     // Return null active account so getEmails() skips cache write by default
     when(mockAccountManager.activeAccount).thenReturn(null);
+    when(mockPendingOperations.enqueue(
+      accountId: anyNamed('accountId'),
+      emailId: anyNamed('emailId'),
+      folderId: anyNamed('folderId'),
+      opType: anyNamed('opType'),
+      payload: anyNamed('payload'),
+    )).thenAnswer((_) async => 1);
+    when(mockOutboxDrainService.drainForAccount(any))
+        .thenAnswer((_) async {});
+    // Online by default — tests that need offline behavior override this.
+    when(mockConnectivityService.isOnline).thenAnswer((_) async => true);
 
     repository = EmailRepositoryImpl(
       accountManager: mockAccountManager,
       localDatasource: mockLocalDatasource,
       folderLocalDatasource: mockFolderLocalDatasource,
+      pendingOperations: mockPendingOperations,
+      outboxDrainService: mockOutboxDrainService,
+      connectivityService: mockConnectivityService,
     );
   });
 
@@ -83,6 +114,25 @@ void main() {
       expect(result, isA<Right<Failure, List<Email>>>());
       final emails = (result as Right).value as List<Email>;
       expect(emails.first.id, 'email-1');
+    });
+
+    // Regression: the datasource's HTTP client has a 30-60s connect timeout,
+    // so without a fast pre-check, an offline call would hang that long
+    // before the caller could fall back to the cache — a "stuck spinner"
+    // from the user's perspective even though cached data was ready to show.
+    test('returns Left(NetworkFailure) immediately when offline, without '
+        'calling the datasource', () async {
+      when(mockConnectivityService.isOnline).thenAnswer((_) async => false);
+
+      final result = await repository.getEmails();
+
+      expect(result.isLeft(), isTrue);
+      expect((result as Left).value, isA<NetworkFailure>());
+      verifyNever(mockRemoteDatasource.getEmails(
+        top: anyNamed('top'),
+        skip: anyNamed('skip'),
+        orderBy: anyNamed('orderBy'),
+      ));
     });
 
     test('caches without clearing on first page (skip=0)', () async {
@@ -299,6 +349,17 @@ void main() {
 
       expect(result.isRight(), isTrue);
     });
+
+    test('returns Left(NetworkFailure) immediately when offline, without '
+        'calling the datasource', () async {
+      when(mockConnectivityService.isOnline).thenAnswer((_) async => false);
+
+      final result = await repository.getMailFolders();
+
+      expect(result.isLeft(), isTrue);
+      expect((result as Left).value, isA<NetworkFailure>());
+      verifyNever(mockRemoteDatasource.getMailFolders());
+    });
   });
 
   group('markAsRead', () {
@@ -374,11 +435,12 @@ void main() {
   });
 
   group('markAsRead', () {
-    test('updates isRead in cache after successful remote call', () async {
-      when(mockRemoteDatasource.updateEmailReadStatus(
-        id: anyNamed('id'),
-        isRead: anyNamed('isRead'),
-      )).thenAnswer((_) async => tEmailModel);
+    test('reads the cached copy, updates it, and enqueues an outbox op '
+        'instead of hitting the network', () async {
+      when(mockLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => tEmailModel); // cached, isRead: false
       when(mockLocalDatasource.updateEmailReadStatusInCache(
         accountId: anyNamed('accountId'),
         emailId: anyNamed('emailId'),
@@ -389,12 +451,48 @@ void main() {
       final result = await repository.markAsRead(id: 'email-1', isRead: true);
 
       expect(result.isRight(), isTrue);
-      await Future.delayed(Duration.zero);
+      expect((result as Right).value.isRead, isTrue);
+      verifyNever(mockRemoteDatasource.updateEmailReadStatus(
+        id: anyNamed('id'),
+        isRead: anyNamed('isRead'),
+      ));
+      verify(mockPendingOperations.enqueue(
+        accountId: 'account-1',
+        emailId: 'email-1',
+        opType: PendingOperationType.markRead,
+        payload: anyNamed('payload'),
+      )).called(1);
       verify(mockLocalDatasource.updateEmailReadStatusInCache(
         accountId: 'account-1',
         emailId: 'email-1',
         isRead: true,
       )).called(1);
+    });
+
+    test('falls back to the network when the email is not cached', () async {
+      when(mockLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => null);
+      when(mockRemoteDatasource.updateEmailReadStatus(
+        id: anyNamed('id'),
+        isRead: anyNamed('isRead'),
+      )).thenAnswer((_) async => tEmailModel);
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+
+      final result = await repository.markAsRead(id: 'email-1', isRead: true);
+
+      expect(result.isRight(), isTrue);
+      verify(mockRemoteDatasource.updateEmailReadStatus(
+        id: 'email-1',
+        isRead: true,
+      )).called(1);
+      verifyNever(mockPendingOperations.enqueue(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+        opType: anyNamed('opType'),
+        payload: anyNamed('payload'),
+      ));
     });
 
     test('does not touch cache when no active account', () async {
@@ -414,8 +512,8 @@ void main() {
   });
 
   group('deleteEmail', () {
-    test('removes email from cache after successful remote delete', () async {
-      when(mockRemoteDatasource.deleteEmail(any)).thenAnswer((_) async {});
+    test('removes email from cache and enqueues an outbox op instead of '
+        'hitting the network', () async {
       when(mockLocalDatasource.deleteEmailFromCache(
         accountId: anyNamed('accountId'),
         emailId: anyNamed('emailId'),
@@ -425,7 +523,13 @@ void main() {
       final result = await repository.deleteEmail('email-1');
 
       expect(result.isRight(), isTrue);
-      await Future.delayed(Duration.zero);
+      verifyNever(mockRemoteDatasource.deleteEmail(any));
+      verify(mockPendingOperations.enqueue(
+        accountId: 'account-1',
+        emailId: 'email-1',
+        opType: PendingOperationType.delete,
+        payload: anyNamed('payload'),
+      )).called(1);
       verify(mockLocalDatasource.deleteEmailFromCache(
         accountId: 'account-1',
         emailId: 'email-1',
@@ -556,9 +660,8 @@ void main() {
   });
 
   group('moveEmail', () {
-    test('removes email from cache after successful remote move', () async {
-      when(mockRemoteDatasource.moveEmail(any, any))
-          .thenAnswer((_) async => 'new-id');
+    test('removes email from cache and enqueues an outbox op instead of '
+        'hitting the network', () async {
       when(mockLocalDatasource.deleteEmailFromCache(
         accountId: anyNamed('accountId'),
         emailId: anyNamed('emailId'),
@@ -568,7 +671,13 @@ void main() {
       final result = await repository.moveEmail('email-1', 'folder-2');
 
       expect(result.isRight(), isTrue);
-      await Future.delayed(Duration.zero);
+      verifyNever(mockRemoteDatasource.moveEmail(any, any));
+      verify(mockPendingOperations.enqueue(
+        accountId: 'account-1',
+        emailId: 'email-1',
+        opType: PendingOperationType.move,
+        payload: anyNamed('payload'),
+      )).called(1);
       verify(mockLocalDatasource.deleteEmailFromCache(
         accountId: 'account-1',
         emailId: 'email-1',

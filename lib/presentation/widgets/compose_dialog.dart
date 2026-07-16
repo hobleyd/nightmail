@@ -1264,53 +1264,6 @@ class _ComposeFormState extends State<ComposeForm> {
         const SizedBox(height: 12),
       ];
 
-  Widget _buildEditorModeRow(AppColors c) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Row(
-        children: [
-          const Spacer(),
-          Container(
-            height: 26,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            decoration: BoxDecoration(
-              color: c.surfaceBase,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: c.border),
-            ),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<EmailBodyType>(
-                value: _bodyType,
-                isDense: true,
-                dropdownColor: c.surfacePanel,
-                style: TextStyle(color: c.textSecondary, fontSize: 11),
-                underline: const SizedBox.shrink(),
-                items: const [
-                  DropdownMenuItem(
-                    value: EmailBodyType.html,
-                    child: Text('Rich Text'),
-                  ),
-                  DropdownMenuItem(
-                    value: EmailBodyType.text,
-                    child: Text('Plain Text'),
-                  ),
-                ],
-                onChanged: (val) {
-                  if (val == null || val == _bodyType) return;
-                  if (val == EmailBodyType.text) {
-                    _switchToPlainText(context);
-                  } else {
-                    _switchToHtml();
-                  }
-                },
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildBodyEditor(AppColors c) {
     if (_bodyType == EmailBodyType.html) {
       return HtmlEmailEditor(
@@ -1534,21 +1487,6 @@ String _plainToHtml(String text) {
     final escaped = escape.convert(line);
     return escaped.isEmpty ? '<div><br></div>' : '<div>$escaped</div>';
   }).join('');
-}
-
-String _formatDate(DateTime dt) {
-  final local = dt.toLocal();
-  const months = [
-    '', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-  ];
-  const days = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  final h = local.hour;
-  final min = local.minute.toString().padLeft(2, '0');
-  final amPm = h >= 12 ? 'PM' : 'AM';
-  final h12 = h == 0 ? 12 : (h > 12 ? h - 12 : h);
-  return '${days[local.weekday]}, ${months[local.month]} ${local.day}, '
-      '${local.year} at $h12:$min $amPm';
 }
 
 // ---------------------------------------------------------------------------

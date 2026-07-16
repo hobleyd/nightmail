@@ -25,7 +25,6 @@ import '../../data/services/office_preview_service.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_address.dart';
 import '../../domain/entities/email_attachment.dart';
-import '../../domain/entities/inline_attachment.dart';
 import '../../domain/entities/meeting_invite.dart';
 import '../../domain/usecases/check_sender_anomaly.dart';
 import '../../domain/usecases/delete_email.dart';
@@ -1772,13 +1771,11 @@ class _MetaRow extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.value,
-    this.wrap = false,
   });
 
   final IconData icon;
   final String label;
   final String value;
-  final bool wrap;
 
   @override
   Widget build(BuildContext context) {
@@ -1806,7 +1803,7 @@ class _MetaRow extends StatelessWidget {
               color: c.textTertiary,
               fontSize: 12,
             ),
-            overflow: wrap ? null : TextOverflow.ellipsis,
+            overflow: TextOverflow.ellipsis,
           ),
         ),
       ],

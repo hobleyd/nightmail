@@ -8,7 +8,6 @@ import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/data/datasources/ai/inference/anthropic_adapter.dart';
-import 'package:nightmail/domain/entities/ai/ai_chunk.dart';
 import 'package:nightmail/domain/entities/ai/ai_message.dart';
 import 'package:nightmail/domain/entities/ai/ai_request.dart';
 import 'package:nightmail/domain/entities/ai/ai_response.dart';

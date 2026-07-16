@@ -93,12 +93,12 @@ void main() {
 
       final event = CalendarEventModel.fromJson(json);
 
-      expect(event.attendees?.length, 3);
-      expect(event.attendees![0].email, 'alice@example.com');
-      expect(event.attendees![0].displayName, 'Alice');
-      expect(event.attendees![0].responseStatus, AttendeeResponseStatus.accepted);
-      expect(event.attendees![1].responseStatus, AttendeeResponseStatus.tentative);
-      expect(event.attendees![2].responseStatus, AttendeeResponseStatus.declined);
+      expect(event.attendees.length, 3);
+      expect(event.attendees[0].email, 'alice@example.com');
+      expect(event.attendees[0].displayName, 'Alice');
+      expect(event.attendees[0].responseStatus, AttendeeResponseStatus.accepted);
+      expect(event.attendees[1].responseStatus, AttendeeResponseStatus.tentative);
+      expect(event.attendees[2].responseStatus, AttendeeResponseStatus.declined);
     });
 
     test('filters out attendees with empty email', () {
@@ -122,8 +122,8 @@ void main() {
 
       final event = CalendarEventModel.fromJson(json);
 
-      expect(event.attendees?.length, 1);
-      expect(event.attendees![0].email, 'valid@example.com');
+      expect(event.attendees.length, 1);
+      expect(event.attendees[0].email, 'valid@example.com');
     });
 
     test('parses weekly recurrence', () {

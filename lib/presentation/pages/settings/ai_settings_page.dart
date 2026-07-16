@@ -153,7 +153,7 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
       if (preferLive) {
         final key = await cubit.getApiKey(provider.id);
         final result = await repo.listLiveModels(
-          baseUrl: baseUrl!,
+          baseUrl: baseUrl,
           apiKey: key,
           azure: isAzure,
         );

@@ -67,7 +67,6 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
 
       for (final map in rawLabels) {
         final id = map['id'] as String;
-        final type = map['type'] as String? ?? '';
         final rawName = _transformLabelName(map['name'] as String? ?? id);
         final parts = rawName.split('/');
 

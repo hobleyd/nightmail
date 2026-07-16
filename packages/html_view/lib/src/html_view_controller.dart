@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart' show unawaited;
 import 'package:flutter/services.dart';
 
 const MethodChannel _pluginChannel = MethodChannel('html_view');

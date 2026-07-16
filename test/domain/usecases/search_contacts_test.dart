@@ -27,12 +27,6 @@ void main() {
     );
   });
 
-  void stubEmpty() {
-    when(mockSenders.getSendersForAccount(any)).thenAnswer((_) async => []);
-    when(mockSystemContacts.search(any)).thenAnswer((_) async => []);
-    when(mockDirectoryContacts.search(any, accountId: anyNamed('accountId'))).thenAnswer((_) async => []);
-  }
-
   group('SearchContacts', () {
     test('returns empty list without hitting repositories when query is blank',
         () async {

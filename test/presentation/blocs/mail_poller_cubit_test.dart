@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fpdart/fpdart.dart';
@@ -641,6 +642,16 @@ void main() {
   group('MailPollerCubit — Gmail non-active account, new unread mail', () {
     late MockEmailRemoteDatasource mockGmailDs;
 
+    // This toast fallback only fires on Windows/Linux (macOS/mobile surface
+    // new mail via the dock badge / OS background isolate instead — see the
+    // `Platform.isWindows || Platform.isLinux` guard in MailPollerCubit._poll).
+    // `Platform.isWindows`/`isLinux` are `static final` in dart:io with no
+    // IOOverrides hook, so they can't be faked when the suite itself runs on
+    // macOS; skip rather than report a false failure on this host.
+    final skipReason = Platform.isWindows || Platform.isLinux
+        ? null
+        : 'Windows/Linux-only new-mail toast path; cannot run on ${Platform.operatingSystem}';
+
     setUp(() {
       mockGmailDs = MockEmailRemoteDatasource();
       when(mockAccountManager.accounts).thenReturn([_gmailAccount]);
@@ -680,7 +691,7 @@ void main() {
         accountLabel: anyNamed('accountLabel'),
         newCount: anyNamed('newCount'),
       ));
-    });
+    }, skip: skipReason);
 
     test('falls back to the generic alert when the inbox fetch fails',
         () async {
@@ -713,7 +724,7 @@ void main() {
         senderName: anyNamed('senderName'),
         accountLabel: anyNamed('accountLabel'),
       ));
-    });
+    }, skip: skipReason);
   });
 
   // ---------------------------------------------------------------------------

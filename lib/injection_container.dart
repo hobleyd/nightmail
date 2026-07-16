@@ -196,6 +196,7 @@ Future<void> configureDependencies() async {
       pendingOperations: sl<PendingOperationsDatasource>(),
       localDatasource: sl<EmailLocalDatasource>(),
       accountManager: sl<AccountManager>(),
+      connectivityService: sl<ConnectivityService>(),
     ),
   );
 

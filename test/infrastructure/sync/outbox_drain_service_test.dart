@@ -15,6 +15,7 @@ import 'package:nightmail/domain/entities/email.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 import 'package:nightmail/infrastructure/cache/cache_encryption_service.dart';
+import 'package:nightmail/infrastructure/network/connectivity_service.dart';
 import 'package:nightmail/infrastructure/sync/outbox_drain_service.dart';
 
 import 'outbox_drain_service_test.mocks.dart';
@@ -56,12 +57,13 @@ EmailModel _email(String id, {String folderId = 'folder-1'}) => EmailModel(
       parentFolderId: folderId,
     );
 
-@GenerateMocks([AccountManager, EmailRemoteDatasource])
+@GenerateMocks([AccountManager, EmailRemoteDatasource, ConnectivityService])
 void main() {
   late AppDatabase db;
   late EmailLocalDatasourceImpl localDatasource;
   late MockAccountManager mockAccountManager;
   late MockEmailRemoteDatasource mockRemoteDatasource;
+  late MockConnectivityService mockConnectivityService;
   late OutboxDrainService service;
 
   setUp(() {
@@ -72,14 +74,17 @@ void main() {
     );
     mockAccountManager = MockAccountManager();
     mockRemoteDatasource = MockEmailRemoteDatasource();
+    mockConnectivityService = MockConnectivityService();
     when(mockAccountManager.accounts).thenReturn([_account]);
     when(mockAccountManager.buildEmailDatasourceForAccount(any))
         .thenReturn(mockRemoteDatasource);
+    when(mockConnectivityService.isOnline).thenAnswer((_) async => true);
 
     service = OutboxDrainService(
       pendingOperations: db,
       localDatasource: localDatasource,
       accountManager: mockAccountManager,
+      connectivityService: mockConnectivityService,
     );
   });
 
@@ -267,6 +272,32 @@ void main() {
       ));
       final remaining = await db.getPendingOperations('acct-1');
       expect(remaining, hasLength(2));
+    });
+  });
+
+  group('connectivity gate', () {
+    // Regression: drainForAccount is fired fire-and-forget immediately after
+    // every mutation (not just from the periodic poll, which already gates
+    // on connectivity itself). Without this check, mutating something while
+    // offline sent a real request straight into the HTTP client's ~30s
+    // connect timeout in the background, live-observed via a real
+    // NetworkException recorded on a queued op after a genuine offline
+    // toggle.
+    test('does not attempt any remote calls while offline', () async {
+      when(mockConnectivityService.isOnline).thenAnswer((_) async => false);
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+        opType: PendingOperationType.delete,
+        payload: '{}',
+      );
+
+      await service.drainForAccount('acct-1');
+
+      verifyNever(mockRemoteDatasource.deleteEmail(any));
+      final remaining = await db.getPendingOperations('acct-1');
+      expect(remaining, hasLength(1));
+      expect(remaining.first.retryCount, 0);
     });
   });
 

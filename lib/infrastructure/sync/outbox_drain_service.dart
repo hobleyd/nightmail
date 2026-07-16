@@ -4,6 +4,7 @@ import '../../data/datasources/local/email_local_datasource.dart';
 import '../../data/datasources/local/pending_operations_datasource.dart';
 import '../accounts/account.dart';
 import '../accounts/account_manager.dart';
+import '../network/connectivity_service.dart';
 
 /// Replays queued mutations (see [PendingOperationsDatasource]) against the
 /// server so an offline/optimistic mutation eventually reaches the mailbox.
@@ -23,13 +24,16 @@ class OutboxDrainService {
     required PendingOperationsDatasource pendingOperations,
     required EmailLocalDatasource localDatasource,
     required AccountManager accountManager,
+    required ConnectivityService connectivityService,
   })  : _pendingOperations = pendingOperations,
         _localDatasource = localDatasource,
-        _accountManager = accountManager;
+        _accountManager = accountManager,
+        _connectivityService = connectivityService;
 
   final PendingOperationsDatasource _pendingOperations;
   final EmailLocalDatasource _localDatasource;
   final AccountManager _accountManager;
+  final ConnectivityService _connectivityService;
 
   /// Drains every account's outbox. Safe to call opportunistically (app
   /// start, poll tick, network-restored) — accounts with an empty queue
@@ -41,6 +45,15 @@ class OutboxDrainService {
   }
 
   Future<void> drainForAccount(String accountId) async {
+    // A drain is also fired immediately, fire-and-forget, right after every
+    // mutation (see EmailRepositoryImpl) — not just from the periodic poll,
+    // which already gates on connectivity before calling in here. Without
+    // this check here too, mutating something while offline would still
+    // send a real request straight into the HTTP client's own ~30s connect
+    // timeout in the background on every single mutation, instead of
+    // failing fast and simply waiting for the next drain attempt.
+    if (!await _connectivityService.isOnline) return;
+
     Account? account;
     for (final a in _accountManager.accounts) {
       if (a.id == accountId) {

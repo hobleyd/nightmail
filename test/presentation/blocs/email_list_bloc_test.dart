@@ -306,6 +306,92 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
+  // Folder-switch races
+  // ---------------------------------------------------------------------------
+
+  group('folder switch races', () {
+    // Regression: clicking folder A kicks off a server fetch; switching to
+    // folder B before A's fetch resolves must not let A's late-arriving
+    // result clobber B's state once it's on screen.
+    test('a slow load for a folder navigated away from does not overwrite '
+        'the newly selected folder', () async {
+      when(mockGetCachedEmails(any)).thenAnswer((_) async => const Right([]));
+
+      final folderACompleter = Completer<Either<Failure, List<Email>>>();
+      when(mockGetEmails(argThat(predicate<GetEmailsParams>(
+              (p) => p.folderId == 'folder-a'))))
+          .thenAnswer((_) => folderACompleter.future);
+
+      bloc.add(const EmailListLoadRequested(
+        folderId: 'folder-a',
+        folderDisplayName: 'Folder A',
+      ));
+      // Let the cache-read phase (Phase 1) run so folder-a is genuinely
+      // in flight before switching away.
+      await Future.delayed(Duration.zero);
+
+      when(mockGetEmails(argThat(predicate<GetEmailsParams>(
+              (p) => p.folderId == 'folder-b'))))
+          .thenAnswer((_) async => Right([_email('id-b')]));
+
+      bloc.add(const EmailListLoadRequested(
+        folderId: 'folder-b',
+        folderDisplayName: 'Folder B',
+      ));
+
+      final loadedB = await bloc.stream.firstWhere((s) =>
+          s is EmailListLoaded && s.currentFolderId == 'folder-b') as EmailListLoaded;
+      expect(loadedB.emails.map((e) => e.id), contains('id-b'));
+
+      // Folder A's fetch finally resolves after the user is already on B.
+      folderACompleter.complete(Right([_email('id-a')]));
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final finalState = bloc.state as EmailListLoaded;
+      expect(finalState.currentFolderId, 'folder-b',
+          reason: 'stale folder-a result must not overwrite folder-b');
+      expect(finalState.emails.map((e) => e.id), contains('id-b'));
+      expect(finalState.emails.map((e) => e.id), isNot(contains('id-a')));
+    });
+
+    // Regression: same bug via EmailListRefreshRequested — a refresh in
+    // flight for the folder that was on screen must not clobber a folder
+    // the user has since switched to.
+    test('a slow refresh for the previous folder does not overwrite a '
+        'folder switched to in the meantime', () async {
+      when(mockGetCachedEmails(any)).thenAnswer((_) async => const Right([]));
+      when(mockGetEmails(argThat(predicate<GetEmailsParams>(
+              (p) => p.folderId == 'folder-a'))))
+          .thenAnswer((_) async => Right([_email('id-a')]));
+      bloc.add(const EmailListLoadRequested(folderId: 'folder-a'));
+      await bloc.stream.firstWhere(
+          (s) => s is EmailListLoaded && s.currentFolderId == 'folder-a');
+
+      final refreshCompleter = Completer<Either<Failure, List<Email>>>();
+      when(mockGetEmails(argThat(predicate<GetEmailsParams>(
+              (p) => p.folderId == 'folder-a'))))
+          .thenAnswer((_) => refreshCompleter.future);
+      bloc.add(const EmailListRefreshRequested(folderId: 'folder-a'));
+      await Future.delayed(Duration.zero);
+
+      when(mockGetEmails(argThat(predicate<GetEmailsParams>(
+              (p) => p.folderId == 'folder-b'))))
+          .thenAnswer((_) async => Right([_email('id-b')]));
+      bloc.add(const EmailListLoadRequested(folderId: 'folder-b'));
+      final loadedB = await bloc.stream.firstWhere((s) =>
+          s is EmailListLoaded && s.currentFolderId == 'folder-b') as EmailListLoaded;
+      expect(loadedB.emails.map((e) => e.id), contains('id-b'));
+
+      refreshCompleter.complete(Right([_email('id-a-refreshed')]));
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final finalState = bloc.state as EmailListLoaded;
+      expect(finalState.currentFolderId, 'folder-b',
+          reason: 'stale refresh of folder-a must not overwrite folder-b');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // EmailListRefreshRequested — cache ordering
   // ---------------------------------------------------------------------------
 

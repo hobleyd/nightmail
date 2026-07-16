@@ -92,11 +92,21 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   /// conversation expansion on Graph accounts.
   int _serverOffset = 0;
 
+  /// Bumped only by [_onLoadRequested] (a folder switch). Other handlers that
+  /// emit after an await (refresh, load-more) capture it at the start and
+  /// bail if it has changed by the time their await resolves, so a stale
+  /// fetch for a folder the user has since navigated away from can't
+  /// overwrite the newer folder's state. Events are handled with the default
+  /// concurrent transformer, so without this multiple in-flight fetches for
+  /// different folders can resolve out of order.
+  int _activeRequestGeneration = 0;
+
   Future<void> _onLoadRequested(
     EmailListLoadRequested event,
     Emitter<EmailListState> emit,
   ) async {
     _serverOffset = 0;
+    final myGeneration = ++_activeRequestGeneration;
     final accountId = _accountManager.activeAccount?.id;
     final folderKey = event.folderId ?? _defaultFolderKey;
     List<Email> cachedEmails = [];
@@ -112,6 +122,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         accountId: accountId,
         folderId: folderKey,
       ));
+      if (myGeneration != _activeRequestGeneration) return;
       cacheResult.fold(
         (_) => emit(const EmailListLoading()),
         (cached) {
@@ -139,6 +150,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       folderId: event.folderId,
       top: _pageSize,
     ));
+    if (myGeneration != _activeRequestGeneration) return;
 
     List<Email>? loaded;
     result.fold(
@@ -185,6 +197,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     if (current is! EmailListLoaded || !current.hasMore || current.isLoadingMore) {
       return;
     }
+    final myGeneration = _activeRequestGeneration;
 
     emit(current.copyWith(isLoadingMore: true));
 
@@ -193,6 +206,11 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       top: _pageSize,
       skip: _serverOffset,
     ));
+    // Re-check: the user may have switched folders (bumping the generation
+    // via _onLoadRequested) while this page was in flight. `current` here is
+    // still the pre-await snapshot, so emitting unconditionally would splice
+    // this page onto — or replace — whatever folder is now on screen.
+    if (myGeneration != _activeRequestGeneration) return;
 
     List<Email>? loadedMore;
     result.fold(
@@ -221,6 +239,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     Emitter<EmailListState> emit,
   ) async {
     _serverOffset = 0;
+    final myGeneration = _activeRequestGeneration;
     final prior = state is EmailListLoaded ? state as EmailListLoaded : null;
     final folderId = event.folderId ?? prior?.currentFolderId;
     final folderName = prior?.currentFolderName;
@@ -234,6 +253,11 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       folderId: folderId,
       top: _pageSize,
     ));
+    // A folder switch (which bumps the generation via _onLoadRequested) while
+    // this refresh was in flight means `folderId` no longer reflects what's
+    // on screen — drop the stale result instead of overwriting the newer
+    // folder's state.
+    if (myGeneration != _activeRequestGeneration) return;
 
     List<Email>? refreshed;
     await result.fold(

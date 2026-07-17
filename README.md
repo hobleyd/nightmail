@@ -17,6 +17,7 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - Report junk/spam
 - Full-text search within folders
 - Sender anomaly and spam detection
+- Spam filter synced across IMAP clients via a dedicated server-side folder
 
 ### Folders
 - Full folder hierarchy with unread counts

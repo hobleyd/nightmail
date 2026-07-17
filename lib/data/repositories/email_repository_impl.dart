@@ -165,7 +165,12 @@ class EmailRepositoryImpl implements EmailRepository {
     }
     try {
       final remote = _accountManager.emailDatasource;
-      final topLevel = await remote.getMailFolders();
+      // SPAMDB is an app-managed folder holding the synced spam filter
+      // database (see SpamDbSyncDatasource) — it must never appear as a
+      // browsable folder (folder tree, move-to dialogs, etc.).
+      final topLevel = (await remote.getMailFolders())
+          .where((f) => f.displayName.toLowerCase() != 'spamdb')
+          .toList();
       final all = <EmailFolder>[...topLevel];
 
       List<EmailFolder> toExpand =
@@ -175,7 +180,13 @@ class EmailRepositoryImpl implements EmailRepository {
         final childResults = await Future.wait(
           toExpand.map((f) => remote.getChildFolders(f.id)),
         );
-        for (final children in childResults) {
+        for (final rawChildren in childResults) {
+          // SPAMDB can land here instead of topLevel on abbreviated-
+          // namespace servers, where it's created as e.g. INBOX.SPAMDB —
+          // a child of INBOX rather than a root-level folder.
+          final children = rawChildren
+              .where((f) => f.displayName.toLowerCase() != 'spamdb')
+              .toList();
           all.addAll(children);
           nextLevel.addAll(children.where((f) => f.childFolderCount > 0));
         }

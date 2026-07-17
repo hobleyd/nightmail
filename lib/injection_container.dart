@@ -109,6 +109,7 @@ import 'infrastructure/network/connectivity_service.dart';
 import 'infrastructure/notifications/calendar_reminder_service.dart';
 import 'infrastructure/notifications/notification_service.dart';
 import 'infrastructure/sync/outbox_drain_service.dart';
+import 'infrastructure/sync/spam_db_sync_service.dart';
 import 'presentation/blocs/account/account_cubit.dart';
 import 'presentation/blocs/calendar/calendar_bloc.dart';
 import 'presentation/blocs/compose/compose_bloc.dart';
@@ -197,6 +198,7 @@ Future<void> configureDependencies() async {
       localDatasource: sl<EmailLocalDatasource>(),
       accountManager: sl<AccountManager>(),
       connectivityService: sl<ConnectivityService>(),
+      spamDbSyncService: sl<SpamDbSyncService>(),
     ),
   );
 
@@ -231,6 +233,12 @@ Future<void> configureDependencies() async {
   );
   sl.registerLazySingleton<SpamFilterRepository>(
     () => SpamFilterRepositoryImpl(),
+  );
+  sl.registerLazySingleton(
+    () => SpamDbSyncService(
+      spamFilterRepository: sl<SpamFilterRepository>(),
+      pendingOperations: sl<PendingOperationsDatasource>(),
+    ),
   );
 
   // Domain — use cases
@@ -322,6 +330,7 @@ Future<void> configureDependencies() async {
       notificationService: sl<NotificationService>(),
       outboxDrainService: sl<OutboxDrainService>(),
       pendingOperations: sl<PendingOperationsDatasource>(),
+      spamDbSyncService: sl<SpamDbSyncService>(),
     ),
   );
 
@@ -350,6 +359,8 @@ Future<void> configureDependencies() async {
         classifyEmails: sl<ClassifyEmails>(),
         trainSpamFilter: sl<TrainSpamFilter>(),
         searchEmails: sl<SearchEmails>(),
+        spamDbSyncService: sl<SpamDbSyncService>(),
+        outboxDrainService: sl<OutboxDrainService>(),
       ));
   sl.registerFactory(() => EmailDetailBloc(
         getEmail: sl<GetEmail>(),

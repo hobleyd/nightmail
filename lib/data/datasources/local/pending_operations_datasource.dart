@@ -1,6 +1,9 @@
 /// The mutation types that can be queued for offline/async replay against
-/// the server. Matches the mutating methods on the email repository.
-enum PendingOperationType { delete, move, markRead, junk, emptyFolder }
+/// the server. Matches the mutating methods on the email repository, plus
+/// [spamDbPush] (see SpamDbSyncService), which isn't an email mutation but
+/// shares the same drain engine so it can never overlap another queued
+/// operation's use of the same IMAP connection.
+enum PendingOperationType { delete, move, markRead, junk, emptyFolder, spamDbPush }
 
 class PendingOperationRecord {
   const PendingOperationRecord({

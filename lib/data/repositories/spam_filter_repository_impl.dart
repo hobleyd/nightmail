@@ -40,6 +40,20 @@ class SpamFilterRepositoryImpl implements SpamFilterRepository {
     };
   }
 
+  @override
+  Future<Map<String, dynamic>> exportState(String accountId) async {
+    final filter = await _load(accountId);
+    return filter.toJson();
+  }
+
+  @override
+  Future<void> importState(
+      String accountId, Map<String, dynamic> remoteState) async {
+    final filter = BayesianSpamFilter.fromJson(remoteState);
+    _cache[accountId] = filter;
+    await _save(accountId, filter);
+  }
+
   Future<BayesianSpamFilter> _load(String accountId) async {
     if (_cache.containsKey(accountId)) return _cache[accountId]!;
     final file = await _filterFile(accountId);

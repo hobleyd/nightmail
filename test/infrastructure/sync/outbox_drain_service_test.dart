@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:drift/native.dart';
@@ -9,6 +10,7 @@ import 'package:nightmail/data/database/app_database.dart';
 import 'package:nightmail/data/datasources/local/email_local_datasource_impl.dart';
 import 'package:nightmail/data/datasources/local/pending_operations_datasource.dart';
 import 'package:nightmail/data/datasources/remote/email_remote_datasource.dart';
+import 'package:nightmail/data/datasources/remote/spam_db_sync_datasource.dart';
 import 'package:nightmail/data/models/email_address_model.dart';
 import 'package:nightmail/data/models/email_model.dart';
 import 'package:nightmail/domain/entities/email.dart';
@@ -17,6 +19,7 @@ import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 import 'package:nightmail/infrastructure/cache/cache_encryption_service.dart';
 import 'package:nightmail/infrastructure/network/connectivity_service.dart';
 import 'package:nightmail/infrastructure/sync/outbox_drain_service.dart';
+import 'package:nightmail/infrastructure/sync/spam_db_sync_service.dart';
 
 import 'outbox_drain_service_test.mocks.dart';
 
@@ -57,13 +60,25 @@ EmailModel _email(String id, {String folderId = 'folder-1'}) => EmailModel(
       parentFolderId: folderId,
     );
 
-@GenerateMocks([AccountManager, EmailRemoteDatasource, ConnectivityService])
+// Implements both interfaces to stand in for ImapDatasourceImpl in the
+// spamDbPush drain test below — a plain mock of EmailRemoteDatasource alone
+// wouldn't satisfy the `ds is SpamDbSyncDatasource` check in the drain loop.
+class _FakeSpamDbCapableDatasource extends Fake
+    implements EmailRemoteDatasource, SpamDbSyncDatasource {}
+
+@GenerateMocks([
+  AccountManager,
+  EmailRemoteDatasource,
+  ConnectivityService,
+  SpamDbSyncService,
+])
 void main() {
   late AppDatabase db;
   late EmailLocalDatasourceImpl localDatasource;
   late MockAccountManager mockAccountManager;
   late MockEmailRemoteDatasource mockRemoteDatasource;
   late MockConnectivityService mockConnectivityService;
+  late MockSpamDbSyncService mockSpamDbSyncService;
   late OutboxDrainService service;
 
   setUp(() {
@@ -75,6 +90,7 @@ void main() {
     mockAccountManager = MockAccountManager();
     mockRemoteDatasource = MockEmailRemoteDatasource();
     mockConnectivityService = MockConnectivityService();
+    mockSpamDbSyncService = MockSpamDbSyncService();
     when(mockAccountManager.accounts).thenReturn([_account]);
     when(mockAccountManager.buildEmailDatasourceForAccount(any))
         .thenReturn(mockRemoteDatasource);
@@ -85,6 +101,7 @@ void main() {
       localDatasource: localDatasource,
       accountManager: mockAccountManager,
       connectivityService: mockConnectivityService,
+      spamDbSyncService: mockSpamDbSyncService,
     );
   });
 
@@ -301,6 +318,52 @@ void main() {
     });
   });
 
+  group('concurrent drainForAccount calls', () {
+    // Regression: drainForAccount is fired unawaited from multiple
+    // uncoordinated call sites (right after a mutation, every poll tick, on
+    // reconnect, and now after enqueuing a SPAMDB push) — all sharing one
+    // live IMAP connection per account with no per-operation locking. Two
+    // overlapping drains could interleave a SELECT from one with an
+    // EXPUNGE from the other and corrupt the wrong mailbox. Chaining, not
+    // racing, is what makes routing SPAMDB push through the outbox actually
+    // safe.
+    test('a second call is chained behind an in-flight drain, not raced',
+        () async {
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+        opType: PendingOperationType.delete,
+        payload: '{}',
+      );
+      final gate = Completer<void>();
+      var deleteCallCount = 0;
+      when(mockRemoteDatasource.deleteEmail(any)).thenAnswer((_) async {
+        deleteCallCount++;
+        await gate.future;
+      });
+
+      final first = service.drainForAccount('acct-1');
+      final second = service.drainForAccount('acct-1');
+
+      // Let both futures run as far as they can without the gate. If the
+      // two drains were racing rather than chained, the second would have
+      // already read the (still-present) queued op and called deleteEmail
+      // too, making this 2.
+      await Future<void>.delayed(Duration.zero);
+      expect(deleteCallCount, 1,
+          reason: 'the second drain must not start its own pass until the '
+              'first one has finished');
+
+      gate.complete();
+      await Future.wait([first, second]);
+
+      // Still 1: by the time the chained second drain actually ran, the
+      // first had already removed the only queued op.
+      expect(deleteCallCount, 1);
+      expect(await db.getPendingOperations('acct-1'), isEmpty);
+    });
+  });
+
   group('emptyFolder', () {
     test('passes folderId and permanentDelete from the payload', () async {
       await db.enqueue(
@@ -317,6 +380,48 @@ void main() {
 
       verify(mockRemoteDatasource.emptyFolder('folder-1', permanentDelete: true))
           .called(1);
+      expect(await db.getPendingOperations('acct-1'), isEmpty);
+    });
+  });
+
+  group('spamDbPush', () {
+    test(
+        'drains a queued push by calling SpamDbSyncService.pushForAccount on '
+        'the account\'s own datasource — never run directly by callers, so '
+        'this is the only path that can touch the shared IMAP connection',
+        () async {
+      final fakeDs = _FakeSpamDbCapableDatasource();
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(fakeDs);
+      when(mockSpamDbSyncService.pushForAccount(any, any))
+          .thenAnswer((_) async {});
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: '__spamdb__',
+        opType: PendingOperationType.spamDbPush,
+        payload: '{}',
+      );
+
+      await service.drainForAccount('acct-1');
+
+      verify(mockSpamDbSyncService.pushForAccount('acct-1', fakeDs)).called(1);
+      expect(await db.getPendingOperations('acct-1'), isEmpty);
+    });
+
+    test('is skipped (not crashed on) when the datasource is not IMAP',
+        () async {
+      // mockRemoteDatasource (the default) doesn't implement
+      // SpamDbSyncDatasource, mirroring Gmail/Graph.
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: '__spamdb__',
+        opType: PendingOperationType.spamDbPush,
+        payload: '{}',
+      );
+
+      await service.drainForAccount('acct-1');
+
+      verifyNever(mockSpamDbSyncService.pushForAccount(any, any));
       expect(await db.getPendingOperations('acct-1'), isEmpty);
     });
   });

@@ -15,8 +15,13 @@ import '../../models/email_address_model.dart';
 import '../../models/email_folder_model.dart';
 import '../../models/email_model.dart';
 import 'email_remote_datasource.dart';
+import 'spam_db_sync_datasource.dart';
 
-class ImapDatasourceImpl implements EmailRemoteDatasource {
+const _spamDbFolderName = 'SPAMDB';
+const _spamDbVersionHeader = 'X-NightMail-SpamDb-Version';
+
+class ImapDatasourceImpl
+    implements EmailRemoteDatasource, SpamDbSyncDatasource {
   ImapDatasourceImpl({
     required this._account,
     required this._credentialStorage,
@@ -988,6 +993,169 @@ class ImapDatasourceImpl implements EmailRemoteDatasource {
       if (match != null) return match;
     }
     return null;
+  }
+
+  /// Locates the `SPAMDB` mailbox used to sync the client-side spam filter
+  /// (see [SpamDbSyncDatasource]). Unlike Junk/Sent/Drafts/Trash this has no
+  /// RFC 6154 special-use flag — it's a literal folder name NightMail itself
+  /// creates and manages, so the match is name-only. Returns null if not
+  /// found and [create] is false; otherwise creates it and returns its path.
+  Future<String?> _findSpamDbPath(ImapClient client, {bool create = false}) async {
+    try {
+      final mailboxes = await client.listMailboxes(recursive: true);
+      final match = mailboxes
+          .where(
+            (mb) =>
+                mb.path.toLowerCase() == _spamDbFolderName.toLowerCase() ||
+                mb.path.split(_pathSeparator).last.toLowerCase() ==
+                    _spamDbFolderName.toLowerCase(),
+          )
+          .firstOrNull;
+      if (match != null) {
+        return (_inboxFolderPrefix.isNotEmpty &&
+                !match.path.toUpperCase().startsWith('INBOX'))
+            ? '$_inboxFolderPrefix${match.path}'
+            : match.path;
+      }
+      if (!create) return null;
+      final newPath = _inboxFolderPrefix.isNotEmpty
+          ? '$_inboxFolderPrefix$_spamDbFolderName'
+          : _spamDbFolderName;
+      await client.createMailbox(newPath);
+      return newPath;
+    } on ImapException {
+      return null;
+    }
+  }
+
+  @override
+  Future<int?> peekSpamDbVersion() async {
+    try {
+      final client = await _getConnectedClient();
+      final path = await _findSpamDbPath(client);
+      if (path == null) return null;
+      await _selectMailboxPath(client, path);
+
+      final searchResult = await client.uidSearchMessages(searchCriteria: 'ALL');
+      final uids = searchResult.matchingSequence?.toList() ?? [];
+      if (uids.isEmpty) return null;
+
+      final sequence = MessageSequence.fromIds(uids, isUid: true);
+      final fetchResult = await client.uidFetchMessages(
+        sequence,
+        'BODY.PEEK[HEADER.FIELDS ($_spamDbVersionHeader)]',
+      );
+
+      int? bestVersion;
+      int? bestUid;
+      for (final msg in fetchResult.messages) {
+        final raw = msg.getHeaderValue(_spamDbVersionHeader);
+        final version = raw != null ? int.tryParse(raw.trim()) : null;
+        // uids (from uidSearchMessages) are real UIDs — msg.uid must be used
+        // here, not a sequenceId fallback, or a null uid on the winning
+        // message would produce a bestUid that matches nothing in uids and
+        // the "stale" filter below would wipe every message, including the
+        // one we meant to keep.
+        final uid = msg.uid;
+        if (version != null &&
+            uid != null &&
+            (bestVersion == null || version > bestVersion)) {
+          bestVersion = version;
+          bestUid = uid;
+        }
+      }
+      if (bestVersion == null || bestUid == null) return null;
+
+      // Self-heal: a race between two clients pushing concurrently can leave
+      // more than one message behind (append-then-delete-old isn't atomic).
+      // Collapse back down to just the highest-versioned message.
+      final staleUids = uids.where((u) => u != bestUid).toList();
+      if (staleUids.isNotEmpty) {
+        final staleSequence = MessageSequence.fromIds(staleUids, isUid: true);
+        await client.uidStore(
+          staleSequence,
+          [MessageFlags.deleted],
+          action: StoreAction.add,
+        );
+        await client.expunge();
+      }
+      return bestVersion;
+    } on ImapException {
+      return null;
+    }
+  }
+
+  @override
+  Future<String?> downloadSpamDbPayload() async {
+    try {
+      final client = await _getConnectedClient();
+      final path = await _findSpamDbPath(client);
+      if (path == null) return null;
+      await _selectMailboxPath(client, path);
+
+      final searchResult = await client.uidSearchMessages(searchCriteria: 'ALL');
+      final uids = searchResult.matchingSequence?.toList() ?? [];
+      if (uids.isEmpty) return null;
+
+      // peekSpamDbVersion() collapses SPAMDB to a single message before this
+      // is called; picking the highest UID is a defensive fallback only.
+      final sequence = MessageSequence.fromId(uids.last, isUid: true);
+      final fetchResult = await client.uidFetchMessages(sequence, 'BODY.PEEK[]');
+      final msg = fetchResult.messages.firstOrNull;
+      if (msg == null) return null;
+      return msg.decodeTextPlainPart();
+    } on ImapException {
+      return null;
+    }
+  }
+
+  @override
+  Future<void> pushSpamDb({required int version, required String payload}) async {
+    try {
+      final client = await _getConnectedClient();
+      final path = await _findSpamDbPath(client, create: true);
+      if (path == null) {
+        throw const ServerException(message: 'Could not create SPAMDB mailbox');
+      }
+
+      final msgId = MessageBuilder.createMessageId(
+        _account.emailAddress.split('@').last,
+      );
+      final builder = MessageBuilder()
+        ..from = [MailAddress(_account.senderName, _account.emailAddress)]
+        ..subject = 'NightMail Spam Database (auto-generated, do not delete)'
+        ..messageId = msgId
+        ..addTextPlain(payload);
+      builder.setHeader(_spamDbVersionHeader, version.toString());
+
+      await client.appendMessageText(
+        builder.buildMimeMessage().renderMessage(),
+        targetMailboxPath: path,
+        flags: [MessageFlags.seen],
+      );
+
+      await _selectMailboxPath(client, path);
+      final newSearch = await client.uidSearchMessages(
+        searchCriteria: 'HEADER Message-Id "$msgId"',
+      );
+      final newUid = newSearch.matchingSequence?.toList().firstOrNull;
+
+      final allSearch = await client.uidSearchMessages(searchCriteria: 'ALL');
+      final allUids = allSearch.matchingSequence?.toList() ?? [];
+      final staleUids =
+          newUid != null ? allUids.where((u) => u != newUid).toList() : <int>[];
+      if (staleUids.isNotEmpty) {
+        final staleSequence = MessageSequence.fromIds(staleUids, isUid: true);
+        await client.uidStore(
+          staleSequence,
+          [MessageFlags.deleted],
+          action: StoreAction.add,
+        );
+        await client.expunge();
+      }
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    }
   }
 
   @override

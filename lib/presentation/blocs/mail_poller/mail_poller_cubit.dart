@@ -12,6 +12,7 @@ import '../../../data/datasources/local/delta_token_datasource.dart';
 import '../../../data/datasources/local/email_local_datasource.dart';
 import '../../../data/datasources/local/pending_operations_datasource.dart';
 import '../../../data/datasources/remote/graph_delta_datasource.dart';
+import '../../../data/datasources/remote/spam_db_sync_datasource.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/usecases/get_cached_folders.dart';
 import '../../../infrastructure/accounts/account.dart';
@@ -20,6 +21,7 @@ import '../../../infrastructure/badge/badge_service.dart';
 import '../../../infrastructure/network/connectivity_service.dart';
 import '../../../infrastructure/notifications/notification_service.dart';
 import '../../../infrastructure/sync/outbox_drain_service.dart';
+import '../../../infrastructure/sync/spam_db_sync_service.dart';
 import 'mail_poller_state.dart';
 
 class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver {
@@ -34,6 +36,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     required NotificationService notificationService,
     required OutboxDrainService outboxDrainService,
     required PendingOperationsDatasource pendingOperations,
+    required SpamDbSyncService spamDbSyncService,
   })  : _accountManager = accountManager,
         _appSettings = appSettings,
         _badgeService = badgeService,
@@ -44,6 +47,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
         _notificationService = notificationService,
         _outboxDrainService = outboxDrainService,
         _pendingOperations = pendingOperations,
+        _spamDbSyncService = spamDbSyncService,
         super(const MailPollerState(
           accountsWithNewMail: {},
           pollIntervalSeconds: AppSettings.defaultPollIntervalSeconds,
@@ -59,6 +63,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   final NotificationService _notificationService;
   final OutboxDrainService _outboxDrainService;
   final PendingOperationsDatasource _pendingOperations;
+  final SpamDbSyncService _spamDbSyncService;
 
   Timer? _timer;
   bool _polling = false;
@@ -287,6 +292,20 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
           } else {
             // Non-delta path: Gmail / IMAP — existing unread-count polling.
             final folders = await ds.getMailFolders();
+
+            // IMAP-only: pull the shared spam filter DB from the SPAMDB
+            // folder if another client has pushed a newer version. Awaited,
+            // not fire-and-forget: ImapDatasourceImpl holds one connection
+            // with one selected mailbox, so a SPAMDB SELECT left running
+            // unawaited could still be in flight when the getEmails() call
+            // below selects INBOX, racing the two mailbox selections against
+            // each other on the same connection. Errors are swallowed
+            // inside the service itself, so this can't fail unread polling.
+            if (account is ImapAccount && ds is SpamDbSyncDatasource) {
+              final spamDbDs = ds as SpamDbSyncDatasource;
+              await _spamDbSyncService.pullForAccount(account.id, spamDbDs);
+            }
+
             final inboxes =
                 folders.where((f) => f.displayName.toLowerCase() == 'inbox');
             if (inboxes.isEmpty) continue;

@@ -360,6 +360,52 @@ void main() {
       expect((result as Left).value, isA<NetworkFailure>());
       verifyNever(mockRemoteDatasource.getMailFolders());
     });
+
+    test('filters out a root-level SPAMDB folder', () async {
+      final spamDb = EmailFolderModel(
+        id: 'SPAMDB',
+        displayName: 'SPAMDB',
+        totalItemCount: 1,
+        unreadItemCount: 0,
+      );
+      when(mockRemoteDatasource.getMailFolders())
+          .thenAnswer((_) async => [tFolderModel, spamDb]);
+      when(mockRemoteDatasource.getChildFolders(any))
+          .thenAnswer((_) async => []);
+
+      final result = await repository.getMailFolders();
+
+      final folders = (result as Right).value as List;
+      expect(folders.map((f) => f.displayName), isNot(contains('SPAMDB')));
+    });
+
+    test(
+        'filters out SPAMDB discovered as a child folder (abbreviated-'
+        'namespace servers create it as e.g. INBOX.SPAMDB)', () async {
+      final parent = EmailFolderModel(
+        id: 'INBOX',
+        displayName: 'Inbox',
+        totalItemCount: 10,
+        unreadItemCount: 3,
+        childFolderCount: 1,
+      );
+      final spamDbChild = EmailFolderModel(
+        id: 'INBOX.SPAMDB',
+        displayName: 'SPAMDB',
+        totalItemCount: 1,
+        unreadItemCount: 0,
+        parentFolderId: 'INBOX',
+      );
+      when(mockRemoteDatasource.getMailFolders())
+          .thenAnswer((_) async => [parent]);
+      when(mockRemoteDatasource.getChildFolders('INBOX'))
+          .thenAnswer((_) async => [spamDbChild]);
+
+      final result = await repository.getMailFolders();
+
+      final folders = (result as Right).value as List;
+      expect(folders.map((f) => f.displayName), isNot(contains('SPAMDB')));
+    });
   });
 
   group('markAsRead', () {

@@ -18,6 +18,8 @@ import '../../../domain/usecases/mark_email_as_read.dart';
 import '../../../domain/usecases/move_email.dart';
 import '../../../domain/usecases/record_known_senders.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
+import '../../../infrastructure/sync/outbox_drain_service.dart';
+import '../../../infrastructure/sync/spam_db_sync_service.dart';
 import 'email_list_event.dart';
 import 'email_list_state.dart';
 
@@ -40,6 +42,8 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     required ClassifyEmails classifyEmails,
     required TrainSpamFilter trainSpamFilter,
     required SearchEmails searchEmails,
+    required SpamDbSyncService spamDbSyncService,
+    required OutboxDrainService outboxDrainService,
   })  : _getEmails = getEmails,
         _getCachedEmails = getCachedEmails,
         _cacheEmails = cacheEmails,
@@ -54,6 +58,8 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         _classifyEmails = classifyEmails,
         _trainSpamFilter = trainSpamFilter,
         _searchEmails = searchEmails,
+        _spamDbSyncService = spamDbSyncService,
+        _outboxDrainService = outboxDrainService,
         super(const EmailListInitial()) {
     on<EmailListLoadRequested>(_onLoadRequested);
     on<EmailListLoadMoreRequested>(_onLoadMoreRequested);
@@ -86,6 +92,8 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   final ClassifyEmails _classifyEmails;
   final TrainSpamFilter _trainSpamFilter;
   final SearchEmails _searchEmails;
+  final SpamDbSyncService _spamDbSyncService;
+  final OutboxDrainService _outboxDrainService;
 
   /// Tracks the server-side skip offset for the current folder independently
   /// of the in-memory email count, which may be inflated by cross-folder
@@ -485,11 +493,21 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     if (_accountManager.activeAccount is ImapAccount) {
       final accountId = _accountManager.activeAccount?.id;
       if (accountId != null && junkEmails.isNotEmpty) {
-        unawaited(_trainSpamFilter(TrainSpamFilterParams(
+        // Training must finish writing before enqueuePush's next read of it.
+        // The push itself is *not* run directly from here — it's enqueued
+        // and drained by OutboxDrainService alongside this account's other
+        // pending mutations, since ImapDatasourceImpl's one live connection
+        // has no per-operation locking: a SPAMDB SELECT run directly from
+        // here could still be in flight when some other flow selects a
+        // different mailbox on that same connection, corrupting whichever
+        // operation runs second. See SpamDbSyncService's class doc.
+        await _trainSpamFilter(TrainSpamFilterParams(
           accountId: accountId,
           emails: junkEmails,
           isSpam: true,
-        )));
+        ));
+        await _spamDbSyncService.enqueuePush(accountId);
+        unawaited(_outboxDrainService.drainForAccount(accountId));
       }
     }
   }

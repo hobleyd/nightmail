@@ -22,6 +22,8 @@ import 'package:nightmail/domain/usecases/search_emails.dart';
 import 'package:nightmail/domain/usecases/train_spam_filter.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
+import 'package:nightmail/infrastructure/sync/outbox_drain_service.dart';
+import 'package:nightmail/infrastructure/sync/spam_db_sync_service.dart';
 import 'package:nightmail/presentation/blocs/email_list/email_list_bloc.dart';
 import 'package:nightmail/presentation/blocs/email_list/email_list_event.dart';
 import 'package:nightmail/presentation/blocs/email_list/email_list_state.dart';
@@ -74,6 +76,8 @@ class _FakeAccountManager extends Fake implements AccountManager {
   TrainSpamFilter,
   SearchEmails,
   ClearEmailCacheForFolder,
+  SpamDbSyncService,
+  OutboxDrainService,
 ])
 void main() {
   late EmailListBloc bloc;
@@ -110,6 +114,8 @@ void main() {
       classifyEmails: MockClassifyEmails(),
       trainSpamFilter: MockTrainSpamFilter(),
       searchEmails: MockSearchEmails(),
+      spamDbSyncService: MockSpamDbSyncService(),
+      outboxDrainService: MockOutboxDrainService(),
     );
   });
 
@@ -425,6 +431,8 @@ void main() {
         classifyEmails: MockClassifyEmails(),
         trainSpamFilter: MockTrainSpamFilter(),
         searchEmails: MockSearchEmails(),
+        spamDbSyncService: MockSpamDbSyncService(),
+        outboxDrainService: MockOutboxDrainService(),
       );
       addTearDown(orderedBloc.close);
 

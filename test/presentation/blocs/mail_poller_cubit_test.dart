@@ -24,6 +24,7 @@ import 'package:nightmail/infrastructure/badge/badge_service.dart';
 import 'package:nightmail/infrastructure/network/connectivity_service.dart';
 import 'package:nightmail/infrastructure/notifications/notification_service.dart';
 import 'package:nightmail/infrastructure/sync/outbox_drain_service.dart';
+import 'package:nightmail/infrastructure/sync/spam_db_sync_service.dart';
 import 'package:nightmail/presentation/blocs/mail_poller/mail_poller_cubit.dart';
 import 'package:nightmail/presentation/blocs/mail_poller/mail_poller_state.dart';
 
@@ -103,6 +104,7 @@ MailDeltaResult _emptyDelta() => MailDeltaResult(
   NotificationService,
   OutboxDrainService,
   PendingOperationsDatasource,
+  SpamDbSyncService,
 ])
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -118,6 +120,7 @@ void main() {
   late MockNotificationService mockNotificationService;
   late MockOutboxDrainService mockOutboxDrainService;
   late MockPendingOperationsDatasource mockPendingOperations;
+  late MockSpamDbSyncService mockSpamDbSyncService;
 
   MailPollerCubit _makeCubit() => MailPollerCubit(
         accountManager: mockAccountManager,
@@ -130,6 +133,7 @@ void main() {
         notificationService: mockNotificationService,
         outboxDrainService: mockOutboxDrainService,
         pendingOperations: mockPendingOperations,
+        spamDbSyncService: mockSpamDbSyncService,
       );
 
   void _stubInfra() {
@@ -184,6 +188,7 @@ void main() {
     mockGetCachedFolders = MockGetCachedFolders();
     mockOutboxDrainService = MockOutboxDrainService();
     mockNotificationService = MockNotificationService();
+    mockSpamDbSyncService = MockSpamDbSyncService();
     provideDummy<Either<Failure, List<EmailFolder>>>(const Right([]));
     _stubInfra();
   });

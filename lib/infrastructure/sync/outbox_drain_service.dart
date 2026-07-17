@@ -2,9 +2,11 @@ import 'dart:convert';
 
 import '../../data/datasources/local/email_local_datasource.dart';
 import '../../data/datasources/local/pending_operations_datasource.dart';
+import '../../data/datasources/remote/spam_db_sync_datasource.dart';
 import '../accounts/account.dart';
 import '../accounts/account_manager.dart';
 import '../network/connectivity_service.dart';
+import 'spam_db_sync_service.dart';
 
 /// Replays queued mutations (see [PendingOperationsDatasource]) against the
 /// server so an offline/optimistic mutation eventually reaches the mailbox.
@@ -25,15 +27,29 @@ class OutboxDrainService {
     required EmailLocalDatasource localDatasource,
     required AccountManager accountManager,
     required ConnectivityService connectivityService,
+    required SpamDbSyncService spamDbSyncService,
   })  : _pendingOperations = pendingOperations,
         _localDatasource = localDatasource,
         _accountManager = accountManager,
-        _connectivityService = connectivityService;
+        _connectivityService = connectivityService,
+        _spamDbSyncService = spamDbSyncService;
 
   final PendingOperationsDatasource _pendingOperations;
   final EmailLocalDatasource _localDatasource;
   final AccountManager _accountManager;
   final ConnectivityService _connectivityService;
+  final SpamDbSyncService _spamDbSyncService;
+
+  /// Chains concurrent [drainForAccount] calls for the same account so at
+  /// most one drain touches that account's shared IMAP connection at a time.
+  /// Callers fire drains unawaited from multiple places (right after a
+  /// mutation, on every poll tick, on reconnect) with no coordination between
+  /// them — without this, two drains racing the same connection could
+  /// interleave a SELECT from one with an EXPUNGE from the other and corrupt
+  /// the wrong mailbox. Chaining (rather than dropping a call while one is
+  /// in flight) still guarantees an op queued mid-drain gets picked up: the
+  /// next drain re-reads getPendingOperations() after the prior one finishes.
+  final Map<String, Future<void>> _inFlight = {};
 
   /// Drains every account's outbox. Safe to call opportunistically (app
   /// start, poll tick, network-restored) — accounts with an empty queue
@@ -44,7 +60,18 @@ class OutboxDrainService {
     }
   }
 
-  Future<void> drainForAccount(String accountId) async {
+  Future<void> drainForAccount(String accountId) {
+    final prior = _inFlight[accountId] ?? Future.value();
+    final next = prior
+        .then((_) => _drainInner(accountId))
+        // A failed drain must not permanently wedge this account's chain —
+        // the next call still needs to run even if this one threw.
+        .catchError((_) {});
+    _inFlight[accountId] = next;
+    return next;
+  }
+
+  Future<void> _drainInner(String accountId) async {
     // A drain is also fired immediately, fire-and-forget, right after every
     // mutation (see EmailRepositoryImpl) — not just from the periodic poll,
     // which already gates on connectivity before calling in here. Without
@@ -115,6 +142,15 @@ class OutboxDrainService {
               op.folderId!,
               permanentDelete: payload['permanentDelete'] as bool? ?? false,
             );
+
+          case PendingOperationType.spamDbPush:
+            // Only IMAP datasources implement this; other providers never
+            // have this op type queued (see SpamDbSyncService.enqueuePush,
+            // gated on ImapAccount at the call site) but guard defensively.
+            if (ds is SpamDbSyncDatasource) {
+              await _spamDbSyncService.pushForAccount(
+                  accountId, ds as SpamDbSyncDatasource);
+            }
         }
         await _pendingOperations.removeOperation(op.id);
       } catch (e) {

@@ -13,6 +13,10 @@ String _padBase64(String s) {
   return s + ('=' * padding);
 }
 
+/// base64url-encodes (no padding) a UTF-8 string, matching the Gmail payload
+/// `body.data` encoding the datasource decodes.
+String _b64(String s) => base64Url.encode(utf8.encode(s)).replaceAll('=', '');
+
 /// Returns a base64url-encoded (no padding) minimal raw MIME email.
 String _rawMime({
   String from = 'alice@example.com',
@@ -742,6 +746,112 @@ void main() {
               .allMatches(rawMime)
               .length;
       expect(toLineMatches, equals(1));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // getEmail — inline (cid:) image resolution
+  // ---------------------------------------------------------------------------
+
+  group('GmailDatasourceImpl.getEmail — inline images', () {
+    // Regression: Gmail tags pasted inline images with
+    // `Content-Disposition: attachment` while still referencing them via cid:
+    // in the HTML, and stores the bytes as a separate attachment (no inline
+    // data). They must still resolve as inline attachments — here the
+    // Content-ID even carries an @-suffix the body reference lacks.
+    test('resolves a cid: image tagged attachment with an @-suffixed '
+        'Content-ID', () async {
+      const html = '<div><img src="cid:ii_x" alt="image.png"></div>';
+      final imageBytes = base64Url.encode([1, 2, 3, 4]).replaceAll('=', '');
+
+      _stubGetByUrl((url) {
+        if (url.contains('/attachments/')) return {'data': imageBytes};
+        return {
+          'id': 'msg1',
+          'threadId': 'thread1',
+          'payload': {
+            'mimeType': 'multipart/related',
+            'headers': [
+              {'name': 'Subject', 'value': 'Inline test'},
+              {'name': 'From', 'value': 'alice@example.com'},
+            ],
+            'parts': [
+              {
+                'mimeType': 'text/html',
+                'body': {'data': _b64(html), 'size': html.length},
+              },
+              {
+                'mimeType': 'image/png',
+                'filename': 'image.png',
+                'headers': [
+                  {
+                    'name': 'Content-Disposition',
+                    'value': 'attachment; filename="image.png"',
+                  },
+                  {'name': 'Content-ID', 'value': '<ii_x@mail.gmail.com>'},
+                ],
+                'body': {'attachmentId': 'att1', 'size': 1234},
+              },
+            ],
+          },
+        };
+      });
+
+      final email = await datasource.getEmail('msg1');
+
+      expect(email.inlineAttachments, hasLength(1));
+      expect(email.inlineAttachments.first.contentType, 'image/png');
+      expect(email.inlineAttachments.first.contentBytes, equals([1, 2, 3, 4]));
+      // Shown inline, so not surfaced as a downloadable attachment chip.
+      expect(email.attachments, isEmpty);
+    });
+
+    // Regression guard: a part carrying a Content-ID that the body does NOT
+    // reference is a genuine attachment and must stay downloadable, not be
+    // hidden as a (broken, unreferenced) inline image.
+    test('a Content-ID part unreferenced by the body stays a normal '
+        'attachment', () async {
+      const html = '<div>no inline images here</div>';
+
+      _stubGetByUrl((url) {
+        if (url.contains('/attachments/')) {
+          return {'data': base64Url.encode([1]).replaceAll('=', '')};
+        }
+        return {
+          'id': 'msg1',
+          'threadId': 'thread1',
+          'payload': {
+            'mimeType': 'multipart/mixed',
+            'headers': [
+              {'name': 'Subject', 'value': 'Attachment test'},
+            ],
+            'parts': [
+              {
+                'mimeType': 'text/html',
+                'body': {'data': _b64(html), 'size': html.length},
+              },
+              {
+                'mimeType': 'image/png',
+                'filename': 'logo.png',
+                'headers': [
+                  {
+                    'name': 'Content-Disposition',
+                    'value': 'attachment; filename="logo.png"',
+                  },
+                  {'name': 'Content-ID', 'value': '<ii_unref>'},
+                ],
+                'body': {'attachmentId': 'att9', 'size': 10},
+              },
+            ],
+          },
+        };
+      });
+
+      final email = await datasource.getEmail('msg1');
+
+      expect(email.inlineAttachments, isEmpty);
+      expect(email.attachments, hasLength(1));
+      expect(email.attachments.first.name, 'logo.png');
     });
   });
 }

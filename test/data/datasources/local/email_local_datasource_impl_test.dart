@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:drift/native.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -6,6 +8,7 @@ import 'package:nightmail/data/datasources/local/email_local_datasource_impl.dar
 import 'package:nightmail/data/models/email_address_model.dart';
 import 'package:nightmail/data/models/email_model.dart';
 import 'package:nightmail/domain/entities/email.dart';
+import 'package:nightmail/domain/entities/inline_attachment.dart';
 import 'package:nightmail/infrastructure/cache/cache_encryption_service.dart';
 
 // Bypasses secure-storage platform channels — tests only need round-trip
@@ -117,6 +120,77 @@ void main() {
         emailId: 'email-1',
       );
       expect(cached!.body, '<p>opened now</p>');
+    });
+  });
+
+  group('inline attachments', () {
+    EmailModel emailWithInline(String id, {String body = '<img src="cid:ii_x">'}) =>
+        EmailModel(
+          id: id,
+          subject: 'Subject $id',
+          from: const EmailAddressModel(address: 'a@b.com'),
+          toRecipients: const [],
+          ccRecipients: const [],
+          bodyPreview: 'preview',
+          body: body,
+          bodyType: EmailBodyType.html,
+          isRead: false,
+          receivedDateTime: DateTime(2026, 6, 1),
+          importance: EmailImportance.normal,
+          parentFolderId: 'folder-1',
+          inlineAttachments: [
+            InlineAttachment(
+              contentId: '<ii_x@mail.gmail.com>',
+              contentType: 'image/png',
+              contentBytes: Uint8List.fromList([9, 8, 7, 6]),
+            ),
+          ],
+        );
+
+    // Regression: inline attachment bytes were dropped by the cache
+    // serializer, so any already-opened email re-served from cache rendered
+    // its cid: images broken.
+    test('round-trips inline attachment bytes through the cache', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [emailWithInline('email-1')],
+      );
+
+      final cached = await datasource.getCachedEmailById(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+      );
+
+      expect(cached, isNotNull);
+      expect(cached!.inlineAttachments, hasLength(1));
+      final inline = cached.inlineAttachments.first;
+      expect(inline.contentId, '<ii_x@mail.gmail.com>');
+      expect(inline.contentType, 'image/png');
+      expect(inline.contentBytes, equals([9, 8, 7, 6]));
+    });
+
+    test('preserves cached inline attachments across a later preview-only '
+        'write', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [emailWithInline('email-1')],
+      );
+      // A subsequent poll/list fetch re-touches the row with preview data only.
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '')],
+      );
+
+      final cached = await datasource.getCachedEmailById(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+      );
+
+      expect(cached!.inlineAttachments, hasLength(1));
+      expect(cached.inlineAttachments.first.contentBytes, equals([9, 8, 7, 6]));
     });
   });
 }

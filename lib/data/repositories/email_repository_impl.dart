@@ -156,7 +156,16 @@ class EmailRepositoryImpl implements EmailRepository {
       // cache for rows a prior single-message fetch actually filled in;
       // otherwise fall through to network below, which will also upgrade
       // the cached row to a full copy.
-      if (cached != null && cached.body.isNotEmpty) return Right(cached);
+      //
+      // Also refetch when the cached body references inline images via cid:
+      // but carries no inline attachments — either an older cache written
+      // before inline attachments were persisted, or a row whose inline parts
+      // were misclassified. The network fetch resolves and re-caches them.
+      if (cached != null &&
+          cached.body.isNotEmpty &&
+          !_needsInlineRefetch(cached)) {
+        return Right(cached);
+      }
     }
 
     final result =
@@ -185,6 +194,12 @@ class EmailRepositoryImpl implements EmailRepository {
       },
     );
   }
+
+  /// A cached full message still needs a network refetch when its body
+  /// references inline images (`cid:`) but no inline attachment bytes are
+  /// cached to satisfy them.
+  bool _needsInlineRefetch(Email email) =>
+      email.inlineAttachments.isEmpty && email.body.contains('cid:');
 
   @override
   Future<Either<Failure, Email>> markAsRead({

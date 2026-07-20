@@ -148,6 +148,12 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
       final dataUrl =
           'data:${attachment.contentType};base64,${base64Encode(attachment.contentBytes)}';
       resolved = resolved.replaceAll('cid:$bare', dataUrl);
+      // Gmail may set Content-ID to `<ii_x@mail.gmail.com>` while the body
+      // references only `cid:ii_x`; substitute the local part too.
+      final at = bare.indexOf('@');
+      if (at != -1) {
+        resolved = resolved.replaceAll('cid:${bare.substring(0, at)}', dataUrl);
+      }
     }
 
     bool hasBlockedImages = false;

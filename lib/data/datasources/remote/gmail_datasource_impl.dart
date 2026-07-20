@@ -353,7 +353,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
 
       // Large inline attachments (>2 MB) have only an attachmentId — no data
       // field in the payload. Fetch them concurrently and merge.
-      final pending = _extractAttachments(payload)
+      final pending = _extractAttachments(payload, _referencedCids(email.body))
           .where((a) =>
               a.isInline &&
               a.contentId != null &&
@@ -514,7 +514,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         }
       }
 
-      final parsed = _extractAttachments(payload);
+      final parsed = _extractAttachments(payload, _referencedCids(body));
       attachments = parsed
           .where((a) => !a.isInline)
           .map((a) => EmailAttachment(
@@ -681,14 +681,54 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     return false;
   }
 
-  List<_GmailAttachment> _extractAttachments(Map<String, dynamic> payload) {
+  List<_GmailAttachment> _extractAttachments(Map<String, dynamic> payload,
+      [Set<String>? referencedCids]) {
     final results = <_GmailAttachment>[];
-    _collectAttachmentParts(payload, results);
+    _collectAttachmentParts(payload, results, referencedCids);
     return results;
   }
 
+  /// Bare cid tokens (without angle brackets) referenced by `cid:` in [body].
+  /// Gmail tags pasted inline images with `Content-Disposition: attachment`
+  /// even though the HTML references them inline via cid:, so the reference
+  /// set — not the disposition — is what decides whether a part is inline.
+  Set<String> _referencedCids(String body) {
+    if (body.isEmpty) return const {};
+    final ids = <String>{};
+    for (final m in RegExp(r'''cid:([^"'\s>)\]]+)''', caseSensitive: false)
+        .allMatches(body)) {
+      final id = m.group(1);
+      if (id != null && id.isNotEmpty) ids.add(id);
+    }
+    return ids;
+  }
+
+  String _bareCid(String contentId) =>
+      contentId.startsWith('<') && contentId.endsWith('>')
+          ? contentId.substring(1, contentId.length - 1)
+          : contentId;
+
+  /// Whether a part's bare Content-Id is referenced by the body. Gmail
+  /// sometimes emits `Content-ID: <ii_x@mail.gmail.com>` while the body
+  /// references only `cid:ii_x`, so fall back to comparing the local part
+  /// before any `@`.
+  bool _cidReferenced(String bareCid, Set<String> referenced) {
+    if (referenced.contains(bareCid)) return true;
+    final key = _cidLocalPart(bareCid);
+    for (final r in referenced) {
+      if (_cidLocalPart(r) == key) return true;
+    }
+    return false;
+  }
+
+  String _cidLocalPart(String cid) {
+    final at = cid.indexOf('@');
+    return at == -1 ? cid : cid.substring(0, at);
+  }
+
   void _collectAttachmentParts(
-      Map<String, dynamic> part, List<_GmailAttachment> out) {
+      Map<String, dynamic> part, List<_GmailAttachment> out,
+      [Set<String>? referencedCids]) {
     final filename = (part['filename'] as String? ?? '').trim();
     final headers = (part['headers'] as List<dynamic>? ?? [])
         .cast<Map<String, dynamic>>();
@@ -716,7 +756,16 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       final inlineData = body['data'] as String?;
       final size = body['size'] as int? ?? 0;
 
-      final isInline = contentId != null && !hasAttachmentDisposition;
+      // Gmail marks pasted inline images with `Content-Disposition: attachment`
+      // while still referencing them via cid: in the HTML body. When the body's
+      // cid references are known, treat a part as inline iff its Content-Id is
+      // actually referenced (disposition is unreliable); otherwise fall back to
+      // the disposition heuristic. Unreferenced Content-Id parts stay as
+      // downloadable attachments.
+      final bareCid = contentId == null ? null : _bareCid(contentId);
+      final isInline = referencedCids != null
+          ? (bareCid != null && _cidReferenced(bareCid, referencedCids))
+          : (contentId != null && !hasAttachmentDisposition);
       out.add(_GmailAttachment(
         attachmentId: attachmentId,
         name: filename,
@@ -731,7 +780,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     final subParts = (part['parts'] as List<dynamic>? ?? [])
         .cast<Map<String, dynamic>>();
     for (final sub in subParts) {
-      _collectAttachmentParts(sub, out);
+      _collectAttachmentParts(sub, out, referencedCids);
     }
   }
 

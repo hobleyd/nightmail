@@ -5,6 +5,7 @@ import 'package:drift/drift.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/email_address.dart';
 import '../../../domain/entities/email_attachment.dart';
+import '../../../domain/entities/inline_attachment.dart';
 import '../../database/app_database.dart';
 import '../../../infrastructure/cache/cache_encryption_service.dart';
 import 'email_local_datasource.dart';
@@ -72,6 +73,7 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
               'body': oldJson['body'],
               'bodyType': oldJson['bodyType'],
               'attachments': oldJson['attachments'],
+              'inlineAttachments': oldJson['inlineAttachments'],
             };
           }
         }
@@ -239,6 +241,8 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
       'conversationId': email.conversationId,
       'hasAttachments': email.hasAttachments,
       'attachments': email.attachments.map(_attachmentToJson).toList(),
+      'inlineAttachments':
+          email.inlineAttachments.map(_inlineAttachmentToJson).toList(),
       'parentFolderId': email.parentFolderId,
     };
   }
@@ -276,6 +280,11 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
           .cast<Map<String, dynamic>>()
           .map(_attachmentFromJson)
           .toList(),
+      inlineAttachments: (j['inlineAttachments'] as List<dynamic>? ?? const [])
+          .cast<Map<String, dynamic>>()
+          .map(_inlineAttachmentFromJson)
+          .whereType<InlineAttachment>()
+          .toList(),
       parentFolderId: j['parentFolderId'] as String?,
     );
   }
@@ -302,4 +311,25 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
         contentType: j['contentType'] as String,
         size: j['size'] as int,
       );
+
+  static Map<String, dynamic> _inlineAttachmentToJson(InlineAttachment a) => {
+        'contentId': a.contentId,
+        'contentType': a.contentType,
+        'bytes': base64Encode(a.contentBytes),
+      };
+
+  static InlineAttachment? _inlineAttachmentFromJson(Map<String, dynamic> j) {
+    final contentId = j['contentId'] as String?;
+    final bytes = j['bytes'] as String?;
+    if (contentId == null || bytes == null) return null;
+    try {
+      return InlineAttachment(
+        contentId: contentId,
+        contentType: j['contentType'] as String? ?? 'application/octet-stream',
+        contentBytes: base64Decode(bytes),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
 }

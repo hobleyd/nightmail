@@ -69,19 +69,76 @@ class EmailRepositoryImpl implements EmailRepository {
           orderBy: orderBy,
         ));
 
-    result.fold((_) {}, (emails) {
-      final accountId = _accountManager.activeAccount?.id;
-      if (accountId != null && emails.isNotEmpty) {
-        final effectiveFolderId = folderId ?? _defaultFolderKey;
-        unawaited(_localDatasource.cacheEmails(
-          accountId: accountId,
-          folderId: effectiveFolderId,
-          emails: emails,
-        ));
-      }
-    });
+    final accountId = _accountManager.activeAccount?.id;
+    if (accountId == null) return result;
 
-    return result;
+    return result.fold(
+      (failure) async => Left<Failure, List<Email>>(failure),
+      (emails) async {
+        // Reconcile against still-queued outbox mutations before caching *or*
+        // returning: a server snapshot taken before the outbox drain committed
+        // the delete/move/junk would otherwise resurrect the just-removed
+        // message into the cache, and the next poll's cache repaint would
+        // put it back on screen. Mirrors MailPollerCubit's reconciliation.
+        final reconciled = await _reconcileAgainstPendingOps(accountId, emails);
+        if (reconciled.isNotEmpty) {
+          final effectiveFolderId = folderId ?? _defaultFolderKey;
+          unawaited(_localDatasource.cacheEmails(
+            accountId: accountId,
+            folderId: effectiveFolderId,
+            emails: reconciled,
+          ));
+        }
+        return Right<Failure, List<Email>>(reconciled);
+      },
+    );
+  }
+
+  /// Drops server results that still carry a pending delete/move/junk op, and
+  /// preserves the cached read-state for a message with a pending markRead —
+  /// the same reconciliation [MailPollerCubit] applies to its sync results.
+  ///
+  /// The outbox drain fires asynchronously after an optimistic mutation, so a
+  /// [getEmails] fetch can overlap that window and return a stale snapshot
+  /// still listing the deleted/moved message. Writing that snapshot to the
+  /// cache un-reconciled is what makes a just-deleted email reappear until the
+  /// drain finishes.
+  Future<List<Email>> _reconcileAgainstPendingOps(
+    String accountId,
+    List<Email> emails,
+  ) async {
+    final pendingOps = await _pendingOperations.getPendingOperations(accountId);
+    if (pendingOps.isEmpty) return emails;
+
+    final tombstoned = <String>{
+      for (final op in pendingOps)
+        if (op.opType == PendingOperationType.delete ||
+            op.opType == PendingOperationType.move ||
+            op.opType == PendingOperationType.junk)
+          op.emailId,
+    };
+    final pendingReadIds = <String>{
+      for (final op in pendingOps)
+        if (op.opType == PendingOperationType.markRead) op.emailId,
+    };
+    if (tombstoned.isEmpty && pendingReadIds.isEmpty) return emails;
+
+    final reconciled = <Email>[];
+    for (final email in emails) {
+      if (tombstoned.contains(email.id)) continue;
+      if (pendingReadIds.contains(email.id)) {
+        final cached = await _localDatasource.getCachedEmailById(
+          accountId: accountId,
+          emailId: email.id,
+        );
+        if (cached != null && cached.isRead != email.isRead) {
+          reconciled.add(email.copyWith(isRead: cached.isRead));
+          continue;
+        }
+      }
+      reconciled.add(email);
+    }
+    return reconciled;
   }
 
   @override
@@ -104,17 +161,29 @@ class EmailRepositoryImpl implements EmailRepository {
 
     final result =
         await _execute(() => _accountManager.emailDatasource.getEmail(id));
-    result.fold((_) {}, (email) {
-      if (accountId != null) {
-        final effectiveFolderId = email.parentFolderId ?? _defaultFolderKey;
+    if (accountId == null) return result;
+
+    return result.fold(
+      (failure) async => Left<Failure, Email>(failure),
+      (email) async {
+        // Same reconciliation as getEmails: don't let a fetch that overlaps
+        // the outbox drain window write a just-deleted/moved message back into
+        // the cache. Still return the fetched copy to the caller that
+        // explicitly requested this id — we just skip the cache write when the
+        // message is tombstoned by a pending delete/move/junk op.
+        final reconciled = await _reconcileAgainstPendingOps(accountId, [email]);
+        if (reconciled.isEmpty) return Right<Failure, Email>(email);
+        final effectiveEmail = reconciled.first;
+        final effectiveFolderId =
+            effectiveEmail.parentFolderId ?? _defaultFolderKey;
         unawaited(_localDatasource.cacheEmails(
           accountId: accountId,
           folderId: effectiveFolderId,
-          emails: [email],
+          emails: [effectiveEmail],
         ));
-      }
-    });
-    return result;
+        return Right<Failure, Email>(effectiveEmail);
+      },
+    );
   }
 
   @override

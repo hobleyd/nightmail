@@ -54,6 +54,7 @@ class EventEditWindowApp extends StatelessWidget {
         initialStartStr != null ? DateTime.parse(initialStartStr).toLocal() : null;
     final accountId = arguments['accountId'] as String?;
     final isO365Account = arguments['isO365Account'] as bool? ?? false;
+    final isGmailAccount = arguments['isGmailAccount'] as bool? ?? false;
 
     return MultiBlocProvider(
       providers: [
@@ -76,6 +77,7 @@ class EventEditWindowApp extends StatelessWidget {
               initialStart: initialStart,
               accountId: accountId,
               isO365Account: isO365Account,
+              isGmailAccount: isGmailAccount,
             ),
           );
         },
@@ -145,12 +147,14 @@ class _EventEditWindowPage extends StatelessWidget {
     this.initialStart,
     this.accountId,
     this.isO365Account = false,
+    this.isGmailAccount = false,
   });
 
   final CalendarEvent? event;
   final DateTime? initialStart;
   final String? accountId;
   final bool isO365Account;
+  final bool isGmailAccount;
 
   void _close() => windowManager.close();
 
@@ -181,6 +185,7 @@ class _EventEditWindowPage extends StatelessWidget {
             initialStart: initialStart,
             accountId: accountId,
             isO365Account: isO365Account,
+            isGmailAccount: isGmailAccount,
             onClose: _close,
             onTitleChanged: (title) => windowManager.setTitle(title),
             checkAttendeesAvailability: sl<CheckAttendeesAvailability>(),

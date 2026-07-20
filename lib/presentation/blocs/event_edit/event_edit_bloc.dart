@@ -45,7 +45,7 @@ class EventEditBloc extends Bloc<EventEditBlocEvent, EventEditState> {
           description: event.description,
           attendeeEmails: event.attendeeEmails,
           recurrence: event.recurrence,
-          isTeamsMeeting: event.isTeamsMeeting,
+          isOnlineMeeting: event.isOnlineMeeting,
           reminderMinutes: event.reminderMinutes,
         ),
       );
@@ -79,7 +79,7 @@ class EventEditBloc extends Bloc<EventEditBlocEvent, EventEditState> {
           description: event.description,
           attendeeEmails: event.attendeeEmails,
           recurrence: event.recurrence,
-          isTeamsMeeting: event.isTeamsMeeting,
+          isOnlineMeeting: event.isOnlineMeeting,
           reminderMinutes: event.reminderMinutes,
         ),
       );

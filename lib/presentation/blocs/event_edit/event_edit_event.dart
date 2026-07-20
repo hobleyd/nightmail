@@ -21,7 +21,7 @@ final class EventEditSubmitted extends EventEditBlocEvent {
     this.description,
     this.attendeeEmails = const [],
     this.recurrence,
-    this.isTeamsMeeting = false,
+    this.isOnlineMeeting = false,
     this.reminderMinutes,
   });
 
@@ -36,7 +36,9 @@ final class EventEditSubmitted extends EventEditBlocEvent {
   final String? description;
   final List<String> attendeeEmails;
   final CalendarRecurrence? recurrence;
-  final bool isTeamsMeeting;
+
+  /// Whether to attach a provider-native online meeting (Teams or Google Meet).
+  final bool isOnlineMeeting;
 
   /// Minutes before start to fire a reminder. Null means no reminder.
   final int? reminderMinutes;
@@ -53,7 +55,7 @@ final class EventEditSubmitted extends EventEditBlocEvent {
         description,
         attendeeEmails,
         recurrence,
-        isTeamsMeeting,
+        isOnlineMeeting,
         reminderMinutes,
       ];
 }

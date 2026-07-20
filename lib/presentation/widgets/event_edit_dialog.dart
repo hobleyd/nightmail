@@ -33,12 +33,14 @@ class EventEditDialog extends StatelessWidget {
     this.initialStart,
     this.accountId,
     this.isO365Account = false,
+    this.isGmailAccount = false,
   });
 
   final CalendarEvent? event;
   final DateTime? initialStart;
   final String? accountId;
   final bool isO365Account;
+  final bool isGmailAccount;
 
   static Future<void> show(
     BuildContext context, {
@@ -46,6 +48,7 @@ class EventEditDialog extends StatelessWidget {
     DateTime? initialStart,
     String? accountId,
     bool isO365Account = false,
+    bool isGmailAccount = false,
   }) async {
     await createSubWindow(
       WindowConfiguration(
@@ -55,6 +58,7 @@ class EventEditDialog extends StatelessWidget {
           if (initialStart != null) 'initialStart': initialStart.toIso8601String(),
           if (accountId != null) 'accountId': accountId,
           if (isO365Account) 'isO365Account': true,
+          if (isGmailAccount) 'isGmailAccount': true,
         }),
       ),
     );
@@ -139,6 +143,7 @@ class EventEditForm extends StatefulWidget {
     this.initialStart,
     this.accountId,
     this.isO365Account = false,
+    this.isGmailAccount = false,
     required this.onClose,
     this.onTitleChanged,
     this.checkAttendeesAvailability,
@@ -148,6 +153,7 @@ class EventEditForm extends StatefulWidget {
   final DateTime? initialStart;
   final String? accountId;
   final bool isO365Account;
+  final bool isGmailAccount;
   final VoidCallback onClose;
   final ValueChanged<String>? onTitleChanged;
   final CheckAttendeesAvailability? checkAttendeesAvailability;
@@ -176,7 +182,7 @@ class _EventEditFormState extends State<EventEditForm> {
   List<AttendeeAvailability>? _availabilities;
   bool _checkingAvailability = false;
   Timer? _availabilityDebounce;
-  bool _isTeamsMeeting = false;
+  bool _isOnlineMeeting = false;
   bool _showSchedulePane = false;
   String? _organizerEmail;
   String? _hoveredLocationUrl;
@@ -364,7 +370,7 @@ class _EventEditFormState extends State<EventEditForm> {
               : null,
           attendeeEmails: _attendees.map(_extractEmail).toList(),
           recurrence: _recurrence,
-          isTeamsMeeting: _isTeamsMeeting,
+          isOnlineMeeting: _isOnlineMeeting,
           reminderMinutes: _reminderMinutes,
         ));
   }
@@ -505,15 +511,24 @@ class _EventEditFormState extends State<EventEditForm> {
                                 ),
                               ),
                             ),
-                            if (widget.isO365Account) ...[
+                            if (widget.isO365Account ||
+                                widget.isGmailAccount) ...[
                               const SizedBox(width: 8),
-                              _TeamsMeetingButton(
-                                active: _isTeamsMeeting,
+                              _OnlineMeetingButton(
+                                active: _isOnlineMeeting,
+                                label:
+                                    widget.isGmailAccount ? 'Meet' : 'Teams',
                                 onToggle: (v) {
-                                  setState(() => _isTeamsMeeting = v);
-                                  if (v && _locationController.text.trim().isEmpty) {
-                                    _locationController.text = 'Microsoft Teams Meeting';
-                                  } else if (!v && _locationController.text.trim() == 'Microsoft Teams Meeting') {
+                                  setState(() => _isOnlineMeeting = v);
+                                  final placeholder = widget.isGmailAccount
+                                      ? 'Google Meet'
+                                      : 'Microsoft Teams Meeting';
+                                  if (v &&
+                                      _locationController.text.trim().isEmpty) {
+                                    _locationController.text = placeholder;
+                                  } else if (!v &&
+                                      _locationController.text.trim() ==
+                                          placeholder) {
                                     _locationController.text = '';
                                   }
                                 },
@@ -1997,10 +2012,15 @@ class _LinkifiedTextState extends State<_LinkifiedText> {
   }
 }
 
-class _TeamsMeetingButton extends StatelessWidget {
-  const _TeamsMeetingButton({required this.active, required this.onToggle});
+class _OnlineMeetingButton extends StatelessWidget {
+  const _OnlineMeetingButton({
+    required this.active,
+    required this.onToggle,
+    required this.label,
+  });
   final bool active;
   final ValueChanged<bool> onToggle;
+  final String label;
 
   @override
   Widget build(BuildContext context) {
@@ -2023,7 +2043,7 @@ class _TeamsMeetingButton extends StatelessWidget {
             ),
             const SizedBox(width: 4),
             Text(
-              'Teams',
+              label,
               style: TextStyle(
                 color: active ? Colors.white : c.textMuted,
                 fontSize: 11,

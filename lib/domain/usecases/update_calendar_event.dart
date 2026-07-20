@@ -32,7 +32,7 @@ class UpdateCalendarEventParams extends Equatable {
     this.description,
     this.attendeeEmails = const [],
     this.recurrence,
-    this.isTeamsMeeting = false,
+    this.isOnlineMeeting = false,
     this.reminderMinutes,
   });
 
@@ -48,7 +48,10 @@ class UpdateCalendarEventParams extends Equatable {
   final String? description;
   final List<String> attendeeEmails;
   final CalendarRecurrence? recurrence;
-  final bool isTeamsMeeting;
+
+  /// Whether to attach a provider-native online meeting (Teams for Microsoft,
+  /// Google Meet for Gmail). The datasource decides how to realize it.
+  final bool isOnlineMeeting;
 
   /// Minutes before start to fire a reminder. Null means no reminder.
   final int? reminderMinutes;
@@ -65,7 +68,7 @@ class UpdateCalendarEventParams extends Equatable {
         description,
         attendeeEmails,
         recurrence,
-        isTeamsMeeting,
+        isOnlineMeeting,
         reminderMinutes,
       ];
 }

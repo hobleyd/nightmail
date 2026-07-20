@@ -259,6 +259,12 @@ bool _isO365Account(BuildContext context) {
   return false;
 }
 
+bool _isGmailAccount(BuildContext context) {
+  final state = context.read<AccountCubit>().state;
+  if (state is AccountsLoaded) return state.activeAccount is GmailAccount;
+  return false;
+}
+
 class _NewEventButton extends StatelessWidget {
   const _NewEventButton({required this.calendarBloc});
   final CalendarBloc calendarBloc;
@@ -272,6 +278,7 @@ class _NewEventButton extends StatelessWidget {
           context,
           accountId: _accountId(context),
           isO365Account: _isO365Account(context),
+          isGmailAccount: _isGmailAccount(context),
         ),
         borderRadius: BorderRadius.circular(6),
         child: Container(
@@ -474,6 +481,7 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
                                   initialStart: start,
                                   accountId: _accountId(context),
                                   isO365Account: _isO365Account(context),
+                                  isGmailAccount: _isGmailAccount(context),
                                 );
                               },
                               child: LayoutBuilder(
@@ -981,6 +989,7 @@ class _AllDayEventChip extends StatelessWidget {
       event: event,
       accountId: _accountId(context),
       isO365Account: _isO365Account(context),
+      isGmailAccount: _isGmailAccount(context),
     );
   }
 }
@@ -1150,6 +1159,7 @@ class _DayColumnCellState extends State<_DayColumnCell> {
       initialStart: start,
       accountId: _accountId(context),
       isO365Account: _isO365Account(context),
+      isGmailAccount: _isGmailAccount(context),
     );
   }
 
@@ -1469,6 +1479,7 @@ class _PositionedEventState extends State<_PositionedEvent> {
       event: widget.event,
       accountId: _accountId(context),
       isO365Account: _isO365Account(context),
+      isGmailAccount: _isGmailAccount(context),
     );
   }
 

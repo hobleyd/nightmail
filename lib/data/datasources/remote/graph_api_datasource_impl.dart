@@ -351,7 +351,7 @@ class GraphApiDatasourceImpl
         description: params.description,
         attendeeEmails: params.attendeeEmails,
         recurrence: params.recurrence,
-        isTeamsMeeting: params.isTeamsMeeting,
+        isOnlineMeeting: params.isOnlineMeeting,
         reminderMinutes: params.reminderMinutes,
       );
 
@@ -384,7 +384,7 @@ class GraphApiDatasourceImpl
         description: params.description,
         attendeeEmails: params.attendeeEmails,
         recurrence: params.recurrence,
-        isTeamsMeeting: params.isTeamsMeeting,
+        isOnlineMeeting: params.isOnlineMeeting,
         reminderMinutes: params.reminderMinutes,
       );
 
@@ -801,7 +801,7 @@ class GraphApiDatasourceImpl
     String? description,
     List<String> attendeeEmails = const [],
     CalendarRecurrence? recurrence,
-    bool isTeamsMeeting = false,
+    bool isOnlineMeeting = false,
     int? reminderMinutes,
   }) {
     final body = <String, dynamic>{
@@ -809,8 +809,8 @@ class GraphApiDatasourceImpl
       'isAllDay': isAllDay,
       'isReminderOn': reminderMinutes != null,
       if (reminderMinutes != null) 'reminderMinutesBeforeStart': reminderMinutes,
-      if (isTeamsMeeting) 'isOnlineMeeting': true,
-      if (isTeamsMeeting) 'onlineMeetingProvider': 'teamsForBusiness',
+      if (isOnlineMeeting) 'isOnlineMeeting': true,
+      if (isOnlineMeeting) 'onlineMeetingProvider': 'teamsForBusiness',
     };
 
     if (description != null && description.isNotEmpty) {

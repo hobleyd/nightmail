@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../../core/error/exceptions.dart';
 import '../../../core/utils/ics_parser.dart';
@@ -100,11 +101,14 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
         attendeeEmails: params.attendeeEmails,
         recurrence: params.recurrence,
         reminderMinutes: params.reminderMinutes,
+        isOnlineMeeting: params.isOnlineMeeting,
       );
 
       final response = await _dio.post<Map<String, dynamic>>(
         '/calendars/primary/events',
         data: body,
+        queryParameters:
+            params.isOnlineMeeting ? {'conferenceDataVersion': 1} : null,
       );
 
       if (response.data == null) {
@@ -132,12 +136,15 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
         attendeeEmails: params.attendeeEmails,
         recurrence: params.recurrence,
         reminderMinutes: params.reminderMinutes,
+        isOnlineMeeting: params.isOnlineMeeting,
         isUpdate: true,
       );
 
       final response = await _dio.patch<Map<String, dynamic>>(
         '/calendars/primary/events/${params.id}',
         data: body,
+        queryParameters:
+            params.isOnlineMeeting ? {'conferenceDataVersion': 1} : null,
       );
 
       if (response.data == null) {
@@ -410,6 +417,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     List<String> attendeeEmails = const [],
     CalendarRecurrence? recurrence,
     int? reminderMinutes,
+    bool isOnlineMeeting = false,
     bool isUpdate = false,
   }) {
     final body = <String, dynamic>{
@@ -418,6 +426,19 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       if (description != null && description.isNotEmpty)
         'description': description,
     };
+
+    // Attach a Google Meet. Requires `conferenceDataVersion=1` on the request
+    // (set by the caller); Google fills in the join URL server-side and returns
+    // it via conferenceData/hangoutLink. The requestId only needs to be unique
+    // per request, so a fresh UUID is fine.
+    if (isOnlineMeeting) {
+      body['conferenceData'] = {
+        'createRequest': {
+          'requestId': const Uuid().v4(),
+          'conferenceSolutionKey': {'type': 'hangoutsMeet'},
+        },
+      };
+    }
 
     if (isAllDay) {
       body['start'] = {'date': _formatDate(start)};

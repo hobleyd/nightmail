@@ -22,6 +22,7 @@ import 'presentation/pages/calendar_window.dart';
 import 'presentation/pages/compose_window.dart';
 import 'presentation/pages/email_view_window.dart';
 import 'presentation/pages/event_edit_window.dart';
+import 'presentation/pages/image_view_window.dart';
 import 'presentation/pages/reminder_popup_window.dart';
 import 'presentation/pages/tasks_window.dart';
 import 'presentation/pages/home_page.dart';
@@ -121,6 +122,14 @@ void main(List<String> args) async {
         WindowOptions(size: const Size(720, 580), center: true, title: title),
       );
       runApp(EmailViewWindowApp(windowId: windowId, arguments: arguments));
+      return;
+    }
+
+    if (arguments['type'] == 'imageView') {
+      await showSubWindow(
+        const WindowOptions(size: Size(900, 700), center: true, title: 'Image'),
+      );
+      runApp(ImageViewWindowApp(arguments: arguments));
       return;
     }
 

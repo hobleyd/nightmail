@@ -22,6 +22,14 @@ static const char* kJsBridge = R"JS(
   window['onContentChanged']  = makeChannel('onContentChanged');
   window['onLinkRequest']     = makeChannel('onLinkRequest');
   window['onAttachRequest']   = makeChannel('onAttachRequest');
+  window['onImageDoubleClicked'] = makeChannel('onImageDoubleClicked');
+  document.addEventListener('dblclick', function(e) {
+    var t = e.target;
+    if (t && t.tagName === 'IMG') {
+      var src = t.currentSrc || t.src;
+      if (src) window['onImageDoubleClicked'].postMessage(src);
+    }
+  }, true);
   document.addEventListener('DOMContentLoaded', function() {
     window.webkit.messageHandlers.HtmlView.postMessage('pageLoaded' + SEP);
   });

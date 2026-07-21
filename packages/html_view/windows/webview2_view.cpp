@@ -30,6 +30,17 @@ static const wchar_t* kJsBridge = LR"JS(
   window['onContentChanged']  = makeChannel('onContentChanged');
   window['onLinkRequest']     = makeChannel('onLinkRequest');
   window['onAttachRequest']   = makeChannel('onAttachRequest');
+  window['onImageDoubleClicked'] = makeChannel('onImageDoubleClicked');
+
+  // Report a double-click on an image so the host can pop it out in a
+  // resizable window. Capture phase so it fires regardless of page handlers.
+  document.addEventListener('dblclick', function(e) {
+    var t = e.target;
+    if (t && t.tagName === 'IMG') {
+      var src = t.currentSrc || t.src;
+      if (src) window['onImageDoubleClicked'].postMessage(src);
+    }
+  }, true);
 
   // Tell Dart when the page DOM is ready so setContent() can be called.
   document.addEventListener('DOMContentLoaded', function() {

@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:html_view/html_view.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../../core/platform/window_utils.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/inline_attachment.dart';
@@ -33,6 +35,7 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
   // Desktop (Windows / macOS / Linux): html_view overlay WebView.
   HtmlViewController? _htmlController;
   StreamSubscription<String>? _linkSub;
+  StreamSubscription<String>? _imageSub;
   // Tracks the latest HTML so _initHtmlView can apply updates that arrived
   // while the controller was still initialising.
   String _pendingHtml = '';
@@ -66,6 +69,7 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
       final uri = Uri.tryParse(url);
       if (uri != null) unawaited(launchUrl(uri, mode: LaunchMode.externalApplication));
     });
+    _imageSub = ctrl.onImageDoubleClicked.listen(_openImageWindow);
     setState(() => _htmlController = ctrl);
     widget.onControllerReady?.call(ctrl);
     unawaited(ctrl.loadHtml(_pendingHtml));
@@ -112,8 +116,19 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
   void dispose() {
     _disposed = true;
     _linkSub?.cancel();
+    _imageSub?.cancel();
     unawaited(_htmlController?.dispose());
     super.dispose();
+  }
+
+  /// Pops the double-clicked image out into its own resizable window.
+  void _openImageWindow(String src) {
+    if (src.isEmpty) return;
+    unawaited(createSubWindow(
+      WindowConfiguration(
+        arguments: jsonEncode({'type': 'imageView', 'src': src}),
+      ),
+    ));
   }
 
   void _reloadWith({required bool allowExternal}) {

@@ -18,6 +18,7 @@ class HtmlViewController {
   final _onLinkOpened       = StreamController<String>.broadcast();
   final _onAttachRequested  = StreamController<void>.broadcast();
   final _onClickFocus       = StreamController<void>.broadcast();
+  final _onImageDoubleClicked = StreamController<String>.broadcast();
 
   Stream<String> get onContentChanged  => _onContentChanged.stream;
   Stream<void>   get onLinkRequest     => _onLinkRequest.stream;
@@ -34,6 +35,9 @@ class HtmlViewController {
   /// out). Callers should unfocus whatever Flutter field currently thinks
   /// it's focused so its cursor doesn't linger.
   Stream<void>   get onClickFocus      => _onClickFocus.stream;
+  /// Fires when the user double-clicks an `<img>` in the page. The value is
+  /// the image's resolved `src` (an `http(s)` URL or an inline `data:` URL).
+  Stream<String> get onImageDoubleClicked => _onImageDoubleClicked.stream;
 
   bool get isInitialized => _viewId != null;
 
@@ -77,6 +81,9 @@ class HtmlViewController {
         break;
       case 'onClickFocus':
         _onClickFocus.add(null);
+        break;
+      case 'onImageDoubleClicked':
+        _onImageDoubleClicked.add(map['value'] as String? ?? '');
         break;
     }
   }
@@ -140,6 +147,7 @@ class HtmlViewController {
     _onLinkOpened.close();
     _onAttachRequested.close();
     _onClickFocus.close();
+    _onImageDoubleClicked.close();
     if (_viewId != null) {
       final id = _viewId;
       _viewId = null;

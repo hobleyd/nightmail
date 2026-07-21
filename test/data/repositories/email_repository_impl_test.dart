@@ -60,6 +60,10 @@ void main() {
     )).thenAnswer((_) async => 1);
     when(mockOutboxDrainService.drainForAccount(any))
         .thenAnswer((_) async {});
+    // No queued outbox ops by default — reconciliation is a no-op unless a
+    // test enqueues one. getEmails/getEmail run this against the active account.
+    when(mockPendingOperations.getPendingOperations(any))
+        .thenAnswer((_) async => []);
     // Online by default — tests that need offline behavior override this.
     when(mockConnectivityService.isOnline).thenAnswer((_) async => true);
 

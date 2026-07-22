@@ -171,6 +171,50 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     }
 
     final event = IcsParser.parse(icsData);
+
+    // Declining is handled specially so it both notifies the organizer AND clears
+    // the event from our calendar. Google has no dedicated decline endpoint:
+    //   1. PATCH responseStatus:'declined' with sendUpdates:'all' — this is the
+    //      RSVP reply the organizer receives (identical mechanism to accept, which
+    //      is confirmed to notify). A guest DELETE alone sends NOTHING, so the
+    //      PATCH must happen first and is what actually notifies.
+    //   2. DELETE the local copy (sendUpdates:'none') so the declined event no
+    //      longer shows on our calendar, without emitting a second notification.
+    // Decline never falls through to the create branch below — it must never add
+    // an event.
+    if (response == MeetingInviteResponseType.decline) {
+      if (event.uid == null) return; // Nothing to look up / remove.
+      final attendees = <Map<String, dynamic>>[
+        ...event.attendees.where((a) => a != userEmail).map((a) => {'email': a}),
+        if (userEmail != null)
+          {'email': userEmail, 'responseStatus': 'declined'},
+      ];
+      try {
+        final searchResp = await _dio.get<Map<String, dynamic>>(
+          '/calendars/primary/events',
+          queryParameters: {'iCalUID': event.uid, 'maxResults': 1},
+        );
+        final items = (searchResp.data?['items'] as List<dynamic>? ?? [])
+            .cast<Map<String, dynamic>>();
+        if (items.isEmpty) return; // Not on the calendar — nothing to decline.
+        final eventId = items.first['id'] as String;
+        // 1. Send the decline RSVP to the organizer.
+        await _dio.patch<void>(
+          '/calendars/primary/events/$eventId',
+          data: {if (attendees.isNotEmpty) 'attendees': attendees},
+          queryParameters: {'sendUpdates': 'all'},
+        );
+        // 2. Remove our now-declined copy from the calendar, silently.
+        await _dio.delete<void>(
+          '/calendars/primary/events/$eventId',
+          queryParameters: {'sendUpdates': 'none'},
+        );
+      } on DioException catch (e) {
+        throw _mapException(e);
+      }
+      return;
+    }
+
     final responseStatus = switch (response) {
       MeetingInviteResponseType.accept => 'accepted',
       MeetingInviteResponseType.tentative => 'tentative',
@@ -343,14 +387,28 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     required String eventId,
     String? userEmail,
   }) async {
-    final attendees = <Map<String, dynamic>>[
-      if (userEmail != null) {'email': userEmail, 'responseStatus': 'declined'},
-    ];
+    // Declining a meeting we were invited to. Google has no dedicated decline
+    // endpoint, and a bare DELETE removes our copy WITHOUT notifying the organizer.
+    // So we first PATCH our own responseStatus:'declined' with sendUpdates:'all'
+    // (the RSVP reply the organizer receives), then DELETE the local copy silently
+    // so the declined event no longer shows on our calendar. (Callers only route
+    // non-organizer events here; organizer-owned events go through
+    // cancelCalendarEvent instead.)
     try {
-      await _dio.patch<void>(
+      if (userEmail != null) {
+        await _dio.patch<void>(
+          '/calendars/primary/events/$eventId',
+          data: {
+            'attendees': [
+              {'email': userEmail, 'responseStatus': 'declined'},
+            ],
+          },
+          queryParameters: {'sendUpdates': 'all'},
+        );
+      }
+      await _dio.delete<void>(
         '/calendars/primary/events/$eventId',
-        data: {if (attendees.isNotEmpty) 'attendees': attendees},
-        queryParameters: {'sendUpdates': 'all'},
+        queryParameters: {'sendUpdates': 'none'},
       );
     } on DioException catch (e) {
       throw _mapException(e);

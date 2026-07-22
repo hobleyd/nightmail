@@ -2246,6 +2246,7 @@ class _AttachmentChipState extends State<_AttachmentChip> {
       onSecondaryTap: _isMobile ? null : _saveAs,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        constraints: const BoxConstraints(maxWidth: 260),
         decoration: BoxDecoration(
           color: widget.isActive
               ? AppColors.accent.withValues(alpha: 0.12)
@@ -2274,9 +2275,13 @@ class _AttachmentChipState extends State<_AttachmentChip> {
                 color: c.textMuted,
               ),
             const SizedBox(width: 4),
-            Text(
-              widget.attachment.name,
-              style: TextStyle(color: c.textTertiary, fontSize: 11),
+            Flexible(
+              child: Text(
+                widget.attachment.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: c.textTertiary, fontSize: 11),
+              ),
             ),
           ],
         ),

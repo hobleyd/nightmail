@@ -36,7 +36,7 @@ import 'email_list_bloc_test.mocks.dart';
 
 const _addr = EmailAddress(address: 'a@b.com', name: 'A');
 
-Email _email(String id, {String? conversationId}) => Email(
+Email _email(String id, {String? conversationId, bool isRead = true}) => Email(
       id: id,
       subject: 'Subject $id',
       from: _addr,
@@ -45,7 +45,7 @@ Email _email(String id, {String? conversationId}) => Email(
       bodyPreview: '',
       body: '',
       bodyType: EmailBodyType.text,
-      isRead: true,
+      isRead: isRead,
       receivedDateTime: DateTime(2026),
       importance: EmailImportance.normal,
       conversationId: conversationId,
@@ -85,10 +85,12 @@ void main() {
   late MockGetCachedEmails mockGetCachedEmails;
   late MockMoveEmail mockMoveEmail;
   late MockEmptyFolder mockEmptyFolder;
+  late MockMarkEmailAsRead mockMarkEmailAsRead;
 
   setUpAll(() {
     // Mockito needs dummy values for sealed/generic types it can't construct.
     provideDummy<Either<Failure, List<Email>>>(const Right([]));
+    provideDummy<Either<Failure, Email>>(Right(_email('dummy')));
     provideDummy<Either<Failure, Unit>>(const Right(unit));
     provideDummy<Set<String>>(<String>{});
   });
@@ -98,13 +100,14 @@ void main() {
     mockGetCachedEmails = MockGetCachedEmails();
     mockMoveEmail = MockMoveEmail();
     mockEmptyFolder = MockEmptyFolder();
+    mockMarkEmailAsRead = MockMarkEmailAsRead();
 
     bloc = EmailListBloc(
       getEmails: mockGetEmails,
       getCachedEmails: mockGetCachedEmails,
       cacheEmails: MockCacheEmails(),
       clearEmailCacheForFolder: MockClearEmailCacheForFolder(),
-      markEmailAsRead: MockMarkEmailAsRead(),
+      markEmailAsRead: mockMarkEmailAsRead,
       moveEmail: mockMoveEmail,
       reportJunk: MockReportJunk(),
       deleteEmail: MockDeleteEmail(),
@@ -227,6 +230,114 @@ void main() {
       await Future.delayed(const Duration(milliseconds: 50));
 
       verify(mockMoveEmail(any)).called(3);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // EmailListMarkThreadReadRequested
+  // ---------------------------------------------------------------------------
+
+  group('EmailListMarkThreadReadRequested', () {
+    // Stubs markEmailAsRead to echo back the same email flipped to the
+    // requested read state, mirroring the real use case's contract.
+    void stubMarkReadEchoes(List<Email> emails) {
+      final byId = {for (final e in emails) e.id: e};
+      when(mockMarkEmailAsRead(any)).thenAnswer((inv) async {
+        final params = inv.positionalArguments[0] as MarkEmailAsReadParams;
+        final source = byId[params.id] ?? _email(params.id);
+        return Right(source.copyWith(isRead: params.isRead));
+      });
+    }
+
+    test('marks every listed email read, not just the first', () async {
+      final emails = [
+        _email('id1', conversationId: 'conv-a', isRead: false),
+        _email('id2', conversationId: 'conv-a', isRead: false),
+        _email('id3', conversationId: 'conv-a', isRead: false),
+        _email('id4', conversationId: 'conv-b', isRead: false),
+      ];
+      await _loadEmails(emails);
+      stubMarkReadEchoes(emails);
+
+      // Opening thread conv-a hands the BLoC all three of its unread ids.
+      bloc.add(const EmailListMarkThreadReadRequested(
+        emailIds: ['id1', 'id2', 'id3'],
+        isRead: true,
+      ));
+
+      final state = await bloc.stream.firstWhere((s) =>
+          s is EmailListLoaded &&
+          s.emails.where((e) => !e.isRead).every((e) => e.id == 'id4'))
+          as EmailListLoaded;
+
+      Email byId(String id) => state.emails.firstWhere((e) => e.id == id);
+      expect(byId('id1').isRead, isTrue);
+      expect(byId('id2').isRead, isTrue);
+      expect(byId('id3').isRead, isTrue);
+      // A different thread is untouched.
+      expect(byId('id4').isRead, isFalse);
+    });
+
+    test('calls markEmailAsRead once per listed id', () async {
+      final emails = [
+        _email('id1', conversationId: 'conv-a', isRead: false),
+        _email('id2', conversationId: 'conv-a', isRead: false),
+      ];
+      await _loadEmails(emails);
+      stubMarkReadEchoes(emails);
+
+      bloc.add(const EmailListMarkThreadReadRequested(
+        emailIds: ['id1', 'id2'],
+        isRead: true,
+      ));
+
+      await bloc.stream.firstWhere(
+          (s) => s is EmailListLoaded && s.emails.every((e) => e.isRead));
+
+      verify(mockMarkEmailAsRead(any)).called(2);
+    });
+
+    // A single message that fails to persist must not stop the rest of the
+    // thread from being marked read.
+    test('a failing id does not block the others', () async {
+      final emails = [
+        _email('id1', conversationId: 'conv-a', isRead: false),
+        _email('id2', conversationId: 'conv-a', isRead: false),
+      ];
+      await _loadEmails(emails);
+      when(mockMarkEmailAsRead(any)).thenAnswer((inv) async {
+        final params = inv.positionalArguments[0] as MarkEmailAsReadParams;
+        if (params.id == 'id1') {
+          return const Left(ServerFailure(message: 'boom'));
+        }
+        return Right(_email(params.id, conversationId: 'conv-a')
+            .copyWith(isRead: params.isRead));
+      });
+
+      bloc.add(const EmailListMarkThreadReadRequested(
+        emailIds: ['id1', 'id2'],
+        isRead: true,
+      ));
+
+      final state = await bloc.stream.firstWhere((s) =>
+          s is EmailListLoaded &&
+          s.emails.firstWhere((e) => e.id == 'id2').isRead) as EmailListLoaded;
+
+      expect(state.emails.firstWhere((e) => e.id == 'id1').isRead, isFalse);
+      expect(state.emails.firstWhere((e) => e.id == 'id2').isRead, isTrue);
+    });
+
+    test('an empty id list makes no use-case calls', () async {
+      await _loadEmails([_email('id1', isRead: false)]);
+      clearInteractions(mockMarkEmailAsRead);
+
+      bloc.add(const EmailListMarkThreadReadRequested(
+        emailIds: [],
+        isRead: true,
+      ));
+      await Future.delayed(const Duration(milliseconds: 20));
+
+      verifyNever(mockMarkEmailAsRead(any));
     });
   });
 

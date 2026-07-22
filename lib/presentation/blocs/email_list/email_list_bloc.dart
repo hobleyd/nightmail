@@ -66,6 +66,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     on<EmailListRefreshRequested>(_onRefreshRequested);
     on<EmailListCacheRefreshRequested>(_onCacheRefreshRequested);
     on<EmailListMarkReadRequested>(_onMarkReadRequested);
+    on<EmailListMarkThreadReadRequested>(_onMarkThreadReadRequested);
     on<EmailListToggleConversation>(_onToggleConversation);
     on<EmailListEmailsMoved>(_onEmailsMoved);
     on<EmailListEmailDeleted>(_onEmailDeleted);
@@ -362,6 +363,29 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         emit(current.copyWith(emails: updatedList));
       },
     );
+  }
+
+  Future<void> _onMarkThreadReadRequested(
+    EmailListMarkThreadReadRequested event,
+    Emitter<EmailListState> emit,
+  ) async {
+    if (state is! EmailListLoaded) return;
+
+    final updates = <String, Email>{};
+    for (final id in event.emailIds) {
+      final result = await _markEmailAsRead(
+        MarkEmailAsReadParams(id: id, isRead: event.isRead),
+      );
+      result.fold((_) {}, (updated) => updates[updated.id] = updated);
+    }
+    if (updates.isEmpty) return;
+
+    // Re-read state: it may have changed while the awaits were in flight.
+    final latest = state;
+    if (latest is! EmailListLoaded) return;
+    final updatedList =
+        latest.emails.map((e) => updates[e.id] ?? e).toList();
+    emit(latest.copyWith(emails: updatedList));
   }
 
   void _onToggleConversation(

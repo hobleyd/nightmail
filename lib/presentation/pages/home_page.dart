@@ -447,8 +447,9 @@ class _MobileLayoutState extends State<_MobileLayout> {
                 context.read<EmailDetailBloc>().add(
                       EmailDetailLoadRequested(emailId: email.id),
                     );
-                if (!email.isRead) {
-                  _markReadOnceLoaded(context, email, selectedFolder);
+                final unreadIds = _unreadThreadEmailIds(context, email);
+                if (unreadIds.isNotEmpty) {
+                  _markReadOnceLoaded(context, email, unreadIds, selectedFolder);
                 }
                 setState(() => _setStep(_MobileStep.readingPane));
               }
@@ -657,8 +658,13 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
       context.read<EmailDetailBloc>().add(
             EmailDetailLoadRequested(emailId: email.id),
           );
-      if (!email.isRead) {
-        _markReadOnceLoaded(context, email, selectedFolder);
+      // Marking is thread-wide: opening a conversation flips every unread
+      // message in it, not just the one shown in the reading pane. This also
+      // covers the case where the newest message is already read but an
+      // older one in the thread is still unread.
+      final unreadIds = _unreadThreadEmailIds(context, email);
+      if (unreadIds.isNotEmpty) {
+        _markReadOnceLoaded(context, email, unreadIds, selectedFolder);
       }
     }
 
@@ -1103,9 +1109,33 @@ class _ResizeHandleState extends State<_ResizeHandle> {
 /// with a full body, no network to fall back to) got marked read anyway —
 /// the user could no longer tell it was still unseen once they went back
 /// online, even though they'd never actually read it.
+/// Returns the ids of every unread message that belongs to [email]'s
+/// conversation thread (falling back to just [email] itself when it isn't
+/// part of a thread or the list state is unavailable). Grouping mirrors the
+/// email list panel: messages share a thread when their `conversationId`
+/// (or, absent one, their own id) matches.
+List<String> _unreadThreadEmailIds(BuildContext context, Email email) {
+  final listState = context.read<EmailListBloc>().state;
+  final threadKey = email.conversationId ?? email.id;
+  if (listState is! EmailListLoaded) {
+    return email.isRead ? const [] : [email.id];
+  }
+  return listState.emails
+      .where((e) => (e.conversationId ?? e.id) == threadKey && !e.isRead)
+      .map((e) => e.id)
+      .toList();
+}
+
+/// Marks [unreadIds] read only once the tapped email's content actually
+/// finishes loading, not the instant it's tapped. Firing the mark-read/
+/// unread-count side effects eagerly meant an unread email that fails to open
+/// offline (never cached with a full body, no network to fall back to) got
+/// marked read anyway — the user could no longer tell it was still unseen once
+/// they went back online, even though they'd never actually read it.
 void _markReadOnceLoaded(
   BuildContext context,
   Email email,
+  List<String> unreadIds,
   EmailFolder? selectedFolder,
 ) {
   context
@@ -1116,17 +1146,20 @@ void _markReadOnceLoaded(
     if (state is! EmailDetailLoaded || state.email.id != email.id) return;
     if (!context.mounted) return;
     context.read<EmailListBloc>().add(
-          EmailListMarkReadRequested(emailId: email.id, isRead: true),
+          EmailListMarkThreadReadRequested(emailIds: unreadIds, isRead: true),
         );
     if (selectedFolder != null) {
       context.read<FolderListBloc>().add(
             FolderListUnreadCountChanged(
               folderId: selectedFolder.id,
-              unreadCountDelta: -1,
+              unreadCountDelta: -unreadIds.length,
             ),
           );
     }
-    context.read<MailPollerCubit>().decrementUnreadCount();
+    final poller = context.read<MailPollerCubit>();
+    for (var i = 0; i < unreadIds.length; i++) {
+      poller.decrementUnreadCount();
+    }
   });
 }
 

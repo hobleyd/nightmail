@@ -44,6 +44,21 @@ final class EmailListMarkReadRequested extends EmailListEvent {
   List<Object?> get props => [emailId, isRead];
 }
 
+/// Marks every listed email read/unread in one shot. Used when opening a
+/// conversation thread so *all* its unread messages flip, not just the one
+/// shown in the reading pane.
+final class EmailListMarkThreadReadRequested extends EmailListEvent {
+  const EmailListMarkThreadReadRequested({
+    required this.emailIds,
+    required this.isRead,
+  });
+  final List<String> emailIds;
+  final bool isRead;
+
+  @override
+  List<Object?> get props => [emailIds, isRead];
+}
+
 final class EmailListToggleConversation extends EmailListEvent {
   const EmailListToggleConversation({required this.conversationId});
   final String conversationId;

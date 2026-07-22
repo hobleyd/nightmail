@@ -965,7 +965,10 @@ class _EmailListView extends StatelessWidget {
               context.read<HomeCubit>().clearEmail();
             }
           }
-          context.read<EmailListBloc>().add(EmailListEmailDeleted(emailId: conv.latestEmail.id));
+          context.read<EmailListBloc>().add(
+                EmailListConversationDeleted(
+                    conversationId: conv.conversationId),
+              );
         }
         void onConvFlag(DateTime? date) =>
             _createTaskFromEmail(context, conv.latestEmail, dueDate: date);

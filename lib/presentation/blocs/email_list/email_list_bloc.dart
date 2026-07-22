@@ -71,6 +71,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     on<EmailListEmailsMoved>(_onEmailsMoved);
     on<EmailListEmailDeleted>(_onEmailDeleted);
     on<EmailListEmailsBulkDeleted>(_onEmailsBulkDeleted);
+    on<EmailListConversationDeleted>(_onConversationDeleted);
     on<EmailListJunkReported>(_onJunkReported);
     on<EmailListFolderEmptied>(_onFolderEmptied);
     on<EmailListCleared>(_onCleared);
@@ -483,6 +484,48 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     ));
     await Future.wait(
       event.emailIds.map((id) => _deleteEmail(DeleteEmailParams(id: id))),
+    );
+  }
+
+  Future<void> _onConversationDeleted(
+    EmailListConversationDeleted event,
+    Emitter<EmailListState> emit,
+  ) async {
+    final current = state;
+    if (current is! EmailListLoaded) return;
+
+    final threadEmails = current.emails
+        .where((e) => e.conversationId == event.conversationId)
+        .toList();
+    if (threadEmails.isEmpty) return;
+
+    // Delete only the messages physically in the folder being viewed. Graph
+    // and Gmail surface a thread's other-folder replies in this list, but
+    // those have already been filed elsewhere and must be left alone. A null
+    // folder id means an unscoped view (no folder to filter against), so the
+    // whole thread is fair game; a null parentFolderId means the message came
+    // straight from the folder query (augmented emails always carry a real
+    // one), so it counts as in-folder.
+    final folderId = current.currentFolderId;
+    final toDelete = folderId == null
+        ? threadEmails
+        : threadEmails
+            .where((e) =>
+                e.parentFolderId == null || e.parentFolderId == folderId)
+            .toList();
+    if (toDelete.isEmpty) return;
+
+    // Remove the whole thread from view: with its in-folder members gone the
+    // conversation no longer belongs in this folder, so any augmented
+    // other-folder rows should disappear with it rather than leave a stub.
+    emit(current.copyWith(
+      emails: current.emails
+          .where((e) => e.conversationId != event.conversationId)
+          .toList(),
+    ));
+
+    await Future.wait(
+      toDelete.map((e) => _deleteEmail(DeleteEmailParams(id: e.id))),
     );
   }
 

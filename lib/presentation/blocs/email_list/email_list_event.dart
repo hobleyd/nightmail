@@ -83,6 +83,20 @@ final class EmailListEmailsBulkDeleted extends EmailListEvent {
   List<Object?> get props => [emailIds];
 }
 
+/// Deletes an entire conversation thread. Only messages physically in the
+/// folder currently being viewed are deleted — messages the thread has
+/// already been filed into other folders (surfaced here by cross-folder
+/// thread augmentation on Graph/Gmail) are left untouched. The whole thread
+/// is removed from the current view regardless, since it only appears here on
+/// the strength of its in-folder members.
+final class EmailListConversationDeleted extends EmailListEvent {
+  const EmailListConversationDeleted({required this.conversationId});
+  final String conversationId;
+
+  @override
+  List<Object?> get props => [conversationId];
+}
+
 final class EmailListEmailsMoved extends EmailListEvent {
   const EmailListEmailsMoved({
     required this.emailIds,

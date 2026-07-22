@@ -36,7 +36,13 @@ import 'email_list_bloc_test.mocks.dart';
 
 const _addr = EmailAddress(address: 'a@b.com', name: 'A');
 
-Email _email(String id, {String? conversationId, bool isRead = true}) => Email(
+Email _email(
+  String id, {
+  String? conversationId,
+  bool isRead = true,
+  String? parentFolderId,
+}) =>
+    Email(
       id: id,
       subject: 'Subject $id',
       from: _addr,
@@ -49,6 +55,7 @@ Email _email(String id, {String? conversationId, bool isRead = true}) => Email(
       receivedDateTime: DateTime(2026),
       importance: EmailImportance.normal,
       conversationId: conversationId,
+      parentFolderId: parentFolderId,
     );
 
 // Fake AccountManager that always reports no active account — keeps the BLoC
@@ -86,6 +93,7 @@ void main() {
   late MockMoveEmail mockMoveEmail;
   late MockEmptyFolder mockEmptyFolder;
   late MockMarkEmailAsRead mockMarkEmailAsRead;
+  late MockDeleteEmail mockDeleteEmail;
 
   setUpAll(() {
     // Mockito needs dummy values for sealed/generic types it can't construct.
@@ -101,6 +109,7 @@ void main() {
     mockMoveEmail = MockMoveEmail();
     mockEmptyFolder = MockEmptyFolder();
     mockMarkEmailAsRead = MockMarkEmailAsRead();
+    mockDeleteEmail = MockDeleteEmail();
 
     bloc = EmailListBloc(
       getEmails: mockGetEmails,
@@ -110,7 +119,7 @@ void main() {
       markEmailAsRead: mockMarkEmailAsRead,
       moveEmail: mockMoveEmail,
       reportJunk: MockReportJunk(),
-      deleteEmail: MockDeleteEmail(),
+      deleteEmail: mockDeleteEmail,
       emptyFolder: mockEmptyFolder,
       accountManager: _FakeAccountManager(),
       recordKnownSenders: MockRecordKnownSenders(),
@@ -124,10 +133,10 @@ void main() {
 
   tearDown(() async => bloc.close());
 
-  Future<void> _loadEmails(List<Email> emails) async {
+  Future<void> _loadEmails(List<Email> emails, {String? folderId}) async {
     when(mockGetCachedEmails(any)).thenAnswer((_) async => const Right([]));
     when(mockGetEmails(any)).thenAnswer((_) async => Right(emails));
-    bloc.add(const EmailListLoadRequested());
+    bloc.add(EmailListLoadRequested(folderId: folderId));
     await bloc.stream.firstWhere((s) => s is EmailListLoaded);
   }
 
@@ -338,6 +347,101 @@ void main() {
       await Future.delayed(const Duration(milliseconds: 20));
 
       verifyNever(mockMarkEmailAsRead(any));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // EmailListConversationDeleted
+  // ---------------------------------------------------------------------------
+
+  group('EmailListConversationDeleted', () {
+    setUp(() {
+      when(mockDeleteEmail(any)).thenAnswer((_) async => const Right(unit));
+    });
+
+    List<String> deletedIds() =>
+        verify(mockDeleteEmail(captureAny)).captured
+            .map((p) => (p as DeleteEmailParams).id)
+            .toList();
+
+    test('deletes every in-folder message of the thread, not just the latest',
+        () async {
+      await _loadEmails([
+        _email('id1', conversationId: 'conv-a', parentFolderId: 'inbox'),
+        _email('id2', conversationId: 'conv-a', parentFolderId: 'inbox'),
+        _email('id3', conversationId: 'conv-a', parentFolderId: 'inbox'),
+        _email('id4', conversationId: 'conv-b', parentFolderId: 'inbox'),
+      ], folderId: 'inbox');
+
+      bloc.add(const EmailListConversationDeleted(conversationId: 'conv-a'));
+
+      final state = await bloc.stream.firstWhere((s) =>
+          s is EmailListLoaded &&
+          !s.emails.any((e) => e.conversationId == 'conv-a')) as EmailListLoaded;
+      // Allow the awaited deletes to flush.
+      await Future.delayed(const Duration(milliseconds: 20));
+
+      final deleted = deletedIds();
+      expect(deleted, containsAll(['id1', 'id2', 'id3']));
+      expect(deleted, isNot(contains('id4')));
+      // The other thread is left in view.
+      expect(state.emails.map((e) => e.id), ['id4']);
+    });
+
+    test('leaves messages the thread has filed in a sub-folder untouched',
+        () async {
+      await _loadEmails([
+        _email('id1', conversationId: 'conv-a', parentFolderId: 'inbox'),
+        _email('id2', conversationId: 'conv-a', parentFolderId: 'inbox'),
+        // Same thread, already filed into a sub-folder (cross-folder
+        // augmentation surfaced it in the inbox view).
+        _email('id3', conversationId: 'conv-a', parentFolderId: 'archive'),
+      ], folderId: 'inbox');
+
+      bloc.add(const EmailListConversationDeleted(conversationId: 'conv-a'));
+
+      final state = await bloc.stream.firstWhere((s) =>
+          s is EmailListLoaded &&
+          !s.emails.any((e) => e.conversationId == 'conv-a')) as EmailListLoaded;
+      await Future.delayed(const Duration(milliseconds: 20));
+
+      final deleted = deletedIds();
+      expect(deleted, containsAll(['id1', 'id2']));
+      expect(deleted, isNot(contains('id3')),
+          reason: 'sub-folder member must survive');
+      // Whole thread stub still leaves the current view.
+      expect(state.emails.where((e) => e.conversationId == 'conv-a'), isEmpty);
+    });
+
+    test('treats a null parentFolderId as in-folder', () async {
+      await _loadEmails([
+        _email('id1', conversationId: 'conv-a', parentFolderId: 'inbox'),
+        _email('id2', conversationId: 'conv-a'), // null parentFolderId
+      ], folderId: 'inbox');
+
+      bloc.add(const EmailListConversationDeleted(conversationId: 'conv-a'));
+
+      await bloc.stream.firstWhere((s) =>
+          s is EmailListLoaded && s.emails.isEmpty);
+      await Future.delayed(const Duration(milliseconds: 20));
+
+      expect(deletedIds(), containsAll(['id1', 'id2']));
+    });
+
+    test('deletes the whole thread when the view is unscoped (null folder)',
+        () async {
+      await _loadEmails([
+        _email('id1', conversationId: 'conv-a', parentFolderId: 'inbox'),
+        _email('id2', conversationId: 'conv-a', parentFolderId: 'archive'),
+      ]); // no folderId → currentFolderId null
+
+      bloc.add(const EmailListConversationDeleted(conversationId: 'conv-a'));
+
+      await bloc.stream.firstWhere((s) =>
+          s is EmailListLoaded && s.emails.isEmpty);
+      await Future.delayed(const Duration(milliseconds: 20));
+
+      expect(deletedIds(), containsAll(['id1', 'id2']));
     });
   });
 

@@ -150,6 +150,14 @@ bool Win32Window::Create(const std::wstring& title,
 }
 
 bool Win32Window::Show() {
+  // The window is created hidden and first revealed here on the first-frame
+  // callback. If something set the window to maximized before the first frame
+  // (e.g. window_manager restoring the last session's maximized state from
+  // Dart's main()), SW_SHOWNORMAL would restore it to un-maximized and lose
+  // that state. Preserve a maximized window instead of forcing it normal.
+  if (IsZoomed(window_handle_)) {
+    return ShowWindow(window_handle_, SW_SHOWMAXIMIZED);
+  }
   return ShowWindow(window_handle_, SW_SHOWNORMAL);
 }
 

@@ -1859,6 +1859,7 @@ class _AttachmentsSection extends StatelessWidget {
                         ))
                     .toList(),
               ),
+              const SizedBox(height: 6),
               Align(
                 alignment: Alignment.centerRight,
                 child: _SaveAllButton(

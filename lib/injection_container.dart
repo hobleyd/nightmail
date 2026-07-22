@@ -110,6 +110,7 @@ import 'infrastructure/network/connectivity_service.dart';
 import 'infrastructure/notifications/calendar_reminder_service.dart';
 import 'infrastructure/notifications/notification_service.dart';
 import 'infrastructure/sync/outbox_drain_service.dart';
+import 'infrastructure/sync/removal_tombstone_store.dart';
 import 'infrastructure/sync/spam_db_sync_service.dart';
 import 'presentation/blocs/account/account_cubit.dart';
 import 'presentation/blocs/calendar/calendar_bloc.dart';
@@ -193,6 +194,7 @@ Future<void> configureDependencies() async {
     () => SenderLocalDatasourceImpl(database: sl<AppDatabase>()),
   );
   sl.registerLazySingleton<ConnectivityService>(() => ConnectivityServiceImpl());
+  sl.registerLazySingleton(() => RemovalTombstoneStore());
   sl.registerLazySingleton(
     () => OutboxDrainService(
       pendingOperations: sl<PendingOperationsDatasource>(),
@@ -212,6 +214,7 @@ Future<void> configureDependencies() async {
       pendingOperations: sl<PendingOperationsDatasource>(),
       outboxDrainService: sl<OutboxDrainService>(),
       connectivityService: sl<ConnectivityService>(),
+      removalTombstones: sl<RemovalTombstoneStore>(),
     ),
   );
   sl.registerLazySingleton<SenderRepository>(
@@ -332,6 +335,7 @@ Future<void> configureDependencies() async {
       notificationService: sl<NotificationService>(),
       outboxDrainService: sl<OutboxDrainService>(),
       pendingOperations: sl<PendingOperationsDatasource>(),
+      removalTombstones: sl<RemovalTombstoneStore>(),
       spamDbSyncService: sl<SpamDbSyncService>(),
     ),
   );

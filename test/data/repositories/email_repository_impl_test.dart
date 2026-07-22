@@ -17,6 +17,7 @@ import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 import 'package:nightmail/infrastructure/network/connectivity_service.dart';
 import 'package:nightmail/infrastructure/sync/outbox_drain_service.dart';
+import 'package:nightmail/infrastructure/sync/removal_tombstone_store.dart';
 
 import 'email_repository_impl_test.mocks.dart';
 
@@ -38,6 +39,7 @@ void main() {
   late MockPendingOperationsDatasource mockPendingOperations;
   late MockOutboxDrainService mockOutboxDrainService;
   late MockConnectivityService mockConnectivityService;
+  late RemovalTombstoneStore removalTombstones;
 
   setUp(() {
     mockAccountManager = MockAccountManager();
@@ -47,6 +49,7 @@ void main() {
     mockPendingOperations = MockPendingOperationsDatasource();
     mockOutboxDrainService = MockOutboxDrainService();
     mockConnectivityService = MockConnectivityService();
+    removalTombstones = RemovalTombstoneStore();
 
     when(mockAccountManager.emailDatasource).thenReturn(mockRemoteDatasource);
     // Return null active account so getEmails() skips cache write by default
@@ -74,6 +77,7 @@ void main() {
       pendingOperations: mockPendingOperations,
       outboxDrainService: mockOutboxDrainService,
       connectivityService: mockConnectivityService,
+      removalTombstones: removalTombstones,
     );
   });
 
@@ -193,6 +197,35 @@ void main() {
         accountId: anyNamed('accountId'),
         folderId: anyNamed('folderId'),
       ));
+    });
+
+    // Regression: a message optimistically removed then drained/dequeued must
+    // stay gone even when no pending op references it any more — the removal
+    // tombstone store closes that post-drain window (shared with the poller).
+    test('drops a recently-removed message with no pending op (tombstone store)',
+        () async {
+      when(mockRemoteDatasource.getEmails(
+        folderId: anyNamed('folderId'),
+        top: anyNamed('top'),
+        skip: anyNamed('skip'),
+        filter: anyNamed('filter'),
+        orderBy: anyNamed('orderBy'),
+      )).thenAnswer((_) async => [tEmailModel]); // id: 'email-1'
+      when(mockLocalDatasource.cacheEmails(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+        emails: anyNamed('emails'),
+      )).thenAnswer((_) async {});
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      // No pending op (default stub returns []), but it was recently removed.
+      removalTombstones.record('account-1', 'email-1');
+
+      final result = await repository.getEmails(folderId: 'folder-1');
+
+      expect(result.isRight(), isTrue);
+      // Right → the reconciled list; falls back to a non-empty list only if it
+      // were unexpectedly Left, which would (correctly) fail the isEmpty check.
+      expect(result.getOrElse((_) => [tEmailModel]), isEmpty);
     });
 
     test('returns Left(ServerFailure) on ServerException', () async {

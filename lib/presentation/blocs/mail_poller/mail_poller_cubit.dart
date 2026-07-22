@@ -21,6 +21,7 @@ import '../../../infrastructure/badge/badge_service.dart';
 import '../../../infrastructure/network/connectivity_service.dart';
 import '../../../infrastructure/notifications/notification_service.dart';
 import '../../../infrastructure/sync/outbox_drain_service.dart';
+import '../../../infrastructure/sync/removal_tombstone_store.dart';
 import '../../../infrastructure/sync/spam_db_sync_service.dart';
 import 'mail_poller_state.dart';
 
@@ -36,6 +37,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     required NotificationService notificationService,
     required OutboxDrainService outboxDrainService,
     required PendingOperationsDatasource pendingOperations,
+    required RemovalTombstoneStore removalTombstones,
     required SpamDbSyncService spamDbSyncService,
   })  : _accountManager = accountManager,
         _appSettings = appSettings,
@@ -47,6 +49,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
         _notificationService = notificationService,
         _outboxDrainService = outboxDrainService,
         _pendingOperations = pendingOperations,
+        _removalTombstones = removalTombstones,
         _spamDbSyncService = spamDbSyncService,
         super(const MailPollerState(
           accountsWithNewMail: {},
@@ -63,6 +66,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   final NotificationService _notificationService;
   final OutboxDrainService _outboxDrainService;
   final PendingOperationsDatasource _pendingOperations;
+  final RemovalTombstoneStore _removalTombstones;
   final SpamDbSyncService _spamDbSyncService;
 
   Timer? _timer;
@@ -525,7 +529,13 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     List<Email> emails,
   ) async {
     final pendingOps = await _pendingOperations.getPendingOperations(accountId);
-    if (pendingOps.isEmpty) return emails;
+    // Recently-removed tombstones outlive op dequeue, closing the race where a
+    // server snapshot built before the mutation propagated resolves after the
+    // outbox drain removed the pending op. Shared with EmailRepositoryImpl so
+    // both reconciliation paths agree; matters most for a multi-message action
+    // like deleting a whole thread, whose ops drain one at a time.
+    final recentlyRemovedIds = _removalTombstones.activeIds(accountId);
+    if (pendingOps.isEmpty && recentlyRemovedIds.isEmpty) return emails;
 
     final tombstoned = <String>{
       for (final op in pendingOps)
@@ -533,6 +543,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
             op.opType == PendingOperationType.move ||
             op.opType == PendingOperationType.junk)
           op.emailId,
+      ...recentlyRemovedIds,
     };
     final pendingReadIds = <String>{
       for (final op in pendingOps)

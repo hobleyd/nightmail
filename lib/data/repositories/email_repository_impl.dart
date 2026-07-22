@@ -14,6 +14,7 @@ import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../../infrastructure/network/connectivity_service.dart';
 import '../../infrastructure/sync/outbox_drain_service.dart';
+import '../../infrastructure/sync/removal_tombstone_store.dart';
 import '../datasources/local/email_local_datasource.dart';
 import '../datasources/local/folder_local_datasource.dart';
 import '../datasources/local/pending_operations_datasource.dart';
@@ -27,6 +28,7 @@ class EmailRepositoryImpl implements EmailRepository {
     required this._pendingOperations,
     required this._outboxDrainService,
     required this._connectivityService,
+    required this._removalTombstones,
   });
 
   final AccountManager _accountManager;
@@ -35,22 +37,12 @@ class EmailRepositoryImpl implements EmailRepository {
   final PendingOperationsDatasource _pendingOperations;
   final OutboxDrainService _outboxDrainService;
   final ConnectivityService _connectivityService;
+  final RemovalTombstoneStore _removalTombstones;
 
   static const _defaultFolderKey = '__DEFAULT__';
 
-  /// Ids optimistically removed by a delete/move/junk, kept tombstoned for a
-  /// short window *after* the outbox op drains and dequeues, keyed
-  /// `accountId::emailId` → expiry. A server fetch issued before the mutation
-  /// propagated can otherwise resolve *after* the drain removed the pending op
-  /// (see [_reconcileAgainstPendingOps]): with no op left to match, the stale
-  /// snapshot would be re-cached and repaint the just-removed row. IMAP UIDs
-  /// collide across accounts, so the key is account-scoped.
-  final Map<String, DateTime> _recentlyRemoved = {};
-  static const _removalTombstoneTtl = Duration(seconds: 30);
-
   void _tombstoneRemoval(String accountId, String emailId) {
-    _recentlyRemoved['$accountId::$emailId'] =
-        DateTime.now().add(_removalTombstoneTtl);
+    _removalTombstones.record(accountId, emailId);
   }
 
   /// Returns the datasource to send through for [accountId]. Falls back to
@@ -127,13 +119,7 @@ class EmailRepositoryImpl implements EmailRepository {
     // Recently-removed tombstones survive a short window past op dequeue,
     // closing the race where a server snapshot built before the mutation
     // propagated resolves after the outbox drain removed the pending op.
-    final now = DateTime.now();
-    _recentlyRemoved.removeWhere((_, expiry) => !expiry.isAfter(now));
-    final prefix = '$accountId::';
-    final recentlyRemovedIds = <String>{
-      for (final key in _recentlyRemoved.keys)
-        if (key.startsWith(prefix)) key.substring(prefix.length),
-    };
+    final recentlyRemovedIds = _removalTombstones.activeIds(accountId);
 
     final tombstoned = <String>{
       for (final op in pendingOps)

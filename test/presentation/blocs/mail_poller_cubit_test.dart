@@ -24,6 +24,7 @@ import 'package:nightmail/infrastructure/badge/badge_service.dart';
 import 'package:nightmail/infrastructure/network/connectivity_service.dart';
 import 'package:nightmail/infrastructure/notifications/notification_service.dart';
 import 'package:nightmail/infrastructure/sync/outbox_drain_service.dart';
+import 'package:nightmail/infrastructure/sync/removal_tombstone_store.dart';
 import 'package:nightmail/infrastructure/sync/spam_db_sync_service.dart';
 import 'package:nightmail/presentation/blocs/mail_poller/mail_poller_cubit.dart';
 import 'package:nightmail/presentation/blocs/mail_poller/mail_poller_state.dart';
@@ -121,6 +122,7 @@ void main() {
   late MockOutboxDrainService mockOutboxDrainService;
   late MockPendingOperationsDatasource mockPendingOperations;
   late MockSpamDbSyncService mockSpamDbSyncService;
+  late RemovalTombstoneStore removalTombstones;
 
   MailPollerCubit _makeCubit() => MailPollerCubit(
         accountManager: mockAccountManager,
@@ -133,6 +135,7 @@ void main() {
         notificationService: mockNotificationService,
         outboxDrainService: mockOutboxDrainService,
         pendingOperations: mockPendingOperations,
+        removalTombstones: removalTombstones,
         spamDbSyncService: mockSpamDbSyncService,
       );
 
@@ -189,6 +192,7 @@ void main() {
     mockOutboxDrainService = MockOutboxDrainService();
     mockNotificationService = MockNotificationService();
     mockSpamDbSyncService = MockSpamDbSyncService();
+    removalTombstones = RemovalTombstoneStore();
     provideDummy<Either<Failure, List<EmailFolder>>>(const Right([]));
     _stubInfra();
   });
@@ -511,6 +515,41 @@ void main() {
       )).captured.single as List<dynamic>;
       final cachedIds = cached.map((e) => (e as dynamic).id).toSet();
       expect(cachedIds, isNot(contains('deleted-msg')));
+      expect(cachedIds, contains('kept-msg'));
+    });
+
+    // Regression: the pending-op tombstone above only covers a message while
+    // its outbox op is still queued. Once the drain deletes and dequeues the
+    // op, a stale server snapshot resolving in that window would resurrect it.
+    // A multi-message delete (e.g. a whole conversation thread) drains one op
+    // at a time over several seconds, widening that window. The recently-
+    // removed tombstone store — shared with EmailRepositoryImpl — must be
+    // honoured here too, or the poll re-caches the just-deleted message.
+    test('drops a message that is in the removal tombstone store even with no '
+        'pending op (post-drain window)', () async {
+      when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
+          .thenAnswer((_) async => MailDeltaResult(
+                upserted: [_email('drained-msg'), _email('kept-msg')],
+                removedIds: [],
+                deltaLink: _newToken,
+              ));
+      // No pending op for it any more — the drain already dequeued it.
+      when(mockPendingOperations.getPendingOperations(_msId))
+          .thenAnswer((_) async => []);
+      removalTombstones.record(_msId, 'drained-msg');
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      final cached = verify(mockEmailLocalDatasource.cacheEmails(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+        emails: captureAnyNamed('emails'),
+      )).captured.single as List<dynamic>;
+      final cachedIds = cached.map((e) => (e as dynamic).id).toSet();
+      expect(cachedIds, isNot(contains('drained-msg')));
       expect(cachedIds, contains('kept-msg'));
     });
 

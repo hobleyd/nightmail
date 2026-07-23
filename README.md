@@ -18,12 +18,16 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - Full-text search within folders
 - Sender anomaly and spam detection
 - Spam filter synced across IMAP clients via a dedicated server-side folder
+- Delete a conversation thread's in-folder messages from the reading pane
+- Double-click an image in a message to open it in a resizable window
+- Spell-checking with inline suggestions in the compose editor (macOS, Windows, Linux)
 
 ### Folders
 - Full folder hierarchy with unread counts
 - Create folders via right-click context menu
 - Empty folder (with permanent delete option)
 - Incremental sync with delta tokens (Microsoft 365)
+- Drag folders in the list to reparent them
 
 ### Calendar
 - View, create, update, and delete events
@@ -32,6 +36,7 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - Propose new meeting times
 - Recurring event support
 - Timezone-aware scheduling
+- Google Meet toggle for Gmail meetings
 - Supported backends: Microsoft Graph, Google Calendar, Nextcloud CalDAV, macOS/iOS EventKit
 
 ### Tasks

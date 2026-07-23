@@ -975,6 +975,49 @@ class _AccountsSectionState extends State<_AccountsSection> {
     );
   }
 
+  void _confirmClearCache(BuildContext context) {
+    if (_selectedAccount == null) return;
+    final account = _selectedAccount!;
+    final name = account.displayName.isEmpty
+        ? account.emailAddress
+        : account.displayName;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Clear Cache'),
+        content: Text(
+          'Clear the locally cached mail for "$name"? The account stays '
+          'signed in and everything re-downloads from the server. Use this '
+          'if cached messages look stale or incomplete.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final messenger = ScaffoldMessenger.of(context);
+              final accountCubit = context.read<AccountCubit>();
+              Navigator.of(ctx).pop();
+              final error = await accountCubit.clearCache(account.id);
+              messenger.showSnackBar(
+                SnackBar(
+                  content: Text(
+                    error == null
+                        ? 'Cache cleared. Refresh a folder to re-download.'
+                        : 'Failed to clear cache: $error',
+                  ),
+                ),
+              );
+            },
+            child: const Text('Clear'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _saveChanges() {
     if (_selectedAccount == null) return;
 
@@ -1381,6 +1424,14 @@ class _AccountsSectionState extends State<_AccountsSection> {
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
+                TextButton(
+                  onPressed: () => _confirmClearCache(context),
+                  style: TextButton.styleFrom(
+                    textStyle: const TextStyle(fontSize: 13),
+                  ),
+                  child: const Text('Clear Cache'),
+                ),
+                const SizedBox(width: 8),
                 TextButton(
                   onPressed: () => _confirmDeleteAccount(context),
                   style: TextButton.styleFrom(

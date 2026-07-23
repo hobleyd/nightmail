@@ -248,6 +248,14 @@ class AccountCubit extends Cubit<AccountState> {
     }
   }
 
+  /// Clear the locally cached mail for an account without removing the
+  /// account. Everything re-syncs from the server on next fetch. Returns the
+  /// failure message if clearing failed, or null on success.
+  Future<String?> clearCache(String accountId) async {
+    final result = await _emailRepository.clearCacheForAccount(accountId);
+    return result.fold((failure) => failure.message, (_) => null);
+  }
+
   /// Sign out of the active account, clearing credentials but keeping the
   /// account configured. The account will show a re-authentication prompt.
   Future<void> signOutActiveAccount() async {

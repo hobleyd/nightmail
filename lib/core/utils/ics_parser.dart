@@ -1,3 +1,8 @@
+import 'package:timezone/data/latest.dart' as tz_data;
+import 'package:timezone/timezone.dart' as tz;
+
+import 'windows_timezones.dart';
+
 class IcsEvent {
   const IcsEvent({
     required this.summary,
@@ -48,7 +53,11 @@ class IcsParser {
       final colonIdx = line.indexOf(':');
       if (colonIdx == -1) continue;
 
-      final namePart = line.substring(0, colonIdx).toUpperCase();
+      // Keep the original case for TZID extraction (IANA names are
+      // case-sensitive, e.g. America/New_York); match property names
+      // case-insensitively below.
+      final rawName = line.substring(0, colonIdx);
+      final namePart = rawName.toUpperCase();
       final value = line.substring(colonIdx + 1);
 
       if (namePart == 'SUMMARY') {
@@ -56,13 +65,13 @@ class IcsParser {
       } else if (namePart == 'UID') {
         uid = value;
       } else if (namePart.startsWith('DTSTART')) {
-        final (dt, allDay) = parseDateTime(namePart, value);
+        final (dt, allDay) = parseDateTime(rawName, value);
         if (dt != null) {
           start = dt;
           isAllDay = allDay;
         }
       } else if (namePart.startsWith('DTEND')) {
-        final (dt, _) = parseDateTime(namePart, value);
+        final (dt, _) = parseDateTime(rawName, value);
         if (dt != null) end = dt;
       } else if (namePart == 'DURATION') {
         duration = parseDuration(value);
@@ -91,10 +100,16 @@ class IcsParser {
     );
   }
 
+  /// Parses a DTSTART/DTEND property.
+  ///
+  /// [namePart] is the property name *with parameters* and in its original
+  /// case (e.g. `DTSTART;TZID=America/New_York`) so the case-sensitive IANA
+  /// TZID can be recovered.
   static (DateTime?, bool) parseDateTime(String namePart, String value) {
+    final upperName = namePart.toUpperCase();
     // All-day: VALUE=DATE (not DATE-TIME).
     final isDate =
-        namePart.contains('VALUE=DATE') && !namePart.contains('DATE-TIME');
+        upperName.contains('VALUE=DATE') && !upperName.contains('DATE-TIME');
     if (isDate) {
       if (value.length >= 8) {
         final y = int.tryParse(value.substring(0, 4));
@@ -107,7 +122,10 @@ class IcsParser {
       return (null, true);
     }
 
-    // UTC: 20260615T100000Z  or  local with TZID: 20260615T100000
+    // Three forms:
+    //   UTC:            20260615T100000Z
+    //   zoned (TZID):   DTSTART;TZID=America/New_York:20260615T100000
+    //   floating:       20260615T100000   (no Z, no TZID)
     final isUtc = value.endsWith('Z');
     final digits = value.replaceAll(RegExp(r'[TZ]'), '');
     if (digits.length >= 14) {
@@ -123,13 +141,61 @@ class IcsParser {
           h != null &&
           mi != null &&
           s != null) {
-        final dt = isUtc
-            ? DateTime.utc(y, mo, d, h, mi, s)
-            : DateTime(y, mo, d, h, mi, s).toUtc();
+        final DateTime dt;
+        if (isUtc) {
+          dt = DateTime.utc(y, mo, d, h, mi, s);
+        } else {
+          final tzid = _extractTzid(namePart);
+          dt = _fromTzid(tzid, y, mo, d, h, mi, s) ??
+              // No TZID (or an unresolvable one): interpret the wall-clock
+              // time in the host's local zone as a last resort.
+              DateTime(y, mo, d, h, mi, s).toUtc();
+        }
         return (dt, false);
       }
     }
     return (null, false);
+  }
+
+  /// Extracts the IANA TZID from a property name+parameters string, e.g.
+  /// `DTSTART;TZID=America/New_York` → `America/New_York`. Handles optional
+  /// surrounding quotes. Returns null if no TZID parameter is present.
+  static String? _extractTzid(String namePart) {
+    final match =
+        RegExp(r'TZID=([^;:]+)', caseSensitive: false).firstMatch(namePart);
+    if (match == null) return null;
+    final tzid = match.group(1)!.replaceAll('"', '').trim();
+    return tzid.isEmpty ? null : tzid;
+  }
+
+  static bool _tzInitialized = false;
+
+  /// Interprets a wall-clock time as being in the zone [tzid] and returns the
+  /// equivalent UTC instant. Accepts IANA names (e.g. "America/New_York") and
+  /// Windows/Outlook names (e.g. "AUS Eastern Standard Time"), the latter via
+  /// [windowsZoneToIana]. Returns null when [tzid] is null or unresolvable, so
+  /// the caller can fall back.
+  static DateTime? _fromTzid(
+      String? tzid, int y, int mo, int d, int h, int mi, int s) {
+    if (tzid == null) return null;
+    try {
+      if (!_tzInitialized) {
+        tz_data.initializeTimeZones();
+        _tzInitialized = true;
+      }
+      tz.Location location;
+      try {
+        location = tz.getLocation(tzid);
+      } catch (_) {
+        // Not an IANA name — try mapping a Windows zone name.
+        final iana = windowsZoneToIana(tzid);
+        if (iana == null) return null;
+        location = tz.getLocation(iana);
+      }
+      return tz.TZDateTime(location, y, mo, d, h, mi, s).toUtc();
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Parses an RFC 5545 DURATION value, e.g. "PT1H30M", "P1DT2H", "-P1D".

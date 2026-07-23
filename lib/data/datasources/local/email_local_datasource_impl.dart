@@ -5,6 +5,7 @@ import 'package:drift/drift.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/email_address.dart';
 import '../../../domain/entities/email_attachment.dart';
+import '../../../domain/entities/meeting_invite.dart';
 import '../../../domain/entities/inline_attachment.dart';
 import '../../database/app_database.dart';
 import '../../../infrastructure/cache/cache_encryption_service.dart';
@@ -74,6 +75,9 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
               'bodyType': oldJson['bodyType'],
               'attachments': oldJson['attachments'],
               'inlineAttachments': oldJson['inlineAttachments'],
+              // Preserve the invite: list/poll fetches carry no ICS, so a
+              // thin re-touch would otherwise drop the Accept/Decline banner.
+              'meetingInvite': oldJson['meetingInvite'],
             };
           }
         }
@@ -244,7 +248,36 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
       'inlineAttachments':
           email.inlineAttachments.map(_inlineAttachmentToJson).toList(),
       'parentFolderId': email.parentFolderId,
+      'meetingInvite': _meetingInviteToJson(email.meetingInvite),
     };
+  }
+
+  static Map<String, dynamic>? _meetingInviteToJson(MeetingInvite? invite) {
+    if (invite == null) return null;
+    return {
+      'icsData': invite.icsData,
+      'meetingStart': invite.meetingStart?.toIso8601String(),
+      'meetingEnd': invite.meetingEnd?.toIso8601String(),
+      'location': invite.location,
+      'isAllDay': invite.isAllDay,
+      'type': invite.type.name,
+    };
+  }
+
+  static MeetingInvite? _meetingInviteFromJson(Map<String, dynamic>? j) {
+    if (j == null) return null;
+    final start = j['meetingStart'] as String?;
+    final end = j['meetingEnd'] as String?;
+    return MeetingInvite(
+      icsData: j['icsData'] as String?,
+      meetingStart: start != null ? DateTime.parse(start) : null,
+      meetingEnd: end != null ? DateTime.parse(end) : null,
+      location: j['location'] as String?,
+      isAllDay: j['isAllDay'] as bool? ?? false,
+      type: MeetingEmailType.values.byName(
+        j['type'] as String? ?? MeetingEmailType.invitation.name,
+      ),
+    );
   }
 
   static Email _emailFromJson(Map<String, dynamic> j) {
@@ -286,6 +319,8 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
           .whereType<InlineAttachment>()
           .toList(),
       parentFolderId: j['parentFolderId'] as String?,
+      meetingInvite:
+          _meetingInviteFromJson(j['meetingInvite'] as Map<String, dynamic>?),
     );
   }
 

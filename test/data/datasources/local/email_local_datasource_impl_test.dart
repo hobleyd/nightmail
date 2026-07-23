@@ -9,6 +9,7 @@ import 'package:nightmail/data/models/email_address_model.dart';
 import 'package:nightmail/data/models/email_model.dart';
 import 'package:nightmail/domain/entities/email.dart';
 import 'package:nightmail/domain/entities/inline_attachment.dart';
+import 'package:nightmail/domain/entities/meeting_invite.dart';
 import 'package:nightmail/infrastructure/cache/cache_encryption_service.dart';
 
 // Bypasses secure-storage platform channels — tests only need round-trip
@@ -120,6 +121,97 @@ void main() {
         emailId: 'email-1',
       );
       expect(cached!.body, '<p>opened now</p>');
+    });
+  });
+
+  group('meeting invite', () {
+    EmailModel emailWithInvite(String id) => EmailModel(
+          id: id,
+          subject: 'Subject $id',
+          from: const EmailAddressModel(address: 'a@b.com'),
+          toRecipients: const [],
+          ccRecipients: const [],
+          bodyPreview: 'preview',
+          body: '<p>invite</p>',
+          bodyType: EmailBodyType.html,
+          isRead: false,
+          receivedDateTime: DateTime(2026, 6, 1),
+          importance: EmailImportance.normal,
+          parentFolderId: 'folder-1',
+          meetingInvite: MeetingInvite(
+            icsData: 'BEGIN:VCALENDAR...',
+            meetingStart: DateTime.utc(2026, 6, 15, 14, 0),
+            meetingEnd: DateTime.utc(2026, 6, 15, 15, 0),
+            location: 'Room 1',
+            isAllDay: false,
+            type: MeetingEmailType.invitation,
+          ),
+        );
+
+    // Regression: the meeting-invite fields were dropped by the cache
+    // serializer, so the Accept/Decline banner vanished as soon as the invite
+    // email was re-served from the local cache (e.g. after an app restart).
+    test('round-trips the meeting invite through the cache', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [emailWithInvite('email-1')],
+      );
+
+      final cached = await datasource.getCachedEmailById(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+      );
+
+      expect(cached, isNotNull);
+      final invite = cached!.meetingInvite;
+      expect(invite, isNotNull);
+      expect(invite!.type, MeetingEmailType.invitation);
+      expect(invite.icsData, 'BEGIN:VCALENDAR...');
+      expect(invite.meetingStart, DateTime.utc(2026, 6, 15, 14, 0));
+      expect(invite.meetingEnd, DateTime.utc(2026, 6, 15, 15, 0));
+      expect(invite.location, 'Room 1');
+      expect(invite.isAllDay, isFalse);
+    });
+
+    // Regression: a poll/list fetch re-touches the row with a thin, ICS-less
+    // email. That must not wipe the previously-cached invite, or the banner
+    // would vanish on the next poll tick.
+    test('preserves the cached invite across a later preview-only write',
+        () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [emailWithInvite('email-1')],
+      );
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '')],
+      );
+
+      final cached = await datasource.getCachedEmailById(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+      );
+      expect(cached!.meetingInvite, isNotNull);
+      expect(cached.meetingInvite!.type, MeetingEmailType.invitation);
+      expect(cached.meetingInvite!.meetingStart,
+          DateTime.utc(2026, 6, 15, 14, 0));
+    });
+
+    test('leaves meetingInvite null for a non-invite email', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '<p>hi</p>')],
+      );
+
+      final cached = await datasource.getCachedEmailById(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+      );
+      expect(cached!.meetingInvite, isNull);
     });
   });
 

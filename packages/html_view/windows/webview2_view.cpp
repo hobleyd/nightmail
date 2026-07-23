@@ -155,6 +155,10 @@ WebView2View::~WebView2View() {
     webview_->remove_NavigationStarting(nav_starting_token_);
     webview_->remove_NewWindowRequested(new_window_token_);
     webview_->remove_WebMessageReceived(web_message_token_);
+    Microsoft::WRL::ComPtr<ICoreWebView2_11> webview11;
+    if (SUCCEEDED(webview_.As(&webview11)) && webview11) {
+      webview11->remove_ContextMenuRequested(context_menu_token_);
+    }
     webview_ = nullptr;
   }
   if (controller_) {
@@ -183,6 +187,10 @@ LRESULT CALLBACK WebView2View::SubclassProc(HWND hwnd, UINT msg, WPARAM wp,
       self->webview_->remove_NavigationStarting(self->nav_starting_token_);
       self->webview_->remove_NewWindowRequested(self->new_window_token_);
       self->webview_->remove_WebMessageReceived(self->web_message_token_);
+      Microsoft::WRL::ComPtr<ICoreWebView2_11> webview11;
+      if (SUCCEEDED(self->webview_.As(&webview11)) && webview11) {
+        webview11->remove_ContextMenuRequested(self->context_menu_token_);
+      }
       self->webview_ = nullptr;
     }
     if (self->controller_) {
@@ -269,7 +277,11 @@ void WebView2View::SetupWebView() {
   Microsoft::WRL::ComPtr<ICoreWebView2Settings> settings;
   if (SUCCEEDED(webview_->get_Settings(settings.GetAddressOf()))) {
     settings->put_IsScriptEnabled(TRUE);
-    settings->put_AreDefaultContextMenusEnabled(FALSE);
+    // Context menus are enabled so the spell-checker's suggestion menu can
+    // appear on misspelled words. The ContextMenuRequested handler below limits
+    // the menu to editable content (the compose editor) and suppresses it
+    // everywhere else, so read-only email bodies keep their menu-free behaviour.
+    settings->put_AreDefaultContextMenusEnabled(TRUE);
     settings->put_AreDevToolsEnabled(FALSE);
     settings->put_IsStatusBarEnabled(FALSE);
   }
@@ -348,6 +360,35 @@ void WebView2View::SetupWebView() {
           })
           .Get(),
       &web_message_token_);
+
+  // Context menu: only show it on editable content (the compose editor), where
+  // its main purpose is the spell-checker's "did you mean" suggestions — the
+  // browser inserts those into the menu automatically and applies the chosen
+  // word for us. On non-editable content (rendered email bodies) suppress the
+  // menu entirely, matching the plugin's prior menu-free behaviour.
+  Microsoft::WRL::ComPtr<ICoreWebView2_11> webview11;
+  if (SUCCEEDED(webview_.As(&webview11)) && webview11) {
+    auto alive_ctx = alive_;
+    webview11->add_ContextMenuRequested(
+        Microsoft::WRL::Callback<ICoreWebView2ContextMenuRequestedEventHandler>(
+            [this, alive_ctx](ICoreWebView2*,
+                              ICoreWebView2ContextMenuRequestedEventArgs* args) -> HRESULT {
+              if (!*alive_ctx) return S_OK;
+              Microsoft::WRL::ComPtr<ICoreWebView2ContextMenuTarget> target;
+              args->get_ContextMenuTarget(&target);
+              BOOL editable = FALSE;
+              if (target) target->get_IsEditable(&editable);
+              if (!editable) {
+                // Handled with no SelectedCommandId set = no menu is shown.
+                args->put_Handled(TRUE);
+              }
+              // Editable: leave Handled FALSE so WebView2 renders its own menu
+              // (including spelling suggestions) and applies the user's choice.
+              return S_OK;
+            })
+            .Get(),
+        &context_menu_token_);
+  }
 }
 
 void WebView2View::FlushPending() {

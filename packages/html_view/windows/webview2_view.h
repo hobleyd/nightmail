@@ -80,6 +80,7 @@ class WebView2View {
   EventRegistrationToken web_message_token_{};
   EventRegistrationToken nav_starting_token_{};
   EventRegistrationToken new_window_token_{};
+  EventRegistrationToken context_menu_token_{};
 
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> channel_;
   std::unique_ptr<flutter::EventChannel<flutter::EncodableValue>> event_channel_;

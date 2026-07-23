@@ -166,4 +166,9 @@ flutter build macos --debug
 
 Run `flutter clean` after any changes to entitlements or code-signing settings.
 
+**Linux:** the compose editor's spell-checking relies on WebKitGTK's system
+spell-checker, which uses hunspell. Install hunspell and a dictionary for your
+locale (e.g. `sudo apt install hunspell hunspell-en-au`), otherwise misspelled
+words will not be underlined and no correction suggestions will appear.
+
 See `CLAUDE.md` for architecture conventions, macOS code-signing requirements, and platform channel gotchas.

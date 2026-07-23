@@ -198,6 +198,15 @@ WebkitView::WebkitView(gint64 id_, GtkOverlay* overlay_,
   webkit_settings_set_hardware_acceleration_policy(
       settings, WEBKIT_HARDWARE_ACCELERATION_POLICY_NEVER);
 
+  // Enable spell-checking so misspelled words are underlined and the native
+  // context menu (which is not suppressed on this platform) offers corrections,
+  // matching the Windows/macOS editors. HTML's spellcheck="true" alone is not
+  // enough on WebKitGTK — spell-checking is a WebContext-level setting that
+  // defaults to off. Languages are left unset so WebKit follows the user's
+  // locale/environment rather than a hard-coded dictionary.
+  WebKitWebContext* web_context = webkit_web_view_get_context(web_view);
+  webkit_web_context_set_spell_checking_enabled(web_context, TRUE);
+
   g_signal_connect(web_view, "decide-policy",
                    G_CALLBACK(on_decide_policy), this);
 

@@ -192,7 +192,15 @@ class IcsParser {
         if (iana == null) return null;
         location = tz.getLocation(iana);
       }
-      return tz.TZDateTime(location, y, mo, d, h, mi, s).toUtc();
+      final zoned = tz.TZDateTime(location, y, mo, d, h, mi, s);
+      // Return a *plain* UTC DateTime, not the TZDateTime itself:
+      // TZDateTime.toLocal() converts to the timezone package's tz.local
+      // (which defaults to UTC unless setLocalLocation was called), whereas
+      // the display code expects DateTime.toLocal() to honor the OS zone.
+      return DateTime.fromMillisecondsSinceEpoch(
+        zoned.millisecondsSinceEpoch,
+        isUtc: true,
+      );
     } catch (_) {
       return null;
     }

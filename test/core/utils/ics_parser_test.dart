@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/core/utils/ics_parser.dart';
+import 'package:timezone/timezone.dart' as tz;
 
 String _ics(String dtstartLine) => '''
 BEGIN:VCALENDAR
@@ -26,6 +27,19 @@ void main() {
       );
       expect(event.start.isUtc, isTrue);
       expect(event.start, DateTime.utc(2026, 6, 15, 14, 0, 0));
+    });
+
+    test('TZID result is a plain DateTime, not a TZDateTime', () {
+      // Regression: returning a tz.TZDateTime made DateTime.toLocal() convert
+      // against the timezone package's tz.local (UTC by default) instead of
+      // the OS zone, so an 11am AEST meeting rendered as 1am (its UTC value).
+      final event = IcsParser.parse(
+        _ics('DTSTART;TZID=Australia/Brisbane:20260723T110000'),
+      );
+      // 11:00 Brisbane (UTC+10) → 01:00 UTC.
+      expect(event.start, DateTime.utc(2026, 7, 23, 1, 0));
+      expect(event.start, isNot(isA<tz.TZDateTime>()));
+      expect(event.start.isUtc, isTrue);
     });
 
     test('quoted TZID is resolved', () {

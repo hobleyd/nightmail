@@ -42,6 +42,15 @@ abstract interface class TasksRepository {
     required Uint8List emlBytes,
   });
 
+  /// Appends a link to the source email into the task's notes and returns the
+  /// updated task. Used for providers without an attachment API (e.g. Google
+  /// Tasks): the link opens the message in the reading pane.
+  Future<Either<Failure, TodoTask>> appendEmailLink({
+    required String listId,
+    required String taskId,
+    required String emailId,
+  });
+
   Future<Either<Failure, List<TodoTaskAttachment>>> getTaskAttachments({
     required String listId,
     required String taskId,

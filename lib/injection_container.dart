@@ -56,6 +56,7 @@ import 'domain/repositories/sender_repository.dart';
 import 'domain/repositories/spam_filter_repository.dart';
 import 'domain/repositories/system_contacts_repository.dart';
 import 'domain/repositories/tasks_repository.dart';
+import 'domain/usecases/append_email_link_to_task.dart';
 import 'domain/usecases/attach_email_to_task.dart';
 import 'domain/usecases/check_sender_anomaly.dart';
 import 'domain/usecases/merge_sender_addresses.dart';
@@ -299,6 +300,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(
     () => AttachEmailToTask(sl<EmailRepository>(), sl<TasksRepository>()),
   );
+  sl.registerLazySingleton(() => AppendEmailLinkToTask(sl<TasksRepository>()));
   sl.registerLazySingleton(() => GetTaskAttachments(sl<TasksRepository>()));
   sl.registerLazySingleton(() => DownloadTaskAttachment(sl<TasksRepository>()));
 
@@ -396,6 +398,7 @@ Future<void> configureDependencies() async {
         updateTaskStatus: sl<UpdateTaskStatus>(),
         updateTaskDueDate: sl<UpdateTaskDueDate>(),
         attachEmailToTask: sl<AttachEmailToTask>(),
+        appendEmailLinkToTask: sl<AppendEmailLinkToTask>(),
         getTaskAttachments: sl<GetTaskAttachments>(),
         downloadTaskAttachment: sl<DownloadTaskAttachment>(),
       ));

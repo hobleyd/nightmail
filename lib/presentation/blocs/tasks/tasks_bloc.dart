@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../core/error/failures.dart';
 import '../../../core/usecases/usecase.dart';
 import '../../../domain/entities/todo_task.dart';
+import '../../../domain/usecases/append_email_link_to_task.dart';
 import '../../../domain/usecases/attach_email_to_task.dart';
 import '../../../domain/usecases/create_task.dart';
 import '../../../domain/usecases/download_task_attachment.dart';
@@ -22,6 +23,7 @@ class TasksBloc extends Bloc<TasksBlocEvent, TasksState> {
     required this._updateTaskStatus,
     required this._updateTaskDueDate,
     required this._attachEmailToTask,
+    required this._appendEmailLinkToTask,
     required this._getTaskAttachments,
     required this._downloadTaskAttachment,
   }) : super(const TasksInitial()) {
@@ -40,6 +42,7 @@ class TasksBloc extends Bloc<TasksBlocEvent, TasksState> {
   final UpdateTaskStatus _updateTaskStatus;
   final UpdateTaskDueDate _updateTaskDueDate;
   final AttachEmailToTask _attachEmailToTask;
+  final AppendEmailLinkToTask _appendEmailLinkToTask;
   final GetTaskAttachments _getTaskAttachments;
   final DownloadTaskAttachment _downloadTaskAttachment;
 
@@ -169,18 +172,42 @@ class TasksBloc extends Bloc<TasksBlocEvent, TasksState> {
             fileName: '$safe.eml',
           ));
 
-          if (attachResult.isRight()) {
-            final patched = _PatchedTask(task);
-            final current2 = state;
-            if (current2 is TasksLoaded) {
-              emit(current2.copyWith(
-                tasks: [
-                  for (final t in current2.tasks)
-                    if (t.id == task.id) patched else t,
-                ],
+          await attachResult.fold(
+            // Provider without an attachment API (e.g. Google Tasks): fall back
+            // to embedding a clickable link to the email in the task's notes.
+            (_) async {
+              final linkResult =
+                  await _appendEmailLinkToTask(AppendEmailLinkToTaskParams(
+                listId: event.listId,
+                taskId: task.id,
+                emailId: event.emailId!,
               ));
-            }
-          }
+              linkResult.fold((_) {}, (updated) {
+                final current2 = state;
+                if (current2 is TasksLoaded) {
+                  emit(current2.copyWith(
+                    tasks: [
+                      for (final t in current2.tasks)
+                        if (t.id == updated.id) updated else t,
+                    ],
+                  ));
+                }
+              });
+            },
+            // Provider with real attachment support (e.g. Microsoft To Do).
+            (_) async {
+              final patched = _PatchedTask(task);
+              final current2 = state;
+              if (current2 is TasksLoaded) {
+                emit(current2.copyWith(
+                  tasks: [
+                    for (final t in current2.tasks)
+                      if (t.id == task.id) patched else t,
+                  ],
+                ));
+              }
+            },
+          );
         }
       },
     );

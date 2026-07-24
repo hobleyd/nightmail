@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../domain/entities/task_email_link.dart';
 import '../../domain/entities/todo_task.dart';
 import '../../domain/entities/todo_task_list.dart';
 import '../blocs/account/account_cubit.dart';
@@ -215,120 +216,174 @@ class _TaskList extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView.builder(
       itemCount: tasks.length,
-      itemBuilder: (context, index) => _TaskTile(task: tasks[index]),
+      itemBuilder: (context, index) => _TaskTile(
+        key: ValueKey(tasks[index].id),
+        task: tasks[index],
+      ),
     );
   }
 }
 
-class _TaskTile extends StatelessWidget {
-  const _TaskTile({required this.task});
+class _TaskTile extends StatefulWidget {
+  const _TaskTile({super.key, required this.task});
 
   final TodoTask task;
 
   @override
+  State<_TaskTile> createState() => _TaskTileState();
+}
+
+class _TaskTileState extends State<_TaskTile> {
+  bool _expanded = false;
+
+  void _toggleStatus() => context.read<TasksBloc>().add(TaskStatusToggled(
+        listId: widget.task.listId,
+        taskId: widget.task.id,
+        currentStatus: widget.task.status,
+      ));
+
+  /// Opens the linked email in the reading pane. In the detached Tasks window
+  /// there is no reading pane (no EmailDetailBloc), so fall back to a hint.
+  void _openLinkedEmail(String emailId) {
+    try {
+      context
+          .read<EmailDetailBloc>()
+          .add(EmailDetailLoadRequested(emailId: emailId));
+    } catch (_) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content:
+              Text('Open Tasks in the main window to view the linked email.'),
+        ),
+      );
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final task = widget.task;
     final isCompleted = task.isCompleted;
 
-    return InkWell(
-      onTap: () => context.read<TasksBloc>().add(TaskStatusToggled(
-            listId: task.listId,
-            taskId: task.id,
-            currentStatus: task.status,
-          )),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            SizedBox(
-              width: 20,
-              height: 20,
-              child: Checkbox(
-                value: isCompleted,
-                onChanged: (_) =>
-                    context.read<TasksBloc>().add(TaskStatusToggled(
+    final linkedEmailId = TaskEmailLink.emailIdFrom(task.body);
+    final visibleNotes = TaskEmailLink.visibleNotes(task.body);
+    final hasNotes = visibleNotes != null || linkedEmailId != null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          // Tapping the row expands the notes — it no longer completes the
+          // task. Only the checkbox toggles completion.
+          onTap: hasNotes ? () => setState(() => _expanded = !_expanded) : null,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: Checkbox(
+                    value: isCompleted,
+                    onChanged: (_) => _toggleStatus(),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                    activeColor: AppColors.accent,
+                    side: BorderSide(color: c.textMuted, width: 1.5),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        task.title,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: isCompleted
+                              ? c.textMuted.withValues(alpha: 0.5)
+                              : c.textPrimary,
+                          decoration:
+                              isCompleted ? TextDecoration.lineThrough : null,
+                        ),
+                      ),
+                      if (task.dueDateTime != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          _formatDue(task.dueDateTime!),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: _isDueOverdue(task.dueDateTime!)
+                                ? Colors.redAccent
+                                : c.textMuted,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                // Microsoft To Do: real .eml attachment → download & open.
+                if (task.hasAttachments) ...[
+                  _RowIconButton(
+                    icon: Icons.email_outlined,
+                    tooltip: 'View source email',
+                    onTap: () => context.read<TasksBloc>().add(
+                          TaskEmailAttachmentTapped(
+                            listId: task.listId,
+                            taskId: task.id,
+                          ),
+                        ),
+                  ),
+                  const SizedBox(width: 2),
+                ]
+                // Google Tasks: linked email via notes → open in reading pane.
+                else if (linkedEmailId != null) ...[
+                  _RowIconButton(
+                    icon: Icons.email_outlined,
+                    tooltip: 'View source email',
+                    onTap: () => _openLinkedEmail(linkedEmailId),
+                  ),
+                  const SizedBox(width: 2),
+                ],
+                FlagIconButton(
+                  size: 14,
+                  onTap: () {},
+                  onSchedule: (date) => context.read<TasksBloc>().add(
+                        TaskDueDateUpdateRequested(
                           listId: task.listId,
                           taskId: task.id,
-                          currentStatus: task.status,
-                        )),
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                visualDensity: VisualDensity.compact,
-                activeColor: AppColors.accent,
-                side: BorderSide(color: c.textMuted, width: 1.5),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(4),
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    task.title,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: isCompleted
-                          ? c.textMuted.withValues(alpha: 0.5)
-                          : c.textPrimary,
-                      decoration:
-                          isCompleted ? TextDecoration.lineThrough : null,
-                    ),
-                  ),
-                  if (task.dueDateTime != null) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      _formatDue(task.dueDateTime!),
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: _isDueOverdue(task.dueDateTime!)
-                            ? Colors.redAccent
-                            : c.textMuted,
+                          dueDate: date,
+                        ),
                       ),
-                    ),
-                  ],
+                ),
+                if (task.importance == TodoTaskImportance.high) ...[
+                  const SizedBox(width: 2),
+                  Icon(Icons.flag_rounded, size: 14, color: Colors.redAccent),
                 ],
-              ),
-            ),
-            if (task.hasAttachments) ...[
-              GestureDetector(
-                onTap: () => context.read<TasksBloc>().add(
-                      TaskEmailAttachmentTapped(
-                        listId: task.listId,
-                        taskId: task.id,
-                      ),
-                    ),
-                child: Tooltip(
-                  message: 'View source email',
-                  child: Icon(
-                    Icons.email_outlined,
-                    size: 14,
-                    color: AppColors.accent,
+                if (hasNotes) ...[
+                  const SizedBox(width: 2),
+                  Icon(
+                    _expanded ? Icons.expand_less : Icons.expand_more,
+                    size: 16,
+                    color: c.textMuted,
                   ),
-                ),
-              ),
-              const SizedBox(width: 2),
-            ],
-            FlagIconButton(
-              size: 14,
-              onTap: () {},
-              onSchedule: (date) => context.read<TasksBloc>().add(
-                    TaskDueDateUpdateRequested(
-                      listId: task.listId,
-                      taskId: task.id,
-                      dueDate: date,
-                    ),
-                  ),
+                ],
+              ],
             ),
-            if (task.importance == TodoTaskImportance.high) ...[
-              const SizedBox(width: 2),
-              Icon(Icons.flag_rounded, size: 14, color: Colors.redAccent),
-            ],
-          ],
+          ),
         ),
-      ),
+        if (_expanded && hasNotes)
+          _TaskNotes(
+            notes: visibleNotes,
+            linkedEmailId: linkedEmailId,
+            onOpenEmail: _openLinkedEmail,
+          ),
+      ],
     );
   }
 
@@ -348,6 +403,88 @@ class _TaskTile extends StatelessWidget {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     return due.isBefore(today);
+  }
+}
+
+/// A small tap target used for the inline row icons (source-email button).
+class _RowIconButton extends StatelessWidget {
+  const _RowIconButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: Padding(
+          padding: const EdgeInsets.all(2),
+          child: Icon(icon, size: 14, color: AppColors.accent),
+        ),
+      ),
+    );
+  }
+}
+
+/// The expanding notes area shown beneath a task when it is tapped.
+class _TaskNotes extends StatelessWidget {
+  const _TaskNotes({
+    required this.notes,
+    required this.linkedEmailId,
+    required this.onOpenEmail,
+  });
+
+  final String? notes;
+  final String? linkedEmailId;
+  final void Function(String emailId) onOpenEmail;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Padding(
+      // Indent to line up under the title (checkbox + gap = 30px + 12 padding).
+      padding: const EdgeInsets.fromLTRB(42, 0, 12, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (notes != null)
+            Text(
+              notes!,
+              style: TextStyle(fontSize: 12, color: c.textMuted, height: 1.35),
+            ),
+          if (linkedEmailId != null) ...[
+            if (notes != null) const SizedBox(height: 6),
+            InkWell(
+              onTap: () => onOpenEmail(linkedEmailId!),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.email_outlined, size: 13, color: AppColors.accent),
+                  const SizedBox(width: 4),
+                  Text(
+                    'View source email',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.accent,
+                      decoration: TextDecoration.underline,
+                      decorationColor: AppColors.accent,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 }
 

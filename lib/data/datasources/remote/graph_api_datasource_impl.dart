@@ -11,6 +11,7 @@ import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/calendar_recurrence.dart';
 import '../../../domain/entities/meeting_invite.dart';
+import '../../../domain/entities/task_email_link.dart';
 import '../../../domain/entities/todo_task.dart';
 import '../../../domain/usecases/create_calendar_event.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
@@ -1476,6 +1477,42 @@ class GraphApiDatasourceImpl
       final response = await _dio.patch<Map<String, dynamic>>(
         '/me/todo/lists/$listId/tasks/$taskId',
         data: data,
+      );
+      if (response.data == null) {
+        throw const ServerException(message: 'Empty response from server');
+      }
+      return TodoTaskModel.fromJson(response.data!, listId: listId);
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<TodoTaskModel> appendEmailLinkToNotes({
+    required String listId,
+    required String taskId,
+    required String emailId,
+  }) async {
+    try {
+      final existing = await _dio.get<Map<String, dynamic>>(
+        '/me/todo/lists/$listId/tasks/$taskId',
+      );
+      final currentNotes =
+          (existing.data?['body'] as Map<String, dynamic>?)?['content']
+                  as String? ??
+              '';
+      final marker = TaskEmailLink.marker(emailId);
+      final newNotes = currentNotes.contains(marker)
+          ? currentNotes
+          : (currentNotes.trim().isEmpty
+              ? marker
+              : '$currentNotes\n\n$marker');
+
+      final response = await _dio.patch<Map<String, dynamic>>(
+        '/me/todo/lists/$listId/tasks/$taskId',
+        data: {
+          'body': {'content': newNotes, 'contentType': 'text'},
+        },
       );
       if (response.data == null) {
         throw const ServerException(message: 'Empty response from server');

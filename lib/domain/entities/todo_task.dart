@@ -38,5 +38,5 @@ class TodoTask extends Equatable {
   bool get isCompleted => status == TodoTaskStatus.completed;
 
   @override
-  List<Object?> get props => [id, hasAttachments];
+  List<Object?> get props => [id, hasAttachments, status, dueDateTime, body];
 }

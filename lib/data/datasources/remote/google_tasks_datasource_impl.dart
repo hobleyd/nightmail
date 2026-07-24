@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 
 import '../../../core/error/exceptions.dart';
+import '../../../domain/entities/task_email_link.dart';
 import '../../../domain/entities/todo_task.dart';
 import '../../../infrastructure/http/google_tasks_http_client.dart';
 import '../../models/todo_task_attachment_model.dart';
@@ -170,6 +171,37 @@ class GoogleTasksDatasourceImpl implements TasksRemoteDatasource {
     throw const ServerException(
       message: 'Email attachment is not supported for Google Tasks',
     );
+  }
+
+  @override
+  Future<TodoTaskModel> appendEmailLinkToNotes({
+    required String listId,
+    required String taskId,
+    required String emailId,
+  }) async {
+    try {
+      // Read existing notes so the link is appended, not overwritten.
+      final existing =
+          await _dio.get<Map<String, dynamic>>('/lists/$listId/tasks/$taskId');
+      final currentNotes = existing.data?['notes'] as String? ?? '';
+      final marker = TaskEmailLink.marker(emailId);
+      final newNotes = currentNotes.contains(marker)
+          ? currentNotes
+          : (currentNotes.trim().isEmpty
+              ? marker
+              : '$currentNotes\n\n$marker');
+
+      final response = await _dio.patch<Map<String, dynamic>>(
+        '/lists/$listId/tasks/$taskId',
+        data: {'notes': newNotes},
+      );
+      if (response.data == null) {
+        throw const ServerException(message: 'Empty response from server');
+      }
+      return _parseTask(response.data!, listId: listId);
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
   }
 
   @override

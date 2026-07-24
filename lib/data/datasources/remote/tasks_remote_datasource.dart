@@ -40,6 +40,14 @@ abstract interface class TasksRemoteDatasource {
     required Uint8List emlBytes,
   });
 
+  /// Appends a `nightmail://email/<emailId>` marker to the task's notes and
+  /// returns the updated task. For providers without attachment support.
+  Future<TodoTaskModel> appendEmailLinkToNotes({
+    required String listId,
+    required String taskId,
+    required String emailId,
+  });
+
   Future<List<TodoTaskAttachmentModel>> getTaskAttachments({
     required String listId,
     required String taskId,

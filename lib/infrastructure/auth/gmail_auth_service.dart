@@ -57,17 +57,24 @@ class GmailAuthService implements AuthService {
   static const _tokenEndpoint = 'https://oauth2.googleapis.com/token';
 
   // Windows and Linux use the loopback server approach.
-  // Google accepts http://localhost (without port) as a registered redirect
-  // URI for Desktop app registrations, and allows any port at runtime per
-  // RFC 8252 §7.3.
+  // Google accepts the loopback IP (with any port) as a redirect URI for
+  // Desktop app registrations at runtime per RFC 8252 §7.3 — no Console
+  // registration required.
+  //
+  // Use the literal 127.0.0.1, NOT "localhost": flutter_web_auth_2's desktop
+  // server binds only to IPv4 127.0.0.1, but on Windows "localhost" often
+  // resolves to the IPv6 loopback (::1) first. The browser then redirects to
+  // a socket nothing is listening on, the callback never arrives, and
+  // authenticate() hangs until timeout — the sign-in silently fails.
   static const _loopbackPort = 34572;
+  static const _loopbackRedirect = 'http://127.0.0.1:$_loopbackPort';
 
   static bool get _useLoopback =>
       !kIsWeb && (Platform.isWindows || Platform.isLinux);
 
   String get _effectiveRedirectUri {
     if (kIsWeb) return '${Uri.base.origin}/callback.html';
-    if (_useLoopback) return 'http://localhost:$_loopbackPort';
+    if (_useLoopback) return _loopbackRedirect;
     return redirectUri;
   }
 
@@ -94,17 +101,40 @@ class GmailAuthService implements AuthService {
       resultUrl = await authenticateWeb(authUri.toString());
     } else {
       final String callbackScheme = _useLoopback
-          ? 'http://localhost:$_loopbackPort'
+          ? _loopbackRedirect
           : Uri.parse(redirectUri).scheme;
       final FlutterWebAuth2Options authOptions = _useLoopback
           ? const FlutterWebAuth2Options(useWebview: false)
           : const FlutterWebAuth2Options(preferEphemeral: true);
 
-      resultUrl = await FlutterWebAuth2.authenticate(
-        url: authUri.toString(),
-        callbackUrlScheme: callbackScheme,
-        options: authOptions,
-      );
+      assert(() {
+        // ignore: avoid_print
+        print('[GmailAuth] loopback=$_useLoopback '
+            'redirectUri=$_effectiveRedirectUri callbackScheme=$callbackScheme');
+        // ignore: avoid_print
+        print('[GmailAuth] opening: $authUri');
+        return true;
+      }());
+
+      try {
+        resultUrl = await FlutterWebAuth2.authenticate(
+          url: authUri.toString(),
+          callbackUrlScheme: callbackScheme,
+          options: authOptions,
+        );
+        assert(() {
+          // ignore: avoid_print
+          print('[GmailAuth] callback received: $resultUrl');
+          return true;
+        }());
+      } catch (e) {
+        assert(() {
+          // ignore: avoid_print
+          print('[GmailAuth] authenticate failed: $e');
+          return true;
+        }());
+        rethrow;
+      }
     }
 
     final uri = Uri.parse(resultUrl);

@@ -481,13 +481,21 @@ class _ErrorView extends StatelessWidget {
             if (requiresReauth) ...[
               const SizedBox(height: 12),
               TextButton(
-                onPressed: () {
+                onPressed: () async {
                   final accountCubit = context.read<AccountCubit>();
                   final tasksBloc = context.read<TasksBloc>();
-                  accountCubit
-                      .reauthenticateActiveOAuth()
-                      .then((_) => tasksBloc.add(const TasksLoadRequested()))
-                      .catchError((_) {});
+                  final messenger = ScaffoldMessenger.of(context);
+                  try {
+                    await accountCubit.reauthenticateActiveOAuth();
+                    tasksBloc.add(const TasksLoadRequested());
+                  } catch (e) {
+                    // Surface the failure instead of swallowing it — a silent
+                    // catch here left a cancelled/failed sign-in looking like
+                    // nothing happened.
+                    messenger.showSnackBar(
+                      SnackBar(content: Text('Re-authorization failed: $e')),
+                    );
+                  }
                 },
                 child: const Text('Re-authorize'),
               ),

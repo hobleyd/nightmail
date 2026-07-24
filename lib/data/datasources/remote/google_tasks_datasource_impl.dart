@@ -237,12 +237,79 @@ class GoogleTasksDatasourceImpl implements TasksRemoteDatasource {
         e.type == DioExceptionType.receiveTimeout) {
       return NetworkException(message: e.message ?? 'Network error');
     }
-    if (statusCode == 401 || statusCode == 403) {
+
+    final (googleMessage, reasons) = _parseGoogleError(e.response?.data);
+    assert(() {
+      // ignore: avoid_print
+      print('[GoogleTasks] HTTP $statusCode reasons=$reasons '
+          'message=$googleMessage');
+      return true;
+    }());
+
+    // A 401 always means the credential is bad — refresh it / re-auth.
+    if (statusCode == 401) {
       return const AuthException(message: 'Authentication required');
     }
+
+    if (statusCode == 403) {
+      // Only a genuine credential/scope problem should drive the user to
+      // re-authenticate. A disabled-API or quota 403 is a project-config
+      // problem — routing it to "re-authorize" sends the user in circles
+      // (re-auth grants the scope, but the call still 403s).
+      const authReasons = {
+        'authError',
+        'ACCESS_TOKEN_SCOPE_INSUFFICIENT',
+        'insufficientPermissions',
+      };
+      if (reasons.any(authReasons.contains)) {
+        return const AuthException(message: 'Authentication required');
+      }
+      // e.g. accessNotConfigured / SERVICE_DISABLED — surface Google's own
+      // message, which includes the console URL to enable the Tasks API.
+      return ServerException(
+        message: googleMessage ??
+            'Google Tasks API is not enabled for this project. '
+                'Enable it in the Google Cloud console, then retry.',
+        statusCode: statusCode,
+      );
+    }
+
     return ServerException(
-      message: e.message ?? 'Server error ($statusCode)',
+      message: googleMessage ?? e.message ?? 'Server error ($statusCode)',
       statusCode: statusCode,
     );
+  }
+
+  /// Extracts `(message, reasons)` from a Google API error body of the shape
+  /// `{ "error": { "message": ..., "errors": [{"reason": ...}],
+  /// "details": [{"reason": ...}] } }`. Returns nulls/empties if absent.
+  (String?, Set<String>) _parseGoogleError(dynamic data) {
+    if (data is! Map) return (null, const {});
+    final error = data['error'];
+    if (error is! Map) return (null, const {});
+
+    final message = error['message'] as String?;
+    final reasons = <String>{};
+
+    final errors = error['errors'];
+    if (errors is List) {
+      for (final item in errors) {
+        if (item is Map && item['reason'] is String) {
+          reasons.add(item['reason'] as String);
+        }
+      }
+    }
+    final details = error['details'];
+    if (details is List) {
+      for (final item in details) {
+        if (item is Map && item['reason'] is String) {
+          reasons.add(item['reason'] as String);
+        }
+      }
+    }
+    final status = error['status'];
+    if (status is String) reasons.add(status);
+
+    return (message, reasons);
   }
 }

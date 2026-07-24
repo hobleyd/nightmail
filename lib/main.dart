@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/foundation.dart';
@@ -26,6 +27,25 @@ import 'presentation/pages/image_view_window.dart';
 import 'presentation/pages/reminder_popup_window.dart';
 import 'presentation/pages/tasks_window.dart';
 import 'presentation/pages/home_page.dart';
+
+/// Places a modestly-sized window centred on [displayBounds] so a subsequent
+/// [WindowManager.maximize] / [WindowManager.setFullScreen] targets that
+/// monitor rather than the default one the OS placed the window on at launch.
+/// No-op when [displayBounds] is null.
+Future<void> _prePositionOnDisplay(Rect? displayBounds) async {
+  if (displayBounds == null) return;
+  final w = math.min(1000.0, displayBounds.width * 0.6);
+  final h = math.min(700.0, displayBounds.height * 0.6);
+  final rect = Rect.fromLTWH(
+    displayBounds.left + (displayBounds.width - w) / 2,
+    displayBounds.top + (displayBounds.height - h) / 2,
+    w,
+    h,
+  );
+  try {
+    await windowManager.setBounds(rect);
+  } catch (_) {}
+}
 
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -181,8 +201,16 @@ await configureDependencies();
       final restored = await WindowBoundsService().loadValidatedBounds();
       if (restored != null) {
         if (restored.fullScreen) {
+          // Move onto the display this window was last full-screened on
+          // before entering full-screen; otherwise the OS applies it to
+          // whichever monitor it placed the window at launch.
+          await _prePositionOnDisplay(restored.displayBounds);
           await windowManager.setFullScreen(true);
         } else if (restored.maximized) {
+          // Move onto the display this window was last maximized on before
+          // maximizing — maximize() targets the monitor the window is
+          // currently on, which defaults to the primary monitor at launch.
+          await _prePositionOnDisplay(restored.displayBounds);
           await windowManager.maximize();
         } else if (restored.bounds != null) {
           await windowManager.setBounds(restored.bounds!);

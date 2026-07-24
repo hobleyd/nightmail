@@ -11,6 +11,7 @@ class WindowRestoreState {
     this.bounds,
     this.fullScreen = false,
     this.maximized = false,
+    this.displayBounds,
   });
 
   /// Saved window rect. Null when [fullScreen] or [maximized] is true.
@@ -21,6 +22,13 @@ class WindowRestoreState {
 
   /// Window was in zoomed/maximized state when last saved.
   final bool maximized;
+
+  /// Visible rect of the display this state was saved on. Set for the
+  /// [fullScreen] and [maximized] cases (where [bounds] is null) so the
+  /// caller can move the window onto the correct monitor before
+  /// maximizing / going full-screen — otherwise the OS applies those
+  /// states on whichever default monitor it placed the window at launch.
+  final Rect? displayBounds;
 }
 
 class WindowBoundsService {
@@ -92,12 +100,18 @@ class WindowBoundsService {
             (_isLikelyBuiltIn(b.$1) ? 1 : 0);
       });
 
-      for (final (_, entry) in candidates) {
+      for (final (display, entry) in candidates) {
         if (entry.fullScreen) {
-          return const WindowRestoreState(fullScreen: true);
+          return WindowRestoreState(
+            fullScreen: true,
+            displayBounds: _visibleRect(display),
+          );
         }
         if (entry.maximized) {
-          return const WindowRestoreState(maximized: true);
+          return WindowRestoreState(
+            maximized: true,
+            displayBounds: _visibleRect(display),
+          );
         }
         if (entry.bounds != null &&
             _isTitleBarReachable(entry.bounds!, displays)) {

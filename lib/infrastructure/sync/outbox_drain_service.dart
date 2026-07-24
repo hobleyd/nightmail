@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import '../../core/error/exceptions.dart';
 import '../../data/datasources/local/email_local_datasource.dart';
 import '../../data/datasources/local/pending_operations_datasource.dart';
 import '../../data/datasources/remote/spam_db_sync_datasource.dart';
@@ -39,6 +40,11 @@ class OutboxDrainService {
   final AccountManager _accountManager;
   final ConnectivityService _connectivityService;
   final SpamDbSyncService _spamDbSyncService;
+
+  /// Backstop so a permanently-failing op can't hammer the server on every
+  /// poll forever (observed: ops stuck at thousands of retries). Once a
+  /// mutation has failed this many times it is dropped rather than requeued.
+  static const int _maxOpRetries = 25;
 
   /// Chains concurrent [drainForAccount] calls for the same account so at
   /// most one drain touches that account's shared IMAP connection at a time.
@@ -154,7 +160,25 @@ class OutboxDrainService {
         }
         await _pendingOperations.removeOperation(op.id);
       } catch (e) {
-        await _pendingOperations.recordFailure(id: op.id, error: e.toString());
+        // A delete/move/junk that 404s means the target message no longer
+        // exists server-side, so the mutation's intent — that message gone
+        // from its old location — is already satisfied; retrying can never
+        // succeed. Drop it. Likewise drop any op that has exhausted its retry
+        // budget, so one permanently-failing mutation can't re-fail on every
+        // poll indefinitely. Everything else is recorded and left queued to
+        // retry next pass.
+        final targetGone = e is ServerException &&
+            e.statusCode == 404 &&
+            (op.opType == PendingOperationType.delete ||
+                op.opType == PendingOperationType.move ||
+                op.opType == PendingOperationType.junk);
+        final exhausted = op.retryCount + 1 >= _maxOpRetries;
+        if (targetGone || exhausted) {
+          await _pendingOperations.removeOperation(op.id);
+        } else {
+          await _pendingOperations.recordFailure(
+              id: op.id, error: e.toString());
+        }
         quarantined.add(op.emailId);
       }
     }

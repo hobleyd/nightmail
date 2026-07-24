@@ -11,6 +11,7 @@ import 'package:nightmail/data/datasources/local/email_local_datasource_impl.dar
 import 'package:nightmail/data/datasources/local/pending_operations_datasource.dart';
 import 'package:nightmail/data/datasources/remote/email_remote_datasource.dart';
 import 'package:nightmail/data/datasources/remote/spam_db_sync_datasource.dart';
+import 'package:nightmail/core/error/exceptions.dart';
 import 'package:nightmail/data/models/email_address_model.dart';
 import 'package:nightmail/data/models/email_model.dart';
 import 'package:nightmail/domain/entities/email.dart';
@@ -289,6 +290,84 @@ void main() {
       ));
       final remaining = await db.getPendingOperations('acct-1');
       expect(remaining, hasLength(2));
+    });
+  });
+
+  group('giving up on doomed ops', () {
+    // Regression: a delete/move/junk whose target 404s ("not found in the
+    // store") can never succeed — the message is already gone. It used to be
+    // requeued and re-fail on every single poll forever (live-observed at
+    // thousands of retries). It must be dropped instead.
+    test('drops a delete whose target 404s instead of retrying forever',
+        () async {
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'gone-id',
+        opType: PendingOperationType.delete,
+        payload: '{}',
+      );
+      when(mockRemoteDatasource.deleteEmail('gone-id')).thenThrow(
+          const ServerException(message: 'not found', statusCode: 404));
+
+      await service.drainForAccount('acct-1');
+
+      expect(await db.getPendingOperations('acct-1'), isEmpty);
+    });
+
+    test('drops a move whose target 404s', () async {
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'gone-id',
+        opType: PendingOperationType.move,
+        payload: jsonEncode({'destinationFolderId': 'folder-2'}),
+      );
+      when(mockRemoteDatasource.moveEmail('gone-id', 'folder-2')).thenThrow(
+          const ServerException(message: 'not found', statusCode: 404));
+
+      await service.drainForAccount('acct-1');
+
+      expect(await db.getPendingOperations('acct-1'), isEmpty);
+    });
+
+    // A non-404 failure (e.g. transient server/throttle) is still retryable,
+    // so it stays queued — only its retry counter advances.
+    test('keeps a non-404 failure queued for retry', () async {
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+        opType: PendingOperationType.delete,
+        payload: '{}',
+      );
+      when(mockRemoteDatasource.deleteEmail('email-1')).thenThrow(
+          const ServerException(message: 'throttled', statusCode: 503));
+
+      await service.drainForAccount('acct-1');
+
+      final remaining = await db.getPendingOperations('acct-1');
+      expect(remaining, hasLength(1));
+      expect(remaining.first.retryCount, 1);
+    });
+
+    // Backstop: even a persistently-failing non-404 op is dropped once it has
+    // burned through its retry budget, so it can't re-fail on every poll
+    // indefinitely.
+    test('drops an op that has exhausted its retry budget', () async {
+      final id = await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+        opType: PendingOperationType.delete,
+        payload: '{}',
+      );
+      // Simulate an op that has already failed right up to the cap boundary.
+      for (var i = 0; i < 24; i++) {
+        await db.recordFailure(id: id, error: 'boom');
+      }
+      when(mockRemoteDatasource.deleteEmail('email-1'))
+          .thenThrow(Exception('still failing'));
+
+      await service.drainForAccount('acct-1');
+
+      expect(await db.getPendingOperations('acct-1'), isEmpty);
     });
   });
 

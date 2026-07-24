@@ -68,7 +68,18 @@ class EmailRepositoryImpl implements EmailRepository {
     String? filter,
     String orderBy = 'receivedDateTime desc',
   }) async {
-    final result = await _execute(() => _accountManager.emailDatasource.getEmails(
+    // Capture the active account id and its datasource together, before any
+    // await, so the fetch and the cache write are bound to the *same* account.
+    // Reading activeAccount?.id after the network await let an account switch
+    // that landed mid-fetch cache one account's messages under the other
+    // account's id (observed: a whole Gmail inbox fetch cached under a
+    // Microsoft account's cache as folder 'INBOX').
+    final accountId = _accountManager.activeAccount?.id;
+    final datasource =
+        accountId == null ? null : _accountManager.emailDatasource;
+
+    final result = await _execute(() =>
+        (datasource ?? _accountManager.emailDatasource).getEmails(
           folderId: folderId,
           top: top,
           skip: skip,
@@ -76,7 +87,6 @@ class EmailRepositoryImpl implements EmailRepository {
           orderBy: orderBy,
         ));
 
-    final accountId = _accountManager.activeAccount?.id;
     if (accountId == null) return result;
 
     return result.fold(
@@ -155,7 +165,12 @@ class EmailRepositoryImpl implements EmailRepository {
 
   @override
   Future<Either<Failure, Email>> getEmail(String id) async {
+    // See getEmails: capture id + datasource together, before any await, so
+    // an account switch mid-fetch can't cache one account's message under the
+    // other account's id.
     final accountId = _accountManager.activeAccount?.id;
+    final datasource =
+        accountId == null ? null : _accountManager.emailDatasource;
     if (accountId != null) {
       final cached = await _localDatasource.getCachedEmailById(
         accountId: accountId,
@@ -180,8 +195,8 @@ class EmailRepositoryImpl implements EmailRepository {
       }
     }
 
-    final result =
-        await _execute(() => _accountManager.emailDatasource.getEmail(id));
+    final result = await _execute(
+        () => (datasource ?? _accountManager.emailDatasource).getEmail(id));
     if (accountId == null) return result;
 
     return result.fold(

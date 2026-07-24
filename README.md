@@ -21,6 +21,7 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - Delete a conversation thread's in-folder messages from the reading pane
 - Double-click an image in a message to open it in a resizable window
 - Spell-checking with inline suggestions in the compose editor (macOS, Windows, Linux)
+- Compose editor: font-family dropdown, custom font-colour palette, and pasting/resizing images inline
 
 ### Folders
 - Full folder hierarchy with unread counts
@@ -42,7 +43,8 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 ### Tasks
 - Create and manage tasks across Microsoft To Do and Google Tasks
 - Set due dates, importance, and status
-- Attach emails to tasks
+- Attach emails to tasks (or link the source email in notes for providers without an attachment API)
+- Expandable task notes with a link back to the source email
 
 ### Contacts
 - Typeahead in the compose window drawing from three sources:
@@ -54,6 +56,7 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - Multiple accounts from different providers simultaneously
 - Per-account folder, calendar, and task views
 - Secure token storage (system Keychain / encrypted preferences)
+- Clear an account's local cache without removing the account
 
 ---
 

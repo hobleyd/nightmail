@@ -23,6 +23,7 @@ static const char* kJsBridge = R"JS(
   window['onLinkRequest']     = makeChannel('onLinkRequest');
   window['onAttachRequest']   = makeChannel('onAttachRequest');
   window['onImageDoubleClicked'] = makeChannel('onImageDoubleClicked');
+  window['onImagePasted']     = makeChannel('onImagePasted');
   document.addEventListener('dblclick', function(e) {
     var t = e.target;
     if (t && t.tagName === 'IMG') {

@@ -12,6 +12,7 @@ private let kJsBridge = """
   }
   window['onContentChanged'] = makeChannel('onContentChanged');
   window['onLinkRequest']    = makeChannel('onLinkRequest');
+  window['onImagePasted']    = makeChannel('onImagePasted');
   document.addEventListener('DOMContentLoaded', function() {
     window.webkit.messageHandlers.HtmlView.postMessage('pageLoaded\\x00');
   });

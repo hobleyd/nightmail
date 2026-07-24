@@ -151,6 +151,10 @@ body { display: flex; flex-direction: column; }
   padding: 0 2px;
 }
 
+#font-family-select {
+  max-width: 120px;
+}
+
 .editor.format-painter-active {
   cursor: crosshair;
 }
@@ -204,8 +208,22 @@ body { display: flex; flex-direction: column; }
     <span class="color-swatch" id="color-swatch"></span>
   </button>
   <span class="sep"></span>
+  <select id="font-family-select" title="Font">
+    <option value="" hidden></option>
+    <option value="Arial" style="font-family:Arial">Arial</option>
+    <option value="Calibri" style="font-family:Calibri">Calibri</option>
+    <option value="Comic Sans MS" style="font-family:'Comic Sans MS'">Comic Sans MS</option>
+    <option value="Courier New" style="font-family:'Courier New'">Courier New</option>
+    <option value="Georgia" style="font-family:Georgia">Georgia</option>
+    <option value="Helvetica" style="font-family:Helvetica">Helvetica</option>
+    <option value="Tahoma" style="font-family:Tahoma">Tahoma</option>
+    <option value="Times New Roman" style="font-family:'Times New Roman'">Times New Roman</option>
+    <option value="Trebuchet MS" style="font-family:'Trebuchet MS'">Trebuchet MS</option>
+    <option value="Verdana" style="font-family:Verdana">Verdana</option>
+  </select>
+  <span class="sep"></span>
   <select id="font-size-select" title="Font size">
-    <option value="">Size</option>
+    <option value="" hidden></option>
     <option value="10">10</option>
     <option value="12">12</option>
     <option value="14">14</option>
@@ -375,16 +393,116 @@ fontSizeSelect.addEventListener('change', function() {
   this.blur();
 });
 
-function updateFontSizeSelect() {
+// The element the caret is currently in (or null if the selection isn't in
+// the editor). Used to read the font/size at the cursor.
+function _caretElement() {
   const sel = window.getSelection();
-  if (!sel || sel.rangeCount === 0) return;
+  if (!sel || sel.rangeCount === 0) return null;
   let node = sel.getRangeAt(0).startContainer;
   if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
-  if (!node || !editor.contains(node)) return;
+  if (!node || !editor.contains(node)) return null;
+  return node;
+}
+
+// Makes a <select> display [value] even when it isn't one of the ship-time
+// presets, by parking the current value in a single reusable option. This lets
+// the size/font boxes reflect whatever the caret actually sits on (e.g. the
+// 13px default body text, or a font pasted in from another mail client) rather
+// than blanking out whenever the value isn't a preset.
+function _reflectInSelect(select, value, label) {
+  if (!value) { select.value = ''; return; }
+  const preset = Array.from(select.options).find(function(o) {
+    return !o.hasAttribute('data-dynamic') && o.value === value;
+  });
+  if (preset) { select.value = value; return; }
+  let dyn = select.querySelector('option[data-dynamic]');
+  if (!dyn) {
+    dyn = document.createElement('option');
+    dyn.setAttribute('data-dynamic', '');
+    select.appendChild(dyn);
+  }
+  dyn.value = value;
+  dyn.textContent = label != null ? label : value;
+  select.value = value;
+}
+
+function updateFontSizeSelect() {
+  const node = _caretElement();
+  if (!node) return;
   const size = Math.round(parseFloat(getComputedStyle(node).fontSize));
-  const match = Array.from(fontSizeSelect.options)
-      .find(function(o) { return parseInt(o.value, 10) === size; });
-  fontSizeSelect.value = match ? match.value : '';
+  _reflectInSelect(fontSizeSelect, size ? String(size) : '', null);
+}
+
+// --- Font family -----------------------------------------------------------
+// Mirrors the font-size control: the <select> steals the editor's selection
+// when opened, so snapshot the range on mousedown and restore it before
+// applying. 'fontName' wraps the selection (or the caret's typing state) in a
+// <font face="..."> element.
+const fontFamilySelect = document.getElementById('font-family-select');
+
+function setFontName(family) {
+  document.execCommand('fontName', false, family);
+  scheduleChange();
+}
+
+fontFamilySelect.addEventListener('mousedown', function() {
+  saveSelection();
+});
+fontFamilySelect.addEventListener('change', function() {
+  const family = this.value;
+  restoreSavedSelection();
+  if (family) setFontName(family);
+  this.blur();
+});
+
+// Generic / system-UI keywords aren't real family names — the app's default
+// body stack begins with them (e.g. "-apple-system") — so they're skipped when
+// working out which concrete font is actually on screen.
+function _isGenericFamily(key) {
+  return key === '' || key === 'sans-serif' || key === 'serif' ||
+      key === 'monospace' || key === 'cursive' || key === 'fantasy' ||
+      key === 'system-ui' || key === '-apple-system' ||
+      key === 'blinkmacsystemfont' || key === 'ui-sans-serif' ||
+      key === 'ui-serif' || key === 'ui-monospace';
+}
+
+// Resolves a computed font-family stack to the family the user should see in
+// the box. getComputedStyle returns the *declared* stack, not the rendered
+// font, so the default body text reads back as its whole system-UI stack. We
+// resolve it to a concrete name:
+//  - If the stack starts with a concrete family, it's a chosen/quoted font —
+//    show it verbatim (even if not installed locally, that's the intended font).
+//  - Otherwise it's the default UI stack; report the first family the OS can
+//    actually render (via document.fonts.check) so the box shows the real font
+//    (e.g. "Segoe UI" on Windows) instead of a system keyword.
+function _resolveFontFamily(cssValue) {
+  if (!cssValue) return '';
+  const families = cssValue.split(',').map(function(f) {
+    return f.trim().replace(/^["']|["']$/g, '');
+  });
+  if (families.length && !_isGenericFamily(families[0].toLowerCase())) {
+    return families[0];
+  }
+  for (let i = 0; i < families.length; i++) {
+    const fam = families[i];
+    if (_isGenericFamily(fam.toLowerCase())) continue;
+    try {
+      if (document.fonts && document.fonts.check('16px "' + fam + '"')) return fam;
+    } catch (_) { /* check unsupported — ignore */ }
+  }
+  return '';
+}
+
+function updateFontFamilySelect() {
+  const node = _caretElement();
+  if (!node) return;
+  const family = _resolveFontFamily(getComputedStyle(node).fontFamily);
+  const key = family.toLowerCase();
+  const preset = Array.from(fontFamilySelect.options).find(function(o) {
+    return !o.hasAttribute('data-dynamic') && o.value.toLowerCase() === key;
+  });
+  if (preset) { fontFamilySelect.value = preset.value; return; }
+  _reflectInSelect(fontFamilySelect, family, family);
 }
 
 // --- Format painter ----------------------------------------------------
@@ -684,9 +802,48 @@ function _escapePlainTextToHtml(text) {
       .join('<br>');
 }
 
+// Returns the first clipboard entry that is an actual image file/blob (e.g. a
+// screenshot or a copied image), or null. A copied *text* selection never
+// populates a file entry, so this reliably distinguishes "paste an image" from
+// "paste rich text that happens to contain images".
+function _findImageFile(cd) {
+  if (cd.items) {
+    for (let i = 0; i < cd.items.length; i++) {
+      const it = cd.items[i];
+      if (it.kind === 'file' && it.type && it.type.indexOf('image/') === 0) {
+        const f = it.getAsFile();
+        if (f) return f;
+      }
+    }
+  }
+  if (cd.files) {
+    for (let i = 0; i < cd.files.length; i++) {
+      const f = cd.files[i];
+      if (f.type && f.type.indexOf('image/') === 0) return f;
+    }
+  }
+  return null;
+}
+
 editor.addEventListener('paste', function(e) {
   const cd = e.clipboardData || window.clipboardData;
   if (!cd) return; // fall back to the browser's default paste behaviour
+
+  // An image on the clipboard is embedded inline: read it as a data URL and
+  // hand it to the host, which registers it as an inline attachment (with a
+  // Content-Id) and inserts it via insertImage(). Doing it host-side keeps the
+  // send-time cid: substitution working — a bare data: URI would otherwise be
+  // stripped by many mail servers.
+  const imageFile = _findImageFile(cd);
+  if (imageFile) {
+    e.preventDefault();
+    const reader = new FileReader();
+    reader.onload = function() {
+      _flutterNotify('onImagePasted', reader.result);
+    };
+    reader.readAsDataURL(imageFile);
+    return;
+  }
 
   e.preventDefault();
 
@@ -788,6 +945,7 @@ function updateToolbarState() {
   }
 
   updateFontSizeSelect();
+  updateFontFamilySelect();
 }
 document.addEventListener('selectionchange', function() {
   if (toolbarUpdateScheduled) return;

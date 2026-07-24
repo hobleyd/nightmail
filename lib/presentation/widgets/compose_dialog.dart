@@ -894,6 +894,37 @@ class _ComposeFormState extends State<ComposeForm> {
     });
   }
 
+  // Handles an image pasted into the HTML editor. The editor sends the image
+  // as a `data:<mime>;base64,<data>` URL; decode it into a real inline
+  // attachment so the send-time cid: substitution embeds it properly (a raw
+  // data: URI left in the body would be stripped by many mail servers).
+  void _onImagePasted(String dataUri) {
+    if (_bodyType != EmailBodyType.html) return;
+    final comma = dataUri.indexOf(',');
+    if (!dataUri.startsWith('data:') || comma < 0) return;
+    final header = dataUri.substring(5, comma); // e.g. "image/png;base64"
+    if (!header.contains('base64')) return;
+    final mimeType = header.split(';').first;
+    if (!mimeType.startsWith('image/')) return;
+
+    Uint8List bytes;
+    try {
+      bytes = base64.decode(dataUri.substring(comma + 1));
+    } catch (_) {
+      return;
+    }
+    if (bytes.isEmpty) return;
+
+    final ext = mimeType.split('/').last.split('+').first;
+    final name =
+        'pasted_image_${DateTime.now().millisecondsSinceEpoch}.$ext';
+    _insertInlineImage(LocalAttachment(
+      name: name,
+      mimeType: mimeType,
+      bytes: bytes,
+    ));
+  }
+
   void _insertInlineImage(LocalAttachment att) {
     final contentId =
         '${DateTime.now().millisecondsSinceEpoch}_${att.name.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_')}@nightmail';
@@ -1277,6 +1308,7 @@ class _ComposeFormState extends State<ComposeForm> {
         },
         onLinkRequested: () => _onLinkRequested(context),
         onAttachRequested: _pickAttachments,
+        onImagePasted: _onImagePasted,
         onClickFocus: () => FocusManager.instance.primaryFocus?.unfocus(),
       );
     }

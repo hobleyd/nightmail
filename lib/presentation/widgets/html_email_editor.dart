@@ -11,6 +11,7 @@ class HtmlEmailEditor extends StatefulWidget {
     required this.onContentChanged,
     required this.onLinkRequested,
     required this.onAttachRequested,
+    this.onImagePasted,
     this.onClickFocus,
     this.autofocus = false,
   });
@@ -23,6 +24,10 @@ class HtmlEmailEditor extends StatefulWidget {
   /// Called when the user taps the paperclip button in the editor toolbar.
   /// The caller should open a file picker and attach the selected files.
   final VoidCallback onAttachRequested;
+  /// Called when the user pastes an image into the editor. The argument is a
+  /// `data:` URL of the pasted image; the caller should register it as an
+  /// inline attachment and insert it via [insertImage].
+  final ValueChanged<String>? onImagePasted;
   /// Called when a raw click forces native OS focus onto the editor. The
   /// caller should drop focus from whatever Flutter field currently has it
   /// (e.g. `FocusManager.instance.primaryFocus?.unfocus()`), since a native
@@ -43,6 +48,7 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
   StreamSubscription<void>?   _linkSub;
   StreamSubscription<void>?   _loadedSub;
   StreamSubscription<void>?   _attachSub;
+  StreamSubscription<String>? _imagePastedSub;
   StreamSubscription<void>?   _clickFocusSub;
 
   String _pendingHtml = '';
@@ -64,6 +70,9 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
       });
       _attachSub = _controller.onAttachRequested.listen((_) {
         if (mounted) widget.onAttachRequested();
+      });
+      _imagePastedSub = _controller.onImagePasted.listen((dataUri) {
+        if (mounted) widget.onImagePasted?.call(dataUri);
       });
       _clickFocusSub = _controller.onClickFocus.listen((_) {
         if (!mounted) return;
@@ -96,6 +105,7 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
     _linkSub?.cancel();
     _loadedSub?.cancel();
     _attachSub?.cancel();
+    _imagePastedSub?.cancel();
     _clickFocusSub?.cancel();
     _controller.dispose();
     super.dispose();

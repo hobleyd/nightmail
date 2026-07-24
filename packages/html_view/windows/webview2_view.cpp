@@ -31,6 +31,7 @@ static const wchar_t* kJsBridge = LR"JS(
   window['onLinkRequest']     = makeChannel('onLinkRequest');
   window['onAttachRequest']   = makeChannel('onAttachRequest');
   window['onImageDoubleClicked'] = makeChannel('onImageDoubleClicked');
+  window['onImagePasted']     = makeChannel('onImagePasted');
 
   // Report a double-click on an image so the host can pop it out in a
   // resizable window. Capture phase so it fires regardless of page handlers.

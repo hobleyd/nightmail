@@ -19,6 +19,7 @@ class HtmlViewController {
   final _onAttachRequested  = StreamController<void>.broadcast();
   final _onClickFocus       = StreamController<void>.broadcast();
   final _onImageDoubleClicked = StreamController<String>.broadcast();
+  final _onImagePasted      = StreamController<String>.broadcast();
 
   Stream<String> get onContentChanged  => _onContentChanged.stream;
   Stream<void>   get onLinkRequest     => _onLinkRequest.stream;
@@ -38,6 +39,10 @@ class HtmlViewController {
   /// Fires when the user double-clicks an `<img>` in the page. The value is
   /// the image's resolved `src` (an `http(s)` URL or an inline `data:` URL).
   Stream<String> get onImageDoubleClicked => _onImageDoubleClicked.stream;
+  /// Fires when the user pastes an image into an editable page. The value is
+  /// the image encoded as a `data:` URL. Callers should register it as an
+  /// inline attachment and insert it back via `insertImage()`.
+  Stream<String> get onImagePasted        => _onImagePasted.stream;
 
   bool get isInitialized => _viewId != null;
 
@@ -84,6 +89,9 @@ class HtmlViewController {
         break;
       case 'onImageDoubleClicked':
         _onImageDoubleClicked.add(map['value'] as String? ?? '');
+        break;
+      case 'onImagePasted':
+        _onImagePasted.add(map['value'] as String? ?? '');
         break;
     }
   }
@@ -148,6 +156,7 @@ class HtmlViewController {
     _onAttachRequested.close();
     _onClickFocus.close();
     _onImageDoubleClicked.close();
+    _onImagePasted.close();
     if (_viewId != null) {
       final id = _viewId;
       _viewId = null;

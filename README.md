@@ -22,6 +22,7 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - Double-click an image in a message to open it in a resizable window
 - Spell-checking with inline suggestions in the compose editor (macOS, Windows, Linux)
 - Compose editor: font-family dropdown, custom font-colour palette, and pasting/resizing images inline
+- Select and copy message text (subject, sender, recipients, date, body) with standard platform shortcuts (Cmd/Ctrl+C)
 
 ### Folders
 - Full folder hierarchy with unread counts

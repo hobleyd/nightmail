@@ -36,6 +36,7 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
   HtmlViewController? _htmlController;
   StreamSubscription<String>? _linkSub;
   StreamSubscription<String>? _imageSub;
+  StreamSubscription<void>? _clickFocusSub;
   // Tracks the latest HTML so _initHtmlView can apply updates that arrived
   // while the controller was still initialising.
   String _pendingHtml = '';
@@ -70,6 +71,21 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
       if (uri != null) unawaited(launchUrl(uri, mode: LaunchMode.externalApplication));
     });
     _imageSub = ctrl.onImageDoubleClicked.listen(_openImageWindow);
+    // A click inside the WKWebView/WebView2 overlay is a native OS focus
+    // steal that never reaches Flutter's own FocusNode tree, so without this
+    // native cmd/ctrl+C never routes to the webview: the reading pane's own
+    // widgets (or nothing) stay firstResponder/focused and the Edit-menu
+    // Copy item has no selection to act on. Drop Flutter's focus first, then
+    // grant native focus — same order html_email_editor.dart uses, since
+    // granting native focus before Flutter unfocuses can be undone by
+    // Flutter's text input plugin reasserting itself.
+    _clickFocusSub = ctrl.onClickFocus.listen((_) {
+      if (!mounted) return;
+      FocusManager.instance.primaryFocus?.unfocus();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(ctrl.focus());
+      });
+    });
     setState(() => _htmlController = ctrl);
     widget.onControllerReady?.call(ctrl);
     unawaited(ctrl.loadHtml(_pendingHtml));
@@ -116,6 +132,7 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
   void dispose() {
     _disposed = true;
     _linkSub?.cancel();
+    _clickFocusSub?.cancel();
     _imageSub?.cancel();
     unawaited(_htmlController?.dispose());
     super.dispose();

@@ -1505,57 +1505,59 @@ class _EmailHeader extends StatelessWidget {
     final c = context.colors;
     return Padding(
       padding: const EdgeInsets.fromLTRB(28, 24, 28, 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            email.subject,
-            style: TextStyle(
-              color: c.textPrimary,
-              fontSize: 20,
-              fontWeight: FontWeight.w600,
-              letterSpacing: -0.5,
-              height: 1.3,
+      child: SelectionArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              email.subject,
+              style: TextStyle(
+                color: c.textPrimary,
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.5,
+                height: 1.3,
+              ),
             ),
-          ),
-          const SizedBox(height: 16),
-          _AnomalousFromRow(
-            email: email,
-            highlightColor: _anomalyColor(senderAnomaly?.score),
-            anomalyMatches: senderAnomaly?.matches,
-          ),
-          if (email.toRecipients.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            _AnomalousFromRow(
+              email: email,
+              highlightColor: _anomalyColor(senderAnomaly?.score),
+              anomalyMatches: senderAnomaly?.matches,
+            ),
+            if (email.toRecipients.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              _RecipientRow(
+                icon: Icons.mail_outline_rounded,
+                label: 'To',
+                recipients: email.toRecipients,
+              ),
+            ],
+            if (email.ccRecipients.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              _RecipientRow(
+                icon: Icons.people_outline_rounded,
+                label: 'Cc',
+                recipients: email.ccRecipients,
+              ),
+            ],
             const SizedBox(height: 6),
-            _RecipientRow(
-              icon: Icons.mail_outline_rounded,
-              label: 'To',
-              recipients: email.toRecipients,
+            _MetaRow(
+              icon: Icons.schedule_rounded,
+              label: 'Date',
+              value: formatEmailDateLong(email.receivedDateTime),
             ),
+            if (email.attachments.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _AttachmentsSection(
+                emailId: email.id,
+                attachments: email.attachments,
+                onAttachmentPreview: onAttachmentPreview,
+                activePreviewAttachmentId: activePreviewAttachmentId,
+              ),
+            ],
           ],
-          if (email.ccRecipients.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            _RecipientRow(
-              icon: Icons.people_outline_rounded,
-              label: 'Cc',
-              recipients: email.ccRecipients,
-            ),
-          ],
-          const SizedBox(height: 6),
-          _MetaRow(
-            icon: Icons.schedule_rounded,
-            label: 'Date',
-            value: formatEmailDateLong(email.receivedDateTime),
-          ),
-          if (email.attachments.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            _AttachmentsSection(
-              emailId: email.id,
-              attachments: email.attachments,
-              onAttachmentPreview: onAttachmentPreview,
-              activePreviewAttachmentId: activePreviewAttachmentId,
-            ),
-          ],
-        ],
+        ),
       ),
     );
   }

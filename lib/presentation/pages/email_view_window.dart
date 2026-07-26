@@ -162,6 +162,7 @@ class _EmailViewPage extends StatelessWidget {
                     html: email.body,
                     inlineAttachments: const [],
                     senderDomain: _senderDomain(email.from.address),
+                    cacheKey: email.id,
                   )
                 : SingleChildScrollView(
                     padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),

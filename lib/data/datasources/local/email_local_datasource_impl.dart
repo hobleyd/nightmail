@@ -8,6 +8,7 @@ import '../../../domain/entities/email_attachment.dart';
 import '../../../domain/entities/meeting_invite.dart';
 import '../../../domain/entities/inline_attachment.dart';
 import '../../database/app_database.dart';
+import '../../services/inline_attachment_cache.dart';
 import '../../../infrastructure/cache/cache_encryption_service.dart';
 import 'email_local_datasource.dart';
 
@@ -15,10 +16,15 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
   const EmailLocalDatasourceImpl({
     required this._database,
     required this._encryption,
+    required this._inlineAttachments,
   });
 
   final AppDatabase _database;
   final CacheEncryptionService _encryption;
+
+  /// Inline images are cached on disk next to — but not inside — the SQLite
+  /// cache, so removing a row here has to remove that email's files too.
+  final InlineAttachmentCache _inlineAttachments;
 
   @override
   Future<List<Email>> getCachedEmails({
@@ -174,8 +180,17 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     await (_database.delete(_database.cachedEmails)
           ..where((t) => t.accountId.equals(accountId)))
         .go();
+    // The inline cache is keyed by email id alone, so there is no per-account
+    // subset to target. Dropping all of it only costs a re-write on next view,
+    // and this runs on account removal / an explicit "clear cached mail".
+    await _inlineAttachments.clear();
   }
 
+  // Deliberately does not touch the inline attachment cache: EmailListBloc
+  // calls this on every successful folder refresh, immediately before writing
+  // the fresh page back, so evicting here would throw the images away on each
+  // poll. Genuinely removed emails come through deleteEmailFromCache; anything
+  // else is caught by InlineAttachmentCache.prune on startup.
   @override
   Future<void> clearCacheForFolder({
     required String accountId,
@@ -194,6 +209,7 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     await (_database.delete(_database.cachedEmails)
           ..where((t) => t.accountId.equals(accountId) & t.emailId.equals(emailId)))
         .go();
+    await _inlineAttachments.evictEmail(emailId);
   }
 
   @override

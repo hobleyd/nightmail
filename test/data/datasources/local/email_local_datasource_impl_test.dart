@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/data/database/app_database.dart';
 import 'package:nightmail/data/datasources/local/email_local_datasource_impl.dart';
+import 'package:nightmail/data/services/inline_attachment_cache.dart';
 import 'package:nightmail/data/models/email_address_model.dart';
 import 'package:nightmail/data/models/email_model.dart';
 import 'package:nightmail/domain/entities/email.dart';
@@ -52,6 +53,8 @@ void main() {
     datasource = EmailLocalDatasourceImpl(
       database: db,
       encryption: _PlaintextEncryption(),
+      // No temp directory under the test binding, so every cache call no-ops.
+      inlineAttachments: InlineAttachmentCache(),
     );
   });
 

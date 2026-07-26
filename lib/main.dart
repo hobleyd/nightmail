@@ -12,6 +12,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'core/settings/window_bounds_service.dart';
 import 'data/database/app_database.dart';
+import 'data/services/inline_attachment_cache.dart';
 import 'domain/usecases/send_email.dart';
 import 'infrastructure/accounts/account_manager.dart';
 import 'infrastructure/background/background_mail_service.dart';
@@ -189,6 +190,9 @@ void main(List<String> args) async {
   }
 
 await configureDependencies();
+  // Sweeps inline-image directories left behind by emails whose id the server
+  // reassigned (a move), which per-email eviction cannot know about.
+  unawaited(sl<InlineAttachmentCache>().prune());
   await BackgroundMailService.initialize();
   await BackgroundMailService.schedulePeriodicCheck();
   // Initialize the notification plugin and check whether the app was launched

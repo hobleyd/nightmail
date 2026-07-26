@@ -26,6 +26,7 @@ import 'data/repositories/spam_filter_repository_impl.dart';
 import 'data/repositories/system_contacts_repository_impl.dart';
 import 'data/repositories/tasks_repository_impl.dart';
 import 'data/services/eml_parser.dart';
+import 'data/services/inline_attachment_cache.dart';
 import 'data/services/office_preview_service.dart';
 // AI subsystem
 import 'data/datasources/ai/ai_adapter_factory.dart';
@@ -185,10 +186,12 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton<FolderLocalDatasource>(() => sl<AppDatabase>());
   sl.registerLazySingleton<ReminderScheduleLocalDatasource>(() => sl<AppDatabase>());
   sl.registerLazySingleton<PendingOperationsDatasource>(() => sl<AppDatabase>());
+  sl.registerLazySingleton(() => InlineAttachmentCache());
   sl.registerLazySingleton<EmailLocalDatasource>(
     () => EmailLocalDatasourceImpl(
       database: sl<AppDatabase>(),
       encryption: sl<CacheEncryptionService>(),
+      inlineAttachments: sl<InlineAttachmentCache>(),
     ),
   );
   sl.registerLazySingleton<SenderLocalDatasource>(

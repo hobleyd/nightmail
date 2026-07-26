@@ -12,6 +12,7 @@ import 'package:nightmail/data/datasources/local/pending_operations_datasource.d
 import 'package:nightmail/data/datasources/remote/email_remote_datasource.dart';
 import 'package:nightmail/data/datasources/remote/spam_db_sync_datasource.dart';
 import 'package:nightmail/core/error/exceptions.dart';
+import 'package:nightmail/data/services/inline_attachment_cache.dart';
 import 'package:nightmail/data/models/email_address_model.dart';
 import 'package:nightmail/data/models/email_model.dart';
 import 'package:nightmail/domain/entities/email.dart';
@@ -87,6 +88,7 @@ void main() {
     localDatasource = EmailLocalDatasourceImpl(
       database: db,
       encryption: _PlaintextEncryption(),
+      inlineAttachments: InlineAttachmentCache(),
     );
     mockAccountManager = MockAccountManager();
     mockRemoteDatasource = MockEmailRemoteDatasource();

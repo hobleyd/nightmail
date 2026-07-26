@@ -2313,6 +2313,7 @@ class _EmailBody extends StatelessWidget {
         html: email.body,
         inlineAttachments: email.inlineAttachments,
         senderDomain: _senderDomain(email.from.address),
+        cacheKey: email.id,
         onControllerReady: onControllerReady,
       );
     }

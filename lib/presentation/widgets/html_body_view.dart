@@ -11,8 +11,23 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../../core/platform/window_utils.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
+import '../../data/services/inline_attachment_cache.dart';
 import '../../domain/entities/inline_attachment.dart';
 import '../../injection_container.dart';
+
+/// A prepared document, ready to hand to the webview. Exactly one of
+/// [filePath] and [inlineHtml] is set: large or image-bearing bodies are
+/// written to disk and loaded by URL, everything else is loaded as a string.
+class _Prepared {
+  const _Prepared.file(String this.filePath, {required this.blockedImages})
+      : inlineHtml = null;
+  const _Prepared.inline(String this.inlineHtml, {required this.blockedImages})
+      : filePath = null;
+
+  final String? filePath;
+  final String? inlineHtml;
+  final bool blockedImages;
+}
 
 class HtmlBodyView extends StatefulWidget {
   const HtmlBodyView({
@@ -20,11 +35,16 @@ class HtmlBodyView extends StatefulWidget {
     required this.html,
     required this.inlineAttachments,
     required this.senderDomain,
+    required this.cacheKey,
     this.onControllerReady,
   });
   final String html;
   final List<InlineAttachment> inlineAttachments;
   final String senderDomain;
+
+  /// Identifies this body in [InlineAttachmentCache] — the email id. Cached
+  /// files are dropped when the email leaves the local cache.
+  final String cacheKey;
   final void Function(HtmlViewController)? onControllerReady;
 
   @override
@@ -37,9 +57,9 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
   StreamSubscription<String>? _linkSub;
   StreamSubscription<String>? _imageSub;
   StreamSubscription<void>? _clickFocusSub;
-  // Tracks the latest HTML so _initHtmlView can apply updates that arrived
-  // while the controller was still initialising.
-  String _pendingHtml = '';
+  // Tracks the latest prepared document so _initHtmlView can apply an update
+  // that arrived while the controller was still initialising.
+  _Prepared? _pending;
 
   // Mobile (Android / iOS): webview_flutter.
   WebViewController? _flutterController;
@@ -47,18 +67,24 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
   bool _allowExternalImages = false;
   bool _hasBlockedImages = false;
   bool _disposed = false;
+  String? _loadError;
+
+  /// Guards against an out-of-order `_prepare` — preparing is async now, so a
+  /// fast "Download once" tap can otherwise land behind the initial build.
+  int _loadSeq = 0;
+
+  static bool get _isDesktop =>
+      Platform.isLinux || Platform.isMacOS || Platform.isWindows;
 
   @override
   void initState() {
     super.initState();
-    if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
-      final (html, blocked) = _buildHtml(allowExternal: false);
-      _pendingHtml = html;
-      _hasBlockedImages = blocked;
+    if (_isDesktop) {
       _initHtmlView();
     } else {
       _initFlutter();
     }
+    _reloadWith(allowExternal: false);
     _loadAlwaysAllowSetting();
   }
 
@@ -88,12 +114,11 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
     });
     setState(() => _htmlController = ctrl);
     widget.onControllerReady?.call(ctrl);
-    unawaited(ctrl.loadHtml(_pendingHtml));
+    final pending = _pending;
+    if (pending != null) _dispatch(pending);
   }
 
   void _initFlutter() {
-    final (html, blocked) = _buildHtml(allowExternal: false);
-    _hasBlockedImages = blocked;
     _flutterController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.disabled)
       ..setNavigationDelegate(NavigationDelegate(
@@ -106,8 +131,7 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
           }
           return NavigationDecision.navigate;
         },
-      ))
-      ..loadHtmlString(html);
+      ));
   }
 
   Future<void> _loadAlwaysAllowSetting() async {
@@ -120,6 +144,7 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
   void didUpdateWidget(HtmlBodyView old) {
     super.didUpdateWidget(old);
     final emailChanged = old.html != widget.html ||
+        old.cacheKey != widget.cacheKey ||
         old.inlineAttachments != widget.inlineAttachments;
     final senderChanged = old.senderDomain != widget.senderDomain;
     if (emailChanged || senderChanged) {
@@ -150,17 +175,51 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
 
   void _reloadWith({required bool allowExternal}) {
     if (_disposed) return;
-    final (html, blocked) = _buildHtml(allowExternal: allowExternal);
-    _pendingHtml = html;
-    setState(() {
-      _allowExternalImages = allowExternal;
-      _hasBlockedImages = blocked;
-    });
-    if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
-      unawaited(_htmlController?.loadHtml(html));
+    final seq = ++_loadSeq;
+    unawaited(() async {
+      final prepared = await _prepare(allowExternal: allowExternal);
+      // A newer reload started while we were writing files — drop this one.
+      if (_disposed || seq != _loadSeq) return;
+      _pending = prepared;
+      if (mounted) {
+        setState(() {
+          _allowExternalImages = allowExternal;
+          _hasBlockedImages = prepared.blockedImages;
+          _loadError = null;
+        });
+      }
+      _dispatch(prepared);
+    }());
+  }
+
+  /// Hands [prepared] to whichever webview backs this platform. Failures are
+  /// surfaced rather than swallowed: an unawaited `loadHtml` that rejects
+  /// leaves the overlay blank with nothing to explain it.
+  void _dispatch(_Prepared prepared) {
+    if (_isDesktop) {
+      final ctrl = _htmlController;
+      // Not initialised yet — _initHtmlView loads _pending when it finishes.
+      if (ctrl == null) return;
+      final path = prepared.filePath;
+      final future = path != null
+          ? ctrl.loadUrl(Uri.file(path).toString())
+          : ctrl.loadHtml(prepared.inlineHtml!);
+      unawaited(future.catchError((Object e) => _onLoadFailed(e)));
     } else {
-      _flutterController?.loadHtmlString(html);
+      final ctrl = _flutterController;
+      if (ctrl == null) return;
+      final path = prepared.filePath;
+      final future = path != null
+          ? ctrl.loadFile(path)
+          : ctrl.loadHtmlString(prepared.inlineHtml!);
+      unawaited(future.catchError((Object e) => _onLoadFailed(e)));
     }
+  }
+
+  void _onLoadFailed(Object error) {
+    debugPrint('HtmlBodyView: load failed: $error');
+    if (!mounted) return;
+    setState(() => _loadError = 'This message could not be displayed.');
   }
 
   void _downloadOnce() => _reloadWith(allowExternal: true);
@@ -170,23 +229,91 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
     if (mounted) _reloadWith(allowExternal: true);
   }
 
-  (String, bool) _buildHtml({required bool allowExternal}) {
-    var resolved = widget.html;
-    for (final attachment in widget.inlineAttachments) {
+  /// Resolves `cid:` references, blocks external images and injects our own
+  /// styles, then decides how the result should reach the webview.
+  ///
+  /// Preferred route on desktop is a file on disk: the inline images are
+  /// written once by [InlineAttachmentCache] and referenced by relative name,
+  /// which keeps the document tiny. Loading a multi-megabyte string instead
+  /// fails outright on Windows — WebView2's `NavigateToString` caps at 2 MB —
+  /// and costs a 33% base64 penalty everywhere else. Falls back to inlining as
+  /// `data:` URLs if the cache is unusable (read-only temp dir, disk full).
+  Future<_Prepared> _prepare({required bool allowExternal}) async {
+    final attachments = widget.inlineAttachments;
+
+    Map<String, String>? fileNames;
+    if (_isDesktop && attachments.isNotEmpty) {
+      fileNames = await sl<InlineAttachmentCache>().materialize(
+        cacheKey: widget.cacheKey,
+        attachments: attachments,
+      );
+    }
+
+    final (body, blocked) = _composeHtml(
+      allowExternal: allowExternal,
+      // `file:` URLs into the cache directory, or — when the cache is
+      // unavailable, or on mobile — the bytes inlined as before.
+      cidReplacements: fileNames ?? _dataUrlReplacements(attachments),
+    );
+
+    // Images on disk only resolve from a document loaded off disk, and any
+    // document too large for NavigateToString has to go to disk regardless.
+    final needsFile = fileNames != null ||
+        (_isDesktop &&
+            utf8.encode(body).length >=
+                InlineAttachmentCache.maxInlineDocumentBytes);
+    if (needsFile) {
+      final path = await sl<InlineAttachmentCache>()
+          .writeDocument(cacheKey: widget.cacheKey, html: body);
+      if (path != null) return _Prepared.file(path, blockedImages: blocked);
+      if (fileNames != null) {
+        // The images were written but the document was not. Retry inline so
+        // the message still renders, size permitting.
+        final (inline, inlineBlocked) = _composeHtml(
+          allowExternal: allowExternal,
+          cidReplacements: _dataUrlReplacements(attachments),
+        );
+        return _Prepared.inline(inline, blockedImages: inlineBlocked);
+      }
+    }
+    return _Prepared.inline(body, blockedImages: blocked);
+  }
+
+  /// `cid` token -> base64 `data:` URL, the pre-cache behaviour, kept as the
+  /// mobile path and as the desktop fallback.
+  static Map<String, String> _dataUrlReplacements(
+    List<InlineAttachment> attachments,
+  ) {
+    final map = <String, String>{};
+    for (final attachment in attachments) {
       final cid = attachment.contentId;
       final bare = cid.startsWith('<') && cid.endsWith('>')
           ? cid.substring(1, cid.length - 1)
           : cid;
-      final dataUrl =
-          'data:${attachment.contentType};base64,${base64Encode(attachment.contentBytes)}';
-      resolved = resolved.replaceAll('cid:$bare', dataUrl);
+      final dataUrl = 'data:${attachment.contentType};base64,'
+          '${base64Encode(attachment.contentBytes)}';
+      map[bare] = dataUrl;
       // Gmail may set Content-ID to `<ii_x@mail.gmail.com>` while the body
-      // references only `cid:ii_x`; substitute the local part too.
+      // references only `cid:ii_x`; map the local part too.
       final at = bare.indexOf('@');
-      if (at != -1) {
-        resolved = resolved.replaceAll('cid:${bare.substring(0, at)}', dataUrl);
-      }
+      if (at != -1) map[bare.substring(0, at)] = dataUrl;
     }
+    return map;
+  }
+
+  (String, bool) _composeHtml({
+    required bool allowExternal,
+    required Map<String, String> cidReplacements,
+  }) {
+    // One pass over the body. Substituting per attachment instead rescans the
+    // whole (already-expanded) document once per image — quadratic, and
+    // painful once the document is megabytes of base64.
+    var resolved = cidReplacements.isEmpty
+        ? widget.html
+        : widget.html.replaceAllMapped(
+            RegExp('''cid:([^"'\\s>)]+)''', caseSensitive: false),
+            (m) => cidReplacements[m.group(1)!] ?? m.group(0)!,
+          );
 
     bool hasBlockedImages = false;
     if (!allowExternal) {
@@ -277,8 +404,11 @@ a[href]:hover::after {
 
   @override
   Widget build(BuildContext context) {
+    final error = _loadError;
+    if (error != null) return _LoadErrorPanel(message: error);
+
     final Widget webviewWidget;
-    if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
+    if (_isDesktop) {
       final ctrl = _htmlController;
       webviewWidget = ctrl != null
           ? HtmlViewWidget(controller: ctrl)
@@ -299,6 +429,34 @@ a[href]:hover::after {
             onAlwaysDownload: _alwaysDownload,
           ),
       ],
+    );
+  }
+}
+
+class _LoadErrorPanel extends StatelessWidget {
+  const _LoadErrorPanel({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.error_outline, size: 28, color: c.textMuted),
+            const SizedBox(height: 10),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: c.textMuted, fontSize: 13),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

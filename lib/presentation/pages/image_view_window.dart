@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:window_manager/window_manager.dart';
@@ -8,9 +10,10 @@ import '../blocs/theme/theme_cubit.dart';
 import '../blocs/theme/theme_state.dart';
 
 /// Standalone, freely resizable window that shows a single image the user
-/// double-clicked in a reading pane. The [src] is either an `http(s)` URL or
-/// an inline `data:` URL (inline `cid:` images are converted to data URLs
-/// before the HTML is rendered, so that is what arrives here).
+/// double-clicked in a reading pane. The [src] is an `http(s)` URL, a `file:`
+/// URL, or an inline `data:` URL — inline `cid:` images are resolved before
+/// the HTML is rendered, to a file in [InlineAttachmentCache] on desktop and
+/// to a data URL on mobile.
 class ImageViewWindowApp extends StatelessWidget {
   const ImageViewWindowApp({super.key, required this.arguments});
 
@@ -68,6 +71,16 @@ class _ImageViewPage extends StatelessWidget {
       if (data == null) return _ImageError(colors: c);
       return Image.memory(
         data.contentAsBytes(),
+        fit: BoxFit.contain,
+        errorBuilder: errorBuilder,
+      );
+    }
+
+    if (src.startsWith('file:')) {
+      final uri = Uri.tryParse(src);
+      if (uri == null) return _ImageError(colors: c);
+      return Image.file(
+        File(uri.toFilePath()),
         fit: BoxFit.contain,
         errorBuilder: errorBuilder,
       );

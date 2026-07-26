@@ -6,10 +6,12 @@ import 'dart:math' as math;
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'core/settings/window_bounds_service.dart';
+import 'data/database/app_database.dart';
 import 'domain/usecases/send_email.dart';
 import 'infrastructure/accounts/account_manager.dart';
 import 'infrastructure/background/background_mail_service.dart';
@@ -251,6 +253,14 @@ class _NightMailAppState extends State<NightMailApp> with WindowListener {
   // onWindowMove before the user has touched anything).
   bool _suppressBoundsSave = Platform.isLinux;
 
+  // On macOS, Cmd-Q calls -[NSApplication terminate:] directly — it does not
+  // go through windowShouldClose/onWindowClose below, so AppDelegate.swift's
+  // applicationShouldTerminate holds termination and invokes this channel to
+  // give Dart a chance to shut down cleanly first.
+  static const _appLifecycleChannel =
+      MethodChannel('au.com.sharpblue.nightmail/app_lifecycle');
+  bool _shutdownStarted = false;
+
   static bool get _isDesktop =>
       !kIsWeb && (Platform.isMacOS || Platform.isLinux || Platform.isWindows);
 
@@ -271,6 +281,14 @@ class _NightMailAppState extends State<NightMailApp> with WindowListener {
     if (_isDesktop) {
       windowManager.addListener(this);
       windowManager.setPreventClose(true);
+    }
+    if (Platform.isMacOS) {
+      _appLifecycleChannel.setMethodCallHandler((call) async {
+        if (call.method == 'applicationWillTerminate') {
+          await _prepareForShutdown();
+        }
+        return null;
+      });
     }
     if (_suppressBoundsSave) {
       Timer(const Duration(milliseconds: 1500), () {
@@ -321,12 +339,31 @@ class _NightMailAppState extends State<NightMailApp> with WindowListener {
     } catch (_) {}
   }
 
+  // The drift cache database runs on a background isolate. Close it through
+  // drift's own shutdown protocol before tearing down the engine/process,
+  // otherwise the isolate can be killed mid-query, crashing native sqlite3
+  // (SIGSEGV in sqlite3Close) instead of shutting down cleanly. Guarded so
+  // both the windowShouldClose path (onWindowClose) and the Cmd-Q path
+  // (applicationShouldTerminate, via _appLifecycleChannel above) can call
+  // this without racing or closing twice.
+  Future<void> _prepareForShutdown() async {
+    if (_shutdownStarted) return;
+    _shutdownStarted = true;
+    _boundsDebounce?.cancel();
+    // Close the database first and give it the lion's share of the shutdown
+    // budget — it's the crash-critical step. Window-bounds save is best
+    // effort and shouldn't eat into the time a draining query needs.
+    try {
+      await sl<AppDatabase>().close().timeout(const Duration(seconds: 3));
+    } catch (_) {}
+    await _saveCurrentState();
+  }
+
   @override
   void onWindowClose() async {
     // Quit the whole app when the main window is closed, even if
     // compose windows are still open.
-    _boundsDebounce?.cancel();
-    await _saveCurrentState();
+    await _prepareForShutdown();
     windowManager.destroy();
   }
 

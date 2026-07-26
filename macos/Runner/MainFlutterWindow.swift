@@ -17,7 +17,28 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
   private var badgeChannel: FlutterMethodChannel?
   private var mainNotificationChannel: FlutterMethodChannel?
   private var systemEventsChannel: FlutterMethodChannel?
+  private var appLifecycleChannel: FlutterMethodChannel?
   private let eventStore = EKEventStore()
+
+  // Cmd-Q sends -[NSApplication terminate:] straight to the app delegate's
+  // applicationShouldTerminate(_:) — it does NOT go through this window's
+  // windowShouldClose, so AppDelegate needs a way to reach back into the main
+  // window's Flutter engine to ask Dart to shut down cleanly first.
+  static weak var shared: MainFlutterWindow?
+
+  /// Asks the Dart side to run its graceful-shutdown path (closing the drift
+  /// cache database, saving window state) before the process is allowed to
+  /// terminate. Calls [completion] once Dart replies, or immediately if the
+  /// channel isn't available.
+  func notifyWillTerminate(completion: @escaping () -> Void) {
+    guard let channel = appLifecycleChannel else {
+      completion()
+      return
+    }
+    channel.invokeMethod("applicationWillTerminate", arguments: nil) { _ in
+      completion()
+    }
+  }
 
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
@@ -117,6 +138,12 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     ) { [weak self] _ in
       self?.systemEventsChannel?.invokeMethod("systemDidWake", arguments: nil)
     }
+
+    appLifecycleChannel = FlutterMethodChannel(
+      name: "au.com.sharpblue.nightmail/app_lifecycle",
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
+    MainFlutterWindow.shared = self
 
     super.awakeFromNib()
   }

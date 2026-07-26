@@ -540,7 +540,8 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     return body;
   }
 
-  String _buildRRule(CalendarRecurrence r) {
+  String _buildRRule(CalendarRecurrence rawR) {
+    final r = rawR.normalizedForSync();
     final parts = <String>['RRULE'];
     final freq = switch (r.frequency) {
       RecurrenceFrequency.daily => 'DAILY',

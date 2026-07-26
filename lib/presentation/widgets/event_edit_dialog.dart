@@ -1052,9 +1052,18 @@ class _RecurrenceSection extends StatelessWidget {
   final DateTime startDate;
   final ValueChanged<CalendarRecurrence?> onChanged;
 
+  static const List<int> _weekdayDefaults = [1, 2, 3, 4, 5];
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final showDayPicker = recurrence?.frequency == RecurrenceFrequency.weekly ||
+        recurrence?.frequency == RecurrenceFrequency.daily;
+    // "Every N days" has no clean meaning once a daily recurrence is
+    // restricted to specific weekdays (it's sent as a weekly rule instead),
+    // so hide the interval control in that case.
+    final isDailyRestricted = recurrence?.frequency == RecurrenceFrequency.daily &&
+        (recurrence?.daysOfWeek?.length ?? 7) < 7;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1081,14 +1090,16 @@ class _RecurrenceSection extends StatelessWidget {
                     interval: recurrence?.interval ?? 1,
                     daysOfWeek: freq == RecurrenceFrequency.weekly
                         ? (recurrence?.daysOfWeek ?? [startDate.weekday])
-                        : null,
+                        : freq == RecurrenceFrequency.daily
+                            ? (recurrence?.daysOfWeek ?? _weekdayDefaults)
+                            : null,
                     endDate: recurrence?.endDate,
                     count: recurrence?.count,
                   ));
                 }
               },
             ),
-            if (recurrence != null) ...[
+            if (recurrence != null && !isDailyRestricted) ...[
               const SizedBox(width: 8),
               Text('every', style: TextStyle(color: c.textMuted, fontSize: 12)),
               const SizedBox(width: 6),
@@ -1110,10 +1121,13 @@ class _RecurrenceSection extends StatelessWidget {
             ],
           ],
         ),
-        if (recurrence?.frequency == RecurrenceFrequency.weekly) ...[
+        if (showDayPicker) ...[
           const SizedBox(height: 8),
           _DayOfWeekPicker(
-            selected: recurrence!.daysOfWeek ?? [startDate.weekday],
+            selected: recurrence!.daysOfWeek ??
+                (recurrence!.frequency == RecurrenceFrequency.daily
+                    ? _weekdayDefaults
+                    : [startDate.weekday]),
             onChanged: (days) => onChanged(CalendarRecurrence(
               frequency: recurrence!.frequency,
               interval: recurrence!.interval,

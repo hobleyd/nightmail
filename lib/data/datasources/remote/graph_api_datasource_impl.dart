@@ -859,7 +859,8 @@ class GraphApiDatasourceImpl
   }
 
   Map<String, dynamic> _buildGraphRecurrence(
-      CalendarRecurrence r, DateTime startDate) {
+      CalendarRecurrence rawR, DateTime startDate) {
+    final r = rawR.normalizedForSync();
     final patternType = switch (r.frequency) {
       RecurrenceFrequency.daily => 'daily',
       RecurrenceFrequency.weekly => 'weekly',

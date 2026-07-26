@@ -385,7 +385,8 @@ class CalDavCalendarDatasourceImpl implements CalendarRemoteDatasource {
     return null;
   }
 
-  String _buildRRule(CalendarRecurrence r) {
+  String _buildRRule(CalendarRecurrence rawR) {
+    final r = rawR.normalizedForSync();
     final freq = switch (r.frequency) {
       RecurrenceFrequency.daily => 'DAILY',
       RecurrenceFrequency.weekly => 'WEEKLY',

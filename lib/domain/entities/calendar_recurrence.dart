@@ -25,4 +25,24 @@ class CalendarRecurrence extends Equatable {
 
   @override
   List<Object?> get props => [frequency, interval, daysOfWeek, endDate, count];
+
+  /// Backends (Graph, CalDAV, Google) only support [daysOfWeek] restrictions
+  /// on weekly recurrence, so "daily on Mon-Fri" is only representable on
+  /// the wire as "weekly on Mon-Fri". Interval is reset to 1 since "every N
+  /// days" has no well-defined meaning once expressed as a weekly rule.
+  CalendarRecurrence normalizedForSync() {
+    if (frequency == RecurrenceFrequency.daily &&
+        daysOfWeek != null &&
+        daysOfWeek!.isNotEmpty &&
+        daysOfWeek!.length < 7) {
+      return CalendarRecurrence(
+        frequency: RecurrenceFrequency.weekly,
+        interval: 1,
+        daysOfWeek: daysOfWeek,
+        endDate: endDate,
+        count: count,
+      );
+    }
+    return this;
+  }
 }

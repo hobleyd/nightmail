@@ -34,7 +34,8 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 ### Calendar
 - View, create, update, and delete events
 - Accept, tentatively accept, or decline meeting invitations
-- Check attendee availability
+- Check attendee availability, with a side-by-side schedule pane for finding a
+  free slot (see below)
 - Propose new meeting times
 - Recurring event support
 - Timezone-aware scheduling
@@ -59,6 +60,13 @@ every account, regardless of the provider-specific fields underneath:
 Out-of-office and working-elsewhere are free/busy states with no participation
 equivalent, so they override the scheme; Gmail's event feed doesn't report
 them, so they appear on Microsoft 365 only.
+
+**Finding a free slot.** Add guests to a meeting and a **Find a time** link
+appears under the Guests field, opening a schedule pane beside the form. It
+shows 07:00–20:00 of the meeting's day with every participant's busy blocks
+side by side; click a slot to move the meeting there. It's always available once
+there's at least one guest — you don't have to hit a clash first — and each
+guest also gets a one-line free/busy summary for the meeting's own time.
 
 ### Tasks
 - Create and manage tasks across Microsoft To Do and Google Tasks

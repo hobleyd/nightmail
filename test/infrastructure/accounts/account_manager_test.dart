@@ -233,4 +233,35 @@ void main() {
       expect(accountManager.contactsDatasource, isNull);
     });
   });
+
+  group('accountById', () {
+    setUp(() {
+      when(mockAccountStorage.loadAccounts()).thenAnswer((_) async => [
+            const GmailAccount(
+                id: '1', displayName: 'Alice', emailAddress: 'a@gmail.com'),
+            const MicrosoftAccount(
+                id: '2',
+                displayName: 'Bob',
+                emailAddress: 'b@corp.com',
+                tenantId: 'tid'),
+          ]);
+      when(mockAccountStorage.loadActiveIndex()).thenAnswer((_) async => 0);
+      stubStorageEmpty();
+    });
+
+    test('finds a configured account regardless of which is active', () async {
+      await accountManager.initialize();
+
+      expect(accountManager.accountById('2')?.emailAddress, 'b@corp.com');
+      expect(accountManager.activeAccount?.id, isNot('2'));
+    });
+
+    test('returns null for an unknown id or a null id', () async {
+      await accountManager.initialize();
+
+      expect(accountManager.accountById('nope'), isNull);
+      expect(accountManager.accountById(null), isNull);
+    });
+  });
+
 }

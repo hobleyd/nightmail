@@ -258,7 +258,14 @@ class _EventEditFormState extends State<EventEditForm> {
     };
     _recurrence = e?.recurrence;
     _reminderMinutes = e?.reminderMinutes;
-    _organizerEmail = sl<AccountManager>().activeAccount?.emailAddress;
+    // The account the meeting is being created on — not necessarily the active
+    // one. This form runs in its own window (and so its own engine, which
+    // restores whichever account was last persisted as active), so the id it
+    // was opened with is the only reliable signal of whose calendar this is.
+    final accounts = sl<AccountManager>();
+    _organizerEmail =
+        (accounts.accountById(widget.accountId) ?? accounts.activeAccount)
+            ?.emailAddress;
 
     // Snapshot the initialized state, normalized the same way _submit() reads
     // it back, so change-detection compares like with like.
@@ -374,6 +381,7 @@ class _EventEditFormState extends State<EventEditForm> {
       start: start,
       end: end,
       organizerEmail: _organizerEmail,
+      accountId: widget.accountId,
     ));
 
     if (!mounted) return;
@@ -594,7 +602,14 @@ class _EventEditFormState extends State<EventEditForm> {
                       const SizedBox(width: 12),
                       _AllDayToggle(
                         value: _isAllDay,
-                        onChanged: (v) => setState(() => _isAllDay = v),
+                        onChanged: (v) {
+                          setState(() => _isAllDay = v);
+                          // Switching to all-day removes the times the pane
+                          // exists to negotiate, so collapse it (and shrink the
+                          // window back) rather than leaving a stale grid open.
+                          if (v && _showSchedulePane) _toggleSchedulePane();
+                          _scheduleAvailabilityCheck();
+                        },
                       ),
                     ],
                   ),
@@ -683,12 +698,17 @@ class _EventEditFormState extends State<EventEditForm> {
                     accountId: widget.accountId,
                   ),
                 ),
-                if (!_readOnly && widget.checkAttendeesAvailability != null)
+                // All-day events have no time to negotiate, so the availability
+                // readout and the schedule pane are both meaningless for them.
+                if (!_readOnly &&
+                    !_isAllDay &&
+                    widget.checkAttendeesAvailability != null)
                   _AvailabilitySection(
                     attendees: _attendees,
                     availabilities: _availabilities,
                     checking: _checkingAvailability,
                     onShowSchedule: _toggleSchedulePane,
+                    scheduleShown: _showSchedulePane,
                     organizerEmail: _organizerEmail,
                   ),
                 const SizedBox(height: 10),
@@ -1939,6 +1959,7 @@ class _AvailabilitySection extends StatelessWidget {
     required this.availabilities,
     required this.checking,
     this.onShowSchedule,
+    this.scheduleShown = false,
     this.organizerEmail,
   });
 
@@ -1946,6 +1967,7 @@ class _AvailabilitySection extends StatelessWidget {
   final List<AttendeeAvailability>? availabilities;
   final bool checking;
   final VoidCallback? onShowSchedule;
+  final bool scheduleShown;
   final String? organizerEmail;
 
   @override
@@ -1954,40 +1976,94 @@ class _AvailabilitySection extends StatelessWidget {
 
     final c = context.colors;
 
+    // Rows are per-guest free/busy summaries. `unknown` guests are omitted
+    // because there is nothing truthful to say about them — the provider either
+    // does not expose free/busy (CalDAV) or would not disclose that mailbox.
+    // The schedule pane is still offered in that case: an empty column is a
+    // fair picture of "we cannot see this calendar", and the organizer's own
+    // calendar is worth scanning regardless.
+    final rows = (availabilities ?? const <AttendeeAvailability>[])
+        .where((a) =>
+            a.status != AttendeeAvailabilityStatus.unknown &&
+            a.email != organizerEmail)
+        .toList();
+
     return Padding(
       padding: const EdgeInsets.only(top: 6, left: 68),
-      child: checking
-          ? Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final a in rows)
+            _AvailabilityRow(availability: a, onScheduleTap: onShowSchedule),
+          Padding(
+            padding: EdgeInsets.only(top: rows.isEmpty ? 0 : 4),
+            child: Row(
               children: [
-                SizedBox(
-                  width: 12,
-                  height: 12,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 1.5,
-                    color: c.textMuted,
+                if (onShowSchedule != null)
+                  _FindTimeButton(
+                    shown: scheduleShown,
+                    onTap: onShowSchedule!,
                   ),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  'Checking availability…',
-                  style: TextStyle(color: c.textMuted, fontSize: 11),
-                ),
+                if (checking) ...[
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.5,
+                      color: c.textMuted,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Checking availability…',
+                    style: TextStyle(color: c.textMuted, fontSize: 11),
+                  ),
+                ],
               ],
-            )
-          : availabilities == null
-              ? const SizedBox.shrink()
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: availabilities!
-                      .where((a) =>
-                          a.status != AttendeeAvailabilityStatus.unknown &&
-                          a.email != organizerEmail)
-                      .map((a) => _AvailabilityRow(
-                            availability: a,
-                            onScheduleTap: onShowSchedule,
-                          ))
-                      .toList(),
-                ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Opens (or closes) the schedule pane. Always available once the meeting has
+/// a guest — finding a free slot is exactly the case where nobody is busy yet,
+/// so this must not be gated on a detected conflict.
+class _FindTimeButton extends StatelessWidget {
+  const _FindTimeButton({required this.shown, required this.onTap});
+
+  final bool shown;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              shown ? Icons.chevron_right_rounded : Icons.event_available_rounded,
+              size: 13,
+              color: AppColors.accent,
+            ),
+            const SizedBox(width: 3),
+            Text(
+              shown ? 'Hide schedules' : 'Find a time',
+              style: const TextStyle(
+                color: AppColors.accent,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -2015,10 +2091,10 @@ class _AvailabilityRow extends StatelessWidget {
         AttendeeAvailabilityStatus.unknown => const Color(0xFF8E8E93),
       };
 
-  bool get _isTappable =>
-      onScheduleTap != null &&
-      availability.status != AttendeeAvailabilityStatus.free &&
-      availability.status != AttendeeAvailabilityStatus.unknown;
+  /// The status word doubles as a shortcut into the schedule pane. Free guests
+  /// are included: the pane is how you pick a slot, so it has to be reachable
+  /// when everyone is free — which is the normal case, not the exception.
+  bool get _isTappable => onScheduleTap != null;
 
   @override
   Widget build(BuildContext context) {

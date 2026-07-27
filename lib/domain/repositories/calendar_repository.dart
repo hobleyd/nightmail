@@ -83,5 +83,6 @@ abstract interface class CalendarRepository {
     required DateTime start,
     required DateTime end,
     String? organizerEmail,
+    String? accountId,
   });
 }

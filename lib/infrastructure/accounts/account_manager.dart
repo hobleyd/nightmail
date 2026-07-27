@@ -97,6 +97,20 @@ class AccountManager {
   Account? get activeAccount =>
       _accounts.isEmpty ? null : _accounts[_activeIndex];
 
+  /// The configured account with [id], or null when [id] is null or unknown.
+  ///
+  /// Needed by anything that acts on a specific account rather than the active
+  /// one — sub-windows in particular, which run their own engine and restore
+  /// whichever account was persisted as active, not the one the window was
+  /// opened for.
+  Account? accountById(String? id) {
+    if (id == null) return null;
+    for (final account in _accounts) {
+      if (account.id == id) return account;
+    }
+    return null;
+  }
+
   EmailRemoteDatasource get emailDatasource {
     if (_emailDatasource == null) throw StateError('No active account');
     return _emailDatasource!;

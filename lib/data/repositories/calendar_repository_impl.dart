@@ -9,6 +9,7 @@ import '../../domain/repositories/calendar_repository.dart';
 import '../../domain/usecases/create_calendar_event.dart';
 import '../../domain/usecases/update_calendar_event.dart';
 import '../../infrastructure/accounts/account_manager.dart';
+import '../datasources/remote/calendar_remote_datasource.dart';
 
 class CalendarRepositoryImpl implements CalendarRepository {
   const CalendarRepositoryImpl({required this._accountManager});
@@ -389,21 +390,30 @@ class CalendarRepositoryImpl implements CalendarRepository {
     required DateTime start,
     required DateTime end,
     String? organizerEmail,
+    String? accountId,
   }) async {
-    final ds = _accountManager.calendarDatasource;
+    final ds = _availabilityDatasource(accountId);
     if (ds == null) return const Right([]);
 
     try {
       final results = <AttendeeAvailability>[];
 
+      // Query the whole working day rather than just the meeting window: the
+      // schedule pane draws 07:00–20:00 so the organizer can find a free slot,
+      // and it can only show blocks that were actually fetched. Widened past
+      // those bounds when the meeting itself falls outside them, so a 06:00 or
+      // 21:00 meeting still gets its own window covered.
+      final dayStart = DateTime(start.year, start.month, start.day, 7);
+      final dayEnd = DateTime(start.year, start.month, start.day, 20);
+      final windowStart = start.isBefore(dayStart) ? start : dayStart;
+      final windowEnd = end.isAfter(dayEnd) ? end : dayEnd;
+
       // Organiser: fetch full calendar events so subjects are included.
       // getSchedule redacts subjects for most queries; calendarView does not.
       if (organizerEmail != null) {
-        final dayStart = DateTime(start.year, start.month, start.day, 7);
-        final dayEnd = DateTime(start.year, start.month, start.day, 20);
         final events = await ds.getCalendarEvents(
-          startDateTime: dayStart,
-          endDateTime: dayEnd,
+          startDateTime: windowStart,
+          endDateTime: windowEnd,
         );
         final items = events
             .where((e) => !e.isAllDay && e.status != CalendarEventStatus.free)
@@ -427,10 +437,10 @@ class CalendarRepositoryImpl implements CalendarRepository {
       if (attendeeEmails.isNotEmpty) {
         final schedules = await ds.getAttendeesSchedule(
           emails: attendeeEmails,
-          start: start,
-          end: end,
+          start: windowStart,
+          end: windowEnd,
         );
-        results.addAll(schedules);
+        results.addAll(schedules.map(_statusForMeetingWindow(start, end)));
       }
 
       return Right(results);
@@ -443,6 +453,54 @@ class CalendarRepositoryImpl implements CalendarRepository {
     } catch (e) {
       return Left(ServerFailure(message: e.toString()));
     }
+  }
+
+  /// Narrows a datasource's day-wide summary status down to the meeting itself.
+  ///
+  /// Datasources derive their status from whatever window they were asked
+  /// about, which is now the whole working day (the schedule pane needs those
+  /// blocks), so a guest with a busy afternoon would otherwise be flagged as a
+  /// clash for a free-morning meeting.
+  AttendeeAvailability Function(AttendeeAvailability) _statusForMeetingWindow(
+    DateTime start,
+    DateTime end,
+  ) {
+    return (a) {
+      // `unknown` means this mailbox's free/busy is not visible to us. Having
+      // no blocks for that reason must never be reported as Free.
+      if (a.status == AttendeeAvailabilityStatus.unknown) return a;
+
+      // Blocks present — recompute precisely from the ones that overlap.
+      if (a.scheduleItems.isNotEmpty) {
+        return AttendeeAvailability(
+          email: a.email,
+          status: _worstOverlap(a.scheduleItems, start, end),
+          scheduleItems: a.scheduleItems,
+        );
+      }
+
+      // No blocks, but a status the provider was willing to state: Exchange
+      // discloses free/busy without details for guests who share only that
+      // much, so the day-wide status is all we have. Keep it — over-reporting
+      // a clash is safer than claiming a guest is free when they are not.
+      return a;
+    };
+  }
+
+  /// Calendar datasource to answer a free/busy query for [accountId].
+  ///
+  /// The active account's shared datasource is reused whenever it is the one
+  /// being asked about, because [AccountManager.buildCalendarDatasourceForAccount]
+  /// stands up an independent auth pipeline against the same stored token —
+  /// running that alongside the active one races on refresh (see
+  /// CalendarReminderService._reconcileAccount for the same trade-off).
+  CalendarRemoteDatasource? _availabilityDatasource(String? accountId) {
+    if (accountId == null || accountId == _accountManager.activeAccount?.id) {
+      return _accountManager.calendarDatasource;
+    }
+    final account = _accountManager.accountById(accountId);
+    if (account == null) return _accountManager.calendarDatasource;
+    return _accountManager.buildCalendarDatasourceForAccount(account);
   }
 
   AttendeeAvailabilityStatus _mapStatus(CalendarEventStatus s) => switch (s) {

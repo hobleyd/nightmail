@@ -391,6 +391,9 @@ class CalendarRepositoryImpl implements CalendarRepository {
     required DateTime end,
     String? organizerEmail,
     String? accountId,
+    String? excludeEventId,
+    DateTime? excludeStart,
+    DateTime? excludeEnd,
   }) async {
     final ds = _availabilityDatasource(accountId);
     if (ds == null) return const Right([]);
@@ -417,6 +420,9 @@ class CalendarRepositoryImpl implements CalendarRepository {
         );
         final items = events
             .where((e) => !e.isAllDay && e.status != CalendarEventStatus.free)
+            // The organizer's own copy is matched by id, which is exact — this
+            // path fetches whole events, unlike the attendee free/busy below.
+            .where((e) => !_isExcludedEvent(e, excludeEventId))
             .map((e) => AttendeeScheduleItem(
                   start: e.start,
                   end: e.end,
@@ -440,7 +446,15 @@ class CalendarRepositoryImpl implements CalendarRepository {
           start: windowStart,
           end: windowEnd,
         );
-        results.addAll(schedules.map(_statusForMeetingWindow(start, end)));
+        for (final raw in schedules) {
+          results.add(_statusForMeetingWindow(
+            _withoutExcludedMeeting(raw, excludeStart, excludeEnd),
+            start,
+            end,
+            // Read from the untrimmed response on purpose — see the doc comment.
+            hadBlocks: raw.scheduleItems.isNotEmpty,
+          ));
+        }
       }
 
       return Right(results);
@@ -461,31 +475,83 @@ class CalendarRepositoryImpl implements CalendarRepository {
   /// about, which is now the whole working day (the schedule pane needs those
   /// blocks), so a guest with a busy afternoon would otherwise be flagged as a
   /// clash for a free-morning meeting.
-  AttendeeAvailability Function(AttendeeAvailability) _statusForMeetingWindow(
+  ///
+  /// [hadBlocks] is whether the provider returned any detail blocks *before*
+  /// the meeting being edited was discounted, and cannot be re-derived from
+  /// `a.scheduleItems` here: a guest whose only commitment was this very
+  /// meeting arrives with an empty list and has to read Free, rather than
+  /// falling through to the provider's now-stale day-wide status.
+  AttendeeAvailability _statusForMeetingWindow(
+    AttendeeAvailability a,
     DateTime start,
-    DateTime end,
-  ) {
-    return (a) {
-      // `unknown` means this mailbox's free/busy is not visible to us. Having
-      // no blocks for that reason must never be reported as Free.
-      if (a.status == AttendeeAvailabilityStatus.unknown) return a;
+    DateTime end, {
+    required bool hadBlocks,
+  }) {
+    // `unknown` means this mailbox's free/busy is not visible to us. Having
+    // no blocks for that reason must never be reported as Free.
+    if (a.status == AttendeeAvailabilityStatus.unknown) return a;
 
-      // Blocks present — recompute precisely from the ones that overlap.
-      if (a.scheduleItems.isNotEmpty) {
-        return AttendeeAvailability(
-          email: a.email,
-          status: _worstOverlap(a.scheduleItems, start, end),
-          scheduleItems: a.scheduleItems,
-        );
-      }
+    // Blocks present — recompute precisely from the ones that overlap.
+    if (hadBlocks) {
+      return AttendeeAvailability(
+        email: a.email,
+        status: _worstOverlap(a.scheduleItems, start, end),
+        scheduleItems: a.scheduleItems,
+      );
+    }
 
-      // No blocks, but a status the provider was willing to state: Exchange
-      // discloses free/busy without details for guests who share only that
-      // much, so the day-wide status is all we have. Keep it — over-reporting
-      // a clash is safer than claiming a guest is free when they are not.
-      return a;
-    };
+    // No blocks, but a status the provider was willing to state: Exchange
+    // discloses free/busy without details for guests who share only that
+    // much, so the day-wide status is all we have. Keep it — over-reporting
+    // a clash is safer than claiming a guest is free when they are not.
+    return a;
   }
+
+  /// True when [e] is the meeting currently being edited.
+  ///
+  /// Matches the series master too, so editing a whole recurring series
+  /// discounts every occurrence of it rather than just the one that was opened.
+  bool _isExcludedEvent(CalendarEvent e, String? excludeEventId) {
+    if (excludeEventId == null) return false;
+    return e.id == excludeEventId || e.seriesMasterId == excludeEventId;
+  }
+
+  /// Drops a guest's own copy of the meeting being edited.
+  ///
+  /// Free/busy carries no event id — Graph's `getSchedule` and Google's
+  /// `freeBusy` both report anonymous intervals — so the meeting's stored slot
+  /// is the only thing left to match on. Bounds are compared with a minute of
+  /// slack because providers round these times to the second.
+  ///
+  /// Google merges touching busy intervals, so a guest with something butted up
+  /// against this meeting comes back as one wider block that no longer matches
+  /// and is therefore kept. That over-reports a clash rather than concealing
+  /// one, which is the right direction to be wrong in.
+  AttendeeAvailability _withoutExcludedMeeting(
+    AttendeeAvailability a,
+    DateTime? excludeStart,
+    DateTime? excludeEnd,
+  ) {
+    if (excludeStart == null || excludeEnd == null) return a;
+    if (a.scheduleItems.isEmpty) return a;
+
+    final kept = a.scheduleItems
+        .where((i) => !_isSameSlot(i, excludeStart, excludeEnd))
+        .toList();
+    if (kept.length == a.scheduleItems.length) return a;
+
+    return AttendeeAvailability(
+      email: a.email,
+      status: a.status,
+      scheduleItems: kept,
+    );
+  }
+
+  static const _slotSlack = Duration(seconds: 60);
+
+  bool _isSameSlot(AttendeeScheduleItem i, DateTime start, DateTime end) =>
+      i.start.difference(start.toUtc()).abs() <= _slotSlack &&
+      i.end.difference(end.toUtc()).abs() <= _slotSlack;
 
   /// Calendar datasource to answer a free/busy query for [accountId].
   ///

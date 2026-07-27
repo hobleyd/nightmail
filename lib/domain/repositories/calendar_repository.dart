@@ -78,11 +78,21 @@ abstract interface class CalendarRepository {
     String? message,
   });
 
+  /// Free/busy for [emails] over the day containing [start].
+  ///
+  /// [excludeEventId] and [excludeStart]/[excludeEnd] identify a meeting that
+  /// must not be counted as a clash with itself — set them when checking on
+  /// behalf of an existing event, whose guests already hold a copy of it.
+  /// Pass the event's stored times, not the ones being edited in the form:
+  /// until the change is saved, the guests' copies still sit at the old slot.
   Future<Either<Failure, List<AttendeeAvailability>>> checkAttendeesAvailability({
     required List<String> emails,
     required DateTime start,
     required DateTime end,
     String? organizerEmail,
     String? accountId,
+    String? excludeEventId,
+    DateTime? excludeStart,
+    DateTime? excludeEnd,
   });
 }

@@ -284,6 +284,15 @@ class _EventEditFormState extends State<EventEditForm> {
         .map(_extractEmail)
         .map((a) => a.toLowerCase())
         .toSet();
+
+    // An existing meeting opens with its guest list already filled in, so the
+    // first free/busy fetch has to be kicked off here. Every other trigger is a
+    // user edit, which means an organizer who opens a meeting and reads the
+    // availability rows — or clicks "Find a time" — without touching anything
+    // would otherwise see nothing at all.
+    if (!_readOnly && !_isAllDay && _attendees.isNotEmpty) {
+      _scheduleAvailabilityCheck();
+    }
   }
 
   static String? _nullIfBlank(String s) {
@@ -340,6 +349,15 @@ class _EventEditFormState extends State<EventEditForm> {
     final next = !_showSchedulePane;
     setState(() => _showSchedulePane = next);
     widget.onSchedulePaneToggled?.call(next);
+
+    // Opening the pane is an explicit request to see schedules now, so don't
+    // leave it behind the edit debounce. Covers a failed earlier fetch too,
+    // which leaves _availabilities null — reopening retries rather than
+    // showing an empty grid for good.
+    if (next && _availabilities == null && !_checkingAvailability) {
+      _availabilityDebounce?.cancel();
+      _checkAvailability();
+    }
   }
 
   void _onTimeSelected(DateTime newStart, DateTime newEnd) {
@@ -376,12 +394,21 @@ class _EventEditFormState extends State<EventEditForm> {
     if (mounted) setState(() => _checkingAvailability = true);
 
     final attendeeEmails = _attendees.map(_extractEmail).toList();
+    // A meeting must not be reported as a clash with itself. The exclusion uses
+    // the event's *stored* slot rather than the form's current one: the guests'
+    // copies stay where the server put them until this edit is saved, so after
+    // dragging the meeting to a new time it is the old slot that has to be
+    // discounted.
+    final edited = widget.event;
     final result = await checker(CheckAttendeesAvailabilityParams(
       emails: attendeeEmails,
       start: start,
       end: end,
       organizerEmail: _organizerEmail,
       accountId: widget.accountId,
+      excludeEventId: edited?.id,
+      excludeStart: edited?.start,
+      excludeEnd: edited?.end,
     ));
 
     if (!mounted) return;
@@ -2428,8 +2455,11 @@ class _ScheduleGridState extends State<_ScheduleGrid> {
 
   List<Widget> _buildAttendeeBlocks(int i, double colWidth) {
     final email = widget.attendees[i];
+    // Case-insensitive: an existing meeting's guest list carries whatever
+    // casing the server stored, which need not match how the provider echoes
+    // the address back in its free/busy response.
     final avail = widget.availabilities.firstWhere(
-      (a) => a.email == email,
+      (a) => a.email.toLowerCase() == email.toLowerCase(),
       orElse: () => AttendeeAvailability(
           email: email, status: AttendeeAvailabilityStatus.unknown),
     );

@@ -8,6 +8,7 @@ import 'package:nightmail/data/datasources/remote/calendar_remote_datasource.dar
 import 'package:nightmail/data/models/calendar_event_model.dart';
 import 'package:nightmail/data/repositories/calendar_repository_impl.dart';
 import 'package:nightmail/domain/entities/attendee_availability.dart';
+import 'package:nightmail/domain/entities/calendar_event.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 
@@ -347,6 +348,249 @@ void main() {
 
       verify(mockAccountManager.buildCalendarDatasourceForAccount(other))
           .called(1);
+    });
+
+    group('excluding the event being edited', () {
+      /// Stubs the organizer's own calendar, with attendee free/busy empty so
+      /// only the organizer path is under test.
+      void stubOrganizer(List<CalendarEventModel> events) {
+        when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+        when(mockDatasource.getCalendarEvents(
+          startDateTime: anyNamed('startDateTime'),
+          endDateTime: anyNamed('endDateTime'),
+        )).thenAnswer((_) async => events);
+        when(mockDatasource.getAttendeesSchedule(
+          emails: anyNamed('emails'),
+          start: anyNamed('start'),
+          end: anyNamed('end'),
+        )).thenAnswer((_) async => []);
+      }
+
+      Future<List<AttendeeAvailability>> checkExcluding({
+        String? eventId,
+        DateTime? exStart,
+        DateTime? exEnd,
+        String? organizerEmail,
+      }) async {
+        final result = await repository.checkAttendeesAvailability(
+          emails: const ['guest@example.com'],
+          start: meetingStart,
+          end: meetingEnd,
+          organizerEmail: organizerEmail,
+          excludeEventId: eventId,
+          excludeStart: exStart,
+          excludeEnd: exEnd,
+        );
+        return result.getRight().toNullable()!;
+      }
+
+      AttendeeAvailability guestBusyAt(List<(DateTime, DateTime)> slots) =>
+          AttendeeAvailability(
+            email: 'guest@example.com',
+            status: AttendeeAvailabilityStatus.busy,
+            scheduleItems: [
+              for (final (s, e) in slots)
+                AttendeeScheduleItem(
+                  start: s,
+                  end: e,
+                  status: AttendeeAvailabilityStatus.busy,
+                ),
+            ],
+          );
+
+      test("discounts a guest's own copy of the meeting being edited", () async {
+        // The guest is busy for exactly this meeting and nothing else, so the
+        // meeting does not clash with anything — it *is* the thing.
+        stubSchedules([
+          guestBusyAt([(meetingStart.toUtc(), meetingEnd.toUtc())]),
+        ]);
+
+        final result = await checkExcluding(
+          eventId: 'event-1',
+          exStart: meetingStart,
+          exEnd: meetingEnd,
+        );
+
+        expect(result.single.status, AttendeeAvailabilityStatus.free);
+        // Dropped from the blocks too, so the pane doesn't paint a red band
+        // underneath the meeting's own overlay.
+        expect(result.single.scheduleItems, isEmpty);
+      });
+
+      test('still reports a clash when the exclusion is not asked for',
+          () async {
+        stubSchedules([
+          guestBusyAt([(meetingStart.toUtc(), meetingEnd.toUtc())]),
+        ]);
+
+        expect((await check()).single.status, AttendeeAvailabilityStatus.busy);
+      });
+
+      test("keeps the guest's other commitments in the same slot", () async {
+        stubSchedules([
+          guestBusyAt([
+            (meetingStart.toUtc(), meetingEnd.toUtc()),
+            (
+              meetingStart.toUtc().add(const Duration(minutes: 30)),
+              meetingEnd.toUtc().add(const Duration(minutes: 30)),
+            ),
+          ]),
+        ]);
+
+        final result = await checkExcluding(
+          eventId: 'event-1',
+          exStart: meetingStart,
+          exEnd: meetingEnd,
+        );
+
+        expect(result.single.status, AttendeeAvailabilityStatus.busy);
+        expect(result.single.scheduleItems, hasLength(1));
+      });
+
+      test('matches the excluded slot despite second-level rounding', () async {
+        // Graph truncates these times to the second, so the guest's copy can
+        // come back a few seconds off the stored bounds.
+        stubSchedules([
+          guestBusyAt([
+            (
+              meetingStart.toUtc().add(const Duration(seconds: 20)),
+              meetingEnd.toUtc().subtract(const Duration(seconds: 20)),
+            ),
+          ]),
+        ]);
+
+        final result = await checkExcluding(
+          eventId: 'event-1',
+          exStart: meetingStart,
+          exEnd: meetingEnd,
+        );
+
+        expect(result.single.status, AttendeeAvailabilityStatus.free);
+      });
+
+      test('keeps a shorter block that merely sits inside the meeting',
+          () async {
+        // A 15-minute call within the hour is a real conflict, not this
+        // meeting — the slot match has to be tight enough to tell them apart.
+        stubSchedules([
+          guestBusyAt([
+            (
+              meetingStart.toUtc().add(const Duration(minutes: 15)),
+              meetingStart.toUtc().add(const Duration(minutes: 30)),
+            ),
+          ]),
+        ]);
+
+        final result = await checkExcluding(
+          eventId: 'event-1',
+          exStart: meetingStart,
+          exEnd: meetingEnd,
+        );
+
+        expect(result.single.status, AttendeeAvailabilityStatus.busy);
+        expect(result.single.scheduleItems, hasLength(1));
+      });
+
+      test('cannot discount a stated status that came with no blocks',
+          () async {
+        // Nothing to match the meeting against, so the day-wide status stands.
+        // Over-reporting a clash beats inventing availability.
+        stubSchedules([
+          const AttendeeAvailability(
+            email: 'guest@example.com',
+            status: AttendeeAvailabilityStatus.busy,
+          ),
+        ]);
+
+        final result = await checkExcluding(
+          eventId: 'event-1',
+          exStart: meetingStart,
+          exEnd: meetingEnd,
+        );
+
+        expect(result.single.status, AttendeeAvailabilityStatus.busy);
+      });
+
+      test("excludes the organizer's own copy by event id", () async {
+        stubOrganizer([
+          CalendarEventModel(
+            id: 'event-1',
+            subject: 'The meeting being edited',
+            start: meetingStart.toUtc(),
+            end: meetingEnd.toUtc(),
+            isAllDay: false,
+            status: CalendarEventStatus.busy,
+          ),
+          CalendarEventModel(
+            id: 'event-2',
+            subject: 'Something else entirely',
+            start: meetingStart.toUtc().add(const Duration(hours: 5)),
+            end: meetingEnd.toUtc().add(const Duration(hours: 5)),
+            isAllDay: false,
+            status: CalendarEventStatus.busy,
+          ),
+        ]);
+
+        final result = await checkExcluding(
+          eventId: 'event-1',
+          exStart: meetingStart,
+          exEnd: meetingEnd,
+          organizerEmail: 'me@example.com',
+        );
+
+        final organizer = result.single;
+        expect(organizer.email, 'me@example.com');
+        expect(organizer.status, AttendeeAvailabilityStatus.free);
+        expect(organizer.scheduleItems, hasLength(1));
+        expect(organizer.scheduleItems.single.subject,
+            'Something else entirely');
+      });
+
+      test('excludes every occurrence when a whole series is being edited',
+          () async {
+        // Editing the series master must discount its occurrences too, which
+        // carry their own ids and point back via seriesMasterId.
+        stubOrganizer([
+          CalendarEventModel(
+            id: 'occurrence-7',
+            subject: 'Stand-up',
+            start: meetingStart.toUtc(),
+            end: meetingEnd.toUtc(),
+            isAllDay: false,
+            status: CalendarEventStatus.busy,
+            seriesMasterId: 'series-1',
+          ),
+        ]);
+
+        final result = await checkExcluding(
+          eventId: 'series-1',
+          exStart: meetingStart,
+          exEnd: meetingEnd,
+          organizerEmail: 'me@example.com',
+        );
+
+        expect(result.single.status, AttendeeAvailabilityStatus.free);
+        expect(result.single.scheduleItems, isEmpty);
+      });
+
+      test("keeps the organizer's unrelated events when nothing is excluded",
+          () async {
+        stubOrganizer([
+          CalendarEventModel(
+            id: 'event-1',
+            subject: 'Stand-up',
+            start: meetingStart.toUtc(),
+            end: meetingEnd.toUtc(),
+            isAllDay: false,
+            status: CalendarEventStatus.busy,
+          ),
+        ]);
+
+        final result = await checkExcluding(organizerEmail: 'me@example.com');
+
+        expect(result.single.status, AttendeeAvailabilityStatus.busy);
+        expect(result.single.scheduleItems, hasLength(1));
+      });
     });
   });
 }

@@ -40,6 +40,7 @@ final class TaskCreationRequested extends TasksBlocEvent {
   const TaskCreationRequested({
     required this.listId,
     required this.title,
+    this.body,
     this.dueDate,
     this.emailId,
     this.emailSubject,
@@ -47,12 +48,15 @@ final class TaskCreationRequested extends TasksBlocEvent {
 
   final String listId;
   final String title;
+
+  /// Initial notes for the task.
+  final String? body;
   final DateTime? dueDate;
   final String? emailId;
   final String? emailSubject;
 
   @override
-  List<Object?> get props => [listId, title, dueDate, emailId];
+  List<Object?> get props => [listId, title, body, dueDate, emailId];
 }
 
 final class TaskEmailAttachmentTapped extends TasksBlocEvent {

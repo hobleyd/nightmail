@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/business_days.dart';
 
 /// A flag icon that shows a due-date context menu on right-click (secondary
 /// tap) and calls [onTap] on a plain left-click.
@@ -102,33 +103,16 @@ class FlagIconButton extends StatelessWidget {
     onSchedule(_resolveDate(chosen));
   }
 
-  /// Hour of the day that "Friday morning" resolves to.
-  static const _morningHour = 9;
-
   static DateTime _resolveDate(_DueDateOption option) {
     final now = DateTime.now();
     return switch (option) {
       _DueDateOption.today => DateTime(now.year, now.month, now.day),
-      _DueDateOption.tomorrow => _addBusinessDays(now, 1),
-      _DueDateOption.threeDays => _addBusinessDays(now, 3),
+      _DueDateOption.tomorrow => addBusinessDays(now, 1),
+      _DueDateOption.threeDays => addBusinessDays(now, 3),
       _DueDateOption.thisWeek => _thisWeekFriday(now),
       _DueDateOption.nextWeek => _nextWeekFriday(now),
       _DueDateOption.custom => DateTime(now.year, now.month, now.day),
     };
-  }
-
-  /// Morning of the [count]th business day (Mon–Fri) after [from]. Weekend
-  /// days are skipped, so Friday + 1 is Monday and Saturday + 1 is Monday.
-  static DateTime _addBusinessDays(DateTime from, int count) {
-    var day = DateTime(from.year, from.month, from.day, _morningHour);
-    var remaining = count;
-    while (remaining > 0) {
-      day = DateTime(day.year, day.month, day.day + 1, _morningHour);
-      if (day.weekday != DateTime.saturday && day.weekday != DateTime.sunday) {
-        remaining--;
-      }
-    }
-    return day;
   }
 
   /// Friday morning of the current week, or of the following week if this
@@ -147,7 +131,7 @@ class FlagIconButton extends StatelessWidget {
   /// when [from] falls on the weekend.
   static DateTime _fridayMorningOfWeek(DateTime from) {
     final offset = DateTime.friday - from.weekday;
-    return DateTime(from.year, from.month, from.day + offset, _morningHour);
+    return DateTime(from.year, from.month, from.day + offset, followUpMorningHour);
   }
 
   // Rebuild rather than add a Duration so the wall-clock hour survives a

@@ -150,6 +150,7 @@ class TasksBloc extends Bloc<TasksBlocEvent, TasksState> {
     final result = await _createTask(CreateTaskParams(
       listId: event.listId,
       title: event.title,
+      body: event.body,
       dueDate: event.dueDate,
     ));
 

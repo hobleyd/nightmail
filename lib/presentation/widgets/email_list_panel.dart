@@ -6,7 +6,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/business_days.dart';
 import '../../domain/entities/email.dart';
+import '../../domain/entities/email_address.dart';
 import 'email_drag_data.dart';
 import '../../domain/entities/email_folder.dart';
 import '../pages/compose_window.dart';
@@ -817,29 +819,41 @@ class _ListHeader extends StatelessWidget {
   }
 }
 
-DateTime _addBusinessDays(DateTime date, int days) {
-  var result = date;
-  var added = 0;
-  while (added < days) {
-    result = result.add(const Duration(days: 1));
-    if (result.weekday != DateTime.saturday && result.weekday != DateTime.sunday) {
-      added++;
-    }
-  }
-  return result;
-}
-
 void _createTaskFromEmail(BuildContext context, Email email, {DateTime? dueDate}) {
   final tasksState = context.read<TasksBloc>().state;
   if (tasksState is! TasksLoaded) return;
   final title = email.subject.isNotEmpty ? email.subject : email.from.displayName;
+  final notes = _emailNotesHeader(email);
   context.read<TasksBloc>().add(TaskCreationRequested(
     listId: tasksState.selectedListId,
     title: title,
-    dueDate: dueDate ?? _addBusinessDays(DateTime.now(), 3),
+    body: notes.isEmpty ? null : notes,
+    dueDate: dueDate ?? addBusinessDays(DateTime.now(), 3),
     emailId: email.id,
     emailSubject: email.subject,
   ));
+}
+
+/// Correspondents for the top of a task's notes. Written at creation time so
+/// they sit above the email link/attachment marker appended afterwards.
+String _emailNotesHeader(Email email) {
+  final lines = <String>[];
+  final from = _formatAddress(email.from);
+  if (from.isNotEmpty) lines.add('From: $from');
+  final to = email.toRecipients
+      .map(_formatAddress)
+      .where((a) => a.isNotEmpty)
+      .join(', ');
+  if (to.isNotEmpty) lines.add('To: $to');
+  return lines.join('\n');
+}
+
+String _formatAddress(EmailAddress a) {
+  final name = a.name?.trim() ?? '';
+  final address = a.address.trim();
+  if (name.isEmpty || name == address) return address;
+  if (address.isEmpty) return name;
+  return '$name <$address>';
 }
 
 class _EmailListView extends StatelessWidget {

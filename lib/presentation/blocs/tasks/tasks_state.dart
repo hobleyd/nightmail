@@ -21,17 +21,44 @@ final class TasksLoading extends TasksState {
 }
 
 final class TasksLoaded extends TasksState {
-  const TasksLoaded({
+  TasksLoaded({
     required this.lists,
-    required this.tasks,
+    required List<TodoTask> tasks,
     required this.selectedListId,
     this.pendingEmailAttachmentBytes,
-  });
+  }) : tasks = _sortedByDueDate(tasks);
 
   final List<TodoTaskList> lists;
+
+  /// Always ordered by due date, earliest first. Sorting here rather than in
+  /// the pane keeps every emit path (load, create, optimistic due-date change)
+  /// consistent without each one having to remember to re-sort.
   final List<TodoTask> tasks;
   final String selectedListId;
   final Uint8List? pendingEmailAttachmentBytes;
+
+  /// Earliest due date first; undated tasks sink to the bottom. Ties (and the
+  /// undated group) keep their incoming order — `List.sort` is not stable, so
+  /// the original index is the final tiebreaker.
+  static List<TodoTask> _sortedByDueDate(List<TodoTask> tasks) {
+    final indexed = [
+      for (var i = 0; i < tasks.length; i++) (index: i, task: tasks[i]),
+    ];
+    indexed.sort((a, b) {
+      final aDue = a.task.dueDateTime;
+      final bDue = b.task.dueDateTime;
+      if (aDue != null && bDue != null) {
+        final byDue = aDue.compareTo(bDue);
+        if (byDue != 0) return byDue;
+      } else if (aDue != null) {
+        return -1;
+      } else if (bDue != null) {
+        return 1;
+      }
+      return a.index.compareTo(b.index);
+    });
+    return [for (final e in indexed) e.task];
+  }
 
   @override
   List<Object?> get props => [lists, tasks, selectedListId, pendingEmailAttachmentBytes];

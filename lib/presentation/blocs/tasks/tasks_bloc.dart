@@ -60,7 +60,7 @@ class TasksBloc extends Bloc<TasksBlocEvent, TasksState> {
       )),
       (lists) async {
         if (lists.isEmpty) {
-          emit(const TasksLoaded(lists: [], tasks: [], selectedListId: ''));
+          emit(TasksLoaded(lists: [], tasks: [], selectedListId: ''));
           return;
         }
         final defaultList = lists.firstWhere(

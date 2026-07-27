@@ -3,7 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../core/error/failures.dart';
 import '../../../core/usecases/usecase.dart';
 import '../../../domain/entities/todo_task.dart';
-import '../../../domain/usecases/append_email_link_to_task.dart';
+import '../../../domain/entities/todo_task_list.dart';
 import '../../../domain/usecases/attach_email_to_task.dart';
 import '../../../domain/usecases/create_task.dart';
 import '../../../domain/usecases/download_task_attachment.dart';
@@ -12,6 +12,7 @@ import '../../../domain/usecases/get_task_lists.dart';
 import '../../../domain/usecases/get_tasks.dart';
 import '../../../domain/usecases/update_task_due_date.dart';
 import '../../../domain/usecases/update_task_status.dart';
+import '../../../infrastructure/notifications/task_reminder_service.dart';
 import 'tasks_event.dart';
 import 'tasks_state.dart';
 
@@ -23,12 +24,13 @@ class TasksBloc extends Bloc<TasksBlocEvent, TasksState> {
     required this._updateTaskStatus,
     required this._updateTaskDueDate,
     required this._attachEmailToTask,
-    required this._appendEmailLinkToTask,
     required this._getTaskAttachments,
     required this._downloadTaskAttachment,
+    required this._taskReminders,
   }) : super(const TasksInitial()) {
     on<TasksLoadRequested>(_onLoadRequested);
     on<TasksListSelected>(_onListSelected);
+    on<TaskFocusRequested>(_onTaskFocusRequested);
     on<TaskStatusToggled>(_onStatusToggled);
     on<TaskCreationRequested>(_onTaskCreated);
     on<TaskDueDateUpdateRequested>(_onDueDateUpdated);
@@ -42,9 +44,9 @@ class TasksBloc extends Bloc<TasksBlocEvent, TasksState> {
   final UpdateTaskStatus _updateTaskStatus;
   final UpdateTaskDueDate _updateTaskDueDate;
   final AttachEmailToTask _attachEmailToTask;
-  final AppendEmailLinkToTask _appendEmailLinkToTask;
   final GetTaskAttachments _getTaskAttachments;
   final DownloadTaskAttachment _downloadTaskAttachment;
+  final TaskReminderService _taskReminders;
 
   Future<void> _onLoadRequested(
     TasksLoadRequested event,
@@ -91,7 +93,11 @@ class TasksBloc extends Bloc<TasksBlocEvent, TasksState> {
     final current = state;
     if (current is! TasksLoaded) return;
 
-    emit(current.copyWith(selectedListId: event.listId, tasks: const []));
+    emit(current.copyWith(
+      selectedListId: event.listId,
+      tasks: const [],
+      clearFocusedTask: true,
+    ));
 
     final result = await _getTasks(GetTasksParams(listId: event.listId));
     result.fold(
@@ -102,6 +108,56 @@ class TasksBloc extends Bloc<TasksBlocEvent, TasksState> {
       (tasks) => emit(current.copyWith(
         selectedListId: event.listId,
         tasks: tasks,
+        clearFocusedTask: true,
+      )),
+    );
+  }
+
+  /// Opened from a due-task notification. The pane may not be showing the
+  /// task's list — or may not have loaded at all yet if the tap arrived on a
+  /// cold start — so fetch what's missing before highlighting the row.
+  Future<void> _onTaskFocusRequested(
+    TaskFocusRequested event,
+    Emitter<TasksState> emit,
+  ) async {
+    final current = state;
+
+    if (current is TasksLoaded &&
+        current.selectedListId == event.listId &&
+        current.tasks.any((t) => t.id == event.taskId)) {
+      emit(current.copyWith(focusedTaskId: event.taskId));
+      return;
+    }
+
+    List<TodoTaskList> lists;
+    if (current is TasksLoaded && current.lists.isNotEmpty) {
+      lists = current.lists;
+    } else {
+      emit(const TasksLoading());
+      final listsResult = await _getTaskLists(const NoParams());
+      final loaded = listsResult.getRight().toNullable();
+      if (loaded == null) {
+        final failure = listsResult.getLeft().toNullable()!;
+        emit(TasksError(
+          message: failure.message,
+          requiresReauth: failure is AuthFailure,
+        ));
+        return;
+      }
+      lists = loaded;
+    }
+
+    final tasksResult = await _getTasks(GetTasksParams(listId: event.listId));
+    tasksResult.fold(
+      (failure) => emit(TasksError(
+        message: failure.message,
+        requiresReauth: failure is AuthFailure,
+      )),
+      (tasks) => emit(TasksLoaded(
+        lists: lists,
+        tasks: tasks,
+        selectedListId: event.listId,
+        focusedTaskId: event.taskId,
       )),
     );
   }
@@ -121,6 +177,9 @@ class TasksBloc extends Bloc<TasksBlocEvent, TasksState> {
       emit(current.copyWith(
         tasks: current.tasks.where((t) => t.id != event.taskId).toList(),
       ));
+      // Drop any pending due alert now rather than letting it fire in the gap
+      // before the next reconcile notices the task is done.
+      await _taskReminders.dismissTask(event.taskId);
     }
 
     final result = await _updateTaskStatus(UpdateTaskStatusParams(
@@ -160,6 +219,11 @@ class TasksBloc extends Bloc<TasksBlocEvent, TasksState> {
         emit(current.copyWith(tasks: [task, ...current.tasks]));
 
         if (event.emailId != null) {
+          // The conversation-link marker is already folded into the task's
+          // notes at creation time, so NightMail can reopen the thread from
+          // any provider. Additionally attach the real .eml where the provider
+          // supports it (e.g. Microsoft To Do); Google Tasks has no attachment
+          // API and fails here, leaving the notes link as the only reference.
           final subject =
               (event.emailSubject?.isNotEmpty == true) ? event.emailSubject! : event.title;
           final safe = subject
@@ -172,43 +236,17 @@ class TasksBloc extends Bloc<TasksBlocEvent, TasksState> {
             taskId: task.id,
             fileName: '$safe.eml',
           ));
-
-          await attachResult.fold(
-            // Provider without an attachment API (e.g. Google Tasks): fall back
-            // to embedding a clickable link to the email in the task's notes.
-            (_) async {
-              final linkResult =
-                  await _appendEmailLinkToTask(AppendEmailLinkToTaskParams(
-                listId: event.listId,
-                taskId: task.id,
-                emailId: event.emailId!,
+          attachResult.fold((_) {}, (_) {
+            final current2 = state;
+            if (current2 is TasksLoaded) {
+              emit(current2.copyWith(
+                tasks: [
+                  for (final t in current2.tasks)
+                    if (t.id == task.id) _PatchedTask(task) else t,
+                ],
               ));
-              linkResult.fold((_) {}, (updated) {
-                final current2 = state;
-                if (current2 is TasksLoaded) {
-                  emit(current2.copyWith(
-                    tasks: [
-                      for (final t in current2.tasks)
-                        if (t.id == updated.id) updated else t,
-                    ],
-                  ));
-                }
-              });
-            },
-            // Provider with real attachment support (e.g. Microsoft To Do).
-            (_) async {
-              final patched = _PatchedTask(task);
-              final current2 = state;
-              if (current2 is TasksLoaded) {
-                emit(current2.copyWith(
-                  tasks: [
-                    for (final t in current2.tasks)
-                      if (t.id == task.id) patched else t,
-                  ],
-                ));
-              }
-            },
-          );
+            }
+          });
         }
       },
     );
@@ -227,6 +265,10 @@ class TasksBloc extends Bloc<TasksBlocEvent, TasksState> {
       return _TaskWithDueDate(t, event.dueDate);
     }).toList();
     emit(current.copyWith(tasks: optimistic));
+
+    // Retire the alert scheduled against the old due date; the next reconcile
+    // schedules the new one from scratch.
+    await _taskReminders.dismissTask(event.taskId);
 
     final result = await _updateTaskDueDate(UpdateTaskDueDateParams(
       listId: event.listId,

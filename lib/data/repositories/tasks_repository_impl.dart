@@ -156,19 +156,6 @@ class TasksRepositoryImpl implements TasksRepository {
   }
 
   @override
-  Future<Either<Failure, TodoTask>> appendEmailLink({
-    required String listId,
-    required String taskId,
-    required String emailId,
-  }) async {
-    return _withDatasource((ds) => ds.appendEmailLinkToNotes(
-          listId: listId,
-          taskId: taskId,
-          emailId: emailId,
-        ));
-  }
-
-  @override
   Future<Either<Failure, List<TodoTaskAttachment>>> getTaskAttachments({
     required String listId,
     required String taskId,

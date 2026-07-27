@@ -9,6 +9,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/utils/business_days.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_address.dart';
+import '../../domain/entities/task_email_link.dart';
 import 'email_drag_data.dart';
 import '../../domain/entities/email_folder.dart';
 import '../pages/compose_window.dart';
@@ -881,11 +882,16 @@ void _createTaskFromEmail(BuildContext context, Email email, {DateTime? dueDate}
   final tasksState = context.read<TasksBloc>().state;
   if (tasksState is! TasksLoaded) return;
   final title = email.subject.isNotEmpty ? email.subject : email.from.displayName;
-  final notes = _emailNotesHeader(email);
+  // Fold the conversation-link marker straight into the notes at creation
+  // time. NightMail intercepts it to reopen the source email's thread; every
+  // provider stores it verbatim, so no follow-up patch is needed.
+  final header = _emailNotesHeader(email);
+  final marker = TaskEmailLink.marker(email.id);
+  final notes = header.isEmpty ? marker : '$header\n\n$marker';
   context.read<TasksBloc>().add(TaskCreationRequested(
     listId: tasksState.selectedListId,
     title: title,
-    body: notes.isEmpty ? null : notes,
+    body: notes,
     dueDate: dueDate ?? addBusinessDays(DateTime.now(), 3),
     emailId: email.id,
     emailSubject: email.subject,
@@ -909,9 +915,10 @@ String _emailNotesHeader(Email email) {
 String _formatAddress(EmailAddress a) {
   final name = a.name?.trim() ?? '';
   final address = a.address.trim();
-  if (name.isEmpty || name == address) return address;
-  if (address.isEmpty) return name;
-  return '$name <$address>';
+  // Notes lead with names only; fall back to the address when no distinct
+  // display name is available.
+  if (name.isNotEmpty && name != address) return name;
+  return address;
 }
 
 class _EmailListView extends StatelessWidget {

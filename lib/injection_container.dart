@@ -15,6 +15,7 @@ import 'data/datasources/local/email_local_datasource_impl.dart';
 import 'data/datasources/local/folder_local_datasource.dart';
 import 'data/datasources/local/pending_operations_datasource.dart';
 import 'data/datasources/local/reminder_schedule_local_datasource.dart';
+import 'data/datasources/local/task_reminder_schedule_local_datasource.dart';
 import 'data/datasources/local/sender_local_datasource.dart';
 import 'data/datasources/local/sender_local_datasource_impl.dart';
 import 'data/repositories/calendar_repository_impl.dart';
@@ -57,7 +58,6 @@ import 'domain/repositories/sender_repository.dart';
 import 'domain/repositories/spam_filter_repository.dart';
 import 'domain/repositories/system_contacts_repository.dart';
 import 'domain/repositories/tasks_repository.dart';
-import 'domain/usecases/append_email_link_to_task.dart';
 import 'domain/usecases/attach_email_to_task.dart';
 import 'domain/usecases/check_sender_anomaly.dart';
 import 'domain/usecases/merge_sender_addresses.dart';
@@ -112,6 +112,7 @@ import 'infrastructure/badge/badge_service.dart';
 import 'infrastructure/cache/cache_encryption_service.dart';
 import 'infrastructure/network/connectivity_service.dart';
 import 'infrastructure/notifications/calendar_reminder_service.dart';
+import 'infrastructure/notifications/task_reminder_service.dart';
 import 'infrastructure/notifications/notification_service.dart';
 import 'infrastructure/sync/outbox_drain_service.dart';
 import 'infrastructure/sync/removal_tombstone_store.dart';
@@ -187,6 +188,8 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton<DeltaTokenDatasource>(() => sl<AppDatabase>());
   sl.registerLazySingleton<FolderLocalDatasource>(() => sl<AppDatabase>());
   sl.registerLazySingleton<ReminderScheduleLocalDatasource>(() => sl<AppDatabase>());
+  sl.registerLazySingleton<TaskReminderScheduleLocalDatasource>(
+      () => sl<AppDatabase>());
   sl.registerLazySingleton<PendingOperationsDatasource>(() => sl<AppDatabase>());
   sl.registerLazySingleton(() => InlineAttachmentCache());
   sl.registerLazySingleton<EmailLocalDatasource>(
@@ -307,7 +310,6 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(
     () => AttachEmailToTask(sl<EmailRepository>(), sl<TasksRepository>()),
   );
-  sl.registerLazySingleton(() => AppendEmailLinkToTask(sl<TasksRepository>()));
   sl.registerLazySingleton(() => GetTaskAttachments(sl<TasksRepository>()));
   sl.registerLazySingleton(() => DownloadTaskAttachment(sl<TasksRepository>()));
 
@@ -322,6 +324,13 @@ Future<void> configureDependencies() async {
       database: sl<ReminderScheduleLocalDatasource>(),
     ),
   );
+  sl.registerLazySingleton(
+    () => TaskReminderService(
+      accountManager: sl<AccountManager>(),
+      notificationService: sl<NotificationService>(),
+      database: sl<TaskReminderScheduleLocalDatasource>(),
+    ),
+  );
 
   // Presentation — singletons
   sl.registerLazySingleton(() => ThemeCubit());
@@ -330,6 +339,7 @@ Future<void> configureDependencies() async {
       accountManager: sl<AccountManager>(),
       emailRepository: sl<EmailRepository>(),
       calendarReminderService: sl<CalendarReminderService>(),
+      taskReminderService: sl<TaskReminderService>(),
     ),
   );
   sl.registerLazySingleton(
@@ -407,9 +417,9 @@ Future<void> configureDependencies() async {
         updateTaskStatus: sl<UpdateTaskStatus>(),
         updateTaskDueDate: sl<UpdateTaskDueDate>(),
         attachEmailToTask: sl<AttachEmailToTask>(),
-        appendEmailLinkToTask: sl<AppendEmailLinkToTask>(),
         getTaskAttachments: sl<GetTaskAttachments>(),
         downloadTaskAttachment: sl<DownloadTaskAttachment>(),
+        taskReminders: sl<TaskReminderService>(),
       ));
   sl.registerFactory(() => EventEditBloc(
         createCalendarEvent: sl<CreateCalendarEvent>(),

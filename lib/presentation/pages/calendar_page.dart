@@ -16,6 +16,7 @@ import '../blocs/account/account_cubit.dart';
 import '../blocs/calendar/calendar_bloc.dart';
 import '../blocs/calendar/calendar_event.dart';
 import '../blocs/calendar/calendar_state.dart';
+import '../widgets/calendar_overlap_layout.dart';
 import '../widgets/event_edit_dialog.dart';
 
 class CalendarPage extends StatelessWidget {
@@ -488,7 +489,7 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
                               },
                               child: LayoutBuilder(
                                 builder: (context, constraints) {
-                                  final layout = _computeOverlapLayout(timedEvents);
+                                  final layout = computeOverlapLayout(timedEvents);
                                   return Stack(
                                     children: [
                                       ...List.generate(
@@ -505,9 +506,9 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
                                           ),
                                         ),
                                       ),
-                                      ...timedEvents.map((e) {
-                                        final span = layout[e.id] ??
-                                            const _ColumnSpan(index: 0, total: 1);
+                                      ...List.generate(timedEvents.length, (i) {
+                                        final e = timedEvents[i];
+                                        final span = layout[i];
                                         final colW =
                                             (constraints.maxWidth - 4) / span.total;
                                         return _PositionedEvent(
@@ -1176,7 +1177,7 @@ class _DayColumnCellState extends State<_DayColumnCell> {
           ),
           child: LayoutBuilder(
             builder: (context, constraints) {
-              final layout = _computeOverlapLayout(widget.dayEvents);
+              final layout = computeOverlapLayout(widget.dayEvents);
               return Stack(
                 children: [
                   ...List.generate(
@@ -1192,9 +1193,9 @@ class _DayColumnCellState extends State<_DayColumnCell> {
                                   : c.separator,
                             ),
                           )),
-                  ...widget.dayEvents.map((e) {
-                    final span = layout[e.id] ??
-                        const _ColumnSpan(index: 0, total: 1);
+                  ...List.generate(widget.dayEvents.length, (i) {
+                    final e = widget.dayEvents[i];
+                    final span = layout[i];
                     final colW =
                         (constraints.maxWidth - 4) / span.total;
                     return _PositionedEvent(
@@ -1255,71 +1256,6 @@ class _CurrentTimeLine extends StatelessWidget {
       ),
     );
   }
-}
-
-// ---------------------------------------------------------------------------
-// Overlap layout helpers
-// ---------------------------------------------------------------------------
-
-class _ColumnSpan {
-  const _ColumnSpan({required this.index, required this.total});
-  final int index;
-  final int total;
-}
-
-/// Groups [events] into overlap clusters and assigns each a column slot so
-/// that simultaneously-occurring events tile side-by-side instead of stacking.
-Map<String, _ColumnSpan> _computeOverlapLayout(List<CalendarEvent> events) {
-  if (events.isEmpty) return {};
-
-  final sorted = List.of(events)..sort((a, b) => a.start.compareTo(b.start));
-
-  bool overlaps(CalendarEvent a, CalendarEvent b) =>
-      a.start.isBefore(b.end) && b.start.isBefore(a.end);
-
-  // Build connected-component clusters.
-  final clusters = <List<CalendarEvent>>[];
-  for (final e in sorted) {
-    final overlapping =
-        clusters.where((c) => c.any((ce) => overlaps(ce, e))).toList();
-    if (overlapping.isEmpty) {
-      clusters.add([e]);
-    } else {
-      final merged = overlapping.expand((c) => c).toList()..add(e);
-      for (final c in overlapping) clusters.remove(c);
-      clusters.add(merged);
-    }
-  }
-
-  final result = <String, _ColumnSpan>{};
-  for (final cluster in clusters) {
-    final cs = List.of(cluster)..sort((a, b) => a.start.compareTo(b.start));
-
-    // Greedy column assignment: each event goes in the first column whose last
-    // event has already ended.
-    final colEnds = <int>[]; // end-minute of last event in each column
-    final assignments = <String, int>{};
-
-    for (final e in cs) {
-      final startMin =
-          e.start.toLocal().hour * 60 + e.start.toLocal().minute;
-      int col = colEnds.indexWhere((end) => startMin >= end);
-      if (col == -1) {
-        col = colEnds.length;
-        colEnds.add(0);
-      }
-      final endLocal = e.end.toLocal();
-      colEnds[col] = endLocal.hour * 60 + endLocal.minute;
-      assignments[e.id] = col;
-    }
-
-    final total = colEnds.length;
-    for (final e in cluster) {
-      result[e.id] = _ColumnSpan(index: assignments[e.id]!, total: total);
-    }
-  }
-
-  return result;
 }
 
 // ---------------------------------------------------------------------------

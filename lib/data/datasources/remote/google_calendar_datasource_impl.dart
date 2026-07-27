@@ -10,6 +10,7 @@ import '../../../domain/entities/calendar_event_attendee.dart';
 import '../../../domain/entities/calendar_recurrence.dart';
 import '../../../domain/entities/meeting_invite.dart';
 import '../../../domain/usecases/create_calendar_event.dart';
+import '../../../domain/entities/meeting_notify_scope.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
 import '../../../infrastructure/http/google_calendar_http_client.dart';
 import '../../models/calendar_event_model.dart';
@@ -27,6 +28,16 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
   // resource, not the Events resource). Refreshed at most once per hour.
   List<int>? _defaultReminderMinutes;
   DateTime? _defaultReminderFetchedAt;
+
+  // Parsed recurrence (RRULE) per series-master id. We fetch events with
+  // `singleEvents=true`, which expands each series into instances that carry
+  // only `recurringEventId` — the RRULE lives on the master alone. So to show
+  // recurrence when editing an occurrence we fetch its master once and cache
+  // the result. Keyed by master id; a null value means "master has no RRULE".
+  // Refreshed at most once every 10 minutes, and cleared on any local edit so
+  // recurrence changes made in-app are reflected immediately.
+  final Map<String, CalendarRecurrence?> _recurrenceByMaster = {};
+  DateTime? _recurrenceCacheAt;
 
   Future<List<int>> _getDefaultReminderMinutes() async {
     final now = DateTime.now();
@@ -75,11 +86,52 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       final data = response.data;
       if (data == null) return [];
 
-      final items = data['items'] as List<dynamic>? ?? [];
-      return items
-          .map((e) => _parseEvent(
-              e as Map<String, dynamic>, defaultReminderMinutes))
-          .toList();
+      final rawItems =
+          (data['items'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+
+      // Instances of a recurring series don't carry the RRULE — resolve it
+      // from each distinct series master so the edit form can show recurrence.
+      final masterIds = rawItems
+          .map((e) => e['recurringEventId'] as String?)
+          .whereType<String>()
+          .toSet();
+      final recurrenceByMaster = await _recurrencesForMasters(masterIds);
+
+      return rawItems.map((e) {
+        final masterId = e['recurringEventId'] as String?;
+        return _parseEvent(
+          e,
+          defaultReminderMinutes,
+          recurrence: masterId != null ? recurrenceByMaster[masterId] : null,
+        );
+      }).toList();
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  @override
+  Future<CalendarEventModel> getCalendarEvent({required String id}) async {
+    try {
+      final defaultReminderMinutes = await _getDefaultReminderMinutes();
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '/calendars/primary/events/$id',
+        queryParameters: {
+          'fields':
+              'id,summary,start,end,description,location,status,organizer,attendees,hangoutLink,conferenceData,reminders,recurringEventId,recurrence',
+        },
+      );
+      final json = resp.data;
+      if (json == null) {
+        throw const ServerException(message: 'Empty response from server');
+      }
+      // A master event carries its own `recurrence` (RRULE) array directly.
+      final rules = (json['recurrence'] as List<dynamic>?)?.cast<String>();
+      return _parseEvent(
+        json,
+        defaultReminderMinutes,
+        recurrence: _parseRecurrenceRules(rules),
+      );
     } on DioException catch (e) {
       throw _mapException(e);
     }
@@ -124,6 +176,8 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
   Future<CalendarEventModel> updateCalendarEvent({
     required UpdateCalendarEventParams params,
   }) async {
+    // Recurrence may have changed; drop the cache so the next load refetches.
+    _invalidateRecurrenceCache();
     try {
       final body = _buildEventBody(
         subject: params.subject,
@@ -140,11 +194,24 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
         isUpdate: true,
       );
 
+      // Google's API can only notify all guests or none — it cannot scope a
+      // notification to just the added/removed attendees. So a roster-only
+      // change (changedAttendeesOnly) falls back to notifying everyone; the
+      // added/removed guests still get the right invite/cancellation, but
+      // unchanged guests are also pinged. Graph handles the delta natively.
+      final sendUpdates = switch (params.notifyScope) {
+        MeetingNotifyScope.all => 'all',
+        MeetingNotifyScope.changedAttendeesOnly => 'all',
+        MeetingNotifyScope.none => 'none',
+      };
+
       final response = await _dio.patch<Map<String, dynamic>>(
         '/calendars/primary/events/${params.id}',
         data: body,
-        queryParameters:
-            params.isOnlineMeeting ? {'conferenceDataVersion': 1} : null,
+        queryParameters: {
+          'sendUpdates': sendUpdates,
+          if (params.isOnlineMeeting) 'conferenceDataVersion': 1,
+        },
       );
 
       if (response.data == null) {
@@ -336,6 +403,8 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     required DateTime occurrenceStart,
   }) async {
     final masterId = seriesMasterId ?? eventId;
+    // Truncating the series rewrites the master's RRULE; drop the cache.
+    _invalidateRecurrenceCache();
     try {
       // GET the series master to read the existing recurrence rules.
       final masterResp = await _dio.get<Map<String, dynamic>>(
@@ -570,6 +639,134 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     return parts.join(':');
   }
 
+  void _invalidateRecurrenceCache() {
+    _recurrenceByMaster.clear();
+    _recurrenceCacheAt = null;
+  }
+
+  /// Resolves the recurrence rule for each distinct series master, fetching any
+  /// not already cached (in parallel) and returning a map of master id →
+  /// parsed recurrence (null when the master has no RRULE or the fetch fails).
+  Future<Map<String, CalendarRecurrence?>> _recurrencesForMasters(
+      Set<String> masterIds) async {
+    final now = DateTime.now();
+    if (_recurrenceCacheAt == null ||
+        now.difference(_recurrenceCacheAt!) > const Duration(minutes: 10)) {
+      _recurrenceByMaster.clear();
+      _recurrenceCacheAt = now;
+    }
+
+    final missing = masterIds
+        .where((id) => !_recurrenceByMaster.containsKey(id))
+        .toList();
+    await Future.wait(missing.map((id) async {
+      try {
+        final resp = await _dio.get<Map<String, dynamic>>(
+          '/calendars/primary/events/$id',
+          queryParameters: {'fields': 'recurrence'},
+        );
+        final rules =
+            (resp.data?['recurrence'] as List<dynamic>?)?.cast<String>();
+        _recurrenceByMaster[id] = _parseRecurrenceRules(rules);
+      } catch (e) {
+        debugPrint(
+            'GoogleCalendarDatasourceImpl: recurrence fetch for $id failed: $e');
+        _recurrenceByMaster[id] = null;
+      }
+    }));
+
+    return {for (final id in masterIds) id: _recurrenceByMaster[id]};
+  }
+
+  /// Picks the RRULE line out of a master's `recurrence` array (which may also
+  /// contain EXDATE/RDATE/EXRULE lines) and parses it.
+  CalendarRecurrence? _parseRecurrenceRules(List<String>? rules) {
+    if (rules == null) return null;
+    for (final raw in rules) {
+      final line = raw.trim();
+      if (line.toUpperCase().startsWith('RRULE')) return _parseRRule(line);
+    }
+    return null;
+  }
+
+  /// Inverse of [_buildRRule]: parses an iCalendar RRULE line into a
+  /// [CalendarRecurrence]. Returns null if FREQ is missing or unrecognized.
+  CalendarRecurrence? _parseRRule(String line) {
+    // Drop an optional "RRULE:" prefix, then split the ";"-separated params.
+    final body =
+        line.contains(':') ? line.substring(line.indexOf(':') + 1) : line;
+    final params = <String, String>{};
+    for (final part in body.split(';')) {
+      final eq = part.indexOf('=');
+      if (eq > 0) {
+        params[part.substring(0, eq).toUpperCase()] = part.substring(eq + 1);
+      }
+    }
+
+    final frequency = switch (params['FREQ']?.toUpperCase()) {
+      'DAILY' => RecurrenceFrequency.daily,
+      'WEEKLY' => RecurrenceFrequency.weekly,
+      'MONTHLY' => RecurrenceFrequency.monthly,
+      'YEARLY' => RecurrenceFrequency.yearly,
+      _ => null,
+    };
+    if (frequency == null) return null;
+
+    final interval = int.tryParse(params['INTERVAL'] ?? '') ?? 1;
+
+    List<int>? daysOfWeek;
+    final byDay = params['BYDAY'];
+    if (byDay != null && byDay.isNotEmpty) {
+      const dayNumbers = {
+        'MO': 1, 'TU': 2, 'WE': 3, 'TH': 4, 'FR': 5, 'SA': 6, 'SU': 7,
+      };
+      final days = byDay
+          .split(',')
+          .map((token) {
+            // BYDAY entries may carry an ordinal prefix, e.g. "2MO" or "-1FR";
+            // the day code is always the trailing two letters.
+            final code = token.trim().toUpperCase();
+            final key = code.length >= 2 ? code.substring(code.length - 2) : code;
+            return dayNumbers[key];
+          })
+          .whereType<int>()
+          .toList();
+      if (days.isNotEmpty) daysOfWeek = days;
+    }
+
+    DateTime? endDate;
+    int? count;
+    final until = params['UNTIL'];
+    final countStr = params['COUNT'];
+    if (until != null && until.isNotEmpty) {
+      endDate = _parseUntil(until);
+    } else if (countStr != null) {
+      count = int.tryParse(countStr);
+    }
+
+    return CalendarRecurrence(
+      frequency: frequency,
+      interval: interval,
+      daysOfWeek: daysOfWeek,
+      endDate: endDate,
+      count: count,
+    );
+  }
+
+  /// Parses an RRULE UNTIL value (`yyyymmdd`, `yyyymmddThhmmss`, or
+  /// `yyyymmddThhmmssZ`) into a local date. Only the calendar date is kept, to
+  /// match how the recurrence end date is represented elsewhere (Graph returns
+  /// a plain date), and to avoid a timezone shift moving it to an adjacent day.
+  DateTime? _parseUntil(String raw) {
+    final m = RegExp(r'^(\d{4})(\d{2})(\d{2})').firstMatch(raw.trim());
+    if (m == null) return null;
+    return DateTime(
+      int.parse(m.group(1)!),
+      int.parse(m.group(2)!),
+      int.parse(m.group(3)!),
+    );
+  }
+
   String _formatDate(DateTime dt) {
     final local = dt.toLocal();
     final y = local.year.toString().padLeft(4, '0');
@@ -599,8 +796,9 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
 
   CalendarEventModel _parseEvent(
     Map<String, dynamic> json,
-    List<int> defaultReminderMinutes,
-  ) {
+    List<int> defaultReminderMinutes, {
+    CalendarRecurrence? recurrence,
+  }) {
     final startMap = json['start'] as Map<String, dynamic>? ?? {};
     final endMap = json['end'] as Map<String, dynamic>? ?? {};
 
@@ -619,8 +817,8 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
                 DateTime.now().toIso8601String())
             .toUtc();
 
-    final organizerEmail =
-        (json['organizer'] as Map<String, dynamic>?)?['email'] as String?;
+    final organizerMap = json['organizer'] as Map<String, dynamic>?;
+    final organizerEmail = organizerMap?['email'] as String?;
     final rawAttendees =
         (json['attendees'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
     final selfAttendee =
@@ -628,7 +826,14 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     final selfStatus = selfAttendee?['responseStatus'] as String?;
 
     final status = _parseStatus(selfStatus ?? json['status'] as String?);
-    final isOrganizer = selfAttendee?['organizer'] == true ||
+    // `organizer.self` is Google's authoritative "I own this event" flag and is
+    // present even when the event has no other guests (in which case
+    // `attendees` is empty and the per-attendee organizer flag can't be
+    // consulted). That empty-attendees case — common for self-created and
+    // recurring meetings — previously fell through to isOrganizer=false and
+    // made the event look read-only / mis-routed delete to "decline".
+    final isOrganizer = organizerMap?['self'] == true ||
+        selfAttendee?['organizer'] == true ||
         (organizerEmail != null &&
             rawAttendees.any(
                 (a) => a['email'] == organizerEmail && a['self'] == true));
@@ -659,6 +864,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       isOrganizer: isOrganizer,
       timezone: startMap['timeZone'] as String?,
       attendees: attendees,
+      recurrence: recurrence,
       reminderMinutes:
           _parseReminderMinutes(json['reminders'], defaultReminderMinutes),
       seriesMasterId: json['recurringEventId'] as String?,

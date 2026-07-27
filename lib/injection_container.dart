@@ -77,6 +77,7 @@ import 'domain/usecases/create_folder.dart';
 import 'domain/usecases/move_folder.dart';
 import 'domain/usecases/rename_folder.dart';
 import 'domain/usecases/empty_folder.dart';
+import 'domain/usecases/get_calendar_event.dart';
 import 'domain/usecases/get_calendar_events.dart';
 import 'domain/usecases/get_contact_details.dart';
 import 'domain/usecases/get_conversation_thread.dart';
@@ -284,6 +285,7 @@ Future<void> configureDependencies() async {
       ));
   sl.registerLazySingleton(() => GetContactDetails(sl<ContactDetailsRepository>()));
   sl.registerLazySingleton(() => GetCalendarEvents(sl<CalendarRepository>()));
+  sl.registerLazySingleton(() => GetCalendarEvent(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => CreateCalendarEvent(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => UpdateCalendarEvent(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => CheckAttendeesAvailability(sl<CalendarRepository>()));

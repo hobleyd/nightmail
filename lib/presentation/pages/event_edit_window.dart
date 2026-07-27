@@ -100,6 +100,7 @@ class EventEditWindowApp extends StatelessWidget {
       attendees: _parseAttendees(raw['attendees'] as List<dynamic>?),
       recurrence: _parseRecurrence(raw['recurrence'] as Map<String, dynamic>?),
       reminderMinutes: raw['reminderMinutes'] as int?,
+      seriesMasterId: raw['seriesMasterId'] as String?,
     );
   }
 

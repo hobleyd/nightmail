@@ -5,6 +5,7 @@ import '../../core/error/failures.dart';
 import '../../core/usecases/usecase.dart';
 import '../entities/calendar_event.dart';
 import '../entities/calendar_recurrence.dart';
+import '../entities/meeting_notify_scope.dart';
 import '../repositories/calendar_repository.dart';
 
 class UpdateCalendarEvent
@@ -34,6 +35,7 @@ class UpdateCalendarEventParams extends Equatable {
     this.recurrence,
     this.isOnlineMeeting = false,
     this.reminderMinutes,
+    this.notifyScope = MeetingNotifyScope.all,
   });
 
   final String id;
@@ -56,6 +58,10 @@ class UpdateCalendarEventParams extends Equatable {
   /// Minutes before start to fire a reminder. Null means no reminder.
   final int? reminderMinutes;
 
+  /// Which attendees to email about this save. Defaults to [MeetingNotifyScope.all]
+  /// so callers that don't diff (e.g. drag-to-reschedule) keep notifying everyone.
+  final MeetingNotifyScope notifyScope;
+
   @override
   List<Object?> get props => [
         id,
@@ -70,5 +76,6 @@ class UpdateCalendarEventParams extends Equatable {
         recurrence,
         isOnlineMeeting,
         reminderMinutes,
+        notifyScope,
       ];
 }

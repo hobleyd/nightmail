@@ -13,6 +13,13 @@ abstract interface class CalendarRepository {
     required DateTime endDateTime,
   });
 
+  /// Fetches a single event by id. Used to load a recurring series' master
+  /// event (its real anchor time and recurrence rule) when editing the whole
+  /// series from a clicked occurrence.
+  Future<Either<Failure, CalendarEvent>> getCalendarEvent({
+    required String id,
+  });
+
   Future<Either<Failure, CalendarEvent>> createCalendarEvent({
     required CreateCalendarEventParams params,
   });

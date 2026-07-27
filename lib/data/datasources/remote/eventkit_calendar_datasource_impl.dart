@@ -42,6 +42,14 @@ class EventKitCalendarDatasourceImpl implements CalendarRemoteDatasource {
   }
 
   @override
+  Future<CalendarEventModel> getCalendarEvent({required String id}) async {
+    // The EventKit bridge has no single-event lookup; series editing (the only
+    // caller) isn't supported for local macOS calendars.
+    throw const ServerException(
+        message: 'Editing a whole series is not supported for this calendar');
+  }
+
+  @override
   Future<CalendarEventModel> createCalendarEvent({
     required CreateCalendarEventParams params,
   }) async {

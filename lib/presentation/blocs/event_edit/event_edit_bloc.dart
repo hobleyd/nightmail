@@ -81,6 +81,7 @@ class EventEditBloc extends Bloc<EventEditBlocEvent, EventEditState> {
           recurrence: event.recurrence,
           isOnlineMeeting: event.isOnlineMeeting,
           reminderMinutes: event.reminderMinutes,
+          notifyScope: event.notifyScope,
         ),
       );
       result.fold(

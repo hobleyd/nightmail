@@ -1,6 +1,7 @@
 import 'package:equatable/equatable.dart';
 
 import '../../../domain/entities/calendar_recurrence.dart';
+import '../../../domain/entities/meeting_notify_scope.dart';
 
 sealed class EventEditBlocEvent extends Equatable {
   const EventEditBlocEvent();
@@ -23,6 +24,7 @@ final class EventEditSubmitted extends EventEditBlocEvent {
     this.recurrence,
     this.isOnlineMeeting = false,
     this.reminderMinutes,
+    this.notifyScope = MeetingNotifyScope.all,
   });
 
   /// Null for create, non-null for update.
@@ -43,6 +45,10 @@ final class EventEditSubmitted extends EventEditBlocEvent {
   /// Minutes before start to fire a reminder. Null means no reminder.
   final int? reminderMinutes;
 
+  /// Which attendees to email about this save (updates only; ignored on create,
+  /// where every attendee is always invited).
+  final MeetingNotifyScope notifyScope;
+
   @override
   List<Object?> get props => [
         id,
@@ -57,5 +63,6 @@ final class EventEditSubmitted extends EventEditBlocEvent {
         recurrence,
         isOnlineMeeting,
         reminderMinutes,
+        notifyScope,
       ];
 }

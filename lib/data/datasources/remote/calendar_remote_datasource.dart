@@ -10,6 +10,9 @@ abstract interface class CalendarRemoteDatasource {
     required DateTime endDateTime,
   });
 
+  /// Fetches a single event by id (e.g. a recurring series' master).
+  Future<CalendarEventModel> getCalendarEvent({required String id});
+
   Future<CalendarEventModel> createCalendarEvent({
     required CreateCalendarEventParams params,
   });

@@ -16,6 +16,7 @@ import '../../core/utils/timezone_utils.dart';
 import '../../domain/entities/attendee_availability.dart';
 import '../../domain/entities/calendar_event.dart';
 import '../../domain/entities/calendar_recurrence.dart';
+import '../../domain/entities/meeting_notify_scope.dart';
 import '../../domain/usecases/check_attendees_availability.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../../injection_container.dart';
@@ -83,6 +84,9 @@ class EventEditDialog extends StatelessWidget {
             .toList(),
         if (e.recurrence != null) 'recurrence': _recurrenceToArgs(e.recurrence!),
         if (e.reminderMinutes != null) 'reminderMinutes': e.reminderMinutes,
+        // Preserved so the window can tell a single occurrence (recurrence
+        // read-only, not sent) from a series master (recurrence editable).
+        if (e.seriesMasterId != null) 'seriesMasterId': e.seriesMasterId,
       };
 
   static Map<String, dynamic> _recurrenceToArgs(CalendarRecurrence r) => {
@@ -187,6 +191,24 @@ class _EventEditFormState extends State<EventEditForm> {
   String? _organizerEmail;
   String? _hoveredLocationUrl;
 
+  // Snapshot of the form's initial values, captured at the end of initState so
+  // a save can tell what the organizer actually changed. Used to decide which
+  // attendees to notify: any content change notifies everyone, an
+  // attendee-list-only change notifies just the added/removed guests, and no
+  // change notifies no one. Only meaningful when editing an existing event.
+  late final String _initialSubject;
+  late final String? _initialLocation;
+  late final String? _initialDescription;
+  late final DateTime _initialStartDate;
+  late final TimeOfDay _initialStartTime;
+  late final DateTime _initialEndDate;
+  late final TimeOfDay _initialEndTime;
+  late final bool _initialIsAllDay;
+  late final String _initialTimezone;
+  late final CalendarRecurrence? _initialRecurrence;
+  late final bool _initialIsOnlineMeeting;
+  late final Set<String> _initialAttendees;
+
   @override
   void initState() {
     super.initState();
@@ -227,6 +249,29 @@ class _EventEditFormState extends State<EventEditForm> {
     _recurrence = e?.recurrence;
     _reminderMinutes = e?.reminderMinutes;
     _organizerEmail = sl<AccountManager>().activeAccount?.emailAddress;
+
+    // Snapshot the initialized state, normalized the same way _submit() reads
+    // it back, so change-detection compares like with like.
+    _initialSubject = _titleController.text.trim();
+    _initialLocation = _nullIfBlank(_locationController.text);
+    _initialDescription = _nullIfBlank(_descriptionController.text);
+    _initialStartDate = _startDate;
+    _initialStartTime = _startTime;
+    _initialEndDate = _endDate;
+    _initialEndTime = _endTime;
+    _initialIsAllDay = _isAllDay;
+    _initialTimezone = _timezone;
+    _initialRecurrence = _recurrence;
+    _initialIsOnlineMeeting = _isOnlineMeeting;
+    _initialAttendees = _attendees
+        .map(_extractEmail)
+        .map((a) => a.toLowerCase())
+        .toSet();
+  }
+
+  static String? _nullIfBlank(String s) {
+    final t = s.trim();
+    return t.isNotEmpty ? t : null;
   }
 
   @override
@@ -240,6 +285,12 @@ class _EventEditFormState extends State<EventEditForm> {
   }
 
   bool get _readOnly => widget.event != null && !widget.event!.isOrganizer;
+
+  /// True when editing a single occurrence of a recurring series. The
+  /// recurrence rule belongs to the series master, so here it's shown as a
+  /// read-only note and never sent — changing how it repeats requires editing
+  /// the whole series (chosen up front before the form opens).
+  bool get _isSeriesOccurrence => widget.event?.isRecurringOccurrence ?? false;
 
   String get _baseTitle {
     if (widget.event == null) return 'New Event';
@@ -356,6 +407,10 @@ class _EventEditFormState extends State<EventEditForm> {
       return;
     }
 
+    final location = _nullIfBlank(_locationController.text);
+    final description = _nullIfBlank(_descriptionController.text);
+    final attendeeEmails = _attendees.map(_extractEmail).toList();
+
     context.read<EventEditBloc>().add(EventEditSubmitted(
           id: widget.event?.id,
           subject: title,
@@ -363,17 +418,53 @@ class _EventEditFormState extends State<EventEditForm> {
           end: end,
           isAllDay: _isAllDay,
           timezone: _timezone,
-          location: _locationController.text.trim().isNotEmpty
-              ? _locationController.text.trim()
-              : null,
-          description: _descriptionController.text.trim().isNotEmpty
-              ? _descriptionController.text.trim()
-              : null,
-          attendeeEmails: _attendees.map(_extractEmail).toList(),
-          recurrence: _recurrence,
+          location: location,
+          description: description,
+          attendeeEmails: attendeeEmails,
+          // Editing a single occurrence must not touch the series' recurrence.
+          recurrence: _isSeriesOccurrence ? null : _recurrence,
           isOnlineMeeting: _isOnlineMeeting,
           reminderMinutes: _reminderMinutes,
+          notifyScope: _computeNotifyScope(
+            subject: title,
+            location: location,
+            description: description,
+            attendeeEmails: attendeeEmails,
+          ),
         ));
+  }
+
+  /// Decides who to email about this save by diffing the form against its
+  /// initial snapshot. Any change to meeting content notifies all attendees;
+  /// a change confined to the attendee list notifies only the added/removed
+  /// guests; no change notifies no one. Creates always notify all.
+  MeetingNotifyScope _computeNotifyScope({
+    required String subject,
+    required String? location,
+    required String? description,
+    required List<String> attendeeEmails,
+  }) {
+    if (widget.event == null) return MeetingNotifyScope.all;
+
+    final contentChanged = subject != _initialSubject ||
+        location != _initialLocation ||
+        description != _initialDescription ||
+        _startDate != _initialStartDate ||
+        _startTime != _initialStartTime ||
+        _endDate != _initialEndDate ||
+        _endTime != _initialEndTime ||
+        _isAllDay != _initialIsAllDay ||
+        _timezone != _initialTimezone ||
+        _recurrence != _initialRecurrence ||
+        _isOnlineMeeting != _initialIsOnlineMeeting;
+    if (contentChanged) return MeetingNotifyScope.all;
+
+    final now = attendeeEmails.map((a) => a.toLowerCase()).toSet();
+    final rosterChanged = now.length != _initialAttendees.length ||
+        !now.containsAll(_initialAttendees);
+    return rosterChanged
+        ? MeetingNotifyScope.changedAttendeesOnly
+        : MeetingNotifyScope.none;
   }
 
   @override
@@ -568,14 +659,17 @@ class _EventEditFormState extends State<EventEditForm> {
                 const SizedBox(height: 10),
                 Divider(height: 1, color: c.separator),
                 const SizedBox(height: 10),
-                AbsorbPointer(
-                  absorbing: _readOnly,
-                  child: _RecurrenceSection(
-                    recurrence: _recurrence,
-                    startDate: _startDate,
-                    onChanged: (r) => setState(() => _recurrence = r),
+                if (_isSeriesOccurrence)
+                  _RecurringOccurrenceNote(recurrence: _recurrence)
+                else
+                  AbsorbPointer(
+                    absorbing: _readOnly,
+                    child: _RecurrenceSection(
+                      recurrence: _recurrence,
+                      startDate: _startDate,
+                      onChanged: (r) => setState(() => _recurrence = r),
+                    ),
                   ),
-                ),
                 const SizedBox(height: 10),
                 Divider(height: 1, color: c.separator),
                 const SizedBox(height: 10),
@@ -662,6 +756,56 @@ class _EventEditFormState extends State<EventEditForm> {
     }
 
     return SizedBox(width: 560, child: formColumn);
+  }
+}
+
+// ─── Recurring-occurrence note ─────────────────────────────────────────────────
+
+/// Read-only line shown in place of the recurrence editor when editing a single
+/// occurrence, explaining that the recurrence rule lives on the whole series.
+class _RecurringOccurrenceNote extends StatelessWidget {
+  const _RecurringOccurrenceNote({this.recurrence});
+
+  final CalendarRecurrence? recurrence;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final r = recurrence;
+    final cadence = r == null ? 'a recurring series' : _summarize(r);
+    return Row(
+      children: [
+        Icon(Icons.repeat, size: 16, color: c.textMuted),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            'Part of $cadence — editing this occurrence only.',
+            style: TextStyle(color: c.textMuted, fontSize: 12),
+          ),
+        ),
+      ],
+    );
+  }
+
+  static String _summarize(CalendarRecurrence r) {
+    final unit = switch (r.frequency) {
+      RecurrenceFrequency.daily => r.interval > 1 ? 'days' : 'daily',
+      RecurrenceFrequency.weekly => r.interval > 1 ? 'weeks' : 'weekly',
+      RecurrenceFrequency.monthly => r.interval > 1 ? 'months' : 'monthly',
+      RecurrenceFrequency.yearly => r.interval > 1 ? 'years' : 'yearly',
+    };
+    final base = r.interval > 1
+        ? 'a series repeating every ${r.interval} $unit'
+        : 'a $unit series';
+    final days = r.daysOfWeek;
+    if (r.frequency == RecurrenceFrequency.weekly &&
+        days != null &&
+        days.isNotEmpty) {
+      const names = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+      final sorted = [...days]..sort();
+      return '$base on ${sorted.map((d) => names[d]).join(', ')}';
+    }
+    return base;
   }
 }
 

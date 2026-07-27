@@ -59,6 +59,14 @@ class GraphApiDatasourceImpl
 
   final Dio _dio;
 
+  // Recurrence JSON per series-master id. calendarView expands each series into
+  // occurrences that don't carry the `recurrence` pattern — only the master
+  // does — so to display recurrence on an occurrence we fetch its master once
+  // and cache the pattern. Refreshed at most every 10 minutes; cleared on any
+  // local edit so recurrence changes made in-app are reflected immediately.
+  final Map<String, Map<String, dynamic>?> _recurrenceByMaster = {};
+  DateTime? _recurrenceCacheAt;
+
   @override
   Future<List<EmailModel>> getEmails({
     String? folderId,
@@ -333,13 +341,88 @@ class GraphApiDatasourceImpl
       final data = response.data;
       if (data == null) return [];
 
-      final value = data['value'] as List<dynamic>? ?? [];
-      return value
-          .map((e) => CalendarEventModel.fromJson(e as Map<String, dynamic>))
-          .toList();
+      final rawItems =
+          (data['value'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+
+      // Occurrences don't carry the recurrence pattern — resolve it from each
+      // distinct series master so the edit form can show recurrence.
+      final masterIds = rawItems
+          .where((e) => e['recurrence'] == null)
+          .map((e) => e['seriesMasterId'] as String?)
+          .whereType<String>()
+          .toSet();
+      final recurrenceByMaster = await _recurrenceJsonForMasters(masterIds);
+
+      return rawItems.map((e) {
+        final masterId = e['seriesMasterId'] as String?;
+        final recurrence =
+            masterId != null ? recurrenceByMaster[masterId] : null;
+        final json = (e['recurrence'] == null && recurrence != null)
+            ? {...e, 'recurrence': recurrence}
+            : e;
+        return CalendarEventModel.fromJson(json);
+      }).toList();
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
+  }
+
+  @override
+  Future<CalendarEventModel> getCalendarEvent({required String id}) async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/me/events/$id',
+        queryParameters: {
+          '\$select':
+              'id,subject,start,end,isAllDay,location,onlineMeeting,bodyPreview,showAs,isOrganizer,attendees,recurrence,isReminderOn,reminderMinutesBeforeStart,seriesMasterId',
+        },
+        options: Options(headers: {'Prefer': 'outlook.timezone="UTC"'}),
+      );
+      final data = response.data;
+      if (data == null) {
+        throw const ServerException(message: 'Empty response from server');
+      }
+      return CalendarEventModel.fromJson(data);
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  /// Fetches the `recurrence` pattern for each distinct series master (in
+  /// parallel), caching results for 10 minutes. Returns master id → recurrence
+  /// JSON (null when the master has no pattern or the fetch fails).
+  Future<Map<String, Map<String, dynamic>?>> _recurrenceJsonForMasters(
+      Set<String> masterIds) async {
+    final now = DateTime.now();
+    if (_recurrenceCacheAt == null ||
+        now.difference(_recurrenceCacheAt!) > const Duration(minutes: 10)) {
+      _recurrenceByMaster.clear();
+      _recurrenceCacheAt = now;
+    }
+
+    final missing = masterIds
+        .where((id) => !_recurrenceByMaster.containsKey(id))
+        .toList();
+    await Future.wait(missing.map((id) async {
+      try {
+        final resp = await _dio.get<Map<String, dynamic>>(
+          '/me/events/$id',
+          queryParameters: {'\$select': 'recurrence'},
+        );
+        _recurrenceByMaster[id] =
+            resp.data?['recurrence'] as Map<String, dynamic>?;
+      } catch (e) {
+        debugPrint('GraphApiDatasourceImpl: recurrence fetch for $id failed: $e');
+        _recurrenceByMaster[id] = null;
+      }
+    }));
+
+    return {for (final id in masterIds) id: _recurrenceByMaster[id]};
+  }
+
+  void _invalidateRecurrenceCache() {
+    _recurrenceByMaster.clear();
+    _recurrenceCacheAt = null;
   }
 
   @override
@@ -379,6 +462,8 @@ class GraphApiDatasourceImpl
   Future<CalendarEventModel> updateCalendarEvent({
     required UpdateCalendarEventParams params,
   }) async {
+    // Recurrence may have changed; drop the cache so the next load refetches.
+    _invalidateRecurrenceCache();
     try {
       final body = _buildGraphEventBody(
         subject: params.subject,
@@ -735,6 +820,7 @@ class GraphApiDatasourceImpl
     // Cancelling the series master via POST /cancel sends the correct
     // cancellation message to all attendees.
     final masterId = seriesMasterId ?? eventId;
+    _invalidateRecurrenceCache();
     try {
       await _dio.post<void>(
         '/me/events/$masterId/cancel',

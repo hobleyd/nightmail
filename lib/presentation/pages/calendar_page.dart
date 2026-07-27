@@ -9,7 +9,9 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/timezone_utils.dart';
 import '../../domain/entities/calendar_event.dart';
+import '../../domain/usecases/get_calendar_event.dart';
 import '../../infrastructure/accounts/account.dart';
+import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/calendar/calendar_bloc.dart';
 import '../blocs/calendar/calendar_event.dart';
@@ -984,13 +986,7 @@ class _AllDayEventChip extends StatelessWidget {
   }
 
   void _openEdit(BuildContext context) {
-    EventEditDialog.show(
-      context,
-      event: event,
-      accountId: _accountId(context),
-      isO365Account: _isO365Account(context),
-      isGmailAccount: _isGmailAccount(context),
-    );
+    unawaited(_openInstanceEditor(context, event));
   }
 }
 
@@ -1568,6 +1564,116 @@ class _EventTile extends StatelessWidget {
   }
 }
 
+// ─── Recurring-aware edit / cancel helpers ──────────────────────────────────────
+
+/// Opens the edit window for a single event/occurrence as-is — used by
+/// double-click and the "Edit" / "Edit Instance" menu items. A recurring
+/// occurrence opens with its recurrence shown read-only (see [EventEditForm]).
+Future<void> _openInstanceEditor(
+    BuildContext context, CalendarEvent event) async {
+  await EventEditDialog.show(
+    context,
+    event: event,
+    accountId: _accountId(context),
+    isO365Account: _isO365Account(context),
+    isGmailAccount: _isGmailAccount(context),
+  );
+}
+
+/// Opens the edit window for the whole series behind a recurring occurrence —
+/// the "Edit Series" menu item. Loads the series master (its real anchor time
+/// and editable recurrence) so the form edits, and the save targets, the
+/// series rather than one instance.
+Future<void> _openSeriesEditor(
+    BuildContext context, CalendarEvent event) async {
+  final accountId = _accountId(context);
+  final isO365 = _isO365Account(context);
+  final isGmail = _isGmailAccount(context);
+  final master =
+      await _fetchSeriesMaster(context, event.seriesMasterId ?? event.id);
+  if (master == null || !context.mounted) return;
+  await EventEditDialog.show(
+    context,
+    event: master,
+    accountId: accountId,
+    isO365Account: isO365,
+    isGmailAccount: isGmail,
+  );
+}
+
+/// Loads a series master by id, surfacing a snackbar (and returning null) on
+/// failure.
+Future<CalendarEvent?> _fetchSeriesMaster(
+  BuildContext context,
+  String masterId,
+) async {
+  final messenger = ScaffoldMessenger.of(context);
+  final result =
+      await sl<GetCalendarEvent>()(GetCalendarEventParams(id: masterId));
+  return result.fold(
+    (f) {
+      messenger.showSnackBar(SnackBar(
+        content: Text("Couldn't load the series: ${f.message}"),
+        backgroundColor: Colors.red.shade700,
+      ));
+      return null;
+    },
+    (event) => event,
+  );
+}
+
+/// Confirms and cancels a meeting the user organizes. [series] chosen up front
+/// via the "Cancel Series" vs "Cancel Instance"/"Cancel Meeting" menu items;
+/// returns without acting if the user declines the confirmation.
+Future<void> _confirmAndCancel(
+  BuildContext context,
+  CalendarEvent event, {
+  required bool series,
+}) async {
+  final title = series
+      ? 'Cancel Series'
+      : (event.isRecurringOccurrence ? 'Cancel Instance' : 'Cancel Meeting');
+  final content = series
+      ? 'Cancel all occurrences of "${event.subject}"? '
+          'Cancellation notices will be sent to all attendees.'
+      : event.isRecurringOccurrence
+          ? 'Cancel this occurrence of "${event.subject}"? '
+              'A cancellation notice will be sent to all attendees.'
+          : 'Cancel "${event.subject}" and send cancellation notices to all attendees?';
+
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text(title),
+      content: Text(content),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: const Text('Keep'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: Colors.red),
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: Text(title, style: const TextStyle(color: Colors.white)),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true || !context.mounted) return;
+
+  if (series) {
+    context.read<CalendarBloc>().add(CalendarEventCancelSeriesRequested(
+          eventId: event.id,
+          seriesMasterId: event.seriesMasterId,
+          occurrenceStart: event.start,
+        ));
+  } else {
+    context
+        .read<CalendarBloc>()
+        .add(CalendarEventCancelRequested(eventId: event.id));
+  }
+}
+
 // ─── Delete selected events ───────────────────────────────────────────────────
 
 Future<void> _confirmAndDeleteSelected(
@@ -1660,87 +1766,69 @@ void _showEventContextMenu(
       context: context,
       position: rect,
       items: [
-        if (hasMeetingLink)
+        if (hasMeetingLink) ...[
           const PopupMenuItem(
             value: _EventMenuAction.joinMeeting,
             height: 36,
             child: Text('Join Meeting', style: TextStyle(fontSize: 13)),
           ),
-        const PopupMenuItem(
-          value: _EventMenuAction.cancel,
-          height: 36,
-          child: Text('Cancel Meeting', style: TextStyle(fontSize: 13)),
-        ),
-        if (isRecurring)
+          const PopupMenuDivider(height: 1),
+        ],
+        if (isRecurring) ...[
+          const PopupMenuItem(
+            value: _EventMenuAction.editInstance,
+            height: 36,
+            child: Text('Edit Instance', style: TextStyle(fontSize: 13)),
+          ),
+          const PopupMenuItem(
+            value: _EventMenuAction.editSeries,
+            height: 36,
+            child: Text('Edit Series', style: TextStyle(fontSize: 13)),
+          ),
+        ] else
+          const PopupMenuItem(
+            value: _EventMenuAction.edit,
+            height: 36,
+            child: Text('Edit', style: TextStyle(fontSize: 13)),
+          ),
+        const PopupMenuDivider(height: 1),
+        if (isRecurring) ...[
+          const PopupMenuItem(
+            value: _EventMenuAction.cancel,
+            height: 36,
+            child: Text('Cancel Instance', style: TextStyle(fontSize: 13)),
+          ),
           const PopupMenuItem(
             value: _EventMenuAction.cancelSeries,
             height: 36,
             child: Text('Cancel Series', style: TextStyle(fontSize: 13)),
           ),
+        ] else
+          const PopupMenuItem(
+            value: _EventMenuAction.cancel,
+            height: 36,
+            child: Text('Cancel Meeting', style: TextStyle(fontSize: 13)),
+          ),
       ],
     ).then((action) async {
       if (action == null || !context.mounted) return;
-      if (action == _EventMenuAction.joinMeeting) {
-        unawaited(launchUrl(Uri.parse(meetingUrl!),
-            mode: LaunchMode.externalApplication));
-        return;
+      switch (action) {
+        case _EventMenuAction.joinMeeting:
+          unawaited(launchUrl(Uri.parse(meetingUrl!),
+              mode: LaunchMode.externalApplication));
+        case _EventMenuAction.edit:
+        case _EventMenuAction.editInstance:
+          await _openInstanceEditor(context, event);
+        case _EventMenuAction.editSeries:
+          await _openSeriesEditor(context, event);
+        case _EventMenuAction.cancel:
+          await _confirmAndCancel(context, event, series: false);
+        case _EventMenuAction.cancelSeries:
+          await _confirmAndCancel(context, event, series: true);
+        case _EventMenuAction.decline:
+        case _EventMenuAction.proposeNewTime:
+          break;
       }
-      if (action == _EventMenuAction.cancelSeries) {
-        final confirmed = await showDialog<bool>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Cancel Series'),
-            content: Text(
-              'Cancel all occurrences of "${event.subject}"? '
-              'Cancellation notices will be sent to all attendees.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(false),
-                child: const Text('Keep'),
-              ),
-              FilledButton(
-                style: FilledButton.styleFrom(backgroundColor: Colors.red),
-                onPressed: () => Navigator.of(ctx).pop(true),
-                child: const Text('Cancel Series',
-                    style: TextStyle(color: Colors.white)),
-              ),
-            ],
-          ),
-        );
-        if (confirmed != true || !context.mounted) return;
-        context.read<CalendarBloc>().add(CalendarEventCancelSeriesRequested(
-              eventId: event.id,
-              seriesMasterId: event.seriesMasterId,
-              occurrenceStart: event.start,
-            ));
-        return;
-      }
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Cancel Meeting'),
-          content: Text(
-            'Cancel "${event.subject}" and send cancellation notices to all attendees?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Keep'),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: Colors.red),
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Cancel Meeting',
-                  style: TextStyle(color: Colors.white)),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true || !context.mounted) return;
-      context
-          .read<CalendarBloc>()
-          .add(CalendarEventCancelRequested(eventId: event.id));
     });
     return;
   }
@@ -1773,6 +1861,9 @@ void _showEventContextMenu(
     switch (action) {
       case _EventMenuAction.cancel:
       case _EventMenuAction.cancelSeries:
+      case _EventMenuAction.edit:
+      case _EventMenuAction.editInstance:
+      case _EventMenuAction.editSeries:
         break;
       case _EventMenuAction.joinMeeting:
         unawaited(launchUrl(Uri.parse(meetingUrl!),
@@ -1794,7 +1885,16 @@ void _showEventContextMenu(
   });
 }
 
-enum _EventMenuAction { cancel, cancelSeries, joinMeeting, decline, proposeNewTime }
+enum _EventMenuAction {
+  edit,
+  editInstance,
+  editSeries,
+  cancel,
+  cancelSeries,
+  joinMeeting,
+  decline,
+  proposeNewTime,
+}
 
 // ─── Propose New Time dialog ──────────────────────────────────────────────────
 

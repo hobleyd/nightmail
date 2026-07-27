@@ -95,6 +95,16 @@ class CalDavCalendarDatasourceImpl implements CalendarRemoteDatasource {
   }
 
   @override
+  Future<CalendarEventModel> getCalendarEvent({required String id}) async {
+    final cached = _eventCache[id];
+    if (cached == null) {
+      throw const ServerException(
+          message: 'Event not found in the CalDAV cache; reload the calendar');
+    }
+    return _toModel(cached);
+  }
+
+  @override
   Future<CalendarEventModel> createCalendarEvent({
     required CreateCalendarEventParams params,
   }) async {

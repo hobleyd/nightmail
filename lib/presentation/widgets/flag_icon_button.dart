@@ -6,7 +6,8 @@ import '../../core/theme/app_colors.dart';
 /// tap) and calls [onTap] on a plain left-click.
 ///
 /// [onSchedule] is called with the chosen [DateTime] when the user picks an
-/// option from the context menu (Today / This Week / Next Week / Custom).
+/// option from the context menu (Today / Tomorrow / 3 Days / This Week /
+/// Next Week / Custom).
 class FlagIconButton extends StatelessWidget {
   const FlagIconButton({
     super.key,
@@ -62,6 +63,14 @@ class FlagIconButton extends StatelessWidget {
           child: _MenuRow(icon: Icons.today_outlined, label: 'Today'),
         ),
         PopupMenuItem(
+          value: _DueDateOption.tomorrow,
+          child: _MenuRow(icon: Icons.event_outlined, label: 'Tomorrow'),
+        ),
+        PopupMenuItem(
+          value: _DueDateOption.threeDays,
+          child: _MenuRow(icon: Icons.more_time_outlined, label: '3 Days'),
+        ),
+        PopupMenuItem(
           value: _DueDateOption.thisWeek,
           child: _MenuRow(icon: Icons.view_week_outlined, label: 'This Week'),
         ),
@@ -93,33 +102,61 @@ class FlagIconButton extends StatelessWidget {
     onSchedule(_resolveDate(chosen));
   }
 
+  /// Hour of the day that "Friday morning" resolves to.
+  static const _morningHour = 9;
+
   static DateTime _resolveDate(_DueDateOption option) {
     final now = DateTime.now();
     return switch (option) {
       _DueDateOption.today => DateTime(now.year, now.month, now.day),
-      _DueDateOption.thisWeek => _thisFriday(now),
-      _DueDateOption.nextWeek => _nextMonday(now),
+      _DueDateOption.tomorrow => _addBusinessDays(now, 1),
+      _DueDateOption.threeDays => _addBusinessDays(now, 3),
+      _DueDateOption.thisWeek => _thisWeekFriday(now),
+      _DueDateOption.nextWeek => _nextWeekFriday(now),
       _DueDateOption.custom => DateTime(now.year, now.month, now.day),
     };
   }
 
-  static DateTime _thisFriday(DateTime from) {
-    final daysUntilFriday = (DateTime.friday - from.weekday + 7) % 7;
-    // If today is already Friday, push to next Friday.
-    final days = daysUntilFriday == 0 ? 7 : daysUntilFriday;
-    final d = from.add(Duration(days: days));
-    return DateTime(d.year, d.month, d.day);
+  /// Morning of the [count]th business day (Mon–Fri) after [from]. Weekend
+  /// days are skipped, so Friday + 1 is Monday and Saturday + 1 is Monday.
+  static DateTime _addBusinessDays(DateTime from, int count) {
+    var day = DateTime(from.year, from.month, from.day, _morningHour);
+    var remaining = count;
+    while (remaining > 0) {
+      day = DateTime(day.year, day.month, day.day + 1, _morningHour);
+      if (day.weekday != DateTime.saturday && day.weekday != DateTime.sunday) {
+        remaining--;
+      }
+    }
+    return day;
   }
 
-  static DateTime _nextMonday(DateTime from) {
-    final daysUntilMonday = (DateTime.monday - from.weekday + 7) % 7;
-    final days = daysUntilMonday == 0 ? 7 : daysUntilMonday;
-    final d = from.add(Duration(days: days));
-    return DateTime(d.year, d.month, d.day);
+  /// Friday morning of the current week, or of the following week if this
+  /// week's Friday morning has already passed (Friday afternoon onwards, and
+  /// the weekend).
+  static DateTime _thisWeekFriday(DateTime from) {
+    final friday = _fridayMorningOfWeek(from);
+    return from.isBefore(friday) ? friday : _plusWeek(friday);
   }
+
+  /// Friday morning of the week after the current one.
+  static DateTime _nextWeekFriday(DateTime from) =>
+      _plusWeek(_fridayMorningOfWeek(from));
+
+  /// Friday morning of the Mon–Sun week containing [from]. May be in the past
+  /// when [from] falls on the weekend.
+  static DateTime _fridayMorningOfWeek(DateTime from) {
+    final offset = DateTime.friday - from.weekday;
+    return DateTime(from.year, from.month, from.day + offset, _morningHour);
+  }
+
+  // Rebuild rather than add a Duration so the wall-clock hour survives a
+  // daylight-saving transition.
+  static DateTime _plusWeek(DateTime d) =>
+      DateTime(d.year, d.month, d.day + 7, d.hour, d.minute);
 }
 
-enum _DueDateOption { today, thisWeek, nextWeek, custom }
+enum _DueDateOption { today, tomorrow, threeDays, thisWeek, nextWeek, custom }
 
 class _MenuRow extends StatelessWidget {
   const _MenuRow({required this.icon, required this.label});

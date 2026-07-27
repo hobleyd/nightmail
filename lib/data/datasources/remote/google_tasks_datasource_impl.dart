@@ -242,11 +242,15 @@ class GoogleTasksDatasourceImpl implements TasksRemoteDatasource {
     );
   }
 
+  // Google Tasks stores `due` as a date only — the time is truncated to
+  // midnight UTC server-side. Send the *local* calendar date: converting to
+  // UTC first shifts the day back for any timezone ahead of UTC (e.g. a
+  // Friday 9am AEST due date would land on Thursday).
   String _formatDueDate(DateTime date) {
-    final utc = date.toUtc();
-    final y = utc.year.toString().padLeft(4, '0');
-    final m = utc.month.toString().padLeft(2, '0');
-    final d = utc.day.toString().padLeft(2, '0');
+    final local = date.toLocal();
+    final y = local.year.toString().padLeft(4, '0');
+    final m = local.month.toString().padLeft(2, '0');
+    final d = local.day.toString().padLeft(2, '0');
     return '$y-$m-${d}T00:00:00.000Z';
   }
 

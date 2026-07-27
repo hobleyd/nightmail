@@ -31,6 +31,7 @@ class RecipientInputField extends StatefulWidget {
     this.fieldId,
     this.onDropAccepted,
     this.onTabToNext,
+    this.chipBadgeBuilder,
   }) : assert(
           fieldId == null || onDropAccepted != null,
           'onDropAccepted is required when fieldId is set',
@@ -50,6 +51,12 @@ class RecipientInputField extends StatefulWidget {
   /// open, so the caller can move focus to the next field in a fixed order
   /// instead of relying on default focus traversal.
   final VoidCallback? onTabToNext;
+
+  /// Optional per-chip trailing marker, rendered inside the chip after the
+  /// label. Return null for no marker. Lets a caller annotate a chip with
+  /// state it owns (e.g. a meeting guest's acceptance tick) without this
+  /// widget knowing anything about that state.
+  final Widget? Function(String address)? chipBadgeBuilder;
 
   @override
   State<RecipientInputField> createState() => RecipientInputFieldState();
@@ -393,11 +400,16 @@ class RecipientInputFieldState extends State<RecipientInputField> {
   Widget _buildChip(int index, AppColors c, {required bool draggable}) {
     final address = widget.recipients[index];
     final isSelected = _selectedIndex == index;
+    final badge = widget.chipBadgeBuilder?.call(address);
 
     if (!draggable) {
       return GestureDetector(
         onTap: () => _selectChip(index),
-        child: _RecipientChip(address: address, isSelected: isSelected),
+        child: _RecipientChip(
+          address: address,
+          isSelected: isSelected,
+          badge: badge,
+        ),
       );
     }
 
@@ -405,16 +417,26 @@ class RecipientInputFieldState extends State<RecipientInputField> {
       data: (address: address, sourceFieldId: widget.fieldId!),
       feedback: Material(
         color: Colors.transparent,
-        child: _RecipientChip(address: address, isSelected: true, opacity: 0.85),
+        child: _RecipientChip(
+          address: address,
+          isSelected: true,
+          opacity: 0.85,
+          badge: badge,
+        ),
       ),
       childWhenDragging: _RecipientChip(
         address: address,
         isSelected: isSelected,
         opacity: 0.35,
+        badge: badge,
       ),
       child: GestureDetector(
         onTap: () => _selectChip(index),
-        child: _RecipientChip(address: address, isSelected: isSelected),
+        child: _RecipientChip(
+          address: address,
+          isSelected: isSelected,
+          badge: badge,
+        ),
       ),
     );
   }
@@ -497,11 +519,13 @@ class _RecipientChip extends StatelessWidget {
     required this.address,
     required this.isSelected,
     this.opacity = 1.0,
+    this.badge,
   });
 
   final String address;
   final bool isSelected;
   final double opacity;
+  final Widget? badge;
 
   static final _nameRe = RegExp(r'^(.+?)\s*<[^>]+>\s*$');
 
@@ -524,12 +548,18 @@ class _RecipientChip extends StatelessWidget {
             color: isSelected ? AppColors.accent : c.separatorStrong,
           ),
         ),
-        child: Text(
-          _label,
-          style: TextStyle(
-            color: isSelected ? AppColors.accent : c.textSecondary,
-            fontSize: 12,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _label,
+              style: TextStyle(
+                color: isSelected ? AppColors.accent : c.textSecondary,
+                fontSize: 12,
+              ),
+            ),
+            if (badge != null) ...[const SizedBox(width: 4), badge!],
+          ],
         ),
       ),
     );

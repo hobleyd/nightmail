@@ -15,6 +15,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/utils/timezone_utils.dart';
 import '../../domain/entities/attendee_availability.dart';
 import '../../domain/entities/calendar_event.dart';
+import '../../domain/entities/calendar_event_attendee.dart';
 import '../../domain/entities/calendar_recurrence.dart';
 import '../../domain/entities/meeting_notify_scope.dart';
 import '../../domain/usecases/check_attendees_availability.dart';
@@ -180,6 +181,11 @@ class _EventEditFormState extends State<EventEditForm> {
   late bool _isAllDay;
   late String _timezone;
   late List<String> _attendees;
+  /// Response status of each guest the event was loaded with, keyed by
+  /// lower-cased email. Drives the RSVP marker on each chip in the Guests
+  /// field (see [_guestStatusBadge]); guests added in this session, and
+  /// providers that don't report other people's responses, have no entry here.
+  late final Map<String, AttendeeResponseStatus> _attendeeStatuses;
   late CalendarRecurrence? _recurrence;
   late int? _reminderMinutes;
 
@@ -246,6 +252,10 @@ class _EventEditFormState extends State<EventEditForm> {
         : storedTz;
     _attendees =
         e?.attendees.map((a) => a.email).toList() ?? const [];
+    _attendeeStatuses = {
+      for (final a in e?.attendees ?? const <CalendarEventAttendee>[])
+        if (a.email.isNotEmpty) a.email.toLowerCase(): a.responseStatus,
+    };
     _recurrence = e?.recurrence;
     _reminderMinutes = e?.reminderMinutes;
     _organizerEmail = sl<AccountManager>().activeAccount?.emailAddress;
@@ -374,6 +384,30 @@ class _EventEditFormState extends State<EventEditForm> {
   }
 
   static final _emailInAngle = RegExp(r'<([^>]+)>');
+
+  /// RSVP marker shown on a guest chip: tick for accepted, cross for declined,
+  /// question mark for tentative. Returns null when there is nothing to report
+  /// — the guest hasn't responded, was added in this session, or the provider
+  /// won't disclose other people's responses (Exchange and Google both hide
+  /// them from non-organizers, and CalDAV doesn't report them at all). So a
+  /// bare chip means "no response known", not "no response given".
+  Widget? _guestStatusBadge(String address) {
+    final status = _attendeeStatuses[_extractEmail(address).toLowerCase()];
+    final (icon, color, label) = switch (status) {
+      AttendeeResponseStatus.accepted =>
+        (Icons.check, const Color(0xFF34C759), 'Accepted'),
+      AttendeeResponseStatus.declined =>
+        (Icons.close, const Color(0xFFFF3B30), 'Declined'),
+      AttendeeResponseStatus.tentative =>
+        (Icons.question_mark, const Color(0xFFFF9F0A), 'Tentative'),
+      AttendeeResponseStatus.none || null => (null, null, null),
+    };
+    if (icon == null) return null;
+    return Tooltip(
+      message: label!,
+      child: Icon(icon, size: 12, color: color),
+    );
+  }
 
   static String _extractEmail(String address) {
     final m = _emailInAngle.firstMatch(address);
@@ -637,6 +671,7 @@ class _EventEditFormState extends State<EventEditForm> {
                     label: 'Guests',
                     labelWidth: 68,
                     recipients: _attendees,
+                    chipBadgeBuilder: _guestStatusBadge,
                     onChanged: (a) {
                       setState(() {
                         _attendees = a;

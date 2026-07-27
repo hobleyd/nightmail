@@ -6,6 +6,7 @@ Widget _wrap({
   required List<String> recipients,
   required ValueChanged<List<String>> onChanged,
   GlobalKey<RecipientInputFieldState>? fieldKey,
+  Widget? Function(String address)? chipBadgeBuilder,
 }) {
   return MaterialApp(
     home: Scaffold(
@@ -14,6 +15,7 @@ Widget _wrap({
         label: 'To',
         recipients: recipients,
         onChanged: onChanged,
+        chipBadgeBuilder: chipBadgeBuilder,
       ),
     ),
   );
@@ -180,6 +182,42 @@ void main() {
       await tester.pump();
 
       expect(result, ['user@example.com']);
+    });
+  });
+
+  group('RecipientInputField.chipBadgeBuilder', () {
+    testWidgets('renders a badge only for the chips the builder marks',
+        (tester) async {
+      await tester.pumpWidget(_wrap(
+        recipients: const ['alice@example.com', 'bob@example.com'],
+        onChanged: (_) {},
+        chipBadgeBuilder: (address) => address == 'alice@example.com'
+            ? const Icon(Icons.check, size: 12)
+            : null,
+      ));
+
+      expect(find.byIcon(Icons.check), findsOneWidget);
+      // The badge sits inside Alice's chip, alongside her label.
+      expect(
+        find.ancestor(
+          of: find.byIcon(Icons.check),
+          matching: find.ancestor(
+            of: find.text('alice@example.com'),
+            matching: find.byType(Container),
+          ),
+        ),
+        findsWidgets,
+      );
+    });
+
+    testWidgets('renders no badges when no builder is given', (tester) async {
+      await tester.pumpWidget(_wrap(
+        recipients: const ['alice@example.com'],
+        onChanged: (_) {},
+      ));
+
+      expect(find.text('alice@example.com'), findsOneWidget);
+      expect(find.byType(Icon), findsNothing);
     });
   });
 }

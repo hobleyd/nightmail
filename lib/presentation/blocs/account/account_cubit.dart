@@ -276,6 +276,13 @@ class AccountCubit extends Cubit<AccountState> {
     await _emitLoaded();
   }
 
+  /// Re-authenticate a specific Microsoft or Gmail account, whether or not it is
+  /// the active one. Used by Settings, where any account can be selected.
+  Future<void> reauthenticateOAuthAccount(String accountId) async {
+    await _accountManager.reauthenticateOAuthAccount(accountId);
+    await _emitLoaded();
+  }
+
   /// Re-authenticate the active IMAP account with the supplied password.
   Future<void> reauthenticateActiveImap(String password) async {
     final account = _accountManager.activeAccount;

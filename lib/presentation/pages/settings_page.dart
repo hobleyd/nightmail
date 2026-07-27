@@ -789,6 +789,7 @@ class _AccountsSection extends StatefulWidget {
 class _AccountsSectionState extends State<_AccountsSection> {
   Account? _selectedAccount;
   bool _isEditing = false;
+  bool _reauthenticating = false;
 
   late TextEditingController _nameController;
   late TextEditingController _emailController;
@@ -973,6 +974,34 @@ class _AccountsSectionState extends State<_AccountsSection> {
         ],
       ),
     );
+  }
+
+  /// Runs the OAuth sign-in flow again for the selected account.
+  ///
+  /// The account keeps working throughout — nothing is cleared up front, so
+  /// cancelling the browser flow is a no-op. Needed whenever the app starts
+  /// asking for a provider scope the stored token predates: providers won't add
+  /// a scope on refresh, so the only way to get it is a fresh consent.
+  Future<void> _reauthenticate(BuildContext context) async {
+    final account = _selectedAccount;
+    if (account == null) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final accountCubit = context.read<AccountCubit>();
+    setState(() => _reauthenticating = true);
+    try {
+      await accountCubit.reauthenticateOAuthAccount(account.id);
+      messenger.showSnackBar(SnackBar(
+        content: Text('Signed in again as ${account.emailAddress}.'),
+      ));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(
+        content: Text('Sign-in failed: $e'),
+        backgroundColor: Colors.red.shade700,
+      ));
+    } finally {
+      if (mounted) setState(() => _reauthenticating = false);
+    }
   }
 
   void _confirmClearCache(BuildContext context) {
@@ -1421,9 +1450,25 @@ class _AccountsSectionState extends State<_AccountsSection> {
                 ),
               ),
             const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
+            Wrap(
+              alignment: WrapAlignment.end,
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
+                // OAuth accounts only — IMAP signs in with a stored password,
+                // re-entered through the Edit fields rather than a browser flow.
+                if (_selectedAccount is! ImapAccount)
+                  TextButton(
+                    onPressed:
+                        _reauthenticating ? null : () => _reauthenticate(context),
+                    style: TextButton.styleFrom(
+                      textStyle: const TextStyle(fontSize: 13),
+                    ),
+                    child: Text(
+                      _reauthenticating ? 'Signing In…' : 'Sign In Again',
+                    ),
+                  ),
                 TextButton(
                   onPressed: () => _confirmClearCache(context),
                   style: TextButton.styleFrom(
@@ -1431,7 +1476,6 @@ class _AccountsSectionState extends State<_AccountsSection> {
                   ),
                   child: const Text('Clear Cache'),
                 ),
-                const SizedBox(width: 8),
                 TextButton(
                   onPressed: () => _confirmDeleteAccount(context),
                   style: TextButton.styleFrom(
@@ -1440,7 +1484,6 @@ class _AccountsSectionState extends State<_AccountsSection> {
                   ),
                   child: const Text('Delete Account'),
                 ),
-                const SizedBox(width: 8),
                 ElevatedButton(
                   onPressed: () {
                     if (_isEditing) {

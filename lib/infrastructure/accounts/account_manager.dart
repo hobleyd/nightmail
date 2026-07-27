@@ -398,6 +398,63 @@ class AccountManager {
     await _authService!.signIn();
   }
 
+  /// Re-authenticate a specific Microsoft or Gmail account via OAuth, active or
+  /// not. Throws [StateError] for an unknown id or a non-OAuth account.
+  ///
+  /// [reauthenticateActiveOAuth] can only reach the active account's auth
+  /// service, but Settings lets any configured account be selected, and consent
+  /// is per-account — when the app starts requesting a new provider scope, every
+  /// account has to be taken through the flow separately.
+  ///
+  /// Deliberately does not clear the stored token first: `signIn()` performs a
+  /// full interactive authorization (Gmail sends `prompt=consent`, so new scopes
+  /// are re-consented), and leaving the existing token in place means a
+  /// cancelled or failed sign-in leaves a working account behind rather than a
+  /// locked-out one.
+  Future<void> reauthenticateOAuthAccount(String accountId) async {
+    final account = accountById(accountId);
+    if (account == null) throw StateError('Unknown account: $accountId');
+
+    // Settings can edit the OAuth client IDs, so pick up any change made since
+    // the last load before building the service (as addAccount does).
+    await _loadAndMigrateClientIds();
+
+    final authService = _buildOAuthServiceForAccount(account);
+    if (authService == null) {
+      throw StateError('${account.emailAddress} does not sign in with OAuth');
+    }
+    await authService.signIn();
+
+    // The new token lands under the same per-account storage key, so existing
+    // datasources would pick it up anyway; rebuilding the active account's
+    // pipeline just avoids waiting on a refresh cycle to notice.
+    if (accountId == activeAccount?.id) _buildDatasourcesForActiveAccount();
+  }
+
+  /// The OAuth service for [account], or null for account types that do not use
+  /// OAuth (IMAP, which authenticates with a stored password).
+  AuthService? _buildOAuthServiceForAccount(Account account) {
+    final tokenStorage = TokenStorage(
+      _secureStorage,
+      storageKey: 'token_${account.id}',
+    );
+    return switch (account) {
+      MicrosoftAccount() => MicrosoftAuthService(
+          clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
+          tenantId: account.tenantId,
+          redirectUri: AppConfig.microsoftRedirectUri,
+          tokenStorage: tokenStorage,
+        ),
+      GmailAccount() => GmailAuthService(
+          clientId: _googleClientId ?? AppConfig.gmailClientId,
+          clientSecret: _googleClientSecret ?? '',
+          redirectUri: AppConfig.gmailRedirectUri,
+          tokenStorage: tokenStorage,
+        ),
+      ImapAccount() => null,
+    };
+  }
+
   /// Re-authenticate an IMAP account by saving the supplied password.
   Future<void> reauthenticateImapAccount(
       String accountId, String password) async {

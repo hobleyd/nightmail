@@ -81,7 +81,8 @@ being reported as free — a blank row means "not known", not "available".
 
 Google Calendar free/busy needs the `calendar.freebusy` OAuth scope. Gmail
 accounts added before that scope was requested keep a token without it and show
-no availability until they're signed in again.
+no availability until they're signed in again — use **Sign In Again** under
+Settings → Accounts.
 
 ### Tasks
 - Create and manage tasks across Microsoft To Do and Google Tasks
@@ -100,6 +101,11 @@ no availability until they're signed in again.
 - Per-account folder, calendar, and task views
 - Secure token storage (system Keychain / encrypted preferences)
 - Clear an account's local cache without removing the account
+- **Sign In Again** (Settings → Accounts) re-runs the OAuth consent flow for a
+  Microsoft 365 or Gmail account without deleting it or its cache. Needed when a
+  new provider scope is added — providers won't grant one on a token refresh, so
+  existing accounts have to re-consent. Cancelling is safe: the current token is
+  left in place until a new one is issued.
 
 ---
 

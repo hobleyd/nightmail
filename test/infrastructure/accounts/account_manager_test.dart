@@ -264,4 +264,47 @@ void main() {
     });
   });
 
+  group('reauthenticateOAuthAccount', () {
+    setUp(() {
+      when(mockAccountStorage.loadActiveIndex()).thenAnswer((_) async => 0);
+      stubStorageEmpty();
+    });
+
+    test('throws for an unknown account id', () async {
+      when(mockAccountStorage.loadAccounts()).thenAnswer((_) async => [
+            const GmailAccount(
+                id: '1', displayName: 'Alice', emailAddress: 'a@gmail.com'),
+          ]);
+      await accountManager.initialize();
+
+      expect(
+        () => accountManager.reauthenticateOAuthAccount('missing'),
+        throwsA(isA<StateError>()),
+      );
+    });
+
+    test('throws for an IMAP account, which has no OAuth flow', () async {
+      // IMAP re-authentication is a stored password, re-entered through the
+      // Settings edit fields — Settings must not offer the browser flow for it.
+      when(mockAccountStorage.loadAccounts()).thenAnswer((_) async => [
+            const ImapAccount(
+              id: '1',
+              displayName: 'Mail',
+              emailAddress: 'me@example.com',
+              host: 'imap.example.com',
+              port: 993,
+              useSsl: true,
+              smtpHost: 'smtp.example.com',
+              smtpPort: 587,
+              smtpUseSsl: true,
+            ),
+          ]);
+      await accountManager.initialize();
+
+      expect(
+        () => accountManager.reauthenticateOAuthAccount('1'),
+        throwsA(isA<StateError>()),
+      );
+    });
+  });
 }

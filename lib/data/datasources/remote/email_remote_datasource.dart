@@ -106,6 +106,18 @@ abstract interface class EmailRemoteDatasource {
     int top = 50,
   });
 
+  /// Returns every message belonging to [conversationId], across all folders
+  /// where the provider supports it. Results are NOT cached.
+  ///
+  /// [folderId] is only a hint for providers whose thread lookup is inherently
+  /// folder-scoped (IMAP, which has no thread API and matches on the
+  /// normalized subject). Graph and Gmail have real conversation/thread
+  /// endpoints and search the whole mailbox regardless.
+  Future<List<EmailModel>> getConversationMessages(
+    String conversationId, {
+    String? folderId,
+  });
+
   /// Creates a server-side draft and returns its server-assigned draft ID.
   Future<String> createServerDraft({
     required List<String> toAddresses,

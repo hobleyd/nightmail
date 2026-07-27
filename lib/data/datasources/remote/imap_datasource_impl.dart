@@ -356,6 +356,53 @@ class ImapDatasourceImpl
     }
   }
 
+  /// IMAP has no thread API. [conversationId] here *is* the normalized subject
+  /// (see [_normalizeSubject]), and `SEARCH SUBJECT` is a case-insensitive
+  /// substring match, so it returns the "Re:"/"Fwd:" replies as well. Hits
+  /// that merely contain the subject as a substring are dropped afterwards by
+  /// re-normalizing each result.
+  ///
+  /// Unlike Graph and Gmail this cannot span folders — [folderId] (defaulting
+  /// to INBOX) bounds the search.
+  @override
+  Future<List<EmailModel>> getConversationMessages(
+    String conversationId, {
+    String? folderId,
+  }) async {
+    final mailboxPath = folderId ?? 'INBOX';
+    try {
+      final client = await _getConnectedClient();
+      await _selectMailboxPath(client, mailboxPath);
+
+      final escaped =
+          conversationId.replaceAll(r'\', r'\\').replaceAll('"', r'\"');
+      final searchResult =
+          await client.uidSearchMessages(searchCriteria: 'SUBJECT "$escaped"');
+      final uids = searchResult.matchingSequence?.toList() ?? [];
+      if (uids.isEmpty) return [];
+
+      final page = uids.reversed.take(_threadFetchLimit).toList();
+      final sequence = MessageSequence.fromIds(page, isUid: true);
+      final fetchResult = await client.uidFetchMessages(
+        sequence,
+        '(FLAGS INTERNALDATE ENVELOPE)',
+      );
+
+      return fetchResult.messages
+          .map((msg) =>
+              _parseToModel(msg, folderId: _selectedMailboxPath ?? mailboxPath))
+          .where((e) => e.conversationId == conversationId)
+          .toList();
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    } on AuthException {
+      rethrow;
+    }
+  }
+
+  /// Upper bound on messages fetched for a single thread.
+  static const _threadFetchLimit = 200;
+
   String _buildImapCriteria(String query) {
     final criteria = <String>[];
     var remaining = query.trim();

@@ -155,6 +155,16 @@ abstract interface class EmailRepository {
     int top = 50,
   });
 
+  /// Returns every message in the conversation [conversationId].
+  ///
+  /// [folderId] is a hint for providers whose thread lookup is folder-scoped
+  /// (IMAP); Graph and Gmail resolve the thread mailbox-wide and ignore it.
+  /// Results are NOT cached.
+  Future<Either<Failure, List<Email>>> getConversationThread({
+    required String conversationId,
+    String? folderId,
+  });
+
   /// Creates a server-side draft and returns its server-assigned ID.
   Future<Either<Failure, String>> createServerDraft({
     required List<String> toAddresses,

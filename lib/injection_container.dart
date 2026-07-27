@@ -79,6 +79,7 @@ import 'domain/usecases/rename_folder.dart';
 import 'domain/usecases/empty_folder.dart';
 import 'domain/usecases/get_calendar_events.dart';
 import 'domain/usecases/get_contact_details.dart';
+import 'domain/usecases/get_conversation_thread.dart';
 import 'domain/usecases/get_email.dart';
 import 'domain/usecases/get_emails.dart';
 import 'domain/usecases/get_mail_folders.dart';
@@ -253,6 +254,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => GetEmails(sl<EmailRepository>()));
   sl.registerLazySingleton(() => SearchEmails(sl<EmailRepository>()));
   sl.registerLazySingleton(() => GetEmail(sl<EmailRepository>()));
+  sl.registerLazySingleton(() => GetConversationThread(sl<EmailRepository>()));
   sl.registerLazySingleton(() => GetMailFolders(sl<EmailRepository>()));
   sl.registerLazySingleton(() => MarkEmailAsRead(sl<EmailRepository>()));
   sl.registerLazySingleton(() => SendEmail(sl<EmailRepository>()));
@@ -371,6 +373,8 @@ Future<void> configureDependencies() async {
         classifyEmails: sl<ClassifyEmails>(),
         trainSpamFilter: sl<TrainSpamFilter>(),
         searchEmails: sl<SearchEmails>(),
+        getEmail: sl<GetEmail>(),
+        getConversationThread: sl<GetConversationThread>(),
         spamDbSyncService: sl<SpamDbSyncService>(),
         outboxDrainService: sl<OutboxDrainService>(),
       ));

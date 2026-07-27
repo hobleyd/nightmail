@@ -13,6 +13,8 @@ import 'package:nightmail/domain/usecases/clear_email_cache_for_folder.dart';
 import 'package:nightmail/domain/usecases/delete_email.dart';
 import 'package:nightmail/domain/usecases/empty_folder.dart';
 import 'package:nightmail/domain/usecases/get_cached_emails.dart';
+import 'package:nightmail/domain/usecases/get_conversation_thread.dart';
+import 'package:nightmail/domain/usecases/get_email.dart';
 import 'package:nightmail/domain/usecases/get_emails.dart';
 import 'package:nightmail/domain/usecases/mark_email_as_read.dart';
 import 'package:nightmail/domain/usecases/move_email.dart';
@@ -82,6 +84,8 @@ class _FakeAccountManager extends Fake implements AccountManager {
   ClassifyEmails,
   TrainSpamFilter,
   SearchEmails,
+  GetEmail,
+  GetConversationThread,
   ClearEmailCacheForFolder,
   SpamDbSyncService,
   OutboxDrainService,
@@ -94,6 +98,8 @@ void main() {
   late MockEmptyFolder mockEmptyFolder;
   late MockMarkEmailAsRead mockMarkEmailAsRead;
   late MockDeleteEmail mockDeleteEmail;
+  late MockGetEmail mockGetEmail;
+  late MockGetConversationThread mockGetConversationThread;
 
   setUpAll(() {
     // Mockito needs dummy values for sealed/generic types it can't construct.
@@ -110,6 +116,8 @@ void main() {
     mockEmptyFolder = MockEmptyFolder();
     mockMarkEmailAsRead = MockMarkEmailAsRead();
     mockDeleteEmail = MockDeleteEmail();
+    mockGetEmail = MockGetEmail();
+    mockGetConversationThread = MockGetConversationThread();
 
     bloc = EmailListBloc(
       getEmails: mockGetEmails,
@@ -126,6 +134,8 @@ void main() {
       classifyEmails: MockClassifyEmails(),
       trainSpamFilter: MockTrainSpamFilter(),
       searchEmails: MockSearchEmails(),
+      getEmail: mockGetEmail,
+      getConversationThread: mockGetConversationThread,
       spamDbSyncService: MockSpamDbSyncService(),
       outboxDrainService: MockOutboxDrainService(),
     );
@@ -530,6 +540,154 @@ void main() {
   // Folder-switch races
   // ---------------------------------------------------------------------------
 
+  // ---------------------------------------------------------------------------
+  // EmailListThreadFocusRequested
+  // ---------------------------------------------------------------------------
+
+  group('EmailListThreadFocusRequested', () {
+    Future<EmailListLoaded> _focus(String emailId) async {
+      bloc.add(EmailListThreadFocusRequested(emailId: emailId));
+      return await bloc.stream.firstWhere(
+        (s) => s is EmailListLoaded && s.focusedThreadId != null,
+      ) as EmailListLoaded;
+    }
+
+    test('replaces the list with the anchor email\'s thread', () async {
+      await _loadEmails([
+        _email('id1', conversationId: 'conv-a'),
+        _email('id2', conversationId: 'conv-b'),
+      ]);
+      when(mockGetConversationThread(any)).thenAnswer((_) async => Right([
+            _email('id1', conversationId: 'conv-a'),
+            _email('id1-reply', conversationId: 'conv-a'),
+          ]));
+
+      final state = await _focus('id1');
+
+      expect(state.emails.map((e) => e.id), {'id1', 'id1-reply'});
+      expect(state.focusedThreadId, 'conv-a');
+      expect(state.focusedThreadSubject, 'Subject id1');
+      expect(state.expandedConversationIds, contains('conv-a'),
+          reason: 'a focused thread should open, not need a second click');
+      expect(state.hasMore, isFalse,
+          reason: 'scrolling must not append folder pages to the thread');
+    });
+
+    // The task being opened from may reference an email in a folder that was
+    // never loaded — the id alone has to be enough.
+    test('fetches the anchor by id when it is not in the current list',
+        () async {
+      await _loadEmails([_email('other', conversationId: 'conv-b')]);
+      when(mockGetEmail(any)).thenAnswer(
+          (_) async => Right(_email('archived', conversationId: 'conv-z')));
+      when(mockGetConversationThread(any)).thenAnswer((_) async =>
+          Right([_email('archived', conversationId: 'conv-z')]));
+
+      final state = await _focus('archived');
+
+      verify(mockGetEmail(any)).called(1);
+      expect(state.focusedThreadId, 'conv-z');
+      expect(state.emails.single.id, 'archived');
+    });
+
+    // A partial or failed thread fetch must never lose the message the
+    // reading pane is already showing.
+    test('keeps the anchor when the thread fetch fails', () async {
+      await _loadEmails([_email('id1', conversationId: 'conv-a')]);
+      when(mockGetConversationThread(any)).thenAnswer(
+          (_) async => const Left(ServerFailure(message: 'boom')));
+
+      final state = await _focus('id1');
+
+      expect(state.emails.map((e) => e.id), contains('id1'));
+    });
+
+    test('an anchor that cannot be resolved leaves the folder listing alone',
+        () async {
+      await _loadEmails([_email('id1', conversationId: 'conv-a')]);
+      when(mockGetEmail(any)).thenAnswer(
+          (_) async => const Left(ServerFailure(message: 'gone')));
+
+      bloc.add(const EmailListThreadFocusRequested(emailId: 'missing'));
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final state = bloc.state as EmailListLoaded;
+      expect(state.focusedThreadId, isNull);
+      expect(state.emails.map((e) => e.id), ['id1']);
+      expect(state.isLoadingFresh, isFalse);
+    });
+
+    // Regression: the poller repaints the list from the folder cache every
+    // cycle. Left unguarded it would swap the thread out from under the user.
+    test('a background cache refresh does not replace the focused thread',
+        () async {
+      await _loadEmails([_email('id1', conversationId: 'conv-a')]);
+      when(mockGetConversationThread(any)).thenAnswer((_) async => Right([
+            _email('id1', conversationId: 'conv-a'),
+            _email('id1-reply', conversationId: 'conv-a'),
+          ]));
+      await _focus('id1');
+
+      bloc.add(const EmailListCacheRefreshRequested());
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final state = bloc.state as EmailListLoaded;
+      expect(state.focusedThreadId, 'conv-a');
+      expect(state.emails.map((e) => e.id), {'id1', 'id1-reply'});
+      verifyNever(mockGetCachedEmails(any));
+    });
+
+    // Same hazard via the periodic foreground refresh: it should re-read the
+    // thread, not fall back to the folder.
+    test('a refresh re-fetches the thread instead of the folder', () async {
+      await _loadEmails([_email('id1', conversationId: 'conv-a')]);
+      when(mockGetConversationThread(any)).thenAnswer(
+          (_) async => Right([_email('id1', conversationId: 'conv-a')]));
+      await _focus('id1');
+
+      when(mockGetConversationThread(any)).thenAnswer((_) async => Right([
+            _email('id1', conversationId: 'conv-a'),
+            _email('id1-new', conversationId: 'conv-a'),
+          ]));
+      clearInteractions(mockGetEmails);
+
+      bloc.add(const EmailListRefreshRequested());
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final state = bloc.state as EmailListLoaded;
+      expect(state.focusedThreadId, 'conv-a');
+      expect(state.emails.map((e) => e.id), contains('id1-new'));
+      verifyNever(mockGetEmails(any));
+    });
+
+    test('clearing the focus reloads the folder', () async {
+      await _loadEmails([_email('id1', conversationId: 'conv-a')],
+          folderId: 'folder-1');
+      when(mockGetConversationThread(any)).thenAnswer((_) async => Right([
+            _email('id1', conversationId: 'conv-a'),
+            _email('id1-reply', conversationId: 'conv-a'),
+          ]));
+      await _focus('id1');
+
+      when(mockGetEmails(any)).thenAnswer((_) async => Right([
+            _email('id1', conversationId: 'conv-a'),
+            _email('id9', conversationId: 'conv-c'),
+          ]));
+
+      bloc.add(const EmailListThreadFocusCleared());
+      // The focus flags drop on the first emit (mirroring search-clear, so the
+      // header reverts immediately); the folder listing lands on the next one.
+      final state = await bloc.stream.firstWhere(
+        (s) => s is EmailListLoaded && s.emails.any((e) => e.id == 'id9'),
+      ) as EmailListLoaded;
+
+      expect(state.focusedThreadId, isNull);
+      expect(state.currentFolderId, 'folder-1');
+      expect(state.emails.map((e) => e.id), contains('id9'));
+      expect(state.focusedThreadSubject, isNull);
+    });
+  });
+
   group('folder switch races', () {
     // Regression: clicking folder A kicks off a server fetch; switching to
     // folder B before A's fetch resolves must not let A's late-arriving
@@ -646,6 +804,8 @@ void main() {
         classifyEmails: MockClassifyEmails(),
         trainSpamFilter: MockTrainSpamFilter(),
         searchEmails: MockSearchEmails(),
+        getEmail: MockGetEmail(),
+        getConversationThread: MockGetConversationThread(),
         spamDbSyncService: MockSpamDbSyncService(),
         outboxDrainService: MockOutboxDrainService(),
       );

@@ -150,3 +150,21 @@ final class EmailListSearchRequested extends EmailListEvent {
 final class EmailListSearchCleared extends EmailListEvent {
   const EmailListSearchCleared();
 }
+
+/// Replaces the list with just the conversation thread that [emailId] belongs
+/// to. Used when opening an email from outside the list (e.g. a task's
+/// "View source email" link), where the message may live in a folder other
+/// than the one on screen — showing its thread gives the reading pane context
+/// the folder listing wouldn't.
+final class EmailListThreadFocusRequested extends EmailListEvent {
+  const EmailListThreadFocusRequested({required this.emailId});
+  final String emailId;
+
+  @override
+  List<Object?> get props => [emailId];
+}
+
+/// Leaves thread-focus mode and reloads the folder that was on screen.
+final class EmailListThreadFocusCleared extends EmailListEvent {
+  const EmailListThreadFocusCleared();
+}

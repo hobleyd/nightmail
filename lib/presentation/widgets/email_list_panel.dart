@@ -482,6 +482,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
                 );
               },
             ),
+            const _ThreadFocusBanner(),
             Divider(height: 1, color: c.separator),
             Expanded(
               child: Focus(
@@ -545,6 +546,63 @@ class _EmailListPanelState extends State<EmailListPanel> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Shown in place of the folder listing when the list has been narrowed to a
+/// single conversation — e.g. after following a task's "View source email"
+/// link. Without it there is nothing to explain why the folder looks empty,
+/// and no way back.
+class _ThreadFocusBanner extends StatelessWidget {
+  const _ThreadFocusBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<EmailListBloc, EmailListState>(
+      buildWhen: (prev, curr) {
+        final p = prev is EmailListLoaded ? prev.focusedThreadSubject : null;
+        final c = curr is EmailListLoaded ? curr.focusedThreadSubject : null;
+        return p != c;
+      },
+      builder: (context, state) {
+        final subject =
+            state is EmailListLoaded ? state.focusedThreadSubject : null;
+        if (subject == null) return const SizedBox.shrink();
+
+        final c = context.colors;
+        return Container(
+          color: AppColors.accent.withValues(alpha: 0.12),
+          padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
+          child: Row(
+            children: [
+              Icon(Icons.forum_outlined, size: 14, color: AppColors.accent),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  subject.isEmpty ? 'Conversation' : subject,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: c.textPrimary,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: Icon(Icons.close, size: 14, color: c.textMuted),
+                tooltip: 'Back to folder',
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                onPressed: () => context
+                    .read<EmailListBloc>()
+                    .add(const EmailListThreadFocusCleared()),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

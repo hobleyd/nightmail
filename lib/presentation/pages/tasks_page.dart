@@ -10,6 +10,9 @@ import '../../domain/entities/todo_task_list.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
 import '../blocs/email_detail/email_detail_event.dart';
+import '../blocs/email_list/email_list_bloc.dart';
+import '../blocs/email_list/email_list_event.dart';
+import '../blocs/home/home_cubit.dart';
 import '../blocs/tasks/tasks_bloc.dart';
 import '../blocs/tasks/tasks_event.dart';
 import '../blocs/tasks/tasks_state.dart';
@@ -242,13 +245,21 @@ class _TaskTileState extends State<_TaskTile> {
         currentStatus: widget.task.status,
       ));
 
-  /// Opens the linked email in the reading pane. In the detached Tasks window
-  /// there is no reading pane (no EmailDetailBloc), so fall back to a hint.
+  /// Opens the linked email in the reading pane and narrows the email list to
+  /// its conversation thread, so the message arrives with its context rather
+  /// than on its own. In the detached Tasks window there is no reading pane
+  /// (no EmailDetailBloc), so fall back to a hint.
   void _openLinkedEmail(String emailId) {
     try {
-      context
-          .read<EmailDetailBloc>()
-          .add(EmailDetailLoadRequested(emailId: emailId));
+      // Resolve every bloc before dispatching: in the detached window the
+      // first read throws, and a partial dispatch would be worse than none.
+      final detailBloc = context.read<EmailDetailBloc>();
+      final listBloc = context.read<EmailListBloc>();
+      final homeCubit = context.read<HomeCubit>();
+
+      detailBloc.add(EmailDetailLoadRequested(emailId: emailId));
+      listBloc.add(EmailListThreadFocusRequested(emailId: emailId));
+      homeCubit.selectEmail(emailId);
     } catch (_) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(

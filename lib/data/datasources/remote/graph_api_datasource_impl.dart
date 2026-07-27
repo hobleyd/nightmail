@@ -104,7 +104,8 @@ class GraphApiDatasourceImpl
 
       if (conversationIds.isEmpty) return folderEmails;
 
-      final crossFolderFutures = conversationIds.map(_fetchConversationMessages);
+      final crossFolderFutures =
+          conversationIds.map((id) => getConversationMessages(id));
       final crossFolderBatches = await Future.wait(crossFolderFutures);
 
       // Merge: folder emails + cross-folder emails, de-duplicated by id.
@@ -123,8 +124,12 @@ class GraphApiDatasourceImpl
     }
   }
 
-  Future<List<EmailModel>> _fetchConversationMessages(
-      String conversationId) async {
+  /// [folderId] is ignored: Graph filters conversations mailbox-wide.
+  @override
+  Future<List<EmailModel>> getConversationMessages(
+    String conversationId, {
+    String? folderId,
+  }) async {
     try {
       final response = await _dio.get<Map<String, dynamic>>(
         '/me/messages',

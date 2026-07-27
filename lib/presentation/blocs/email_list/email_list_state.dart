@@ -30,6 +30,8 @@ final class EmailListLoaded extends EmailListState {
     this.spamEmailIds = const {},
     this.isSearchMode = false,
     this.activeSearchQuery,
+    this.focusedThreadId,
+    this.focusedThreadSubject,
   });
 
   final List<Email> emails;
@@ -57,6 +59,17 @@ final class EmailListLoaded extends EmailListState {
   /// Non-null while search results are being displayed.
   final String? activeSearchQuery;
 
+  /// Non-null while [emails] holds a single conversation thread rather than
+  /// the folder's contents. Background repaints leave this view alone.
+  final String? focusedThreadId;
+
+  /// Subject of the focused thread, for the header banner.
+  final String? focusedThreadSubject;
+
+  /// True when [emails] is something other than the current folder's listing,
+  /// so handlers that repaint from the folder know to stand down.
+  bool get isShowingFolder => activeSearchQuery == null && focusedThreadId == null;
+
   static const _unset = Object();
 
   EmailListLoaded copyWith({
@@ -70,6 +83,8 @@ final class EmailListLoaded extends EmailListState {
     Set<String>? spamEmailIds,
     bool? isSearchMode,
     Object? activeSearchQuery = _unset,
+    Object? focusedThreadId = _unset,
+    Object? focusedThreadSubject = _unset,
   }) {
     return EmailListLoaded(
       emails: emails ?? this.emails,
@@ -85,6 +100,12 @@ final class EmailListLoaded extends EmailListState {
       activeSearchQuery: identical(activeSearchQuery, _unset)
           ? this.activeSearchQuery
           : activeSearchQuery as String?,
+      focusedThreadId: identical(focusedThreadId, _unset)
+          ? this.focusedThreadId
+          : focusedThreadId as String?,
+      focusedThreadSubject: identical(focusedThreadSubject, _unset)
+          ? this.focusedThreadSubject
+          : focusedThreadSubject as String?,
     );
   }
 
@@ -101,6 +122,8 @@ final class EmailListLoaded extends EmailListState {
         spamEmailIds,
         isSearchMode,
         activeSearchQuery,
+        focusedThreadId,
+        focusedThreadSubject,
       ];
 }
 

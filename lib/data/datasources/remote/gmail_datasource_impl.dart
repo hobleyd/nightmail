@@ -230,6 +230,18 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     }
   }
 
+  /// Gmail's conversationId *is* the thread id, so this is a direct thread
+  /// fetch. Unlike the folder listing above nothing is excluded — a thread
+  /// opened on its own should show all of its messages, including any that
+  /// have since been trashed or marked spam. [folderId] is ignored.
+  @override
+  Future<List<EmailModel>> getConversationMessages(
+    String conversationId, {
+    String? folderId,
+  }) {
+    return _fetchThreadMessages(conversationId);
+  }
+
   Future<List<EmailModel>> _fetchThreadMessages(
     String threadId, {
     Set<String> excludeLabels = const {},

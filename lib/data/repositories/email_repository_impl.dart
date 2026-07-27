@@ -673,6 +673,18 @@ class EmailRepositoryImpl implements EmailRepository {
   }
 
   @override
+  Future<Either<Failure, List<Email>>> getConversationThread({
+    required String conversationId,
+    String? folderId,
+  }) {
+    return _execute(
+        () => _accountManager.emailDatasource.getConversationMessages(
+              conversationId,
+              folderId: folderId,
+            ));
+  }
+
+  @override
   Future<Either<Failure, String>> createServerDraft({
     required List<String> toAddresses,
     List<String> ccAddresses = const [],

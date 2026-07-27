@@ -7,6 +7,8 @@ import '../../../domain/usecases/cache_emails.dart';
 import '../../../domain/usecases/classify_emails.dart';
 import '../../../domain/usecases/clear_email_cache_for_folder.dart';
 import '../../../domain/usecases/delete_email.dart';
+import '../../../domain/usecases/get_conversation_thread.dart';
+import '../../../domain/usecases/get_email.dart';
 import '../../../domain/usecases/report_junk.dart';
 import '../../../domain/usecases/search_emails.dart';
 import '../../../domain/usecases/train_spam_filter.dart';
@@ -42,6 +44,8 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     required ClassifyEmails classifyEmails,
     required TrainSpamFilter trainSpamFilter,
     required SearchEmails searchEmails,
+    required GetEmail getEmail,
+    required GetConversationThread getConversationThread,
     required SpamDbSyncService spamDbSyncService,
     required OutboxDrainService outboxDrainService,
   })  : _getEmails = getEmails,
@@ -58,6 +62,8 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         _classifyEmails = classifyEmails,
         _trainSpamFilter = trainSpamFilter,
         _searchEmails = searchEmails,
+        _getEmail = getEmail,
+        _getConversationThread = getConversationThread,
         _spamDbSyncService = spamDbSyncService,
         _outboxDrainService = outboxDrainService,
         super(const EmailListInitial()) {
@@ -78,6 +84,8 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     on<EmailListSearchModeActivated>(_onSearchModeActivated);
     on<EmailListSearchRequested>(_onSearchRequested);
     on<EmailListSearchCleared>(_onSearchCleared);
+    on<EmailListThreadFocusRequested>(_onThreadFocusRequested);
+    on<EmailListThreadFocusCleared>(_onThreadFocusCleared);
   }
 
   final GetEmails _getEmails;
@@ -94,6 +102,8 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   final ClassifyEmails _classifyEmails;
   final TrainSpamFilter _trainSpamFilter;
   final SearchEmails _searchEmails;
+  final GetEmail _getEmail;
+  final GetConversationThread _getConversationThread;
   final SpamDbSyncService _spamDbSyncService;
   final OutboxDrainService _outboxDrainService;
 
@@ -248,9 +258,18 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     EmailListRefreshRequested event,
     Emitter<EmailListState> emit,
   ) async {
+    final prior = state is EmailListLoaded ? state as EmailListLoaded : null;
+
+    // The list may be showing a single conversation rather than the folder.
+    // Refresh is also fired periodically in the background, so falling
+    // through here would silently swap the thread for the folder listing.
+    if (prior != null && prior.focusedThreadId != null) {
+      await _refreshFocusedThread(prior, emit);
+      return;
+    }
+
     _serverOffset = 0;
     final myGeneration = _activeRequestGeneration;
-    final prior = state is EmailListLoaded ? state as EmailListLoaded : null;
     final folderId = event.folderId ?? prior?.currentFolderId;
     final folderName = prior?.currentFolderName;
     final accountId = _accountManager.activeAccount?.id;
@@ -324,6 +343,10 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   ) async {
     final s = state;
     if (s is! EmailListLoaded) return;
+    // Search results and a focused thread aren't the folder's contents —
+    // repainting them from the folder cache would wipe out what the user is
+    // looking at.
+    if (!s.isShowingFolder) return;
     final accountId = _accountManager.activeAccount?.id;
     if (accountId == null) return;
 
@@ -696,6 +719,8 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         isSearchMode: true,
         activeSearchQuery: event.query,
         hasMore: false,
+        focusedThreadId: null,
+        focusedThreadSubject: null,
       )),
     );
   }
@@ -737,6 +762,165 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         _recordSenders(emails, folderName);
       },
     );
+  }
+
+  Future<void> _onThreadFocusRequested(
+    EmailListThreadFocusRequested event,
+    Emitter<EmailListState> emit,
+  ) async {
+    final current = state;
+    if (current is! EmailListLoaded) return;
+
+    // Focusing a thread is a view change like a folder switch: bump the
+    // generation so a folder fetch already in flight can't land on top of it.
+    final myGeneration = ++_activeRequestGeneration;
+    emit(current.copyWith(isLoadingFresh: true));
+
+    // The email is usually already on screen (a task made from the inbox
+    // email being viewed), but it may equally live in a folder that isn't
+    // loaded — fall back to fetching it by id.
+    var anchor = _emailInList(current.emails, event.emailId);
+    if (anchor == null) {
+      final result = await _getEmail(GetEmailParams(id: event.emailId));
+      if (myGeneration != _activeRequestGeneration) return;
+      anchor = result.fold((_) => null, (email) => email);
+    }
+    if (anchor == null) {
+      final s = state;
+      if (s is EmailListLoaded) emit(s.copyWith(isLoadingFresh: false));
+      return;
+    }
+
+    final threadId = anchor.conversationId ?? anchor.id;
+    final thread = await _threadFor(anchor, current.emails);
+    if (myGeneration != _activeRequestGeneration) return;
+
+    final s = state;
+    if (s is! EmailListLoaded) return;
+    emit(s.copyWith(
+      emails: thread,
+      hasMore: false,
+      isLoadingMore: false,
+      isLoadingFresh: false,
+      // Always open — seeing the messages is the whole point of focusing.
+      expandedConversationIds: {...s.expandedConversationIds, threadId},
+      focusedThreadId: threadId,
+      focusedThreadSubject: anchor.subject,
+      // A thread replaces search results; don't leave a stale query behind.
+      isSearchMode: false,
+      activeSearchQuery: null,
+    ));
+  }
+
+  Future<void> _onThreadFocusCleared(
+    EmailListThreadFocusCleared event,
+    Emitter<EmailListState> emit,
+  ) async {
+    final current = state;
+    if (current is! EmailListLoaded || current.focusedThreadId == null) return;
+
+    final myGeneration = ++_activeRequestGeneration;
+    final folderId = current.currentFolderId;
+    final folderName = current.currentFolderName;
+
+    emit(current.copyWith(
+      focusedThreadId: null,
+      focusedThreadSubject: null,
+      isLoadingFresh: true,
+    ));
+
+    _serverOffset = 0;
+    final result = await _getEmails(GetEmailsParams(
+      folderId: folderId,
+      top: _pageSize,
+    ));
+    if (myGeneration != _activeRequestGeneration) return;
+
+    result.fold(
+      (failure) {
+        final s = state;
+        if (s is EmailListLoaded) emit(s.copyWith(isLoadingFresh: false));
+      },
+      (emails) {
+        _serverOffset = _pageSize;
+        emit(EmailListLoaded(
+          emails: emails,
+          hasMore: emails.length >= _pageSize,
+          currentFolderId: folderId,
+          currentFolderName: folderName,
+          emptyingFolderIds: current.emptyingFolderIds,
+        ));
+        _recordSenders(emails, folderName);
+      },
+    );
+  }
+
+  /// Re-fetches the thread currently on screen, leaving focus mode intact.
+  Future<void> _refreshFocusedThread(
+    EmailListLoaded current,
+    Emitter<EmailListState> emit,
+  ) async {
+    final threadId = current.focusedThreadId;
+    if (threadId == null) return;
+
+    final myGeneration = _activeRequestGeneration;
+    emit(current.copyWith(isLoadingFresh: true));
+
+    final result = await _getConversationThread(GetConversationThreadParams(
+      conversationId: threadId,
+      folderId: _folderHintFor(current),
+    ));
+    if (myGeneration != _activeRequestGeneration) return;
+
+    final s = state;
+    if (s is! EmailListLoaded || s.focusedThreadId != threadId) return;
+    result.fold(
+      (_) => emit(s.copyWith(isLoadingFresh: false)),
+      (emails) => emit(s.copyWith(
+        // An empty result means the lookup found nothing, not that the thread
+        // vanished — keep showing what's there rather than emptying the pane.
+        emails: emails.isEmpty ? s.emails : emails,
+        hasMore: false,
+        isLoadingFresh: false,
+      )),
+    );
+  }
+
+  /// Every message in [anchor]'s conversation, merged with any thread members
+  /// already on screen. A provider fetch can fail or come back partial, and
+  /// the anchor must always be present since the reading pane is showing it.
+  Future<List<Email>> _threadFor(Email anchor, List<Email> onScreen) async {
+    final conversationId = anchor.conversationId;
+    if (conversationId == null) return [anchor];
+
+    final result = await _getConversationThread(GetConversationThreadParams(
+      conversationId: conversationId,
+      folderId: anchor.parentFolderId,
+    ));
+    final fetched = result.fold((_) => const <Email>[], (emails) => emails);
+
+    final byId = <String, Email>{for (final e in fetched) e.id: e};
+    for (final e in onScreen) {
+      if (e.conversationId == conversationId) byId.putIfAbsent(e.id, () => e);
+    }
+    byId.putIfAbsent(anchor.id, () => anchor);
+    return byId.values.toList();
+  }
+
+  /// Folder to scope a thread lookup to, for providers that need one (IMAP).
+  static String? _folderHintFor(EmailListLoaded state) {
+    for (final email in state.emails) {
+      final parent = email.parentFolderId;
+      if (parent != null) return parent;
+    }
+    return state.currentFolderId;
+  }
+
+  static Email? _emailInList(List<Email> emails, String id) {
+    for (final email in emails) {
+      if (email.id == id) return email;
+    }
+    return null;
   }
 
   void _recordSenders(List<Email> emails, String? folderName) {

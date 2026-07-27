@@ -1436,6 +1436,7 @@ class _EventTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = _colorForEvent(event);
+    final joinable = _isJoinable(event, DateTime.now());
 
     return Opacity(
       opacity: isDragging ? 0.75 : 1.0,
@@ -1457,32 +1458,42 @@ class _EventTile extends StatelessWidget {
                   ? [BoxShadow(color: color.withAlpha(50), blurRadius: 4, offset: Offset.zero)]
                   : null,
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Stack(
           children: [
-            Text(
-              event.subject,
-              style: TextStyle(
-                color: color,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                height: 1.2,
-              ),
-              maxLines: compact ? 1 : 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            if (!compact && event.location != null) ...[
-              const SizedBox(height: 1),
-              Text(
-                _displayLocation(event.location!),
-                style: TextStyle(
-                  color: color.withAlpha(180),
-                  fontSize: 10,
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  event.subject,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    height: 1.2,
+                  ),
+                  maxLines: compact ? 1 : 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                if (!compact && event.location != null) ...[
+                  const SizedBox(height: 1),
+                  Text(
+                    _displayLocation(event.location!),
+                    style: TextStyle(
+                      color: color.withAlpha(180),
+                      fontSize: 10,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ],
+            ),
+            if (joinable)
+              Positioned(
+                right: 0,
+                bottom: 0,
+                child: _JoinButton(url: event.location!, color: color),
               ),
-            ],
           ],
         ),
       ),
@@ -1511,6 +1522,57 @@ class _EventTile extends StatelessWidget {
       MeetingParticipation.declined => grey, // declined
       MeetingParticipation.none => AppColors.accent, // blue — on your calendar
     };
+  }
+}
+
+/// A meeting is "joinable" from 3 minutes before it starts until it ends,
+/// provided it carries an online-meeting link (an `https://` [location], the
+/// same signal the context menu uses for "Join Meeting").
+bool _isJoinable(CalendarEvent event, DateTime now) {
+  final url = event.location;
+  if (url == null || !url.startsWith('https://')) return false;
+  final start = event.start.toLocal();
+  final end = event.end.toLocal();
+  return !now.isBefore(start.subtract(const Duration(minutes: 3))) &&
+      now.isBefore(end);
+}
+
+/// Small inline "Join" pill shown on an imminent meeting's tile, so joining
+/// doesn't require the right-click context menu. Its own tap handler swallows
+/// the gesture, keeping the tile's select/edit/drag handlers from firing.
+class _JoinButton extends StatelessWidget {
+  const _JoinButton({required this.url, required this.color});
+
+  final String url;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    // Pick a black/white foreground that stays legible on any tile colour
+    // (e.g. white-on-yellow is too weak) using the pill background's luminance.
+    final fg = color.computeLuminance() > 0.5 ? Colors.black : Colors.white;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => unawaited(
+        launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+      ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(3),
+        ),
+        child: Text(
+          'Join',
+          style: TextStyle(
+            color: fg,
+            fontSize: 9,
+            fontWeight: FontWeight.w700,
+            height: 1.2,
+          ),
+        ),
+      ),
+    );
   }
 }
 

@@ -37,7 +37,10 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - Check attendee availability, with a side-by-side schedule pane for finding a
   free slot (see below)
 - Propose new meeting times
-- Recurring event support
+- Recurring event support, with per-occurrence or whole-series edit and cancel
+- Editing a meeting you organize notifies attendees of the change
+- Inline **Join** button on a meeting tile from 3 minutes before it starts until it ends, for meetings with a video-call link
+- Guest RSVP status (accepted / declined / tentative) shown on each guest chip
 - Timezone-aware scheduling
 - Google Meet toggle for Gmail meetings
 - Supported backends: Microsoft Graph, Google Calendar, Nextcloud CalDAV, macOS/iOS EventKit
@@ -87,8 +90,11 @@ Settings → Accounts.
 ### Tasks
 - Create and manage tasks across Microsoft To Do and Google Tasks
 - Set due dates, importance, and status
+- Notified when a task falls due, even if NightMail was closed at the time
+- Tasks pane sorted by due date, earliest first, with undated tasks at the bottom
+- Flag context menu offers business-day-aware due dates: Tomorrow, 3 Days, This Week and Next Week (resolving to the coming or following Friday)
 - Attach emails to tasks (or link the source email in notes for providers without an attachment API)
-- Expandable task notes with a link back to the source email
+- Expandable task notes with a link back to the source email — opens the email's conversation thread in the list pane
 
 ### Contacts
 - Typeahead in the compose window drawing from three sources:

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_address.dart';
+import '../../domain/entities/inline_attachment.dart';
 import '../../domain/usecases/send_email.dart';
 
 const _forwardSeparator = '---------- Forwarded message ---------';
@@ -71,9 +72,10 @@ class ComposeBodyBuilder {
     String signature = '',
   }) {
     if (draftEmail != null) {
-      return draftEmail.bodyType == EmailBodyType.html
+      final draftBody = draftEmail.bodyType == EmailBodyType.html
           ? draftEmail.body
           : plainToHtml(draftEmail.body);
+      return resolveCidImages(draftBody, draftEmail.inlineAttachments);
     }
     // A leading blank div above the signature gives the cursor somewhere to
     // land (setContent always places the caret at the very start) that isn't
@@ -88,9 +90,12 @@ class ComposeBodyBuilder {
     final dateEsc = const HtmlEscape().convert(dateStr);
 
     if (mode == ComposeMode.forward) {
-      final htmlBody = email.bodyType == EmailBodyType.html
-          ? extractHtmlBodyContent(email.body)
-          : plainToHtml(email.body);
+      final htmlBody = resolveCidImages(
+        email.bodyType == EmailBodyType.html
+            ? extractHtmlBodyContent(email.body)
+            : plainToHtml(email.body),
+        email.inlineAttachments,
+      );
       final subjectEsc = const HtmlEscape().convert(email.subject);
       final fromHeaderEsc = const HtmlEscape().convert(from);
       final toEsc = const HtmlEscape().convert(formatAddressList(email.toRecipients));
@@ -112,9 +117,12 @@ class ComposeBodyBuilder {
       return sigBlock;
     }
 
-    final htmlBody = email.bodyType == EmailBodyType.html
-        ? extractHtmlBodyContent(email.body)
-        : plainToHtml(email.body);
+    final htmlBody = resolveCidImages(
+      email.bodyType == EmailBodyType.html
+          ? extractHtmlBodyContent(email.body)
+          : plainToHtml(email.body),
+      email.inlineAttachments,
+    );
 
     final toEsc = const HtmlEscape().convert(formatAddressList(email.toRecipients));
     final ccEsc = const HtmlEscape().convert(formatAddressList(email.ccRecipients));
@@ -131,6 +139,77 @@ class ComposeBodyBuilder {
         'content-visibility:auto;contain-intrinsic-size:500px">'
         '$htmlBody'
         '</blockquote>';
+  }
+
+  /// Strips the angle brackets a `Content-ID` header carries but a `cid:`
+  /// reference does not.
+  static String bareContentId(String contentId) {
+    final trimmed = contentId.trim();
+    return trimmed.startsWith('<') && trimmed.endsWith('>')
+        ? trimmed.substring(1, trimmed.length - 1)
+        : trimmed;
+  }
+
+  /// Rewrites `<img src="cid:…">` in [html] to `data:` URLs backed by
+  /// [attachments], recording the content id in `data-cid`.
+  ///
+  /// Quoting a reply or forward carries the original's `cid:` references into
+  /// the compose body, but the editor is an asset-loaded WebView with no way to
+  /// resolve them — the reading pane's route (images written to disk by
+  /// `InlineAttachmentCache`, document loaded from the same directory) isn't
+  /// open to a document that lives in the app bundle. So the bytes travel
+  /// inline instead, and `data-cid` is what `_substituteInlineImageSrcs` turns
+  /// back into `cid:` at send time, matched against the re-attached part.
+  ///
+  /// References with no matching attachment are left alone: they were already
+  /// dangling in the original (an Outlook thread quotes cids from messages
+  /// several replies back without re-attaching the parts) and rewriting them
+  /// would only hide that.
+  static String resolveCidImages(
+    String html,
+    List<InlineAttachment> attachments,
+  ) {
+    if (html.isEmpty || attachments.isEmpty) return html;
+
+    final byToken = <String, ({String url, String cid})>{};
+    for (final attachment in attachments) {
+      final cid = bareContentId(attachment.contentId);
+      if (cid.isEmpty) continue;
+      final resolved = (
+        url: 'data:${attachment.contentType};base64,'
+            '${base64Encode(attachment.contentBytes)}',
+        cid: cid,
+      );
+      byToken[cid] = resolved;
+      // Gmail may set `Content-ID: <ii_x@mail.gmail.com>` while the body
+      // references only `cid:ii_x`; accept the local part too, but never let
+      // it shadow an exact match.
+      final at = cid.indexOf('@');
+      if (at > 0) byToken.putIfAbsent(cid.substring(0, at), () => resolved);
+    }
+    if (byToken.isEmpty) return html;
+
+    final srcPattern =
+        RegExp(r'''\bsrc\s*=\s*(["'])\s*cid:([^"']+?)\s*\1''', caseSensitive: false);
+    return html.replaceAllMapped(
+      RegExp(r'<img\b[^>]*>', caseSensitive: false),
+      (match) {
+        final tag = match.group(0)!;
+        final src = srcPattern.firstMatch(tag);
+        if (src == null) return tag;
+        final resolved = byToken[src.group(2)!];
+        if (resolved == null) return tag;
+        final withData =
+            tag.replaceRange(src.start, src.end, 'src="${resolved.url}"');
+        if (withData.contains('data-cid=')) return withData;
+        // Prepended rather than appended so the tag's closing `>` — which may
+        // be `/>` — doesn't need special handling.
+        return withData.replaceFirst(
+          RegExp(r'<img\b', caseSensitive: false),
+          '<img data-cid="${const HtmlEscape().convert(resolved.cid)}"',
+        );
+      },
+    );
   }
 
   static String formatAddress(EmailAddress addr) {

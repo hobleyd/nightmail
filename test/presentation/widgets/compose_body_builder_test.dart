@@ -1,6 +1,10 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/domain/entities/email.dart';
 import 'package:nightmail/domain/entities/email_address.dart';
+import 'package:nightmail/domain/entities/inline_attachment.dart';
 import 'package:nightmail/domain/usecases/send_email.dart';
 import 'package:nightmail/presentation/widgets/compose_body_builder.dart';
 
@@ -438,6 +442,143 @@ void main() {
         ComposeBodyBuilder.formatAddressList(addresses),
         'Alice <a@example.com>, b@example.com',
       );
+    });
+  });
+
+  group('ComposeBodyBuilder.resolveCidImages', () {
+    final png = InlineAttachment(
+      contentId: '<image002.png@01DD1DDB.2F326CA0>',
+      contentType: 'image/png',
+      contentBytes: Uint8List.fromList([1, 2, 3]),
+    );
+    final expectedUrl = 'data:image/png;base64,${base64Encode(png.contentBytes)}';
+
+    test('swaps a cid: src for a data: URL and records the content id', () {
+      const html = '<p><img width="1092" id="Picture_x0020_6" '
+          'src="cid:image002.png@01DD1DDB.2F326CA0"></p>';
+
+      final result = ComposeBodyBuilder.resolveCidImages(html, [png]);
+
+      expect(result, contains('src="$expectedUrl"'));
+      expect(result, contains('data-cid="image002.png@01DD1DDB.2F326CA0"'));
+      expect(result, isNot(contains('cid:image002.png')));
+      // Unrelated attributes survive.
+      expect(result, contains('width="1092"'));
+      expect(result, contains('id="Picture_x0020_6"'));
+    });
+
+    test('matches a Content-Id given without angle brackets', () {
+      final attachment = InlineAttachment(
+        contentId: 'logo@example.com',
+        contentType: 'image/gif',
+        contentBytes: Uint8List.fromList([9]),
+      );
+
+      final result = ComposeBodyBuilder.resolveCidImages(
+          '<img src="cid:logo@example.com">', [attachment]);
+
+      expect(result, contains('data:image/gif;base64,'));
+      expect(result, contains('data-cid="logo@example.com"'));
+    });
+
+    test('resolves a bare local part against a fully qualified Content-Id, '
+        'tagging it with the qualified form the send path will re-attach', () {
+      final attachment = InlineAttachment(
+        contentId: '<ii_x@mail.gmail.com>',
+        contentType: 'image/png',
+        contentBytes: Uint8List.fromList([7]),
+      );
+
+      final result =
+          ComposeBodyBuilder.resolveCidImages('<img src="cid:ii_x">', [attachment]);
+
+      expect(result, contains('data-cid="ii_x@mail.gmail.com"'));
+    });
+
+    test('leaves references with no matching attachment untouched', () {
+      // An Outlook thread quotes cids from messages several replies back
+      // without re-attaching the parts; they were already broken on arrival.
+      const html = '<img src="cid:image001.png@01DD1919.5D643CF0">';
+
+      expect(ComposeBodyBuilder.resolveCidImages(html, [png]), html);
+    });
+
+    test('leaves single-quoted and self-closing tags well formed', () {
+      final result = ComposeBodyBuilder.resolveCidImages(
+          "<img src='cid:image002.png@01DD1DDB.2F326CA0' />", [png]);
+
+      expect(result, contains('src="$expectedUrl"'));
+      expect(result, endsWith('/>'));
+    });
+
+    test('does not touch non-image cid references or external images', () {
+      const html = '<img src="https://example.com/logo.png">'
+          '<a href="cid:image002.png@01DD1DDB.2F326CA0">link</a>';
+
+      expect(ComposeBodyBuilder.resolveCidImages(html, [png]), html);
+    });
+
+    test('is a no-op when the message carries no inline attachments', () {
+      const html = '<img src="cid:whatever">';
+      expect(ComposeBodyBuilder.resolveCidImages(html, const []), html);
+    });
+  });
+
+  group('buildInitialHtmlBody inline images', () {
+    final attachment = InlineAttachment(
+      contentId: '<image002.png@01DD1DDB.2F326CA0>',
+      contentType: 'image/png',
+      contentBytes: Uint8List.fromList([1, 2, 3]),
+    );
+
+    Email htmlEmailWithInlineImage() => Email(
+          id: 'test-id',
+          subject: 'Hello',
+          from: const EmailAddress(address: 'sender@example.com'),
+          toRecipients: const [],
+          ccRecipients: const [],
+          bodyPreview: '',
+          body: '<html><body><p>See below</p>'
+              '<img src="cid:image002.png@01DD1DDB.2F326CA0"></body></html>',
+          bodyType: EmailBodyType.html,
+          isRead: true,
+          receivedDateTime: DateTime.utc(2026, 7, 24, 3, 57),
+          importance: EmailImportance.normal,
+          inlineAttachments: [attachment],
+        );
+
+    test('reply resolves the quoted body\'s inline images', () {
+      final result = ComposeBodyBuilder.buildInitialHtmlBody(
+        originalEmail: htmlEmailWithInlineImage(),
+        draftEmail: null,
+        mode: ComposeMode.reply,
+      );
+
+      expect(result, contains('data:image/png;base64,'));
+      expect(result, contains('data-cid="image002.png@01DD1DDB.2F326CA0"'));
+      expect(result, isNot(contains('src="cid:')));
+    });
+
+    test('forward resolves the quoted body\'s inline images', () {
+      final result = ComposeBodyBuilder.buildInitialHtmlBody(
+        originalEmail: htmlEmailWithInlineImage(),
+        draftEmail: null,
+        mode: ComposeMode.forward,
+      );
+
+      expect(result, contains('data:image/png;base64,'));
+      expect(result, isNot(contains('src="cid:')));
+    });
+
+    test('a reopened draft resolves its own inline images', () {
+      final result = ComposeBodyBuilder.buildInitialHtmlBody(
+        originalEmail: null,
+        draftEmail: htmlEmailWithInlineImage(),
+        mode: ComposeMode.newEmail,
+      );
+
+      expect(result, contains('data:image/png;base64,'));
+      expect(result, isNot(contains('src="cid:')));
     });
   });
 }

@@ -16,6 +16,7 @@ import '../../core/theme/app_colors.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_attachment.dart';
+import '../../domain/entities/inline_attachment.dart';
 import '../../domain/entities/local_attachment.dart';
 import '../../domain/usecases/delete_server_draft.dart';
 import '../../domain/usecases/download_attachment.dart';
@@ -200,6 +201,9 @@ class _ComposeFormState extends State<ComposeForm> {
   final FocusNode _bodyFocus = FocusNode();
   List<String> _excludedAttachmentIds = [];
   List<LocalAttachment> _localAttachments = [];
+  // cid: references the quoted body arrived with that nothing can resolve.
+  // See [_hasOrphanedInlineImages].
+  Set<String> _inheritedOrphanCids = const {};
   bool _isDragOver = false;
 
   late EmailBodyType _bodyType;
@@ -249,6 +253,8 @@ class _ComposeFormState extends State<ComposeForm> {
     _bodyType = _determineInitialBodyType();
     if (_bodyType == EmailBodyType.html) {
       _htmlBodyCache = _buildInitialHtmlBody();
+      _localAttachments = _sourceInlineAttachments();
+      _inheritedOrphanCids = _unresolvedCids(_htmlBodyCache);
       _bodyController = TextEditingController();
     } else {
       _bodyController = TextEditingController(text: _buildInitialPlainBody());
@@ -339,6 +345,64 @@ class _ComposeFormState extends State<ComposeForm> {
         mode: widget.mode,
         signature: widget.signatureHtml,
       );
+
+  /// The inline images carried by whichever message supplied the initial body
+  /// — the same precedence [ComposeBodyBuilder.buildInitialHtmlBody] uses.
+  ///
+  /// `buildInitialHtmlBody` has already swapped their `cid:` references for
+  /// `data:` URLs so the editor can show them; registering them here is the
+  /// other half, so that [_submit] re-attaches the parts and the quoted images
+  /// reach the recipient (and survive a draft round-trip) instead of arriving
+  /// as broken-image icons. [_attachmentsForBody] drops any the user deletes
+  /// along with the quoted text.
+  List<LocalAttachment> _sourceInlineAttachments() {
+    final source = widget.draftEmail ?? widget.originalEmail;
+    final inline = source?.inlineAttachments ?? const <InlineAttachment>[];
+    final out = <LocalAttachment>[];
+    final seen = <String>{};
+    for (final attachment in inline) {
+      final cid = ComposeBodyBuilder.bareContentId(attachment.contentId);
+      if (cid.isEmpty || !seen.add(cid)) continue;
+      out.add(LocalAttachment(
+        name: _inlineFileName(cid, attachment.contentType, out.length),
+        mimeType: attachment.contentType,
+        bytes: attachment.contentBytes,
+        isInline: true,
+        contentId: cid,
+      ));
+    }
+    return out;
+  }
+
+  /// Inline parts have a Content-Id but no name of their own. Outlook's cids
+  /// are the original filename plus a domain (`image001.png@01DD…`), so the
+  /// local part is usually the name already; otherwise synthesise one, since
+  /// every send path types the part from its filename.
+  static String _inlineFileName(String cid, String mimeType, int index) {
+    final at = cid.indexOf('@');
+    final localPart = at > 0 ? cid.substring(0, at) : cid;
+    final safe = localPart.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+    if (safe.contains('.') && !safe.endsWith('.')) return safe;
+    final subtype = mimeType.split('/').last.split(';').first.trim();
+    return '${safe.isEmpty ? 'inline$index' : safe}'
+        '.${subtype.isEmpty ? 'bin' : subtype}';
+  }
+
+  /// [_localAttachments] minus the inline images [html] no longer references —
+  /// deleting the quoted text should not still ship its images as invisible
+  /// parts.
+  List<LocalAttachment> _attachmentsForBody(String html) {
+    final referenced = RegExp(r'''\bsrc\s*=\s*(["'])\s*cid:([^"']+?)\s*\1''',
+            caseSensitive: false)
+        .allMatches(html)
+        .map((m) => m.group(2)!)
+        .toSet();
+    return _localAttachments
+        .where((a) =>
+            !a.isInline ||
+            (a.contentId != null && referenced.contains(a.contentId)))
+        .toList();
+  }
 
   List<String> _parseAddresses(String text) {
     if (text.trim().isEmpty) return [];
@@ -433,10 +497,10 @@ class _ComposeFormState extends State<ComposeForm> {
     final cc = List<String>.from(_ccRecipients);
     final subject = _subjectController.text;
     final body = _bodyType == EmailBodyType.html
-        ? _htmlBodyCache
+        ? _substituteInlineImageSrcs(_htmlBodyCache)
         : _bodyController.text;
     final bodyType = _bodyType;
-    final attachments = List<LocalAttachment>.from(_localAttachments);
+    final attachments = _attachmentsForBody(body);
 
     _draftTimer?.cancel();
     _subjectController.removeListener(_onSubjectChanged);
@@ -483,8 +547,11 @@ class _ComposeFormState extends State<ComposeForm> {
     final completer = Completer<String?>();
     _saveCompleter = completer;
     final oldDraftId = _pendingOldDraftId;
+    // cid: rather than the editor's data: URLs, so the bytes are stored once as
+    // attachment parts instead of being re-uploaded base64-inflated inside the
+    // body on every autosave.
     final body = _bodyType == EmailBodyType.html
-        ? _htmlBodyCache
+        ? _substituteInlineImageSrcs(_htmlBodyCache)
         : _bodyController.text;
     try {
       final result = await sl<SaveServerDraft>()(SaveServerDraftParams(
@@ -494,7 +561,7 @@ class _ComposeFormState extends State<ComposeForm> {
         subject: _subjectController.text,
         body: body,
         bodyType: _bodyType,
-        newAttachments: _localAttachments,
+        newAttachments: _attachmentsForBody(body),
       ));
       return result.fold(
         (failure) {
@@ -1128,28 +1195,41 @@ class _ComposeFormState extends State<ComposeForm> {
           body: effectiveBody,
           excludedAttachmentIds: _excludedAttachmentIds,
           bodyType: effectiveBodyType,
-          newAttachments: _localAttachments,
+          newAttachments: _attachmentsForBody(effectiveBody),
           fromAccountId: _selectedAccountId,
         ));
   }
 
-  // True if the HTML references an inline image (cid:...) with no matching
-  // local attachment — e.g. HTML pasted from another mail client that kept
-  // the source's cid reference without the image bytes. Sending as-is bakes
-  // a permanently broken image into the message.
-  bool _hasOrphanedInlineImages(String html) {
+  static final _cidSrcPattern = RegExp(
+      r'''<img\b[^>]*\bsrc\s*=\s*(["'])\s*cid:([^"']+?)\s*\1''',
+      caseSensitive: false);
+
+  // cid: references in [html] with no matching local attachment to supply the
+  // bytes — they render as a broken-image icon wherever the message lands.
+  Set<String> _unresolvedCids(String html) {
     final knownCids = _localAttachments
         .where((a) => a.isInline && a.contentId != null)
         .map((a) => a.contentId!)
         .toSet();
-    final matches = RegExp(r'<img\b[^>]*\bsrc="cid:([^"]+)"', caseSensitive: false)
-        .allMatches(html);
-    for (final match in matches) {
-      final cid = match.group(1)!;
-      if (!knownCids.contains(cid)) return true;
-    }
-    return false;
+    return _cidSrcPattern
+        .allMatches(html)
+        .map((m) => m.group(2)!)
+        .where((cid) => !knownCids.contains(cid))
+        .toSet();
   }
+
+  // True if the user's own editing introduced a broken inline image — e.g.
+  // HTML pasted from another mail client that kept the source's cid reference
+  // without the image bytes. Sending as-is bakes a permanently broken image
+  // into the message.
+  //
+  // References the quoted original arrived with are excluded via
+  // [_inheritedOrphanCids]: a long Outlook thread quotes cids from messages
+  // several replies back without re-attaching the parts, so they are already
+  // broken in the received message and the user cannot fix them. Warning on
+  // every reply in such a thread would only train the dialog away.
+  bool _hasOrphanedInlineImages(String html) =>
+      _unresolvedCids(html).difference(_inheritedOrphanCids).isNotEmpty;
 
   Future<bool?> _confirmSendWithBrokenImages(BuildContext context) {
     return showDialog<bool>(

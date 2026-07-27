@@ -14,6 +14,7 @@ import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_address.dart';
 import '../../domain/entities/email_attachment.dart';
+import '../../domain/entities/inline_attachment.dart';
 import '../../domain/usecases/send_email.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../../injection_container.dart';
@@ -86,6 +87,8 @@ class ComposeWindowApp extends StatelessWidget {
                   'size': a.size,
                 })
             .toList(),
+        'inlineAttachments':
+            _inlineAttachmentsToJson(originalEmail.inlineAttachments),
       };
     }
     if (draftEmail != null) {
@@ -99,11 +102,62 @@ class ComposeWindowApp extends StatelessWidget {
             .toList(),
         'body': draftEmail.body,
         'bodyType': draftEmail.bodyType.name,
+        'inlineAttachments':
+            _inlineAttachmentsToJson(draftEmail.inlineAttachments),
       };
     }
     await createSubWindow(
       WindowConfiguration(arguments: jsonEncode(args)),
     );
+  }
+
+  /// Inline images have to cross the window boundary as bytes: the sub-window
+  /// runs its own engine, and the quoted body it builds references them by
+  /// `cid:`, which nothing downstream of here can resolve on its own.
+  ///
+  /// The whole argument map is JSON-encoded into a single string and handed to
+  /// the platform channel, so a message carrying tens of megabytes of embedded
+  /// images would stall window creation. Fill greedily up to a budget instead
+  /// and let the remainder stay unresolved — the same broken-image result as
+  /// before, but only for the images past the cap.
+  static const int _maxInlineAttachmentBytes = 12 * 1024 * 1024;
+
+  static List<Map<String, dynamic>> _inlineAttachmentsToJson(
+    List<InlineAttachment> attachments,
+  ) {
+    final out = <Map<String, dynamic>>[];
+    var budget = _maxInlineAttachmentBytes;
+    for (final a in attachments) {
+      if (a.contentBytes.length > budget) continue;
+      budget -= a.contentBytes.length;
+      out.add({
+        'contentId': a.contentId,
+        'contentType': a.contentType,
+        'contentBytes': base64.encode(a.contentBytes),
+      });
+    }
+    return out;
+  }
+
+  static List<InlineAttachment> _inlineAttachmentsFromJson(dynamic raw) {
+    if (raw is! List) return const [];
+    final out = <InlineAttachment>[];
+    for (final entry in raw) {
+      if (entry is! Map) continue;
+      final contentId = entry['contentId'] as String?;
+      final bytes = entry['contentBytes'] as String?;
+      if (contentId == null || contentId.isEmpty || bytes == null) continue;
+      try {
+        out.add(InlineAttachment(
+          contentId: contentId,
+          contentType: entry['contentType'] as String? ?? 'application/octet-stream',
+          contentBytes: base64.decode(bytes),
+        ));
+      } catch (_) {
+        // Malformed payload — skip it rather than fail the whole window.
+      }
+    }
+    return out;
   }
 
   static final _darkTheme = ThemeData(
@@ -230,6 +284,8 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage> {
           size: (aMap['size'] as num).toInt(),
         );
       }).toList(),
+      inlineAttachments:
+          ComposeWindowApp._inlineAttachmentsFromJson(map['inlineAttachments']),
     );
   }
 
@@ -266,6 +322,8 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage> {
           size: (aMap['size'] as num).toInt(),
         );
       }).toList(),
+      inlineAttachments:
+          ComposeWindowApp._inlineAttachmentsFromJson(map['inlineAttachments']),
     );
   }
 

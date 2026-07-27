@@ -523,14 +523,84 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     required DateTime start,
     required DateTime end,
   }) async {
-    // Google Calendar FreeBusy API requires OAuth scope not currently requested;
-    // return unknown status so the UI omits availability indicators.
-    return emails
-        .map((e) => AttendeeAvailability(
-              email: e,
-              status: AttendeeAvailabilityStatus.unknown,
-            ))
-        .toList();
+    // Google's freeBusy query reports opaque busy intervals only — no subject,
+    // and no distinction between busy/tentative/out-of-office (unlike Graph's
+    // getSchedule). So every returned interval maps to `busy` with no subject,
+    // which the schedule pane renders as an unlabelled red block.
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/freeBusy',
+        data: {
+          'timeMin': start.toUtc().toIso8601String(),
+          'timeMax': end.toUtc().toIso8601String(),
+          'items': emails.map((e) => {'id': e}).toList(),
+        },
+      );
+
+      final calendars =
+          response.data?['calendars'] as Map<String, dynamic>? ?? {};
+
+      return emails.map((email) {
+        final entry = calendars[email] as Map<String, dynamic>?;
+        // A calendar we cannot see comes back with an `errors` array (reason
+        // notFound for an address outside the domain, or a sharing restriction)
+        // and an empty `busy` list. That is indistinguishable from a genuinely
+        // free day unless the errors are checked, so report unknown rather than
+        // claiming the guest is free.
+        final errors = entry?['errors'] as List<dynamic>?;
+        if (entry == null || (errors != null && errors.isNotEmpty)) {
+          if (errors != null && errors.isNotEmpty) {
+            debugPrint(
+                '[GoogleCalendar] freeBusy unavailable for $email: $errors');
+          }
+          return AttendeeAvailability(
+            email: email,
+            status: AttendeeAvailabilityStatus.unknown,
+          );
+        }
+
+        final items = (entry['busy'] as List<dynamic>? ?? [])
+            .cast<Map<String, dynamic>>()
+            .map((slot) {
+              final slotStart = slot['start'] as String?;
+              final slotEnd = slot['end'] as String?;
+              if (slotStart == null || slotEnd == null) return null;
+              return AttendeeScheduleItem(
+                start: DateTime.parse(slotStart).toUtc(),
+                end: DateTime.parse(slotEnd).toUtc(),
+                status: AttendeeAvailabilityStatus.busy,
+              );
+            })
+            .whereType<AttendeeScheduleItem>()
+            .toList();
+
+        return AttendeeAvailability(
+          email: email,
+          status: items.isEmpty
+              ? AttendeeAvailabilityStatus.free
+              : AttendeeAvailabilityStatus.busy,
+          scheduleItems: items,
+        );
+      }).toList();
+    } on DioException catch (e) {
+      // A 403 here is the expected state for an account authorised before the
+      // calendar.freebusy scope was requested: the stored refresh token simply
+      // does not carry it, and Google will not add it on refresh. Degrade to
+      // unknown so the rest of the form still works — the user gets free/busy
+      // back after signing the account in again.
+      if (e.response?.statusCode == 403) {
+        debugPrint('[GoogleCalendar] freeBusy denied (403) — the account most '
+            'likely predates the calendar.freebusy scope; sign in again to '
+            'restore attendee availability.');
+        return emails
+            .map((email) => AttendeeAvailability(
+                  email: email,
+                  status: AttendeeAvailabilityStatus.unknown,
+                ))
+            .toList();
+      }
+      throw _mapException(e);
+    }
   }
 
   Map<String, dynamic> _buildEventBody({

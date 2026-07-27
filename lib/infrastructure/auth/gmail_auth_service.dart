@@ -47,6 +47,13 @@ class GmailAuthService implements AuthService {
     // and every event using the calendar's default reminder (i.e. any event
     // without an explicit per-event override) silently gets no reminder.
     'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+    // Free/busy lookups for meeting guests (freeBusy.query). calendar.events
+    // does not cover it, so without this the scheduling assistant has no data
+    // to show for a Gmail account. Accounts authorised before this scope was
+    // added keep a token without it and 403 until they are signed in again —
+    // GoogleCalendarDatasourceImpl.getAttendeesSchedule degrades to "unknown"
+    // rather than surfacing an error in that case.
+    'https://www.googleapis.com/auth/calendar.freebusy',
     'https://www.googleapis.com/auth/tasks',
     'https://www.googleapis.com/auth/contacts.readonly',
     'https://www.googleapis.com/auth/contacts.other.readonly',

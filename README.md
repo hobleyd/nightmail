@@ -68,6 +68,21 @@ side by side; click a slot to move the meeting there. It's always available once
 there's at least one guest — you don't have to hit a clash first — and each
 guest also gets a one-line free/busy summary for the meeting's own time.
 
+What the pane can show depends on the provider:
+
+| Backend | Free/busy detail |
+|---|---|
+| Microsoft 365 | Busy / tentative / out-of-office / working elsewhere, with meeting titles where shared |
+| Google Calendar | Busy intervals only — no titles, no tentative/OOF distinction (a `freeBusy` API limitation) |
+| Nextcloud CalDAV | None; CalDAV free/busy needs the RFC 6638 scheduling extensions, which aren't universally supported |
+
+Guests whose free/busy isn't visible are left out of the summary rather than
+being reported as free — a blank row means "not known", not "available".
+
+Google Calendar free/busy needs the `calendar.freebusy` OAuth scope. Gmail
+accounts added before that scope was requested keep a token without it and show
+no availability until they're signed in again.
+
 ### Tasks
 - Create and manage tasks across Microsoft To Do and Google Tasks
 - Set due dates, importance, and status
@@ -142,7 +157,9 @@ NightMail connects to Google via the Gmail API, Google Calendar API, Google Task
    | Scope | Purpose |
    |---|---|
    | `gmail.modify` | Read, move, label, and send messages |
-   | `calendar.readonly` | Read calendar events |
+   | `calendar.events` | Read and write calendar events |
+   | `calendar.calendarlist.readonly` | Resolve a calendar's default reminder minutes |
+   | `calendar.freebusy` | Attendee free/busy for the scheduling pane |
    | `tasks` | Read and write Google Tasks |
    | `contacts.readonly` | Personal contact suggestions |
    | `directory.readonly` | Organisation directory suggestions |

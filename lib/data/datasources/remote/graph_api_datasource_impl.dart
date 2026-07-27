@@ -329,7 +329,7 @@ class GraphApiDatasourceImpl
           'startDateTime': startDateTime.toUtc().toIso8601String(),
           'endDateTime': endDateTime.toUtc().toIso8601String(),
           '\$select':
-              'id,subject,start,end,isAllDay,location,onlineMeeting,bodyPreview,showAs,isOrganizer,attendees,recurrence,isReminderOn,reminderMinutesBeforeStart,seriesMasterId',
+              'id,subject,start,end,isAllDay,location,onlineMeeting,bodyPreview,showAs,isOrganizer,responseStatus,attendees,recurrence,isReminderOn,reminderMinutesBeforeStart,seriesMasterId',
           '\$top': 100,
         },
         options: Options(
@@ -373,7 +373,7 @@ class GraphApiDatasourceImpl
         '/me/events/$id',
         queryParameters: {
           '\$select':
-              'id,subject,start,end,isAllDay,location,onlineMeeting,bodyPreview,showAs,isOrganizer,attendees,recurrence,isReminderOn,reminderMinutesBeforeStart,seriesMasterId',
+              'id,subject,start,end,isAllDay,location,onlineMeeting,bodyPreview,showAs,isOrganizer,responseStatus,attendees,recurrence,isReminderOn,reminderMinutesBeforeStart,seriesMasterId',
         },
         options: Options(headers: {'Prefer': 'outlook.timezone="UTC"'}),
       );

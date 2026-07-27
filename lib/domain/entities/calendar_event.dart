@@ -5,6 +5,33 @@ import 'calendar_recurrence.dart';
 
 enum CalendarEventStatus { free, busy, tentative, outOfOffice, workingElsewhere }
 
+/// The current user's relationship to a meeting, derived from whether they
+/// organised it and their RSVP. This drives the calendar tile colour and is
+/// deliberately independent of the free/busy [CalendarEventStatus] (which is
+/// used for conflict detection). Both the Google and O365 datasources map
+/// their provider-specific fields into this shared enum so a meeting is
+/// coloured the same way regardless of which account it came from.
+enum MeetingParticipation {
+  /// You own the meeting.
+  organizer,
+
+  /// You accepted someone else's invite.
+  accepted,
+
+  /// You tentatively accepted.
+  tentative,
+
+  /// You were invited but haven't responded yet.
+  needsAction,
+
+  /// You declined.
+  declined,
+
+  /// No participation signal available (e.g. an event on a subscribed
+  /// calendar). Treated as "on your calendar" for colouring.
+  none,
+}
+
 class CalendarEvent extends Equatable {
   const CalendarEvent({
     required this.id,
@@ -15,6 +42,7 @@ class CalendarEvent extends Equatable {
     this.location,
     this.bodyPreview,
     this.status = CalendarEventStatus.busy,
+    this.participation = MeetingParticipation.none,
     this.isOrganizer = false,
     this.timezone,
     this.attendees = const [],
@@ -31,6 +59,11 @@ class CalendarEvent extends Equatable {
   final String? location;
   final String? bodyPreview;
   final CalendarEventStatus status;
+
+  /// The current user's relationship to this meeting (organiser / accepted /
+  /// tentative / …), used to colour the calendar tile. See [MeetingParticipation].
+  final MeetingParticipation participation;
+
   final bool isOrganizer;
 
   /// IANA timezone string (e.g. "America/New_York"). Null means UTC.

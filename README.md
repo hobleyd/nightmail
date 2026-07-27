@@ -41,6 +41,25 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - Google Meet toggle for Gmail meetings
 - Supported backends: Microsoft Graph, Google Calendar, Nextcloud CalDAV, macOS/iOS EventKit
 
+**Meeting colours** are driven by your relationship to each meeting (your
+participation), mapped to a single shared scheme so Gmail and Microsoft 365
+events are coloured consistently — the same situation gets the same colour on
+every account, regardless of the provider-specific fields underneath:
+
+| Your participation | Colour |
+|---|---|
+| Organiser (your own meeting) | 🟢 Green |
+| Accepted someone else's | 🔵 Blue |
+| Tentative / not yet responded | 🟡 Yellow |
+| Declined | ⚪ Grey |
+| On your calendar (no response signal) | 🔵 Blue |
+| Out-of-office (Microsoft 365 only) | 🔴 Red |
+| Working elsewhere (Microsoft 365 only) | ⚪ Grey |
+
+Out-of-office and working-elsewhere are free/busy states with no participation
+equivalent, so they override the scheme; Gmail's event feed doesn't report
+them, so they appear on Microsoft 365 only.
+
 ### Tasks
 - Create and manage tasks across Microsoft To Do and Google Tasks
 - Set due dates, importance, and status

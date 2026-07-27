@@ -1499,7 +1499,7 @@ class _EventTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = _colorForStatus(event.status);
+    final color = _colorForEvent(event);
 
     return Opacity(
       opacity: isDragging ? 0.75 : 1.0,
@@ -1553,13 +1553,27 @@ class _EventTile extends StatelessWidget {
     );
   }
 
-  Color _colorForStatus(CalendarEventStatus status) {
-    return switch (status) {
-      CalendarEventStatus.free => const Color(0xFF34A853),
-      CalendarEventStatus.tentative => const Color(0xFFFBBC04),
-      CalendarEventStatus.outOfOffice => const Color(0xFFEA4335),
-      CalendarEventStatus.workingElsewhere => const Color(0xFF9E9E9E),
-      CalendarEventStatus.busy => AppColors.accent,
+  /// Tile colour, driven by the user's [MeetingParticipation] so Gmail and
+  /// O365 meetings are coloured consistently (they expose different underlying
+  /// fields but map onto the same participation enum). Out-of-office and
+  /// working-elsewhere are free/busy states with no participation equivalent,
+  /// so they override as red/grey — these come from O365's `showAs` only.
+  Color _colorForEvent(CalendarEvent event) {
+    const green = Color(0xFF34A853);
+    const yellow = Color(0xFFFBBC04);
+    const red = Color(0xFFEA4335);
+    const grey = Color(0xFF9E9E9E);
+
+    if (event.status == CalendarEventStatus.outOfOffice) return red;
+    if (event.status == CalendarEventStatus.workingElsewhere) return grey;
+
+    return switch (event.participation) {
+      MeetingParticipation.organizer => green, // you organised it
+      MeetingParticipation.accepted => AppColors.accent, // blue — you accepted
+      MeetingParticipation.tentative => yellow, // tentatively accepted
+      MeetingParticipation.needsAction => yellow, // invited, not yet responded
+      MeetingParticipation.declined => grey, // declined
+      MeetingParticipation.none => AppColors.accent, // blue — on your calendar
     };
   }
 }

@@ -12,6 +12,7 @@ class CalendarEventModel extends CalendarEvent {
     super.location,
     super.bodyPreview,
     super.status,
+    super.participation,
     super.isOrganizer,
     super.timezone,
     super.attendees,
@@ -33,6 +34,12 @@ class CalendarEventModel extends CalendarEvent {
       ),
       bodyPreview: json['bodyPreview'] as String?,
       status: _parseStatus(json['showAs'] as String?),
+      participation: _parseParticipation(
+        isOrganizer: json['isOrganizer'] as bool? ?? false,
+        response:
+            (json['responseStatus'] as Map<String, dynamic>?)?['response']
+                as String?,
+      ),
       isOrganizer: json['isOrganizer'] as bool? ?? false,
       timezone: (json['start'] as Map<String, dynamic>?)?['timeZone'] as String?,
       attendees: _parseAttendees(json['attendees'] as List<dynamic>?),
@@ -70,6 +77,26 @@ class CalendarEventModel extends CalendarEvent {
       'oof' => CalendarEventStatus.outOfOffice,
       'workingelsewhere' => CalendarEventStatus.workingElsewhere,
       _ => CalendarEventStatus.busy,
+    };
+  }
+
+  /// Maps Graph's `isOrganizer` + `responseStatus.response`
+  /// (organizer/accepted/tentativelyAccepted/notResponded/declined/none) onto
+  /// the shared [MeetingParticipation] enum. `isOrganizer` wins so a meeting
+  /// you own is always [MeetingParticipation.organizer] even if Exchange also
+  /// auto-set your response to accepted.
+  static MeetingParticipation _parseParticipation({
+    required bool isOrganizer,
+    String? response,
+  }) {
+    if (isOrganizer) return MeetingParticipation.organizer;
+    return switch (response?.toLowerCase()) {
+      'organizer' => MeetingParticipation.organizer,
+      'accepted' => MeetingParticipation.accepted,
+      'tentativelyaccepted' => MeetingParticipation.tentative,
+      'notresponded' => MeetingParticipation.needsAction,
+      'declined' => MeetingParticipation.declined,
+      _ => MeetingParticipation.none,
     };
   }
 

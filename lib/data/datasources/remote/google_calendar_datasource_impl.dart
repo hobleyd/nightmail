@@ -825,7 +825,6 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
         rawAttendees.where((a) => a['self'] == true).firstOrNull;
     final selfStatus = selfAttendee?['responseStatus'] as String?;
 
-    final status = _parseStatus(selfStatus ?? json['status'] as String?);
     // `organizer.self` is Google's authoritative "I own this event" flag and is
     // present even when the event has no other guests (in which case
     // `attendees` is empty and the per-attendee organizer flag can't be
@@ -837,6 +836,18 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
         (organizerEmail != null &&
             rawAttendees.any(
                 (a) => a['email'] == organizerEmail && a['self'] == true));
+
+    // Free/busy status, used for conflict detection (not colouring).
+    final status = _parseStatus(selfStatus ?? json['status'] as String?);
+
+    // Participation drives the tile colour. Google inconsistently omits the
+    // organizer from `attendees`, so we lean on the `organizer.self` flag
+    // (captured in isOrganizer) rather than a self-attendee RSVP to identify
+    // meetings you own.
+    final participation = _parseParticipation(
+      isOrganizer: isOrganizer,
+      responseStatus: selfStatus,
+    );
 
     final attendees = rawAttendees
         .map((a) => CalendarEventAttendee(
@@ -861,6 +872,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       ),
       bodyPreview: description,
       status: status,
+      participation: participation,
       isOrganizer: isOrganizer,
       timezone: startMap['timeZone'] as String?,
       attendees: attendees,
@@ -934,6 +946,25 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       'tentative' || 'needsaction' => CalendarEventStatus.tentative,
       'declined' => CalendarEventStatus.free,
       _ => CalendarEventStatus.busy,
+    };
+  }
+
+  /// Maps Google's organiser flag + the user's `responseStatus`
+  /// (accepted/tentative/needsAction/declined) onto the shared
+  /// [MeetingParticipation] enum. `isOrganizer` wins so meetings you own are
+  /// always [MeetingParticipation.organizer], even when Google omits you from
+  /// the `attendees` list (a common inconsistency for self-created events).
+  MeetingParticipation _parseParticipation({
+    required bool isOrganizer,
+    String? responseStatus,
+  }) {
+    if (isOrganizer) return MeetingParticipation.organizer;
+    return switch (responseStatus?.toLowerCase()) {
+      'accepted' => MeetingParticipation.accepted,
+      'tentative' => MeetingParticipation.tentative,
+      'needsaction' => MeetingParticipation.needsAction,
+      'declined' => MeetingParticipation.declined,
+      _ => MeetingParticipation.none,
     };
   }
 

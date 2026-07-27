@@ -225,6 +225,42 @@ void main() {
       }
     });
 
+    test('maps isOrganizer + responseStatus to MeetingParticipation', () {
+      // isOrganizer wins regardless of response.
+      MeetingParticipation participationFor({
+        required bool isOrganizer,
+        String? response,
+      }) {
+        final json = <String, dynamic>{
+          'id': 'participation-test',
+          'subject': 'Test',
+          'isAllDay': false,
+          'isOrganizer': isOrganizer,
+          if (response != null) 'responseStatus': {'response': response},
+          'start': {'dateTime': '2026-06-10T09:00:00.0000000', 'timeZone': 'UTC'},
+          'end': {'dateTime': '2026-06-10T10:00:00.0000000', 'timeZone': 'UTC'},
+        };
+        return CalendarEventModel.fromJson(json).participation;
+      }
+
+      expect(participationFor(isOrganizer: true, response: 'accepted'),
+          MeetingParticipation.organizer);
+      expect(participationFor(isOrganizer: false, response: 'organizer'),
+          MeetingParticipation.organizer);
+      expect(participationFor(isOrganizer: false, response: 'accepted'),
+          MeetingParticipation.accepted);
+      expect(participationFor(isOrganizer: false, response: 'tentativelyAccepted'),
+          MeetingParticipation.tentative);
+      expect(participationFor(isOrganizer: false, response: 'notResponded'),
+          MeetingParticipation.needsAction);
+      expect(participationFor(isOrganizer: false, response: 'declined'),
+          MeetingParticipation.declined);
+      expect(participationFor(isOrganizer: false, response: 'none'),
+          MeetingParticipation.none);
+      expect(participationFor(isOrganizer: false, response: null),
+          MeetingParticipation.none);
+    });
+
     test('parses location as null when displayName is empty', () {
       final json = <String, dynamic>{
         'id': 'no-location',

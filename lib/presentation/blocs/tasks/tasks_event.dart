@@ -21,6 +21,18 @@ final class TasksListSelected extends TasksBlocEvent {
   List<Object?> get props => [listId];
 }
 
+/// Reveal one specific task — selecting its list if it isn't the current one
+/// and highlighting the row. Raised when the user taps a due-task notification.
+final class TaskFocusRequested extends TasksBlocEvent {
+  const TaskFocusRequested({required this.listId, required this.taskId});
+
+  final String listId;
+  final String taskId;
+
+  @override
+  List<Object?> get props => [listId, taskId];
+}
+
 final class TaskStatusToggled extends TasksBlocEvent {
   const TaskStatusToggled({
     required this.listId,

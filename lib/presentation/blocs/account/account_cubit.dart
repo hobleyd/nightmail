@@ -11,6 +11,7 @@ import '../../../domain/repositories/email_repository.dart';
 import '../../../infrastructure/accounts/account.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
 import '../../../infrastructure/notifications/calendar_reminder_service.dart';
+import '../../../infrastructure/notifications/task_reminder_service.dart';
 
 // ---------------------------------------------------------------------------
 // State
@@ -74,7 +75,9 @@ class AccountCubit extends Cubit<AccountState> {
     required this._accountManager,
     required this._emailRepository,
     required this._calendarReminderService,
-  }) : super(const AccountLoading()) {
+    required TaskReminderService taskReminderService,
+  })  : _taskReminderService = taskReminderService,
+        super(const AccountLoading()) {
     _authFailureSub = _accountManager.authFailures.listen(_onAuthFailure);
     _authSuccessSub = _accountManager.authSuccesses.listen(_onAuthSuccess);
   }
@@ -82,6 +85,7 @@ class AccountCubit extends Cubit<AccountState> {
   final AccountManager _accountManager;
   final EmailRepository _emailRepository;
   final CalendarReminderService _calendarReminderService;
+  final TaskReminderService _taskReminderService;
   late final StreamSubscription<String> _authFailureSub;
   late final StreamSubscription<String> _authSuccessSub;
 
@@ -241,6 +245,7 @@ class AccountCubit extends Cubit<AccountState> {
     await _accountManager.removeAccount(accountId);
     await _emailRepository.clearCacheForAccount(accountId);
     await _calendarReminderService.clearAccount(accountId);
+    await _taskReminderService.clearAccount(accountId);
     if (_accountManager.hasAccounts) {
       await _emitLoaded();
     } else {

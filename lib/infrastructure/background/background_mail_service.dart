@@ -8,6 +8,7 @@ import '../../data/datasources/local/folder_local_datasource.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../../infrastructure/notifications/calendar_reminder_service.dart';
 import '../../infrastructure/notifications/notification_service.dart';
+import '../../infrastructure/notifications/task_reminder_service.dart';
 import '../../injection_container.dart';
 
 const _periodicTaskName = 'au.com.sharpblue.nightmail.mailCheck';
@@ -99,10 +100,12 @@ void _callbackDispatcher() {
 /// (a real registered plugin, reachable here) is used instead to surface new
 /// mail while the app is backgrounded.
 ///
-/// Also reconciles calendar reminders for every account (see
-/// [CalendarReminderService]) on this same cycle, so reminders keep getting
-/// (re)scheduled even when the app is fully backgrounded/killed on mobile —
-/// no second WorkManager/BGTaskScheduler task is registered for this.
+/// Also reconciles calendar reminders and due-task notifications for every
+/// account (see [CalendarReminderService] and [TaskReminderService]) on this
+/// same cycle, so reminders keep getting (re)scheduled — and tasks that fell
+/// due meanwhile still announce themselves — even when the app is fully
+/// backgrounded/killed on mobile. No second WorkManager/BGTaskScheduler task
+/// is registered for this.
 Future<void> _runBackgroundPoll() async {
   WidgetsFlutterBinding.ensureInitialized();
   await configureDependencies();
@@ -177,5 +180,11 @@ Future<void> _runBackgroundPoll() async {
   } catch (_) {
     // Never let a calendar failure break the mail-poll return-true/false
     // contract above.
+  }
+
+  try {
+    await sl<TaskReminderService>().reconcileAll();
+  } catch (_) {
+    // Same contract as the calendar pass above.
   }
 }

@@ -26,6 +26,7 @@ final class TasksLoaded extends TasksState {
     required List<TodoTask> tasks,
     required this.selectedListId,
     this.pendingEmailAttachmentBytes,
+    this.focusedTaskId,
   }) : tasks = _sortedByDueDate(tasks);
 
   final List<TodoTaskList> lists;
@@ -36,6 +37,10 @@ final class TasksLoaded extends TasksState {
   final List<TodoTask> tasks;
   final String selectedListId;
   final Uint8List? pendingEmailAttachmentBytes;
+
+  /// The task to call out in the pane — set when one is opened from a due
+  /// notification, so the row the alert referred to is obvious among the rest.
+  final String? focusedTaskId;
 
   /// Earliest due date first; undated tasks sink to the bottom. Ties (and the
   /// undated group) keep their incoming order — `List.sort` is not stable, so
@@ -61,7 +66,8 @@ final class TasksLoaded extends TasksState {
   }
 
   @override
-  List<Object?> get props => [lists, tasks, selectedListId, pendingEmailAttachmentBytes];
+  List<Object?> get props =>
+      [lists, tasks, selectedListId, pendingEmailAttachmentBytes, focusedTaskId];
 
   TasksLoaded copyWith({
     List<TodoTaskList>? lists,
@@ -69,6 +75,8 @@ final class TasksLoaded extends TasksState {
     String? selectedListId,
     Uint8List? pendingEmailAttachmentBytes,
     bool clearPendingAttachment = false,
+    String? focusedTaskId,
+    bool clearFocusedTask = false,
   }) {
     return TasksLoaded(
       lists: lists ?? this.lists,
@@ -77,6 +85,8 @@ final class TasksLoaded extends TasksState {
       pendingEmailAttachmentBytes: clearPendingAttachment
           ? null
           : (pendingEmailAttachmentBytes ?? this.pendingEmailAttachmentBytes),
+      focusedTaskId:
+          clearFocusedTask ? null : (focusedTaskId ?? this.focusedTaskId),
     );
   }
 }

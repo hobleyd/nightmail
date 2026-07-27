@@ -63,11 +63,13 @@ class TasksDayPanel extends StatelessWidget {
                       :final lists,
                       :final tasks,
                       :final selectedListId,
+                      :final focusedTaskId,
                     ) =>
                       _LoadedBody(
                         lists: lists,
                         tasks: tasks,
                         selectedListId: selectedListId,
+                        focusedTaskId: focusedTaskId,
                       ),
                     TasksError(:final message, :final requiresReauth) =>
                       _ErrorView(message: message, requiresReauth: requiresReauth),
@@ -128,11 +130,13 @@ class _LoadedBody extends StatelessWidget {
     required this.lists,
     required this.tasks,
     required this.selectedListId,
+    this.focusedTaskId,
   });
 
   final List<TodoTaskList> lists;
   final List<TodoTask> tasks;
   final String selectedListId;
+  final String? focusedTaskId;
 
   @override
   Widget build(BuildContext context) {
@@ -142,7 +146,11 @@ class _LoadedBody extends StatelessWidget {
         Expanded(
           child: tasks.isEmpty
               ? const _EmptyPlaceholder()
-              : _TaskList(tasks: tasks, listId: selectedListId),
+              : _TaskList(
+                  tasks: tasks,
+                  listId: selectedListId,
+                  focusedTaskId: focusedTaskId,
+                ),
         ),
         if (selectedListId.isNotEmpty) _AddTaskBar(listId: selectedListId),
       ],
@@ -210,10 +218,15 @@ class _ListSelector extends StatelessWidget {
 }
 
 class _TaskList extends StatelessWidget {
-  const _TaskList({required this.tasks, required this.listId});
+  const _TaskList({
+    required this.tasks,
+    required this.listId,
+    this.focusedTaskId,
+  });
 
   final List<TodoTask> tasks;
   final String listId;
+  final String? focusedTaskId;
 
   @override
   Widget build(BuildContext context) {
@@ -222,15 +235,20 @@ class _TaskList extends StatelessWidget {
       itemBuilder: (context, index) => _TaskTile(
         key: ValueKey(tasks[index].id),
         task: tasks[index],
+        isFocused: tasks[index].id == focusedTaskId,
       ),
     );
   }
 }
 
 class _TaskTile extends StatefulWidget {
-  const _TaskTile({super.key, required this.task});
+  const _TaskTile({super.key, required this.task, this.isFocused = false});
 
   final TodoTask task;
+
+  /// Set for the task a due notification was raised about, so the row the
+  /// alert referred to stands out from the rest of the list.
+  final bool isFocused;
 
   @override
   State<_TaskTile> createState() => _TaskTileState();
@@ -280,7 +298,11 @@ class _TaskTileState extends State<_TaskTile> {
     final visibleNotes = TaskEmailLink.visibleNotes(task.body);
     final hasNotes = visibleNotes != null || linkedEmailId != null;
 
-    return Column(
+    return Container(
+      color: widget.isFocused
+          ? AppColors.accent.withValues(alpha: 0.12)
+          : Colors.transparent,
+      child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         InkWell(
@@ -395,6 +417,7 @@ class _TaskTileState extends State<_TaskTile> {
             onOpenEmail: _openLinkedEmail,
           ),
       ],
+      ),
     );
   }
 

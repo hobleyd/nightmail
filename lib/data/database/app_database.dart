@@ -7,6 +7,7 @@ import '../datasources/local/delta_token_datasource.dart';
 import '../datasources/local/folder_local_datasource.dart';
 import '../datasources/local/pending_operations_datasource.dart';
 import '../datasources/local/reminder_schedule_local_datasource.dart';
+import '../datasources/local/task_reminder_schedule_local_datasource.dart';
 
 part 'app_database.g.dart';
 
@@ -155,6 +156,24 @@ class ScheduledReminders extends Table {
   Set<Column> get primaryKey => {accountId, eventId};
 }
 
+/// The tasks counterpart of [ScheduledReminders]: tracks which to-do items
+/// already have a due notification arranged, so [TaskReminderService] can tell
+/// new/rescheduled tasks apart from unchanged ones and — crucially — knows
+/// whether a task that fell due while the app was closed has been announced
+/// yet, rather than either missing it or re-announcing it every cycle.
+class ScheduledTaskReminders extends Table {
+  TextColumn get accountId => text()();
+  TextColumn get taskId => text()();
+  TextColumn get listId => text()();
+  IntColumn get triggerAtMs => integer()();
+  IntColumn get dueAtMs => integer()();
+  BoolColumn get osScheduled => boolean().withDefault(const Constant(false))();
+  IntColumn get notifiedAtMs => integer().nullable()();
+
+  @override
+  Set<Column> get primaryKey => {accountId, taskId};
+}
+
 /// Queued mutations awaiting a server round-trip — the outbox that lets a
 /// mutation apply to the cache and appear in the UI immediately (even
 /// offline), replayed against the server later. [emailId] is rewritten in
@@ -172,12 +191,13 @@ class PendingOperations extends Table {
   TextColumn get lastError => text().nullable()();
 }
 
-@DriftDatabase(tables: [CachedEmails, KnownSenders, SenderAliases, DeltaSyncTokens, CachedFolders, LocalDrafts, CatalogCache, AiConfig, CapabilityRouting, ScheduledReminders, PendingOperations])
+@DriftDatabase(tables: [CachedEmails, KnownSenders, SenderAliases, DeltaSyncTokens, CachedFolders, LocalDrafts, CatalogCache, AiConfig, CapabilityRouting, ScheduledReminders, ScheduledTaskReminders, PendingOperations])
 class AppDatabase extends _$AppDatabase
     implements
         DeltaTokenDatasource,
         FolderLocalDatasource,
         ReminderScheduleLocalDatasource,
+        TaskReminderScheduleLocalDatasource,
         PendingOperationsDatasource {
   AppDatabase() : super(_openConnection());
 
@@ -188,7 +208,7 @@ class AppDatabase extends _$AppDatabase
   AppDatabase.forTesting(QueryExecutor executor) : super(executor);
 
   @override
-  int get schemaVersion => 10;
+  int get schemaVersion => 11;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -246,6 +266,9 @@ class AppDatabase extends _$AppDatabase
               'CREATE INDEX idx_pending_operations_account_email_created '
               'ON pending_operations(account_id, email_id, created_at_ms)',
             );
+          }
+          if (from < 11) {
+            await m.createTable(scheduledTaskReminders);
           }
         },
       );
@@ -395,6 +418,75 @@ class AppDatabase extends _$AppDatabase
   @override
   Future<void> clearScheduledRemindersForAccount(String accountId) =>
       (delete(scheduledReminders)
+            ..where((t) => t.accountId.equals(accountId)))
+          .go();
+
+  // TaskReminderScheduleLocalDatasource implementation
+
+  @override
+  Future<List<ScheduledTaskReminderRecord>> getScheduledTaskReminders(
+      String accountId) async {
+    final rows = await (select(scheduledTaskReminders)
+          ..where((t) => t.accountId.equals(accountId)))
+        .get();
+    return rows
+        .map((r) => ScheduledTaskReminderRecord(
+              accountId: r.accountId,
+              listId: r.listId,
+              taskId: r.taskId,
+              triggerAtMs: r.triggerAtMs,
+              dueAtMs: r.dueAtMs,
+              osScheduled: r.osScheduled,
+              notifiedAtMs: r.notifiedAtMs,
+            ))
+        .toList();
+  }
+
+  @override
+  Future<void> upsertScheduledTaskReminder({
+    required String accountId,
+    required String listId,
+    required String taskId,
+    required int triggerAtMs,
+    required int dueAtMs,
+    required bool osScheduled,
+    int? notifiedAtMs,
+  }) =>
+      into(scheduledTaskReminders).insertOnConflictUpdate(
+        ScheduledTaskRemindersCompanion(
+          accountId: Value(accountId),
+          listId: Value(listId),
+          taskId: Value(taskId),
+          triggerAtMs: Value(triggerAtMs),
+          dueAtMs: Value(dueAtMs),
+          osScheduled: Value(osScheduled),
+          notifiedAtMs: Value(notifiedAtMs),
+        ),
+      );
+
+  @override
+  Future<void> markTaskReminderNotified({
+    required String accountId,
+    required String taskId,
+    required int notifiedAtMs,
+  }) =>
+      (update(scheduledTaskReminders)
+            ..where(
+                (t) => t.accountId.equals(accountId) & t.taskId.equals(taskId)))
+          .write(ScheduledTaskRemindersCompanion(
+        notifiedAtMs: Value(notifiedAtMs),
+      ));
+
+  @override
+  Future<void> deleteScheduledTaskReminder(String accountId, String taskId) =>
+      (delete(scheduledTaskReminders)
+            ..where((t) =>
+                t.accountId.equals(accountId) & t.taskId.equals(taskId)))
+          .go();
+
+  @override
+  Future<void> clearScheduledTaskRemindersForAccount(String accountId) =>
+      (delete(scheduledTaskReminders)
             ..where((t) => t.accountId.equals(accountId)))
           .go();
 

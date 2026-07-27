@@ -617,6 +617,56 @@ class AccountManager {
     }
   }
 
+  /// Build a [TasksRemoteDatasource] for [account] without changing the active
+  /// account or touching [_emailDatasource]/[_calendarDatasource].
+  ///
+  /// The tasks counterpart of [buildCalendarDatasourceForAccount], and used the
+  /// same way: by periodic/background due-task reconciliation, which needs
+  /// every configured account's tasks rather than only the active one. IMAP
+  /// accounts have no tasks provider, so they return null.
+  TasksRemoteDatasource? buildTasksDatasourceForAccount(Account account) {
+    switch (account) {
+      case MicrosoftAccount():
+        final tokenStorage = TokenStorage(
+          _secureStorage,
+          storageKey: 'token_${account.id}',
+        );
+        final authSvc = MicrosoftAuthService(
+          clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
+          tenantId: account.tenantId,
+          redirectUri: AppConfig.microsoftRedirectUri,
+          tokenStorage: tokenStorage,
+        );
+        return GraphApiDatasourceImpl(
+          client: GraphHttpClient(
+            authService: authSvc,
+            onAuthFailure: () => _authFailureController.add(account.id),
+            onAuthSuccess: () => _authSuccessController.add(account.id),
+          ),
+        );
+      case GmailAccount():
+        final tokenStorage = TokenStorage(
+          _secureStorage,
+          storageKey: 'token_${account.id}',
+        );
+        final authSvc = GmailAuthService(
+          clientId: _googleClientId ?? AppConfig.gmailClientId,
+          clientSecret: _googleClientSecret ?? '',
+          redirectUri: AppConfig.gmailRedirectUri,
+          tokenStorage: tokenStorage,
+        );
+        return GoogleTasksDatasourceImpl(
+          client: GoogleTasksHttpClient(
+            authService: authSvc,
+            onAuthFailure: () => _authFailureController.add(account.id),
+            onAuthSuccess: () => _authSuccessController.add(account.id),
+          ),
+        );
+      case ImapAccount():
+        return null;
+    }
+  }
+
   CalendarRemoteDatasource? _buildImapCalendarDatasource(ImapAccount account) {
     final config = account.nextcloudCalendarConfig;
     if (config != null) {

@@ -64,6 +64,12 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       case "showMailNotification":
         let args = call.arguments as? [String: Any] ?? [:]
         self.handleShowMailNotification(args: args, result: result)
+      case "showTaskNotification":
+        let args = call.arguments as? [String: Any] ?? [:]
+        self.handleShowTaskNotification(args: args, result: result)
+      case "showTasksSummaryNotification":
+        let args = call.arguments as? [String: Any] ?? [:]
+        self.handleShowTasksSummaryNotification(args: args, result: result)
       case "scheduleReminder":
         let args = call.arguments as? [String: Any] ?? [:]
         self.handleScheduleReminder(args: args, result: result)
@@ -182,13 +188,66 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     }
   }
 
+  private func handleShowTaskNotification(args: [String: Any], result: @escaping FlutterResult) {
+    let id        = args["id"]        as? String ?? ""
+    let title     = args["title"]     as? String ?? ""
+    let body      = args["body"]      as? String ?? ""
+    let taskId    = args["taskId"]    as? String ?? ""
+    let listId    = args["listId"]    as? String ?? ""
+    let accountId = args["accountId"] as? String ?? ""
+
+    let content       = UNMutableNotificationContent()
+    content.title     = title
+    content.body      = body
+    content.sound     = .default
+    content.userInfo  = [
+      "type": "task", "taskId": taskId, "listId": listId, "accountId": accountId,
+    ]
+
+    let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
+    let request = UNNotificationRequest(
+      identifier: "task_reminder_\(id)",
+      content: content,
+      trigger: trigger
+    )
+    UNUserNotificationCenter.current().add(request) { _ in
+      DispatchQueue.main.async { result(nil) }
+    }
+  }
+
+  private func handleShowTasksSummaryNotification(args: [String: Any], result: @escaping FlutterResult) {
+    let id        = args["id"]        as? String ?? ""
+    let title     = args["title"]     as? String ?? ""
+    let body      = args["body"]      as? String ?? ""
+    let accountId = args["accountId"] as? String ?? ""
+
+    let content       = UNMutableNotificationContent()
+    content.title     = title
+    content.body      = body
+    content.sound     = .default
+    content.userInfo  = ["type": "tasksSummary", "accountId": accountId]
+
+    let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
+    let request = UNNotificationRequest(
+      identifier: "tasks_summary_\(id)",
+      content: content,
+      trigger: trigger
+    )
+    UNUserNotificationCenter.current().add(request) { _ in
+      DispatchQueue.main.async { result(nil) }
+    }
+  }
+
+  /// Schedules a calendar reminder ("event", the default) or a task due alert
+  /// ("task", passed as `kind`). The two differ only in the userInfo they
+  /// carry — which decides the tap route — and in the identifier namespace, so
+  /// a cancel for one kind can never remove the other's pending request.
   private func handleScheduleReminder(args: [String: Any], result: @escaping FlutterResult) {
     let id        = args["id"]       as? String ?? ""
+    let kind      = args["kind"]     as? String ?? "event"
     let title     = args["title"]    as? String ?? ""
     let body      = args["body"]     as? String ?? ""
     let triggerMs = (args["triggerMs"] as? NSNumber)?.int64Value ?? 0
-    let startIso  = args["startIso"] as? String
-    let eventId   = args["eventId"]  as? String ?? id
 
     let triggerDate = Date(timeIntervalSince1970: Double(triggerMs) / 1000.0)
     let interval    = triggerDate.timeIntervalSinceNow
@@ -198,13 +257,28 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     content.title     = title
     content.body      = body
     content.sound     = .default
-    var userInfo: [String: Any] = ["type": "reminder", "eventId": eventId, "eventTitle": title]
-    if let iso = startIso { userInfo["startIso"] = iso }
+
+    var userInfo: [String: Any]
+    if kind == "task" {
+      userInfo = [
+        "type": "task",
+        "taskId": args["taskId"] as? String ?? "",
+        "listId": args["listId"] as? String ?? "",
+        "accountId": args["accountId"] as? String ?? "",
+      ]
+    } else {
+      userInfo = [
+        "type": "reminder",
+        "eventId": args["eventId"] as? String ?? id,
+        "eventTitle": title,
+      ]
+      if let iso = args["startIso"] as? String { userInfo["startIso"] = iso }
+    }
     content.userInfo  = userInfo
 
     let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
     let request = UNNotificationRequest(
-      identifier: "event_reminder_\(id)",
+      identifier: "\(kind)_reminder_\(id)",
       content: content,
       trigger: trigger
     )
@@ -221,8 +295,11 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
   }
 
   private func handleCancelReminder(args: [String: Any], result: @escaping FlutterResult) {
-    let id = args["id"] as? String ?? ""
-    UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["event_reminder_\(id)"])
+    let id   = args["id"]   as? String ?? ""
+    let kind = args["kind"] as? String ?? "event"
+    UNUserNotificationCenter.current().removePendingNotificationRequests(
+      withIdentifiers: ["\(kind)_reminder_\(id)"]
+    )
     result(nil)
   }
 
@@ -269,6 +346,20 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       mainNotificationChannel?.invokeMethod(
         "openEmail",
         arguments: ["emailId": emailId, "accountId": accountId]
+      )
+    } else if type == "task" {
+      let taskId    = userInfo["taskId"]    as? String ?? ""
+      let listId    = userInfo["listId"]    as? String ?? ""
+      let accountId = userInfo["accountId"] as? String ?? ""
+      mainNotificationChannel?.invokeMethod(
+        "openTask",
+        arguments: ["taskId": taskId, "listId": listId, "accountId": accountId]
+      )
+    } else if type == "tasksSummary" {
+      let accountId = userInfo["accountId"] as? String ?? ""
+      mainNotificationChannel?.invokeMethod(
+        "openTasks",
+        arguments: ["accountId": accountId]
       )
     } else {
       // Calendar reminder tap (or legacy notification without a type).
@@ -338,6 +429,12 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       case "showMailNotification":
         let args = call.arguments as? [String: Any] ?? [:]
         self.handleShowMailNotification(args: args, result: result)
+      case "showTaskNotification":
+        let args = call.arguments as? [String: Any] ?? [:]
+        self.handleShowTaskNotification(args: args, result: result)
+      case "showTasksSummaryNotification":
+        let args = call.arguments as? [String: Any] ?? [:]
+        self.handleShowTasksSummaryNotification(args: args, result: result)
       case "scheduleReminder":
         let args = call.arguments as? [String: Any] ?? [:]
         self.handleScheduleReminder(args: args, result: result)

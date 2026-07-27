@@ -20,6 +20,7 @@ import '../../core/settings/app_settings.dart';
 import '../../infrastructure/notifications/calendar_reminder_service.dart';
 import '../../infrastructure/notifications/notification_action.dart';
 import '../../infrastructure/notifications/notification_service.dart';
+import '../../infrastructure/notifications/task_reminder_service.dart';
 import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/calendar/calendar_bloc.dart';
@@ -62,6 +63,7 @@ class HomePage extends StatelessWidget {
     // once the home shell mounts alongside mail polling. startPeriodic()
     // cancels any existing timer first, so repeated builds are safe.
     sl<CalendarReminderService>().startPeriodic();
+    sl<TaskReminderService>().startPeriodic();
     return MultiBlocProvider(
       providers: [
         BlocProvider.value(value: sl<AccountCubit>()),
@@ -138,6 +140,10 @@ class _HomeViewState extends State<_HomeView> {
         _openEmailFromNotification(emailId, accountId);
       case OpenCalendarEventAction(:final eventId, :final startIso):
         _openCalendarEventFromNotification(eventId, startIso);
+      case OpenTaskAction(:final taskId, :final listId, :final accountId):
+        _openTaskFromNotification(taskId, listId, accountId);
+      case OpenTasksAction(:final accountId):
+        _openTaskFromNotification(null, null, accountId);
     }
   }
 
@@ -206,6 +212,72 @@ class _HomeViewState extends State<_HomeView> {
         ),
       );
     }
+  }
+
+  /// A due-task notification names a task in a specific account's list, which
+  /// may not be the account currently on screen — so switch first (deferring
+  /// the focus dispatch past the BlocListener cascade the switch triggers,
+  /// exactly as `_openEmailFromNotification` does), then reveal the task.
+  ///
+  /// [taskId]/[listId] are null for the aggregate "N tasks are due" alert,
+  /// which just opens the pane on the right account.
+  void _openTaskFromNotification(
+    String? taskId,
+    String? listId,
+    String accountId,
+  ) {
+    final accountCubit = context.read<AccountCubit>();
+    final accountState = accountCubit.state;
+
+    void focusTask() {
+      context.read<HomeCubit>().showTasks();
+      if (taskId != null && listId != null) {
+        context
+            .read<TasksBloc>()
+            .add(TaskFocusRequested(listId: listId, taskId: taskId));
+      }
+      if (MediaQuery.of(context).size.width < 600) _pushMobileTasksRoute();
+    }
+
+    if (accountState is AccountsLoaded) {
+      final idx = accountState.accounts.indexWhere((a) => a.id == accountId);
+      if (idx >= 0 && idx != accountState.activeIndex) {
+        accountCubit.switchToAccount(idx).then((_) {
+          if (!mounted) return;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) focusTask();
+            });
+          });
+        });
+        return;
+      }
+    }
+    focusTask();
+  }
+
+  void _pushMobileTasksRoute() {
+    final tasksBloc = context.read<TasksBloc>();
+    final emailDetailBloc = context.read<EmailDetailBloc>();
+    final accountCubit = context.read<AccountCubit>();
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (ctx) => Scaffold(
+          body: SafeArea(
+            child: MultiBlocProvider(
+              providers: [
+                BlocProvider.value(value: tasksBloc),
+                BlocProvider.value(value: emailDetailBloc),
+                BlocProvider.value(value: accountCubit),
+              ],
+              child: TasksDayPanel(onClose: () => Navigator.of(ctx).pop()),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   void _handleMailto(Uri uri) {

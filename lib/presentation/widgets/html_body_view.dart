@@ -29,6 +29,49 @@ class _Prepared {
   final bool blockedImages;
 }
 
+const _utf8Meta = '<meta charset="utf-8">';
+
+/// Any `<meta>` that declares an encoding, in either spelling: the HTML5
+/// `<meta charset=...>` and the older `<meta http-equiv="Content-Type"
+/// content="text/html; charset=...">`. Both put `charset=` inside the tag, so
+/// one pattern covers them.
+final _charsetMeta =
+    RegExp(r'<meta\b[^>]*charset\s*=[^>]*>', caseSensitive: false);
+
+final _headOpen = RegExp(r'<head\b[^>]*>', caseSensitive: false);
+
+/// Makes [html] declare the encoding it is actually in.
+///
+/// Whatever charset a part arrived in, what reaches the webview is UTF-8: the
+/// body is a Dart string long before it gets here, and both delivery routes
+/// encode it as UTF-8 ([InlineAttachmentCache.writeDocument] and WebView2's
+/// `NavigateToString`). Neither route carries a `Content-Type` header — a
+/// `file:` URL has none — so the engine believes the document's own
+/// declaration, and Outlook routinely leaves a stale `charset=Windows-1252`
+/// meta in a body it then sent as UTF-8. Every multi-byte character is then
+/// rendered as its individual UTF-8 bytes: `haven’t` becomes `havenâ€™t`.
+///
+/// So the sender's declaration has to be removed rather than overridden — the
+/// encoding prescan takes the *first* declaration it finds, and ours would
+/// lose. Note the prescan also only reads the first 1024 bytes, which is why
+/// ours goes at the top of the head and not alongside the injected styles: a
+/// mail-sized `<style>` block is more than enough to push it out of range, and
+/// a declaration the prescan misses falls back to the OS locale default —
+/// Windows-1252 on a Western Windows install, i.e. the same mojibake.
+@visibleForTesting
+String forceUtf8Charset(String html) {
+  final stripped = html.replaceAll(_charsetMeta, '');
+  final headOpen = _headOpen.firstMatch(stripped);
+  if (headOpen != null) {
+    return stripped.replaceRange(headOpen.end, headOpen.end, _utf8Meta);
+  }
+  // Implicit head. A meta ahead of `<html>` is still hoisted into the head by
+  // the parser, and the prescan reads bytes rather than the tree, so this
+  // works the same. A body with no head at all is handled by the caller, which
+  // builds the head it wraps the fragment in.
+  return stripped.contains('</head>') ? '$_utf8Meta$stripped' : stripped;
+}
+
 class HtmlBodyView extends StatefulWidget {
   const HtmlBodyView({
     super.key,
@@ -390,13 +433,17 @@ a[href]:hover::after {
 }
 </style>
 ''';
+    resolved = forceUtf8Charset(resolved);
+
     final headEnd = resolved.indexOf('</head>');
     if (headEnd != -1) {
       resolved = resolved.substring(0, headEnd) +
           injected +
           resolved.substring(headEnd);
     } else {
-      resolved = '<html><head>$injected</head><body>$resolved</body></html>';
+      // A bare fragment — no head of its own to have declared anything.
+      resolved =
+          '<html><head>$_utf8Meta$injected</head><body>$resolved</body></html>';
     }
 
     return (resolved, hasBlockedImages);

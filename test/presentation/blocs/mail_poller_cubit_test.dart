@@ -23,6 +23,7 @@ import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 import 'package:nightmail/infrastructure/badge/badge_service.dart';
 import 'package:nightmail/infrastructure/network/connectivity_service.dart';
 import 'package:nightmail/infrastructure/notifications/notification_service.dart';
+import 'package:nightmail/infrastructure/sync/body_prefetch_service.dart';
 import 'package:nightmail/infrastructure/sync/outbox_drain_service.dart';
 import 'package:nightmail/infrastructure/sync/removal_tombstone_store.dart';
 import 'package:nightmail/infrastructure/sync/spam_db_sync_service.dart';
@@ -123,11 +124,13 @@ void main() {
   late MockPendingOperationsDatasource mockPendingOperations;
   late MockSpamDbSyncService mockSpamDbSyncService;
   late RemovalTombstoneStore removalTombstones;
+  late BodyPrefetchService bodyPrefetchService;
 
   MailPollerCubit _makeCubit() => MailPollerCubit(
         accountManager: mockAccountManager,
         appSettings: mockAppSettings,
         badgeService: mockBadgeService,
+        bodyPrefetchService: bodyPrefetchService,
         connectivityService: mockConnectivityService,
         database: mockDatabase,
         emailLocalDatasource: mockEmailLocalDatasource,
@@ -193,6 +196,8 @@ void main() {
     mockNotificationService = MockNotificationService();
     mockSpamDbSyncService = MockSpamDbSyncService();
     removalTombstones = RemovalTombstoneStore();
+    bodyPrefetchService =
+        BodyPrefetchService(localDatasource: mockEmailLocalDatasource);
     provideDummy<Either<Failure, List<EmailFolder>>>(const Right([]));
     _stubInfra();
   });

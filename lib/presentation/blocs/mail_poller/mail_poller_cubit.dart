@@ -11,6 +11,7 @@ import '../../../core/settings/app_settings.dart';
 import '../../../data/datasources/local/delta_token_datasource.dart';
 import '../../../data/datasources/local/email_local_datasource.dart';
 import '../../../data/datasources/local/pending_operations_datasource.dart';
+import '../../../data/datasources/remote/email_remote_datasource.dart';
 import '../../../data/datasources/remote/graph_delta_datasource.dart';
 import '../../../data/datasources/remote/spam_db_sync_datasource.dart';
 import '../../../domain/entities/email.dart';
@@ -20,6 +21,7 @@ import '../../../infrastructure/accounts/account_manager.dart';
 import '../../../infrastructure/badge/badge_service.dart';
 import '../../../infrastructure/network/connectivity_service.dart';
 import '../../../infrastructure/notifications/notification_service.dart';
+import '../../../infrastructure/sync/body_prefetch_service.dart';
 import '../../../infrastructure/sync/outbox_drain_service.dart';
 import '../../../infrastructure/sync/removal_tombstone_store.dart';
 import '../../../infrastructure/sync/spam_db_sync_service.dart';
@@ -30,6 +32,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     required AccountManager accountManager,
     required AppSettings appSettings,
     required BadgeService badgeService,
+    required BodyPrefetchService bodyPrefetchService,
     required ConnectivityService connectivityService,
     required DeltaTokenDatasource database,
     required EmailLocalDatasource emailLocalDatasource,
@@ -42,6 +45,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   })  : _accountManager = accountManager,
         _appSettings = appSettings,
         _badgeService = badgeService,
+        _bodyPrefetch = bodyPrefetchService,
         _connectivityService = connectivityService,
         _database = database,
         _emailLocalDatasource = emailLocalDatasource,
@@ -59,6 +63,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   final AccountManager _accountManager;
   final AppSettings _appSettings;
   final BadgeService _badgeService;
+  final BodyPrefetchService _bodyPrefetch;
   final ConnectivityService _connectivityService;
   final DeltaTokenDatasource _database;
   final EmailLocalDatasource _emailLocalDatasource;
@@ -177,6 +182,19 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
       bool changed = false;
       bool activeInboxChanged = false;
 
+      // Full-body prefetch jobs collected as new mail is cached this cycle,
+      // then run after the UI-refresh emit below (see the tail of the try).
+      // Deferred rather than run inline so the list still repaints from the
+      // envelope cache immediately; the bodies fill in a beat later so a tap
+      // opens instantly instead of blocking on a per-message fetch.
+      final prefetchJobs = <
+          ({
+            String accountId,
+            EmailRemoteDatasource datasource,
+            String folderId,
+            List<Email> emails,
+          })>[];
+
       for (final account in accounts) {
         try {
           // Optimistically assume this round will succeed; the AuthException
@@ -242,6 +260,18 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                 // right after this loop and the list repaints from cache, so
                 // the write must land first.
                 await _cacheUpserted(account.id, result.upserted);
+                if (result.upserted.isNotEmpty) {
+                  // Newly-arrived delta messages carry only bodyPreview — queue
+                  // a background body fetch so opening them is instant. Not
+                  // done in the null-token bootstrap path, which pulls 30 days
+                  // of mail and would flood the network.
+                  prefetchJobs.add((
+                    accountId: account.id,
+                    datasource: ds,
+                    folderId: 'inbox',
+                    emails: result.upserted,
+                  ));
+                }
                 for (final removedId in result.removedIds) {
                   unawaited(_emailLocalDatasource.deleteEmailFromCache(
                     accountId: account.id,
@@ -352,6 +382,14 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                   folderId: inboxes.first.id,
                   emails: reconciled,
                 );
+                // Warm the body cache for the page we just synced so tapping a
+                // message opens instantly instead of fetching on demand.
+                prefetchJobs.add((
+                  accountId: account.id,
+                  datasource: ds,
+                  folderId: inboxes.first.id,
+                  emails: reconciled,
+                ));
               }
               _baselineUnread[account.id] = unreadCount;
               _baselineTotal[account.id] = totalCount;
@@ -390,6 +428,28 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
               : state.pollGeneration,
           accountsNeedingReauth: Set.of(_reauthAccounts),
         ));
+      }
+
+      // Prefetch full bodies for the mail synced this cycle. Runs here — after
+      // the repaint emit, but while _polling is still true so the guard at the
+      // top of _poll() defers the next tick — because an IMAP account's fetch
+      // and this prefetch share one connection with a single selected mailbox;
+      // letting them overlap would race that selection. Best-effort: the
+      // service swallows per-message errors, and this guard keeps an
+      // unexpected throw from escaping the timer callback.
+      if (!isClosed) {
+        for (final job in prefetchJobs) {
+          try {
+            await _bodyPrefetch.prefetchBodies(
+              accountId: job.accountId,
+              datasource: job.datasource,
+              folderId: job.folderId,
+              emails: job.emails,
+            );
+          } catch (_) {
+            // Ignore — prefetch is an optimisation, never a poll failure.
+          }
+        }
       }
     } finally {
       _polling = false;

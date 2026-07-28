@@ -119,6 +119,7 @@ import 'infrastructure/network/connectivity_service.dart';
 import 'infrastructure/notifications/calendar_reminder_service.dart';
 import 'infrastructure/notifications/task_reminder_service.dart';
 import 'infrastructure/notifications/notification_service.dart';
+import 'infrastructure/sync/body_prefetch_service.dart';
 import 'infrastructure/sync/outbox_drain_service.dart';
 import 'infrastructure/sync/removal_tombstone_store.dart';
 import 'infrastructure/sync/spam_db_sync_service.dart';
@@ -220,6 +221,9 @@ Future<void> configureDependencies() async {
       connectivityService: sl<ConnectivityService>(),
       spamDbSyncService: sl<SpamDbSyncService>(),
     ),
+  );
+  sl.registerLazySingleton(
+    () => BodyPrefetchService(localDatasource: sl<EmailLocalDatasource>()),
   );
 
   // Data — repositories delegate to AccountManager for the live active datasource.
@@ -369,6 +373,7 @@ Future<void> configureDependencies() async {
       accountManager: sl<AccountManager>(),
       appSettings: sl<AppSettings>(),
       badgeService: sl<BadgeService>(),
+      bodyPrefetchService: sl<BodyPrefetchService>(),
       connectivityService: sl<ConnectivityService>(),
       database: sl<DeltaTokenDatasource>(),
       emailLocalDatasource: sl<EmailLocalDatasource>(),

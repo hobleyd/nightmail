@@ -38,6 +38,49 @@ class KnownSenders extends Table {
   Set<Column> get primaryKey => {accountId, address};
 }
 
+/// Address-book cache backing the recipient typeahead, refreshed at most once
+/// a day by `ContactCacheSyncService`. Plaintext for the same reason as
+/// [KnownSenders] — [searchText] has to be `LIKE`-queryable.
+///
+/// [accountId] is a real account id for directory/personal contacts, or the
+/// sentinel `__system__` for the OS address book (which is not account-scoped).
+/// [source] is a `ContactSource.name`, used to rank matches.
+///
+/// The row class is renamed because drift would otherwise generate
+/// `CachedContact`, which is the domain entity this table stores.
+@DataClassName('CachedContactRow')
+class CachedContacts extends Table {
+  TextColumn get accountId => text()();
+  TextColumn get address => text()(); // always lower-cased
+  TextColumn get name => text()();
+
+  /// `"<lower name> <lower address>"` — the single column the typeahead's
+  /// `LIKE` runs against, so one index covers both name and address matching.
+  TextColumn get searchText => text()();
+  TextColumn get source => text()();
+  IntColumn get updatedAtMs => integer()();
+
+  @override
+  Set<Column> get primaryKey => {accountId, address};
+}
+
+/// One row per account (plus `__system__`) recording when its slice of
+/// [CachedContacts] was last refreshed, so a restart doesn't re-pull the whole
+/// address book and a partial failure can be retried sooner than the full TTL.
+class ContactSyncStates extends Table {
+  TextColumn get accountId => text()();
+  IntColumn get syncedAtMs => integer()();
+  IntColumn get contactCount => integer().withDefault(const Constant(0))();
+
+  /// `ok` | `partial` | `error` — `partial` and `error` use a shorter retry
+  /// interval than a clean sync.
+  TextColumn get status => text()();
+  TextColumn get detail => text().nullable()();
+
+  @override
+  Set<Column> get primaryKey => {accountId};
+}
+
 /// Cached mail folder metadata for offline-first startup.
 /// Not encrypted — contains only IDs, names, and counts.
 class CachedFolders extends Table {
@@ -191,7 +234,7 @@ class PendingOperations extends Table {
   TextColumn get lastError => text().nullable()();
 }
 
-@DriftDatabase(tables: [CachedEmails, KnownSenders, SenderAliases, DeltaSyncTokens, CachedFolders, LocalDrafts, CatalogCache, AiConfig, CapabilityRouting, ScheduledReminders, ScheduledTaskReminders, PendingOperations])
+@DriftDatabase(tables: [CachedEmails, KnownSenders, SenderAliases, CachedContacts, ContactSyncStates, DeltaSyncTokens, CachedFolders, LocalDrafts, CatalogCache, AiConfig, CapabilityRouting, ScheduledReminders, ScheduledTaskReminders, PendingOperations])
 class AppDatabase extends _$AppDatabase
     implements
         DeltaTokenDatasource,
@@ -208,7 +251,7 @@ class AppDatabase extends _$AppDatabase
   AppDatabase.forTesting(QueryExecutor executor) : super(executor);
 
   @override
-  int get schemaVersion => 11;
+  int get schemaVersion => 12;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -225,6 +268,10 @@ class AppDatabase extends _$AppDatabase
           await customStatement(
             'CREATE INDEX idx_pending_operations_account_email_created '
             'ON pending_operations(account_id, email_id, created_at_ms)',
+          );
+          await customStatement(
+            'CREATE INDEX idx_cached_contacts_account_search '
+            'ON cached_contacts(account_id, search_text)',
           );
         },
         onUpgrade: (m, from, to) async {
@@ -269,6 +316,14 @@ class AppDatabase extends _$AppDatabase
           }
           if (from < 11) {
             await m.createTable(scheduledTaskReminders);
+          }
+          if (from < 12) {
+            await m.createTable(cachedContacts);
+            await m.createTable(contactSyncStates);
+            await customStatement(
+              'CREATE INDEX idx_cached_contacts_account_search '
+              'ON cached_contacts(account_id, search_text)',
+            );
           }
         },
       );

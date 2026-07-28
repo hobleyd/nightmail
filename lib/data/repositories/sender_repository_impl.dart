@@ -24,6 +24,18 @@ class SenderRepositoryImpl implements SenderRepository {
       _localDatasource.getSendersForAccount(accountId);
 
   @override
+  Future<List<KnownSenderEntry>> searchSendersForAccount({
+    required String accountId,
+    required String query,
+    int limit = 60,
+  }) =>
+      _localDatasource.searchSendersForAccount(
+        accountId: accountId,
+        query: query,
+        limit: limit,
+      );
+
+  @override
   Future<void> clearSendersForAccount(String accountId) =>
       _localDatasource.clearSendersForAccount(accountId);
 

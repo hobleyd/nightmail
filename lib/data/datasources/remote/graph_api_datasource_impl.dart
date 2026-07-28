@@ -23,6 +23,7 @@ import '../../models/todo_task_attachment_model.dart';
 import '../../models/todo_task_list_model.dart';
 import '../../models/todo_task_model.dart';
 import 'calendar_remote_datasource.dart';
+import 'contact_bulk_parser.dart';
 import 'email_remote_datasource.dart';
 import 'graph_delta_datasource.dart';
 import 'tasks_remote_datasource.dart';
@@ -1099,6 +1100,104 @@ class GraphApiDatasourceImpl
       if (e.response?.statusCode == 403) return null;
       throw _mapDioException(e);
     }
+  }
+
+  /// Graph's maximum page size is 999 for `/users` and `/me/contacts`; `/me/people`
+  /// caps out lower but accepts the larger value and clamps it itself.
+  static const _bulkPageSize = 999;
+
+  /// Ceiling on pages per collection — 25 × 999 covers any tenant we expect to
+  /// see. Hitting it is reported through [BulkFetchResult.truncated] rather
+  /// than silently returning a partial directory as if it were whole.
+  static const _maxBulkPages = 25;
+
+  /// Pulls this account's entire address book — Outlook contacts, the Entra
+  /// directory, and Graph's relevance-ranked `/me/people` — as raw, undecoded
+  /// page bodies for [parseGraphContactPages] to handle off the UI isolate.
+  /// Backs the daily cache refresh, not the typeahead.
+  ///
+  /// Each collection fails independently. `Contacts.Read` and `People.Read`
+  /// were added to the requested scopes after the first release, so accounts
+  /// authorised before that keep a token without them and 403 on two of the
+  /// three until they are signed in again from Settings; the directory (which
+  /// only needs the long-standing `User.Read.All`) still populates meanwhile.
+  Future<BulkFetchResult<GraphContactPages>> fetchAllContacts() async {
+    final failures = <String>[];
+    var truncated = false;
+
+    Future<List<String>> collect(
+      String label,
+      String path,
+      Map<String, dynamic> params,
+    ) async {
+      try {
+        final result = await _fetchAllGraphPages(path, params);
+        if (result.truncated) truncated = true;
+        return result.pages;
+      } catch (e) {
+        failures.add('$label: ${_describeBulk(e)}');
+        return const [];
+      }
+    }
+
+    final results = await Future.wait([
+      collect('contacts', '/me/contacts', {
+        '\$select': 'displayName,emailAddresses',
+        '\$top': _bulkPageSize,
+      }),
+      collect('directory', '/users', {
+        '\$select': 'displayName,mail,userPrincipalName',
+        '\$top': _bulkPageSize,
+      }),
+      collect('people', '/me/people', {
+        '\$select': 'displayName,scoredEmailAddresses',
+        '\$top': _bulkPageSize,
+      }),
+    ]);
+
+    return BulkFetchResult(
+      data: GraphContactPages(
+        personalContacts: results[0],
+        directoryUsers: results[1],
+        people: results[2],
+      ),
+      failures: failures,
+      truncated: truncated,
+    );
+  }
+
+  /// Walks one Graph collection, following `@odata.nextLink` until it runs out
+  /// or [_maxBulkPages] is reached. Bodies come back undecoded
+  /// (`ResponseType.plain`) so the JSON parse can happen in a background
+  /// isolate.
+  Future<({List<String> pages, bool truncated})> _fetchAllGraphPages(
+    String path,
+    Map<String, dynamic> baseParams,
+  ) async {
+    final pages = <String>[];
+    // nextLink is an absolute URL with the paging state already baked in, so
+    // after the first request the query parameters must not be re-applied.
+    String? nextLink;
+    for (var i = 0; i < _maxBulkPages; i++) {
+      final resp = await _dio.get<String>(
+        nextLink ?? path,
+        queryParameters: nextLink == null ? baseParams : null,
+        options: Options(responseType: ResponseType.plain),
+      );
+      final body = resp.data;
+      if (body == null || body.isEmpty) break;
+      pages.add(body);
+      nextLink = graphNextLink(body);
+      if (nextLink == null) return (pages: pages, truncated: false);
+    }
+    return (pages: pages, truncated: nextLink != null);
+  }
+
+  static String _describeBulk(Object e) {
+    if (e is DioException) {
+      return 'HTTP ${e.response?.statusCode ?? e.type.name}';
+    }
+    return e.toString();
   }
 
   /// Best-effort photo fetch — any failure (no photo set, no permission)

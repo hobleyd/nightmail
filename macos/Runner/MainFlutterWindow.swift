@@ -677,6 +677,8 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       case "search":
         let query = (call.arguments as? [String: Any])?["query"] as? String ?? ""
         self.handleSearch(query: query, result: result)
+      case "fetchAll":
+        self.handleFetchAll(result: result)
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -767,8 +769,30 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
   }
 
   private func handleSearch(query: String, result: @escaping FlutterResult) {
-    let status = CNContactStore.authorizationStatus(for: .contacts)
-    guard status == .authorized else {
+    // Substring filter applied during enumeration, matching the Dart-side
+    // fallback path. Only reached before the contact cache has been populated
+    // or when compose has no account selected; the typeahead normally reads
+    // the cache that fetchAll fills.
+    let q = query.lowercased()
+    enumerateContacts(result: result) { displayName, address in
+      address.lowercased().contains(q) || displayName.lowercased().contains(q)
+    }
+  }
+
+  /// Returns the whole address book for the daily contact-cache refresh, so
+  /// the typeahead never has to walk CNContactStore on a keystroke.
+  private func handleFetchAll(result: @escaping FlutterResult) {
+    enumerateContacts(result: result) { _, _ in true }
+  }
+
+  /// Walks CNContactStore off the main thread, emitting one `(name, address)`
+  /// entry per email address that passes `include`. Replies on the main
+  /// thread, as FlutterResult requires.
+  private func enumerateContacts(
+    result: @escaping FlutterResult,
+    include: @escaping (String, String) -> Bool
+  ) {
+    guard CNContactStore.authorizationStatus(for: .contacts) == .authorized else {
       result([])
       return
     }
@@ -777,18 +801,23 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       let keysToFetch: [CNKeyDescriptor] = [
         CNContactGivenNameKey as CNKeyDescriptor,
         CNContactFamilyNameKey as CNKeyDescriptor,
+        CNContactOrganizationNameKey as CNKeyDescriptor,
         CNContactEmailAddressesKey as CNKeyDescriptor,
       ]
       let fetchRequest = CNContactFetchRequest(keysToFetch: keysToFetch)
-      let q = query.lowercased()
       var matches: [[String: String]] = []
       try? store.enumerateContacts(with: fetchRequest) { contact, _ in
-        let displayName = [contact.givenName, contact.familyName]
+        // Company entries in the address book have no given/family name, so
+        // fall back to the organisation rather than showing a bare address.
+        var displayName = [contact.givenName, contact.familyName]
           .filter { !$0.isEmpty }
           .joined(separator: " ")
+        if displayName.isEmpty {
+          displayName = contact.organizationName
+        }
         for email in contact.emailAddresses {
           let address = email.value as String
-          if address.lowercased().contains(q) || displayName.lowercased().contains(q) {
+          if include(displayName, address) {
             matches.append(["address": address, "name": displayName])
           }
         }

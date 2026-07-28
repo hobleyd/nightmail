@@ -78,6 +78,14 @@ class MicrosoftAuthService implements AuthService {
     'https://graph.microsoft.com/Calendars.ReadWrite',
     'https://graph.microsoft.com/Tasks.ReadWrite',
     'https://graph.microsoft.com/User.Read.All',
+    // Bulk address-book caching for the recipient typeahead: Contacts.Read
+    // covers /me/contacts and People.Read covers /me/people. Accounts
+    // authorised before these were added keep a token without them and 403 on
+    // those two collections until they are re-authenticated from Settings —
+    // GraphApiDatasourceImpl.fetchAllContacts records that as a partial sync
+    // and still caches the Entra directory, which only needs User.Read.All.
+    'https://graph.microsoft.com/Contacts.Read',
+    'https://graph.microsoft.com/People.Read',
   ];
 
   String get _baseUrl =>

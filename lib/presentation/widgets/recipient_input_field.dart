@@ -73,6 +73,10 @@ class RecipientInputFieldState extends State<RecipientInputField> {
   List<ContactSuggestion> _suggestions = [];
   int _suggestionIndex = -1;
   Timer? _searchDebounce;
+
+  /// Incremented per dispatched search; a result is only applied if its id is
+  /// still the latest, so out-of-order responses are dropped.
+  int _searchRequestId = 0;
   bool _suppressNextFocusLoss = false;
 
   @override
@@ -157,6 +161,12 @@ class RecipientInputFieldState extends State<RecipientInputField> {
       if (!mounted) return;
       final query = _inputController.text.trim();
       if (query.isEmpty) return;
+      // Cancelling the debounce timer does not cancel a search already
+      // awaiting, so tag each one: without this a slow lookup (the live
+      // fallback before the contact cache has been populated) can land after a
+      // newer, faster one and repopulate the dropdown with results for a query
+      // the user has already typed past.
+      final requestId = ++_searchRequestId;
       try {
         final List<ContactSuggestion> results;
         final accountId = widget.accountId;
@@ -169,7 +179,7 @@ class RecipientInputFieldState extends State<RecipientInputField> {
         } else {
           results = await sl<SystemContactsRepository>().search(query);
         }
-        if (mounted) _setSuggestions(results);
+        if (mounted && requestId == _searchRequestId) _setSuggestions(results);
       } catch (e) {
         debugPrint('[NightMail] recipient search error: $e');
       }

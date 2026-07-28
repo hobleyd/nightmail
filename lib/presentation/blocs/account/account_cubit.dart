@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:equatable/equatable.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -10,6 +10,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../domain/repositories/email_repository.dart';
 import '../../../infrastructure/accounts/account.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
+import '../../../infrastructure/contacts/contact_cache_sync_service.dart';
 import '../../../infrastructure/notifications/calendar_reminder_service.dart';
 import '../../../infrastructure/notifications/task_reminder_service.dart';
 
@@ -75,6 +76,7 @@ class AccountCubit extends Cubit<AccountState> {
     required this._accountManager,
     required this._emailRepository,
     required this._calendarReminderService,
+    required this._contactCacheSync,
     required TaskReminderService taskReminderService,
   })  : _taskReminderService = taskReminderService,
         super(const AccountLoading()) {
@@ -85,6 +87,7 @@ class AccountCubit extends Cubit<AccountState> {
   final AccountManager _accountManager;
   final EmailRepository _emailRepository;
   final CalendarReminderService _calendarReminderService;
+  final ContactCacheSyncService _contactCacheSync;
   final TaskReminderService _taskReminderService;
   late final StreamSubscription<String> _authFailureSub;
   late final StreamSubscription<String> _authSuccessSub;
@@ -222,6 +225,10 @@ class AccountCubit extends Cubit<AccountState> {
   Future<void> addAccount(Account account) async {
     await _accountManager.addAccount(account);
     await _emitLoaded();
+    // Pull the new account's address book now rather than waiting for the next
+    // staleness tick, so the recipient typeahead is useful straight away.
+    unawaited(_syncContacts(() =>
+        _contactCacheSync.syncAccount(account.id, force: true)));
   }
 
   Future<void> updateAccount(Account account) async {
@@ -246,6 +253,7 @@ class AccountCubit extends Cubit<AccountState> {
     await _emailRepository.clearCacheForAccount(accountId);
     await _calendarReminderService.clearAccount(accountId);
     await _taskReminderService.clearAccount(accountId);
+    await _syncContacts(() => _contactCacheSync.clearAccount(accountId));
     if (_accountManager.hasAccounts) {
       await _emitLoaded();
     } else {
@@ -272,8 +280,10 @@ class AccountCubit extends Cubit<AccountState> {
 
   /// Re-authenticate the active Microsoft or Gmail account via OAuth.
   Future<void> reauthenticateActiveOAuth() async {
+    final accountId = _accountManager.activeAccount?.id;
     await _accountManager.reauthenticateActiveOAuth();
     await _emitLoaded();
+    if (accountId != null) _refetchContactsAfterReauth(accountId);
   }
 
   /// Re-authenticate a specific Microsoft or Gmail account, whether or not it is
@@ -281,6 +291,26 @@ class AccountCubit extends Cubit<AccountState> {
   Future<void> reauthenticateOAuthAccount(String accountId) async {
     await _accountManager.reauthenticateOAuthAccount(accountId);
     await _emitLoaded();
+    _refetchContactsAfterReauth(accountId);
+  }
+
+  /// Re-consent is usually how a contact source that was 403ing becomes
+  /// available (the Graph `Contacts.Read`/`People.Read` scopes were added after
+  /// the first release), so throw away what was cached under the old grant and
+  /// refetch rather than waiting out the daily TTL.
+  void _refetchContactsAfterReauth(String accountId) {
+    unawaited(_syncContacts(
+        () => _contactCacheSync.invalidateAccount(accountId)));
+  }
+
+  /// A contact refresh is a background nicety — never let one surface as an
+  /// error on an account operation that otherwise succeeded.
+  Future<void> _syncContacts(Future<void> Function() run) async {
+    try {
+      await run();
+    } catch (e) {
+      debugPrint('[Contacts] refresh after account change failed: $e');
+    }
   }
 
   /// Re-authenticate the active IMAP account with the supplied password.

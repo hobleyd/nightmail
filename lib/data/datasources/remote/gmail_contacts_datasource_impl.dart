@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import '../../../domain/entities/contact_details.dart';
 import '../../../domain/entities/contact_suggestion.dart';
 import '../../../infrastructure/http/google_people_http_client.dart';
+import 'contact_bulk_parser.dart';
 
 class GmailContactsDatasourceImpl {
   GmailContactsDatasourceImpl({required GooglePeopleHttpClient client})
@@ -16,6 +17,107 @@ class GmailContactsDatasourceImpl {
 
   static const _detailsReadMask =
       'emailAddresses,names,phoneNumbers,organizations,photos';
+
+  /// People API's maximum page size for all three bulk collections.
+  static const _bulkPageSize = 1000;
+
+  /// Ceiling on pages per collection. 20 × 1000 covers any realistic address
+  /// book or Workspace domain; the cap exists so a pathological tenant can't
+  /// turn the daily refresh into an unbounded crawl. Truncation is reported
+  /// through [BulkFetchResult.truncated] rather than passing silently.
+  static const _maxBulkPages = 20;
+
+  /// Pulls this account's entire address book — personal contacts, the
+  /// Workspace directory, and Google's auto-saved "other contacts" — as raw,
+  /// undecoded page bodies for [parseGooglePeoplePages] to handle off the UI
+  /// isolate. Backs the daily cache refresh, not the typeahead.
+  ///
+  /// Each collection is fetched independently and a failure in one is recorded
+  /// rather than thrown: consumer Gmail accounts have no directory (404/403),
+  /// and an account authorised before the contacts scopes were added 403s on
+  /// all three until it is signed in again. A partial address book still beats
+  /// none.
+  Future<BulkFetchResult<GooglePeoplePages>> fetchAllContacts() async {
+    final failures = <String>[];
+    var truncated = false;
+
+    Future<List<String>> collect(
+      String label,
+      String path,
+      Map<String, dynamic> params,
+    ) async {
+      try {
+        final result = await _fetchAllPages(path, params);
+        if (result.truncated) truncated = true;
+        return result.pages;
+      } catch (e) {
+        failures.add('$label: ${_describe(e)}');
+        return const [];
+      }
+    }
+
+    const readMask = 'names,emailAddresses';
+    final results = await Future.wait([
+      collect('connections', '/people/me/connections', {
+        'personFields': readMask,
+        'pageSize': _bulkPageSize,
+      }),
+      collect('otherContacts', '/otherContacts', {
+        'readMask': readMask,
+        'pageSize': _bulkPageSize,
+      }),
+      collect('directory', '/people:listDirectoryPeople', {
+        'readMask': readMask,
+        'sources': 'DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE',
+        'pageSize': _bulkPageSize,
+      }),
+    ]);
+
+    return BulkFetchResult(
+      data: GooglePeoplePages(
+        connections: results[0],
+        otherContacts: results[1],
+        directory: results[2],
+      ),
+      failures: failures,
+      truncated: truncated,
+    );
+  }
+
+  /// Walks one People API collection, following `nextPageToken` until it runs
+  /// out or [_maxBulkPages] is reached. Bodies come back undecoded
+  /// (`ResponseType.plain`) so the JSON parse can happen in a background
+  /// isolate.
+  Future<({List<String> pages, bool truncated})> _fetchAllPages(
+    String path,
+    Map<String, dynamic> baseParams,
+  ) async {
+    final pages = <String>[];
+    String? pageToken;
+    for (var i = 0; i < _maxBulkPages; i++) {
+      final resp = await _dio.get<String>(
+        path,
+        queryParameters: {
+          ...baseParams,
+          if (pageToken != null) 'pageToken': pageToken,
+        },
+        options: Options(responseType: ResponseType.plain),
+      );
+      final body = resp.data;
+      if (body == null || body.isEmpty) break;
+      pages.add(body);
+      pageToken = googleNextPageToken(body);
+      if (pageToken == null) return (pages: pages, truncated: false);
+    }
+    return (pages: pages, truncated: pageToken != null);
+  }
+
+  static String _describe(Object e) {
+    if (e is DioException) {
+      return 'HTTP ${e.response?.statusCode ?? e.type.name}';
+    }
+    return e.toString();
+  }
 
   Future<List<ContactSuggestion>> searchContacts(String query) async {
     final seen = <String>{};

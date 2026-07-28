@@ -7,6 +7,15 @@ abstract interface class SenderRepository {
 
   Future<List<KnownSenderEntry>> getSendersForAccount(String accountId);
 
+  /// Substring match over this account's known senders, filtered in SQL rather
+  /// than by loading the whole table — the recipient typeahead calls this on
+  /// every keystroke. [query] must already be lower-cased and trimmed.
+  Future<List<KnownSenderEntry>> searchSendersForAccount({
+    required String accountId,
+    required String query,
+    int limit = 60,
+  });
+
   Future<void> clearSendersForAccount(String accountId);
 
   Future<void> mergeSenders({

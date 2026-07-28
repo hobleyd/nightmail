@@ -6,6 +6,7 @@ import 'package:workmanager/workmanager.dart';
 
 import '../../data/datasources/local/folder_local_datasource.dart';
 import '../../infrastructure/accounts/account_manager.dart';
+import '../../infrastructure/contacts/contact_cache_sync_service.dart';
 import '../../infrastructure/notifications/calendar_reminder_service.dart';
 import '../../infrastructure/notifications/notification_service.dart';
 import '../../infrastructure/notifications/task_reminder_service.dart';
@@ -186,5 +187,15 @@ Future<void> _runBackgroundPoll() async {
     await sl<TaskReminderService>().reconcileAll();
   } catch (_) {
     // Same contract as the calendar pass above.
+  }
+
+  try {
+    // Keeps the recipient typeahead's address-book cache within its daily TTL
+    // on mobile, where the app is routinely killed before the foreground
+    // refresh timer ever fires. syncAll is a no-op for accounts that are still
+    // fresh, so this costs nothing on most wakes.
+    await sl<ContactCacheSyncService>().syncAll();
+  } catch (_) {
+    // Same contract as the two passes above.
   }
 }

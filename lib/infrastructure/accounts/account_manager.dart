@@ -72,6 +72,14 @@ class AccountManager {
   final _authSuccessController = StreamController<String>.broadcast();
   Stream<String> get authSuccesses => _authSuccessController.stream;
 
+  final _readyCompleter = Completer<void>();
+
+  /// Completes the first time [initialize] finishes, so background work that
+  /// needs the account list can start without racing the UI's own init or
+  /// calling [initialize] a second time. Never completes if [initialize]
+  /// throws — await it with a timeout.
+  Future<void> get ready => _readyCompleter.future;
+
   // Lazily built and cached per Gmail account ID so contact search works for
   // any account regardless of which one is currently active.
   final Map<String, GmailContactsDatasourceImpl> _contactsDatasourceCache = {};
@@ -238,6 +246,7 @@ class AccountManager {
       _buildDatasourcesForActiveAccount();
       await _migrateLegacyTokenIfNeeded();
     }
+    if (!_readyCompleter.isCompleted) _readyCompleter.complete();
   }
 
   /// One-time migration for the case where accounts were loaded from the legacy

@@ -16,9 +16,12 @@ import 'data/datasources/local/folder_local_datasource.dart';
 import 'data/datasources/local/pending_operations_datasource.dart';
 import 'data/datasources/local/reminder_schedule_local_datasource.dart';
 import 'data/datasources/local/task_reminder_schedule_local_datasource.dart';
+import 'data/datasources/local/contact_cache_local_datasource.dart';
+import 'data/datasources/local/contact_cache_local_datasource_impl.dart';
 import 'data/datasources/local/sender_local_datasource.dart';
 import 'data/datasources/local/sender_local_datasource_impl.dart';
 import 'data/repositories/calendar_repository_impl.dart';
+import 'data/repositories/contact_cache_repository_impl.dart';
 import 'data/repositories/contact_details_repository_impl.dart';
 import 'data/repositories/directory_contacts_repository_impl.dart';
 import 'data/repositories/email_repository_impl.dart';
@@ -52,6 +55,7 @@ import 'presentation/blocs/ai/ai_folder_cubit.dart';
 import 'presentation/blocs/ai/ai_settings_cubit.dart';
 import 'domain/repositories/calendar_repository.dart';
 import 'domain/repositories/contact_details_repository.dart';
+import 'domain/repositories/contact_cache_repository.dart';
 import 'domain/repositories/directory_contacts_repository.dart';
 import 'domain/repositories/email_repository.dart';
 import 'domain/repositories/sender_repository.dart';
@@ -110,6 +114,7 @@ import 'infrastructure/accounts/account_manager.dart';
 import 'infrastructure/accounts/account_storage.dart';
 import 'infrastructure/badge/badge_service.dart';
 import 'infrastructure/cache/cache_encryption_service.dart';
+import 'infrastructure/contacts/contact_cache_sync_service.dart';
 import 'infrastructure/network/connectivity_service.dart';
 import 'infrastructure/notifications/calendar_reminder_service.dart';
 import 'infrastructure/notifications/task_reminder_service.dart';
@@ -202,6 +207,9 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton<SenderLocalDatasource>(
     () => SenderLocalDatasourceImpl(database: sl<AppDatabase>()),
   );
+  sl.registerLazySingleton<ContactCacheLocalDatasource>(
+    () => ContactCacheLocalDatasourceImpl(database: sl<AppDatabase>()),
+  );
   sl.registerLazySingleton<ConnectivityService>(() => ConnectivityServiceImpl());
   sl.registerLazySingleton(() => RemovalTombstoneStore());
   sl.registerLazySingleton(
@@ -231,6 +239,18 @@ Future<void> configureDependencies() async {
   );
   sl.registerLazySingleton<SystemContactsRepository>(
     () => SystemContactsRepositoryImpl(),
+  );
+  sl.registerLazySingleton<ContactCacheRepository>(
+    () => ContactCacheRepositoryImpl(
+      localDatasource: sl<ContactCacheLocalDatasource>(),
+    ),
+  );
+  sl.registerLazySingleton(
+    () => ContactCacheSyncService(
+      accountManager: sl<AccountManager>(),
+      cache: sl<ContactCacheLocalDatasource>(),
+      systemContacts: sl<SystemContactsRepository>(),
+    ),
   );
   sl.registerLazySingleton<DirectoryContactsRepository>(
     () => DirectoryContactsRepositoryImpl(accountManager: sl<AccountManager>()),
@@ -283,6 +303,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => MergeSenderAddresses(sl<SenderRepository>()));
   sl.registerLazySingleton(() => SearchContacts(
         senderRepository: sl<SenderRepository>(),
+        contactCacheRepository: sl<ContactCacheRepository>(),
         systemContactsRepository: sl<SystemContactsRepository>(),
         directoryContactsRepository: sl<DirectoryContactsRepository>(),
       ));
@@ -339,6 +360,7 @@ Future<void> configureDependencies() async {
       accountManager: sl<AccountManager>(),
       emailRepository: sl<EmailRepository>(),
       calendarReminderService: sl<CalendarReminderService>(),
+      contactCacheSync: sl<ContactCacheSyncService>(),
       taskReminderService: sl<TaskReminderService>(),
     ),
   );

@@ -16,6 +16,7 @@ import 'data/services/inline_attachment_cache.dart';
 import 'domain/usecases/send_email.dart';
 import 'infrastructure/accounts/account_manager.dart';
 import 'infrastructure/background/background_mail_service.dart';
+import 'infrastructure/contacts/contact_cache_sync_service.dart';
 import 'infrastructure/notifications/notification_service.dart';
 import 'injection_container.dart';
 import 'presentation/blocs/account/account_cubit.dart';
@@ -195,6 +196,12 @@ await configureDependencies();
   unawaited(sl<InlineAttachmentCache>().prune());
   await BackgroundMailService.initialize();
   await BackgroundMailService.schedulePeriodicCheck();
+  // Refresh the address-book cache behind the recipient typeahead if it has
+  // gone stale (at most once a day per account), and keep re-checking for
+  // sessions that stay open for days. Deliberately not awaited — it pulls
+  // whole directories over the network, and the dropdown reads whatever is
+  // already cached in the meantime.
+  unawaited(_startContactCacheSync());
   // Initialize the notification plugin and check whether the app was launched
   // by a notification tap (handles iOS/Android terminated-state cold starts).
   // Must complete before runApp so that _pendingAction is set before
@@ -240,6 +247,27 @@ await configureDependencies();
   }
 
   runApp(const NightMailApp());
+}
+
+/// Brings the recipient typeahead's address-book cache up to date and keeps it
+/// there. Only the main window does this: `desktop_multi_window` gives each
+/// secondary window its own engine and therefore its own service locator, so
+/// starting it anywhere else would have several isolates writing the same
+/// SQLite file at once.
+///
+/// AccountCubit owns the call to `AccountManager.initialize()`, so this waits
+/// on the manager's `ready` future rather than initialising it a second time.
+/// The timeout is a backstop for the keychain-unavailable path, where
+/// initialize can fail and never complete.
+Future<void> _startContactCacheSync() async {
+  try {
+    await sl<AccountManager>().ready.timeout(const Duration(seconds: 30));
+    final sync = sl<ContactCacheSyncService>();
+    sync.startPeriodicRefresh();
+    await sync.syncAll();
+  } catch (e) {
+    debugPrint('[Contacts] initial cache sync skipped: $e');
+  }
 }
 
 class NightMailApp extends StatefulWidget {

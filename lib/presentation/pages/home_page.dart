@@ -20,6 +20,7 @@ import '../../core/settings/app_settings.dart';
 import '../../infrastructure/notifications/calendar_reminder_service.dart';
 import '../../infrastructure/notifications/notification_action.dart';
 import '../../infrastructure/notifications/notification_service.dart';
+import '../../infrastructure/notifications/reminder_reconcile_channel.dart';
 import '../../infrastructure/notifications/task_reminder_service.dart';
 import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
@@ -64,6 +65,14 @@ class HomePage extends StatelessWidget {
     // cancels any existing timer first, so repeated builds are safe.
     sl<CalendarReminderService>().startPeriodic();
     sl<TaskReminderService>().startPeriodic();
+    // Sub-windows cannot reach the OS scheduler themselves, so they nudge the
+    // main window to reconcile as soon as they change a reminder instead of
+    // leaving it to the next 15-minute cycle. Re-registering only swaps the
+    // handler, so repeated builds are safe here too.
+    unawaited(ReminderReconcileChannel.listen(() async {
+      await sl<CalendarReminderService>().reconcileAll();
+      await sl<TaskReminderService>().reconcileAll();
+    }));
     return MultiBlocProvider(
       providers: [
         BlocProvider.value(value: sl<AccountCubit>()),

@@ -9,7 +9,9 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
+import '../../core/platform/window_utils.dart';
 import 'notification_action.dart';
+import 'reminder_reconcile_channel.dart';
 
 // Top-level callback — required for background isolate on Android when the
 // app is killed and the user taps a notification.
@@ -25,6 +27,27 @@ class NotificationService {
 
   static final _localPlugin = FlutterLocalNotificationsPlugin();
   static Future<void>? _localInitFuture;
+
+  /// The `flutter_local_notifications` plugin, or null in a sub-window engine —
+  /// every call through it is a deliberate no-op there.
+  ///
+  /// The plugin belongs to the main window alone. On Windows it is FFI-based:
+  /// `initialize` hands the native DLL a `NativeCallable.listener` trampoline
+  /// owned by the calling isolate and nothing ever disposes it. Because
+  /// `desktop_multi_window` gives every sub-window its own engine and isolate,
+  /// a sub-window that so much as constructed this service registered a second
+  /// native plugin against the same app user model id — and closing that window
+  /// killed its isolate, deleting the trampoline while the native side kept the
+  /// pointer. The next toast activation then invoked a deleted callback, which
+  /// is a *fatal VM abort* ("Callback invoked after it has been deleted"), not a
+  /// catchable exception: it took the entire process down, main window included.
+  ///
+  /// Nothing is lost by staying quiet in sub-windows. CalendarReminderService
+  /// and TaskReminderService run in the main window, reconcile every account's
+  /// events against the persisted schedule tables, and are already the
+  /// authority for what the OS actually holds.
+  static FlutterLocalNotificationsPlugin? get _plugin =>
+      AppWindow.isMain ? _localPlugin : null;
 
   final _linuxTimers = <String, Timer>{};
   final _actionController = StreamController<NotificationAction>.broadcast();
@@ -45,8 +68,11 @@ class NotificationService {
   // the native plugin does COM/registry setup that can outlast the
   // constructor's fire-and-forget call, so a bool flag let scheduleEventReminder
   // call zonedSchedule before the plugin had actually finished initializing.
-  Future<void> _initLocalNotifications() =>
-      _localInitFuture ??= _doInitLocalNotifications();
+  Future<void> _initLocalNotifications() {
+    // Sub-windows must never register the native callback — see [_plugin].
+    if (!AppWindow.isMain) return Future.value();
+    return _localInitFuture ??= _doInitLocalNotifications();
+  }
 
   /// Awaits plugin initialization and checks whether the app was launched by
   /// a notification tap (iOS/Android terminated-state). Call once in main()
@@ -55,7 +81,7 @@ class NotificationService {
     if (Platform.isMacOS) return;
     await _initLocalNotifications();
     try {
-      final details = await _localPlugin.getNotificationAppLaunchDetails();
+      final details = await _plugin?.getNotificationAppLaunchDetails();
       if (details?.didNotificationLaunchApp == true) {
         final action = _parsePayload(details?.notificationResponse?.payload);
         if (action != null) _pendingAction = action;
@@ -82,7 +108,7 @@ class NotificationService {
       guid: '6e452e7a-3c45-4b9e-8f1d-2a7b8c3d9e1f',
     );
 
-    await _localPlugin.initialize(
+    await _plugin?.initialize(
       settings: const InitializationSettings(
         android: android,
         iOS: darwin,
@@ -93,6 +119,23 @@ class NotificationService {
       onDidReceiveBackgroundNotificationResponse:
           _onBackgroundNotificationResponse,
     );
+  }
+
+  /// Hands a reminder change made in a sub-window to the main window, which is
+  /// the only engine that may talk to the OS scheduler (see [_plugin]).
+  ///
+  /// Returns true when the caller should stop — the change is the main window's
+  /// to apply now. Its reconcilers re-derive the correct schedule by *fetching*
+  /// the account, so the change has to be committed to the server before this
+  /// is called; every current caller awaits its API call first.
+  ///
+  /// macOS never gets here: its reminders go through a bespoke
+  /// UNUserNotificationCenter channel that is process-wide and works from any
+  /// engine, so sub-windows there schedule directly.
+  Future<bool> _handedToMainWindow() async {
+    if (AppWindow.isMain) return false;
+    await ReminderReconcileChannel.requestReconcile();
+    return true;
   }
 
   void _onNotificationResponse(NotificationResponse details) {
@@ -249,7 +292,7 @@ class NotificationService {
       'accountId': accountId,
     });
     try {
-      await _localPlugin.show(
+      await _plugin?.show(
         id: notifId,
         title: title,
         body: body,
@@ -291,7 +334,7 @@ class NotificationService {
     if (Platform.isMacOS) return;
     await _initLocalNotifications();
     try {
-      await _localPlugin.show(
+      await _plugin?.show(
         id: accountLabel.hashCode.abs() % 0x7FFFFFFF,
         title: newCount == 1 ? 'New email' : '$newCount new emails',
         body: accountLabel,
@@ -324,12 +367,12 @@ class NotificationService {
       }
     }
     if (Platform.isAndroid) {
-      final impl = _localPlugin.resolvePlatformSpecificImplementation<
+      final impl = _plugin?.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
       return await impl?.requestNotificationsPermission() ?? false;
     }
     if (Platform.isIOS) {
-      final impl = _localPlugin.resolvePlatformSpecificImplementation<
+      final impl = _plugin?.resolvePlatformSpecificImplementation<
           IOSFlutterLocalNotificationsPlugin>();
       return await impl?.requestPermissions(
             alert: true,
@@ -368,6 +411,8 @@ class NotificationService {
       return;
     }
 
+    if (await _handedToMainWindow()) return;
+
     if (Platform.isLinux) {
       _scheduleLinux(
         key: key,
@@ -388,7 +433,7 @@ class NotificationService {
         tz.UTC,
         triggerTime.millisecondsSinceEpoch,
       );
-      await _localPlugin.zonedSchedule(
+      await _plugin?.zonedSchedule(
         id: _notifId(accountId, eventId),
         title: eventTitle,
         body: 'Starting in ${_minutesLabel(reminderMinutes)}',
@@ -412,7 +457,7 @@ class NotificationService {
     final delay = triggerTime.toUtc().difference(DateTime.now().toUtc());
     _linuxTimers[key] = Timer(delay, () {
       _linuxTimers.remove(key);
-      _localPlugin.show(
+      _plugin?.show(
         id: key.hashCode.abs() % 0x7FFFFFFF,
         title: eventTitle,
         body: 'Starting in ${_minutesLabel(reminderMinutes)}',
@@ -434,8 +479,9 @@ class NotificationService {
       } catch (_) {}
       return;
     }
+    if (await _handedToMainWindow()) return;
     _linuxTimers.remove(key)?.cancel();
-    await _localPlugin.cancel(id: _notifId(accountId, eventId));
+    await _plugin?.cancel(id: _notifId(accountId, eventId));
   }
 
   /// Whether a future notification handed to [scheduleTaskReminder] is held by
@@ -474,7 +520,7 @@ class NotificationService {
 
     await _initLocalNotifications();
     try {
-      await _localPlugin.show(
+      await _plugin?.show(
         id: _taskNotifId(accountId, taskId),
         title: title,
         body: body,
@@ -509,7 +555,7 @@ class NotificationService {
 
     await _initLocalNotifications();
     try {
-      await _localPlugin.show(
+      await _plugin?.show(
         id: 'tasks::$accountId'.hashCode.abs() % 0x7FFFFFFF,
         title: title,
         body: accountLabel,
@@ -553,12 +599,14 @@ class NotificationService {
       return;
     }
 
+    if (await _handedToMainWindow()) return;
+
     if (Platform.isLinux) {
       _linuxTimers[key]?.cancel();
       final delay = triggerUtc.difference(DateTime.now().toUtc());
       _linuxTimers[key] = Timer(delay, () {
         _linuxTimers.remove(key);
-        _localPlugin.show(
+        _plugin?.show(
           id: _taskNotifId(accountId, taskId),
           title: title,
           body: body,
@@ -576,7 +624,7 @@ class NotificationService {
         tz.UTC,
         triggerUtc.millisecondsSinceEpoch,
       );
-      await _localPlugin.zonedSchedule(
+      await _plugin?.zonedSchedule(
         id: _taskNotifId(accountId, taskId),
         title: title,
         body: body,
@@ -603,8 +651,9 @@ class NotificationService {
       } catch (_) {}
       return;
     }
+    if (await _handedToMainWindow()) return;
     _linuxTimers.remove(key)?.cancel();
-    await _localPlugin.cancel(id: _taskNotifId(accountId, taskId));
+    await _plugin?.cancel(id: _taskNotifId(accountId, taskId));
   }
 
   static String _taskPayload({

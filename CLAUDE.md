@@ -63,6 +63,68 @@ Use an array to retain all channel instances:
 private var allChannels: [FlutterMethodChannel] = []
 ```
 
+## Sub-Windows and FFI Plugins
+
+**Critical rule: an FFI plugin may only be initialized in the main window.**
+
+`desktop_multi_window` re-enters `main()` with a fresh `FlutterEngine` for every
+sub-window, so each one gets its own isolate, service locator and statics.
+FFI plugins hand the native side a `NativeCallable` trampoline **owned by the
+isolate that registered it**. When a sub-window closes, its isolate dies and the
+trampoline is deleted — but the native library keeps the pointer. The next time
+native code fires it, the VM aborts:
+
+```
+error: Callback invoked after it has been deleted.
+isolate_group=(nil), isolate=(nil)
+Lost connection to device.
+```
+
+That is a **`FATAL` in the VM, not a Dart exception** — no `try`/`catch` can
+contain it, and it kills the whole process including the main window. Note the
+`isolate=(nil)`: the callback ran on a native thread with no owning isolate,
+which is the signature of this bug. Nothing in the Dart stack will point at the
+plugin, and the symbolized frame is usually meaningless
+(`InternalFlutterGpu_Texture_AsImage` or similar nearest-symbol noise).
+
+Check `windows/flutter/generated_plugins.cmake` for what is affected —
+`FLUTTER_FFI_PLUGIN_LIST` is the list of plugins with this hazard.
+`flutter_local_notifications_windows` is the live one; it never disposes its
+`NativeCallable` and the app never calls its `dispose()`.
+
+`AppWindow.isMain` (`lib/core/platform/window_utils.dart`) is how code tells
+which engine it is in. It is set from `main()` **before**
+`configureDependencies()`, because lazy singletons decide at construction time
+whether they may touch process-wide native resources.
+
+### How the notification plugin applies the rule
+
+`NotificationService._plugin` returns null outside the main window, so every
+call through it is a no-op — including `initialize`, so the `NativeCallable` is
+never registered in a sub-window at all. Beware that the plugin is easy to
+reach by accident: `NotificationService` self-initializes in its constructor and
+is pulled in transitively by `CalendarBloc`, `TasksBloc` and `EventEditBloc`, so
+merely opening the Calendar, Tasks or Event-Edit window used to be enough.
+
+Reminders are not lost. `CalendarReminderService`/`TaskReminderService` run in
+the main window only (started from `HomePage.build`), reconcile every account's
+events against the persisted schedule tables, and are the authority for what the
+OS actually holds. Sub-windows nudge them via `ReminderReconcileChannel` (a
+`unidirectional` `WindowMethodChannel` — the app's only cross-window channel)
+so a change applies at once instead of waiting up to 15 min for the next cycle.
+`reconcileAll()` therefore coalesces rather than drops a request that lands
+mid-cycle. Because the reconcilers re-derive state by *fetching* the account,
+anything that nudges must commit to the server first.
+
+macOS is exempt: its notifications go through a bespoke
+`UNUserNotificationCenter` method channel that is process-wide and works from
+any engine, so sub-windows there schedule directly.
+
+**Known remaining hole:** hot restart replaces the root isolate, deleting the
+main window's trampoline while the native plugin created by the old isolate
+lives on — the same fatal abort, debug builds only. Upstream limitation; if you
+hit this crash in `flutter run` and no sub-window was involved, that is why.
+
 ## macOS Privacy Permissions (TCC)
 
 ### Contacts

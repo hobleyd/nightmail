@@ -33,6 +33,7 @@ class CalendarReminderService {
 
   Timer? _timer;
   bool _reconciling = false;
+  bool _rerunRequested = false;
 
   /// Starts (or restarts) the periodic reconciliation timer. Safe to call
   /// repeatedly — any existing timer is cancelled first.
@@ -48,27 +49,48 @@ class CalendarReminderService {
   }
 
   /// Fetches upcoming events for every account and schedules/cancels
-  /// reminders so they match. Skips a cycle if one is already running.
+  /// reminders so they match.
+  ///
+  /// A request that arrives while a cycle is running does not run concurrently,
+  /// but nor is it dropped: it books exactly one more pass once the current one
+  /// finishes. A sub-window's nudge (see [ReminderReconcileChannel]) would
+  /// otherwise be lost whenever it happened to land mid-cycle — which is the
+  /// very delay it exists to avoid — and a cycle already past the account in
+  /// question would never see the change. Capped at one extra pass so a stream
+  /// of nudges cannot spin here indefinitely.
   Future<void> reconcileAll() async {
-    if (_reconciling) return;
+    if (_reconciling) {
+      _rerunRequested = true;
+      return;
+    }
     _reconciling = true;
     try {
-      for (final account in _accountManager.accounts) {
-        debugPrint(
-            'CalendarReminderService: reconciling account ${account.id} (${account.runtimeType}) ${account.emailAddress}');
-        try {
-          await _reconcileAccount(account);
-          debugPrint(
-              'CalendarReminderService: reconcile OK for account ${account.id}');
-        } catch (e) {
-          // Skip accounts that fail (auth error, network blip, calendar not
-          // supported for this account type) — the next cycle retries.
-          debugPrint(
-              'CalendarReminderService: reconcile failed for account ${account.id}: $e');
-        }
-      }
+      var passes = 0;
+      do {
+        _rerunRequested = false;
+        await _reconcileEveryAccount();
+        passes++;
+      } while (_rerunRequested && passes < 2);
     } finally {
       _reconciling = false;
+      _rerunRequested = false;
+    }
+  }
+
+  Future<void> _reconcileEveryAccount() async {
+    for (final account in _accountManager.accounts) {
+      debugPrint(
+          'CalendarReminderService: reconciling account ${account.id} (${account.runtimeType}) ${account.emailAddress}');
+      try {
+        await _reconcileAccount(account);
+        debugPrint(
+            'CalendarReminderService: reconcile OK for account ${account.id}');
+      } catch (e) {
+        // Skip accounts that fail (auth error, network blip, calendar not
+        // supported for this account type) — the next cycle retries.
+        debugPrint(
+            'CalendarReminderService: reconcile failed for account ${account.id}: $e');
+      }
     }
   }
 

@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'core/platform/window_utils.dart';
 import 'core/settings/window_bounds_service.dart';
 import 'data/database/app_database.dart';
 import 'data/services/inline_attachment_cache.dart';
@@ -60,6 +61,9 @@ void main(List<String> args) async {
   }
 
   if (args.firstOrNull == 'multi_window') {
+    // Must precede configureDependencies() — services keyed off this decide at
+    // construction time whether they may touch process-wide native resources.
+    AppWindow.markAsSubWindow();
     final windowId = args[1];
     final arguments = args[2].isEmpty
         ? <String, dynamic>{}

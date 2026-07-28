@@ -59,6 +59,7 @@ class TaskReminderService {
 
   Timer? _timer;
   bool _reconciling = false;
+  bool _rerunRequested = false;
 
   /// Starts (or restarts) the periodic reconciliation timer. Safe to call
   /// repeatedly — any existing timer is cancelled first.
@@ -74,23 +75,39 @@ class TaskReminderService {
   }
 
   /// Fetches open tasks for every account and schedules/fires/cancels due
-  /// notifications so they match. Skips a cycle if one is already running.
+  /// notifications so they match.
+  ///
+  /// Requests arriving mid-cycle book one more pass rather than being dropped —
+  /// same reasoning as [CalendarReminderService.reconcileAll].
   Future<void> reconcileAll() async {
-    if (_reconciling) return;
+    if (_reconciling) {
+      _rerunRequested = true;
+      return;
+    }
     _reconciling = true;
     try {
-      for (final account in _accountManager.accounts) {
-        try {
-          await _reconcileAccount(account);
-        } catch (e) {
-          // Skip accounts that fail (auth error, network blip, no tasks
-          // provider for this account type) — the next cycle retries.
-          debugPrint(
-              'TaskReminderService: reconcile failed for account ${account.id}: $e');
-        }
-      }
+      var passes = 0;
+      do {
+        _rerunRequested = false;
+        await _reconcileEveryAccount();
+        passes++;
+      } while (_rerunRequested && passes < 2);
     } finally {
       _reconciling = false;
+      _rerunRequested = false;
+    }
+  }
+
+  Future<void> _reconcileEveryAccount() async {
+    for (final account in _accountManager.accounts) {
+      try {
+        await _reconcileAccount(account);
+      } catch (e) {
+        // Skip accounts that fail (auth error, network blip, no tasks
+        // provider for this account type) — the next cycle retries.
+        debugPrint(
+            'TaskReminderService: reconcile failed for account ${account.id}: $e');
+      }
     }
   }
 

@@ -29,6 +29,7 @@ import '../blocs/compose/compose_bloc.dart';
 import '../blocs/compose/compose_event.dart';
 import '../blocs/compose/compose_state.dart';
 import 'compose_body_builder.dart';
+import 'error_snack_bar.dart';
 import 'html_email_editor.dart';
 import 'insert_link_dialog.dart';
 import 'recipient_input_field.dart';
@@ -119,12 +120,7 @@ class ComposeDialog extends StatelessWidget {
             ),
           );
         } else if (state is ComposeError) {
-          ScaffoldMessenger.of(listenerContext).showSnackBar(
-            SnackBar(
-              content: Text(state.message),
-              backgroundColor: Colors.red.shade700,
-            ),
-          );
+          showErrorSnackBar(listenerContext, state.message);
         }
       },
       child: Dialog(

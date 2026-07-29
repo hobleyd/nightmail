@@ -1,3 +1,4 @@
+import 'dart:io' show SocketException, TlsException;
 import 'dart:typed_data';
 
 import 'package:enough_mail/enough_mail.dart';
@@ -29,6 +30,9 @@ class ImapDatasourceImpl
 
   final ImapAccount _account;
   final ImapCredentialStorage _credentialStorage;
+
+  /// Ceiling on the whole SMTP connect → EHLO → STARTTLS → AUTH exchange.
+  static const _smtpConnectTimeout = Duration(seconds: 30);
 
   ImapClient? _client;
   String? _selectedMailboxPath;
@@ -661,7 +665,42 @@ class ImapDatasourceImpl
       throw const AuthException(message: 'No SMTP credentials stored');
     }
 
+    final host = _account.smtpHost;
+    final port = _account.smtpPort;
+    final useSsl = _account.smtpUseSsl;
+    final server = '$host:$port';
+
     final client = SmtpClient('nightmail', isLogEnabled: false);
+    try {
+      // `connectToServer`'s own timeout covers the TCP connect only, not the
+      // greeting that follows — so plaintext against an implicit-TLS port
+      // (usually 465) leaves the server waiting for a handshake and the send
+      // waiting for a greeting, forever. Bound the whole exchange instead.
+      await _connectAndAuthenticate(client, password).timeout(
+        _smtpConnectTimeout,
+        onTimeout: () => throw ServerException(
+          message: 'The SMTP server $server did not respond within '
+              '${_smtpConnectTimeout.inSeconds}s.'
+              '${useSsl ? '' : ' If this is an implicit-TLS port (usually 465), '
+                  'it is waiting for a TLS handshake that never comes — turn '
+                  '"Use SSL" on for outgoing mail.'}',
+        ),
+      );
+      return client;
+    } catch (e) {
+      // `disconnect`, not `quit`: a socket that just died mid-handshake throws
+      // again when QUIT is written to it, which would replace the real error.
+      try {
+        await client.disconnect();
+      } catch (_) {}
+      throw describeSmtpConnectFailure(e, server, useSsl);
+    }
+  }
+
+  Future<void> _connectAndAuthenticate(
+    SmtpClient client,
+    String password,
+  ) async {
     await client.connectToServer(
       _account.smtpHost,
       _account.smtpPort,
@@ -672,7 +711,72 @@ class ImapDatasourceImpl
       await client.startTls();
     }
     await client.authenticate(_account.emailAddress, password);
-    return client;
+  }
+
+  /// Maps an SMTP connect/authenticate failure onto this layer's exception
+  /// vocabulary so the repository turns it into a `Failure` with a message
+  /// worth reading. Anything unrecognised is passed through untouched.
+  @visibleForTesting
+  static Object describeSmtpConnectFailure(
+    Object error,
+    String server,
+    bool useSsl,
+  ) {
+    // HandshakeException is a TlsException, so this covers both.
+    if (error is TlsException) {
+      return ServerException(
+        message: describeSmtpTlsFailure(error, server, useSsl),
+      );
+    }
+    if (error is SocketException) {
+      return NetworkException(
+        message: 'Cannot reach SMTP server $server: '
+            '${error.osError?.message ?? error.message}',
+      );
+    }
+    if (error is SmtpException) {
+      final detail = error.message ?? error.response.errorMessage;
+      final code = error.response.code;
+      // A rejected AUTH is a credential problem, not a server problem — it has
+      // to arrive as an AuthFailure to prompt for re-authentication.
+      if (code == 535 || code == 534 || code == 530) {
+        return AuthException(message: 'SMTP rejected the sign-in: $detail');
+      }
+      return ServerException(
+        message: 'SMTP server $server refused the connection: $detail',
+        statusCode: code,
+      );
+    }
+    return error;
+  }
+
+  /// Turns Dart's opaque `HandshakeException: Handshake error in client` into
+  /// something a user can act on. The two causes we can name are worth naming:
+  /// TLS-on-a-plaintext-port (the default 587 with "Use SSL" ticked) reads as
+  /// garbage in the handshake, and an untrusted certificate says so in the
+  /// nested OS error. The raw text is kept on the end either way, because for
+  /// anything else it is the only clue there is.
+  @visibleForTesting
+  static String describeSmtpTlsFailure(
+    Object error,
+    String server,
+    bool useSsl,
+  ) {
+    final raw = error.toString();
+    final lower = raw.toLowerCase();
+
+    if (lower.contains('certificate')) {
+      return 'The SMTP server $server presented a certificate that could not '
+          'be verified. Check the host name matches the certificate. ($raw)';
+    }
+    if (useSsl) {
+      return 'TLS handshake with $server failed. "Use SSL" is on, so NightMail '
+          'expects TLS from the first byte — if this is a STARTTLS port '
+          '(usually 587) turn "Use SSL" off, or switch to the implicit-TLS '
+          'port (usually 465). ($raw)';
+    }
+    return 'STARTTLS upgrade with $server failed after the server advertised '
+        'support for it. ($raw)';
   }
 
   Future<void> _sendMime(MimeMessage message) async {
@@ -683,9 +787,17 @@ class ImapDatasourceImpl
         throw ServerException(message: 'SMTP error: ${response.code}');
       }
     } on SmtpException catch (e) {
-      throw ServerException(message: e.message ?? 'SMTP error');
+      throw ServerException(
+        message: e.message ?? 'SMTP error',
+        statusCode: e.response.code,
+      );
     } finally {
-      await smtpClient.quit();
+      // QUIT is a courtesy. If the send failed because the connection dropped,
+      // writing it throws — and an exception out of `finally` would replace the
+      // real send error with a meaningless socket one.
+      try {
+        await smtpClient.quit();
+      } catch (_) {}
     }
 
     // Plain SMTP has no concept of a Sent folder — unlike the Gmail/Graph

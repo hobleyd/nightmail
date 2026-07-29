@@ -23,6 +23,7 @@ import '../blocs/compose/compose_state.dart';
 import '../blocs/theme/theme_cubit.dart';
 import '../blocs/theme/theme_state.dart';
 import '../widgets/compose_dialog.dart';
+import '../widgets/error_snack_bar.dart';
 
 class ComposeWindowApp extends StatelessWidget {
   const ComposeWindowApp({
@@ -347,12 +348,7 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage> {
             if (state is ComposeSent) {
               _close();
             } else if (state is ComposeError) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(state.message),
-                  backgroundColor: Colors.red.shade700,
-                ),
-              );
+              showErrorSnackBar(context, state.message);
             }
           },
           child: ComposeForm(
@@ -449,12 +445,7 @@ class _MobileComposePageState extends State<_MobileComposePage> {
             listener: (context, state) {
               if (state is ComposeSent || state is ComposeError) {
                 if (state is ComposeError) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(state.message),
-                      backgroundColor: Colors.red.shade700,
-                    ),
-                  );
+                  showErrorSnackBar(context, state.message);
                 }
                 if (state is ComposeSent) {
                   Navigator.of(context).pop();

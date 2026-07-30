@@ -17,6 +17,7 @@ import 'package:share_plus/share_plus.dart';
 
 import 'html_body_view.dart';
 import 'contact_hover_card.dart';
+import 'date_time_fields.dart';
 
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
@@ -722,27 +723,10 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
     }
   }
 
-  Future<void> _pickDateTime({
-    required bool isStart,
-  }) async {
-    final current = isStart ? _proposedStart : _proposedEnd;
-    final base = current ?? DateTime.now();
-    final date = await showDatePicker(
-      context: context,
-      initialDate: base.toLocal(),
-      firstDate: DateTime.now().subtract(const Duration(days: 1)),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
-    );
-    if (date == null || !mounted) return;
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(base.toLocal()),
-      initialEntryMode: TimePickerEntryMode.input,
-    );
-    if (time == null || !mounted) return;
-    final combined = DateTime(
-      date.year, date.month, date.day, time.hour, time.minute,
-    ).toUtc();
+  /// Writes back a start/end edit, keeping [_proposedStart]/[_proposedEnd] in
+  /// UTC while the fields work in local time.
+  void _applyProposed({required bool isStart, required DateTime localValue}) {
+    final utc = localValue.toUtc();
     setState(() {
       if (isStart) {
         final oldStart = _proposedStart;
@@ -751,12 +735,39 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
         final duration = (oldStart != null && oldEnd != null)
             ? oldEnd.difference(oldStart)
             : const Duration(hours: 1);
-        _proposedStart = combined;
-        _proposedEnd = combined.add(duration);
+        _proposedStart = utc;
+        _proposedEnd = utc.add(duration);
       } else {
-        _proposedEnd = combined;
+        _proposedEnd = utc;
       }
     });
+  }
+
+  Future<void> _pickDate({required bool isStart}) async {
+    final base = (isStart ? _proposedStart : _proposedEnd)?.toLocal() ??
+        DateTime.now();
+    final date = await showDatePicker(
+      context: context,
+      initialDate: base,
+      firstDate: DateTime.now().subtract(const Duration(days: 1)),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (date == null || !mounted) return;
+    _applyProposed(
+      isStart: isStart,
+      localValue:
+          DateTime(date.year, date.month, date.day, base.hour, base.minute),
+    );
+  }
+
+  void _pickTime({required bool isStart, required TimeOfDay time}) {
+    final base = (isStart ? _proposedStart : _proposedEnd)?.toLocal() ??
+        DateTime.now();
+    _applyProposed(
+      isStart: isStart,
+      localValue:
+          DateTime(base.year, base.month, base.day, time.hour, time.minute),
+    );
   }
 
   Widget _buildIdleState(AppColors c) {
@@ -869,19 +880,9 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
   }
 
   Widget _buildProposingState(AppColors c) {
-    String fmt(DateTime? dt) {
-      if (dt == null) return '—';
-      return _formatMeetingTime(MeetingInvite(
-        meetingStart: dt,
-        meetingEnd: dt.add(const Duration(seconds: 1)),
-        isAllDay: false,
-      )).split('  ').last;
-    }
-
-    String fmtDate(DateTime? dt) {
-      if (dt == null) return '—';
-      return DateFormat('EEE d MMM yyyy').format(dt.toLocal());
-    }
+    final startLocal = _proposedStart?.toLocal() ?? DateTime.now();
+    final endLocal = _proposedEnd?.toLocal() ??
+        startLocal.add(const Duration(hours: 1));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -905,16 +906,14 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
               child: Text('From',
                   style: TextStyle(color: c.textTertiary, fontSize: 11)),
             ),
-            _DateTimeChip(
-              label: fmtDate(_proposedStart),
-              onTap: () => _pickDateTime(isStart: true),
-              c: c,
+            DateFieldButton(
+              date: startLocal,
+              onTap: () => _pickDate(isStart: true),
             ),
             const SizedBox(width: 6),
-            _DateTimeChip(
-              label: fmt(_proposedStart),
-              onTap: () => _pickDateTime(isStart: true),
-              c: c,
+            TimeComboBox(
+              time: TimeOfDay.fromDateTime(startLocal),
+              onChanged: (t) => _pickTime(isStart: true, time: t),
             ),
           ],
         ),
@@ -926,16 +925,14 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
               child: Text('To',
                   style: TextStyle(color: c.textTertiary, fontSize: 11)),
             ),
-            _DateTimeChip(
-              label: fmtDate(_proposedEnd),
-              onTap: () => _pickDateTime(isStart: false),
-              c: c,
+            DateFieldButton(
+              date: endLocal,
+              onTap: () => _pickDate(isStart: false),
             ),
             const SizedBox(width: 6),
-            _DateTimeChip(
-              label: fmt(_proposedEnd),
-              onTap: () => _pickDateTime(isStart: false),
-              c: c,
+            TimeComboBox(
+              time: TimeOfDay.fromDateTime(endLocal),
+              onChanged: (t) => _pickTime(isStart: false, time: t),
             ),
             const Spacer(),
             _InviteResponseButton(
@@ -1076,35 +1073,6 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
         _InviteState.idle => _buildIdleState(c),
         _InviteState.proposing => _buildProposingState(c),
       },
-    );
-  }
-}
-
-class _DateTimeChip extends StatelessWidget {
-  const _DateTimeChip({
-    required this.label,
-    required this.onTap,
-    required this.c,
-  });
-
-  final String label;
-  final VoidCallback onTap;
-  final AppColors c;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(4),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          border: Border.all(color: c.border),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: Text(label,
-            style: TextStyle(color: c.textPrimary, fontSize: 11)),
-      ),
     );
   }
 }

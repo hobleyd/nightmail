@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -43,6 +45,23 @@ EmailModel _email(String id, {required String body, String folderId = 'folder-1'
       importance: EmailImportance.normal,
       parentFolderId: folderId,
     );
+
+/// Rewrites a cached row without its parse stamp, standing in for a row
+/// written before the stamp existed (the encryption here is plaintext, so the
+/// stored payload is editable JSON).
+Future<void> _stripParseVersion(
+    AppDatabase db, String accountId, String emailId) async {
+  final row = await (db.select(db.cachedEmails)
+        ..where((t) => t.accountId.equals(accountId))
+        ..where((t) => t.emailId.equals(emailId)))
+      .getSingle();
+  final json = jsonDecode(row.encryptedData) as Map<String, dynamic>;
+  json.remove('attachmentParseVersion');
+  await (db.update(db.cachedEmails)
+        ..where((t) => t.accountId.equals(accountId))
+        ..where((t) => t.emailId.equals(emailId)))
+      .write(CachedEmailsCompanion(encryptedData: Value(jsonEncode(json))));
+}
 
 void main() {
   late AppDatabase db;
@@ -124,6 +143,92 @@ void main() {
         emailId: 'email-1',
       );
       expect(cached!.body, '<p>opened now</p>');
+    });
+  });
+
+  group('attachment parse version', () {
+    test('a row this version wrote is not stale', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '<p>full</p>')],
+      );
+
+      expect(
+        await datasource.hasStaleAttachmentParse(
+            accountId: 'acct-1', emailId: 'email-1'),
+        isFalse,
+      );
+    });
+
+    test('an unstamped legacy row is stale', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '<p>full</p>')],
+      );
+      await _stripParseVersion(db, 'acct-1', 'email-1');
+
+      expect(
+        await datasource.hasStaleAttachmentParse(
+            accountId: 'acct-1', emailId: 'email-1'),
+        isTrue,
+      );
+    });
+
+    test('an uncached email is not stale — there is nothing to repair',
+        () async {
+      expect(
+        await datasource.hasStaleAttachmentParse(
+            accountId: 'acct-1', emailId: 'nope'),
+        isFalse,
+      );
+    });
+
+    // The preview-merge above copies the *old* row's attachment metadata
+    // forward. Stamping that as current would mark stale metadata fresh and
+    // silently cancel the one-time repair, so the old stamp has to travel with
+    // it — a poll tick must not "fix" a stale row by touching it.
+    test('a thin preview-only re-touch keeps a legacy row stale', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '<p>full</p>')],
+      );
+      await _stripParseVersion(db, 'acct-1', 'email-1');
+
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '')],
+      );
+
+      expect(
+        await datasource.hasStaleAttachmentParse(
+            accountId: 'acct-1', emailId: 'email-1'),
+        isTrue,
+      );
+    });
+
+    test('a full-body rewrite clears staleness', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '<p>full</p>')],
+      );
+      await _stripParseVersion(db, 'acct-1', 'email-1');
+
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '<p>refetched</p>')],
+      );
+
+      expect(
+        await datasource.hasStaleAttachmentParse(
+            accountId: 'acct-1', emailId: 'email-1'),
+        isFalse,
+      );
     });
   });
 

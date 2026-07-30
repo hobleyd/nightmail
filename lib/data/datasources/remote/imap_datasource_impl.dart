@@ -312,7 +312,11 @@ class ImapDatasourceImpl
       final sequence = MessageSequence.fromIds(page, isUid: true);
       final fetchResult = await client.uidFetchMessages(
         sequence,
-        '(FLAGS INTERNALDATE ENVELOPE)',
+        // BODYSTRUCTURE so `collectAttachments` can flag attachments on list
+        // rows without the cost of fetching each body (`msg.body` is only
+        // populated by a BODYSTRUCTURE/BODY[] fetch — ENVELOPE alone leaves it
+        // null and every message reads as attachment-free).
+        '(FLAGS INTERNALDATE ENVELOPE BODYSTRUCTURE)',
       );
 
       return fetchResult.messages
@@ -346,7 +350,11 @@ class ImapDatasourceImpl
       final sequence = MessageSequence.fromIds(page, isUid: true);
       final fetchResult = await client.uidFetchMessages(
         sequence,
-        '(FLAGS INTERNALDATE ENVELOPE)',
+        // BODYSTRUCTURE so `collectAttachments` can flag attachments on list
+        // rows without the cost of fetching each body (`msg.body` is only
+        // populated by a BODYSTRUCTURE/BODY[] fetch — ENVELOPE alone leaves it
+        // null and every message reads as attachment-free).
+        '(FLAGS INTERNALDATE ENVELOPE BODYSTRUCTURE)',
       );
 
       return fetchResult.messages
@@ -389,7 +397,11 @@ class ImapDatasourceImpl
       final sequence = MessageSequence.fromIds(page, isUid: true);
       final fetchResult = await client.uidFetchMessages(
         sequence,
-        '(FLAGS INTERNALDATE ENVELOPE)',
+        // BODYSTRUCTURE so `collectAttachments` can flag attachments on list
+        // rows without the cost of fetching each body (`msg.body` is only
+        // populated by a BODYSTRUCTURE/BODY[] fetch — ENVELOPE alone leaves it
+        // null and every message reads as attachment-free).
+        '(FLAGS INTERNALDATE ENVELOPE BODYSTRUCTURE)',
       );
 
       return fetchResult.messages
@@ -448,6 +460,12 @@ class ImapDatasourceImpl
       await _selectMailboxPath(client, mailboxPath);
 
       final sequence = MessageSequence.fromId(uid, isUid: true);
+      // BODY[] only — deliberately NOT BODYSTRUCTURE. `collectAttachments`
+      // reads the real MIME headers of the parsed body, which is reliable; the
+      // moment `msg.body` is populated by BODYSTRUCTURE it switches to the
+      // BODYSTRUCTURE tree instead, whose disposition/filename parsing is
+      // flakier. The list fetches carry BODYSTRUCTURE because they have no
+      // BODY[] to parse; a single-message read does.
       final fetchResult = await client.uidFetchMessages(
         sequence,
         '(FLAGS INTERNALDATE ENVELOPE BODY[])',
@@ -547,6 +565,11 @@ class ImapDatasourceImpl
     List<EmailAttachment> attachments = const [];
     List<InlineAttachment> inlineAttachments = const [];
 
+    // Detected from BODYSTRUCTURE (present on both list and full-body fetches),
+    // so the list paperclip and the reading-pane chips agree. Computed even
+    // when !fullBody purely for the `hasAttachments` flag below.
+    final attachmentParts = collectAttachments(msg);
+
     if (fullBody) {
       final html = msg.decodeTextHtmlPart();
       if (html != null && html.isNotEmpty) {
@@ -557,16 +580,7 @@ class ImapDatasourceImpl
         body = plain ?? '';
       }
 
-      attachments = msg
-          .findContentInfo(disposition: ContentDisposition.attachment)
-          .map((info) => EmailAttachment(
-                id: info.fetchId,
-                name: info.fileName ?? 'Attachment',
-                contentType:
-                    info.contentType?.mediaType.text ?? 'application/octet-stream',
-                size: info.size ?? 0,
-              ))
-          .toList();
+      attachments = attachmentParts;
 
       final inlineResult = <InlineAttachment>[];
       for (final info
@@ -622,10 +636,191 @@ class ImapDatasourceImpl
       importance: EmailImportance.normal,
       conversationId: _normalizeSubject(msg.decodeSubject() ?? ''),
       parentFolderId: folderId,
-      hasAttachments: msg.hasAttachments(),
+      hasAttachments: attachmentParts.isNotEmpty,
       attachments: attachments,
       inlineAttachments: inlineAttachments,
     );
+  }
+
+  /// Collects the downloadable attachments of [msg] from its BODYSTRUCTURE.
+  ///
+  /// enough_mail's `hasAttachments()` and `findContentInfo(disposition:
+  /// attachment)` match only on an explicit `Content-Disposition: attachment`
+  /// header (see `collectContentInfo` in the vendored package). Some servers
+  /// and clients ship an attachment declared solely via `Content-Type:
+  /// ...; name="x"` with no disposition at all, which those helpers miss
+  /// entirely. So detect by filename as well — mirroring the Gmail datasource.
+  ///
+  /// **What is excluded is a part the body can actually reference — i.e. one
+  /// with a `Content-Id` — not merely one marked `Content-Disposition: inline`.**
+  /// Those are two different things, and conflating them silently loses
+  /// attachments. Apple Mail sends photos as `image/jpeg` parts marked `inline`
+  /// *with* a filename and *without* a `Content-Id`: nothing in the body can
+  /// point at them, so skipping them as "the body renders these" means they are
+  /// rendered nowhere and offered as no chip. A cid-less part therefore belongs
+  /// in this list regardless of its disposition; the inline collection in
+  /// [_parseToModel] skips exactly the same parts for the mirror-image reason
+  /// (no cid to satisfy).
+  ///
+  /// Multipart containers are always excluded — they hold parts, they are not
+  /// one.
+  ///
+  /// Each attachment's `id` is the IMAP part number (`fetchId`, e.g. `2` or
+  /// `1.2`) that [downloadAttachment] later feeds to `getPart`.
+  ///
+  /// Two sources, by fetch shape:
+  /// * List/search/thread rows carry BODYSTRUCTURE but no BODY[], so `msg.body`
+  ///   is set and we walk that tree — enough to light the list paperclip.
+  /// * A single-message read carries BODY[] but no BODYSTRUCTURE (see the
+  ///   fetch in [getEmail]), so `msg.body` is null and we walk the parsed
+  ///   message's real MIME headers instead — see
+  ///   [_collectAttachmentsFromHeaders]. The read deliberately keeps `msg.body`
+  ///   null to stay on that path, which reads the true headers rather than
+  ///   enough_mail's flakier BODYSTRUCTURE disposition parsing.
+  ///
+  /// Both paths apply the *same* rules, filename fallback included. They did
+  /// not always: the header path used to be
+  /// `findContentInfo(disposition: attachment)`, which matches only an explicit
+  /// `Content-Disposition: attachment`, so a message whose attachment is
+  /// declared solely via `Content-Type; name="x"` lit the list paperclip (from
+  /// BODYSTRUCTURE, which had the fallback) and then rendered no chips.
+  @visibleForTesting
+  static List<EmailAttachment> collectAttachments(MimeMessage msg) {
+    final structure = msg.body;
+    if (structure == null) {
+      final result = <EmailAttachment>[];
+      _collectAttachmentsFromHeaders(msg, null, result);
+      return result;
+    }
+    final result = <EmailAttachment>[];
+    _walkAttachments(structure, result);
+    return result;
+  }
+
+  /// Header-path twin of [_walkAttachments]: applies the same attachment rules
+  /// to the real MIME headers of a message parsed from a `BODY[]` fetch.
+  ///
+  /// [fetchId] is built positionally exactly as enough_mail's own
+  /// `MimePart.collectContentInfo` builds it, so the ids stay compatible with
+  /// the `getPart` lookup in [downloadAttachment].
+  ///
+  /// Size stays 0 on this path: only BODYSTRUCTURE reports part sizes, and
+  /// decoding each part just to measure it would pull every attachment's bytes
+  /// into memory on every message open. This matches what the previous
+  /// `findContentInfo` implementation produced here.
+  static void _collectAttachmentsFromHeaders(
+    MimePart part,
+    String? fetchId,
+    List<EmailAttachment> out,
+  ) {
+    final contentType = part.getHeaderContentType();
+    // Multipart parts are containers, never chips — recurse past them.
+    if (contentType?.mediaType.top != MediaToptype.multipart) {
+      final disposition = part.getHeaderContentDisposition()?.disposition;
+      final fileName = part.decodeFileName();
+      final cid = part.getHeaderValue('content-id');
+      final hasCid = cid != null && cid.isNotEmpty;
+      final isAttachment = disposition == ContentDisposition.attachment ||
+          (!hasCid &&
+              !_isBodyTextPart(contentType?.mediaType.sub, disposition) &&
+              (fileName?.isNotEmpty ?? false));
+      if (isAttachment && fetchId != null && fetchId.isNotEmpty) {
+        out.add(EmailAttachment(
+          id: fetchId,
+          name: (fileName?.isNotEmpty ?? false) ? fileName! : 'Attachment',
+          contentType:
+              contentType?.mediaType.text ?? 'application/octet-stream',
+          size: 0,
+        ));
+      }
+    }
+
+    final parts = part.parts;
+    if (parts == null || parts.isEmpty) return;
+    for (var i = 0; i < parts.length; i++) {
+      final childFetchId = part.mediaType.sub == MediaSubtype.messageRfc822
+          ? fetchId
+          : fetchId == null
+              ? '${i + 1}'
+              : '$fetchId.${i + 1}';
+      _collectAttachmentsFromHeaders(parts[i], childFetchId, out);
+    }
+  }
+
+  static void _walkAttachments(BodyPart part, List<EmailAttachment> out) {
+    if (part.contentType?.mediaType.top == MediaToptype.multipart) {
+      for (final child in part.parts ?? const <BodyPart>[]) {
+        _walkAttachments(child, out);
+      }
+      return;
+    }
+
+    final disposition = part.contentDisposition?.disposition;
+    final fileName = _partFileName(part);
+    final hasCid = part.cid != null && part.cid!.isNotEmpty;
+    final isAttachment = disposition == ContentDisposition.attachment ||
+        (!hasCid &&
+            !_isBodyTextPart(part.contentType?.mediaType.sub, disposition) &&
+            fileName != null);
+    if (!isAttachment) return;
+
+    final fetchId = part.fetchId;
+    if (fetchId == null || fetchId.isEmpty) return;
+
+    out.add(EmailAttachment(
+      id: fetchId,
+      name: fileName ?? 'Attachment',
+      contentType: part.contentType?.mediaType.text ?? 'application/octet-stream',
+      size: part.size ?? 0,
+    ));
+  }
+
+  /// Whether a part is the message body rather than a candidate attachment.
+  ///
+  /// Dropping the "inline means never a chip" rule (see [collectAttachments])
+  /// opens one hole: some mailers label the body itself
+  /// `Content-Disposition: inline; filename="message.html"`, and a filename is
+  /// otherwise enough to make a part a chip. A `text/plain` or `text/html` part
+  /// is the body unless the sender explicitly said `attachment`, so require
+  /// that disposition for those two subtypes. Other text subtypes — notably
+  /// `text/calendar` invites, which arrive as `; name="meeting.ics"` with no
+  /// disposition at all — stay detectable by filename.
+  static bool _isBodyTextPart(
+    MediaSubtype? subtype,
+    ContentDisposition? disposition,
+  ) =>
+      disposition != ContentDisposition.attachment &&
+      (subtype == MediaSubtype.textPlain || subtype == MediaSubtype.textHtml);
+
+  /// The attachment filename of a BODYSTRUCTURE [part].
+  ///
+  /// enough_mail builds a BODYSTRUCTURE `ContentDispositionHeader` from just
+  /// the `attachment`/`inline` token and then loads its `filename` via
+  /// `setParameter`, which — unlike the raw-header parser — leaves the
+  /// `.filename` getter null and does NOT lowercase parameter keys or strip
+  /// quotes. So read the parameter maps directly and case-insensitively,
+  /// preferring `Content-Disposition; filename` and falling back to the
+  /// `Content-Type; name` some senders use instead.
+  static String? _partFileName(BodyPart part) {
+    final fromDisposition = part.contentDisposition?.filename;
+    if (fromDisposition != null && fromDisposition.isNotEmpty) {
+      return fromDisposition;
+    }
+    return _lookupParam(part.contentDisposition?.parameters, 'filename') ??
+        _lookupParam(part.contentType?.parameters, 'name');
+  }
+
+  static String? _lookupParam(Map<String, String>? params, String key) {
+    if (params == null || params.isEmpty) return null;
+    for (final entry in params.entries) {
+      if (entry.key.toLowerCase() != key) continue;
+      var value = entry.value.trim();
+      if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+        value = value.substring(1, value.length - 1);
+      }
+      if (value.isNotEmpty) return value;
+    }
+    return null;
   }
 
   /// Returns a stable conversation key by stripping reply/forward prefixes.

@@ -171,8 +171,11 @@ class EmailRepositoryImpl implements EmailRepository {
     final accountId = _accountManager.activeAccount?.id;
     final datasource =
         accountId == null ? null : _accountManager.emailDatasource;
+    // Held beyond the block below so a failed refetch can still fall back to
+    // it — see the failure branch of the fold.
+    Email? cached;
     if (accountId != null) {
-      final cached = await _localDatasource.getCachedEmailById(
+      cached = await _localDatasource.getCachedEmailById(
         accountId: accountId,
         emailId: id,
       );
@@ -188,10 +191,36 @@ class EmailRepositoryImpl implements EmailRepository {
       // but carries no inline attachments — either an older cache written
       // before inline attachments were persisted, or a row whose inline parts
       // were misclassified. The network fetch resolves and re-caches them.
-      if (cached != null &&
-          cached.body.isNotEmpty &&
-          !_needsInlineRefetch(cached)) {
-        return Right(cached);
+      //
+      // And refetch when the row is flagged as having attachments but carries
+      // an empty attachment list — a full body cached before an attachment
+      // parsing/fetch fix (its metadata frozen incomplete) that would
+      // otherwise render with no attachment chips forever, since a non-empty
+      // body normally short-circuits the network. The next list fetch marks
+      // hasAttachments from BODYSTRUCTURE, so this self-heals on next open.
+      //
+      // And refetch a row whose attachment metadata predates the current
+      // parser. A row that recorded *no* attachments looks exactly like a
+      // message that has none, so the guards above cannot spot a bad parse —
+      // only its age gives it away. Rows written while the IMAP walks treated
+      // every `inline` part as body-rendered are in that state
+      // (`hasAttachments: false`, empty list, full body), so nothing else here
+      // would ever refetch them. The rewrite carries the current stamp, so
+      // this costs one round-trip per stale message, once.
+      final staleAttachmentParse = cached == null
+          ? false
+          : await _localDatasource.hasStaleAttachmentParse(
+              accountId: accountId,
+              emailId: id,
+            );
+
+      final cachedCopy = cached;
+      if (cachedCopy != null &&
+          cachedCopy.body.isNotEmpty &&
+          !_needsInlineRefetch(cachedCopy) &&
+          !_hasIncompleteAttachments(cachedCopy) &&
+          !staleAttachmentParse) {
+        return Right(cachedCopy);
       }
     }
 
@@ -200,7 +229,18 @@ class EmailRepositoryImpl implements EmailRepository {
     if (accountId == null) return result;
 
     return result.fold(
-      (failure) async => Left<Failure, Email>(failure),
+      (failure) async {
+        // A refetch we chose to make — for inline images or a stale attachment
+        // parse — must not cost the user a readable message when it fails.
+        // The cached copy is imperfect, not useless: show it and repair on a
+        // later open. Rows with an empty body are excluded; there is nothing
+        // to show and the failure is the honest answer.
+        final fallback = cached;
+        if (fallback != null && fallback.body.isNotEmpty) {
+          return Right<Failure, Email>(fallback);
+        }
+        return Left<Failure, Email>(failure);
+      },
       (email) async {
         // Same reconciliation as getEmails: don't let a fetch that overlaps
         // the outbox drain window write a just-deleted/moved message back into
@@ -227,6 +267,21 @@ class EmailRepositoryImpl implements EmailRepository {
   /// cached to satisfy them.
   bool _needsInlineRefetch(Email email) =>
       email.inlineAttachments.isEmpty && email.body.contains('cid:');
+
+  /// A cached full message flagged `hasAttachments` yet carrying *no*
+  /// attachments of any kind — neither a regular chip nor an inline image.
+  /// That contradiction means the row was filled by a code path that missed
+  /// the attachment metadata, so refetch to repair it rather than render
+  /// chips-less forever.
+  ///
+  /// Both lists must be empty: an email whose only attachments are inline
+  /// images legitimately has an empty `attachments` list while `hasAttachments`
+  /// is true (Gmail/Graph flag inline parts), and refetching those on every
+  /// open would be a pointless round-trip.
+  bool _hasIncompleteAttachments(Email email) =>
+      email.hasAttachments &&
+      email.attachments.isEmpty &&
+      email.inlineAttachments.isEmpty;
 
   @override
   Future<Either<Failure, Email>> markAsRead({

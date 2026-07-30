@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fpdart/fpdart.dart';
 import 'package:mockito/annotations.dart';
@@ -13,6 +15,8 @@ import 'package:nightmail/data/models/email_folder_model.dart';
 import 'package:nightmail/data/models/email_model.dart';
 import 'package:nightmail/data/repositories/email_repository_impl.dart';
 import 'package:nightmail/domain/entities/email.dart';
+import 'package:nightmail/domain/entities/email_attachment.dart';
+import 'package:nightmail/domain/entities/inline_attachment.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 import 'package:nightmail/infrastructure/network/connectivity_service.dart';
@@ -69,6 +73,12 @@ void main() {
         .thenAnswer((_) async => []);
     // Online by default — tests that need offline behavior override this.
     when(mockConnectivityService.isOnline).thenAnswer((_) async => true);
+    // Cached attachment metadata is current by default; the one-time repair
+    // path is exercised by the tests that override this.
+    when(mockLocalDatasource.hasStaleAttachmentParse(
+      accountId: anyNamed('accountId'),
+      emailId: anyNamed('emailId'),
+    )).thenAnswer((_) async => false);
 
     repository = EmailRepositoryImpl(
       accountManager: mockAccountManager,
@@ -372,6 +382,231 @@ void main() {
 
       expect(result.isRight(), isTrue);
       verify(mockRemoteDatasource.getEmail('email-1')).called(1);
+    });
+
+    // Regression: a full body cached by a code path that missed the attachment
+    // metadata (hasAttachments true, attachments empty) would otherwise be
+    // served cache-first forever, so the reading pane's
+    // `if (email.attachments.isNotEmpty)` never renders chips. Refetch to
+    // repair it.
+    test('refetches a full-body row flagged hasAttachments but with an '
+        'empty attachments list', () async {
+      final incompleteCached = EmailModel(
+        id: 'email-1',
+        subject: 'Test',
+        from: const EmailAddressModel(address: 'a@b.com'),
+        toRecipients: const [],
+        ccRecipients: const [],
+        bodyPreview: 'preview',
+        body: '<p>body but no chips</p>',
+        bodyType: EmailBodyType.html,
+        isRead: false,
+        receivedDateTime: DateTime(2026, 6, 1),
+        importance: EmailImportance.normal,
+        hasAttachments: true,
+        attachments: const [],
+      );
+      final repaired = EmailModel(
+        id: 'email-1',
+        subject: 'Test',
+        from: const EmailAddressModel(address: 'a@b.com'),
+        toRecipients: const [],
+        ccRecipients: const [],
+        bodyPreview: 'preview',
+        body: '<p>body but no chips</p>',
+        bodyType: EmailBodyType.html,
+        isRead: false,
+        receivedDateTime: DateTime(2026, 6, 1),
+        importance: EmailImportance.normal,
+        hasAttachments: true,
+        attachments: const [
+          EmailAttachment(
+              id: '2', name: 'doc.pdf', contentType: 'application/pdf', size: 1),
+        ],
+      );
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      when(mockLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => incompleteCached);
+      when(mockRemoteDatasource.getEmail(any))
+          .thenAnswer((_) async => repaired);
+      when(mockLocalDatasource.cacheEmails(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+        emails: anyNamed('emails'),
+      )).thenAnswer((_) async {});
+
+      final result = await repository.getEmail('email-1');
+
+      expect(result.isRight(), isTrue);
+      expect((result as Right).value.attachments, hasLength(1));
+      verify(mockRemoteDatasource.getEmail('email-1')).called(1);
+    });
+
+    test('does NOT refetch an inline-only email (hasAttachments true, no '
+        'chips, but inline images present)', () async {
+      final inlineOnly = EmailModel(
+        id: 'email-1',
+        subject: 'Newsletter',
+        from: const EmailAddressModel(address: 'a@b.com'),
+        toRecipients: const [],
+        ccRecipients: const [],
+        bodyPreview: 'preview',
+        body: '<p>logo below</p>',
+        bodyType: EmailBodyType.html,
+        isRead: false,
+        receivedDateTime: DateTime(2026, 6, 1),
+        importance: EmailImportance.normal,
+        hasAttachments: true,
+        attachments: const [],
+        inlineAttachments: [
+          InlineAttachment(
+            contentId: '<logo@x>',
+            contentType: 'image/png',
+            contentBytes: Uint8List.fromList(const [1, 2, 3]),
+          ),
+        ],
+      );
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      when(mockLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => inlineOnly);
+
+      final result = await repository.getEmail('email-1');
+
+      expect(result.isRight(), isTrue);
+      verifyNever(mockRemoteDatasource.getEmail(any));
+    });
+
+    // Regression: rows written before the IMAP read path learned to detect an
+    // attachment declared only via `Content-Type; name="x"` carry
+    // hasAttachments FALSE and an empty list, so they look exactly like a
+    // message with no attachments — no guard above can spot them. Only the
+    // parse stamp dates them.
+    test('refetches a full-body row whose attachment parse is stale, even '
+        'though it claims no attachments', () async {
+      final staleCached = EmailModel(
+        id: 'email-1',
+        subject: 'Quote',
+        from: const EmailAddressModel(address: 'a@b.com'),
+        toRecipients: const [],
+        ccRecipients: const [],
+        bodyPreview: 'preview',
+        body: '<p>body, chips missed by the old parser</p>',
+        bodyType: EmailBodyType.html,
+        isRead: false,
+        receivedDateTime: DateTime(2026, 6, 1),
+        importance: EmailImportance.normal,
+        hasAttachments: false,
+        attachments: const [],
+      );
+      final repaired = EmailModel(
+        id: 'email-1',
+        subject: 'Quote',
+        from: const EmailAddressModel(address: 'a@b.com'),
+        toRecipients: const [],
+        ccRecipients: const [],
+        bodyPreview: 'preview',
+        body: '<p>body, chips missed by the old parser</p>',
+        bodyType: EmailBodyType.html,
+        isRead: false,
+        receivedDateTime: DateTime(2026, 6, 1),
+        importance: EmailImportance.normal,
+        hasAttachments: true,
+        attachments: const [
+          EmailAttachment(
+              id: '2', name: 'quote.pdf', contentType: 'application/pdf', size: 0),
+        ],
+      );
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      when(mockLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => staleCached);
+      when(mockLocalDatasource.hasStaleAttachmentParse(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => true);
+      when(mockRemoteDatasource.getEmail(any))
+          .thenAnswer((_) async => repaired);
+      when(mockLocalDatasource.cacheEmails(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+        emails: anyNamed('emails'),
+      )).thenAnswer((_) async {});
+
+      final result = await repository.getEmail('email-1');
+
+      expect(result.isRight(), isTrue);
+      expect((result as Right).value.attachments.single.name, 'quote.pdf');
+      verify(mockRemoteDatasource.getEmail('email-1')).called(1);
+    });
+
+    // The repair must not make a readable message unreadable: if the refetch
+    // it triggers fails (offline, server hiccup), fall back to the cached copy
+    // and try again on a later open.
+    test('falls back to the stale cached copy when the repair refetch fails',
+        () async {
+      final staleCached = EmailModel(
+        id: 'email-1',
+        subject: 'Quote',
+        from: const EmailAddressModel(address: 'a@b.com'),
+        toRecipients: const [],
+        ccRecipients: const [],
+        bodyPreview: 'preview',
+        body: '<p>still readable</p>',
+        bodyType: EmailBodyType.html,
+        isRead: false,
+        receivedDateTime: DateTime(2026, 6, 1),
+        importance: EmailImportance.normal,
+      );
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      when(mockLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => staleCached);
+      when(mockLocalDatasource.hasStaleAttachmentParse(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => true);
+      when(mockRemoteDatasource.getEmail(any))
+          .thenThrow(ServerException(message: 'boom'));
+
+      final result = await repository.getEmail('email-1');
+
+      expect(result.isRight(), isTrue);
+      expect((result as Right).value.body, '<p>still readable</p>');
+      verify(mockRemoteDatasource.getEmail('email-1')).called(1);
+    });
+
+    test('a thin cached row (empty body) still surfaces a fetch failure',
+        () async {
+      final thinCached = EmailModel(
+        id: 'email-1',
+        subject: 'Quote',
+        from: const EmailAddressModel(address: 'a@b.com'),
+        toRecipients: const [],
+        ccRecipients: const [],
+        bodyPreview: 'preview',
+        body: '',
+        bodyType: EmailBodyType.text,
+        isRead: false,
+        receivedDateTime: DateTime(2026, 6, 1),
+        importance: EmailImportance.normal,
+      );
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      when(mockLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => thinCached);
+      when(mockRemoteDatasource.getEmail(any))
+          .thenThrow(ServerException(message: 'boom'));
+
+      final result = await repository.getEmail('email-1');
+
+      expect(result.isLeft(), isTrue);
     });
   });
 

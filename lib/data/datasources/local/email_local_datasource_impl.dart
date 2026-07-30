@@ -26,6 +26,23 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
   /// cache, so removing a row here has to remove that email's files too.
   final InlineAttachmentCache _inlineAttachments;
 
+  /// Stamped into every row this version writes, and bumped whenever the
+  /// attachment-parsing code changes such that rows written before it may hold
+  /// wrong attachment metadata. [hasStaleAttachmentParse] compares against it
+  /// so those rows are refetched once instead of serving bad metadata forever.
+  ///
+  /// * 1 — implicit; rows with no stamp at all. The IMAP walks treated every
+  ///   `Content-Disposition: inline` part as body-rendered, so a message whose
+  ///   attachments are inline *without* a `Content-Id` (Apple Mail photos) was
+  ///   cached with `hasAttachments: false` and an empty attachment list. The
+  ///   reading-pane path additionally missed attachments declared only via
+  ///   `Content-Type; name="x"`.
+  static const attachmentParseVersion = 2;
+
+  /// JSON key for [attachmentParseVersion]. Absent on pre-versioning rows,
+  /// which read back as version 1.
+  static const _parseVersionKey = 'attachmentParseVersion';
+
   @override
   Future<List<Email>> getCachedEmails({
     required String accountId,
@@ -84,6 +101,12 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
               // Preserve the invite: list/poll fetches carry no ICS, so a
               // thin re-touch would otherwise drop the Accept/Decline banner.
               'meetingInvite': oldJson['meetingInvite'],
+              // The attachment metadata just preserved came from the old row,
+              // so its parse stamp has to come with it. Stamping a thin
+              // re-touch as current would mark stale metadata fresh and
+              // silently cancel the one-time repair in
+              // [hasStaleAttachmentParse].
+              _parseVersionKey: oldJson[_parseVersionKey],
             };
           }
         }
@@ -127,6 +150,23 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     final plaintext = await _encryption.decrypt(row.encryptedData);
     final json = jsonDecode(plaintext) as Map<String, dynamic>;
     return _emailFromJson(json);
+  }
+
+  @override
+  Future<bool> hasStaleAttachmentParse({
+    required String accountId,
+    required String emailId,
+  }) async {
+    final row = await (_database.select(_database.cachedEmails)
+          ..where(
+              (t) => t.accountId.equals(accountId) & t.emailId.equals(emailId)))
+        .getSingleOrNull();
+    if (row == null) return false;
+
+    final json = jsonDecode(await _encryption.decrypt(row.encryptedData))
+        as Map<String, dynamic>;
+    final version = json[_parseVersionKey] as int? ?? 1;
+    return version < attachmentParseVersion;
   }
 
   @override
@@ -265,6 +305,7 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
           email.inlineAttachments.map(_inlineAttachmentToJson).toList(),
       'parentFolderId': email.parentFolderId,
       'meetingInvite': _meetingInviteToJson(email.meetingInvite),
+      _parseVersionKey: attachmentParseVersion,
     };
   }
 
@@ -324,8 +365,13 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
         _ => EmailImportance.normal,
       },
       conversationId: j['conversationId'] as String?,
-      hasAttachments: j['hasAttachments'] as bool,
-      attachments: (j['attachments'] as List<dynamic>)
+      hasAttachments: j['hasAttachments'] as bool? ?? false,
+      // Null-safe like inlineAttachments below: a legacy row cached before the
+      // attachments field existed, or a preservation merge that copied through
+      // a null, has no 'attachments' key. A bare `as List` would throw here —
+      // and this runs inside getCachedEmailById, outside getEmail's try, so
+      // the whole message would fail to load instead of just missing chips.
+      attachments: (j['attachments'] as List<dynamic>? ?? const [])
           .cast<Map<String, dynamic>>()
           .map(_attachmentFromJson)
           .toList(),

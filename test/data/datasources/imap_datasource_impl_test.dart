@@ -2,6 +2,47 @@ import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/data/datasources/remote/imap_datasource_impl.dart';
 
+/// Builds a leaf [BodyPart] the way enough_mail's BODYSTRUCTURE parser does:
+/// the header objects are constructed from the bare media-type/disposition
+/// token and their parameters are then attached via `setParameter` (which
+/// leaves `ContentDispositionHeader.filename` null and preserves the server's
+/// parameter-name casing). Building them this way — rather than from a full
+/// raw header string — is what makes these tests reflect real fetch output.
+BodyPart _leaf(
+  String mediaType, {
+  String? disposition,
+  // Parameter name deliberately overridable so tests can reproduce servers
+  // that send e.g. `NAME`/`FILENAME` in caps.
+  String nameParam = 'name',
+  String? name,
+  String dispositionFilenameParam = 'filename',
+  String? dispositionFilename,
+  String? cid,
+  int? size,
+}) {
+  final contentType = ContentTypeHeader(mediaType);
+  if (name != null) contentType.setParameter(nameParam, name);
+  final part = BodyPart()..contentType = contentType;
+  if (disposition != null) {
+    final header = ContentDispositionHeader(disposition);
+    if (dispositionFilename != null) {
+      header.setParameter(dispositionFilenameParam, dispositionFilename);
+    }
+    part.contentDisposition = header;
+  }
+  if (cid != null) part.cid = cid;
+  if (size != null) part.size = size;
+  return part;
+}
+
+MimeMessage _multipart(String subtype, List<BodyPart> children) {
+  final root = BodyPart()..contentType = ContentTypeHeader('multipart/$subtype');
+  for (final child in children) {
+    root.addPart(child);
+  }
+  return MimeMessage()..body = root;
+}
+
 Mailbox _mb(
   String path, {
   required String sep,
@@ -159,6 +200,407 @@ void main() {
       final result = ImapDatasourceImpl.detectNamespaceConvention(mailboxes);
 
       expect(result.inboxFolderPrefix, isEmpty);
+    });
+  });
+
+  group('ImapDatasourceImpl.collectAttachments', () {
+    test('envelope-only message (no body, no parts) has no attachments', () {
+      final msg = MimeMessage();
+      expect(ImapDatasourceImpl.collectAttachments(msg), isEmpty);
+    });
+
+    test('reads the MIME headers of a BODY[]-only message (no BODYSTRUCTURE)',
+        () {
+      // parseFromText populates `parts` but not the BODYSTRUCTURE `body`, so
+      // this exercises the header-walk path the reading pane uses.
+      const raw = 'Subject: test\r\n'
+          'Content-Type: multipart/mixed; boundary="b"\r\n'
+          '\r\n'
+          '--b\r\n'
+          'Content-Type: text/plain\r\n'
+          '\r\n'
+          'hello\r\n'
+          '--b\r\n'
+          'Content-Type: application/pdf; name="doc.pdf"\r\n'
+          'Content-Disposition: attachment; filename="doc.pdf"\r\n'
+          '\r\n'
+          'JVBER\r\n'
+          '--b--\r\n';
+      final msg = MimeMessage.parseFromText(raw);
+      expect(msg.body, isNull); // no BODYSTRUCTURE from a text parse
+
+      final attachments = ImapDatasourceImpl.collectAttachments(msg);
+
+      expect(attachments, hasLength(1));
+      expect(attachments.single.name, 'doc.pdf');
+    });
+
+    test(
+        'BODY[]-only: finds an attachment declared only via Content-Type name '
+        '(the reading-pane regression)', () {
+      // The reading pane fetches BODY[] without BODYSTRUCTURE, so this is the
+      // path it actually runs. It used to call
+      // `findContentInfo(disposition: attachment)`, which matches only an
+      // explicit Content-Disposition — this message has none, so the chips
+      // vanished even though the list paperclip (BODYSTRUCTURE, which has the
+      // filename fallback) lit up.
+      const raw = 'Subject: test\r\n'
+          'Content-Type: multipart/mixed; boundary="b"\r\n'
+          '\r\n'
+          '--b\r\n'
+          'Content-Type: text/plain\r\n'
+          '\r\n'
+          'hello\r\n'
+          '--b\r\n'
+          'Content-Type: application/pdf; name="quote.pdf"\r\n'
+          'Content-Transfer-Encoding: base64\r\n'
+          '\r\n'
+          'JVBER\r\n'
+          '--b--\r\n';
+      final msg = MimeMessage.parseFromText(raw);
+      expect(msg.body, isNull);
+
+      final attachments = ImapDatasourceImpl.collectAttachments(msg);
+
+      expect(attachments, hasLength(1));
+      expect(attachments.single.name, 'quote.pdf');
+      expect(attachments.single.id, '2'); // part number for getPart/download
+      expect(attachments.single.contentType, 'application/pdf');
+    });
+
+    test('BODY[]-only: numbers nested parts so getPart can fetch them', () {
+      const raw = 'Subject: test\r\n'
+          'Content-Type: multipart/mixed; boundary="out"\r\n'
+          '\r\n'
+          '--out\r\n'
+          'Content-Type: multipart/alternative; boundary="in"\r\n'
+          '\r\n'
+          '--in\r\n'
+          'Content-Type: text/plain\r\n'
+          '\r\n'
+          'hello\r\n'
+          '--in\r\n'
+          'Content-Type: text/html\r\n'
+          '\r\n'
+          '<p>hello</p>\r\n'
+          '--in--\r\n'
+          '--out\r\n'
+          'Content-Type: application/zip; name="bundle.zip"\r\n'
+          '\r\n'
+          'PK\r\n'
+          '--out--\r\n';
+      final msg = MimeMessage.parseFromText(raw);
+
+      final attachments = ImapDatasourceImpl.collectAttachments(msg);
+
+      expect(attachments, hasLength(1));
+      expect(attachments.single.name, 'bundle.zip');
+      expect(attachments.single.id, '2');
+    });
+
+    test('BODY[]-only: works on an unparsed message, as the fetch delivers it',
+        () {
+      // `MimeMessage.parseFromText` parses eagerly, but the IMAP fetch parser
+      // only assigns `mimeData` (see fetch_parser.dart: `message.mimeData =
+      // TextMimeData(..., containsHeader: true)`) and leaves `parts` null until
+      // something touches a header. `_parseToModel` calls collectAttachments
+      // *before* it decodes the body, so the walk has to trigger that lazy
+      // parse itself — otherwise it would see no parts and find nothing on the
+      // real path while every eagerly-parsed test still passed.
+      const raw = 'Subject: test\r\n'
+          'Content-Type: multipart/mixed; boundary="b"\r\n'
+          '\r\n'
+          '--b\r\n'
+          'Content-Type: text/plain\r\n'
+          '\r\n'
+          'hello\r\n'
+          '--b\r\n'
+          'Content-Type: application/pdf; name="lazy.pdf"\r\n'
+          '\r\n'
+          'JVBER\r\n'
+          '--b--\r\n';
+      final msg = MimeMessage()
+        ..mimeData = TextMimeData(raw, containsHeader: true);
+      expect(msg.parts, isNull, reason: 'not parsed yet, as after a fetch');
+
+      final attachments = ImapDatasourceImpl.collectAttachments(msg);
+
+      expect(attachments, hasLength(1));
+      expect(attachments.single.name, 'lazy.pdf');
+      expect(attachments.single.id, '2');
+    });
+
+    // The live regression, captured from INBOX:5082 (Apple Mail): photos sent
+    // as `Content-Disposition: inline` with a filename but NO Content-Id. The
+    // body cannot reference them, so treating "inline" as "the body renders
+    // this" dropped them from the chips *and* from the inline images — they
+    // appeared nowhere at all.
+    test('BODY[]-only: offers an inline part with no Content-Id as a chip', () {
+      const raw = 'Subject: Expense John Henderson\r\n'
+          'Content-Type: multipart/mixed; boundary="b"\r\n'
+          '\r\n'
+          '--b\r\n'
+          'Content-Type: text/plain; charset=us-ascii\r\n'
+          '\r\n'
+          'See attached\r\n'
+          '--b\r\n'
+          'Content-Type: image/jpeg; name="IMG_5857.jpeg"\r\n'
+          'Content-Disposition: inline; filename="IMG_5857.jpeg"\r\n'
+          'Content-Transfer-Encoding: base64\r\n'
+          '\r\n'
+          '/9j/4AAQ\r\n'
+          '--b\r\n'
+          'Content-Type: text/plain; charset=us-ascii\r\n'
+          '\r\n'
+          'and another\r\n'
+          '--b\r\n'
+          'Content-Type: image/jpeg; name="IMG_5858.jpeg"\r\n'
+          'Content-Disposition: inline; filename="IMG_5858.jpeg"\r\n'
+          'Content-Transfer-Encoding: base64\r\n'
+          '\r\n'
+          '/9j/4AAQ\r\n'
+          '--b--\r\n';
+      final msg = MimeMessage()
+        ..mimeData = TextMimeData(raw, containsHeader: true);
+
+      final attachments = ImapDatasourceImpl.collectAttachments(msg);
+
+      expect(attachments.map((a) => a.name),
+          <String>['IMG_5857.jpeg', 'IMG_5858.jpeg']);
+      expect(attachments.map((a) => a.id), <String>['2', '4']);
+      expect(attachments.first.contentType, 'image/jpeg');
+    });
+
+    test('BODYSTRUCTURE: offers an inline part with no Content-Id as a chip',
+        () {
+      // Same message shape as above, arriving on the list path — so the
+      // paperclip agrees with the reading pane instead of contradicting it.
+      final msg = _multipart('mixed', [
+        _leaf('text/plain'),
+        _leaf('image/jpeg',
+            disposition: 'inline',
+            dispositionFilename: 'IMG_5857.jpeg',
+            size: 120000),
+        _leaf('text/plain'),
+        _leaf('image/jpeg',
+            disposition: 'inline',
+            dispositionFilename: 'IMG_5858.jpeg',
+            size: 130000),
+      ]);
+
+      final attachments = ImapDatasourceImpl.collectAttachments(msg);
+
+      expect(attachments.map((a) => a.name),
+          <String>['IMG_5857.jpeg', 'IMG_5858.jpeg']);
+      expect(attachments.map((a) => a.id), <String>['2', '4']);
+    });
+
+    test('does not turn an inline-labelled HTML body into a chip', () {
+      // Some mailers label the body `inline; filename="message.html"`. Since a
+      // filename alone is now enough to make a cid-less part a chip, the body
+      // has to be excluded explicitly or every such email grows a bogus chip.
+      const raw = 'Subject: test\r\n'
+          'Content-Type: multipart/mixed; boundary="b"\r\n'
+          '\r\n'
+          '--b\r\n'
+          'Content-Type: text/html\r\n'
+          'Content-Disposition: inline; filename="message.html"\r\n'
+          '\r\n'
+          '<p>hello</p>\r\n'
+          '--b\r\n'
+          'Content-Type: application/pdf; name="real.pdf"\r\n'
+          '\r\n'
+          'JVBER\r\n'
+          '--b--\r\n';
+      final msg = MimeMessage()
+        ..mimeData = TextMimeData(raw, containsHeader: true);
+
+      final attachments = ImapDatasourceImpl.collectAttachments(msg);
+
+      expect(attachments.map((a) => a.name), <String>['real.pdf']);
+    });
+
+    test('still offers a text part the sender explicitly marked attachment',
+        () {
+      const raw = 'Subject: test\r\n'
+          'Content-Type: multipart/mixed; boundary="b"\r\n'
+          '\r\n'
+          '--b\r\n'
+          'Content-Type: text/plain\r\n'
+          '\r\n'
+          'see log\r\n'
+          '--b\r\n'
+          'Content-Type: text/plain; name="server.log"\r\n'
+          'Content-Disposition: attachment; filename="server.log"\r\n'
+          '\r\n'
+          'line 1\r\n'
+          '--b--\r\n';
+      final msg = MimeMessage()
+        ..mimeData = TextMimeData(raw, containsHeader: true);
+
+      expect(ImapDatasourceImpl.collectAttachments(msg).map((a) => a.name),
+          <String>['server.log']);
+    });
+
+    test('offers a text/calendar invite declared only by name', () {
+      const raw = 'Subject: invite\r\n'
+          'Content-Type: multipart/mixed; boundary="b"\r\n'
+          '\r\n'
+          '--b\r\n'
+          'Content-Type: text/plain\r\n'
+          '\r\n'
+          'you are invited\r\n'
+          '--b\r\n'
+          'Content-Type: text/calendar; method=REQUEST; name="meeting.ics"\r\n'
+          '\r\n'
+          'BEGIN:VCALENDAR\r\n'
+          '--b--\r\n';
+      final msg = MimeMessage()
+        ..mimeData = TextMimeData(raw, containsHeader: true);
+
+      expect(ImapDatasourceImpl.collectAttachments(msg).map((a) => a.name),
+          <String>['meeting.ics']);
+    });
+
+    test('BODY[]-only: skips inline cid images and the text body parts', () {
+      const raw = 'Subject: test\r\n'
+          'Content-Type: multipart/related; boundary="b"\r\n'
+          '\r\n'
+          '--b\r\n'
+          'Content-Type: text/html\r\n'
+          '\r\n'
+          '<img src="cid:logo@x">\r\n'
+          '--b\r\n'
+          'Content-Type: image/png; name="logo.png"\r\n'
+          'Content-Id: <logo@x>\r\n'
+          '\r\n'
+          'iVBOR\r\n'
+          '--b--\r\n';
+      final msg = MimeMessage.parseFromText(raw);
+
+      expect(ImapDatasourceImpl.collectAttachments(msg), isEmpty);
+    });
+
+    test('single text/plain message has no attachments', () {
+      final msg = MimeMessage()..body = _leaf('text/plain');
+      expect(ImapDatasourceImpl.collectAttachments(msg), isEmpty);
+    });
+
+    test('finds an attachment declared with Content-Disposition: attachment',
+        () {
+      final msg = _multipart('mixed', [
+        _leaf('text/plain'),
+        _leaf('application/pdf',
+            disposition: 'attachment',
+            dispositionFilename: 'report.pdf',
+            size: 2048),
+      ]);
+
+      final attachments = ImapDatasourceImpl.collectAttachments(msg);
+
+      expect(attachments, hasLength(1));
+      expect(attachments.single.id, '2'); // IMAP part number for getPart
+      expect(attachments.single.name, 'report.pdf');
+      expect(attachments.single.contentType, 'application/pdf');
+      expect(attachments.single.size, 2048);
+    });
+
+    test(
+        'finds an attachment declared only via Content-Type name, no disposition',
+        () {
+      // The regression this fix targets: enough_mail's disposition-only
+      // findContentInfo/hasAttachments miss this part entirely.
+      final msg = _multipart('mixed', [
+        _leaf('text/html'),
+        _leaf('application/octet-stream', name: 'data.bin'),
+      ]);
+
+      final attachments = ImapDatasourceImpl.collectAttachments(msg);
+
+      expect(attachments, hasLength(1));
+      expect(attachments.single.name, 'data.bin');
+      expect(attachments.single.id, '2');
+    });
+
+    test('reads the filename case-insensitively (server sent NAME/FILENAME)',
+        () {
+      // BODYSTRUCTURE parameter names arrive in whatever case the server
+      // used; enough_mail stores them verbatim, so a naive params['name']
+      // lookup would miss these.
+      final msg = _multipart('mixed', [
+        _leaf('text/plain'),
+        _leaf('application/pdf',
+            disposition: 'attachment',
+            dispositionFilenameParam: 'FILENAME',
+            dispositionFilename: 'caps.pdf'),
+        _leaf('application/zip', nameParam: 'NAME', name: 'archive.zip'),
+      ]);
+
+      final attachments = ImapDatasourceImpl.collectAttachments(msg);
+
+      expect(attachments.map((a) => a.name),
+          containsAll(<String>['caps.pdf', 'archive.zip']));
+    });
+
+    test('strips surrounding quotes left on a BODYSTRUCTURE filename', () {
+      final msg = _multipart('mixed', [
+        _leaf('text/plain'),
+        _leaf('application/pdf',
+            disposition: 'attachment', dispositionFilename: '"quoted.pdf"'),
+      ]);
+
+      expect(
+          ImapDatasourceImpl.collectAttachments(msg).single.name, 'quoted.pdf');
+    });
+
+    test('falls back to a generic name when the part has no filename', () {
+      final msg = _multipart('mixed', [
+        _leaf('text/plain'),
+        _leaf('application/pdf', disposition: 'attachment'),
+      ]);
+
+      final attachments = ImapDatasourceImpl.collectAttachments(msg);
+
+      expect(attachments, hasLength(1));
+      expect(attachments.single.name, 'Attachment');
+    });
+
+    test('ignores inline (cid) images even when they carry a filename', () {
+      final msg = _multipart('related', [
+        _leaf('text/html'),
+        _leaf('image/png',
+            disposition: 'inline',
+            dispositionFilename: 'logo.png',
+            cid: '<logo@x>'),
+      ]);
+
+      expect(ImapDatasourceImpl.collectAttachments(msg), isEmpty);
+    });
+
+    test('ignores a part that only has a Content-Id and no disposition', () {
+      final msg = _multipart('related', [
+        _leaf('text/html'),
+        _leaf('image/png', name: 'logo.png', cid: '<logo@x>'),
+      ]);
+
+      expect(ImapDatasourceImpl.collectAttachments(msg), isEmpty);
+    });
+
+    test('mixes a real attachment with an inline image', () {
+      final msg = _multipart('mixed', [
+        _multipart('related', [
+          _leaf('text/html'),
+          _leaf('image/png', disposition: 'inline', cid: '<logo@x>'),
+        ]).body!,
+        _leaf('application/pdf',
+            disposition: 'attachment', dispositionFilename: 'invoice.pdf'),
+      ]);
+
+      final attachments = ImapDatasourceImpl.collectAttachments(msg);
+
+      expect(attachments, hasLength(1));
+      expect(attachments.single.name, 'invoice.pdf');
+      expect(attachments.single.id, '2'); // second top-level part
     });
   });
 }

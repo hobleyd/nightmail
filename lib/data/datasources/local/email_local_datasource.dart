@@ -24,6 +24,19 @@ abstract interface class EmailLocalDatasource {
     required String emailId,
   });
 
+  /// Whether the cached row for [emailId] was written by an older version of
+  /// the attachment-parsing code, so its attachment metadata cannot be trusted.
+  ///
+  /// A row that parsed *no* attachments is indistinguishable from a message
+  /// that genuinely has none, so a bad parse cannot be detected by inspecting
+  /// the row — it can only be dated. Callers use this to refetch such a row
+  /// once; the rewrite carries the current stamp, so it never refetches again.
+  /// Returns false when [emailId] isn't cached (nothing to repair).
+  Future<bool> hasStaleAttachmentParse({
+    required String accountId,
+    required String emailId,
+  });
+
   /// Deletes all cached emails belonging to [accountId].
   /// Call when an account is removed so no stale data lingers on disk.
   Future<void> clearCacheForAccount(String accountId);

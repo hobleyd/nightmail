@@ -350,6 +350,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
                 meetingInvite = MeetingInvite(
                   icsData: icsStr,
                   type: type,
+                  uid: event.uid,
                   meetingStart: event.start,
                   meetingEnd: event.end,
                   location: event.location,
@@ -516,6 +517,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
           meetingInvite = MeetingInvite(
             icsData: icsData,
             type: type,
+            uid: event.uid,
             meetingStart: event.start,
             meetingEnd: event.end,
             location: event.location,

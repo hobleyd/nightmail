@@ -18,6 +18,9 @@ Map<String, dynamic> _event({
   Map<String, dynamic>? organizer,
   List<Map<String, dynamic>>? attendees,
   String status = 'confirmed',
+  String? transparency,
+  String? eventType,
+  String? iCalUID,
 }) =>
     <String, dynamic>{
       'id': id,
@@ -25,8 +28,18 @@ Map<String, dynamic> _event({
       'status': status,
       'start': {'dateTime': '2026-07-27T09:00:00+10:00', 'timeZone': 'Australia/Brisbane'},
       'end': {'dateTime': '2026-07-27T09:30:00+10:00', 'timeZone': 'Australia/Brisbane'},
-      if (organizer != null) 'organizer': organizer,
-      if (attendees != null) 'attendees': attendees,
+      'organizer': ?organizer,
+      'attendees': ?attendees,
+      'transparency': ?transparency,
+      'eventType': ?eventType,
+      'iCalUID': ?iCalUID,
+    };
+
+/// A `self` attendee entry with the given RSVP.
+Map<String, dynamic> _selfRsvp(String responseStatus) => {
+      'email': 'david.hobley@example.com',
+      'responseStatus': responseStatus,
+      'self': true,
     };
 
 @GenerateMocks([Dio, GoogleCalendarHttpClient])
@@ -187,6 +200,129 @@ void main() {
       final parsed = await parse(event);
       expect(parsed.participation, MeetingParticipation.organizer);
       expect(parsed.status, CalendarEventStatus.busy);
+    });
+  });
+
+  group('GoogleCalendarDatasourceImpl free/busy → conflict detection', () {
+    Future<CalendarEventStatus> statusOf(Map<String, dynamic> event) async {
+      stubEvents([event]);
+      final events = await datasource.getCalendarEvents(
+        startDateTime: _tStart,
+        endDateTime: _tEnd,
+      );
+      return events.single.status;
+    }
+
+    test('an invite you accepted is BUSY, so a new invite clashes with it',
+        () async {
+      // The regression this group exists for: Google's RSVP was fed straight
+      // into the free/busy mapping, so `accepted` became
+      // CalendarEventStatus.free and conflict detection ignored every meeting
+      // the user had agreed to attend.
+      final event = _event(
+        id: 'accepted-invite',
+        organizer: {'email': 'someone.else@example.com'},
+        attendees: [_selfRsvp('accepted')],
+      );
+
+      expect(await statusOf(event), CalendarEventStatus.busy);
+    });
+
+    test('a meeting you organise and are listed on is busy', () async {
+      final event = _event(
+        id: 'organized-with-self-attendee',
+        organizer: {'email': 'david.hobley@example.com', 'self': true},
+        attendees: [
+          {..._selfRsvp('accepted'), 'organizer': true},
+          {'email': 'guest@example.com', 'responseStatus': 'needsAction'},
+        ],
+      );
+
+      expect(await statusOf(event), CalendarEventStatus.busy);
+    });
+
+    test('an unanswered or tentative invite holds the slot', () async {
+      expect(
+        await statusOf(_event(
+          id: 'unanswered',
+          attendees: [_selfRsvp('needsAction')],
+        )),
+        CalendarEventStatus.tentative,
+      );
+      expect(
+        await statusOf(_event(
+          id: 'tentative',
+          attendees: [_selfRsvp('tentative')],
+        )),
+        CalendarEventStatus.tentative,
+      );
+    });
+
+    test('an invite you declined frees the slot', () async {
+      final event = _event(
+        id: 'declined-invite',
+        attendees: [_selfRsvp('declined')],
+      );
+
+      expect(await statusOf(event), CalendarEventStatus.free);
+    });
+
+    test('transparency is the only signal that means free', () async {
+      // Google's Busy/Free toggle. It outranks the RSVP: an accepted meeting
+      // the user marked "Free" does not clash.
+      expect(
+        await statusOf(_event(
+          id: 'accepted-but-marked-free',
+          attendees: [_selfRsvp('accepted')],
+          transparency: 'transparent',
+        )),
+        CalendarEventStatus.free,
+      );
+      expect(
+        await statusOf(_event(
+          id: 'explicitly-opaque',
+          attendees: [_selfRsvp('accepted')],
+          transparency: 'opaque',
+        )),
+        CalendarEventStatus.busy,
+      );
+    });
+
+    test('a cancelled event no longer holds the slot', () async {
+      final event = _event(
+        id: 'called-off',
+        status: 'cancelled',
+        attendees: [_selfRsvp('accepted')],
+      );
+
+      expect(await statusOf(event), CalendarEventStatus.free);
+    });
+
+    test('out-of-office blocks the slot; a working location does not',
+        () async {
+      expect(
+        await statusOf(_event(id: 'on-leave', eventType: 'outOfOffice')),
+        CalendarEventStatus.outOfOffice,
+      );
+      // Returned by events.list for anyone who sets a working location. Mapping
+      // it to busy would warn of a conflict on every invite of the day.
+      final wfh =
+          await statusOf(_event(id: 'from-home', eventType: 'workingLocation'));
+      expect(wfh, CalendarEventStatus.workingElsewhere);
+    });
+
+    test('iCalUID is carried through so an invite can identify its own copy',
+        () async {
+      stubEvents([
+        _event(id: 'auto-added', iCalUID: 'abc123uid@google.com'),
+      ]);
+
+      final events = await datasource.getCalendarEvents(
+        startDateTime: _tStart,
+        endDateTime: _tEnd,
+      );
+
+      expect(events.single.iCalUid, 'abc123uid@google.com');
     });
   });
 }

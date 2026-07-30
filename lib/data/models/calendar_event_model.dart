@@ -9,6 +9,7 @@ class CalendarEventModel extends CalendarEvent {
     required super.start,
     required super.end,
     required super.isAllDay,
+    super.iCalUid,
     super.location,
     super.bodyPreview,
     super.status,
@@ -28,6 +29,7 @@ class CalendarEventModel extends CalendarEvent {
       start: _parseDateTime(json['start'] as Map<String, dynamic>?),
       end: _parseDateTime(json['end'] as Map<String, dynamic>?),
       isAllDay: json['isAllDay'] as bool? ?? false,
+      iCalUid: json['iCalUId'] as String?,
       location: _parseLocation(
         json['location'] as Map<String, dynamic>?,
         json['onlineMeeting'] as Map<String, dynamic>?,

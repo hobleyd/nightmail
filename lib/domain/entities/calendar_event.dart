@@ -39,6 +39,7 @@ class CalendarEvent extends Equatable {
     required this.start,
     required this.end,
     required this.isAllDay,
+    this.iCalUid,
     this.location,
     this.bodyPreview,
     this.status = CalendarEventStatus.busy,
@@ -56,6 +57,14 @@ class CalendarEvent extends Equatable {
   final DateTime start;
   final DateTime end;
   final bool isAllDay;
+
+  /// The cross-provider iCalendar UID (Google `iCalUID`, Graph `iCalUId`),
+  /// shared by every copy of a meeting on every attendee's calendar. Lets a
+  /// meeting invite recognise the copy of *itself* that the provider already
+  /// added to the calendar, instead of reporting it as a clash. Null for
+  /// providers that don't expose it.
+  final String? iCalUid;
+
   final String? location;
   final String? bodyPreview;
   final CalendarEventStatus status;
@@ -82,6 +91,16 @@ class CalendarEvent extends Equatable {
   bool get isRecurringOccurrence => seriesMasterId != null;
 
   Duration get duration => end.difference(start);
+
+  /// Whether this event actually occupies its slot, for conflict detection.
+  /// [CalendarEventStatus.free] is explicit availability; `workingElsewhere` is
+  /// a location marker (a Google working-location entry, Graph's
+  /// "working elsewhere") rather than a commitment, so neither clashes with a
+  /// new invite. Everything else — including a tentative or unanswered
+  /// meeting — does.
+  bool get blocksTime =>
+      status != CalendarEventStatus.free &&
+      status != CalendarEventStatus.workingElsewhere;
 
   @override
   List<Object?> get props => [id];

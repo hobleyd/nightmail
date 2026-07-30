@@ -313,6 +313,7 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     if (invite == null) return null;
     return {
       'icsData': invite.icsData,
+      'uid': invite.uid,
       'meetingStart': invite.meetingStart?.toIso8601String(),
       'meetingEnd': invite.meetingEnd?.toIso8601String(),
       'location': invite.location,
@@ -327,6 +328,7 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     final end = j['meetingEnd'] as String?;
     return MeetingInvite(
       icsData: j['icsData'] as String?,
+      uid: j['uid'] as String?,
       meetingStart: start != null ? DateTime.parse(start) : null,
       meetingEnd: end != null ? DateTime.parse(end) : null,
       location: j['location'] as String?,

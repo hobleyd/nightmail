@@ -78,8 +78,12 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
           'singleEvents': true,
           'orderBy': 'startTime',
           'maxResults': 250,
+          // transparency/eventType/iCalUID feed conflict detection: the first
+          // two decide whether an event really occupies its slot, the third
+          // identifies the invite's own auto-added copy. A field mask omitting
+          // them makes every event look busy and unidentifiable.
           'fields':
-              'items(id,summary,start,end,description,location,status,organizer,attendees,hangoutLink,conferenceData,reminders,recurringEventId)',
+              'items(id,iCalUID,summary,start,end,description,location,status,transparency,eventType,organizer,attendees,hangoutLink,conferenceData,reminders,recurringEventId)',
         },
       );
 
@@ -118,7 +122,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
         '/calendars/primary/events/$id',
         queryParameters: {
           'fields':
-              'id,summary,start,end,description,location,status,organizer,attendees,hangoutLink,conferenceData,reminders,recurringEventId,recurrence',
+              'id,iCalUID,summary,start,end,description,location,status,transparency,eventType,organizer,attendees,hangoutLink,conferenceData,reminders,recurringEventId,recurrence',
         },
       );
       final json = resp.data;
@@ -908,7 +912,12 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
                 (a) => a['email'] == organizerEmail && a['self'] == true));
 
     // Free/busy status, used for conflict detection (not colouring).
-    final status = _parseStatus(selfStatus ?? json['status'] as String?);
+    final status = _parseStatus(
+      eventStatus: json['status'] as String?,
+      transparency: json['transparency'] as String?,
+      eventType: json['eventType'] as String?,
+      selfResponseStatus: selfStatus,
+    );
 
     // Participation drives the tile colour. Google inconsistently omits the
     // organizer from `attendees`, so we lean on the `organizer.self` flag
@@ -935,6 +944,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       start: start,
       end: end,
       isAllDay: isAllDay,
+      iCalUid: json['iCalUID'] as String?,
       location: _parseLocation(
         json['location'] as String?,
         description,
@@ -1010,11 +1020,45 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     return (location != null && location.isNotEmpty) ? location : null;
   }
 
-  CalendarEventStatus _parseStatus(String? value) {
-    return switch (value?.toLowerCase()) {
-      'free' || 'accepted' => CalendarEventStatus.free,
-      'tentative' || 'needsaction' => CalendarEventStatus.tentative,
+  /// Free/busy status, used for conflict detection (not colouring).
+  ///
+  /// Google has no single `showAs`-style field, so this combines three
+  /// independent signals, in priority order:
+  ///
+  ///  * `status: 'cancelled'` — called off, so no longer a commitment.
+  ///  * `transparency: 'transparent'` — the event's own "show me as available"
+  ///    flag (Google's UI calls it Busy/Free). Absent or `opaque` means busy;
+  ///    this is the *only* field that genuinely means free.
+  ///  * `eventType` — working-location entries are a location marker rather
+  ///    than a commitment; out-of-office blocks the day.
+  ///  * the user's own RSVP — `declined` releases the slot, `tentative` and
+  ///    `needsAction` hold it loosely.
+  ///
+  /// An RSVP of `accepted` is emphatically **not** free. It used to map to
+  /// [CalendarEventStatus.free], which silently disabled conflict detection
+  /// against every meeting the user had accepted — i.e. against almost
+  /// everything a new invite can realistically clash with.
+  CalendarEventStatus _parseStatus({
+    String? eventStatus,
+    String? transparency,
+    String? eventType,
+    String? selfResponseStatus,
+  }) {
+    if (eventStatus?.toLowerCase() == 'cancelled') {
+      return CalendarEventStatus.free;
+    }
+    if (transparency?.toLowerCase() == 'transparent') {
+      return CalendarEventStatus.free;
+    }
+    switch (eventType?.toLowerCase()) {
+      case 'outofoffice':
+        return CalendarEventStatus.outOfOffice;
+      case 'workinglocation':
+        return CalendarEventStatus.workingElsewhere;
+    }
+    return switch (selfResponseStatus?.toLowerCase()) {
       'declined' => CalendarEventStatus.free,
+      'tentative' || 'needsaction' => CalendarEventStatus.tentative,
       _ => CalendarEventStatus.busy,
     };
   }

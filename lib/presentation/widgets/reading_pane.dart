@@ -20,6 +20,7 @@ import 'contact_hover_card.dart';
 
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/meeting_conflicts.dart';
 import '../../data/services/eml_parser.dart';
 import '../../data/services/office_preview_service.dart';
 import '../../domain/entities/email.dart';
@@ -568,13 +569,12 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
     ));
     if (!mounted) return;
     result.fold((_) {}, (events) {
-      final conflicts = events.where((e) {
-        if (e.status == CalendarEventStatus.free) return false;
-        // Skip the calendar entry auto-created for this invite itself (same start+end).
-        if (e.start.toUtc().isAtSameMomentAs(start.toUtc()) &&
-            e.end.toUtc().isAtSameMomentAs(end.toUtc())) return false;
-        return e.start.isBefore(end) && e.end.isAfter(start);
-      }).toList();
+      final conflicts = findMeetingConflicts(
+        events: events,
+        meetingStart: start,
+        meetingEnd: end,
+        inviteUid: invite?.uid,
+      );
       if (conflicts.isNotEmpty) setState(() => _conflicts = conflicts);
     });
   }

@@ -30,6 +30,15 @@ abstract interface class CalendarRemoteDatasource {
     String? message,
   });
 
+  /// Whether the provider itself delivers a propose-new-time to the organizer.
+  ///
+  /// Only Graph does (`/decline` with `proposedNewTime`). The others can only
+  /// decline, so [CalendarRepositoryImpl] follows their
+  /// [proposeNewTimeFromEmail] with an emailed `METHOD:COUNTER` reply —
+  /// without which the organizer receives a bare decline and never learns the
+  /// proposed time.
+  bool get supportsNativeProposeNewTime;
+
   Future<void> proposeNewTimeFromEmail({
     required String emailId,
     required DateTime newStart,
@@ -48,6 +57,24 @@ abstract interface class CalendarRemoteDatasource {
 
   Future<void> cancelMeetingFromEmail({
     required String emailId,
+    DateTime? meetingStart,
+  });
+
+  /// Moves the meeting we organize to a time an attendee proposed, and sends
+  /// the revised invitation to every attendee.
+  ///
+  /// [emailId] is the proposal message; [icsData] its `METHOD:COUNTER` part,
+  /// whose `UID` is how providers without message→event navigation find the
+  /// event. [meetingStart] is the meeting's *current* start, used as a
+  /// last-resort locator.
+  ///
+  /// Throws when the event cannot be found or the caller does not organize it —
+  /// only the organizer can move a meeting.
+  Future<void> acceptProposedTimeFromEmail({
+    required String emailId,
+    required DateTime newStart,
+    required DateTime newEnd,
+    String? icsData,
     DateTime? meetingStart,
   });
 

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nightmail/data/datasources/remote/gmail_datasource_impl.dart';
+import 'package:nightmail/domain/entities/meeting_invite.dart';
 
 import 'gmail_datasource_impl_test.mocks.dart';
 
@@ -852,6 +853,85 @@ void main() {
       expect(email.inlineAttachments, isEmpty);
       expect(email.attachments, hasLength(1));
       expect(email.attachments.first.name, 'logo.png');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // getEmail — iCalendar METHOD classification
+  // ---------------------------------------------------------------------------
+
+  group('GmailDatasourceImpl.getEmail — meeting invite type', () {
+    String ics(String method, {String dtstart = '20260805T013000Z'}) =>
+        'BEGIN:VCALENDAR\r\n'
+        'VERSION:2.0\r\n'
+        'METHOD:$method\r\n'
+        'BEGIN:VEVENT\r\n'
+        'UID:evt-1@example.com\r\n'
+        'SUMMARY:Quarterly review\r\n'
+        'ORGANIZER;CN="Me":mailto:me@example.com\r\n'
+        'DTSTART:$dtstart\r\n'
+        'DTEND:20260805T020000Z\r\n'
+        'END:VEVENT\r\n'
+        'END:VCALENDAR';
+
+    void stubIcsMessage(String icsText) {
+      _stubGetByUrl((url) => {
+            'id': 'msg1',
+            'threadId': 'thread1',
+            'payload': {
+              'mimeType': 'multipart/mixed',
+              'headers': [
+                {'name': 'Subject', 'value': 'Quarterly review'},
+                {'name': 'From', 'value': 'bob@example.com'},
+              ],
+              'parts': [
+                {
+                  'mimeType': 'text/plain',
+                  'body': {'data': _b64('see attached'), 'size': 12},
+                },
+                {
+                  'mimeType': 'text/calendar',
+                  'filename': 'counter.ics',
+                  'body': {'data': _b64(icsText), 'size': icsText.length},
+                },
+              ],
+            },
+          });
+    }
+
+    test('classifies METHOD:COUNTER as a proposed new time', () async {
+      // An attendee proposing a different time for a meeting we organize. Left
+      // as `invitation`, the organizer was offered Accept/Decline/Propose on
+      // their own meeting instead of a way to act on the proposal.
+      stubIcsMessage(ics('COUNTER'));
+
+      final email = await datasource.getEmail('msg1');
+
+      final invite = email.meetingInvite!;
+      expect(invite.type, MeetingEmailType.proposedNewTime);
+      expect(invite.uid, 'evt-1@example.com');
+      // A counter states only the proposed time, so DTSTART/DTEND *are* it.
+      expect(invite.proposedStart, DateTime.utc(2026, 8, 5, 1, 30));
+      expect(invite.proposedEnd, DateTime.utc(2026, 8, 5, 2, 0));
+    });
+
+    test('classifies METHOD:REQUEST as an invitation with no proposal',
+        () async {
+      stubIcsMessage(ics('REQUEST'));
+
+      final email = await datasource.getEmail('msg1');
+
+      expect(email.meetingInvite!.type, MeetingEmailType.invitation);
+      expect(email.meetingInvite!.proposedStart, isNull);
+    });
+
+    test('classifies METHOD:CANCEL as a cancellation', () async {
+      stubIcsMessage(ics('CANCEL'));
+
+      final email = await datasource.getEmail('msg1');
+
+      expect(email.meetingInvite!.type, MeetingEmailType.cancellation);
+      expect(email.meetingInvite!.proposedStart, isNull);
     });
   });
 }

@@ -1,14 +1,19 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fpdart/fpdart.dart';
+import 'package:intl/intl.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/error/exceptions.dart';
 import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/data/datasources/remote/calendar_remote_datasource.dart';
+import 'package:nightmail/data/datasources/remote/email_remote_datasource.dart';
 import 'package:nightmail/data/models/calendar_event_model.dart';
 import 'package:nightmail/data/repositories/calendar_repository_impl.dart';
 import 'package:nightmail/domain/entities/attendee_availability.dart';
 import 'package:nightmail/domain/entities/calendar_event.dart';
+import 'package:nightmail/domain/entities/local_attachment.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 
@@ -25,7 +30,8 @@ final _tEventModel = CalendarEventModel(
   isAllDay: false,
 );
 
-@GenerateMocks([AccountManager, CalendarRemoteDatasource])
+@GenerateMocks(
+    [AccountManager, CalendarRemoteDatasource, EmailRemoteDatasource])
 void main() {
   late CalendarRepositoryImpl repository;
   late MockAccountManager mockAccountManager;
@@ -591,6 +597,329 @@ void main() {
         expect(result.single.status, AttendeeAvailabilityStatus.busy);
         expect(result.single.scheduleItems, hasLength(1));
       });
+    });
+  });
+
+  group('CalendarRepositoryImpl.proposeNewTimeFromEmail', () {
+    late MockEmailRemoteDatasource mockEmailDatasource;
+
+    const invite = '''
+BEGIN:VCALENDAR
+VERSION:2.0
+METHOD:REQUEST
+BEGIN:VEVENT
+UID:evt-1@example.com
+SEQUENCE:2
+SUMMARY:Quarterly review
+ORGANIZER;CN="Dana Chen":mailto:dana@example.com
+DTSTART:20260803T230000Z
+DTEND:20260803T234500Z
+END:VEVENT
+END:VCALENDAR''';
+
+    final newStart = DateTime.utc(2026, 8, 5, 1, 30);
+    final newEnd = DateTime.utc(2026, 8, 5, 2, 0);
+
+    setUp(() {
+      mockEmailDatasource = MockEmailRemoteDatasource();
+      when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+      when(mockAccountManager.emailDatasource).thenReturn(mockEmailDatasource);
+      when(mockAccountManager.activeAccount).thenReturn(const GmailAccount(
+        id: 'acct-1',
+        displayName: 'Sam Patel',
+        emailAddress: 'sam@example.com',
+      ));
+      when(mockDatasource.proposeNewTimeFromEmail(
+        emailId: anyNamed('emailId'),
+        newStart: anyNamed('newStart'),
+        newEnd: anyNamed('newEnd'),
+        icsData: anyNamed('icsData'),
+        meetingStart: anyNamed('meetingStart'),
+        userEmail: anyNamed('userEmail'),
+        message: anyNamed('message'),
+      )).thenAnswer((_) async {});
+      when(mockEmailDatasource.replyToEmail(
+        messageId: anyNamed('messageId'),
+        comment: anyNamed('comment'),
+        replyAll: anyNamed('replyAll'),
+        toAddresses: anyNamed('toAddresses'),
+        ccAddresses: anyNamed('ccAddresses'),
+        bodyType: anyNamed('bodyType'),
+        newAttachments: anyNamed('newAttachments'),
+      )).thenAnswer((_) async {});
+    });
+
+    Future<Either<Failure, void>> propose({
+      String? icsData = invite,
+      String? message,
+    }) =>
+        repository.proposeNewTimeFromEmail(
+          emailId: 'msg-1',
+          newStart: newStart,
+          newEnd: newEnd,
+          icsData: icsData,
+          meetingStart: DateTime.utc(2026, 8, 3, 23),
+          message: message,
+        );
+
+    /// The single reply the repository sent, as its captured named arguments.
+    Map<Symbol, dynamic> capturedReply() {
+      final call = verify(mockEmailDatasource.replyToEmail(
+        messageId: captureAnyNamed('messageId'),
+        comment: captureAnyNamed('comment'),
+        toAddresses: captureAnyNamed('toAddresses'),
+        newAttachments: captureAnyNamed('newAttachments'),
+        bodyType: anyNamed('bodyType'),
+        replyAll: anyNamed('replyAll'),
+        ccAddresses: anyNamed('ccAddresses'),
+      ));
+      call.called(1);
+      final captured = call.captured;
+      return {
+        #messageId: captured[0],
+        #comment: captured[1],
+        #toAddresses: captured[2],
+        #newAttachments: captured[3],
+      };
+    }
+
+    test('emails a COUNTER when the provider cannot propose natively',
+        () async {
+      // Regression: proposing from a Gmail account reached the organizer as a
+      // bare decline, with the proposed time dropped entirely.
+      when(mockDatasource.supportsNativeProposeNewTime).thenReturn(false);
+
+      final result = await propose();
+
+      expect(result.isRight(), isTrue);
+      final reply = capturedReply();
+      expect(reply[#messageId], 'msg-1');
+      final attachments = reply[#newAttachments] as List<LocalAttachment>;
+      expect(attachments, hasLength(1));
+      expect(attachments.single.mimeType, contains('method=COUNTER'));
+      final ics = utf8.decode(attachments.single.bytes);
+      expect(ics, contains('METHOD:COUNTER'));
+      expect(ics, contains('UID:evt-1@example.com'));
+      expect(ics, contains('DTSTART:20260805T013000Z'));
+      expect(ics, contains('DTEND:20260805T020000Z'));
+    });
+
+    test('sends no email when the provider proposes natively', () async {
+      // Graph's own decline+proposedNewTime already reached the organizer; a
+      // second, emailed proposal would double up.
+      when(mockDatasource.supportsNativeProposeNewTime).thenReturn(true);
+
+      final result = await propose();
+
+      expect(result.isRight(), isTrue);
+      verifyNever(mockEmailDatasource.replyToEmail(
+        messageId: anyNamed('messageId'),
+        comment: anyNamed('comment'),
+        replyAll: anyNamed('replyAll'),
+        toAddresses: anyNamed('toAddresses'),
+        ccAddresses: anyNamed('ccAddresses'),
+        bodyType: anyNamed('bodyType'),
+        newAttachments: anyNamed('newAttachments'),
+      ));
+    });
+
+    test('addresses the reply to the ICS organizer, not the sender', () async {
+      // An invite can be sent by a delegate or a room system; the RSVP and
+      // counter belong to the organizer named in the ICS.
+      when(mockDatasource.supportsNativeProposeNewTime).thenReturn(false);
+
+      await propose();
+
+      expect(capturedReply()[#toAddresses], ['dana@example.com']);
+    });
+
+    test('states the proposed time in the body for clients that ignore COUNTER',
+        () async {
+      when(mockDatasource.supportsNativeProposeNewTime).thenReturn(false);
+
+      await propose();
+
+      final body = capturedReply()[#comment] as String;
+      expect(body, contains('Quarterly review'));
+      expect(body, contains('Proposed:'));
+      expect(body, contains('Originally:'));
+      // The body is written in the sender's local zone, so assert on the
+      // rendered local time rather than a fixed string.
+      expect(body, contains(DateFormat('h:mm a').format(newStart.toLocal())));
+    });
+
+    test('includes the note in both the body and the COUNTER', () async {
+      when(mockDatasource.supportsNativeProposeNewTime).thenReturn(false);
+
+      await propose(message: 'Clashes with my flight');
+
+      final reply = capturedReply();
+      expect(reply[#comment], contains('Clashes with my flight'));
+      final attachments = reply[#newAttachments] as List<LocalAttachment>;
+      expect(utf8.decode(attachments.single.bytes),
+          contains('COMMENT:Clashes with my flight'));
+    });
+
+    test('still emails the proposal when the invite has no ICS', () async {
+      // No ICS means no counter can be built, but the organizer must still be
+      // told a time was proposed. Falls back to replying to the sender.
+      when(mockDatasource.supportsNativeProposeNewTime).thenReturn(false);
+
+      final result = await propose(icsData: null);
+
+      expect(result.isRight(), isTrue);
+      final reply = capturedReply();
+      expect(reply[#newAttachments], isEmpty);
+      expect(reply[#toAddresses], isEmpty);
+      expect(reply[#comment], contains('Proposed:'));
+    });
+
+    test('fails, naming the decline, when the reply cannot be sent', () async {
+      // The invite is already declined by this point: reporting success would
+      // leave the user believing a proposal they never sent had gone out.
+      when(mockDatasource.supportsNativeProposeNewTime).thenReturn(false);
+      when(mockEmailDatasource.replyToEmail(
+        messageId: anyNamed('messageId'),
+        comment: anyNamed('comment'),
+        replyAll: anyNamed('replyAll'),
+        toAddresses: anyNamed('toAddresses'),
+        ccAddresses: anyNamed('ccAddresses'),
+        bodyType: anyNamed('bodyType'),
+        newAttachments: anyNamed('newAttachments'),
+      )).thenThrow(const ServerException(message: 'SMTP rejected'));
+
+      final result = await propose();
+
+      expect(result.isLeft(), isTrue);
+      result.fold(
+        (failure) {
+          expect(failure, isA<ServerFailure>());
+          expect(failure.message, contains('declined'));
+          expect(failure.message, contains('SMTP rejected'));
+        },
+        (_) => fail('Expected Left'),
+      );
+    });
+  });
+
+  group('CalendarRepositoryImpl.acceptProposedTimeFromEmail', () {
+    final newStart = DateTime.utc(2026, 8, 5, 1, 30);
+    final newEnd = DateTime.utc(2026, 8, 5, 2, 0);
+    final currentStart = DateTime.utc(2026, 8, 4, 1, 30);
+    const icsData = 'BEGIN:VCALENDAR\r\nMETHOD:COUNTER\r\nEND:VCALENDAR';
+
+    Future<Either<Failure, void>> accept() => repository.acceptProposedTimeFromEmail(
+          emailId: 'msg-9',
+          newStart: newStart,
+          newEnd: newEnd,
+          icsData: icsData,
+          meetingStart: currentStart,
+        );
+
+    setUp(() {
+      when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+      when(mockDatasource.acceptProposedTimeFromEmail(
+        emailId: anyNamed('emailId'),
+        newStart: anyNamed('newStart'),
+        newEnd: anyNamed('newEnd'),
+        icsData: anyNamed('icsData'),
+        meetingStart: anyNamed('meetingStart'),
+      )).thenAnswer((_) async {});
+    });
+
+    test('forwards the proposed time and the locators to the datasource',
+        () async {
+      final result = await accept();
+
+      expect(result.isRight(), isTrue);
+      final call = verify(mockDatasource.acceptProposedTimeFromEmail(
+        emailId: captureAnyNamed('emailId'),
+        newStart: captureAnyNamed('newStart'),
+        newEnd: captureAnyNamed('newEnd'),
+        icsData: captureAnyNamed('icsData'),
+        meetingStart: captureAnyNamed('meetingStart'),
+      ));
+      call.called(1);
+      // The ICS and the *current* start are both locators: providers without
+      // message-to-event navigation need one of them to find the meeting.
+      expect(call.captured, ['msg-9', newStart, newEnd, icsData, currentStart]);
+    });
+
+    test('returns Left(ServerFailure) when calendarDatasource is null',
+        () async {
+      when(mockAccountManager.calendarDatasource).thenReturn(null);
+
+      final result = await accept();
+
+      expect(result.isLeft(), isTrue);
+      result.fold(
+        (failure) => expect(failure, isA<ServerFailure>()),
+        (_) => fail('Expected Left'),
+      );
+    });
+
+    test('maps AuthException to Left(AuthFailure)', () async {
+      // Must stay an AuthFailure or the re-auth prompt never appears.
+      when(mockDatasource.acceptProposedTimeFromEmail(
+        emailId: anyNamed('emailId'),
+        newStart: anyNamed('newStart'),
+        newEnd: anyNamed('newEnd'),
+        icsData: anyNamed('icsData'),
+        meetingStart: anyNamed('meetingStart'),
+      )).thenThrow(const AuthException(message: 'token expired'));
+
+      final result = await accept();
+
+      result.fold(
+        (failure) {
+          expect(failure, isA<AuthFailure>());
+          expect(failure.message, 'token expired');
+        },
+        (_) => fail('Expected Left'),
+      );
+    });
+
+    test('maps NetworkException to Left(NetworkFailure)', () async {
+      when(mockDatasource.acceptProposedTimeFromEmail(
+        emailId: anyNamed('emailId'),
+        newStart: anyNamed('newStart'),
+        newEnd: anyNamed('newEnd'),
+        icsData: anyNamed('icsData'),
+        meetingStart: anyNamed('meetingStart'),
+      )).thenThrow(const NetworkException(message: 'offline'));
+
+      final result = await accept();
+
+      result.fold(
+        (failure) => expect(failure, isA<NetworkFailure>()),
+        (_) => fail('Expected Left'),
+      );
+    });
+
+    test('surfaces the not-organizer refusal as a Left', () async {
+      // Only the organizer can move a meeting; the message has to reach the UI
+      // rather than the banner reporting a move that never happened.
+      when(mockDatasource.acceptProposedTimeFromEmail(
+        emailId: anyNamed('emailId'),
+        newStart: anyNamed('newStart'),
+        newEnd: anyNamed('newEnd'),
+        icsData: anyNamed('icsData'),
+        meetingStart: anyNamed('meetingStart'),
+      )).thenThrow(const ServerException(
+          message: 'You are not the organizer of this meeting',
+          statusCode: 403));
+
+      final result = await accept();
+
+      expect(result.isLeft(), isTrue);
+      result.fold(
+        (failure) {
+          expect(failure, isA<ServerFailure>());
+          expect(failure.message, contains('not the organizer'));
+          expect((failure as ServerFailure).statusCode, 403);
+        },
+        (_) => fail('Expected Left'),
+      );
     });
   });
 }

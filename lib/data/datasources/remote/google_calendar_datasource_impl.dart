@@ -227,6 +227,15 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     }
   }
 
+  /// The RSVP note, as the `comment` field Google shows the organizer next to
+  /// our response. Omitted entirely when there is no note — sending
+  /// `comment: ''` clears any note already on the attendee.
+  Map<String, String> _responseComment(String? message) {
+    final note = message?.trim();
+    if (note == null || note.isEmpty) return const {};
+    return {'comment': note};
+  }
+
   @override
   Future<void> respondToMeetingInvite({
     required String emailId,
@@ -258,7 +267,11 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       final attendees = <Map<String, dynamic>>[
         ...event.attendees.where((a) => a != userEmail).map((a) => {'email': a}),
         if (userEmail != null)
-          {'email': userEmail, 'responseStatus': 'declined'},
+          {
+            'email': userEmail,
+            'responseStatus': 'declined',
+            ..._responseComment(message),
+          },
       ];
       try {
         final searchResp = await _dio.get<Map<String, dynamic>>(
@@ -295,7 +308,12 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     // Build attendee list: include ICS attendees plus self with the chosen status.
     final attendees = <Map<String, dynamic>>[
       ...event.attendees.where((a) => a != userEmail).map((a) => {'email': a}),
-      if (userEmail != null) {'email': userEmail, 'responseStatus': responseStatus},
+      if (userEmail != null)
+        {
+          'email': userEmail,
+          'responseStatus': responseStatus,
+          ..._responseComment(message),
+        },
     ];
 
     // Google auto-adds invite events to the calendar with needsAction status,
@@ -386,6 +404,69 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
   }) async {
     throw const ServerException(
         message: 'Cancel from decline notification is not supported for Google Calendar');
+  }
+
+  @override
+  Future<void> acceptProposedTimeFromEmail({
+    required String emailId,
+    required DateTime newStart,
+    required DateTime newEnd,
+    String? icsData,
+    DateTime? meetingStart,
+  }) async {
+    // Google has no message→event navigation, so the counter's UID is the only
+    // way to find the meeting. It is echoed from the original invitation, so it
+    // matches the organizer's own copy.
+    if (icsData == null) {
+      throw const ServerException(
+          message: 'Cannot accept the proposal: the message has no '
+              'iCalendar part identifying the meeting');
+    }
+    final uid = IcsParser.parse(icsData).uid;
+    if (uid == null) {
+      throw const ServerException(
+          message: 'Cannot accept the proposal: iCalendar UID missing');
+    }
+
+    try {
+      final searchResp = await _dio.get<Map<String, dynamic>>(
+        '/calendars/primary/events',
+        queryParameters: {'iCalUID': uid, 'maxResults': 1},
+      );
+      final items = (searchResp.data?['items'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      if (items.isEmpty) {
+        throw const ServerException(
+            message: 'That meeting is no longer in your calendar');
+      }
+      final event = items.first;
+      // `organizer.self` is Google's marker for "this calendar owns it". Only
+      // the organizer can move a meeting for everyone.
+      final organizer = event['organizer'] as Map<String, dynamic>?;
+      if (organizer?['self'] != true) {
+        throw const ServerException(
+            message: 'You are not the organizer of this meeting');
+      }
+      final eventId = event['id'] as String;
+
+      // A recurring master here means the whole series moves — a counter that
+      // named a single occurrence would have carried a RECURRENCE-ID, which
+      // Google cannot address by UID anyway.
+      if (event['recurrence'] != null) _invalidateRecurrenceCache();
+
+      await _dio.patch<Map<String, dynamic>>(
+        '/calendars/primary/events/$eventId',
+        // sendUpdates=all is what actually re-issues the invitation; without it
+        // the time changes and no attendee is told.
+        queryParameters: {'sendUpdates': 'all'},
+        data: {
+          'start': {'dateTime': newStart.toUtc().toIso8601String(), 'timeZone': 'UTC'},
+          'end': {'dateTime': newEnd.toUtc().toIso8601String(), 'timeZone': 'UTC'},
+        },
+      );
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
   }
 
   @override
@@ -502,6 +583,9 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
   }
 
   @override
+  bool get supportsNativeProposeNewTime => false;
+
+  @override
   Future<void> proposeNewTimeFromEmail({
     required String emailId,
     required DateTime newStart,
@@ -512,12 +596,15 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     String? message,
   }) async {
     // Google Calendar has no native propose-new-time API; decline the invite.
+    // The proposed time itself reaches the organizer as the COUNTER reply the
+    // repository sends afterwards (see supportsNativeProposeNewTime).
     await respondToMeetingInvite(
       emailId: emailId,
       response: MeetingInviteResponseType.decline,
       icsData: icsData,
       meetingStart: meetingStart,
       userEmail: userEmail,
+      message: message,
     );
   }
 

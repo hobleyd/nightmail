@@ -342,9 +342,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
             final raw = ar.data?['data'] as String?;
             if (raw != null && raw.isNotEmpty) {
               final icsStr = utf8.decode(base64Url.decode(_padBase64(raw)));
-              final type = _icsMethod(icsStr) == 'CANCEL'
-                  ? MeetingEmailType.cancellation
-                  : MeetingEmailType.invitation;
+              final type = _icsInviteType(icsStr);
               try {
                 final event = IcsParser.parse(icsStr);
                 meetingInvite = MeetingInvite(
@@ -355,6 +353,11 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
                   meetingEnd: event.end,
                   location: event.location,
                   isAllDay: event.isAllDay,
+                  proposedStart: type == MeetingEmailType.proposedNewTime
+                      ? event.start
+                      : null,
+                  proposedEnd:
+                      type == MeetingEmailType.proposedNewTime ? event.end : null,
                 );
               } catch (_) {
                 meetingInvite = MeetingInvite(icsData: icsStr, type: type);
@@ -509,9 +512,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       bodyType = extractedType;
       final icsData = _extractIcsData(payload);
       if (icsData != null) {
-        final type = _icsMethod(icsData) == 'CANCEL'
-            ? MeetingEmailType.cancellation
-            : MeetingEmailType.invitation;
+        final type = _icsInviteType(icsData);
         try {
           final event = IcsParser.parse(icsData);
           meetingInvite = MeetingInvite(
@@ -522,6 +523,10 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
             meetingEnd: event.end,
             location: event.location,
             isAllDay: event.isAllDay,
+            proposedStart:
+                type == MeetingEmailType.proposedNewTime ? event.start : null,
+            proposedEnd:
+                type == MeetingEmailType.proposedNewTime ? event.end : null,
           );
         } catch (_) {
           meetingInvite = MeetingInvite(icsData: icsData, type: type);
@@ -638,6 +643,20 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       }
     }
     return null;
+  }
+
+  /// Classifies an iCalendar part by its `METHOD`.
+  ///
+  /// `COUNTER` is an attendee proposing a different time for a meeting we
+  /// organize (RFC 5546 §3.2.7) — it must not fall through to [invitation], or
+  /// the organizer is offered Accept/Decline/Propose on their own meeting
+  /// instead of a way to act on the proposal.
+  MeetingEmailType _icsInviteType(String icsData) {
+    return switch (_icsMethod(icsData)) {
+      'CANCEL' => MeetingEmailType.cancellation,
+      'COUNTER' => MeetingEmailType.proposedNewTime,
+      _ => MeetingEmailType.invitation,
+    };
   }
 
   String? _extractIcsData(Map<String, dynamic> payload) {

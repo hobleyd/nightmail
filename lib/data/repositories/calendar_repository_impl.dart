@@ -1,9 +1,16 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:fpdart/fpdart.dart';
+import 'package:intl/intl.dart';
 
 import '../../core/error/exceptions.dart';
 import '../../core/error/failures.dart';
+import '../../core/utils/ics_counter_builder.dart';
+import '../../core/utils/ics_parser.dart';
 import '../../domain/entities/attendee_availability.dart';
 import '../../domain/entities/calendar_event.dart';
+import '../../domain/entities/local_attachment.dart';
 import '../../domain/entities/meeting_invite.dart';
 import '../../domain/repositories/calendar_repository.dart';
 import '../../domain/usecases/create_calendar_event.dart';
@@ -191,6 +198,16 @@ class CalendarRepositoryImpl implements CalendarRepository {
         userEmail: userEmail,
         message: message,
       );
+      if (!ds.supportsNativeProposeNewTime) {
+        await _emailCounterProposal(
+          emailId: emailId,
+          icsData: icsData,
+          newStart: newStart,
+          newEnd: newEnd,
+          userEmail: userEmail,
+          message: message,
+        );
+      }
       return const Right(null);
     } on AuthException catch (e) {
       return Left(AuthFailure(message: e.message));
@@ -201,6 +218,110 @@ class CalendarRepositoryImpl implements CalendarRepository {
     } catch (e) {
       return Left(ServerFailure(message: e.toString()));
     }
+  }
+
+  /// Emails the organizer the proposed time, for account types whose provider
+  /// can only decline (see [CalendarRemoteDatasource.supportsNativeProposeNewTime]).
+  ///
+  /// The reply carries a `METHOD:COUNTER` iCalendar part — what Outlook itself
+  /// sends over SMTP, so Exchange can offer the organizer an "Accept Proposal"
+  /// action — and states the proposed time in the message body as well, for
+  /// clients that ignore COUNTER. Replying (rather than composing) keeps the
+  /// proposal in the invitation's thread.
+  ///
+  /// Throws when the reply cannot be sent: by this point the invite has already
+  /// been declined, and a silent failure would leave the organizer with a bare
+  /// decline and no idea a time was proposed.
+  Future<void> _emailCounterProposal({
+    required String emailId,
+    required String? icsData,
+    required DateTime newStart,
+    required DateTime newEnd,
+    required String? userEmail,
+    required String? message,
+  }) async {
+    final event = icsData != null ? IcsParser.parse(icsData) : null;
+    final note = message?.trim();
+
+    final body = StringBuffer()
+      ..writeln(event != null
+          ? 'I\'ve proposed a new time for "${event.summary}".'
+          : "I've proposed a new time for this meeting.")
+      ..writeln()
+      ..writeln('Proposed: ${_formatRange(newStart, newEnd)}');
+    if (event != null) {
+      body.writeln('Originally: ${_formatRange(event.start, event.end)}');
+    }
+    if (note != null && note.isNotEmpty) {
+      body
+        ..writeln()
+        ..writeln(note);
+    }
+
+    // No ICS (or no address to reply as) means no counter can be built — send
+    // the plain-text proposal on its own rather than nothing at all.
+    final counter = (icsData != null && userEmail != null)
+        ? buildCounterIcs(
+            originalIcs: icsData,
+            attendeeEmail: userEmail,
+            attendeeName: _accountManager.activeAccount?.displayName,
+            newStart: newStart,
+            newEnd: newEnd,
+            comment: note,
+          )
+        : null;
+
+    try {
+      await _accountManager.emailDatasource.replyToEmail(
+        messageId: emailId,
+        comment: body.toString(),
+        // Reply to the ICS organizer when it is known: the address an invite
+        // was *sent* from can be a delegate or a room system.
+        toAddresses: event?.organizer != null ? [event!.organizer!] : const [],
+        newAttachments: counter == null
+            ? const []
+            : [
+                LocalAttachment(
+                  name: 'counter.ics',
+                  // The `method` parameter is what makes Exchange read the part
+                  // as a meeting counter-proposal rather than a file.
+                  mimeType: 'text/calendar; method=COUNTER',
+                  bytes: Uint8List.fromList(utf8.encode(counter)),
+                ),
+              ],
+      );
+      // Each exception is re-thrown as its own type so the caller still maps it
+      // to the right Failure — an expired token has to stay an AuthFailure for
+      // the re-auth prompt to appear.
+    } on AuthException catch (e) {
+      throw AuthException(message: _counterFailed(e.message));
+    } on NetworkException catch (e) {
+      throw NetworkException(message: _counterFailed(e.message));
+    } on ServerException catch (e) {
+      throw ServerException(
+          message: _counterFailed(e.message), statusCode: e.statusCode);
+    } catch (e) {
+      throw ServerException(message: _counterFailed(e.toString()));
+    }
+  }
+
+  String _counterFailed(String reason) =>
+      'The invitation was declined, but the new time could not be sent to the '
+      'organizer: $reason';
+
+  String _formatRange(DateTime start, DateTime end) {
+    final localStart = start.toLocal();
+    final localEnd = end.toLocal();
+    final date = DateFormat('EEE d MMM yyyy').format(localStart);
+    final from = DateFormat('h:mm a').format(localStart);
+    final to = DateFormat('h:mm a').format(localEnd);
+    final sameDay = localStart.year == localEnd.year &&
+        localStart.month == localEnd.month &&
+        localStart.day == localEnd.day;
+    final zone = localStart.timeZoneName;
+    if (sameDay) return '$date, $from – $to ($zone)';
+    final endDate = DateFormat('EEE d MMM yyyy').format(localEnd);
+    return '$date $from – $endDate $to ($zone)';
   }
 
   @override
@@ -249,6 +370,41 @@ class CalendarRepositoryImpl implements CalendarRepository {
     try {
       await ds.cancelMeetingFromEmail(
         emailId: emailId,
+        meetingStart: meetingStart,
+      );
+      return const Right(null);
+    } on AuthException catch (e) {
+      return Left(AuthFailure(message: e.message));
+    } on NetworkException catch (e) {
+      return Left(NetworkFailure(message: e.message));
+    } on ServerException catch (e) {
+      return Left(ServerFailure(message: e.message, statusCode: e.statusCode));
+    } catch (e) {
+      return Left(ServerFailure(message: e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, void>> acceptProposedTimeFromEmail({
+    required String emailId,
+    required DateTime newStart,
+    required DateTime newEnd,
+    String? icsData,
+    DateTime? meetingStart,
+  }) async {
+    final ds = _accountManager.calendarDatasource;
+    if (ds == null) {
+      return const Left(
+        ServerFailure(message: 'Calendar is not available for this account type'),
+      );
+    }
+
+    try {
+      await ds.acceptProposedTimeFromEmail(
+        emailId: emailId,
+        newStart: newStart,
+        newEnd: newEnd,
+        icsData: icsData,
         meetingStart: meetingStart,
       );
       return const Right(null);

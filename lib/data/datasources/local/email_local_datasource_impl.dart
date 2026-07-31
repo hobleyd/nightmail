@@ -319,6 +319,8 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
       'location': invite.location,
       'isAllDay': invite.isAllDay,
       'type': invite.type.name,
+      'proposedStart': invite.proposedStart?.toIso8601String(),
+      'proposedEnd': invite.proposedEnd?.toIso8601String(),
     };
   }
 
@@ -326,6 +328,8 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     if (j == null) return null;
     final start = j['meetingStart'] as String?;
     final end = j['meetingEnd'] as String?;
+    final proposedStart = j['proposedStart'] as String?;
+    final proposedEnd = j['proposedEnd'] as String?;
     return MeetingInvite(
       icsData: j['icsData'] as String?,
       uid: j['uid'] as String?,
@@ -336,6 +340,9 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
       type: MeetingEmailType.values.byName(
         j['type'] as String? ?? MeetingEmailType.invitation.name,
       ),
+      proposedStart:
+          proposedStart != null ? DateTime.tryParse(proposedStart) : null,
+      proposedEnd: proposedEnd != null ? DateTime.tryParse(proposedEnd) : null,
     );
   }
 

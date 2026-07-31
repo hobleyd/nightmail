@@ -148,6 +148,20 @@ class EventKitCalendarDatasourceImpl implements CalendarRemoteDatasource {
   }
 
   @override
+  Future<void> acceptProposedTimeFromEmail({
+    required String emailId,
+    required DateTime newStart,
+    required DateTime newEnd,
+    String? icsData,
+    DateTime? meetingStart,
+  }) async {
+    // A local calendar sends nothing to attendees, so moving the event would
+    // leave everyone else on the old time.
+    throw const ServerException(
+        message: 'Accepting a proposed time is not supported for local calendar');
+  }
+
+  @override
   Future<void> cancelCalendarEvent({required String eventId}) async {
     try {
       await _channel.invokeMethod<void>('deleteEvent', {'id': eventId});
@@ -190,6 +204,9 @@ class EventKitCalendarDatasourceImpl implements CalendarRemoteDatasource {
   }) async {
     await cancelCalendarEvent(eventId: eventId);
   }
+
+  @override
+  bool get supportsNativeProposeNewTime => false;
 
   @override
   Future<void> proposeNewTimeFromEmail({

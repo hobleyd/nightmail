@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../../core/error/exceptions.dart';
+import '../../../core/utils/ics_parser.dart';
 import '../../../domain/entities/contact_details.dart';
 import '../../../domain/entities/local_attachment.dart';
 import '../../../domain/entities/attendee_availability.dart';
@@ -27,6 +28,18 @@ import 'contact_bulk_parser.dart';
 import 'email_remote_datasource.dart';
 import 'graph_delta_datasource.dart';
 import 'tasks_remote_datasource.dart';
+
+/// Path to the calendar event linked to a message.
+///
+/// The `event` navigation property is declared on `eventMessage`, a type derived
+/// from `message`, so OData requires the cast segment. Reaching for
+/// `/me/messages/{id}/event` instead makes Graph answer HTTP 400 "Resource not
+/// found for the segment 'event'" — which reads like a missing event rather than
+/// a malformed URL, so callers quietly fall back to searching the calendar.
+///
+/// Visible for testing.
+String linkedEventPath(String messageId) =>
+    '/me/messages/$messageId/microsoft.graph.eventMessage/event';
 
 final _emailListSelect = [
   'id',
@@ -523,7 +536,7 @@ class GraphApiDatasourceImpl
     String? eventId;
     try {
       final eventResp = await _dio.get<Map<String, dynamic>>(
-        '/me/messages/$emailId/event',
+        linkedEventPath(emailId),
         queryParameters: {'\$select': 'id,isOrganizer'},
       );
       final isOrganizer = eventResp.data?['isOrganizer'] as bool? ?? false;
@@ -588,6 +601,9 @@ class GraphApiDatasourceImpl
   }
 
   @override
+  bool get supportsNativeProposeNewTime => true;
+
+  @override
   Future<void> proposeNewTimeFromEmail({
     required String emailId,
     required DateTime newStart,
@@ -597,19 +613,15 @@ class GraphApiDatasourceImpl
     String? userEmail,
     String? message,
   }) async {
-    final tz = 'UTC';
+    // Both halves must describe the same zone. _formatLocalDateTime renders
+    // *local* wall-clock, so pairing it with 'UTC' shifted every proposal by
+    // the local offset — a proposal of 11:30 Sydney arrived as 21:30 Sydney.
     final body = {
       'sendResponse': true,
       'comment': message ?? '',
       'proposedNewTime': {
-        'start': {
-          'dateTime': _formatLocalDateTime(newStart.toUtc()),
-          'timeZone': tz,
-        },
-        'end': {
-          'dateTime': _formatLocalDateTime(newEnd.toUtc()),
-          'timeZone': tz,
-        },
+        'start': _graphDateTime(newStart),
+        'end': _graphDateTime(newEnd),
       },
     };
 
@@ -617,7 +629,7 @@ class GraphApiDatasourceImpl
     String? eventId;
     try {
       final eventResp = await _dio.get<Map<String, dynamic>>(
-        '/me/messages/$emailId/event',
+        linkedEventPath(emailId),
         queryParameters: {'\$select': 'id,isOrganizer'},
       );
       final isOrganizer = eventResp.data?['isOrganizer'] as bool? ?? false;
@@ -681,7 +693,7 @@ class GraphApiDatasourceImpl
     String? eventId;
     try {
       final eventResp = await _dio.get<Map<String, dynamic>>(
-        '/me/messages/$emailId/event',
+        linkedEventPath(emailId),
         queryParameters: {'\$select': 'id'},
       );
       eventId = eventResp.data?['id'] as String?;
@@ -740,7 +752,7 @@ class GraphApiDatasourceImpl
     String? eventId;
     try {
       final eventResp = await _dio.get<Map<String, dynamic>>(
-        '/me/messages/$emailId/event',
+        linkedEventPath(emailId),
         queryParameters: {'\$select': 'id,isOrganizer'},
       );
       final isOrganizer = eventResp.data?['isOrganizer'] as bool? ?? false;
@@ -794,6 +806,365 @@ class GraphApiDatasourceImpl
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
+  }
+
+  @override
+  Future<void> acceptProposedTimeFromEmail({
+    required String emailId,
+    required DateTime newStart,
+    required DateTime newEnd,
+    String? icsData,
+    DateTime? meetingStart,
+  }) async {
+    final eventId = await _organizerEventIdForMessage(
+      emailId: emailId,
+      meetingStart: meetingStart,
+      icsData: icsData,
+    );
+    try {
+      // PATCHing start/end makes Graph send the updated invitation to every
+      // attendee by itself — there is no separate "send update" call.
+      await _dio.patch<void>(
+        '/me/events/$eventId',
+        data: {
+          'start': _graphDateTime(newStart),
+          'end': _graphDateTime(newEnd),
+        },
+      );
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  /// A Graph `DateTimeTimeZone` in UTC.
+  ///
+  /// The zone lives in its own field, so the `dateTime` string carries no
+  /// offset — hence stripping the `Z`. Use this rather than
+  /// [_formatLocalDateTime] unless you are also passing that value's real IANA
+  /// zone: the two fields must agree, or the time silently shifts.
+  Map<String, String> _graphDateTime(DateTime dt) => {
+        'dateTime':
+            dt.toUtc().toIso8601String().replaceFirst(RegExp(r'Z$'), ''),
+        'timeZone': 'UTC',
+      };
+
+  /// Resolves the proposal message into the id of the organizer's own copy of
+  /// the meeting.
+  ///
+  /// Four strategies are tried in turn, because none is reliable alone:
+  /// the iCalendar UID in the proposal's calendar part, Graph's `message/event`
+  /// navigation, a calendar search at the meeting's current time, and finally
+  /// the same navigation from another message in the conversation.
+  ///
+  /// The UID goes first because it is the only one that survives a proposal
+  /// Exchange never recognised. A `METHOD:COUNTER` from a non-Exchange client
+  /// can stay an ordinary `message`, and then every navigation is dead — the
+  /// cast segment is rejected outright with "Resource not found for the segment
+  /// 'EventMessage'", because the message genuinely is not one.
+  ///
+  /// Every attempt's reason for failing is collected and reported together: a
+  /// bare "could not locate" says nothing about which step broke, which is
+  /// exactly what distinguishes a missing event from a rejected request.
+  Future<String> _organizerEventIdForMessage({
+    required String emailId,
+    DateTime? meetingStart,
+    String? icsData,
+  }) async {
+    final tried = <String>[];
+
+    final byUid = await _eventIdByICalUid(emailId, icsData, tried);
+    if (byUid != null) return byUid;
+
+    // Re-read the message rather than trusting what the caller parsed: Graph
+    // does not always populate startDateTime on a response, and the caller's
+    // copy may have come from the list projection.
+    Map<String, dynamic>? message;
+    try {
+      final resp =
+          await _dio.get<Map<String, dynamic>>('/me/messages/$emailId');
+      message = resp.data;
+    } on DioException catch (e) {
+      if (_isGraphAuthFailure(e)) throw _mapDioException(e);
+      tried.add('re-reading the message failed (${_describeGraphError(e)})');
+    }
+
+    final conversationId = message?['conversationId'] as String?;
+    final siblings = conversationId == null
+        ? const <String>[]
+        : await _conversationMessageIds(conversationId, emailId, tried);
+    if (conversationId == null) {
+      tried.add('the message has no conversation to trace back to');
+    }
+
+    // Outlook splits propose-new-time into two messages: a decline that carries
+    // the .ics, and the proposal itself, which does not. So the UID that
+    // identifies the meeting usually lives on a sibling, not on the message the
+    // user is looking at.
+    for (final id in siblings) {
+      final viaSibling = await _eventIdByICalUid(id, null, <String>[]);
+      if (viaSibling != null) return viaSibling;
+    }
+    if (siblings.isNotEmpty) {
+      tried.add('no calendar attachment on the ${siblings.length} other '
+          'messages in the conversation either');
+    }
+
+    final direct = await _eventIdForMessage(emailId, tried);
+    if (direct != null) return direct;
+
+    final start =
+        meetingStart ?? _parseGraphDateTime(message?['startDateTime']);
+    if (start == null) {
+      tried.add('the message states no current meeting time to search by');
+    } else {
+      final byTime = await _organizerEventIdAt(start, tried);
+      if (byTime != null) return byTime;
+    }
+
+    for (final id in siblings) {
+      final viaSibling = await _eventIdForMessage(id, <String>[]);
+      if (viaSibling != null) return viaSibling;
+    }
+    if (siblings.isNotEmpty) {
+      tried.add('none of them link to a calendar event');
+    }
+
+    // The message's real type explains most failures above, and is otherwise
+    // invisible from the outside.
+    final odataType = message?['@odata.type'] as String?;
+    if (odataType != null) tried.add('the message is a $odataType');
+
+    throw ServerException(
+        message: 'Could not find the meeting to update. ${tried.join('. ')}.');
+  }
+
+  /// Finds the meeting by the iCalendar UID of the proposal's calendar part.
+  ///
+  /// The UID is echoed from the invitation, so it matches the organizer's own
+  /// copy, and Graph exposes it on events as `iCalUId`.
+  Future<String?> _eventIdByICalUid(
+      String messageId, String? icsData, List<String> tried) async {
+    final ics = icsData ?? await _calendarPartOfMessage(messageId, tried);
+    if (ics == null) return null;
+
+    String? uid;
+    try {
+      uid = IcsParser.parse(ics).uid;
+    } catch (_) {
+      // Fall through to the same diagnostic as a UID-less part.
+    }
+    if (uid == null) {
+      tried.add('the calendar part carries no UID');
+      return null;
+    }
+
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '/me/events',
+        queryParameters: {
+          // Single quotes delimit the literal, so an embedded one must double.
+          '\$filter': "iCalUId eq '${uid.replaceAll("'", "''")}'",
+          '\$select': 'id,isOrganizer',
+          '\$top': 5,
+        },
+      );
+      final events = (resp.data?['value'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      for (final e in events) {
+        if (e['isOrganizer'] == true) return e['id'] as String?;
+      }
+      if (events.isNotEmpty) {
+        throw const ServerException(
+            message: 'You are not the organizer of this meeting');
+      }
+      tried.add('no meeting in your calendar has UID $uid');
+    } on DioException catch (e) {
+      if (_isGraphAuthFailure(e)) throw _mapDioException(e);
+      tried.add('looking up UID $uid failed (${_describeGraphError(e)})');
+    }
+    return null;
+  }
+
+  /// The text of the message's `text/calendar` part, if it has one.
+  Future<String?> _calendarPartOfMessage(
+      String messageId, List<String> tried) async {
+    try {
+      final list = await _dio.get<Map<String, dynamic>>(
+        '/me/messages/$messageId/attachments',
+        queryParameters: {'\$select': 'id,name,contentType'},
+      );
+      final items = (list.data?['value'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      String? calendarId;
+      for (final a in items) {
+        final type = (a['contentType'] as String? ?? '').toLowerCase();
+        final name = (a['name'] as String? ?? '').toLowerCase();
+        if (type.contains('text/calendar') || name.endsWith('.ics')) {
+          calendarId = a['id'] as String?;
+          break;
+        }
+      }
+      if (calendarId == null) {
+        tried.add('the message has no calendar attachment to read a UID from');
+        return null;
+      }
+
+      // contentBytes lives on the fileAttachment subtype and cannot be
+      // $selected from the collection, so fetch the attachment on its own.
+      final detail = await _dio.get<Map<String, dynamic>>(
+          '/me/messages/$messageId/attachments/$calendarId');
+      final encoded = detail.data?['contentBytes'] as String?;
+      if (encoded == null || encoded.isEmpty) {
+        tried.add('the calendar attachment returned no content');
+        return null;
+      }
+      return utf8.decode(base64Decode(encoded), allowMalformed: true);
+    } on DioException catch (e) {
+      if (_isGraphAuthFailure(e)) throw _mapDioException(e);
+      tried.add('reading the calendar attachment failed '
+          '(${_describeGraphError(e)})');
+    } on FormatException catch (e) {
+      tried.add('the calendar attachment was not readable (${e.message})');
+    }
+    return null;
+  }
+
+  /// The id of the calendar event linked to [messageId], or null if it cannot
+  /// be reached.
+  ///
+  /// `event` is declared on `eventMessage`, a type *derived* from `message`, so
+  /// OData needs a cast segment; without one Graph answers HTTP 400 "Resource
+  /// not found for the segment 'event'". Which cast it accepts varies: some
+  /// Exchange builds reject the upcast to `eventMessage` and want the message's
+  /// exact type, so the response subtype is tried too, and the uncast form last
+  /// because it is the documented spelling.
+  ///
+  /// All three fail when the message is not an eventMessage at all — a
+  /// `METHOD:COUNTER` Exchange did not recognise stays an ordinary message.
+  Future<String?> _eventIdForMessage(String messageId, List<String> tried) async {
+    final attempts = <String>[];
+    for (final path in [
+      '/me/messages/$messageId/microsoft.graph.eventMessageResponse/event',
+      linkedEventPath(messageId),
+      '/me/messages/$messageId/event',
+    ]) {
+      final id = await _eventIdByNavigation(path, attempts);
+      if (id != null) return id;
+    }
+    // The spellings fail for the same underlying reason, so report it once
+    // rather than three times.
+    if (attempts.isNotEmpty) tried.add(attempts.first);
+    return null;
+  }
+
+  /// Follows a `message/event` navigation, returning the event id or null when
+  /// this strategy did not resolve.
+  ///
+  /// Throws rather than returning null when the caller is not the organizer:
+  /// that is a settled answer, not a failed lookup, and no other strategy can
+  /// improve on it.
+  Future<String?> _eventIdByNavigation(String path, List<String> tried) async {
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>(path);
+      if (resp.data?['isOrganizer'] == false) {
+        throw const ServerException(
+            message: 'You are not the organizer of this meeting');
+      }
+      final id = resp.data?['id'] as String?;
+      if (id != null) return id;
+      tried.add('$path returned no event id');
+    } on DioException catch (e) {
+      if (_isGraphAuthFailure(e)) throw _mapDioException(e);
+      tried.add('$path failed (${_describeGraphError(e)})');
+    }
+    return null;
+  }
+
+  /// Finds a meeting the caller organizes around [start].
+  Future<String?> _organizerEventIdAt(DateTime start, List<String> tried) async {
+    try {
+      String fmt(DateTime d) => d.toUtc().toIso8601String();
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '/me/calendarView',
+        queryParameters: {
+          'startDateTime': fmt(start.subtract(const Duration(minutes: 30))),
+          'endDateTime': fmt(start.add(const Duration(hours: 2))),
+          '\$select': 'id,isOrganizer',
+          '\$top': 50,
+        },
+        options: Options(headers: {'Prefer': 'outlook.timezone="UTC"'}),
+      );
+      final events = (resp.data?['value'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      final organized =
+          events.where((e) => e['isOrganizer'] == true).toList();
+      if (organized.isNotEmpty) return organized.first['id'] as String;
+      tried.add('no meeting you organize sits at ${fmt(start)}');
+    } on DioException catch (e) {
+      if (_isGraphAuthFailure(e)) throw _mapDioException(e);
+      tried.add('searching the calendar failed (${_describeGraphError(e)})');
+    }
+    return null;
+  }
+
+  /// The other messages in [conversationId] — the meeting's whole thread, which
+  /// is where the identifying `.ics` and any navigable message actually live.
+  ///
+  /// Only base-`message` fields are selected. `meetingMessageType` is declared
+  /// on the derived `eventMessage`, and asking a message collection for it draws
+  /// HTTP 400 "Could not find a property named 'meetingMessageType'" — so the
+  /// useful message is found by probing rather than by filtering.
+  Future<List<String>> _conversationMessageIds(
+      String conversationId, String excludeMessageId, List<String> tried) async {
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '/me/messages',
+        queryParameters: {
+          '\$filter': "conversationId eq '$conversationId'",
+          '\$select': 'id',
+          '\$top': 10,
+        },
+      );
+      final ids = (resp.data?['value'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>()
+          .map((m) => m['id'] as String?)
+          .whereType<String>()
+          .where((id) => id != excludeMessageId)
+          // Each candidate costs several requests, so probe only a few.
+          .take(5)
+          .toList();
+      if (ids.isEmpty) {
+        tried.add('the conversation holds no other message to trace back '
+            'through');
+      }
+      return ids;
+    } on DioException catch (e) {
+      if (_isGraphAuthFailure(e)) throw _mapDioException(e);
+      tried.add('searching the conversation failed (${_describeGraphError(e)})');
+      return const [];
+    }
+  }
+
+  bool _isGraphAuthFailure(DioException e) {
+    final status = e.response?.statusCode;
+    return status == 401 || status == 403 || e.error is AuthException;
+  }
+
+  /// A short, user-readable reason for a failed Graph call.
+  String _describeGraphError(DioException e) {
+    final status = e.response?.statusCode;
+    final detail = _extractGraphErrorMessage(e);
+    if (detail != null) return status != null ? 'HTTP $status: $detail' : detail;
+    return status != null ? 'HTTP $status' : (e.message ?? 'network error');
+  }
+
+  /// Parses a Graph `DateTimeTimeZone` as UTC. Graph omits the `Z` when the
+  /// caller asked for UTC via `Prefer: outlook.timezone`, so append one.
+  DateTime? _parseGraphDateTime(dynamic raw) {
+    if (raw is! Map) return null;
+    final str = raw['dateTime'] as String?;
+    if (str == null || str.isEmpty) return null;
+    return DateTime.tryParse(str.endsWith('Z') ? str : '${str}Z');
   }
 
   @override

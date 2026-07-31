@@ -255,6 +255,20 @@ class CalDavCalendarDatasourceImpl implements CalendarRemoteDatasource {
   }
 
   @override
+  Future<void> acceptProposedTimeFromEmail({
+    required String emailId,
+    required DateTime newStart,
+    required DateTime newEnd,
+    String? icsData,
+    DateTime? meetingStart,
+  }) async {
+    // CalDAV has no scheduling outbox here, so moving the event locally would
+    // never reach the attendees — worse than declining to act.
+    throw const ServerException(
+        message: 'Accepting a proposed time is not supported for CalDAV');
+  }
+
+  @override
   Future<void> cancelCalendarEvent({required String eventId}) async {
     try {
       final client = await _getClient();
@@ -302,6 +316,9 @@ class CalDavCalendarDatasourceImpl implements CalendarRemoteDatasource {
     // CalDAV has no propose-new-time mechanism; remove from local calendar.
     await cancelCalendarEvent(eventId: eventId);
   }
+
+  @override
+  bool get supportsNativeProposeNewTime => false;
 
   @override
   Future<void> proposeNewTimeFromEmail({

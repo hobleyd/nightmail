@@ -32,6 +32,7 @@ import '../../domain/usecases/check_sender_anomaly.dart';
 import '../../domain/usecases/delete_email.dart';
 import '../../domain/usecases/download_attachment.dart';
 import '../../domain/usecases/cancel_meeting_from_email.dart';
+import '../../domain/usecases/accept_proposed_time_from_email.dart';
 import '../../domain/usecases/remove_cancelled_meeting.dart';
 import '../../domain/entities/calendar_event.dart';
 import '../../domain/usecases/get_calendar_events.dart';
@@ -293,6 +294,10 @@ class _EmailViewState extends State<_EmailView> {
         ],
         if (calendarAvailable && meetingType == MeetingEmailType.declineNotification) ...[
           _MeetingDeclineNotificationBanner(email: widget.email),
+          Divider(height: 1, color: c.border),
+        ],
+        if (calendarAvailable && meetingType == MeetingEmailType.proposedNewTime) ...[
+          _MeetingProposedTimeBanner(email: widget.email),
           Divider(height: 1, color: c.border),
         ],
         Expanded(
@@ -1358,6 +1363,214 @@ class _MeetingDeclineNotificationBannerState
                 label: 'Cancel meeting',
                 icon: Icons.cancel_outlined,
                 onPressed: _cancel,
+              ),
+            ],
+          ),
+      },
+    );
+  }
+}
+
+/// Shown to the *organizer* when an attendee declined and proposed a different
+/// time. Accepting moves the meeting and re-issues the invitation to everyone;
+/// "Cancel meeting" is the same action the plain decline banner offers, for an
+/// organizer who would rather drop the meeting than move it.
+class _MeetingProposedTimeBanner extends StatefulWidget {
+  const _MeetingProposedTimeBanner({required this.email});
+  final Email email;
+
+  @override
+  State<_MeetingProposedTimeBanner> createState() =>
+      _MeetingProposedTimeBannerState();
+}
+
+class _MeetingProposedTimeBannerState
+    extends State<_MeetingProposedTimeBanner> {
+  _InviteState _state = _InviteState.idle;
+  String? _errorMessage;
+  String _doneMessage = '';
+
+  String _formatRange(DateTime start, DateTime? end) {
+    final local = start.toLocal();
+    final date = DateFormat('EEE d MMM yyyy').format(local);
+    final from = DateFormat('h:mm a').format(local);
+    if (end == null) return '$date  $from';
+    return '$date  $from – ${DateFormat('h:mm a').format(end.toLocal())}';
+  }
+
+  Future<void> _accept() async {
+    final invite = widget.email.meetingInvite;
+    final start = invite?.proposedStart;
+    if (start == null || _state == _InviteState.loading) return;
+    // A proposal without an explicit end keeps the meeting's current length;
+    // falling back to an hour only when that is unknown too.
+    final end = invite?.proposedEnd ??
+        (invite?.meetingStart != null && invite?.meetingEnd != null
+            ? start.add(invite!.meetingEnd!.difference(invite.meetingStart!))
+            : start.add(const Duration(hours: 1)));
+
+    setState(() {
+      _state = _InviteState.loading;
+      _errorMessage = null;
+    });
+
+    final result = await sl<AcceptProposedTimeFromEmail>()(
+      AcceptProposedTimeFromEmailParams(
+        emailId: widget.email.id,
+        newStart: start,
+        newEnd: end,
+        icsData: invite?.icsData,
+        meetingStart: invite?.meetingStart,
+      ),
+    );
+
+    if (!mounted) return;
+    result.fold(
+      (failure) => setState(() {
+        _state = _InviteState.error;
+        _errorMessage = failure.message;
+      }),
+      (_) => setState(() {
+        _state = _InviteState.done;
+        _doneMessage = 'Meeting moved to ${_formatRange(start, end)}';
+      }),
+    );
+
+    if (result.isRight() && mounted) {
+      context.read<CalendarBloc>().add(
+            CalendarWeekLoadRequested(
+                weekStart: context.read<CalendarBloc>().state.weekStart),
+          );
+    }
+  }
+
+  Future<void> _cancelMeeting() async {
+    if (_state == _InviteState.loading) return;
+    setState(() {
+      _state = _InviteState.loading;
+      _errorMessage = null;
+    });
+
+    final result = await sl<CancelMeetingFromEmail>()(
+      CancelMeetingFromEmailParams(
+        emailId: widget.email.id,
+        meetingStart: widget.email.meetingInvite?.meetingStart,
+      ),
+    );
+
+    if (!mounted) return;
+    result.fold(
+      (failure) => setState(() {
+        _state = _InviteState.error;
+        _errorMessage = failure.message;
+      }),
+      (_) => setState(() {
+        _state = _InviteState.done;
+        _doneMessage = 'Meeting cancelled';
+      }),
+    );
+
+    if (result.isRight() && mounted) {
+      context.read<CalendarBloc>().add(
+            CalendarWeekLoadRequested(
+                weekStart: context.read<CalendarBloc>().state.weekStart),
+          );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final invite = widget.email.meetingInvite;
+    final proposed = invite?.proposedStart;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 10),
+      color: c.surfacePanel,
+      child: switch (_state) {
+        _InviteState.loading => Row(
+            children: [
+              Icon(Icons.schedule_rounded, size: 14, color: c.textDimmed),
+              const SizedBox(width: 8),
+              Text(
+                'New time proposed',
+                style: TextStyle(color: c.textTertiary, fontSize: 12),
+              ),
+              const SizedBox(width: 12),
+              SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                    strokeWidth: 1.5, color: AppColors.accent),
+              ),
+            ],
+          ),
+        _InviteState.done => Row(
+            children: [
+              Icon(Icons.check_circle_outline_rounded,
+                  size: 14, color: AppColors.accent),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _doneMessage,
+                  style: TextStyle(color: c.textTertiary, fontSize: 12),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        // Locating the meeting can fail several ways and the message names
+        // which, so let it wrap instead of ellipsising the useful half away.
+        _InviteState.error => Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.error_outline_rounded,
+                  size: 14, color: Colors.redAccent),
+              const SizedBox(width: 8),
+              Expanded(
+                child: SelectableText(
+                  _errorMessage ?? 'Something went wrong',
+                  style:
+                      const TextStyle(color: Colors.redAccent, fontSize: 12),
+                  maxLines: 4,
+                ),
+              ),
+              const SizedBox(width: 8),
+              _InviteResponseButton(
+                label: 'Retry',
+                icon: Icons.refresh_rounded,
+                onPressed: () => setState(() => _state = _InviteState.idle),
+              ),
+            ],
+          ),
+        _InviteState.idle || _InviteState.proposing => Row(
+            children: [
+              Icon(Icons.schedule_rounded, size: 14, color: c.textDimmed),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  proposed == null
+                      ? 'New time proposed'
+                      : 'New time proposed: '
+                          '${_formatRange(proposed, invite?.proposedEnd)}',
+                  style: TextStyle(color: c.textTertiary, fontSize: 12),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Only offer Accept when there is a time to move the meeting to.
+              if (proposed != null) ...[
+                _InviteResponseButton(
+                  label: 'Accept',
+                  icon: Icons.check_rounded,
+                  onPressed: _accept,
+                ),
+                const SizedBox(width: 6),
+              ],
+              _InviteResponseButton(
+                label: 'Cancel meeting',
+                icon: Icons.cancel_outlined,
+                onPressed: _cancelMeeting,
               ),
             ],
           ),

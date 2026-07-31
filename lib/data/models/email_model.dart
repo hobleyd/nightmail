@@ -117,8 +117,8 @@ class EmailModel extends Email {
   static MeetingInvite? _parseMeetingInvite(
       String? odataType, String? meetingMessageType, Map<String, dynamic> json) {
     // Only surface invite/cancellation UI for relevant message types.
-    // Exclude acceptance/tentative/decline notifications (others responding to us).
-    final type = switch (meetingMessageType) {
+    // Exclude acceptance/tentative notifications (others responding to us).
+    var type = switch (meetingMessageType) {
       'meetingRequest' => MeetingEmailType.invitation,
       'meetingCancelled' => MeetingEmailType.cancellation,
       'meetingDeclined' => MeetingEmailType.declineNotification,
@@ -126,28 +126,20 @@ class EmailModel extends Email {
     };
     if (type == null) return null;
 
-    // Parse startDateTime (DateTimeTimeZone: {dateTime, timeZone}).
-    // getEmail() sends Prefer: outlook.timezone="UTC" so Graph returns the
-    // dateTime string already in UTC, but without a Z suffix — append it so
-    // DateTime.parse treats it as UTC rather than local time.
-    DateTime? meetingStart;
-    final startMap = json['startDateTime'] as Map<String, dynamic>?;
-    final dtStr = startMap?['dateTime'] as String?;
-    if (dtStr != null) {
-      try {
-        final utcStr = dtStr.endsWith('Z') ? dtStr : '${dtStr}Z';
-        meetingStart = DateTime.parse(utcStr);
-      } catch (_) {}
-    }
+    final meetingStart = _parseGraphDateTime(json['startDateTime']);
+    final meetingEnd = _parseGraphDateTime(json['endDateTime']);
 
-    DateTime? meetingEnd;
-    final endMap = json['endDateTime'] as Map<String, dynamic>?;
-    final endStr = endMap?['dateTime'] as String?;
-    if (endStr != null) {
-      try {
-        final utcStr = endStr.endsWith('Z') ? endStr : '${endStr}Z';
-        meetingEnd = DateTime.parse(utcStr);
-      } catch (_) {}
+    // A propose-new-time arrives as a decline carrying `proposedNewTime`
+    // (a timeSlot). Only reclassify when the slot actually parses: a decline
+    // whose proposal we cannot read is still an ordinary decline, and must keep
+    // offering "Cancel meeting" rather than an Accept button with no time.
+    final slot = json['proposedNewTime'] as Map<String, dynamic>?;
+    final proposedStart = _parseGraphDateTime(slot?['start']);
+    final proposedEnd = _parseGraphDateTime(slot?['end']);
+    if (type == MeetingEmailType.declineNotification &&
+        proposedStart != null &&
+        proposedEnd != null) {
+      type = MeetingEmailType.proposedNewTime;
     }
 
     String? location;
@@ -163,7 +155,21 @@ class EmailModel extends Email {
       location: location,
       isAllDay: isAllDay,
       type: type,
+      proposedStart: proposedStart,
+      proposedEnd: proposedEnd,
     );
+  }
+
+  /// Parses a Graph `DateTimeTimeZone` (`{dateTime, timeZone}`) as UTC.
+  ///
+  /// getEmail() sends `Prefer: outlook.timezone="UTC"`, so Graph returns the
+  /// dateTime string already in UTC but without a Z suffix — append one so
+  /// DateTime.parse does not read it as local time.
+  static DateTime? _parseGraphDateTime(dynamic raw) {
+    if (raw is! Map<String, dynamic>) return null;
+    final str = raw['dateTime'] as String?;
+    if (str == null || str.isEmpty) return null;
+    return DateTime.tryParse(str.endsWith('Z') ? str : '${str}Z');
   }
 
   static EmailImportance _parseImportance(String? value) {

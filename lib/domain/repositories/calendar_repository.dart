@@ -56,6 +56,16 @@ abstract interface class CalendarRepository {
     DateTime? meetingStart,
   });
 
+  /// Moves a meeting we organize to the time an attendee proposed, re-issuing
+  /// the invitation to every attendee.
+  Future<Either<Failure, void>> acceptProposedTimeFromEmail({
+    required String emailId,
+    required DateTime newStart,
+    required DateTime newEnd,
+    String? icsData,
+    DateTime? meetingStart,
+  });
+
   Future<Either<Failure, void>> cancelCalendarEvent({
     required String eventId,
   });

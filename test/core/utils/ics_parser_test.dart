@@ -91,4 +91,75 @@ void main() {
       expect(event.start, DateTime.utc(2026, 6, 15));
     });
   });
+
+  group('IcsParser.parse ORGANIZER', () {
+    String organizerIcs(String organizerLine) => '''
+BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:evt-1
+SUMMARY:Test meeting
+$organizerLine
+DTSTART:20260615T100000Z
+END:VEVENT
+END:VCALENDAR''';
+
+    test('address comes from the mailto: value', () {
+      final event =
+          IcsParser.parse(organizerIcs('ORGANIZER:mailto:dana@example.com'));
+      expect(event.organizer, 'dana@example.com');
+    });
+
+    test('quoted CN is read as the display name', () {
+      final event = IcsParser.parse(
+        organizerIcs('ORGANIZER;CN="Dana Chen":mailto:dana@example.com'),
+      );
+      expect(event.organizerName, 'Dana Chen');
+      expect(event.organizer, 'dana@example.com');
+    });
+
+    test('unquoted CN is read as the display name', () {
+      final event = IcsParser.parse(
+        organizerIcs('ORGANIZER;CN=Dana:mailto:dana@example.com'),
+      );
+      expect(event.organizerName, 'Dana');
+    });
+
+    test('CN is null when the parameter is absent', () {
+      final event =
+          IcsParser.parse(organizerIcs('ORGANIZER:mailto:dana@example.com'));
+      expect(event.organizerName, isNull);
+    });
+
+    test('other ORGANIZER parameters do not become the name', () {
+      final event = IcsParser.parse(organizerIcs(
+        'ORGANIZER;SENT-BY="mailto:pa@example.com":mailto:dana@example.com',
+      ));
+      expect(event.organizer, 'dana@example.com');
+      expect(event.organizerName, isNull);
+    });
+
+    test('organizer is null when the property is missing', () {
+      final event = IcsParser.parse(_ics('DTSTART:20260615T100000Z'));
+      expect(event.organizer, isNull);
+    });
+  });
+
+  group('IcsParser.parse SEQUENCE', () {
+    test('is read as an int', () {
+      final event = IcsParser.parse('''
+BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:evt-1
+SEQUENCE:4
+DTSTART:20260615T100000Z
+END:VEVENT
+END:VCALENDAR''');
+      expect(event.sequence, 4);
+    });
+
+    test('is null when absent, so callers can apply the RFC default of 0', () {
+      final event = IcsParser.parse(_ics('DTSTART:20260615T100000Z'));
+      expect(event.sequence, isNull);
+    });
+  });
 }

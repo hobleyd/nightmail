@@ -1,6 +1,17 @@
 enum MeetingInviteResponseType { accept, tentative, decline }
 
-enum MeetingEmailType { invitation, cancellation, declineNotification }
+enum MeetingEmailType {
+  invitation,
+  cancellation,
+  declineNotification,
+
+  /// An attendee declined *and* proposed a different time — what the organizer
+  /// receives from Outlook's propose-new-time, and from the `METHOD:COUNTER`
+  /// reply this app sends for providers with no native equivalent. Distinct
+  /// from [declineNotification] because there is a time to accept, not just a
+  /// meeting to cancel.
+  proposedNewTime,
+}
 
 class MeetingInvite {
   const MeetingInvite({
@@ -11,6 +22,8 @@ class MeetingInvite {
     this.location,
     this.isAllDay = false,
     this.type = MeetingEmailType.invitation,
+    this.proposedStart,
+    this.proposedEnd,
   });
 
   /// Raw iCalendar text from a text/calendar MIME part. Populated for Gmail;
@@ -38,4 +51,14 @@ class MeetingInvite {
   final bool isAllDay;
 
   final MeetingEmailType type;
+
+  /// The time an attendee proposed instead (UTC), set only for
+  /// [MeetingEmailType.proposedNewTime]. From Graph's `proposedNewTime` slot,
+  /// or the `DTSTART`/`DTEND` of a `METHOD:COUNTER` part.
+  ///
+  /// Note this is *not* [meetingStart]: for a counter arriving as ICS the two
+  /// coincide, because the counter states only the proposed time and the
+  /// original is not recoverable from it.
+  final DateTime? proposedStart;
+  final DateTime? proposedEnd;
 }

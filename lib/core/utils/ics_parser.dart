@@ -12,6 +12,9 @@ class IcsEvent {
     this.uid,
     this.location,
     this.attendees = const [],
+    this.organizer,
+    this.organizerName,
+    this.sequence,
   });
 
   final String summary;
@@ -21,6 +24,20 @@ class IcsEvent {
   final String? uid;
   final String? location;
   final List<String> attendees;
+
+  /// Organizer's address, from the `ORGANIZER` property's `mailto:` value.
+  /// This is who a reply (RSVP or counter-proposal) is addressed to, which is
+  /// not always the address the invite was *sent* from — a delegate or room
+  /// system can send on the organizer's behalf.
+  final String? organizer;
+
+  /// Organizer's display name, from the `ORGANIZER` property's `CN` parameter.
+  final String? organizerName;
+
+  /// The `SEQUENCE` revision number, or null when the property is absent
+  /// (which per RFC 5545 means 0). A reply must echo the sequence it is
+  /// replying to so the organizer can discard replies to stale revisions.
+  final int? sequence;
 }
 
 class IcsParser {
@@ -36,6 +53,9 @@ class IcsParser {
     Duration? duration;
     bool isAllDay = false;
     String? location;
+    String? organizer;
+    String? organizerName;
+    int? sequence;
     final attendees = <String>[];
 
     bool inVEvent = false;
@@ -50,7 +70,7 @@ class IcsParser {
       if (line.toUpperCase() == 'END:VEVENT') break;
       if (!inVEvent) continue;
 
-      final colonIdx = line.indexOf(':');
+      final colonIdx = _valueColonIndex(line);
       if (colonIdx == -1) continue;
 
       // Keep the original case for TZID extraction (IANA names are
@@ -82,6 +102,14 @@ class IcsParser {
             ? value.substring('mailto:'.length)
             : value;
         if (mailto.contains('@')) attendees.add(mailto);
+      } else if (namePart.startsWith('ORGANIZER')) {
+        final mailto = value.toLowerCase().startsWith('mailto:')
+            ? value.substring('mailto:'.length)
+            : value;
+        if (mailto.contains('@')) organizer = mailto;
+        organizerName = _extractCn(rawName);
+      } else if (namePart == 'SEQUENCE') {
+        sequence = int.tryParse(value.trim());
       }
     }
 
@@ -97,7 +125,40 @@ class IcsParser {
       isAllDay: isAllDay,
       location: location,
       attendees: attendees,
+      organizer: organizer,
+      organizerName: organizerName,
+      sequence: sequence,
     );
+  }
+
+  /// Index of the colon that separates a content line's name+parameters from
+  /// its value, skipping colons inside quoted parameter values.
+  ///
+  /// Outlook and Exchange emit those routinely —
+  /// `ORGANIZER;SENT-BY="mailto:pa@example.com":mailto:dana@example.com`,
+  /// `DESCRIPTION;ALTREP="cid:...":...` — and splitting on the first colon
+  /// instead lands mid-parameter, yielding a garbage value.
+  static int _valueColonIndex(String line) {
+    var inQuotes = false;
+    for (var i = 0; i < line.length; i++) {
+      final ch = line[i];
+      if (ch == '"') {
+        inQuotes = !inQuotes;
+      } else if (ch == ':' && !inQuotes) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /// Extracts the `CN` (common name) parameter from a property name+parameters
+  /// string, e.g. `ORGANIZER;CN="Dana Chen"` → `Dana Chen`.
+  static String? _extractCn(String namePart) {
+    final match =
+        RegExp(r'CN=("[^"]*"|[^;:]*)', caseSensitive: false).firstMatch(namePart);
+    if (match == null) return null;
+    final cn = match.group(1)!.replaceAll('"', '').trim();
+    return cn.isEmpty ? null : cn;
   }
 
   /// Parses a DTSTART/DTEND property.

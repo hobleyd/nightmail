@@ -107,7 +107,7 @@ class ImapDatasourceImpl
       throw const AuthException(message: 'No IMAP credentials stored');
     }
 
-    final client = ImapClient(isLogEnabled: true);
+    final client = ImapClient(isLogEnabled: false);
     await client.connectToServer(
       _account.host,
       _account.port,

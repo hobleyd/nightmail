@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 
@@ -126,7 +127,7 @@ class EventEditDialog extends StatelessWidget {
         backgroundColor: c.surfacePanel,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         child: SizedBox(
-          width: 560,
+          width: kEventFormWidth,
           child: EventEditForm(
             event: event,
             initialStart: initialStart,
@@ -141,6 +142,23 @@ class EventEditDialog extends StatelessWidget {
 }
 
 // ─── Form ─────────────────────────────────────────────────────────────────────
+
+/// Reminder a newly created meeting starts with. Must be one of
+/// [_ReminderDropdown._options], or the dropdown asserts on a missing value.
+const int _kDefaultReminderMinutes = 15;
+
+/// Natural width of the form column. The form does not grow with the window —
+/// extra width goes to the schedule pane beside it.
+const double kEventFormWidth = 560;
+
+/// Width the schedule pane opens at, and the amount the host window grows by
+/// when it is toggled on (see [EventEditForm.onSchedulePaneToggled]).
+const double kSchedulePaneWidth = 280;
+
+/// Floors for the two columns when the pane is open and the window is too
+/// narrow to give both their natural width.
+const double _kMinFormWidth = 320;
+const double _kMinGridWidth = 200;
 
 class EventEditForm extends StatefulWidget {
   const EventEditForm({
@@ -258,7 +276,9 @@ class _EventEditFormState extends State<EventEditForm> {
         if (a.email.isNotEmpty) a.email.toLowerCase(): a.responseStatus,
     };
     _recurrence = e?.recurrence;
-    _reminderMinutes = e?.reminderMinutes;
+    // A new meeting defaults to a 15-minute reminder; an existing one keeps
+    // whatever the server has, including no reminder at all.
+    _reminderMinutes = e == null ? _kDefaultReminderMinutes : e.reminderMinutes;
     // The account the meeting is being created on — not necessarily the active
     // one. This form runs in its own window (and so its own engine, which
     // restores whichever account was last persisted as active), so the id it
@@ -806,39 +826,54 @@ class _EventEditFormState extends State<EventEditForm> {
     );
 
     if (_showSchedulePane) {
-      return SizedBox(
-        height: 640,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SizedBox(width: 560, child: formColumn),
-            VerticalDivider(width: 1, thickness: 1, color: c.border),
-            SizedBox(
-              width: 280,
-              child: _ScheduleGrid(
-                attendees: [
-                  if (_organizerEmail != null &&
-                      !_attendees
-                          .map(_extractEmail)
-                          .contains(_organizerEmail))
-                    _organizerEmail!,
-                  ..._attendees.map(_extractEmail),
-                ],
-                availabilities: _availabilities ?? [],
-                meetingStart: _computedStart,
-                meetingEnd: _computedEnd,
-                organizerEmail: _organizerEmail,
-                onClose: _toggleSchedulePane,
-                onTimeSelected: _onTimeSelected,
-              ),
-            ),
-          ],
-        ),
+      final grid = _ScheduleGrid(
+        attendees: [
+          if (_organizerEmail != null &&
+              !_attendees.map(_extractEmail).contains(_organizerEmail))
+            _organizerEmail!,
+          ..._attendees.map(_extractEmail),
+        ],
+        availabilities: _availabilities ?? [],
+        meetingStart: _computedStart,
+        meetingEnd: _computedEnd,
+        organizerEmail: _organizerEmail,
+        onClose: _toggleSchedulePane,
+        onTimeSelected: _onTimeSelected,
+      );
+
+      // The form is a fixed-width column; every pixel the window gains goes to
+      // the schedule grid, which lays its columns out from its own constraints.
+      // Falls back to intrinsic sizes when the parent gives none — the in-app
+      // dialog variant, where an Expanded/unbounded height would assert.
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final bounded = constraints.hasBoundedWidth;
+          // A window dragged narrower than form + grid squeezes the form
+          // rather than pushing the grid off the edge.
+          final formWidth = bounded
+              ? math.max(_kMinFormWidth,
+                  math.min(kEventFormWidth, constraints.maxWidth - _kMinGridWidth))
+              : kEventFormWidth;
+          final row = Row(
+            mainAxisSize: bounded ? MainAxisSize.max : MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(width: formWidth, child: formColumn),
+              VerticalDivider(width: 1, thickness: 1, color: c.border),
+              if (bounded)
+                Expanded(child: grid)
+              else
+                SizedBox(width: kSchedulePaneWidth, child: grid),
+            ],
+          );
+          return constraints.hasBoundedHeight
+              ? row
+              : SizedBox(height: 640, child: row);
+        },
       );
     }
 
-    return SizedBox(width: 560, child: formColumn);
+    return SizedBox(width: kEventFormWidth, child: formColumn);
   }
 }
 

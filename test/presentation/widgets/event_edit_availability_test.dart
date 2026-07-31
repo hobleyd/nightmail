@@ -132,6 +132,7 @@ CalendarEvent _event({
   bool isAllDay = false,
   bool isOrganizer = true,
   String id = 'event-1',
+  int? reminderMinutes,
 }) =>
     CalendarEvent(
       id: id,
@@ -140,6 +141,7 @@ CalendarEvent _event({
       end: _end,
       isAllDay: isAllDay,
       isOrganizer: isOrganizer,
+      reminderMinutes: reminderMinutes,
       attendees: [
         for (final g in guests) CalendarEventAttendee(email: g),
       ],
@@ -386,6 +388,55 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Existing commitment'), findsOneWidget);
+    });
+
+    testWidgets('gives the grid every pixel the form column does not use',
+        (tester) async {
+      // The pane is the only part that grows: resizing the window has to widen
+      // the grid rather than leave a gap beside a fixed-width pane.
+      await useLargeSurface(tester);
+
+      await pumpForm(tester, event: _event());
+      await settleDebounce(tester);
+      await tester.tap(find.text('Find a time'));
+      await tester.pumpAndSettle();
+
+      // pumpForm lays the form out in a 1000x800 box; 560 goes to the form
+      // column and 1 to the divider between them.
+      final grid = tester.getSize(find.byWidgetPredicate(
+          (w) => w.runtimeType.toString() == '_ScheduleGrid'));
+      expect(grid.width, 1000 - 560 - 1);
+      expect(grid.height, 800);
+    });
+  });
+
+  group('EventEditForm — the reminder field', () {
+    int? reminderValue(WidgetTester tester) =>
+        tester.widget<DropdownButton<int?>>(find.byType(DropdownButton<int?>))
+            .value;
+
+    testWidgets('defaults a new meeting to 15 minutes before the start',
+        (tester) async {
+      await pumpForm(tester, event: null);
+      await tester.pumpAndSettle();
+
+      expect(reminderValue(tester), 15);
+    });
+
+    testWidgets('keeps an existing meeting without a reminder', (tester) async {
+      // The default is for meetings being created; opening one the organizer
+      // deliberately saved with no reminder must not quietly add one.
+      await pumpForm(tester, event: _event());
+      await settleDebounce(tester);
+
+      expect(reminderValue(tester), isNull);
+    });
+
+    testWidgets("keeps an existing meeting's own reminder", (tester) async {
+      await pumpForm(tester, event: _event(reminderMinutes: 30));
+      await settleDebounce(tester);
+
+      expect(reminderValue(tester), 30);
     });
   });
 }

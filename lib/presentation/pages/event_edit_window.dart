@@ -191,9 +191,13 @@ class _EventEditWindowPage extends StatelessWidget {
             onTitleChanged: (title) => windowManager.setTitle(title),
             checkAttendeesAvailability: sl<CheckAttendeesAvailability>(),
             onSchedulePaneToggled: (expanded) async {
+              // Make room for the pane at its natural width. Anything the
+              // organizer resizes the window to after that is the pane's to
+              // use — the form column beside it stays fixed.
+              const delta = kSchedulePaneWidth + 1; // + the divider
               final size = await windowManager.getSize();
               await windowManager.setSize(Size(
-                expanded ? size.width + 281 : size.width - 281,
+                expanded ? size.width + delta : size.width - delta,
                 size.height,
               ));
             },

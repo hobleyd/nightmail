@@ -79,12 +79,8 @@ class CalendarReminderService {
 
   Future<void> _reconcileEveryAccount() async {
     for (final account in _accountManager.accounts) {
-      debugPrint(
-          'CalendarReminderService: reconciling account ${account.id} (${account.runtimeType}) ${account.emailAddress}');
       try {
         await _reconcileAccount(account);
-        debugPrint(
-            'CalendarReminderService: reconcile OK for account ${account.id}');
       } catch (e) {
         // Skip accounts that fail (auth error, network blip, calendar not
         // supported for this account type) — the next cycle retries.
@@ -106,11 +102,7 @@ class CalendarReminderService {
     final ds = account.id == _accountManager.activeAccount?.id
         ? _accountManager.calendarDatasource
         : _accountManager.buildCalendarDatasourceForAccount(account);
-    if (ds == null) {
-      debugPrint(
-          'CalendarReminderService: no calendar datasource for account ${account.id}, skipping');
-      return;
-    }
+    if (ds == null) return;
 
     final now = DateTime.now().toUtc();
     final events = await ds.getCalendarEvents(

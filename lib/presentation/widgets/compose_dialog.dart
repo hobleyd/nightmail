@@ -1119,7 +1119,10 @@ class _ComposeFormState extends State<ComposeForm> {
   }
 
   Future<void> _submit(BuildContext context) async {
-    _sent = true;
+    // Flips the Send button to its "Sending…" state immediately on tap, before
+    // the async prep below (HTML extraction, draft-delete network calls) has a
+    // chance to run — otherwise the button looks unresponsive for that gap.
+    setState(() => _sent = true);
     _draftTimer?.cancel();
     _toFieldKey.currentState?.flush();
     _ccFieldKey.currentState?.flush();
@@ -1130,7 +1133,7 @@ class _ComposeFormState extends State<ComposeForm> {
     if ((widget.mode == ComposeMode.newEmail ||
             widget.mode == ComposeMode.forward) &&
         to.isEmpty) {
-      _sent = false;
+      setState(() => _sent = false);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please enter at least one recipient')),
       );
@@ -1147,11 +1150,11 @@ class _ComposeFormState extends State<ComposeForm> {
       effectiveBodyType = EmailBodyType.html;
 
       if (_hasOrphanedInlineImages(effectiveBody)) {
-        _sent = false;
+        setState(() => _sent = false);
         if (!mounted) return;
         final sendAnyway = await _confirmSendWithBrokenImages(context);
         if (sendAnyway != true) return;
-        _sent = true;
+        setState(() => _sent = true);
       }
     } else {
       effectiveBody = _bodyController.text.trim();
@@ -1489,6 +1492,7 @@ class _ComposeFormState extends State<ComposeForm> {
           _Footer(
             onSend: () => _submit(context),
             onClose: () => _requestClose(context),
+            isSubmitting: _sent,
             draftSavedAt: _lastDraftSavedAt,
             bodyType: _bodyType,
             onBodyTypeChanged: (val) {
@@ -1548,6 +1552,7 @@ class _ComposeFormState extends State<ComposeForm> {
           _Footer(
             onSend: () => _submit(context),
             onClose: () => _requestClose(context),
+            isSubmitting: _sent,
             draftSavedAt: _lastDraftSavedAt,
             bodyType: _bodyType,
             onBodyTypeChanged: (val) {
@@ -2000,6 +2005,7 @@ class _Footer extends StatefulWidget {
   const _Footer({
     required this.onSend,
     required this.onClose,
+    required this.isSubmitting,
     this.draftSavedAt,
     required this.bodyType,
     required this.onBodyTypeChanged,
@@ -2007,6 +2013,11 @@ class _Footer extends StatefulWidget {
   });
   final VoidCallback onSend;
   final VoidCallback onClose;
+  // True from the moment Send is tapped, ahead of ComposeSending: the Bloc
+  // event isn't dispatched until async prep (HTML extraction, draft-delete
+  // calls) finishes, so waiting for the Bloc state alone leaves the button
+  // looking unresponsive for that gap.
+  final bool isSubmitting;
   final DateTime? draftSavedAt;
   final EmailBodyType bodyType;
   final ValueChanged<EmailBodyType> onBodyTypeChanged;
@@ -2039,8 +2050,16 @@ class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
     _sub = bloc.stream.listen(_syncShimmer);
   }
 
+  @override
+  void didUpdateWidget(_Footer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isSubmitting != widget.isSubmitting) {
+      _syncShimmer(context.read<ComposeBloc>().state);
+    }
+  }
+
   void _syncShimmer(ComposeState state) {
-    if (state is ComposeSending) {
+    if (state is ComposeSending || widget.isSubmitting) {
       _shimmer.repeat();
     } else {
       _shimmer.stop();
@@ -2060,7 +2079,7 @@ class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
     final c = context.colors;
     return BlocBuilder<ComposeBloc, ComposeState>(
       builder: (context, state) {
-        final isSending = state is ComposeSending;
+        final isSending = state is ComposeSending || widget.isSubmitting;
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: Row(

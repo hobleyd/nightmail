@@ -36,7 +36,8 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - Accept, tentatively accept, or decline meeting invitations
 - Check attendee availability, with a side-by-side schedule pane for finding a
   free slot (see below)
-- Propose new meeting times
+- Propose new meeting times, and accept a proposed time as the organizer (moves the meeting and re-invites attendees)
+- New meetings default to a 15-minute reminder
 - Recurring event support, with per-occurrence or whole-series edit and cancel
 - Editing a meeting you organize notifies attendees of the change
 - Inline **Join** button on a meeting tile from 3 minutes before it starts until it ends, for meetings with a video-call link

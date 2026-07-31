@@ -822,13 +822,8 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
         .toList();
     await Future.wait(missing.map((id) async {
       try {
-        final resp = await _dio.get<Map<String, dynamic>>(
-          '/calendars/primary/events/$id',
-          queryParameters: {'fields': 'recurrence'},
-        );
-        final rules =
-            (resp.data?['recurrence'] as List<dynamic>?)?.cast<String>();
-        _recurrenceByMaster[id] = _parseRecurrenceRules(rules);
+        _recurrenceByMaster[id] =
+            _parseRecurrenceRules(await _fetchRecurrenceRules(id));
       } catch (e) {
         debugPrint(
             'GoogleCalendarDatasourceImpl: recurrence fetch for $id failed: $e');
@@ -837,6 +832,50 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     }));
 
     return {for (final id in masterIds) id: _recurrenceByMaster[id]};
+  }
+
+  /// GETs a series master's `recurrence` array, tolerating the ids Google
+  /// reports for a split series.
+  ///
+  /// Editing a series as "this and following" splits it: the original master is
+  /// truncated and a second master is created with id
+  /// `<originalId>_R<UTC occurrence start>`. Later instances point at that
+  /// split id via `recurringEventId`, and `events.get` returns **404** for it
+  /// whenever this calendar holds no copy of the split master — the usual case
+  /// for an attendee, since the split happened on the organizer's calendar.
+  /// A 404 here is therefore expected, not a fault: retry the base id, which
+  /// often does resolve, and fall back to null (no recurrence shown) rather
+  /// than logging. Anything other than a 404 is still worth a line in the log.
+  Future<List<String>?> _fetchRecurrenceRules(String id) async {
+    try {
+      return await _getRecurrenceField(id);
+    } on DioException catch (e) {
+      if (e.response?.statusCode != 404) {
+        debugPrint(
+            'GoogleCalendarDatasourceImpl: recurrence fetch for $id failed: $e');
+        return null;
+      }
+    }
+
+    final split = RegExp(r'^(.+)_R\d{8}T\d{6}Z?$').firstMatch(id);
+    if (split == null) return null;
+    try {
+      return await _getRecurrenceField(split.group(1)!);
+    } on DioException catch (e) {
+      if (e.response?.statusCode != 404) {
+        debugPrint('GoogleCalendarDatasourceImpl: recurrence fetch for '
+            '${split.group(1)} (base of $id) failed: $e');
+      }
+      return null;
+    }
+  }
+
+  Future<List<String>?> _getRecurrenceField(String id) async {
+    final resp = await _dio.get<Map<String, dynamic>>(
+      '/calendars/primary/events/$id',
+      queryParameters: {'fields': 'recurrence'},
+    );
+    return (resp.data?['recurrence'] as List<dynamic>?)?.cast<String>();
   }
 
   /// Picks the RRULE line out of a master's `recurrence` array (which may also

@@ -1744,7 +1744,7 @@ class _EmailHeader extends StatelessWidget {
   }
 }
 
-class _AnomalousFromRow extends StatelessWidget {
+class _AnomalousFromRow extends StatefulWidget {
   const _AnomalousFromRow({
     required this.email,
     this.highlightColor,
@@ -1755,8 +1755,15 @@ class _AnomalousFromRow extends StatelessWidget {
   final Color? highlightColor;
   final List<({String address, String name})>? anomalyMatches;
 
+  @override
+  State<_AnomalousFromRow> createState() => _AnomalousFromRowState();
+}
+
+class _AnomalousFromRowState extends State<_AnomalousFromRow> {
+  bool _hovering = false;
+
   void _showMatchesMenu(BuildContext context, Offset position) {
-    final matches = anomalyMatches;
+    final matches = widget.anomalyMatches;
     if (matches == null || matches.isEmpty) return;
     // Capture bloc before entering the overlay subtree — context.read won't
     // work inside PopupMenuItem because it's mounted outside the BlocProvider.
@@ -1819,63 +1826,134 @@ class _AnomalousFromRow extends StatelessWidget {
     );
   }
 
+  void _openCompose() {
+    final from = widget.email.from;
+    ComposeWindowApp.open(
+      context,
+      mode: ComposeMode.newEmail,
+      draftEmail: Email(
+        id: '',
+        subject: '',
+        from: const EmailAddress(address: '', name: null),
+        toRecipients: [from],
+        ccRecipients: const [],
+        bodyPreview: '',
+        body: '',
+        bodyType: EmailBodyType.text,
+        isRead: true,
+        receivedDateTime: DateTime.now(),
+        importance: EmailImportance.normal,
+      ),
+    );
+  }
+
+  Future<void> _copyAddress() async {
+    await Clipboard.setData(ClipboardData(text: widget.email.from.address));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Email address copied to clipboard'),
+        duration: Duration(milliseconds: 1200),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final row = _MetaRow(
-      icon: Icons.person_outline_rounded,
-      label: 'From',
-      value: '${email.from.displayName} <${email.from.address}>',
+    final c = context.colors;
+    final from = widget.email.from;
+    final matches = widget.anomalyMatches;
+    final highlight = widget.highlightColor;
+
+    Widget sender = Text(
+      '${from.displayName} <${from.address}>',
+      style: TextStyle(
+        color: _hovering ? c.textSecondary : c.textTertiary,
+        fontSize: 12,
+        decoration: _hovering ? TextDecoration.underline : null,
+        decorationColor: c.textSecondary,
+      ),
+      overflow: TextOverflow.ellipsis,
     );
 
-    void openCompose() {
-      ComposeWindowApp.open(
-        context,
-        mode: ComposeMode.newEmail,
-        draftEmail: Email(
-          id: '',
-          subject: '',
-          from: const EmailAddress(address: '', name: null),
-          toRecipients: [email.from],
-          ccRecipients: const [],
-          bodyPreview: '',
-          body: '',
-          bodyType: EmailBodyType.text,
-          isRead: true,
-          receivedDateTime: DateTime.now(),
-          importance: EmailImportance.normal,
-        ),
-      );
-    }
-
-    final Widget core;
-    if (highlightColor == null) {
-      core = GestureDetector(onTap: openCompose, child: row);
-    } else {
-      final highlighted = DecoratedBox(
+    if (highlight != null) {
+      sender = DecoratedBox(
         decoration: BoxDecoration(
-          color: highlightColor!.withAlpha(60),
+          color: highlight.withAlpha(60),
           borderRadius: BorderRadius.circular(4),
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-          child: row,
+          child: sender,
         ),
       );
-
-      if (anomalyMatches == null || anomalyMatches!.isEmpty) {
-        core = GestureDetector(onTap: openCompose, child: highlighted);
-      } else {
-        core = GestureDetector(
-          onTap: openCompose,
-          onSecondaryTapUp: (d) => _showMatchesMenu(context, d.globalPosition),
-          child: highlighted,
-        );
-      }
     }
 
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: core,
+    sender = GestureDetector(
+      onTap: _openCompose,
+      onSecondaryTapUp: (highlight != null && matches != null && matches.isNotEmpty)
+          ? (d) => _showMatchesMenu(context, d.globalPosition)
+          : null,
+      child: sender,
+    );
+
+    // The header sits in a SelectionArea, and inside one every Text installs
+    // its own MouseRegion with SystemMouseCursors.text *below* ours — so it
+    // wins the cursor. Overriding the selection style is the only way to get
+    // the click cursor onto the sender line.
+    sender = DefaultSelectionStyle.merge(
+      mouseCursor: SystemMouseCursors.click,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovering = true),
+        onExit: (_) => setState(() => _hovering = false),
+        child: Tooltip(
+          message: 'Write a new email to ${from.address}',
+          waitDuration: const Duration(milliseconds: 600),
+          child: sender,
+        ),
+      ),
+    );
+
+    return Row(
+      children: [
+        Icon(Icons.person_outline_rounded, size: 14, color: c.textDimmed),
+        const SizedBox(width: 6),
+        SizedBox(
+          width: 44,
+          child: Text(
+            'From',
+            style: TextStyle(
+              color: c.textDimmed,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+        Flexible(child: sender),
+        const SizedBox(width: 2),
+        _CopyAddressButton(onCopy: _copyAddress),
+      ],
+    );
+  }
+}
+
+class _CopyAddressButton extends StatelessWidget {
+  const _CopyAddressButton({required this.onCopy});
+
+  final VoidCallback onCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return IconButton(
+      icon: Icon(Icons.copy_rounded, size: 13, color: c.textDimmed),
+      iconSize: 13,
+      tooltip: 'Copy email address',
+      padding: EdgeInsets.zero,
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints(minWidth: 22, minHeight: 22),
+      onPressed: onCopy,
     );
   }
 }

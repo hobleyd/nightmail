@@ -139,6 +139,20 @@ class CalendarReminderService {
           existing.eventStartMs == e.start.millisecondsSinceEpoch;
       if (unchanged) continue;
 
+      // The event moved (or its reminder lead time changed) — drop the alert
+      // already sitting with the OS before queuing the new one. Scheduling
+      // over the top is not a replacement: on Windows `zonedSchedule` calls
+      // `AddToSchedule`, which appends a second scheduled toast rather than
+      // superseding the one carrying the same id, so a meeting postponed to
+      // tomorrow still fired at its original time. Cancel unconditionally
+      // rather than only when the new trigger is schedulable, so a start moved
+      // to less than `reminderMinutes` from now (where scheduleEventReminder
+      // declines a trigger in the past) also clears the stale alert.
+      if (existing != null) {
+        await _notificationService.cancelEventReminder(
+            accountId: account.id, eventId: e.id);
+      }
+
       await _notificationService.scheduleEventReminder(
         accountId: account.id,
         eventId: e.id,

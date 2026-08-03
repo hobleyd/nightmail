@@ -486,7 +486,12 @@ class _ComposeFormState extends State<ComposeForm> {
 
   @override
   void dispose() {
-    final hasPendingSave = _draftTimer?.isActive == true;
+    // Never resurrect a draft for a message that has already gone out. The
+    // editor's change notification is debounced 300 ms in JS, so a keystroke
+    // just before Send lands *after* _submit() cancelled the timer and
+    // reschedules it; without this guard the flush below re-uploads the body
+    // as a fresh draft once the send completes and the window tears down.
+    final hasPendingSave = !_sent && _draftTimer?.isActive == true;
     final draftId = _serverDraftId;
     final oldDraftId = _pendingOldDraftId;
     final to = List<String>.from(_toRecipients);
@@ -534,6 +539,10 @@ class _ComposeFormState extends State<ComposeForm> {
   }
 
   void _scheduleDraftSave() {
+    // Late change notifications keep arriving after Send (the webview debounces
+    // them, and setState-driven callbacks still fire while the send is in
+    // flight). Restarting the timer here would outlive _submit()'s cancel.
+    if (_sent) return;
     _draftTimer?.cancel();
     _draftTimer = Timer(const Duration(milliseconds: 1500), _saveDraft);
   }

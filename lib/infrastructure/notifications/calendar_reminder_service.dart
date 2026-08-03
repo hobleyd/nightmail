@@ -32,20 +32,36 @@ class CalendarReminderService {
   final ReminderScheduleLocalDatasource _database;
 
   Timer? _timer;
+  Timer? _startupTimer;
   bool _reconciling = false;
   bool _rerunRequested = false;
+
+  /// How long the first reconcile waits after startup.
+  ///
+  /// Reconciling fetches every account's calendar and parses the response on
+  /// the UI isolate. Doing that the instant the home shell mounts put it in a
+  /// dead heat with the first mail poll, the task reconciler and the contact
+  /// cache sync — four multi-account network-and-parse jobs interleaving over
+  /// the app's first seconds, which is exactly when the UI can least afford it.
+  /// Nothing here is time-critical: the reminders being reconciled are for
+  /// events at least a lead-time away, and a sub-window's change arrives as an
+  /// explicit nudge rather than waiting for a cycle.
+  static const _startupDelay = Duration(seconds: 20);
 
   /// Starts (or restarts) the periodic reconciliation timer. Safe to call
   /// repeatedly — any existing timer is cancelled first.
   void startPeriodic({Duration interval = const Duration(minutes: 15)}) {
     _timer?.cancel();
-    unawaited(reconcileAll());
+    _startupTimer?.cancel();
+    _startupTimer = Timer(_startupDelay, () => unawaited(reconcileAll()));
     _timer = Timer.periodic(interval, (_) => reconcileAll());
   }
 
   void stop() {
     _timer?.cancel();
     _timer = null;
+    _startupTimer?.cancel();
+    _startupTimer = null;
   }
 
   /// Fetches upcoming events for every account and schedules/cancels

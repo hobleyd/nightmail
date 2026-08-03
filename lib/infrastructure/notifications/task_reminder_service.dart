@@ -58,20 +58,30 @@ class TaskReminderService {
   final TaskReminderScheduleLocalDatasource _database;
 
   Timer? _timer;
+  Timer? _startupTimer;
   bool _reconciling = false;
   bool _rerunRequested = false;
+
+  /// How long the first reconcile waits after startup — see the same constant
+  /// on [CalendarReminderService] for why this is deferred at all. Offset from
+  /// the calendar reconciler's delay so the two don't simply collide with each
+  /// other instead of with the first mail poll.
+  static const _startupDelay = Duration(seconds: 35);
 
   /// Starts (or restarts) the periodic reconciliation timer. Safe to call
   /// repeatedly — any existing timer is cancelled first.
   void startPeriodic({Duration interval = const Duration(minutes: 15)}) {
     _timer?.cancel();
-    unawaited(reconcileAll());
+    _startupTimer?.cancel();
+    _startupTimer = Timer(_startupDelay, () => unawaited(reconcileAll()));
     _timer = Timer.periodic(interval, (_) => reconcileAll());
   }
 
   void stop() {
     _timer?.cancel();
     _timer = null;
+    _startupTimer?.cancel();
+    _startupTimer = null;
   }
 
   /// Fetches open tasks for every account and schedules/fires/cancels due

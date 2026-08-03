@@ -18,6 +18,19 @@ class GmailContactsDatasourceImpl {
   static const _detailsReadMask =
       'emailAddresses,names,phoneNumbers,organizations,photos';
 
+  /// `otherContacts` is a restricted collection — auto-saved addresses rather
+  /// than real contact records — and People API rejects the full details mask
+  /// against it outright:
+  ///
+  ///     400 INVALID_ARGUMENT
+  ///     Request field 'organizations' not allowed for other contacts read requests.
+  ///
+  /// It only permits `emailAddresses`, `metadata`, `names` and `phoneNumbers`,
+  /// so asking for `organizations`/`photos` failed *every* lookup here, making
+  /// this whole source silently dead rather than merely returning less.
+  static const _otherContactsDetailsReadMask =
+      'emailAddresses,names,phoneNumbers';
+
   /// People API's maximum page size for all three bulk collections.
   static const _bulkPageSize = 1000;
 
@@ -320,7 +333,7 @@ class GmailContactsDatasourceImpl {
         '/otherContacts:search',
         queryParameters: {
           'query': email,
-          'readMask': _detailsReadMask,
+          'readMask': _otherContactsDetailsReadMask,
           'pageSize': 10,
         },
       );

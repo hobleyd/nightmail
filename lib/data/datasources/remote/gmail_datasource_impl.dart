@@ -6,11 +6,8 @@ import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../../core/error/exceptions.dart';
-import '../../../core/utils/html_entities.dart';
-import '../../../core/utils/ics_parser.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/local_attachment.dart';
-import '../../../domain/entities/email_attachment.dart';
 import '../../../domain/entities/inline_attachment.dart';
 import '../../../domain/entities/meeting_invite.dart';
 import '../../../infrastructure/http/gmail_http_client.dart';
@@ -18,6 +15,7 @@ import '../../models/email_address_model.dart';
 import '../../models/email_folder_model.dart';
 import '../../models/email_model.dart';
 import 'email_remote_datasource.dart';
+import 'gmail_message_parser.dart';
 
 class GmailDatasourceImpl implements EmailRemoteDatasource {
   GmailDatasourceImpl({required GmailHttpClient client, this.displayName = ''})
@@ -50,7 +48,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         final map = label as Map<String, dynamic>;
         final id = map['id'] as String;
         final type = map['type'] as String? ?? '';
-        if (type == 'system' && _isHiddenSystemLabel(id)) continue;
+        if (type == 'system' && isHiddenGmailSystemLabel(id)) continue;
         rawLabels.add(map);
       }
 
@@ -191,13 +189,22 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         'pageToken': ?_pageTokens[folderId],
       };
 
-      final listResp = await _dio.get<Map<String, dynamic>>(
+      // Plain like the per-thread fetches below, and decoded here rather than in
+      // an isolate: this response is only thread ids and a page token, so the
+      // decode is trivial — the bulk is in the bodies, which do go to the
+      // isolate. Keeping one response type across the message endpoints also
+      // keeps them stubbable as one thing in tests, since a Dart `Invocation`
+      // does not carry the type argument that would tell `get<Map>` from
+      // `get<String>`.
+      final listResp = await _dio.get<String>(
         '/users/me/threads',
         queryParameters: queryParams,
+        options: Options(responseType: ResponseType.plain),
       );
 
-      final data = listResp.data;
-      if (data == null) return [];
+      final rawList = listResp.data;
+      if (rawList == null || rawList.isEmpty) return [];
+      final data = jsonDecode(rawList) as Map<String, dynamic>;
 
       // Store the next page token so the next load-more call can advance.
       final nextToken = data['nextPageToken'] as String?;
@@ -219,12 +226,23 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
           ? const <String>{}
           : const {'TRASH', 'SPAM'};
 
+      // Fetch every thread's body concurrently (network only — no decoding),
+      // then parse the whole page in a single background isolate. One compute()
+      // for the page rather than one per thread: each call spawns its own
+      // isolate, and paying that 25 times over would cost more than the parse.
       final threadFutures = threads.map((t) {
         final id = (t as Map<String, dynamic>)['id'] as String;
-        return _fetchThreadMessages(id, excludeLabels: excludeLabels);
+        return _fetchThreadRaw(id);
       });
+      final rawBodies = await Future.wait(threadFutures);
 
-      return (await Future.wait(threadFutures)).expand((msgs) => msgs).toList();
+      return compute(
+        parseGmailThreads,
+        GmailThreadParseParams(
+          rawThreadBodies: rawBodies,
+          excludeLabels: excludeLabels,
+        ),
+      );
     } on DioException catch (e) {
       throw _mapException(e);
     }
@@ -238,35 +256,33 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   Future<List<EmailModel>> getConversationMessages(
     String conversationId, {
     String? folderId,
-  }) {
-    return _fetchThreadMessages(conversationId);
+  }) async {
+    final raw = await _fetchThreadRaw(conversationId);
+    if (raw == null) return [];
+    return compute(
+      parseGmailThreads,
+      GmailThreadParseParams(
+        rawThreadBodies: [raw],
+        excludeLabels: const {},
+      ),
+    );
   }
 
-  Future<List<EmailModel>> _fetchThreadMessages(
-    String threadId, {
-    Set<String> excludeLabels = const {},
-  }) async {
+  /// Fetches one thread's response **undecoded**, for a parser isolate to
+  /// decode. Returns null when the fetch fails, which the batch parser skips.
+  Future<String?> _fetchThreadRaw(String threadId) async {
     try {
-      final resp = await _dio.get<Map<String, dynamic>>(
+      final resp = await _dio.get<String>(
         '/users/me/threads/$threadId',
         queryParameters: {
           'format': 'metadata',
           'metadataHeaders': ['From', 'To', 'Cc', 'Subject', 'Date'],
         },
+        options: Options(responseType: ResponseType.plain),
       );
-      if (resp.data == null) return [];
-      var messages = (resp.data!['messages'] as List<dynamic>? ?? [])
-          .cast<Map<String, dynamic>>();
-      if (excludeLabels.isNotEmpty) {
-        messages = messages.where((m) {
-          final labels =
-              (m['labelIds'] as List<dynamic>? ?? []).cast<String>();
-          return !labels.any(excludeLabels.contains);
-        }).toList();
-      }
-      return messages.map((m) => _parseMessage(m, fullBody: false)).toList();
+      return resp.data;
     } catch (_) {
-      return [];
+      return null;
     }
   }
 
@@ -278,13 +294,16 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   }) async {
     // Gmail's q parameter natively supports from:, to:, subject:, has:attachment.
     try {
-      final listResp = await _dio.get<Map<String, dynamic>>(
+      // Plain, decoded here — an id list, same as the thread index in getEmails.
+      final listResp = await _dio.get<String>(
         '/users/me/messages',
         queryParameters: {'maxResults': top, 'q': query},
+        options: Options(responseType: ResponseType.plain),
       );
 
-      final data = listResp.data;
-      if (data == null) return [];
+      final rawList = listResp.data;
+      if (rawList == null || rawList.isEmpty) return [];
+      final data = jsonDecode(rawList) as Map<String, dynamic>;
 
       final messages = data['messages'] as List<dynamic>? ?? [];
       if (messages.isEmpty) return [];
@@ -292,22 +311,23 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       final futures = messages.map((m) async {
         final id = (m as Map<String, dynamic>)['id'] as String;
         try {
-          final resp = await _dio.get<Map<String, dynamic>>(
+          final resp = await _dio.get<String>(
             '/users/me/messages/$id',
             queryParameters: {
               'format': 'metadata',
               'metadataHeaders': ['From', 'To', 'Cc', 'Subject', 'Date'],
             },
+            options: Options(responseType: ResponseType.plain),
           );
-          if (resp.data == null) return null;
-          return _parseMessage(resp.data!, fullBody: false);
+          return resp.data;
         } catch (_) {
           return null;
         }
       });
 
-      final results = await Future.wait(futures);
-      return results.whereType<EmailModel>().toList();
+      // As in getEmails: fetch concurrently, decode once off the UI isolate.
+      final rawBodies = await Future.wait(futures);
+      return compute(parseGmailMetadataMessages, rawBodies);
     } on DioException catch (e) {
       throw _mapException(e);
     }
@@ -316,66 +336,45 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   @override
   Future<EmailModel> getEmail(String id) async {
     try {
-      final resp = await _dio.get<Map<String, dynamic>>(
+      // Undecoded: the parser isolate does the jsonDecode as well as the parse.
+      // A `format=full` body carries the message body and every inline image as
+      // base64, so decoding it here would leave the larger half of the cost on
+      // the UI isolate — which is the whole reason this moved.
+      final resp = await _dio.get<String>(
         '/users/me/messages/$id',
         queryParameters: {'format': 'full'},
+        options: Options(responseType: ResponseType.plain),
       );
-      if (resp.data == null) {
+      final raw = resp.data;
+      if (raw == null || raw.isEmpty) {
         throw ServerException(message: 'Empty response for message $id');
       }
 
-      final email = _parseMessage(resp.data!, fullBody: true);
-
-      final payload = resp.data!['payload'] as Map<String, dynamic>? ?? {};
+      final parsed = await compute(parseGmailFullMessage, raw);
+      final email = parsed.email;
 
       // If no ICS was inlined in the payload, check for a calendar attachment
       // stored separately — Gmail omits body.data for some parts even when
-      // the content is small, requiring a dedicated attachment fetch.
+      // the content is small, requiring a dedicated attachment fetch. The
+      // isolate reported the id while it had the payload open.
       MeetingInvite? meetingInvite = email.meetingInvite;
-      if (meetingInvite == null) {
-        final icsId = _findIcsAttachmentId(payload);
-        if (icsId != null) {
-          try {
-            final ar = await _dio.get<Map<String, dynamic>>(
-              '/users/me/messages/$id/attachments/$icsId',
-            );
-            final raw = ar.data?['data'] as String?;
-            if (raw != null && raw.isNotEmpty) {
-              final icsStr = utf8.decode(base64Url.decode(_padBase64(raw)));
-              final type = _icsInviteType(icsStr);
-              try {
-                final event = IcsParser.parse(icsStr);
-                meetingInvite = MeetingInvite(
-                  icsData: icsStr,
-                  type: type,
-                  uid: event.uid,
-                  meetingStart: event.start,
-                  meetingEnd: event.end,
-                  location: event.location,
-                  isAllDay: event.isAllDay,
-                  proposedStart: type == MeetingEmailType.proposedNewTime
-                      ? event.start
-                      : null,
-                  proposedEnd:
-                      type == MeetingEmailType.proposedNewTime ? event.end : null,
-                );
-              } catch (_) {
-                meetingInvite = MeetingInvite(icsData: icsStr, type: type);
-              }
-            }
-          } catch (_) {}
-        }
+      final icsId = parsed.icsAttachmentId;
+      if (meetingInvite == null && icsId != null) {
+        try {
+          final ar = await _dio.get<String>(
+            '/users/me/messages/$id/attachments/$icsId',
+            options: Options(responseType: ResponseType.plain),
+          );
+          final body = ar.data;
+          if (body != null && body.isNotEmpty) {
+            meetingInvite = await compute(parseGmailIcsAttachment, body);
+          }
+        } catch (_) {}
       }
 
       // Large inline attachments (>2 MB) have only an attachmentId — no data
       // field in the payload. Fetch them concurrently and merge.
-      final pending = _extractAttachments(payload, _referencedCids(email.body))
-          .where((a) =>
-              a.isInline &&
-              a.contentId != null &&
-              a.attachmentId.isNotEmpty &&
-              a.inlineData == null)
-          .toList();
+      final pending = parsed.pendingInline;
 
       if (pending.isEmpty && meetingInvite == email.meetingInvite) return email;
 
@@ -417,17 +416,21 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   }
 
   Future<InlineAttachment?> _fetchLargeInlineAttachment(
-      String messageId, _GmailAttachment a) async {
+      String messageId, GmailPendingInline a) async {
     try {
-      final response = await _dio.get<Map<String, dynamic>>(
+      final response = await _dio.get<String>(
         '/users/me/messages/$messageId/attachments/${a.attachmentId}',
+        options: Options(responseType: ResponseType.plain),
       );
-      final rawData = response.data?['data'] as String?;
-      if (rawData == null || rawData.isEmpty) return null;
+      final body = response.data;
+      if (body == null || body.isEmpty) return null;
+      // These are the >2 MB images, so the base64 decode is worth an isolate.
+      final bytes = await compute(decodeGmailAttachmentBytes, body);
+      if (bytes == null) return null;
       return InlineAttachment(
-        contentId: a.contentId!,
+        contentId: a.contentId,
         contentType: a.contentType,
-        contentBytes: base64Url.decode(_padBase64(rawData)),
+        contentBytes: bytes,
       );
     } catch (_) {
       return null;
@@ -459,420 +462,10 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   // ---------------------------------------------------------------------------
   // Parsing helpers
   // ---------------------------------------------------------------------------
-
-  EmailModel _parseMessage(Map<String, dynamic> json, {required bool fullBody}) {
-    final id = json['id'] as String;
-    final threadId = json['threadId'] as String?;
-    final labelIds = (json['labelIds'] as List<dynamic>? ?? []).cast<String>();
-    final isRead = !labelIds.contains('UNREAD');
-    final snippet = decodeHtmlEntities(json['snippet'] as String? ?? '');
-
-    final payload = json['payload'] as Map<String, dynamic>? ?? {};
-    final headers = (payload['headers'] as List<dynamic>? ?? [])
-        .cast<Map<String, dynamic>>();
-
-    String headerValue(String name) {
-      return headers
-          .firstWhere(
-            (h) => (h['name'] as String).toLowerCase() == name.toLowerCase(),
-            orElse: () => {'value': ''},
-          )['value'] as String;
-    }
-
-    final subject = decodeHtmlEntities(headerValue('Subject'));
-    final fromStr = headerValue('From');
-    final toStr = headerValue('To');
-    final ccStr = headerValue('Cc');
-    final dateStr = headerValue('Date');
-
-    DateTime receivedAt;
-    try {
-      final internalDate = json['internalDate'] as String?;
-      if (internalDate != null) {
-        receivedAt = DateTime.fromMillisecondsSinceEpoch(
-          int.parse(internalDate),
-          isUtc: true,
-        );
-      } else {
-        receivedAt = _parseRfc2822Date(dateStr);
-      }
-    } catch (_) {
-      receivedAt = DateTime.now().toUtc();
-    }
-
-    String body = '';
-    EmailBodyType bodyType = EmailBodyType.text;
-
-    MeetingInvite? meetingInvite;
-    List<EmailAttachment> attachments = const [];
-    List<InlineAttachment> inlineAttachments = const [];
-
-    if (fullBody) {
-      final (extractedBody, extractedType) = _extractBody(payload);
-      body = extractedBody;
-      bodyType = extractedType;
-      final icsData = _extractIcsData(payload);
-      if (icsData != null) {
-        final type = _icsInviteType(icsData);
-        try {
-          final event = IcsParser.parse(icsData);
-          meetingInvite = MeetingInvite(
-            icsData: icsData,
-            type: type,
-            uid: event.uid,
-            meetingStart: event.start,
-            meetingEnd: event.end,
-            location: event.location,
-            isAllDay: event.isAllDay,
-            proposedStart:
-                type == MeetingEmailType.proposedNewTime ? event.start : null,
-            proposedEnd:
-                type == MeetingEmailType.proposedNewTime ? event.end : null,
-          );
-        } catch (_) {
-          meetingInvite = MeetingInvite(icsData: icsData, type: type);
-        }
-      }
-
-      final parsed = _extractAttachments(payload, _referencedCids(body));
-      attachments = parsed
-          .where((a) => !a.isInline)
-          .map((a) => EmailAttachment(
-                id: a.attachmentId,
-                name: a.name,
-                contentType: a.contentType,
-                size: a.size,
-              ))
-          .toList();
-      inlineAttachments = parsed
-          .where((a) => a.isInline && a.contentId != null && a.inlineData != null)
-          .map((a) {
-            try {
-              return InlineAttachment(
-                contentId: a.contentId!,
-                contentType: a.contentType,
-                contentBytes: base64Url.decode(_padBase64(a.inlineData!)),
-              );
-            } catch (_) {
-              return null;
-            }
-          })
-          .whereType<InlineAttachment>()
-          .toList();
-    }
-
-    final parentFolderId = labelIds.contains('INBOX')
-        ? 'INBOX'
-        : labelIds.where((l) => !_isSystemLabel(l)).firstOrNull;
-
-    // Gmail labels *are* this account's folder ids, and a message carries every
-    // one it belongs to — which is what lets a folder-scoped action tell a
-    // thread's in-folder messages from the copies (Sent, already-filed replies)
-    // the Threads API returns alongside them. Hidden system labels are dropped
-    // so this matches the ids getFolders() exposes; the resulting list may well
-    // be longer than one, so it says strictly more than [parentFolderId].
-    final folderIds =
-        labelIds.where((l) => !_isHiddenSystemLabel(l)).toList();
-
-    return EmailModel(
-      id: id,
-      conversationId: threadId,
-      subject: subject.isEmpty ? '(No Subject)' : subject,
-      from: _parseAddress(fromStr),
-      toRecipients: _parseAddressList(toStr),
-      ccRecipients: _parseAddressList(ccStr),
-      bodyPreview: snippet,
-      body: body,
-      bodyType: bodyType,
-      isRead: isRead,
-      receivedDateTime: receivedAt,
-      importance: EmailImportance.normal,
-      parentFolderId: parentFolderId,
-      folderIds: folderIds,
-      hasAttachments: _detectAttachments(payload),
-      attachments: attachments,
-      inlineAttachments: inlineAttachments,
-      meetingInvite: meetingInvite,
-    );
-  }
-
-  (String, EmailBodyType) _extractBody(Map<String, dynamic> payload) {
-    final mimeType = payload['mimeType'] as String? ?? '';
-
-    if (mimeType == 'text/html' || mimeType == 'text/plain') {
-      final data = (payload['body'] as Map<String, dynamic>?)?['data'] as String?;
-      if (data != null) {
-        final decoded = utf8.decode(base64Url.decode(_padBase64(data)));
-        return (decoded, mimeType == 'text/html' ? EmailBodyType.html : EmailBodyType.text);
-      }
-    }
-
-    // Multipart: prefer HTML part.
-    final parts = (payload['parts'] as List<dynamic>? ?? [])
-        .cast<Map<String, dynamic>>();
-
-    String? htmlBody;
-    String? textBody;
-
-    void scanParts(List<Map<String, dynamic>> partList) {
-      for (final part in partList) {
-        final mt = part['mimeType'] as String? ?? '';
-        if (mt == 'text/html') {
-          final data = (part['body'] as Map<String, dynamic>?)?['data'] as String?;
-          if (data != null) {
-            htmlBody = utf8.decode(base64Url.decode(_padBase64(data)));
-          }
-        } else if (mt == 'text/plain' && htmlBody == null) {
-          final data = (part['body'] as Map<String, dynamic>?)?['data'] as String?;
-          if (data != null) {
-            textBody = utf8.decode(base64Url.decode(_padBase64(data)));
-          }
-        } else if (mt.startsWith('multipart/')) {
-          final nested = (part['parts'] as List<dynamic>? ?? [])
-              .cast<Map<String, dynamic>>();
-          scanParts(nested);
-        }
-      }
-    }
-
-    scanParts(parts);
-
-    if (htmlBody != null) return (htmlBody!, EmailBodyType.html);
-    if (textBody != null) return (textBody!, EmailBodyType.text);
-    return ('', EmailBodyType.text);
-  }
-
-  /// Recursively scan MIME parts for a text/calendar part and return its decoded
-  /// content. Returns null if no calendar part is found or if the content is
-  /// stored as a separate attachment (see [_findIcsAttachmentId]).
-  /// Returns the METHOD value (e.g. 'REQUEST', 'CANCEL') from an iCalendar string.
-  String? _icsMethod(String icsData) {
-    for (final rawLine in icsData.split(RegExp(r'\r?\n'))) {
-      final line = rawLine.trim();
-      if (line.toUpperCase().startsWith('METHOD:')) {
-        return line.substring('METHOD:'.length).trim().toUpperCase();
-      }
-    }
-    return null;
-  }
-
-  /// Classifies an iCalendar part by its `METHOD`.
-  ///
-  /// `COUNTER` is an attendee proposing a different time for a meeting we
-  /// organize (RFC 5546 §3.2.7) — it must not fall through to [invitation], or
-  /// the organizer is offered Accept/Decline/Propose on their own meeting
-  /// instead of a way to act on the proposal.
-  MeetingEmailType _icsInviteType(String icsData) {
-    return switch (_icsMethod(icsData)) {
-      'CANCEL' => MeetingEmailType.cancellation,
-      'COUNTER' => MeetingEmailType.proposedNewTime,
-      _ => MeetingEmailType.invitation,
-    };
-  }
-
-  String? _extractIcsData(Map<String, dynamic> payload) {
-    final mimeType = (payload['mimeType'] as String? ?? '').toLowerCase();
-    final filename = (payload['filename'] as String? ?? '').toLowerCase();
-    // Match on MIME type or .ics filename — some senders use application/octet-stream.
-    if (mimeType == 'text/calendar' || mimeType == 'application/ics' ||
-        filename.endsWith('.ics')) {
-      final data = (payload['body'] as Map<String, dynamic>?)?['data'] as String?;
-      if (data != null && data.isNotEmpty) {
-        return utf8.decode(base64Url.decode(_padBase64(data)));
-      }
-    }
-    final parts = (payload['parts'] as List<dynamic>? ?? [])
-        .cast<Map<String, dynamic>>();
-    for (final part in parts) {
-      final result = _extractIcsData(part);
-      if (result != null) return result;
-    }
-    return null;
-  }
-
-  /// Recursively scan MIME parts for a calendar attachment whose content was
-  /// not inlined (body.data is absent). Returns the Gmail attachment ID so the
-  /// caller can fetch it separately. Returns null if the ICS is already inlined.
-  String? _findIcsAttachmentId(Map<String, dynamic> payload) {
-    final mimeType = (payload['mimeType'] as String? ?? '').toLowerCase();
-    final filename = (payload['filename'] as String? ?? '').toLowerCase();
-    if (mimeType == 'text/calendar' || mimeType == 'application/ics' ||
-        filename.endsWith('.ics')) {
-      final body = payload['body'] as Map<String, dynamic>?;
-      final data = body?['data'] as String?;
-      if (data != null && data.isNotEmpty) return null; // already inlined
-      final attachmentId = body?['attachmentId'] as String?;
-      if (attachmentId != null && attachmentId.isNotEmpty) return attachmentId;
-    }
-    final parts = (payload['parts'] as List<dynamic>? ?? [])
-        .cast<Map<String, dynamic>>();
-    for (final part in parts) {
-      final result = _findIcsAttachmentId(part);
-      if (result != null) return result;
-    }
-    return null;
-  }
-
-  bool _detectAttachments(Map<String, dynamic> payload) {
-    final filename = payload['filename'] as String? ?? '';
-    if (filename.isNotEmpty) return true;
-
-    final parts = (payload['parts'] as List<dynamic>? ?? [])
-        .cast<Map<String, dynamic>>();
-    for (final part in parts) {
-      if (_detectAttachments(part)) return true;
-    }
-    return false;
-  }
-
-  List<_GmailAttachment> _extractAttachments(Map<String, dynamic> payload,
-      [Set<String>? referencedCids]) {
-    final results = <_GmailAttachment>[];
-    _collectAttachmentParts(payload, results, referencedCids);
-    return results;
-  }
-
-  /// Bare cid tokens (without angle brackets) referenced by `cid:` in [body].
-  /// Gmail tags pasted inline images with `Content-Disposition: attachment`
-  /// even though the HTML references them inline via cid:, so the reference
-  /// set — not the disposition — is what decides whether a part is inline.
-  Set<String> _referencedCids(String body) {
-    if (body.isEmpty) return const {};
-    final ids = <String>{};
-    for (final m in RegExp(r'''cid:([^"'\s>)\]]+)''', caseSensitive: false)
-        .allMatches(body)) {
-      final id = m.group(1);
-      if (id != null && id.isNotEmpty) ids.add(id);
-    }
-    return ids;
-  }
-
-  String _bareCid(String contentId) =>
-      contentId.startsWith('<') && contentId.endsWith('>')
-          ? contentId.substring(1, contentId.length - 1)
-          : contentId;
-
-  /// Whether a part's bare Content-Id is referenced by the body. Gmail
-  /// sometimes emits `Content-ID: <ii_x@mail.gmail.com>` while the body
-  /// references only `cid:ii_x`, so fall back to comparing the local part
-  /// before any `@`.
-  bool _cidReferenced(String bareCid, Set<String> referenced) {
-    if (referenced.contains(bareCid)) return true;
-    final key = _cidLocalPart(bareCid);
-    for (final r in referenced) {
-      if (_cidLocalPart(r) == key) return true;
-    }
-    return false;
-  }
-
-  String _cidLocalPart(String cid) {
-    final at = cid.indexOf('@');
-    return at == -1 ? cid : cid.substring(0, at);
-  }
-
-  void _collectAttachmentParts(
-      Map<String, dynamic> part, List<_GmailAttachment> out,
-      [Set<String>? referencedCids]) {
-    final filename = (part['filename'] as String? ?? '').trim();
-    final headers = (part['headers'] as List<dynamic>? ?? [])
-        .cast<Map<String, dynamic>>();
-
-    String? contentId;
-    bool hasAttachmentDisposition = false;
-    for (final h in headers) {
-      final name = (h['name'] as String? ?? '').toLowerCase();
-      final value = h['value'] as String? ?? '';
-      if (name == 'content-id' && value.isNotEmpty) contentId = value.trim();
-      if (name == 'content-disposition' &&
-          value.toLowerCase().startsWith('attachment')) {
-        hasAttachmentDisposition = true;
-      }
-    }
-
-    // A part is worth extracting if it has a filename (a normal attachment)
-    // or a Content-Id (an inline image referenced by cid:) — Gmail hoists
-    // inline images embedded as data: URIs into their own part without ever
-    // assigning a filename, so filename alone isn't a reliable signal.
-    if (filename.isNotEmpty || contentId != null) {
-      final mimeType = part['mimeType'] as String? ?? 'application/octet-stream';
-      final body = part['body'] as Map<String, dynamic>? ?? {};
-      final attachmentId = body['attachmentId'] as String? ?? '';
-      final inlineData = body['data'] as String?;
-      final size = body['size'] as int? ?? 0;
-
-      // Gmail marks pasted inline images with `Content-Disposition: attachment`
-      // while still referencing them via cid: in the HTML body. When the body's
-      // cid references are known, treat a part as inline iff its Content-Id is
-      // actually referenced (disposition is unreliable); otherwise fall back to
-      // the disposition heuristic. Unreferenced Content-Id parts stay as
-      // downloadable attachments.
-      final bareCid = contentId == null ? null : _bareCid(contentId);
-      final isInline = referencedCids != null
-          ? (bareCid != null && _cidReferenced(bareCid, referencedCids))
-          : (contentId != null && !hasAttachmentDisposition);
-      out.add(_GmailAttachment(
-        attachmentId: attachmentId,
-        name: filename,
-        contentType: mimeType,
-        size: size,
-        isInline: isInline,
-        contentId: isInline ? contentId : null,
-        inlineData: inlineData,
-      ));
-    }
-
-    final subParts = (part['parts'] as List<dynamic>? ?? [])
-        .cast<Map<String, dynamic>>();
-    for (final sub in subParts) {
-      _collectAttachmentParts(sub, out, referencedCids);
-    }
-  }
-
-  String _padBase64(String s) {
-    final padding = (4 - s.length % 4) % 4;
-    return s + ('=' * padding);
-  }
-
-  EmailAddressModel _parseAddress(String raw) {
-    if (raw.isEmpty) return const EmailAddressModel(address: '', name: '');
-    // Handles: "Display Name <email>", "<email>", and bare "email"
-    final match = RegExp(r'^(.*?)\s*<([^>]+)>\s*$').firstMatch(raw.trim());
-    if (match != null) {
-      return EmailAddressModel(
-        name: (match.group(1) ?? '').replaceAll('"', '').trim(),
-        address: match.group(2)?.trim() ?? '',
-      );
-    }
-    return EmailAddressModel(address: raw.trim(), name: '');
-  }
-
-  List<EmailAddressModel> _parseAddressList(String raw) {
-    if (raw.isEmpty) return [];
-    return raw.split(',').map((s) => _parseAddress(s.trim())).toList();
-  }
-
-  DateTime _parseRfc2822Date(String date) {
-    // Attempt parsing — fallback to now.
-    try {
-      return DateTime.parse(date);
-    } catch (_) {
-      return DateTime.now().toUtc();
-    }
-  }
-
-  bool _isSystemLabel(String id) {
-    const system = {
-      'INBOX', 'SENT', 'DRAFT', 'TRASH', 'SPAM', 'STARRED', 'IMPORTANT',
-      'UNREAD', 'CHAT', 'CATEGORY_PERSONAL', 'CATEGORY_SOCIAL',
-      'CATEGORY_PROMOTIONS', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS',
-    };
-    return system.contains(id);
-  }
-
-  bool _isHiddenSystemLabel(String id) {
-    const hidden = {'CHAT', 'STARRED', 'IMPORTANT', 'UNREAD'};
-    return hidden.contains(id);
-  }
+  //
+  // Message parsing lives in gmail_message_parser.dart as top-level functions
+  // so it can run in a background isolate via compute(). Only label naming,
+  // which is cheap and never touches a message body, is left here.
 
   String _transformLabelName(String name) {
     if (!name.startsWith('CATEGORY_')) return name;
@@ -935,20 +528,28 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     List<LocalAttachment> newAttachments = const [],
   }) async {
     try {
-      final rawResp = await _dio.get<Map<String, dynamic>>(
+      // Plain for the same reason as the rest of the message endpoints, though
+      // here the decode stays local: MessageBuilder.prepareReplyToMessage needs
+      // the original as a live MimeMessage on this isolate, so there is nothing
+      // to gain by decoding elsewhere and no way to send the object back. This
+      // is a user-initiated one-off rather than the polling path.
+      final rawResp = await _dio.get<String>(
         '/users/me/messages/$messageId',
         queryParameters: {'format': 'raw'},
+        options: Options(responseType: ResponseType.plain),
       );
-      if (rawResp.data == null) {
+      final rawBody = rawResp.data;
+      if (rawBody == null || rawBody.isEmpty) {
         throw const ServerException(message: 'Message not found');
       }
-      final rawBase64 = rawResp.data!['raw'] as String?;
+      final rawJson = jsonDecode(rawBody) as Map<String, dynamic>;
+      final rawBase64 = rawJson['raw'] as String?;
       if (rawBase64 == null) {
         throw const ServerException(message: 'No raw data in response');
       }
-      final threadId = rawResp.data!['threadId'] as String?;
+      final threadId = rawJson['threadId'] as String?;
 
-      final rawBytes = base64Url.decode(_padBase64(rawBase64));
+      final rawBytes = base64Url.decode(padGmailBase64(rawBase64));
       final original = MimeMessage.parseFromData(rawBytes);
 
       final fromEmail = await _getUserEmail();
@@ -998,23 +599,19 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     List<LocalAttachment> newAttachments = const [],
   }) async {
     try {
-      final resp = await _dio.get<Map<String, dynamic>>(
+      final resp = await _dio.get<String>(
         '/users/me/messages/$messageId',
         queryParameters: {'format': 'full'},
+        options: Options(responseType: ResponseType.plain),
       );
-      if (resp.data == null) throw const ServerException(message: 'Message not found');
+      final raw = resp.data;
+      if (raw == null || raw.isEmpty) {
+        throw const ServerException(message: 'Message not found');
+      }
 
-      final threadId = resp.data!['threadId'] as String?;
-      final payload = resp.data!['payload'] as Map<String, dynamic>? ?? {};
-      final hdrs = (payload['headers'] as List<dynamic>? ?? [])
-          .cast<Map<String, dynamic>>();
-      String hdr(String name) => hdrs
-          .firstWhere(
-            (h) => (h['name'] as String).toLowerCase() == name.toLowerCase(),
-            orElse: () => {'value': ''},
-          )['value'] as String;
-
-      final originalSubject = hdr('Subject');
+      final source = await compute(parseGmailForwardSource, raw);
+      final threadId = source.threadId;
+      final originalSubject = source.subject;
 
       final fromEmail = await _getUserEmail();
       final subject = originalSubject.startsWith('Fwd:')
@@ -1041,9 +638,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         builder.addTextPlain(comment);
       }
 
-      final allAttachments = _extractAttachments(payload);
-      for (final att in allAttachments) {
-        if (att.isInline || att.attachmentId.isEmpty) continue;
+      for (final att in source.attachments) {
         if (excludedAttachmentIds.contains(att.attachmentId)) continue;
         try {
           final bytes = await downloadAttachment(messageId, att.attachmentId);
@@ -1174,18 +769,21 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   Future<Uint8List> downloadAttachment(
       String messageId, String attachmentId) async {
     try {
-      final response = await _dio.get<Map<String, dynamic>>(
+      final response = await _dio.get<String>(
         '/users/me/messages/$messageId/attachments/$attachmentId',
+        options: Options(responseType: ResponseType.plain),
       );
-      final data = response.data;
-      if (data == null) {
+      final body = response.data;
+      if (body == null || body.isEmpty) {
         throw const ServerException(message: 'Empty response from server');
       }
-      final rawData = data['data'] as String?;
-      if (rawData == null || rawData.isEmpty) {
+      // An attachment is by definition the large kind of payload, so both the
+      // jsonDecode and the base64 decode go to a background isolate.
+      final bytes = await compute(decodeGmailAttachmentBytes, body);
+      if (bytes == null) {
         throw const ServerException(message: 'No attachment data in response');
       }
-      return base64Url.decode(_padBase64(rawData));
+      return bytes;
     } on DioException catch (e) {
       throw _mapException(e);
     }
@@ -1453,26 +1051,6 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         message: e.message ?? 'Server error ($statusCode)',
         statusCode: statusCode);
   }
-}
-
-class _GmailAttachment {
-  _GmailAttachment({
-    required this.attachmentId,
-    required this.name,
-    required this.contentType,
-    required this.size,
-    required this.isInline,
-    this.contentId,
-    this.inlineData,
-  });
-
-  final String attachmentId;
-  final String name;
-  final String contentType;
-  final int size;
-  final bool isInline;
-  final String? contentId;
-  final String? inlineData;
 }
 
 /// Inputs for [_buildDraftRawBase64]. Kept as plain, isolate-transferable

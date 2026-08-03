@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mockito/annotations.dart';
@@ -25,12 +27,14 @@ Map<String, dynamic> _emailJson(String id, {bool isRead = false}) => {
       'parentFolderId': 'inbox',
     };
 
-Response<Map<String, dynamic>> _resp(
+/// Delta pages are requested with `ResponseType.plain` so the parse can run on a
+/// background isolate, so the stub answers with the page still encoded.
+Response<String> _resp(
   Map<String, dynamic> data, {
   String path = '/me/mailFolders/inbox/messages/delta',
 }) =>
     Response(
-      data: data,
+      data: jsonEncode(data),
       statusCode: 200,
       requestOptions: RequestOptions(path: path),
     );
@@ -47,9 +51,10 @@ void main() {
 
   group('GraphApiDatasourceImpl.syncMailDelta — initial sync', () {
     test('calls /me/mailFolders/{folderId}/messages/delta', () async {
-      when(mockDio.get<Map<String, dynamic>>(
+      when(mockDio.get<String>(
         any,
         queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).thenAnswer((_) async => _resp({
             'value': <dynamic>[],
             '@odata.deltaLink': 'https://graph.microsoft.com/v1.0/delta-1',
@@ -57,18 +62,20 @@ void main() {
 
       await datasource.syncMailDelta('inbox');
 
-      final captured = verify(mockDio.get<Map<String, dynamic>>(
+      final captured = verify(mockDio.get<String>(
         captureAny,
         queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).captured;
 
       expect(captured.first, '/me/mailFolders/inbox/messages/delta');
     });
 
     test('includes \$select and receivedDateTime \$filter query params', () async {
-      when(mockDio.get<Map<String, dynamic>>(
+      when(mockDio.get<String>(
         any,
         queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).thenAnswer((_) async => _resp({
             'value': <dynamic>[],
             '@odata.deltaLink': 'https://graph.microsoft.com/v1.0/delta-1',
@@ -76,9 +83,10 @@ void main() {
 
       await datasource.syncMailDelta('inbox');
 
-      final params = verify(mockDio.get<Map<String, dynamic>>(
+      final params = verify(mockDio.get<String>(
         any,
         queryParameters: captureAnyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).captured.first as Map<String, dynamic>;
 
       expect(params.containsKey(r'$select'), isTrue);
@@ -86,9 +94,10 @@ void main() {
     });
 
     test('returns upserted messages and empty removedIds', () async {
-      when(mockDio.get<Map<String, dynamic>>(
+      when(mockDio.get<String>(
         any,
         queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).thenAnswer((_) async => _resp({
             'value': [_emailJson('msg-1'), _emailJson('msg-2', isRead: true)],
             '@odata.deltaLink': 'https://graph.microsoft.com/v1.0/delta-1',
@@ -102,9 +111,10 @@ void main() {
     });
 
     test('separates @removed items into removedIds', () async {
-      when(mockDio.get<Map<String, dynamic>>(
+      when(mockDio.get<String>(
         any,
         queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).thenAnswer((_) async => _resp({
             'value': [
               _emailJson('msg-kept'),
@@ -122,9 +132,10 @@ void main() {
 
     test('returns the @odata.deltaLink value', () async {
       const expected = 'https://graph.microsoft.com/v1.0/delta-token-abc';
-      when(mockDio.get<Map<String, dynamic>>(
+      when(mockDio.get<String>(
         any,
         queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).thenAnswer((_) async => _resp({
             'value': <dynamic>[],
             '@odata.deltaLink': expected,
@@ -140,9 +151,10 @@ void main() {
       const deltaLink = 'https://graph.microsoft.com/v1.0/delta-final';
 
       int calls = 0;
-      when(mockDio.get<Map<String, dynamic>>(
+      when(mockDio.get<String>(
         any,
         queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).thenAnswer((inv) async {
         calls++;
         if (calls == 1) {
@@ -167,9 +179,10 @@ void main() {
     });
 
     test('hasChanges is false when value list is empty', () async {
-      when(mockDio.get<Map<String, dynamic>>(
+      when(mockDio.get<String>(
         any,
         queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).thenAnswer((_) async => _resp({
             'value': <dynamic>[],
             '@odata.deltaLink': 'https://graph.microsoft.com/v1.0/delta-1',
@@ -181,9 +194,10 @@ void main() {
     });
 
     test('hasChanges is true when messages are returned', () async {
-      when(mockDio.get<Map<String, dynamic>>(
+      when(mockDio.get<String>(
         any,
         queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).thenAnswer((_) async => _resp({
             'value': [_emailJson('new-msg')],
             '@odata.deltaLink': 'https://graph.microsoft.com/v1.0/delta-1',
@@ -201,9 +215,10 @@ void main() {
       const savedLink =
           'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?\$deltatoken=xyz';
 
-      when(mockDio.get<Map<String, dynamic>>(
+      when(mockDio.get<String>(
         any,
         queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).thenAnswer((_) async => _resp({
             'value': <dynamic>[],
             '@odata.deltaLink':
@@ -212,9 +227,10 @@ void main() {
 
       await datasource.syncMailDelta('inbox', deltaLink: savedLink);
 
-      final url = verify(mockDio.get<Map<String, dynamic>>(
+      final url = verify(mockDio.get<String>(
         captureAny,
         queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).captured.first as String;
 
       expect(url, savedLink);
@@ -223,9 +239,10 @@ void main() {
     test(r'does not include $filter when using saved delta link', () async {
       const savedLink = 'https://graph.microsoft.com/v1.0/delta-token';
 
-      when(mockDio.get<Map<String, dynamic>>(
+      when(mockDio.get<String>(
         any,
         queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).thenAnswer((_) async => _resp({
             'value': <dynamic>[],
             '@odata.deltaLink': 'https://graph.microsoft.com/v1.0/delta-new',
@@ -235,9 +252,10 @@ void main() {
 
       // Verify there were no query parameters — the delta link is a full URL
       // that already encodes all params.
-      final qp = verify(mockDio.get<Map<String, dynamic>>(
+      final qp = verify(mockDio.get<String>(
         any,
         queryParameters: captureAnyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).captured.first;
 
       expect(qp, isNull);
@@ -245,9 +263,10 @@ void main() {
 
     test('saves new delta link returned from incremental sync', () async {
       const newDelta = 'https://graph.microsoft.com/v1.0/delta-updated';
-      when(mockDio.get<Map<String, dynamic>>(
+      when(mockDio.get<String>(
         any,
         queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).thenAnswer((_) async => _resp({
             'value': [_emailJson('incoming')],
             '@odata.deltaLink': newDelta,
@@ -263,9 +282,10 @@ void main() {
   group('GraphApiDatasourceImpl.syncMailDelta — error handling', () {
     test('throws ServerException with statusCode 410 for expired token',
         () async {
-      when(mockDio.get<Map<String, dynamic>>(
+      when(mockDio.get<String>(
         any,
         queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).thenThrow(DioException(
         type: DioExceptionType.badResponse,
         response: Response(
@@ -287,9 +307,10 @@ void main() {
     });
 
     test('throws NetworkException on connection error', () async {
-      when(mockDio.get<Map<String, dynamic>>(
+      when(mockDio.get<String>(
         any,
         queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).thenThrow(DioException(
         type: DioExceptionType.connectionError,
         requestOptions:
@@ -303,9 +324,10 @@ void main() {
     });
 
     test('throws AuthException on 401', () async {
-      when(mockDio.get<Map<String, dynamic>>(
+      when(mockDio.get<String>(
         any,
         queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).thenThrow(DioException(
         type: DioExceptionType.badResponse,
         response: Response(

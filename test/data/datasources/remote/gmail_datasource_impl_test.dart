@@ -45,6 +45,13 @@ Map<String, dynamic> _fullMessage({String subject = 'Test Subject'}) => {
 Response<Map<String, dynamic>> _jsonResp(Map<String, dynamic> data, String path) =>
     Response(data: data, statusCode: 200, requestOptions: RequestOptions(path: path));
 
+/// The undecoded form, for the endpoints requested with `ResponseType.plain`.
+Response<String> _plainResp(Map<String, dynamic> data, String path) => Response(
+      data: jsonEncode(data),
+      statusCode: 200,
+      requestOptions: RequestOptions(path: path),
+    );
+
 Response<void> _sendResp() => Response<void>(
       statusCode: 200,
       requestOptions: RequestOptions(path: '/users/me/messages/send'),
@@ -628,6 +635,17 @@ void main() {
         .thenAnswer((inv) async {
       final url = inv.positionalArguments[0] as String;
       return _jsonResp(responder(url), url);
+    });
+    // The message-fetching calls ask for ResponseType.plain so the parse can run
+    // on a background isolate, so they arrive as get<String> and are answered
+    // with the response still encoded — exactly what the parser isolate gets.
+    when(mockDio.get<String>(
+      any,
+      queryParameters: anyNamed('queryParameters'),
+      options: anyNamed('options'),
+    )).thenAnswer((inv) async {
+      final url = inv.positionalArguments[0] as String;
+      return _plainResp(responder(url), url);
     });
   }
 

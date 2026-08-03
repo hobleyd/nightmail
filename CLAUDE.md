@@ -222,6 +222,51 @@ async stream, so the adapter must emit `Left(failure)` inline. For consistency
 the single-shot adapter path returns `Either` the same way rather than mixing
 throw-and-convert with emit-`Left` in one class.
 
+## Message Parsing Runs Off the UI Isolate
+
+**Parsing a fetched message never happens on the UI isolate.** Each provider
+hands the **undecoded** response body to `compute()`:
+
+| Provider | Parser | Entry points |
+|---|---|---|
+| Gmail | `gmail_message_parser.dart` | `parseGmailFullMessage`, `parseGmailThreads`, `parseGmailMetadataMessages`, `parseGmailForwardSource` |
+| Microsoft | `graph_message_parser.dart` | `parseGraphFullMessage`, `parseGraphMessageCollection(s)`, `parseGraphDeltaPages` |
+| IMAP | `ImapDatasourceImpl.parseFullImapMessage` | raw MIME in, `EmailModel` out |
+
+Three things here look incidental and are not:
+
+- **`ResponseType.plain` is load-bearing.** `jsonDecode` is a large share of the
+  cost — a `format=full` Gmail message and a Graph message both carry the body
+  and every inline image as base64 inside the JSON. Letting Dio decode the
+  response puts that half back on the UI isolate no matter what the parser does.
+  This mirrors the contacts fetchers; same reason.
+- **One `compute()` per batch, not per message.** Each call spawns an isolate, so
+  a 25-thread page parsed one call at a time pays isolate setup 25 times and
+  loses most of the gain. List paths fetch concurrently, then parse once.
+- **A parser cannot make a network call, so it reports what it could not
+  finish.** `GmailFullMessage` carries `icsAttachmentId` and `pendingInline`;
+  `GraphFullMessage` carries `pendingInlineAttachmentIds`. The alternative —
+  decoding the response again on the UI isolate just to find them — is the thing
+  being avoided. Merge fetched extras by *rebuilding* the model, not re-parsing.
+
+Deliberate exceptions:
+
+- IMAP **list** rows (`ENVELOPE`/`BODYSTRUCTURE`, no `BODY[]`) parse inline.
+  There is no raw source to reconstruct a `MimeMessage` from, and without a body
+  there is nothing expensive to decode. Only `getEmail` (which fetches `BODY[]`)
+  moves, via `renderMessage()`/`parseFromText` — a documented round-trip.
+  `uid` and the `\Seen` flag come from the FETCH, not the MIME, so they travel
+  beside the source text.
+- Reply/forward MIME **building** stays on the calling isolate: `MessageBuilder`
+  needs the original as a live `MimeMessage`, and these are user-initiated
+  one-offs rather than the polling path.
+
+Mockito cannot tell `get<Map>` from `get<String>` — a Dart `Invocation` does not
+carry the type argument, so the stubs collide and the last one registered wins.
+That is why the whole Gmail message path uses one response type (the thread and
+search *indexes* are plain too, decoded locally since they are only ids), and why
+these tests stub `get<String>` with `jsonEncode`d bodies.
+
 ## Contacts Typeahead Architecture
 
 **The dropdown never hits the network.** Every address book is pulled down at

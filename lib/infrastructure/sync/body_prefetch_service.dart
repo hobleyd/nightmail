@@ -34,6 +34,21 @@ class BodyPrefetchService {
   /// into a long serial run of round-trips that starves the poll loop.
   static const _maxPerBatch = 20;
 
+  /// One frame, yielded to between messages so the batch never runs as one
+  /// tight burst.
+  ///
+  /// Parsing a message does not happen on the calling isolate any more — each
+  /// provider's `getEmail` hands the undecoded response to a background isolate
+  /// (see `gmail_message_parser.dart` and friends). What that leaves here is
+  /// small but not free: one `compute()` spawn per message, plus the request.
+  /// Spacing them keeps a 20-message batch from queueing 20 isolate startups
+  /// back to back behind whatever the user is doing.
+  ///
+  /// A plain `await` would not do it — microtasks run before the next frame, so
+  /// the loop would resume without one ever being drawn. This has to be a timer,
+  /// i.e. a real event-loop turn.
+  static const _betweenMessages = Duration(milliseconds: 16);
+
   /// Fetches and caches full bodies for the body-less messages in [emails].
   ///
   /// Runs the fetches serially: IMAP accounts share one connection whose
@@ -88,6 +103,9 @@ class BodyPrefetchService {
         } catch (_) {
           // Best-effort: leave this one to load lazily on tap.
         }
+        // Outside the catch so a failed fetch still yields, but after the
+        // `continue`s above, which skip it — those did no parsing to yield for.
+        await Future<void>.delayed(_betweenMessages);
       }
     } finally {
       _inFlight.remove(accountId);

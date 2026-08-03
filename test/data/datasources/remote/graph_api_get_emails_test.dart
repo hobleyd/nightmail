@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mockito/annotations.dart';
@@ -23,12 +25,12 @@ Map<String, dynamic> _messageJson(String id, String convId) => {
       'parentFolderId': 'inbox',
     };
 
-Response<Map<String, dynamic>> _resp(
+Response<String> _resp(
   Map<String, dynamic> data, {
   String path = '',
 }) =>
     Response(
-      data: data,
+      data: jsonEncode(data),
       statusCode: 200,
       requestOptions: RequestOptions(path: path),
     );
@@ -51,9 +53,10 @@ void main() {
     test('passes \$top: 200 when fetching cross-folder conversation messages',
         () async {
       // First call: folder messages (contains one email with a conversationId).
-      when(mockDio.get<Map<String, dynamic>>(
+      when(mockDio.get<String>(
         '/me/mailFolders/inbox/messages',
         queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).thenAnswer((_) async => _resp({
             'value': [_messageJson('msg1', 'conv-1')],
           }));
@@ -61,9 +64,10 @@ void main() {
       // Second call: _fetchConversationMessages for conv-1.
       // Capture the queryParameters so we can assert on $top.
       Map<String, dynamic>? capturedParams;
-      when(mockDio.get<Map<String, dynamic>>(
+      when(mockDio.get<String>(
         '/me/messages',
         queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).thenAnswer((invocation) async {
         capturedParams = invocation.namedArguments[#queryParameters]
             as Map<String, dynamic>?;
@@ -81,17 +85,19 @@ void main() {
 
     test('conversation fetch uses \$filter with the correct conversationId',
         () async {
-      when(mockDio.get<Map<String, dynamic>>(
+      when(mockDio.get<String>(
         '/me/mailFolders/inbox/messages',
         queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).thenAnswer((_) async => _resp({
             'value': [_messageJson('msg1', 'my-conv-id')],
           }));
 
       Map<String, dynamic>? capturedParams;
-      when(mockDio.get<Map<String, dynamic>>(
+      when(mockDio.get<String>(
         '/me/messages',
         queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
       )).thenAnswer((invocation) async {
         capturedParams = invocation.namedArguments[#queryParameters]
             as Map<String, dynamic>?;

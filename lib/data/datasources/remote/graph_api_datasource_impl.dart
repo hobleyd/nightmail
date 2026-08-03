@@ -17,6 +17,7 @@ import '../../../domain/usecases/create_calendar_event.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
 import '../../../infrastructure/http/graph_http_client.dart';
 import '../../models/calendar_event_model.dart';
+import '../../models/email_address_model.dart';
 import '../../models/email_folder_model.dart';
 import '../../models/email_model.dart';
 import '../../models/mail_delta_result.dart';
@@ -27,6 +28,7 @@ import 'calendar_remote_datasource.dart';
 import 'contact_bulk_parser.dart';
 import 'email_remote_datasource.dart';
 import 'graph_delta_datasource.dart';
+import 'graph_message_parser.dart';
 import 'tasks_remote_datasource.dart';
 
 /// Path to the calendar event linked to a message.
@@ -93,7 +95,7 @@ class GraphApiDatasourceImpl
         : '/me/messages';
 
     try {
-      final response = await _dio.get<Map<String, dynamic>>(
+      final response = await _dio.get<String>(
         path,
         queryParameters: {
           '\$top': top,
@@ -102,15 +104,13 @@ class GraphApiDatasourceImpl
           '\$orderby': orderBy,
           '\$filter': ?filter,
         },
+        options: Options(responseType: ResponseType.plain),
       );
 
-      final data = response.data;
-      if (data == null) return [];
+      final raw = response.data;
+      if (raw == null || raw.isEmpty) return [];
 
-      final value = data['value'] as List<dynamic>? ?? [];
-      final folderEmails = value
-          .map((e) => EmailModel.fromJson(e as Map<String, dynamic>))
-          .toList();
+      final folderEmails = await compute(parseGraphMessageCollection, raw);
 
       if (folderEmails.isEmpty) return [];
 
@@ -125,19 +125,23 @@ class GraphApiDatasourceImpl
 
       if (conversationIds.isEmpty) return folderEmails;
 
-      final crossFolderFutures =
-          conversationIds.map((id) => getConversationMessages(id));
-      final crossFolderBatches = await Future.wait(crossFolderFutures);
+      // Fetch every conversation concurrently (network only), then decode the
+      // whole set in one background isolate rather than one per conversation —
+      // compute() spawns an isolate per call, and a page can easily hold 25
+      // distinct threads.
+      final rawBatches = await Future.wait(
+        conversationIds.map(_fetchConversationRaw),
+      );
+      final crossFolderEmails =
+          await compute(parseGraphMessageCollections, rawBatches);
 
       // Merge: folder emails + cross-folder emails, de-duplicated by id.
       final byId = <String, EmailModel>{};
       for (final e in folderEmails) {
         byId[e.id] = e;
       }
-      for (final batch in crossFolderBatches) {
-        for (final e in batch) {
-          byId.putIfAbsent(e.id, () => e);
-        }
+      for (final e in crossFolderEmails) {
+        byId.putIfAbsent(e.id, () => e);
       }
       return byId.values.toList();
     } on DioException catch (e) {
@@ -151,22 +155,31 @@ class GraphApiDatasourceImpl
     String conversationId, {
     String? folderId,
   }) async {
+    final raw = await _fetchConversationRaw(conversationId);
+    if (raw == null) return [];
     try {
-      final response = await _dio.get<Map<String, dynamic>>(
+      return await compute(parseGraphMessageCollection, raw);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Fetches one conversation's messages **undecoded**, for a parser isolate to
+  /// decode. Returns null when the fetch fails, which the batch parser skips.
+  Future<String?> _fetchConversationRaw(String conversationId) async {
+    try {
+      final response = await _dio.get<String>(
         '/me/messages',
         queryParameters: {
           '\$filter': "conversationId eq '$conversationId'",
           '\$select': _emailListSelect,
           '\$top': 200,
         },
+        options: Options(responseType: ResponseType.plain),
       );
-      final value =
-          (response.data?['value'] as List<dynamic>? ?? []);
-      return value
-          .map((e) => EmailModel.fromJson(e as Map<String, dynamic>))
-          .toList();
+      return response.data;
     } catch (_) {
-      return [];
+      return null;
     }
   }
 
@@ -188,18 +201,18 @@ class GraphApiDatasourceImpl
       // and Graph uses inconsistent ID formats (AQMk vs AAMk) that break
       // client-side parentFolderId filtering. Global search matches Outlook's
       // default behaviour.
-      final response = await _dio.get<Map<String, dynamic>>(
+      final response = await _dio.get<String>(
         '/me/messages',
         queryParameters: {
           '\$top': top,
           '\$select': _emailListSelect,
           '\$search': '"$kql"',
         },
+        options: Options(responseType: ResponseType.plain),
       );
-      final value = response.data?['value'] as List<dynamic>? ?? [];
-      return value
-          .map((e) => EmailModel.fromJson(e as Map<String, dynamic>))
-          .toList();
+      final raw = response.data;
+      if (raw == null || raw.isEmpty) return [];
+      return compute(parseGraphMessageCollection, raw);
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
@@ -208,7 +221,10 @@ class GraphApiDatasourceImpl
   @override
   Future<EmailModel> getEmail(String id) async {
     try {
-      final response = await _dio.get<Map<String, dynamic>>(
+      // Undecoded: the message body and every inline image arrive as one JSON
+      // document, so the jsonDecode is a large share of the cost and belongs in
+      // the parser isolate along with the parse itself.
+      final response = await _dio.get<String>(
         '/me/messages/$id',
         queryParameters: {
           // No $select here: Graph omits @odata.type for derived types
@@ -218,43 +234,70 @@ class GraphApiDatasourceImpl
         },
         // Return eventMessage startDateTime/endDateTime in UTC so we can use
         // them directly without Windows-timezone-name conversion.
-        options: Options(headers: {'Prefer': 'outlook.timezone="UTC"'}),
+        options: Options(
+          headers: {'Prefer': 'outlook.timezone="UTC"'},
+          responseType: ResponseType.plain,
+        ),
       );
 
-      if (response.data == null) {
+      final raw = response.data;
+      if (raw == null || raw.isEmpty) {
         throw ServerException(
             message: 'Empty response for message $id', statusCode: 200);
       }
 
-      // contentId and contentBytes are on the fileAttachment subtype and
-      // cannot be requested via $select in $expand (which targets the base
-      // attachment type). Fetch each inline attachment individually to get
-      // those fields, then merge before parsing.
-      final emailData = Map<String, dynamic>.from(response.data!);
-      final rawAttachments = emailData['attachments'] as List<dynamic>?;
-      if (rawAttachments != null) {
-        final enriched = <Map<String, dynamic>>[];
-        for (final a in rawAttachments.cast<Map<String, dynamic>>()) {
-          if (a['isInline'] == true) {
-            final attachId = a['id'] as String?;
-            if (attachId != null) {
-              try {
-                final detail = await _dio.get<Map<String, dynamic>>(
-                  '/me/messages/$id/attachments/$attachId',
-                );
-                if (detail.data != null) {
-                  enriched.add({...a, ...detail.data!});
-                  continue;
-                }
-              } catch (_) {}
-            }
-          }
-          enriched.add(a);
-        }
-        emailData['attachments'] = enriched;
-      }
+      final parsed = await compute(parseGraphFullMessage, raw);
+      final pendingIds = parsed.pendingInlineAttachmentIds;
+      if (pendingIds.isEmpty) return parsed.email;
 
-      return EmailModel.fromJson(emailData);
+      // contentId and contentBytes are on the fileAttachment subtype and cannot
+      // be requested via $select in $expand (which targets the base attachment
+      // type), so each inline image needs its own GET. Fetched undecoded and
+      // decoded in one more isolate hop — these are images, so the base64 is
+      // exactly what must not run here.
+      final rawInline = <String>[];
+      for (final attachId in pendingIds) {
+        try {
+          final detail = await _dio.get<String>(
+            '/me/messages/$id/attachments/$attachId',
+            options: Options(responseType: ResponseType.plain),
+          );
+          final body = detail.data;
+          if (body != null && body.isNotEmpty) rawInline.add(body);
+        } catch (_) {}
+      }
+      if (rawInline.isEmpty) return parsed.email;
+
+      final inlineAttachments =
+          await compute(parseGraphInlineAttachments, rawInline);
+      if (inlineAttachments.isEmpty) return parsed.email;
+
+      // Rebuilt rather than re-parsed: the decode already happened in the
+      // isolate, so this is pure object construction.
+      final email = parsed.email;
+      return EmailModel(
+        id: email.id,
+        subject: email.subject,
+        from: EmailAddressModel.fromEntity(email.from),
+        toRecipients:
+            email.toRecipients.map(EmailAddressModel.fromEntity).toList(),
+        ccRecipients:
+            email.ccRecipients.map(EmailAddressModel.fromEntity).toList(),
+        bodyPreview: email.bodyPreview,
+        body: email.body,
+        bodyType: email.bodyType,
+        isRead: email.isRead,
+        receivedDateTime: email.receivedDateTime,
+        importance: email.importance,
+        sentDateTime: email.sentDateTime,
+        conversationId: email.conversationId,
+        hasAttachments: email.hasAttachments,
+        attachments: email.attachments,
+        inlineAttachments: [...email.inlineAttachments, ...inlineAttachments],
+        parentFolderId: email.parentFolderId,
+        folderIds: email.folderIds,
+        meetingInvite: email.meetingInvite,
+      );
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
@@ -266,18 +309,20 @@ class GraphApiDatasourceImpl
     required bool isRead,
   }) async {
     try {
-      final response = await _dio.patch<Map<String, dynamic>>(
+      final response = await _dio.patch<String>(
         '/me/messages/$id',
         data: {'isRead': isRead},
         queryParameters: {'\$select': _emailListSelect},
+        options: Options(responseType: ResponseType.plain),
       );
 
-      if (response.data == null) {
+      final raw = response.data;
+      if (raw == null || raw.isEmpty) {
         throw ServerException(
             message: 'Empty response when updating message $id', statusCode: 200);
       }
 
-      return EmailModel.fromJson(response.data!);
+      return compute(parseGraphMessage, raw);
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
@@ -2214,8 +2259,10 @@ class GraphApiDatasourceImpl
     String folderId, {
     String? deltaLink,
   }) async {
-    final upserted = <EmailModel>[];
-    final removedIds = <String>[];
+    // Pages are collected undecoded and parsed together at the end, off the UI
+    // isolate. Paging itself has to stay here: each page's next link is only
+    // known once that page has arrived.
+    final rawPages = <String>[];
 
     // For the initial sync (no saved token), restrict to the last 30 days so
     // the first pass is fast. The returned delta link tracks ALL future changes
@@ -2231,46 +2278,41 @@ class GraphApiDatasourceImpl
 
     try {
       while (true) {
-        final Response<Map<String, dynamic>> response;
+        final Response<String> response;
 
         if (isInitial) {
           isInitial = false;
-          response = await _dio.get<Map<String, dynamic>>(
+          response = await _dio.get<String>(
             '/me/mailFolders/$folderId/messages/delta',
             queryParameters: {
               '\$select': _emailListSelect,
               '\$filter': 'receivedDateTime ge $cutoffStr',
               '\$top': 50,
             },
+            options: Options(responseType: ResponseType.plain),
           );
         } else {
           // nextLink / deltaLink are full absolute URLs — Dio uses them as-is.
-          response = await _dio.get<Map<String, dynamic>>(nextUrl!);
+          response = await _dio.get<String>(
+            nextUrl!,
+            options: Options(responseType: ResponseType.plain),
+          );
         }
 
-        final data = response.data ?? <String, dynamic>{};
+        final raw = response.data ?? '';
+        if (raw.isNotEmpty) rawPages.add(raw);
 
-        for (final item
-            in (data['value'] as List<dynamic>? ?? [])
-                .cast<Map<String, dynamic>>()) {
-          if (item.containsKey('@removed')) {
-            final id = item['id'] as String?;
-            if (id != null) removedIds.add(id);
-          } else {
-            upserted.add(EmailModel.fromJson(item));
-          }
-        }
-
-        final dl = data['@odata.deltaLink'] as String?;
+        final dl = graphDeltaLink(raw);
         if (dl != null) {
+          final parsed = await compute(parseGraphDeltaPages, rawPages);
           return MailDeltaResult(
-            upserted: upserted,
-            removedIds: removedIds,
+            upserted: parsed.upserted,
+            removedIds: parsed.removedIds,
             deltaLink: dl,
           );
         }
 
-        nextUrl = data['@odata.nextLink'] as String?;
+        nextUrl = graphNextLink(raw);
         if (nextUrl == null) break;
       }
     } on DioException catch (e) {
@@ -2520,6 +2562,19 @@ class GraphApiDatasourceImpl
   String? _extractGraphErrorMessage(DioException e) {
     try {
       final data = e.response?.data;
+      // The message-fetch requests ask for ResponseType.plain so the parse can
+      // happen in a background isolate, which means *their* error bodies arrive
+      // as an undecoded String rather than a Map. Without this branch a failed
+      // message fetch loses Graph's own explanation and falls back to a bare
+      // "Server error (400)".
+      if (data is String) {
+        if (data.isEmpty) return null;
+        final decoded = jsonDecode(data);
+        if (decoded is Map) {
+          return (decoded['error'] as Map?)?['message'] as String?;
+        }
+        return null;
+      }
       if (data is Map) {
         final error = data['error'] as Map?;
         return error?['message'] as String?;

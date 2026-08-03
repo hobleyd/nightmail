@@ -475,10 +475,33 @@ class ImapDatasourceImpl
         throw ServerException(message: 'Message not found: $id');
       }
 
-      return _parseToModel(
-        fetchResult.messages.first,
-        folderId: _selectedMailboxPath ?? mailboxPath,
-        fullBody: true,
+      final msg = fetchResult.messages.first;
+      final folderId = _selectedMailboxPath ?? mailboxPath;
+
+      // Hand the raw MIME to a background isolate to decode. The UID and
+      // `\Seen` flag come from the FETCH rather than the MIME, so they travel
+      // alongside it.
+      String? rawMime;
+      try {
+        rawMime = msg.renderMessage();
+      } catch (_) {
+        rawMime = null;
+      }
+      if (rawMime == null || rawMime.isEmpty) {
+        // No raw source to re-parse from (a server that answered BODY[] with
+        // nothing renderable). Parse here rather than fail the read.
+        return _parseToModel(msg, folderId: folderId, fullBody: true);
+      }
+
+      return compute(
+        parseFullImapMessage,
+        ImapFullMessageParams(
+          rawMime: rawMime,
+          folderId: folderId,
+          uid: msg.uid ?? msg.sequenceId ?? 0,
+          isRead: msg.isSeen,
+          receivedAt: msg.decodeDate(),
+        ),
       );
     } on ImapException catch (e) {
       throw ServerException(message: e.message ?? 'IMAP error');
@@ -549,15 +572,55 @@ class ImapDatasourceImpl
   // Parsing
   // ---------------------------------------------------------------------------
 
-  EmailModel _parseToModel(
+  /// Parses a full message from its raw MIME source. [compute] entry point.
+  ///
+  /// The fetch has to happen on the calling isolate — the IMAP connection is
+  /// stateful, with one selected mailbox, and cannot be shared — but the fetch
+  /// itself is cheap: enough_mail decodes lazily, so `uidFetchMessages` only
+  /// hands back a message whose body is still raw. The expensive half is what
+  /// [_parseToModel] then triggers: `decodeTextHtmlPart` (charset plus
+  /// quoted-printable/base64 over the whole body) and `decodeContentBinary` per
+  /// inline image. That is what moves here.
+  ///
+  /// Reconstructing the message from text rather than sending the fetched
+  /// [MimeMessage] across is deliberate — it is a lazily-parsed object graph,
+  /// not plain data — and `renderMessage`/`parseFromText` are a documented
+  /// round-trip. Rendering costs a string copy of already-raw bytes, which is
+  /// why this is a win rather than a shuffle.
+  static EmailModel parseFullImapMessage(ImapFullMessageParams params) {
+    final msg = MimeMessage.parseFromText(params.rawMime);
+    return _parseToModel(
+      msg,
+      folderId: params.folderId,
+      fullBody: true,
+      uid: params.uid,
+      isRead: params.isRead,
+      receivedAt: params.receivedAt,
+    );
+  }
+
+  /// Builds the model for a fetched message.
+  ///
+  /// [uid], [isRead] and [receivedAt] exist because they are **IMAP-level**
+  /// facts, not MIME ones: the UID and the `\Seen` flag come from the FETCH
+  /// response, so a message reconstructed from its raw MIME alone (which is what
+  /// [parseFullImapMessage] does on a background isolate) has no way to know
+  /// them. Callers holding the fetched message leave them null and they are read
+  /// off it as before.
+  ///
+  /// Static so [compute] can reach it; it never touched instance state.
+  static EmailModel _parseToModel(
     MimeMessage msg, {
     required String folderId,
     bool fullBody = false,
+    int? uid,
+    bool? isRead,
+    DateTime? receivedAt,
   }) {
-    final uid = msg.uid ?? msg.sequenceId ?? 0;
-    final id = '$folderId:$uid';
-    final isRead = msg.isSeen;
-    final date = msg.decodeDate() ?? DateTime.now().toUtc();
+    final resolvedUid = uid ?? msg.uid ?? msg.sequenceId ?? 0;
+    final id = '$folderId:$resolvedUid';
+    final resolvedIsRead = isRead ?? msg.isSeen;
+    final date = receivedAt ?? msg.decodeDate() ?? DateTime.now().toUtc();
 
     String body = '';
     EmailBodyType bodyType = EmailBodyType.text;
@@ -631,7 +694,7 @@ class ImapDatasourceImpl
       bodyPreview: bodyPreview,
       body: body,
       bodyType: bodyType,
-      isRead: isRead,
+      isRead: resolvedIsRead,
       receivedDateTime: date,
       importance: EmailImportance.normal,
       conversationId: _normalizeSubject(msg.decodeSubject() ?? ''),
@@ -1941,4 +2004,36 @@ String _buildDraftMimeText(_DraftMimeParams p) {
     }
   }
   return builder.buildMimeMessage().renderMessage();
+}
+
+/// Inputs for [ImapDatasourceImpl.parseFullImapMessage].
+///
+/// Kept as plain, isolate-transferable data — a raw MIME string plus the two
+/// IMAP-level facts that are not represented in the MIME itself. Deliberately
+/// not a [MimeMessage]: that is a lazily-parsed object graph rather than data,
+/// which is the reason the source text is what crosses the boundary.
+class ImapFullMessageParams {
+  const ImapFullMessageParams({
+    required this.rawMime,
+    required this.folderId,
+    required this.uid,
+    required this.isRead,
+    this.receivedAt,
+  });
+
+  /// The message's rendered MIME source, as returned by `renderMessage()`.
+  final String rawMime;
+
+  /// Mailbox the message was read from — its id is derived from this and [uid].
+  final String folderId;
+
+  /// From the FETCH response, not the MIME.
+  final int uid;
+
+  /// The `\Seen` flag, likewise from the FETCH response.
+  final bool isRead;
+
+  /// Decoded on the fetching isolate so the reconstructed message cannot
+  /// disagree with what the list row already shows.
+  final DateTime? receivedAt;
 }

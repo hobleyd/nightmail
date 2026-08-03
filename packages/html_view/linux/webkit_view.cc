@@ -24,12 +24,26 @@ static const char* kJsBridge = R"JS(
   window['onAttachRequest']   = makeChannel('onAttachRequest');
   window['onImageDoubleClicked'] = makeChannel('onImageDoubleClicked');
   window['onImagePasted']     = makeChannel('onImagePasted');
+  window['onLinkHovered']     = makeChannel('onLinkHovered');
   document.addEventListener('dblclick', function(e) {
     var t = e.target;
     if (t && t.tagName === 'IMG') {
       var src = t.currentSrc || t.src;
       if (src) window['onImageDoubleClicked'].postMessage(src);
     }
+  }, true);
+  // Report the link under the pointer (empty when there is none) so the host
+  // can offer to copy it — nothing Flutter draws can sit on top of this native
+  // view. closest() so a hover over a nested element still reports the anchor;
+  // only changes are posted, as mouseover fires for every element crossed.
+  var hoveredLink = '';
+  document.addEventListener('mouseover', function(e) {
+    var t = e.target;
+    var a = (t && t.closest) ? t.closest('a[href]') : null;
+    var href = a ? a.href : '';
+    if (href === hoveredLink) return;
+    hoveredLink = href;
+    window['onLinkHovered'].postMessage(href);
   }, true);
   document.addEventListener('DOMContentLoaded', function() {
     window.webkit.messageHandlers.HtmlView.postMessage('pageLoaded' + SEP);

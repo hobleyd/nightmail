@@ -20,6 +20,7 @@ class HtmlViewController {
   final _onClickFocus       = StreamController<void>.broadcast();
   final _onImageDoubleClicked = StreamController<String>.broadcast();
   final _onImagePasted      = StreamController<String>.broadcast();
+  final _onLinkHovered      = StreamController<String>.broadcast();
 
   Stream<String> get onContentChanged  => _onContentChanged.stream;
   Stream<void>   get onLinkRequest     => _onLinkRequest.stream;
@@ -43,6 +44,10 @@ class HtmlViewController {
   /// the image encoded as a `data:` URL. Callers should register it as an
   /// inline attachment and insert it back via `insertImage()`.
   Stream<String> get onImagePasted        => _onImagePasted.stream;
+  /// Fires when the link under the pointer changes: the resolved URL of the
+  /// hovered `a[href]`, or an empty string when the pointer moves off one.
+  /// Desktop only — the mobile backends have no pointer to hover with.
+  Stream<String> get onLinkHovered        => _onLinkHovered.stream;
 
   bool get isInitialized => _viewId != null;
 
@@ -92,6 +97,9 @@ class HtmlViewController {
         break;
       case 'onImagePasted':
         _onImagePasted.add(map['value'] as String? ?? '');
+        break;
+      case 'onLinkHovered':
+        _onLinkHovered.add(map['value'] as String? ?? '');
         break;
     }
   }
@@ -157,6 +165,7 @@ class HtmlViewController {
     _onClickFocus.close();
     _onImageDoubleClicked.close();
     _onImagePasted.close();
+    _onLinkHovered.close();
     if (_viewId != null) {
       final id = _viewId;
       _viewId = null;

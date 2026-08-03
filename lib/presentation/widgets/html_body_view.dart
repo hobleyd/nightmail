@@ -14,6 +14,7 @@ import '../../core/theme/app_colors.dart';
 import '../../data/services/inline_attachment_cache.dart';
 import '../../domain/entities/inline_attachment.dart';
 import '../../injection_container.dart';
+import 'body_status_bar.dart';
 
 /// A prepared document, ready to hand to the webview. Exactly one of
 /// [filePath] and [inlineHtml] is set: large or image-bearing bodies are
@@ -98,6 +99,7 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
   // Desktop (Windows / macOS / Linux): html_view overlay WebView.
   HtmlViewController? _htmlController;
   StreamSubscription<String>? _linkSub;
+  StreamSubscription<String>? _linkHoverSub;
   StreamSubscription<String>? _imageSub;
   StreamSubscription<void>? _clickFocusSub;
   // Tracks the latest prepared document so _initHtmlView can apply an update
@@ -111,6 +113,14 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
   bool _hasBlockedImages = false;
   bool _disposed = false;
   String? _loadError;
+
+  /// URL of the link the pointer is over, shown in the [BodyStatusBar] with a
+  /// copy button. Deliberately kept once the pointer leaves the link: the copy
+  /// button is below the body, so clearing on mouse-out would take the URL away
+  /// while the reader is on their way to it — and it would also mean resizing
+  /// the webview (and reflowing the message) on every link crossed rather than
+  /// once per message. Cleared when a different message loads.
+  String? _hoveredLink;
 
   /// Guards against an out-of-order `_prepare` — preparing is async now, so a
   /// fast "Download once" tap can otherwise land behind the initial build.
@@ -138,6 +148,11 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
     _linkSub = ctrl.onLinkOpened.listen((url) {
       final uri = Uri.tryParse(url);
       if (uri != null) unawaited(launchUrl(uri, mode: LaunchMode.externalApplication));
+    });
+    // An empty URL means the pointer left a link — see [_hoveredLink].
+    _linkHoverSub = ctrl.onLinkHovered.listen((url) {
+      if (url.isEmpty || url == _hoveredLink || !mounted) return;
+      setState(() => _hoveredLink = url);
     });
     _imageSub = ctrl.onImageDoubleClicked.listen(_openImageWindow);
     // A click inside the WKWebView/WebView2 overlay is a native OS focus
@@ -190,6 +205,9 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
         old.cacheKey != widget.cacheKey ||
         old.inlineAttachments != widget.inlineAttachments;
     final senderChanged = old.senderDomain != widget.senderDomain;
+    // A hovered link belongs to the message it was in. Reloading the *same*
+    // message (an image download) keeps it.
+    if (emailChanged) _hoveredLink = null;
     if (emailChanged || senderChanged) {
       _reloadWith(allowExternal: false);
       _loadAlwaysAllowSetting();
@@ -200,6 +218,7 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
   void dispose() {
     _disposed = true;
     _linkSub?.cancel();
+    _linkHoverSub?.cancel();
     _clickFocusSub?.cancel();
     _imageSub?.cancel();
     unawaited(_htmlController?.dispose());
@@ -406,31 +425,6 @@ table { max-width: 100% !important; }
   table { width: 100% !important; }
   td, th { width: auto !important; min-width: 0 !important; }
 }
-a[href]:hover::after {
-  content: attr(href);
-  display: block;
-  position: fixed;
-  bottom: 0; left: 0; right: 0;
-  height: 20px; line-height: 20px;
-  background: rgba(245,245,245,0.97);
-  border-top: 1px solid #ddd;
-  padding: 0 12px;
-  font-size: 11px;
-  font-family: -apple-system, ui-sans-serif, system-ui, sans-serif;
-  color: #555;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  z-index: 99999;
-  pointer-events: none;
-}
-@media (prefers-color-scheme: dark) {
-  a[href]:hover::after {
-    background: rgba(38,38,38,0.97);
-    border-top-color: #444;
-    color: #aaa;
-  }
-}
 </style>
 ''';
     resolved = forceUtf8Charset(resolved);
@@ -470,11 +464,12 @@ a[href]:hover::after {
     return Column(
       children: [
         Expanded(child: webviewWidget),
-        if (_hasBlockedImages && !_allowExternalImages)
-          _ImageBlockedBar(
-            onDownloadOnce: _downloadOnce,
-            onAlwaysDownload: _alwaysDownload,
-          ),
+        BodyStatusBar(
+          hoveredLink: _hoveredLink,
+          imagesBlocked: _hasBlockedImages && !_allowExternalImages,
+          onDownloadOnce: _downloadOnce,
+          onAlwaysDownload: _alwaysDownload,
+        ),
       ],
     );
   }
@@ -502,95 +497,6 @@ class _LoadErrorPanel extends StatelessWidget {
               style: TextStyle(color: c.textMuted, fontSize: 13),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ImageBlockedBar extends StatelessWidget {
-  const _ImageBlockedBar({
-    required this.onDownloadOnce,
-    required this.onAlwaysDownload,
-  });
-
-  final VoidCallback onDownloadOnce;
-  final VoidCallback onAlwaysDownload;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Container(
-      height: 29,
-      decoration: BoxDecoration(
-        color: c.surfacePanel,
-        border: Border(top: BorderSide(color: c.border, width: 1)),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Row(
-        children: [
-          Icon(Icons.hide_image_outlined, size: 13, color: c.textMuted),
-          const SizedBox(width: 6),
-          Text(
-            'External images blocked',
-            style: TextStyle(color: c.textMuted, fontSize: 11),
-          ),
-          const Spacer(),
-          _StatusBarButton(
-            label: 'Download once',
-            onPressed: onDownloadOnce,
-          ),
-          const SizedBox(width: 4),
-          _StatusBarButton(
-            label: 'Always download',
-            onPressed: onAlwaysDownload,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StatusBarButton extends StatefulWidget {
-  const _StatusBarButton({required this.label, required this.onPressed});
-  final String label;
-  final VoidCallback onPressed;
-
-  @override
-  State<_StatusBarButton> createState() => _StatusBarButtonState();
-}
-
-class _StatusBarButtonState extends State<_StatusBarButton> {
-  bool _isPressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return GestureDetector(
-      onTap: widget.onPressed,
-      onTapDown: (_) => setState(() => _isPressed = true),
-      onTapUp: (_) => setState(() => _isPressed = false),
-      onTapCancel: () => setState(() => _isPressed = false),
-      child: AnimatedScale(
-        scale: _isPressed ? 0.93 : 1.0,
-        duration: const Duration(milliseconds: 70),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-          decoration: BoxDecoration(
-            color: _isPressed
-                ? AppColors.accent.withAlpha(70)
-                : AppColors.accent.withAlpha(30),
-            borderRadius: BorderRadius.circular(5),
-            border: Border.all(
-                color: AppColors.accent.withAlpha(80), width: 0.5),
-          ),
-          child: Text(
-            widget.label,
-            style: TextStyle(
-              color: c.textTertiary,
-              fontSize: 11,
-            ),
-          ),
         ),
       ),
     );

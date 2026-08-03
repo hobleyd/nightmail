@@ -32,6 +32,7 @@ static const wchar_t* kJsBridge = LR"JS(
   window['onAttachRequest']   = makeChannel('onAttachRequest');
   window['onImageDoubleClicked'] = makeChannel('onImageDoubleClicked');
   window['onImagePasted']     = makeChannel('onImagePasted');
+  window['onLinkHovered']     = makeChannel('onLinkHovered');
 
   // Report a double-click on an image so the host can pop it out in a
   // resizable window. Capture phase so it fires regardless of page handlers.
@@ -41,6 +42,21 @@ static const wchar_t* kJsBridge = LR"JS(
       var src = t.currentSrc || t.src;
       if (src) window['onImageDoubleClicked'].postMessage(src);
     }
+  }, true);
+
+  // Report the link under the pointer (empty when there is none) so the host
+  // can offer to copy it — nothing Flutter draws can sit on top of this
+  // native view, so the affordance has to live in the host's own chrome.
+  // closest() so a hover over a nested <span>/<img> still reports the anchor.
+  // Only changes are posted: mouseover fires for every element crossed.
+  var hoveredLink = '';
+  document.addEventListener('mouseover', function(e) {
+    var t = e.target;
+    var a = (t && t.closest) ? t.closest('a[href]') : null;
+    var href = a ? a.href : '';
+    if (href === hoveredLink) return;
+    hoveredLink = href;
+    window['onLinkHovered'].postMessage(href);
   }, true);
 
   // Tell Dart when the page DOM is ready so setContent() can be called.

@@ -20,11 +20,16 @@ class HtmlViewController {
   final _onLinkRequest    = StreamController<void>.broadcast();
   final _onPageLoaded     = StreamController<void>.broadcast();
   final _onLinkOpened     = StreamController<String>.broadcast();
+  final _onLinkHovered    = StreamController<String>.broadcast();
 
   Stream<String> get onContentChanged => _onContentChanged.stream;
   Stream<void>   get onLinkRequest    => _onLinkRequest.stream;
   Stream<void>   get onPageLoaded     => _onPageLoaded.stream;
   Stream<String> get onLinkOpened     => _onLinkOpened.stream;
+  /// Never fires on web: the bridge is only injected into the editor document
+  /// (`loadAsset`), and a `srcdoc` message body is out of reach. Declared so
+  /// callers compile against either implementation.
+  Stream<String> get onLinkHovered    => _onLinkHovered.stream;
 
   bool get isInitialized => _viewId != null;
   int? get viewId => _viewId;
@@ -138,6 +143,7 @@ class HtmlViewController {
     _onLinkRequest.close();
     _onPageLoaded.close();
     _onLinkOpened.close();
+    _onLinkHovered.close();
     _iframe = null;
     _viewId = null;
   }

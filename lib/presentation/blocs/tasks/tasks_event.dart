@@ -13,6 +13,12 @@ final class TasksLoadRequested extends TasksBlocEvent {
   const TasksLoadRequested();
 }
 
+/// Drop everything on screen without fetching anything back — the pane has
+/// nothing to show, e.g. the last account was removed.
+final class TasksCleared extends TasksBlocEvent {
+  const TasksCleared();
+}
+
 final class TasksListSelected extends TasksBlocEvent {
   const TasksListSelected({required this.listId});
   final String listId;

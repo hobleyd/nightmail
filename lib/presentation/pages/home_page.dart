@@ -330,6 +330,11 @@ class _HomeViewState extends State<_HomeView> {
                 CalendarWeekLoadRequested(weekStart: _mondayOfWeek(DateTime.now())),
               );
             }
+            // Task lists belong to the account, so reload unconditionally
+            // rather than only when the pane is open: the load is what puts the
+            // bloc in TasksLoaded, and "create task from email" is a silent
+            // no-op in any other state.
+            context.read<TasksBloc>().add(const TasksLoadRequested());
           },
         ),
         BlocListener<AccountCubit, AccountState>(
@@ -339,6 +344,7 @@ class _HomeViewState extends State<_HomeView> {
             context.read<EmailListBloc>().add(const EmailListCleared());
             context.read<EmailDetailBloc>().add(const EmailDetailCleared());
             context.read<CalendarBloc>().add(const CalendarCleared());
+            context.read<TasksBloc>().add(const TasksCleared());
           },
         ),
         BlocListener<HomeCubit, HomeState>(

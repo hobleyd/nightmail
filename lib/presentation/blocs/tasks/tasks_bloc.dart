@@ -29,6 +29,7 @@ class TasksBloc extends Bloc<TasksBlocEvent, TasksState> {
     required this._taskReminders,
   }) : super(const TasksInitial()) {
     on<TasksLoadRequested>(_onLoadRequested);
+    on<TasksCleared>(_onCleared);
     on<TasksListSelected>(_onListSelected);
     on<TaskFocusRequested>(_onTaskFocusRequested);
     on<TaskStatusToggled>(_onStatusToggled);
@@ -84,6 +85,10 @@ class TasksBloc extends Bloc<TasksBlocEvent, TasksState> {
         );
       },
     );
+  }
+
+  void _onCleared(TasksCleared event, Emitter<TasksState> emit) {
+    emit(const TasksInitial());
   }
 
   Future<void> _onListSelected(

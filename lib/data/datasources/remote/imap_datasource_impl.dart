@@ -636,6 +636,8 @@ class ImapDatasourceImpl
       importance: EmailImportance.normal,
       conversationId: _normalizeSubject(msg.decodeSubject() ?? ''),
       parentFolderId: folderId,
+      // An IMAP message lives in exactly one mailbox, the one it was read from.
+      folderIds: [folderId],
       hasAttachments: attachmentParts.isNotEmpty,
       attachments: attachments,
       inlineAttachments: inlineAttachments,

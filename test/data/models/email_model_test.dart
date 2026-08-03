@@ -112,5 +112,40 @@ void main() {
         expect(email.meetingInvite!.type, MeetingEmailType.invitation);
       });
     });
+
+    // Graph puts a message in exactly one folder, so its parent id *is* its
+    // whole membership. Saying so keeps folder-scoped actions — deciding which
+    // members of a thread a delete may touch — off the fallback path.
+    group('folder membership', () {
+      test('a Graph message belongs to its parent folder', () {
+        final email = EmailModel.fromJson({
+          ...baseJson(),
+          'parentFolderId': 'AAMkAGinbox',
+        });
+
+        expect(email.folderIds, ['AAMkAGinbox']);
+        expect(email.isInFolder('AAMkAGinbox'), isTrue);
+        expect(email.isInFolder('AAMkAGsentitems'), isFalse);
+      });
+
+      test('a message with no parent folder reports no membership', () {
+        final email = EmailModel.fromJson(baseJson());
+
+        expect(email.folderIds, isEmpty);
+      });
+
+      // The cross-folder rows Graph adds to a folder listing always carry a
+      // real parent id, which is what keeps them out of a delete scoped here.
+      test('a message from another folder is not in the folder being viewed',
+          () {
+        final filed = EmailModel.fromJson({
+          ...baseJson(),
+          'parentFolderId': 'AAMkAGarchive',
+        });
+
+        expect(filed.isDeletableFrom('AAMkAGinbox'), isFalse);
+        expect(filed.isDeletableFrom('AAMkAGarchive'), isTrue);
+      });
+    });
   });
 }

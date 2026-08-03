@@ -393,4 +393,117 @@ void main() {
       expect(cached.inlineAttachments.first.contentBytes, equals([9, 8, 7, 6]));
     });
   });
+
+  // Which folders a message belongs to is what a folder-scoped delete consults
+  // to decide whether it may touch it, and the list pane is frequently served
+  // from cache — dropping membership here would put a thread's Sent copies
+  // back in range of a delete aimed at the Inbox.
+  group('folder membership', () {
+    EmailModel emailIn(String id, List<String> folderIds) => EmailModel(
+          id: id,
+          subject: 'Subject $id',
+          from: const EmailAddressModel(address: 'a@b.com'),
+          toRecipients: const [],
+          ccRecipients: const [],
+          bodyPreview: 'preview',
+          body: '',
+          bodyType: EmailBodyType.text,
+          isRead: false,
+          receivedDateTime: DateTime(2026, 6, 1),
+          importance: EmailImportance.normal,
+          parentFolderId: folderIds.first,
+          folderIds: folderIds,
+        );
+
+    test('round-trips every folder a message is in', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'INBOX',
+        emails: [emailIn('email-1', ['INBOX', 'SENT', 'Label_7'])],
+      );
+
+      final cached = await datasource.getCachedEmailById(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+      );
+
+      expect(cached!.folderIds, ['INBOX', 'SENT', 'Label_7']);
+      expect(cached.isInFolder('SENT'), isTrue);
+      expect(cached.isDeletableFrom('INBOX'), isFalse);
+    });
+
+    test('survives a later preview-only write', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'INBOX',
+        emails: [emailIn('email-1', ['SENT'])],
+      );
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'INBOX',
+        emails: [emailIn('email-1', ['SENT'])],
+      );
+
+      final cached = await datasource.getCachedEmailById(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+      );
+
+      expect(cached!.folderIds, ['SENT']);
+    });
+
+    // A row cached before membership was recorded has no folderIds. Reading it
+    // back as empty is what sends it to the parentFolderId fallback; inventing
+    // one would have it claim membership of a folder nobody checked.
+    test('a row written before membership existed reads back empty', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'INBOX',
+        emails: [emailIn('email-1', ['INBOX'])],
+      );
+      final row = await (db.select(db.cachedEmails)
+            ..where((t) => t.emailId.equals('email-1')))
+          .getSingle();
+      final json = jsonDecode(row.encryptedData) as Map<String, dynamic>;
+      json.remove('folderIds');
+      await (db.update(db.cachedEmails)
+            ..where((t) => t.emailId.equals('email-1')))
+          .write(CachedEmailsCompanion(encryptedData: Value(jsonEncode(json))));
+
+      final cached = await datasource.getCachedEmailById(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+      );
+
+      expect(cached!.folderIds, isEmpty);
+      expect(cached.isInFolder('INBOX'), isTrue,
+          reason: 'parentFolderId still answers for it');
+      expect(cached.isInFolder('SENT'), isFalse);
+    });
+
+    // renameCachedEmailId runs when a move mints a new server id. The row's old
+    // membership describes where the message no longer is.
+    test('a rename onto a new folder replaces the old membership', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'INBOX',
+        emails: [emailIn('email-1', ['INBOX'])],
+      );
+
+      await datasource.renameCachedEmailId(
+        accountId: 'acct-1',
+        oldEmailId: 'email-1',
+        newEmailId: 'email-2',
+        newFolderId: 'archive',
+      );
+
+      final cached = await datasource.getCachedEmailById(
+        accountId: 'acct-1',
+        emailId: 'email-2',
+      );
+
+      expect(cached!.folderIds, ['archive']);
+      expect(cached.isInFolder('INBOX'), isFalse);
+    });
+  });
 }

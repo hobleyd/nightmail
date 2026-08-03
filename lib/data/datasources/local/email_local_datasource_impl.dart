@@ -187,6 +187,10 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
       final json = jsonDecode(plaintext) as Map<String, dynamic>;
       json['id'] = newEmailId;
       json['parentFolderId'] = newFolderId;
+      // The move landed it somewhere else, so its old membership is wrong. This
+      // runs for single-folder providers (a move on Graph/IMAP mints a new id),
+      // where the destination is the whole of it.
+      json['folderIds'] = [newFolderId];
       final encryptedData = await _encryption.encrypt(jsonEncode(json));
 
       // A row may already exist at newEmailId (e.g. a delta sync landed it
@@ -304,6 +308,7 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
       'inlineAttachments':
           email.inlineAttachments.map(_inlineAttachmentToJson).toList(),
       'parentFolderId': email.parentFolderId,
+      'folderIds': email.folderIds,
       'meetingInvite': _meetingInviteToJson(email.meetingInvite),
       _parseVersionKey: attachmentParseVersion,
     };
@@ -390,6 +395,10 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
           .whereType<InlineAttachment>()
           .toList(),
       parentFolderId: j['parentFolderId'] as String?,
+      // Absent on rows cached before folder membership was recorded; an empty
+      // list is the honest answer there and sends readers to the
+      // parentFolderId fallback rather than claiming the message is nowhere.
+      folderIds: (j['folderIds'] as List<dynamic>? ?? const []).cast<String>(),
       meetingInvite:
           _meetingInviteFromJson(j['meetingInvite'] as Map<String, dynamic>?),
     );

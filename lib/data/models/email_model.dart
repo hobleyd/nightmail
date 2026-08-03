@@ -27,6 +27,7 @@ class EmailModel extends Email {
     super.attachments,
     super.inlineAttachments,
     super.parentFolderId,
+    super.folderIds,
     super.meetingInvite,
   });
 
@@ -34,6 +35,7 @@ class EmailModel extends Email {
     final bodyMap = json['body'] as Map<String, dynamic>?;
     final bodyContent = bodyMap?['content'] as String? ?? '';
     final bodyTypeStr = bodyMap?['contentType'] as String? ?? 'text';
+    final parentFolderId = json['parentFolderId'] as String?;
 
     return EmailModel(
       id: json['id'] as String,
@@ -67,7 +69,11 @@ class EmailModel extends Email {
       hasAttachments: json['hasAttachments'] as bool? ?? false,
       attachments: _parseAttachments(json['attachments']),
       inlineAttachments: _parseInlineAttachments(json['attachments']),
-      parentFolderId: json['parentFolderId'] as String?,
+      parentFolderId: parentFolderId,
+      // A Graph message lives in exactly one folder, so its parent id *is* its
+      // whole membership. Stating it explicitly keeps folder-scoped actions off
+      // the [parentFolderId] fallback path.
+      folderIds: parentFolderId == null ? const [] : [parentFolderId],
       meetingInvite: _parseMeetingInvite(
         json['@odata.type'] as String?,
         json['meetingMessageType'] as String?,
@@ -203,6 +209,7 @@ class EmailModel extends Email {
       attachments: entity.attachments,
       inlineAttachments: entity.inlineAttachments,
       parentFolderId: entity.parentFolderId,
+      folderIds: entity.folderIds,
       meetingInvite: entity.meetingInvite,
     );
   }

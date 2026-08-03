@@ -934,4 +934,99 @@ void main() {
       expect(email.meetingInvite!.proposedStart, isNull);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // getEmails — which folders each message belongs to
+  // ---------------------------------------------------------------------------
+
+  // A Gmail folder listing is a *thread* listing: every message of a matching
+  // thread comes back whatever labels it carries. Reporting each message's
+  // labels is what lets a folder-scoped action — deleting a thread out of the
+  // Inbox — tell the messages this folder holds from the sent copies and
+  // already-filed replies that merely came along for context.
+  group('GmailDatasourceImpl.getEmails — folder membership', () {
+    Map<String, dynamic> message(String id, List<String> labelIds) => {
+          'id': id,
+          'threadId': 'thread1',
+          'labelIds': labelIds,
+          'internalDate': '1780000000000',
+          'payload': {
+            'mimeType': 'text/plain',
+            'headers': [
+              {'name': 'Subject', 'value': 'Re: hello'},
+              {'name': 'From', 'value': 'alice@example.com'},
+            ],
+            'parts': <dynamic>[],
+          },
+        };
+
+    void stubThread(List<Map<String, dynamic>> messages) {
+      _stubGetByUrl((url) => url.endsWith('/threads')
+          ? {
+              'threads': [
+                {'id': 'thread1'},
+              ],
+            }
+          : {'messages': messages});
+    }
+
+    test('reports every label the message carries', () async {
+      stubThread([
+        message('m1', ['INBOX', 'UNREAD', 'Label_7']),
+      ]);
+
+      final emails = await datasource.getEmails(folderId: 'INBOX');
+
+      expect(emails, hasLength(1));
+      expect(emails.first.folderIds, ['INBOX', 'Label_7'],
+          reason: 'UNREAD is a flag, not a folder anyone can view');
+      expect(emails.first.isInFolder('Label_7'), isTrue);
+    });
+
+    // The bug: a sent reply carries neither INBOX nor any user label, so it has
+    // no parentFolderId at all — and a null one used to read as "came from the
+    // folder query", putting it in range of a delete aimed at the Inbox.
+    test('a sent reply belongs to SENT, not the folder being listed', () async {
+      stubThread([
+        message('m1', ['INBOX']),
+        message('sent1', ['SENT']),
+      ]);
+
+      final emails = await datasource.getEmails(folderId: 'INBOX');
+      final sent = emails.firstWhere((e) => e.id == 'sent1');
+
+      expect(sent.parentFolderId, isNull);
+      expect(sent.folderIds, ['SENT']);
+      expect(sent.isInFolder('INBOX'), isFalse);
+      expect(sent.isDeletableFrom('INBOX'), isFalse);
+      expect(emails.firstWhere((e) => e.id == 'm1').isDeletableFrom('INBOX'),
+          isTrue);
+    });
+
+    // Membership has to name the same ids getMailFolders() exposes, or a
+    // containment check against the folder on screen can never match.
+    test('drops the hidden system labels that are not folders', () async {
+      stubThread([
+        message('m1', ['INBOX', 'STARRED', 'IMPORTANT', 'CHAT', 'UNREAD']),
+      ]);
+
+      final emails = await datasource.getEmails(folderId: 'INBOX');
+
+      expect(emails.first.folderIds, ['INBOX']);
+    });
+
+    test('a filed reply belongs to its label, not the folder being listed',
+        () async {
+      stubThread([
+        message('m1', ['INBOX']),
+        message('filed1', ['Label_Archive']),
+      ]);
+
+      final emails = await datasource.getEmails(folderId: 'INBOX');
+      final filed = emails.firstWhere((e) => e.id == 'filed1');
+
+      expect(filed.folderIds, ['Label_Archive']);
+      expect(filed.isDeletableFrom('INBOX'), isFalse);
+    });
+  });
 }

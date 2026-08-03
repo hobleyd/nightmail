@@ -405,6 +405,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         receivedDateTime: email.receivedDateTime,
         importance: email.importance,
         parentFolderId: email.parentFolderId,
+        folderIds: email.folderIds,
         hasAttachments: email.hasAttachments,
         attachments: email.attachments,
         inlineAttachments: enriched,
@@ -564,6 +565,15 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         ? 'INBOX'
         : labelIds.where((l) => !_isSystemLabel(l)).firstOrNull;
 
+    // Gmail labels *are* this account's folder ids, and a message carries every
+    // one it belongs to — which is what lets a folder-scoped action tell a
+    // thread's in-folder messages from the copies (Sent, already-filed replies)
+    // the Threads API returns alongside them. Hidden system labels are dropped
+    // so this matches the ids getFolders() exposes; the resulting list may well
+    // be longer than one, so it says strictly more than [parentFolderId].
+    final folderIds =
+        labelIds.where((l) => !_isHiddenSystemLabel(l)).toList();
+
     return EmailModel(
       id: id,
       conversationId: threadId,
@@ -578,6 +588,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       receivedDateTime: receivedAt,
       importance: EmailImportance.normal,
       parentFolderId: parentFolderId,
+      folderIds: folderIds,
       hasAttachments: _detectAttachments(payload),
       attachments: attachments,
       inlineAttachments: inlineAttachments,

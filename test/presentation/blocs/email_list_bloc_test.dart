@@ -43,6 +43,7 @@ Email _email(
   String? conversationId,
   bool isRead = true,
   String? parentFolderId,
+  List<String> folderIds = const [],
 }) =>
     Email(
       id: id,
@@ -58,6 +59,7 @@ Email _email(
       importance: EmailImportance.normal,
       conversationId: conversationId,
       parentFolderId: parentFolderId,
+      folderIds: folderIds,
     );
 
 // Fake AccountManager that always reports no active account — keeps the BLoC
@@ -452,6 +454,244 @@ void main() {
       await Future.delayed(const Duration(milliseconds: 20));
 
       expect(deletedIds(), containsAll(['id1', 'id2']));
+    });
+
+    // Gmail's folder listing is a *thread* listing: every message of a matching
+    // thread comes back, labels and all. The sent replies carry only SENT, and
+    // no parentFolderId the Inbox view would recognise — deleting the thread
+    // out of the Inbox once took the record of what was sent with it.
+    test('leaves the copies in Sent alone when deleting from another folder',
+        () async {
+      await _loadEmails([
+        _email('id1',
+            conversationId: 'conv-a',
+            parentFolderId: 'INBOX',
+            folderIds: ['INBOX']),
+        _email('sent1', conversationId: 'conv-a', folderIds: ['SENT']),
+        _email('id2',
+            conversationId: 'conv-a',
+            parentFolderId: 'INBOX',
+            folderIds: ['INBOX']),
+        _email('sent2', conversationId: 'conv-a', folderIds: ['SENT']),
+      ], folderId: 'INBOX');
+
+      bloc.add(const EmailListConversationDeleted(conversationId: 'conv-a'));
+
+      await bloc.stream.firstWhere((s) =>
+          s is EmailListLoaded &&
+          !s.emails.any((e) => e.conversationId == 'conv-a'));
+      await Future.delayed(const Duration(milliseconds: 20));
+
+      final deleted = deletedIds();
+      expect(deleted, containsAll(['id1', 'id2']));
+      expect(deleted, isNot(contains('sent1')));
+      expect(deleted, isNot(contains('sent2')));
+    });
+
+    test('leaves a draft in the thread alone', () async {
+      await _loadEmails([
+        _email('id1', conversationId: 'conv-a', folderIds: ['INBOX']),
+        _email('draft1', conversationId: 'conv-a', folderIds: ['DRAFT']),
+      ], folderId: 'INBOX');
+
+      bloc.add(const EmailListConversationDeleted(conversationId: 'conv-a'));
+
+      await bloc.stream.firstWhere((s) =>
+          s is EmailListLoaded &&
+          !s.emails.any((e) => e.conversationId == 'conv-a'));
+      await Future.delayed(const Duration(milliseconds: 20));
+
+      expect(deletedIds(), ['id1']);
+    });
+
+    // A sent message the user also filed under the label being viewed really is
+    // in that label — but the sent record still must not be destroyed.
+    test('leaves a sent message that also carries the current label alone',
+        () async {
+      await _loadEmails([
+        _email('id1', conversationId: 'conv-a', folderIds: ['Label_7']),
+        _email('sent1', conversationId: 'conv-a', folderIds: ['SENT', 'Label_7']),
+      ], folderId: 'Label_7');
+
+      bloc.add(const EmailListConversationDeleted(conversationId: 'conv-a'));
+
+      await bloc.stream.firstWhere((s) =>
+          s is EmailListLoaded &&
+          !s.emails.any((e) => e.conversationId == 'conv-a'));
+      await Future.delayed(const Duration(milliseconds: 20));
+
+      expect(deletedIds(), ['id1']);
+    });
+
+    test('deletes the sent messages when Sent is the folder being viewed',
+        () async {
+      await _loadEmails([
+        _email('sent1', conversationId: 'conv-a', folderIds: ['SENT']),
+        _email('sent2', conversationId: 'conv-a', folderIds: ['SENT']),
+        _email('id1', conversationId: 'conv-a', folderIds: ['INBOX']),
+      ], folderId: 'SENT');
+
+      bloc.add(const EmailListConversationDeleted(conversationId: 'conv-a'));
+
+      await bloc.stream.firstWhere((s) =>
+          s is EmailListLoaded &&
+          !s.emails.any((e) => e.conversationId == 'conv-a'));
+      await Future.delayed(const Duration(milliseconds: 20));
+
+      final deleted = deletedIds();
+      expect(deleted, containsAll(['sent1', 'sent2']));
+      expect(deleted, isNot(contains('id1')),
+          reason: 'the inbox copy is not in Sent');
+    });
+
+    // A Gmail message carries every label it holds, so the one folder a
+    // parentFolderId can name is not the only one it is in. Viewed under a user
+    // label, an INBOX-labelled member of the thread is still in that label.
+    test('deletes a message that holds the current label among others',
+        () async {
+      await _loadEmails([
+        _email('id1',
+            conversationId: 'conv-a',
+            parentFolderId: 'INBOX',
+            folderIds: ['INBOX', 'Label_7']),
+        _email('id2', conversationId: 'conv-a', folderIds: ['Label_7']),
+        _email('other', conversationId: 'conv-a', folderIds: ['Archive']),
+      ], folderId: 'Label_7');
+
+      bloc.add(const EmailListConversationDeleted(conversationId: 'conv-a'));
+
+      await bloc.stream.firstWhere((s) =>
+          s is EmailListLoaded &&
+          !s.emails.any((e) => e.conversationId == 'conv-a'));
+      await Future.delayed(const Duration(milliseconds: 20));
+
+      final deleted = deletedIds();
+      expect(deleted, containsAll(['id1', 'id2']));
+      expect(deleted, isNot(contains('other')));
+    });
+
+    // Nothing to delete means nothing to hide: a thread on screen purely as
+    // other-folder context must not vanish from a delete that does nothing.
+    test('deletes nothing and keeps the thread when no member is in the folder',
+        () async {
+      await _loadEmails([
+        _email('sent1', conversationId: 'conv-a', folderIds: ['SENT']),
+        _email('filed1', conversationId: 'conv-a', folderIds: ['Archive']),
+        _email('id9', conversationId: 'conv-b', folderIds: ['INBOX']),
+      ], folderId: 'INBOX');
+
+      bloc.add(const EmailListConversationDeleted(conversationId: 'conv-a'));
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      verifyNever(mockDeleteEmail(any));
+      final state = bloc.state as EmailListLoaded;
+      expect(state.emails.map((e) => e.id),
+          containsAll(['sent1', 'filed1', 'id9']));
+    });
+
+    // The optimistic removal is a lie until the server agrees. A delete the
+    // server refused leaves the message where it was, so the row has to come
+    // back rather than wait for the next refresh to resurrect it.
+    test('restores the thread when every delete fails', () async {
+      await _loadEmails([
+        _email('id1', conversationId: 'conv-a', folderIds: ['INBOX']),
+        _email('id2', conversationId: 'conv-a', folderIds: ['INBOX']),
+        _email('sent1', conversationId: 'conv-a', folderIds: ['SENT']),
+      ], folderId: 'INBOX');
+      when(mockDeleteEmail(any))
+          .thenAnswer((_) async => const Left(ServerFailure(message: 'boom')));
+
+      bloc.add(const EmailListConversationDeleted(conversationId: 'conv-a'));
+
+      final state = await bloc.stream.firstWhere((s) =>
+              s is EmailListLoaded &&
+              s.emails.any((e) => e.conversationId == 'conv-a'))
+          as EmailListLoaded;
+
+      expect(state.emails.map((e) => e.id),
+          containsAll(['id1', 'id2', 'sent1']),
+          reason: 'the Sent row was hidden with the thread, so it comes back too');
+    });
+
+    test('restores only what the server did not delete', () async {
+      await _loadEmails([
+        _email('id1', conversationId: 'conv-a', folderIds: ['INBOX']),
+        _email('id2', conversationId: 'conv-a', folderIds: ['INBOX']),
+      ], folderId: 'INBOX');
+      when(mockDeleteEmail(any)).thenAnswer((inv) async {
+        final params = inv.positionalArguments[0] as DeleteEmailParams;
+        return params.id == 'id2'
+            ? const Left(ServerFailure(message: 'boom'))
+            : const Right(unit);
+      });
+
+      bloc.add(const EmailListConversationDeleted(conversationId: 'conv-a'));
+
+      final state = await bloc.stream.firstWhere((s) =>
+              s is EmailListLoaded &&
+              s.emails.any((e) => e.conversationId == 'conv-a'))
+          as EmailListLoaded;
+
+      expect(state.emails.map((e) => e.id), ['id2']);
+    });
+
+    test('does not restore into a folder the user has moved on to', () async {
+      await _loadEmails([
+        _email('id1', conversationId: 'conv-a', folderIds: ['INBOX']),
+      ], folderId: 'INBOX');
+      final deleteBlocked = Completer<void>();
+      when(mockDeleteEmail(any)).thenAnswer((_) async {
+        await deleteBlocked.future;
+        return const Left(ServerFailure(message: 'boom'));
+      });
+
+      bloc.add(const EmailListConversationDeleted(conversationId: 'conv-a'));
+      await bloc.stream.firstWhere(
+          (s) => s is EmailListLoaded && s.emails.isEmpty);
+
+      // The user switches folders while the delete is still in flight.
+      when(mockGetEmails(any))
+          .thenAnswer((_) async => Right([_email('other1')]));
+      bloc.add(const EmailListLoadRequested(folderId: 'archive'));
+      await bloc.stream.firstWhere((s) =>
+          s is EmailListLoaded && s.currentFolderId == 'archive');
+      deleteBlocked.complete();
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final state = bloc.state as EmailListLoaded;
+      expect(state.currentFolderId, 'archive');
+      expect(state.emails.map((e) => e.id), ['other1']);
+    });
+
+    // A refresh landing mid-delete can put the surviving rows back on its own.
+    test('does not restore a row the list already has', () async {
+      await _loadEmails([
+        _email('id1', conversationId: 'conv-a', folderIds: ['INBOX']),
+        _email('id2', conversationId: 'conv-a', folderIds: ['INBOX']),
+      ], folderId: 'INBOX');
+      final deleteBlocked = Completer<void>();
+      when(mockDeleteEmail(any)).thenAnswer((_) async {
+        await deleteBlocked.future;
+        return const Left(ServerFailure(message: 'boom'));
+      });
+
+      bloc.add(const EmailListConversationDeleted(conversationId: 'conv-a'));
+      await bloc.stream.firstWhere(
+          (s) => s is EmailListLoaded && s.emails.isEmpty);
+
+      // A reload of the same folder lands while the delete is still in flight
+      // and puts one of the two rows back on its own.
+      when(mockGetEmails(any)).thenAnswer((_) async => Right([
+            _email('id1', conversationId: 'conv-a', folderIds: ['INBOX']),
+          ]));
+      bloc.add(const EmailListLoadRequested(folderId: 'INBOX'));
+      await bloc.stream.firstWhere((s) =>
+          s is EmailListLoaded && s.emails.any((e) => e.id == 'id1'));
+      deleteBlocked.complete();
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final state = bloc.state as EmailListLoaded;
+      expect(state.emails.map((e) => e.id), ['id1', 'id2']);
     });
   });
 

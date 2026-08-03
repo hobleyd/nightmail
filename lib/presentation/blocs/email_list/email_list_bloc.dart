@@ -522,20 +522,17 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         .toList();
     if (threadEmails.isEmpty) return;
 
-    // Delete only the messages physically in the folder being viewed. Graph
-    // and Gmail surface a thread's other-folder replies in this list, but
-    // those have already been filed elsewhere and must be left alone. A null
-    // folder id means an unscoped view (no folder to filter against), so the
-    // whole thread is fair game; a null parentFolderId means the message came
-    // straight from the folder query (augmented emails always carry a real
-    // one), so it counts as in-folder.
+    // Delete only the messages the folder being viewed actually holds. Graph
+    // and Gmail both surface a thread's other-folder messages in this list —
+    // replies already filed elsewhere, and the copies in Sent — and deleting
+    // the thread out of this folder must not take those with it. See
+    // [Email.isDeletableFrom] for the rule.
     final folderId = current.currentFolderId;
-    final toDelete = folderId == null
-        ? threadEmails
-        : threadEmails
-            .where((e) =>
-                e.parentFolderId == null || e.parentFolderId == folderId)
-            .toList();
+    final toDelete =
+        threadEmails.where((e) => e.isDeletableFrom(folderId)).toList();
+    // Nothing of this thread is in this folder: it is on screen purely as
+    // other-folder context. Leave both the server and the list alone rather
+    // than hiding a thread that no delete would have removed.
     if (toDelete.isEmpty) return;
 
     // Remove the whole thread from view: with its in-folder members gone the
@@ -547,9 +544,29 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
           .toList(),
     ));
 
-    await Future.wait(
+    final results = await Future.wait(
       toDelete.map((e) => _deleteEmail(DeleteEmailParams(id: e.id))),
     );
+
+    // Put back what the server still holds. Anything that failed is plainly
+    // still there, and so are the other-folder rows hidden alongside it — the
+    // thread still has members in this folder, so it still belongs on screen.
+    final deletedIds = {
+      for (var i = 0; i < toDelete.length; i++)
+        if (results[i].isRight()) toDelete[i].id,
+    };
+    if (deletedIds.length == toDelete.length) return;
+    final after = state;
+    // The list has moved on — another folder is on screen, so these rows have
+    // no business being put back into it. Whatever survived is still on the
+    // server and will reappear the next time this folder is read.
+    if (after is! EmailListLoaded || after.currentFolderId != folderId) return;
+    final onScreen = after.emails.map((e) => e.id).toSet();
+    final toRestore = threadEmails
+        .where((e) => !deletedIds.contains(e.id) && !onScreen.contains(e.id))
+        .toList();
+    if (toRestore.isEmpty) return;
+    emit(after.copyWith(emails: [...after.emails, ...toRestore]));
   }
 
   Future<void> _onJunkReported(

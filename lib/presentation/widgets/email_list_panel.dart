@@ -27,6 +27,7 @@ import '../blocs/tasks/tasks_bloc.dart';
 import '../blocs/tasks/tasks_event.dart';
 import '../blocs/tasks/tasks_state.dart';
 import 'email_date_formatter.dart';
+import 'email_list_conversations.dart';
 import 'email_list_item.dart';
 import 'flag_icon_button.dart';
 
@@ -358,15 +359,34 @@ class _EmailListPanelState extends State<EmailListPanel> {
     }
   }
 
+  DeleteTargets _resolveDeleteTargets(List<String> ids) {
+    final state = context.read<EmailListBloc>().state;
+    return resolveDeleteTargets(
+      emails: state is EmailListLoaded ? state.emails : const [],
+      selectedIds: ids,
+      currentFolderId: state is EmailListLoaded ? state.currentFolderId : null,
+    );
+  }
+
+  void _dispatchDeletes(DeleteTargets targets) {
+    final bloc = context.read<EmailListBloc>();
+    for (final conversationId in targets.conversationIds) {
+      bloc.add(EmailListConversationDeleted(conversationId: conversationId));
+    }
+    if (targets.emailIds.isNotEmpty) {
+      bloc.add(EmailListEmailsBulkDeleted(emailIds: targets.emailIds));
+    }
+    _applyRemovalCountChange(targets.removed);
+  }
+
   void _deleteSelected() {
     final ids = List.of(_selectedEmailIds);
-    final removed = _emailsById(ids);
+    final targets = _resolveDeleteTargets(ids);
     if (widget.selectedEmailId != null && ids.contains(widget.selectedEmailId)) {
       context.read<EmailDetailBloc>().add(const EmailDetailCleared());
       context.read<HomeCubit>().clearEmail();
     }
-    context.read<EmailListBloc>().add(EmailListEmailsBulkDeleted(emailIds: ids));
-    _applyRemovalCountChange(removed);
+    _dispatchDeletes(targets);
     _clearSelection();
   }
 
@@ -375,7 +395,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
       _deleteSelected();
     } else if (widget.selectedEmailId != null) {
       final deletedId = widget.selectedEmailId!;
-      final removed = _emailsById([deletedId]);
+      final targets = _resolveDeleteTargets([deletedId]);
       final nextEmail = _findNextEmail(_currentFlatItems(), deletedId);
       if (nextEmail != null) {
         widget.onEmailSelected(nextEmail);
@@ -383,8 +403,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
         context.read<EmailDetailBloc>().add(const EmailDetailCleared());
         context.read<HomeCubit>().clearEmail();
       }
-      context.read<EmailListBloc>().add(EmailListEmailDeleted(emailId: deletedId));
-      _applyRemovalCountChange(removed);
+      _dispatchDeletes(targets);
     }
   }
 
@@ -609,36 +628,6 @@ class _ThreadFocusBanner extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Conversation grouping logic
-// ---------------------------------------------------------------------------
-
-class _EmailConversation {
-  _EmailConversation({required this.id, required this.emails});
-  final String id;
-  final List<Email> emails;
-
-  Email get latest => emails.first;
-  DateTime get latestDate => latest.receivedDateTime;
-  bool get hasUnread => emails.any((e) => !e.isRead);
-}
-
-List<_EmailConversation> _groupIntoConversations(List<Email> emails) {
-  final sorted = [...emails]
-    ..sort((a, b) => b.receivedDateTime.compareTo(a.receivedDateTime));
-
-  final map = <String, List<Email>>{};
-  for (final email in sorted) {
-    final key = email.conversationId ?? email.id;
-    map.putIfAbsent(key, () => []).add(email);
-  }
-
-  return map.entries
-      .map((e) => _EmailConversation(id: e.key, emails: e.value))
-      .toList()
-    ..sort((a, b) => b.latestDate.compareTo(a.latestDate));
-}
-
-// ---------------------------------------------------------------------------
 // Flat list item types
 // ---------------------------------------------------------------------------
 
@@ -671,7 +660,7 @@ List<_ListItem> _buildListItems(
   List<Email> emails,
   Set<String> expandedIds,
 ) {
-  final conversations = _groupIntoConversations(emails);
+  final conversations = groupIntoConversations(emails);
   final items = <_ListItem>[];
 
   for (final conv in conversations) {

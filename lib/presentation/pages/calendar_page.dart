@@ -19,8 +19,18 @@ import '../blocs/calendar/calendar_state.dart';
 import '../widgets/calendar_overlap_layout.dart';
 import '../widgets/event_edit_dialog.dart';
 
-class CalendarPage extends StatelessWidget {
+class CalendarPage extends StatefulWidget {
   const CalendarPage({super.key});
+
+  @override
+  State<CalendarPage> createState() => _CalendarPageState();
+}
+
+class _CalendarPageState extends State<CalendarPage> {
+  /// The window opens on the working week (Mon–Fri); the nav bar toggles it.
+  bool _workWeek = true;
+
+  int get _dayCount => _workWeek ? 5 : 7;
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +43,11 @@ class CalendarPage extends StatelessWidget {
         builder: (context, state) {
           return Column(
             children: [
-              _WeekNavBar(state: state),
+              _WeekNavBar(
+                state: state,
+                workWeek: _workWeek,
+                onToggleWorkWeek: () => setState(() => _workWeek = !_workWeek),
+              ),
               Divider(height: 1, color: c.separatorStrong),
               Expanded(
                 child: switch (state) {
@@ -44,9 +58,16 @@ class CalendarPage extends StatelessWidget {
                       ),
                     ),
                   CalendarLoaded(:final events, :final weekStart) =>
-                    _WeekView(weekStart: weekStart, events: events),
+                    _WeekView(
+                        weekStart: weekStart,
+                        events: events,
+                        dayCount: _dayCount),
                   CalendarError(:final message, :final weekStart) =>
-                    _WeekView(weekStart: weekStart, events: const [], errorMessage: message),
+                    _WeekView(
+                        weekStart: weekStart,
+                        events: const [],
+                        dayCount: _dayCount,
+                        errorMessage: message),
                   CalendarInitial() => const SizedBox.shrink(),
                 },
               ),
@@ -60,8 +81,14 @@ class CalendarPage extends StatelessWidget {
 }
 
 class _WeekNavBar extends StatefulWidget {
-  const _WeekNavBar({required this.state});
+  const _WeekNavBar({
+    required this.state,
+    required this.workWeek,
+    required this.onToggleWorkWeek,
+  });
   final CalendarState state;
+  final bool workWeek;
+  final VoidCallback onToggleWorkWeek;
 
   @override
   State<_WeekNavBar> createState() => _WeekNavBarState();
@@ -103,7 +130,7 @@ class _WeekNavBarState extends State<_WeekNavBar> {
   Widget build(BuildContext context) {
     final c = context.colors;
     final weekStart = widget.state.weekStart;
-    final weekEnd = weekStart.add(const Duration(days: 6));
+    final weekEnd = weekStart.add(Duration(days: widget.workWeek ? 4 : 6));
     final isCurrentWeek = _isCurrentWeek(weekStart);
 
     final rangeLabel = _buildRangeLabel(weekStart, weekEnd);
@@ -142,6 +169,11 @@ class _WeekNavBarState extends State<_WeekNavBar> {
             ),
             const SizedBox(width: 4),
           ],
+          _WeekSpanToggle(
+            workWeek: widget.workWeek,
+            onTap: widget.onToggleWorkWeek,
+          ),
+          const SizedBox(width: 8),
           _IconNavButton(
             icon: Icons.chevron_left_rounded,
             tooltip: 'Previous week',
@@ -216,6 +248,55 @@ class _NavChip extends StatelessWidget {
             color: AppColors.accent,
             fontSize: 12,
             fontWeight: FontWeight.w500,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Switches the week view between Mon–Fri and the full seven days. Shows the
+/// span it will switch *to*, so the label doubles as the action.
+class _WeekSpanToggle extends StatelessWidget {
+  const _WeekSpanToggle({required this.workWeek, required this.onTap});
+  final bool workWeek;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final label = workWeek ? 'Full Week' : 'Working Week';
+    return Tooltip(
+      message: 'Show $label',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: c.separatorStrong),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                workWeek
+                    ? Icons.calendar_view_week_rounded
+                    : Icons.calendar_view_month_rounded,
+                size: 14,
+                color: c.textMuted,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  color: c.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -709,11 +790,15 @@ class _WeekView extends StatefulWidget {
   const _WeekView({
     required this.weekStart,
     required this.events,
+    required this.dayCount,
     this.errorMessage,
   });
 
   final DateTime weekStart;
   final List<CalendarEvent> events;
+
+  /// Days rendered from [weekStart]: 5 for the working week, 7 for the full one.
+  final int dayCount;
   final String? errorMessage;
 
   @override
@@ -744,15 +829,24 @@ class _WeekViewState extends State<_WeekView> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final allDayEvents = widget.events.where((e) => e.isAllDay).toList();
-    final timedEvents = widget.events.where((e) => !e.isAllDay).toList();
+    // Hidden days shouldn't leave an empty all-day strip behind, so drop
+    // anything outside the rendered span before splitting.
+    final visible =
+        widget.events.where((e) => _isVisibleDay(e.start)).toList();
+    final allDayEvents = visible.where((e) => e.isAllDay).toList();
+    final timedEvents = visible.where((e) => !e.isAllDay).toList();
 
     return Column(
       children: [
-        _DayHeader(weekStart: widget.weekStart, timeColumnWidth: _timeColumnWidth),
+        _DayHeader(
+          weekStart: widget.weekStart,
+          dayCount: widget.dayCount,
+          timeColumnWidth: _timeColumnWidth,
+        ),
         if (allDayEvents.isNotEmpty)
           _AllDayStrip(
             weekStart: widget.weekStart,
+            dayCount: widget.dayCount,
             events: allDayEvents,
             timeColumnWidth: _timeColumnWidth,
           ),
@@ -772,11 +866,16 @@ class _WeekViewState extends State<_WeekView> {
                   Expanded(
                     child: _DayColumns(
                       weekStart: widget.weekStart,
+                      dayCount: widget.dayCount,
                       events: timedEvents,
                       hourHeight: _hourHeight,
                       totalHours: _totalHours,
                     ),
                   ),
+                  // Mirrored gutter, so the hour a tile sits at is readable
+                  // without tracking all the way back to the left edge.
+                  VerticalDivider(width: 1, color: c.separatorStrong),
+                  _TimeColumn(hourHeight: _hourHeight, totalHours: _totalHours, width: _timeColumnWidth),
                 ],
               ),
             ),
@@ -785,15 +884,26 @@ class _WeekViewState extends State<_WeekView> {
       ],
     );
   }
+
+  bool _isVisibleDay(DateTime instant) {
+    final local = instant.toLocal();
+    final day = DateTime(local.year, local.month, local.day);
+    final firstDay = DateTime(
+        widget.weekStart.year, widget.weekStart.month, widget.weekStart.day);
+    final lastDay = firstDay.add(Duration(days: widget.dayCount - 1));
+    return !day.isBefore(firstDay) && !day.isAfter(lastDay);
+  }
 }
 
 class _DayHeader extends StatelessWidget {
   const _DayHeader({
     required this.weekStart,
+    required this.dayCount,
     required this.timeColumnWidth,
   });
 
   final DateTime weekStart;
+  final int dayCount;
   final double timeColumnWidth;
 
   @override
@@ -806,7 +916,7 @@ class _DayHeader extends StatelessWidget {
       child: Row(
         children: [
           SizedBox(width: timeColumnWidth + 1), // +1 for divider
-          ...List.generate(7, (i) {
+          ...List.generate(dayCount, (i) {
             final day = weekStart.add(Duration(days: i));
             final isToday = _isSameDay(day, today);
             return Expanded(
@@ -855,6 +965,8 @@ class _DayHeader extends StatelessWidget {
               ),
             );
           }),
+          // Matches the right-hand hour gutter (+1 for its divider).
+          SizedBox(width: timeColumnWidth + 1),
         ],
       ),
     );
@@ -867,11 +979,13 @@ class _DayHeader extends StatelessWidget {
 class _AllDayStrip extends StatelessWidget {
   const _AllDayStrip({
     required this.weekStart,
+    required this.dayCount,
     required this.events,
     required this.timeColumnWidth,
   });
 
   final DateTime weekStart;
+  final int dayCount;
   final List<CalendarEvent> events;
   final double timeColumnWidth;
 
@@ -901,7 +1015,7 @@ class _AllDayStrip extends StatelessWidget {
           Container(width: 1, color: c.separatorStrong),
           Expanded(
             child: Row(
-              children: List.generate(7, (i) {
+              children: List.generate(dayCount, (i) {
                 final day = weekStart.add(Duration(days: i));
                 final dayEvents = events.where((e) => _isSameDay(e.start, day)).toList();
                 return Expanded(
@@ -923,6 +1037,9 @@ class _AllDayStrip extends StatelessWidget {
               }),
             ),
           ),
+          // Matches the right-hand hour gutter.
+          Container(width: 1, color: c.separatorStrong),
+          SizedBox(width: timeColumnWidth),
         ],
       ),
     );
@@ -1053,12 +1170,14 @@ class _TimeColumn extends StatelessWidget {
 class _DayColumns extends StatelessWidget {
   const _DayColumns({
     required this.weekStart,
+    required this.dayCount,
     required this.events,
     required this.hourHeight,
     required this.totalHours,
   });
 
   final DateTime weekStart;
+  final int dayCount;
   final List<CalendarEvent> events;
   final double hourHeight;
   final int totalHours;
@@ -1068,7 +1187,7 @@ class _DayColumns extends StatelessWidget {
     final today = DateTime.now();
 
     return Row(
-      children: List.generate(7, (i) {
+      children: List.generate(dayCount, (i) {
         final day = weekStart.add(Duration(days: i));
         final isToday = _isSameDay(day, today);
         final dayEvents = _eventsForDay(day);

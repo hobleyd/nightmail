@@ -41,22 +41,25 @@ void main() {
   );
 
   late _FakeGetContactDetails lookup;
+  late int composeCalls;
 
   void register(ContactDetails? result) {
     lookup = _FakeGetContactDetails(result);
     sl.registerSingleton<GetContactDetails>(lookup);
   }
 
+  setUp(() => composeCalls = 0);
   tearDown(() => sl.reset());
 
   Future<void> pumpTarget(WidgetTester tester) async {
-    await tester.pumpWidget(const MaterialApp(
+    await tester.pumpWidget(MaterialApp(
       home: Scaffold(
         body: Center(
           child: ContactHoverTarget(
             address: 'ada@example.com',
             accountId: 'acct-1',
-            child: Text('ada@example.com'),
+            onCompose: () => composeCalls++,
+            child: const Text('ada@example.com'),
           ),
         ),
       ),
@@ -197,14 +200,18 @@ void main() {
       expect(find.text('Phone'), findsNothing);
     });
 
-    testWidgets('renders an empty card for an unknown contact',
+    testWidgets('falls back to the hovered address for an unknown contact',
         (tester) async {
+      // No details to show (an IMAP account, or someone not in the directory),
+      // but the card still has to carry the address and the compose button.
       register(null);
       await openCard(tester);
 
       expect(card(), findsOneWidget);
+      expect(find.text('Email'), findsOneWidget);
+      expect(find.text('ada@example.com'), findsNWidgets(2),
+          reason: 'once on the chip, once in the card');
       expect(find.text('Name'), findsNothing);
-      expect(find.text('Email'), findsNothing);
     });
 
     testWidgets('copies a field to the clipboard', (tester) async {
@@ -282,6 +289,43 @@ void main() {
 
       expect(card(), findsOneWidget);
       expect(lookup.calls, 1, reason: 'the first result is cached');
+    });
+  });
+
+  group('ContactHoverTarget — compose', () {
+    Future<void> openCard(WidgetTester tester) async {
+      await pumpTarget(tester);
+      final gesture = await mouse(tester);
+      await hoverChip(tester, gesture);
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('offers the button even when there are no details',
+        (tester) async {
+      register(null);
+      await openCard(tester);
+
+      expect(find.byIcon(Icons.mail_outline_rounded), findsOneWidget);
+    });
+
+    testWidgets('tapping it calls back and closes the card', (tester) async {
+      // The card is dismissed before the callback runs, so the compose window
+      // does not open behind a stranded overlay.
+      //
+      // Few fields on purpose: a fully populated card is taller than the test
+      // surface, which puts the button at its foot out of hit-test range.
+      register(const ContactDetails(
+        address: 'ada@example.com',
+        name: 'Ada Lovelace',
+      ));
+      await openCard(tester);
+
+      await tester.tap(find.byIcon(Icons.mail_outline_rounded));
+      await tester.pump();
+
+      expect(composeCalls, 1);
+      expect(card(), findsNothing);
     });
   });
 }

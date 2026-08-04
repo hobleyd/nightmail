@@ -152,22 +152,32 @@ class CalendarReminderService {
       final unchanged = existing != null &&
           existing.triggerAtMs == triggerAtMs &&
           existing.reminderMinutes == reminderMinutes &&
-          existing.eventStartMs == e.start.millisecondsSinceEpoch;
+          existing.eventStartMs == e.start.millisecondsSinceEpoch &&
+          // Skipping an unchanged event assumes the alerts it was scheduled
+          // with are still queued somewhere. Where nothing outlives the process
+          // (Linux, whose reminders are in-process timers) that assumption is
+          // wrong after a restart and the row would silence the event for good,
+          // so re-arm it every pass instead. Rescheduling is idempotent: the
+          // cancel below clears the old timers and offsets already gone by are
+          // skipped, so a meeting mid-countdown picks it up where it is.
+          _notificationService.osRetainsSchedule;
       if (unchanged) continue;
 
-      // The event moved (or its reminder lead time changed) — drop the alert
-      // already sitting with the OS before queuing the new one. Scheduling
-      // over the top is not a replacement: on Windows `zonedSchedule` calls
-      // `AddToSchedule`, which appends a second scheduled toast rather than
-      // superseding the one carrying the same id, so a meeting postponed to
-      // tomorrow still fired at its original time. Cancel unconditionally
-      // rather than only when the new trigger is schedulable, so a start moved
-      // to less than `reminderMinutes` from now (where scheduleEventReminder
-      // declines a trigger in the past) also clears the stale alert.
-      if (existing != null) {
-        await _notificationService.cancelEventReminder(
-            accountId: account.id, eventId: e.id);
-      }
+      // Drop the alerts already sitting with the OS before queuing the new
+      // ones. Scheduling over the top is not a replacement: on Windows
+      // `zonedSchedule` calls `AddToSchedule`, which appends a second scheduled
+      // toast rather than superseding the one carrying the same id, so a
+      // meeting postponed to tomorrow still fired at its original time.
+      //
+      // Unconditional, on two counts. A start moved to inside its lead time
+      // leaves earlier offsets unschedulable, and the stale alerts for the
+      // original time still have to go. And an event with no row here is not
+      // proof the OS holds nothing for it — a build that scheduled a single
+      // alert per event, or a cache cleared behind our back, both leave alerts
+      // pending that only a cancel by id can reach. Cancelling ids the OS never
+      // had is a no-op.
+      await _notificationService.cancelEventReminder(
+          accountId: account.id, eventId: e.id);
 
       await _notificationService.scheduleEventReminder(
         accountId: account.id,

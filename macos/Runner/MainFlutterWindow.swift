@@ -273,6 +273,15 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
         "eventTitle": title,
       ]
       if let iso = args["startIso"] as? String { userInfo["startIso"] = iso }
+      // A reminder is one alert in a series counting down to the start. The
+      // countdown travels with the request so the in-app popup can show it,
+      // and `popup` marks the alerts that warrant opening that popup at all
+      // (the first and the last) rather than only a banner. Defaults to true
+      // for a request scheduled before those keys existed.
+      if let mins = args["minutesUntilStart"] as? NSNumber {
+        userInfo["minutesUntilStart"] = mins.intValue
+      }
+      userInfo["popup"] = (args["popup"] as? Bool) ?? true
     }
     content.userInfo  = userInfo
 
@@ -294,11 +303,14 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     }
   }
 
+  /// Removes pending alerts by id. A calendar reminder is a *series* — the
+  /// lead-time alert plus a countdown to the start — so `ids` cancels the whole
+  /// set in one call; `id` is the single-alert form task reminders use.
   private func handleCancelReminder(args: [String: Any], result: @escaping FlutterResult) {
-    let id   = args["id"]   as? String ?? ""
     let kind = args["kind"] as? String ?? "event"
+    let ids  = (args["ids"] as? [String]) ?? [args["id"] as? String ?? ""]
     UNUserNotificationCenter.current().removePendingNotificationRequests(
-      withIdentifiers: ["\(kind)_reminder_\(id)"]
+      withIdentifiers: ids.map { "\(kind)_reminder_\($0)" }
     )
     result(nil)
   }
@@ -312,14 +324,19 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     let userInfo = notification.request.content.userInfo
     let type = userInfo["type"] as? String
 
-    if type == "reminder" {
+    if type == "reminder", (userInfo["popup"] as? Bool) ?? true {
       // For calendar reminders fired in-app, show the existing popup so the
-      // user can dismiss it without leaving what they're doing.
+      // user can dismiss it without leaving what they're doing. Only the first
+      // and last alert of a series carry `popup` — the countdown between them
+      // stays a banner, so a meeting cannot pile up a stack of these windows.
       let eventId    = userInfo["eventId"]    as? String ?? ""
       let eventTitle = userInfo["eventTitle"] as? String ?? ""
       let startIso   = userInfo["startIso"]   as? String
       var args: [String: Any] = ["eventId": eventId, "eventTitle": eventTitle]
       if let iso = startIso { args["startIso"] = iso }
+      if let mins = userInfo["minutesUntilStart"] as? Int {
+        args["minutesUntilStart"] = mins
+      }
       mainNotificationChannel?.invokeMethod("showReminderPopup", arguments: args)
     }
 

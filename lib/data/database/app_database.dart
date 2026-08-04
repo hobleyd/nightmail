@@ -251,7 +251,7 @@ class AppDatabase extends _$AppDatabase
   AppDatabase.forTesting(QueryExecutor executor) : super(executor);
 
   @override
-  int get schemaVersion => 12;
+  int get schemaVersion => 13;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -324,6 +324,16 @@ class AppDatabase extends _$AppDatabase
               'CREATE INDEX idx_cached_contacts_account_search '
               'ON cached_contacts(account_id, search_text)',
             );
+          }
+          if (from < 13) {
+            // A reminder is now a series of alerts per event (the lead-time
+            // one, then a countdown every five minutes to the start). Rows
+            // written before that account for a single alert, and the
+            // reconciler skips an event whose row still matches — so these
+            // would never grow their countdown. Drop them and let the next
+            // reconcile re-derive the full series; the table only records what
+            // was handed to the OS, so nothing else is lost.
+            await customStatement('DELETE FROM scheduled_reminders');
           }
         },
       );

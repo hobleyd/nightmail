@@ -203,6 +203,7 @@ class NotificationService {
           eventId: args['eventId'] as String? ?? '',
           eventTitle: args['eventTitle'] as String? ?? '',
           startIso: args['startIso'] as String?,
+          minutesUntilStart: args['minutesUntilStart'] as int?,
         );
       case 'openEmail':
         final args = Map<String, dynamic>.from(call.arguments as Map);
@@ -244,6 +245,7 @@ class NotificationService {
     required String eventId,
     required String eventTitle,
     String? startIso,
+    int? minutesUntilStart,
   }) async {
     await WindowController.create(
       WindowConfiguration(
@@ -252,6 +254,7 @@ class NotificationService {
           'eventId': eventId,
           'eventTitle': eventTitle,
           if (startIso != null) 'startIso': startIso,
+          if (minutesUntilStart != null) 'minutesUntilStart': minutesUntilStart,
         }),
       ),
     );
@@ -384,6 +387,18 @@ class NotificationService {
     return true;
   }
 
+  /// Schedules the whole reminder series for one meeting: an alert at
+  /// [reminderMinutes] before the start, then a countdown alert every
+  /// [_followUpStepMinutes] minutes as it approaches, ending with a "Starting
+  /// now" alert at the start itself.
+  ///
+  /// Offsets whose moment has already gone by are skipped individually rather
+  /// than abandoning the series, so a meeting brought forward to inside its own
+  /// lead time still gets the rest of the countdown and the final alert.
+  ///
+  /// Callers keep treating a reminder as one thing: they pass the event's lead
+  /// time here and [cancelEventReminder] clears every alert in the series
+  /// without being told which offsets are live.
   Future<void> scheduleEventReminder({
     required String accountId,
     required String eventId,
@@ -392,58 +407,81 @@ class NotificationService {
     required int reminderMinutes,
     String? startIso,
   }) async {
-    final triggerTime = startUtc.subtract(Duration(minutes: reminderMinutes));
-    if (!triggerTime.isAfter(DateTime.now().toUtc())) return;
+    // Hoisted out of the loop: a sub-window hands the whole series to the main
+    // window at once, not one alert at a time.
+    if (!Platform.isMacOS && await _handedToMainWindow()) return;
 
-    final key = _key(accountId, eventId);
-
-    if (Platform.isMacOS) {
-      try {
-        await _macChannel.invokeMethod<void>('scheduleReminder', {
-          'id': key,
-          'title': eventTitle,
-          'body': 'Starting in ${_minutesLabel(reminderMinutes)}',
-          'triggerMs': triggerTime.millisecondsSinceEpoch,
-          'startIso': startIso ?? startUtc.toIso8601String(),
-          'eventId': eventId,
-        });
-      } catch (_) {}
-      return;
-    }
-
-    if (await _handedToMainWindow()) return;
-
-    if (Platform.isLinux) {
-      _scheduleLinux(
-        key: key,
-        eventTitle: eventTitle,
-        triggerTime: triggerTime,
-        reminderMinutes: reminderMinutes,
-      );
-      return;
-    }
-
+    final now = DateTime.now().toUtc();
+    final iso = startIso ?? startUtc.toIso8601String();
+    final base = _key(accountId, eventId);
+    final offsets = reminderOffsets(reminderMinutes);
+    // Every alert in the series taps through to the same event.
     final payload = jsonEncode({
       'type': 'reminder',
       'eventId': eventId,
-      'startIso': startIso ?? startUtc.toIso8601String(),
+      'startIso': iso,
     });
-    try {
-      final scheduled = tz.TZDateTime.fromMillisecondsSinceEpoch(
-        tz.UTC,
-        triggerTime.millisecondsSinceEpoch,
-      );
-      await _plugin?.zonedSchedule(
-        id: _notifId(accountId, eventId),
-        title: eventTitle,
-        body: 'Starting in ${_minutesLabel(reminderMinutes)}',
-        scheduledDate: scheduled,
-        payload: payload,
-        notificationDetails: _reminderDetails(),
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      );
-    } catch (e) {
-      debugPrint('NotificationService.scheduleEventReminder failed: $e');
+
+    for (var i = 0; i < offsets.length; i++) {
+      final offset = offsets[i];
+      final triggerTime = startUtc.subtract(Duration(minutes: offset));
+      if (!triggerTime.isAfter(now)) continue;
+
+      // The first alert keeps the bare [_key] this method has always used, so
+      // rescheduling supersedes (rather than doubles up on) a reminder left
+      // pending by a build that only ever scheduled one alert per event.
+      final key = i == 0 ? base : _followUpKey(base, offset);
+      final body = _countdownLabel(offset);
+      // The macOS reminder popup is NightMail's own window, not an OS banner,
+      // so only the two alerts worth interrupting for get one: the first (the
+      // lead-time warning the user asked for) and the last (the meeting is
+      // starting). The countdown in between arrives as a banner, which is what
+      // every other platform shows throughout.
+      final popup = i == 0 || offset == 0;
+
+      if (Platform.isMacOS) {
+        try {
+          await _macChannel.invokeMethod<void>('scheduleReminder', {
+            'id': key,
+            'title': eventTitle,
+            'body': body,
+            'triggerMs': triggerTime.millisecondsSinceEpoch,
+            'startIso': iso,
+            'eventId': eventId,
+            'minutesUntilStart': offset,
+            'popup': popup,
+          });
+        } catch (_) {}
+        continue;
+      }
+
+      if (Platform.isLinux) {
+        _scheduleLinux(
+          key: key,
+          eventTitle: eventTitle,
+          triggerTime: triggerTime,
+          body: body,
+        );
+        continue;
+      }
+
+      try {
+        final scheduled = tz.TZDateTime.fromMillisecondsSinceEpoch(
+          tz.UTC,
+          triggerTime.millisecondsSinceEpoch,
+        );
+        await _plugin?.zonedSchedule(
+          id: _idFor(key),
+          title: eventTitle,
+          body: body,
+          scheduledDate: scheduled,
+          payload: payload,
+          notificationDetails: _reminderDetails(),
+          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        );
+      } catch (e) {
+        debugPrint('NotificationService.scheduleEventReminder failed: $e');
+      }
     }
   }
 
@@ -451,16 +489,16 @@ class NotificationService {
     required String key,
     required String eventTitle,
     required DateTime triggerTime,
-    required int reminderMinutes,
+    required String body,
   }) {
     _linuxTimers[key]?.cancel();
     final delay = triggerTime.toUtc().difference(DateTime.now().toUtc());
     _linuxTimers[key] = Timer(delay, () {
       _linuxTimers.remove(key);
       _plugin?.show(
-        id: key.hashCode.abs() % 0x7FFFFFFF,
+        id: _idFor(key),
         title: eventTitle,
-        body: 'Starting in ${_minutesLabel(reminderMinutes)}',
+        body: body,
         notificationDetails: const NotificationDetails(
           linux: LinuxNotificationDetails(),
         ),
@@ -468,20 +506,39 @@ class NotificationService {
     });
   }
 
+  /// Clears every alert in an event's reminder series — the lead-time one and
+  /// each follow-up offset a countdown can use, whether or not this run
+  /// scheduled them.
+  ///
+  /// Cancelling ids the OS has never seen is a no-op everywhere, and it is what
+  /// lets the offsets stay a private detail: neither the caller nor the
+  /// persisted schedule has to remember which lead time built the series, and a
+  /// reminder left pending by a build that scheduled a single alert per event
+  /// is cleared along with it.
   Future<void> cancelEventReminder({
     required String accountId,
     required String eventId,
   }) async {
-    final key = _key(accountId, eventId);
+    final base = _key(accountId, eventId);
+    final keys = [
+      base,
+      for (final offset in _followUpOffsets) _followUpKey(base, offset),
+    ];
+
     if (Platform.isMacOS) {
+      // One call for the set: UNUserNotificationCenter removes pending
+      // requests by identifier list, so a series costs the same round trip a
+      // single alert used to.
       try {
-        await _macChannel.invokeMethod<void>('cancelReminder', {'id': key});
+        await _macChannel.invokeMethod<void>('cancelReminder', {'ids': keys});
       } catch (_) {}
       return;
     }
     if (await _handedToMainWindow()) return;
-    _linuxTimers.remove(key)?.cancel();
-    await _plugin?.cancel(id: _notifId(accountId, eventId));
+    for (final key in keys) {
+      _linuxTimers.remove(key)?.cancel();
+      await _plugin?.cancel(id: _idFor(key));
+    }
   }
 
   /// Whether a future notification handed to [scheduleTaskReminder] is held by
@@ -694,10 +751,49 @@ class NotificationService {
         windows: WindowsNotificationDetails(),
       );
 
+  /// How far apart the follow-up alerts in a reminder series are.
+  static const _followUpStepMinutes = 5;
+
+  /// How long before the start the countdown begins.
+  ///
+  /// A lead time of 15 minutes or less is countdown the whole way (the default
+  /// 15-minute reminder alerts at 15, 10, 5 and 0). A longer one gets the alert
+  /// it asked for, then nothing until the last quarter hour — the countdown is
+  /// there to walk someone into a meeting, not to nag them through the hour
+  /// before it.
+  ///
+  /// The bound also keeps the series affordable. The step is fixed, so a lead
+  /// time of a day — an option in the reminder dropdown — would otherwise
+  /// expand to 289 alerts for one meeting, and iOS keeps only the 64 soonest
+  /// pending notifications per app before silently discarding the rest. At five
+  /// alerts per meeting no realistic calendar comes near that.
+  static const _followUpWindowMinutes = 15;
+
+  /// Every offset a follow-up alert can use, furthest from the start first.
+  ///
+  /// Fixed rather than derived per event so [cancelEventReminder] can clear a
+  /// series knowing only the account and event ids.
+  static final List<int> _followUpOffsets = [
+    for (var m = _followUpWindowMinutes; m >= 0; m -= _followUpStepMinutes) m,
+  ];
+
+  /// The offsets, in minutes before the start, at which the reminder series for
+  /// a meeting with a [reminderMinutes] lead time fires: the lead-time alert
+  /// first, then the countdown, always ending at 0 — the final "Starting now".
+  @visibleForTesting
+  static List<int> reminderOffsets(int reminderMinutes) => [
+        if (reminderMinutes > 0) reminderMinutes,
+        for (final offset in _followUpOffsets)
+          if (offset < reminderMinutes) offset,
+        if (reminderMinutes <= 0) 0,
+      ];
+
   static String _key(String accountId, String eventId) => '$accountId::$eventId';
 
-  static int _notifId(String accountId, String eventId) =>
-      _key(accountId, eventId).hashCode.abs() % 0x7FFFFFFF;
+  static String _followUpKey(String baseKey, int offsetMinutes) =>
+      '$baseKey::$offsetMinutes';
+
+  static int _idFor(String key) => key.hashCode.abs() % 0x7FFFFFFF;
 
   // Deliberately a different string shape from _key so a task and an event
   // sharing an id can never collide in the notification-id space.
@@ -705,7 +801,11 @@ class NotificationService {
       'task::$accountId::$taskId';
 
   static int _taskNotifId(String accountId, String taskId) =>
-      _taskKey(accountId, taskId).hashCode.abs() % 0x7FFFFFFF;
+      _idFor(_taskKey(accountId, taskId));
+
+  static String _countdownLabel(int minutesUntilStart) => minutesUntilStart <= 0
+      ? 'Starting now'
+      : 'Starting in ${_minutesLabel(minutesUntilStart)}';
 
   static String _minutesLabel(int minutes) {
     if (minutes < 60) return '$minutes minute${minutes == 1 ? '' : 's'}';

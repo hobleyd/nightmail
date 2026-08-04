@@ -69,6 +69,7 @@ void main() {
     when(accountManager.activeAccount).thenReturn(account);
     when(accountManager.calendarDatasource).thenReturn(calendarDatasource);
 
+    when(notifications.osRetainsSchedule).thenReturn(true);
     when(notifications.scheduleEventReminder(
       accountId: anyNamed('accountId'),
       eventId: anyNamed('eventId'),
@@ -99,18 +100,21 @@ void main() {
 
     await service.reconcileAll();
 
-    verify(notifications.scheduleEventReminder(
-      accountId: account.id,
-      eventId: 'e1',
-      eventTitle: 'Event e1',
-      startUtc: start,
-      reminderMinutes: 15,
-      startIso: anyNamed('startIso'),
-    )).called(1);
-    verifyNever(notifications.cancelEventReminder(
-      accountId: anyNamed('accountId'),
-      eventId: anyNamed('eventId'),
-    ));
+    // The cancel comes first even for an event with no row here: nothing this
+    // side can prove the OS holds no alert for it (a build that scheduled one
+    // alert per event, or a cleared cache, both leave some pending), and a
+    // cancel for an id the OS never had costs nothing.
+    verifyInOrder([
+      notifications.cancelEventReminder(accountId: account.id, eventId: 'e1'),
+      notifications.scheduleEventReminder(
+        accountId: account.id,
+        eventId: 'e1',
+        eventTitle: 'Event e1',
+        startUtc: start,
+        reminderMinutes: 15,
+        startIso: anyNamed('startIso'),
+      ),
+    ]);
   });
 
   test('leaves an unchanged event alone on the next pass', () async {
@@ -160,23 +164,54 @@ void main() {
     ]);
   });
 
-  test('cancels the old alert when a moved start leaves no time to warn',
+  test('cancels the old alerts when a moved start leaves no time to warn',
       () async {
     final start = DateTime.now().toUtc().add(const Duration(hours: 2));
     stubEvents([event('e1', start: start)]);
     await service.reconcileAll();
     clearInteractions(notifications);
 
-    // Brought forward to start in 5 minutes, so a 15-minute warning is already
-    // in the past. scheduleEventReminder declines it — the stale alert for the
-    // original time still has to go.
+    // Brought forward to start in 5 minutes, so the 15-minute warning is
+    // already in the past — scheduleEventReminder skips that offset and keeps
+    // only the tail of the countdown. The alerts queued for the original time
+    // still have to go.
     final moved = DateTime.now().toUtc().add(const Duration(minutes: 5));
     stubEvents([event('e1', start: moved)]);
     await service.reconcileAll();
 
-    verify(notifications.cancelEventReminder(
-            accountId: account.id, eventId: 'e1'))
-        .called(1);
+    verifyInOrder([
+      notifications.cancelEventReminder(accountId: account.id, eventId: 'e1'),
+      notifications.scheduleEventReminder(
+        accountId: account.id,
+        eventId: 'e1',
+        eventTitle: 'Event e1',
+        startUtc: moved,
+        reminderMinutes: 15,
+        startIso: anyNamed('startIso'),
+      ),
+    ]);
+  });
+
+  test('re-arms an unchanged event where the schedule dies with the process',
+      () async {
+    // Linux holds reminders in in-process timers, so a row matching an
+    // unchanged event is no reason to believe anything is still queued for it.
+    when(notifications.osRetainsSchedule).thenReturn(false);
+    final start = DateTime.now().toUtc().add(const Duration(hours: 2));
+    stubEvents([event('e1', start: start)]);
+
+    await service.reconcileAll();
+    clearInteractions(notifications);
+    await service.reconcileAll();
+
+    verify(notifications.scheduleEventReminder(
+      accountId: account.id,
+      eventId: 'e1',
+      eventTitle: 'Event e1',
+      startUtc: start,
+      reminderMinutes: 15,
+      startIso: anyNamed('startIso'),
+    )).called(1);
   });
 
   test('cancels a reminder removed from an event that is still there',

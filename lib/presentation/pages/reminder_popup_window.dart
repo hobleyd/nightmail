@@ -34,6 +34,10 @@ class ReminderPopupWindowApp extends StatelessWidget {
     final startIso = arguments['startIso'] as String?;
     final startTime =
         startIso != null ? DateTime.tryParse(startIso)?.toLocal() : null;
+    // Which alert of the event's reminder series opened this popup — the
+    // lead-time one, or the final one at the start. Absent for a reminder
+    // scheduled before the series existed.
+    final minutesUntilStart = arguments['minutesUntilStart'] as int?;
 
     return BlocProvider<ThemeCubit>(
       create: (_) => ThemeCubit()..load(),
@@ -51,6 +55,7 @@ class ReminderPopupWindowApp extends StatelessWidget {
             home: _ReminderPopupPage(
               eventTitle: eventTitle,
               startTime: startTime,
+              minutesUntilStart: minutesUntilStart,
             ),
           );
         },
@@ -63,10 +68,12 @@ class _ReminderPopupPage extends StatelessWidget {
   const _ReminderPopupPage({
     required this.eventTitle,
     this.startTime,
+    this.minutesUntilStart,
   });
 
   final String eventTitle;
   final DateTime? startTime;
+  final int? minutesUntilStart;
 
   @override
   Widget build(BuildContext context) {
@@ -77,6 +84,13 @@ class _ReminderPopupPage extends StatelessWidget {
     final dateLabel = startTime != null
         ? DateFormat('EEE, MMM d').format(startTime!)
         : null;
+    final countdownLabel = switch (minutesUntilStart) {
+      null => null,
+      <= 0 => 'Starting now',
+      1 => 'Starting in 1 minute',
+      final m when m < 60 => 'Starting in $m minutes',
+      final m => 'Starting in ${m ~/ 60} hour${m ~/ 60 == 1 ? '' : 's'}',
+    };
 
     return Scaffold(
       backgroundColor: c.surfacePanel,
@@ -140,6 +154,17 @@ class _ReminderPopupPage extends StatelessWidget {
                     style: TextStyle(color: c.textMuted, fontSize: 12),
                   ),
                 ],
+              ),
+            ],
+            if (countdownLabel != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                countdownLabel,
+                style: const TextStyle(
+                  color: AppColors.accent,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ],
             const Spacer(),

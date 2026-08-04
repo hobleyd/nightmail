@@ -18,6 +18,7 @@ import '../blocs/calendar/calendar_event.dart';
 import '../blocs/calendar/calendar_state.dart';
 import '../widgets/calendar_overlap_layout.dart';
 import '../widgets/event_edit_dialog.dart';
+import '../widgets/event_hover_card.dart';
 
 class CalendarPage extends StatefulWidget {
   const CalendarPage({super.key});
@@ -1076,28 +1077,31 @@ class _AllDayEventChip extends StatelessWidget {
       onDoubleTap: () => _openEdit(context),
       onSecondaryTapUp: (details) =>
           _showEventContextMenu(context, event, details.globalPosition),
-      child: Container(
-        width: double.infinity,
-        margin: const EdgeInsets.only(bottom: 1),
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-        decoration: BoxDecoration(
-          color: AppColors.accent.withAlpha(isSelected ? 80 : 40),
-          borderRadius: BorderRadius.circular(3),
-          border: isSelected
-              ? Border.all(color: AppColors.accent, width: 1.5)
-              : Border(left: BorderSide(color: AppColors.accent, width: 2)),
-          boxShadow: isSelected
-              ? [BoxShadow(color: AppColors.accent.withAlpha(50), blurRadius: 4, offset: Offset.zero)]
-              : null,
-        ),
-        child: Text(
-          event.subject,
-          style: const TextStyle(
-            color: AppColors.accent,
-            fontSize: 11,
-            fontWeight: FontWeight.w500,
+      child: EventHoverTarget(
+        event: event,
+        child: Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(bottom: 1),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          decoration: BoxDecoration(
+            color: AppColors.accent.withAlpha(isSelected ? 80 : 40),
+            borderRadius: BorderRadius.circular(3),
+            border: isSelected
+                ? Border.all(color: AppColors.accent, width: 1.5)
+                : Border(left: BorderSide(color: AppColors.accent, width: 2)),
+            boxShadow: isSelected
+                ? [BoxShadow(color: AppColors.accent.withAlpha(50), blurRadius: 4, offset: Offset.zero)]
+                : null,
           ),
-          overflow: TextOverflow.ellipsis,
+          child: Text(
+            event.subject,
+            style: const TextStyle(
+              color: AppColors.accent,
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
       ),
     );
@@ -1514,11 +1518,15 @@ class _PositionedEventState extends State<_PositionedEvent> {
         onPanUpdate: _onPanUpdate,
         onPanEnd: _onPanEnd,
         onPanCancel: _onPanCancel,
-        child: _EventTile(
+        child: EventHoverTarget(
           event: widget.event,
-          compact: height < 36,
-          isDragging: _isDragging,
-          isSelected: isSelected,
+          enabled: !_isDragging,
+          child: _EventTile(
+            event: widget.event,
+            compact: height < 36,
+            isDragging: _isDragging,
+            isSelected: isSelected,
+          ),
         ),
       ),
     );
@@ -1554,7 +1562,7 @@ class _EventTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = _colorForEvent(event);
+    final color = eventColor(event);
     final joinable = _isJoinable(event, DateTime.now());
 
     return Opacity(
@@ -1596,7 +1604,7 @@ class _EventTile extends StatelessWidget {
                 if (!compact && event.location != null) ...[
                   const SizedBox(height: 1),
                   Text(
-                    _displayLocation(event.location!),
+                    displayEventLocation(event.location!),
                     style: TextStyle(
                       color: color.withAlpha(180),
                       fontSize: 10,
@@ -1619,29 +1627,6 @@ class _EventTile extends StatelessWidget {
     );
   }
 
-  /// Tile colour, driven by the user's [MeetingParticipation] so Gmail and
-  /// O365 meetings are coloured consistently (they expose different underlying
-  /// fields but map onto the same participation enum). Out-of-office and
-  /// working-elsewhere are free/busy states with no participation equivalent,
-  /// so they override as red/grey — these come from O365's `showAs` only.
-  Color _colorForEvent(CalendarEvent event) {
-    const green = Color(0xFF34A853);
-    const yellow = Color(0xFFFBBC04);
-    const red = Color(0xFFEA4335);
-    const grey = Color(0xFF9E9E9E);
-
-    if (event.status == CalendarEventStatus.outOfOffice) return red;
-    if (event.status == CalendarEventStatus.workingElsewhere) return grey;
-
-    return switch (event.participation) {
-      MeetingParticipation.organizer => green, // you organised it
-      MeetingParticipation.accepted => AppColors.accent, // blue — you accepted
-      MeetingParticipation.tentative => yellow, // tentatively accepted
-      MeetingParticipation.needsAction => yellow, // invited, not yet responded
-      MeetingParticipation.declined => grey, // declined
-      MeetingParticipation.none => AppColors.accent, // blue — on your calendar
-    };
-  }
 }
 
 /// A meeting is "joinable" from 3 minutes before it starts until it ends,
@@ -1865,13 +1850,6 @@ Future<void> _confirmAndDeleteSelected(
 /// Teams meetup-join URLs carry a long opaque meeting-id/context token that's
 /// meaningless to display; show a clean stand-in while the real URL (used for
 /// "Join Meeting" and editing) stays in [CalendarEvent.location].
-String _displayLocation(String location) {
-  if (location.startsWith('https://teams.microsoft.com')) {
-    return 'https://teams.microsoft.com/join-meeting';
-  }
-  return location;
-}
-
 // ─── Context menu ─────────────────────────────────────────────────────────────
 
 void _showEventContextMenu(

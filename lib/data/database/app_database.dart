@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../../domain/entities/email_folder.dart';
 import '../datasources/local/delta_token_datasource.dart';
 import '../datasources/local/folder_local_datasource.dart';
+import '../datasources/local/pending_calendar_operations_datasource.dart';
 import '../datasources/local/pending_operations_datasource.dart';
 import '../datasources/local/reminder_schedule_local_datasource.dart';
 import '../datasources/local/task_reminder_schedule_local_datasource.dart';
@@ -183,6 +184,41 @@ class CapabilityRouting extends Table {
   Set<Column> get primaryKey => {capability};
 }
 
+/// Offline-first cache of calendar events, so the calendar paints from disk
+/// while the provider is still being asked. Refreshed by
+/// `CalendarCacheSyncService`, which holds today through four weeks ahead and
+/// drops anything that finished more than a fortnight ago.
+///
+/// Only the range/lookup fields are plaintext; everything user-visible
+/// (subject, location, attendees, body preview) lives in [encryptedData], the
+/// same split [CachedEmails] uses.
+///
+/// [iCalUid] is here as a column rather than only inside the blob because the
+/// invitation-side mutations (accept/decline from a mail banner) know the
+/// meeting by its iCalendar UID and nothing else — that lookup has to be
+/// indexed SQL, not a decrypt-everything scan.
+///
+/// The row class is renamed because drift would otherwise generate
+/// `CachedCalendarEvent`, too close to the `CalendarEvent` entity it stores.
+@DataClassName('CachedCalendarEventRow')
+class CachedCalendarEvents extends Table {
+  TextColumn get accountId => text()();
+  TextColumn get eventId => text()();
+
+  /// Event bounds in UTC epoch ms. Range queries match on *overlap*, so a
+  /// multi-day event still belongs to every week it spans.
+  IntColumn get startMs => integer()();
+  IntColumn get endMs => integer()();
+
+  TextColumn get iCalUid => text().nullable()();
+  TextColumn get seriesMasterId => text().nullable()();
+  IntColumn get cachedAtMs => integer()();
+  TextColumn get encryptedData => text()();
+
+  @override
+  Set<Column> get primaryKey => {accountId, eventId};
+}
+
 /// Tracks which calendar events currently have an OS-level reminder
 /// notification scheduled, so the reconciliation pass in
 /// [CalendarReminderService] can tell new/changed events (need scheduling)
@@ -234,14 +270,35 @@ class PendingOperations extends Table {
   TextColumn get lastError => text().nullable()();
 }
 
-@DriftDatabase(tables: [CachedEmails, KnownSenders, SenderAliases, CachedContacts, ContactSyncStates, DeltaSyncTokens, CachedFolders, LocalDrafts, CatalogCache, AiConfig, CapabilityRouting, ScheduledReminders, ScheduledTaskReminders, PendingOperations])
+/// Queued calendar mutations awaiting a server round-trip — the calendar
+/// counterpart of [PendingOperations], kept separate because its ops target an
+/// event (or the invitation email that carries one) rather than a message in a
+/// folder, and because a calendar op must never be serialised behind an IMAP
+/// mailbox mutation that has nothing to do with it.
+///
+/// [targetId] is an event id for the calendar-side ops and an email id for the
+/// invitation-side ones; which it is follows from [opType]. See
+/// [PendingCalendarOperationType].
+class PendingCalendarOperations extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get accountId => text()();
+  TextColumn get targetId => text()();
+  TextColumn get opType => text()();
+  TextColumn get payload => text()();
+  IntColumn get createdAtMs => integer()();
+  IntColumn get retryCount => integer().withDefault(const Constant(0))();
+  TextColumn get lastError => text().nullable()();
+}
+
+@DriftDatabase(tables: [CachedEmails, KnownSenders, SenderAliases, CachedContacts, ContactSyncStates, DeltaSyncTokens, CachedFolders, LocalDrafts, CatalogCache, AiConfig, CapabilityRouting, ScheduledReminders, ScheduledTaskReminders, PendingOperations, CachedCalendarEvents, PendingCalendarOperations])
 class AppDatabase extends _$AppDatabase
     implements
         DeltaTokenDatasource,
         FolderLocalDatasource,
         ReminderScheduleLocalDatasource,
         TaskReminderScheduleLocalDatasource,
-        PendingOperationsDatasource {
+        PendingOperationsDatasource,
+        PendingCalendarOperationsDatasource {
   AppDatabase() : super(_openConnection());
 
   /// Test-only constructor: lets a unit test open the schema on an in-memory
@@ -251,7 +308,7 @@ class AppDatabase extends _$AppDatabase
   AppDatabase.forTesting(QueryExecutor executor) : super(executor);
 
   @override
-  int get schemaVersion => 13;
+  int get schemaVersion => 14;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -273,6 +330,7 @@ class AppDatabase extends _$AppDatabase
             'CREATE INDEX idx_cached_contacts_account_search '
             'ON cached_contacts(account_id, search_text)',
           );
+          await _createCalendarCacheIndexes();
         },
         onUpgrade: (m, from, to) async {
           if (from < 2) {
@@ -335,8 +393,31 @@ class AppDatabase extends _$AppDatabase
             // was handed to the OS, so nothing else is lost.
             await customStatement('DELETE FROM scheduled_reminders');
           }
+          if (from < 14) {
+            await m.createTable(cachedCalendarEvents);
+            await m.createTable(pendingCalendarOperations);
+            await _createCalendarCacheIndexes();
+          }
         },
       );
+
+  Future<void> _createCalendarCacheIndexes() async {
+    // The calendar always asks "what overlaps this range", so start_ms leads
+    // the index and end_ms rides along to keep the overlap test off the rows.
+    await customStatement(
+      'CREATE INDEX idx_cached_calendar_events_account_start '
+      'ON cached_calendar_events(account_id, start_ms, end_ms)',
+    );
+    // The invitation-side mutations look a meeting up by its iCalendar UID.
+    await customStatement(
+      'CREATE INDEX idx_cached_calendar_events_account_uid '
+      'ON cached_calendar_events(account_id, i_cal_uid)',
+    );
+    await customStatement(
+      'CREATE INDEX idx_pending_calendar_ops_account_created '
+      'ON pending_calendar_operations(account_id, created_at_ms)',
+    );
+  }
 
   Future<String?> loadDeltaToken(String accountId, String folderId) async {
     final q = select(deltaSyncTokens)
@@ -625,6 +706,72 @@ class AppDatabase extends _$AppDatabase
       ),
     );
   }
+
+  // PendingCalendarOperationsDatasource implementation (the calendar outbox)
+
+  @override
+  Future<int> enqueueCalendarOperation({
+    required String accountId,
+    required String targetId,
+    required PendingCalendarOperationType opType,
+    required String payload,
+  }) =>
+      into(pendingCalendarOperations).insert(
+        PendingCalendarOperationsCompanion.insert(
+          accountId: accountId,
+          targetId: targetId,
+          opType: opType.name,
+          payload: payload,
+          createdAtMs: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
+
+  @override
+  Future<List<PendingCalendarOperationRecord>> getPendingCalendarOperations(
+      String accountId) async {
+    final rows = await (select(pendingCalendarOperations)
+          ..where((t) => t.accountId.equals(accountId))
+          ..orderBy([(t) => OrderingTerm.asc(t.createdAtMs)]))
+        .get();
+    return rows
+        .map((r) => PendingCalendarOperationRecord(
+              id: r.id,
+              accountId: r.accountId,
+              targetId: r.targetId,
+              opType: PendingCalendarOperationType.values.byName(r.opType),
+              payload: r.payload,
+              createdAtMs: r.createdAtMs,
+              retryCount: r.retryCount,
+              lastError: r.lastError,
+            ))
+        .toList();
+  }
+
+  @override
+  Future<void> removeCalendarOperation(int id) =>
+      (delete(pendingCalendarOperations)..where((t) => t.id.equals(id))).go();
+
+  @override
+  Future<void> recordCalendarOperationFailure({
+    required int id,
+    required String error,
+  }) async {
+    final row = await (select(pendingCalendarOperations)
+          ..where((t) => t.id.equals(id)))
+        .getSingleOrNull();
+    if (row == null) return;
+    await (update(pendingCalendarOperations)..where((t) => t.id.equals(id)))
+        .write(PendingCalendarOperationsCompanion(
+      retryCount: Value(row.retryCount + 1),
+      lastError: Value(error),
+    ));
+  }
+
+  @override
+  Future<void> clearCalendarOperationsForAccount(String accountId) =>
+      (delete(pendingCalendarOperations)
+            ..where((t) => t.accountId.equals(accountId)))
+          .go();
 
   static QueryExecutor _openConnection() {
     return driftDatabase(name: 'nightmail_cache');

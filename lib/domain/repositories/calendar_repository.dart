@@ -8,7 +8,20 @@ import '../usecases/create_calendar_event.dart';
 import '../usecases/update_calendar_event.dart';
 
 abstract interface class CalendarRepository {
+  /// Fetches events from the provider and refreshes the local cache for the
+  /// same range, so the next launch can paint that range from disk.
   Future<Either<Failure, List<CalendarEvent>>> getCalendarEvents({
+    required DateTime startDateTime,
+    required DateTime endDateTime,
+  });
+
+  /// Locally cached events overlapping the range, without touching the network.
+  ///
+  /// The calendar shows this first and then repaints from
+  /// [getCalendarEvents] — a range that has never been cached simply comes back
+  /// empty. `CalendarCacheSyncService` keeps today through four weeks ahead
+  /// populated in the background, so the common case is already on disk.
+  Future<Either<Failure, List<CalendarEvent>>> getCachedCalendarEvents({
     required DateTime startDateTime,
     required DateTime endDateTime,
   });

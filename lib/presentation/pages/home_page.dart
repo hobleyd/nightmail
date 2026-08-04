@@ -17,6 +17,7 @@ import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email_folder.dart';
 import '../../domain/usecases/get_email.dart';
 import '../../core/settings/app_settings.dart';
+import '../../infrastructure/calendar/calendar_cache_sync_service.dart';
 import '../../infrastructure/notifications/calendar_reminder_service.dart';
 import '../../infrastructure/notifications/notification_action.dart';
 import '../../infrastructure/notifications/notification_service.dart';
@@ -65,6 +66,11 @@ class HomePage extends StatelessWidget {
     // cancels any existing timer first, so repeated builds are safe.
     sl<CalendarReminderService>().startPeriodic();
     sl<TaskReminderService>().startPeriodic();
+    // Fills the calendar cache (today through four weeks) and expires meetings
+    // older than a fortnight. Started here rather than in the calendar window on
+    // purpose: it must run in the main window only, and the calendar has to find
+    // the cache already warm the first time it is opened.
+    sl<CalendarCacheSyncService>().startPeriodic();
     // Sub-windows cannot reach the OS scheduler themselves, so they nudge the
     // main window to reconcile as soon as they change a reminder instead of
     // leaving it to the next 15-minute cycle. Re-registering only swaps the

@@ -90,6 +90,51 @@ class CalendarEvent extends Equatable {
 
   bool get isRecurringOccurrence => seriesMasterId != null;
 
+  /// Returns a copy with the given fields replaced. Used to apply an optimistic
+  /// mutation (an RSVP, a drag to a new time) to a cached event before the
+  /// provider has been told about it.
+  ///
+  /// Nullable fields take a sentinel-free "omit means keep" form, which means a
+  /// field cannot be *cleared* through here. Nothing needs to: a mutation that
+  /// blanks a location or drops a recurrence rewrites the whole event from its
+  /// save params rather than patching one field.
+  CalendarEvent copyWith({
+    String? id,
+    String? subject,
+    DateTime? start,
+    DateTime? end,
+    bool? isAllDay,
+    String? iCalUid,
+    String? location,
+    String? bodyPreview,
+    CalendarEventStatus? status,
+    MeetingParticipation? participation,
+    bool? isOrganizer,
+    String? timezone,
+    List<CalendarEventAttendee>? attendees,
+    CalendarRecurrence? recurrence,
+    int? reminderMinutes,
+    String? seriesMasterId,
+  }) =>
+      CalendarEvent(
+        id: id ?? this.id,
+        subject: subject ?? this.subject,
+        start: start ?? this.start,
+        end: end ?? this.end,
+        isAllDay: isAllDay ?? this.isAllDay,
+        iCalUid: iCalUid ?? this.iCalUid,
+        location: location ?? this.location,
+        bodyPreview: bodyPreview ?? this.bodyPreview,
+        status: status ?? this.status,
+        participation: participation ?? this.participation,
+        isOrganizer: isOrganizer ?? this.isOrganizer,
+        timezone: timezone ?? this.timezone,
+        attendees: attendees ?? this.attendees,
+        recurrence: recurrence ?? this.recurrence,
+        reminderMinutes: reminderMinutes ?? this.reminderMinutes,
+        seriesMasterId: seriesMasterId ?? this.seriesMasterId,
+      );
+
   Duration get duration => end.difference(start);
 
   /// Whether this event actually occupies its slot, for conflict detection.

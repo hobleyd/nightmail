@@ -7,6 +7,7 @@ import '../../data/datasources/remote/spam_db_sync_datasource.dart';
 import '../accounts/account.dart';
 import '../accounts/account_manager.dart';
 import '../network/connectivity_service.dart';
+import 'calendar_outbox_drain_service.dart';
 import 'spam_db_sync_service.dart';
 
 /// Replays queued mutations (see [PendingOperationsDatasource]) against the
@@ -29,17 +30,23 @@ class OutboxDrainService {
     required AccountManager accountManager,
     required ConnectivityService connectivityService,
     required SpamDbSyncService spamDbSyncService,
+    required CalendarOutboxDrainService calendarDrainService,
   })  : _pendingOperations = pendingOperations,
         _localDatasource = localDatasource,
         _accountManager = accountManager,
         _connectivityService = connectivityService,
-        _spamDbSyncService = spamDbSyncService;
+        _spamDbSyncService = spamDbSyncService,
+        _calendarDrainService = calendarDrainService;
 
   final PendingOperationsDatasource _pendingOperations;
   final EmailLocalDatasource _localDatasource;
   final AccountManager _accountManager;
   final ConnectivityService _connectivityService;
   final SpamDbSyncService _spamDbSyncService;
+
+  /// Queued calendar mutations are replayed before this queue is, because some
+  /// of them are addressed by *message* id — see [_drainInner].
+  final CalendarOutboxDrainService _calendarDrainService;
 
   /// Backstop so a permanently-failing op can't hammer the server on every
   /// poll forever (observed: ops stuck at thousands of retries). Once a
@@ -86,6 +93,19 @@ class OutboxDrainService {
     // timeout in the background on every single mutation, instead of
     // failing fast and simply waiting for the next drain attempt.
     if (!await _connectivityService.isOnline) return;
+
+    // Queued calendar mutations go first, and this ordering is load-bearing.
+    // An RSVP or a remove-from-calendar is addressed to the *invitation email's*
+    // id — Graph resolves `/messages/{id}/accept` itself, and the other
+    // providers read the `UID` out of that message's ICS. The reading pane
+    // deletes the invitation as soon as it has been answered, so draining this
+    // queue first would delete the very message the calendar op needs and turn
+    // the RSVP into a 404.
+    //
+    // Returns immediately when the calendar queue is empty, which is the usual
+    // case; the two services keep separate in-flight chains, so this cannot
+    // deadlock against a calendar drain already running.
+    await _calendarDrainService.drainForAccount(accountId);
 
     Account? account;
     for (final a in _accountManager.accounts) {

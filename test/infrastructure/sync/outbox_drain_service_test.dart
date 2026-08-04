@@ -20,6 +20,7 @@ import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 import 'package:nightmail/infrastructure/cache/cache_encryption_service.dart';
 import 'package:nightmail/infrastructure/network/connectivity_service.dart';
+import 'package:nightmail/infrastructure/sync/calendar_outbox_drain_service.dart';
 import 'package:nightmail/infrastructure/sync/outbox_drain_service.dart';
 import 'package:nightmail/infrastructure/sync/spam_db_sync_service.dart';
 
@@ -73,6 +74,7 @@ class _FakeSpamDbCapableDatasource extends Fake
   EmailRemoteDatasource,
   ConnectivityService,
   SpamDbSyncService,
+  CalendarOutboxDrainService,
 ])
 void main() {
   late AppDatabase db;
@@ -81,6 +83,7 @@ void main() {
   late MockEmailRemoteDatasource mockRemoteDatasource;
   late MockConnectivityService mockConnectivityService;
   late MockSpamDbSyncService mockSpamDbSyncService;
+  late MockCalendarOutboxDrainService mockCalendarDrainService;
   late OutboxDrainService service;
 
   setUp(() {
@@ -94,10 +97,13 @@ void main() {
     mockRemoteDatasource = MockEmailRemoteDatasource();
     mockConnectivityService = MockConnectivityService();
     mockSpamDbSyncService = MockSpamDbSyncService();
+    mockCalendarDrainService = MockCalendarOutboxDrainService();
     when(mockAccountManager.accounts).thenReturn([_account]);
     when(mockAccountManager.buildEmailDatasourceForAccount(any))
         .thenReturn(mockRemoteDatasource);
     when(mockConnectivityService.isOnline).thenAnswer((_) async => true);
+    when(mockCalendarDrainService.drainForAccount(any))
+        .thenAnswer((_) async {});
 
     service = OutboxDrainService(
       pendingOperations: db,
@@ -105,6 +111,7 @@ void main() {
       accountManager: mockAccountManager,
       connectivityService: mockConnectivityService,
       spamDbSyncService: mockSpamDbSyncService,
+      calendarDrainService: mockCalendarDrainService,
     );
   });
 
@@ -504,6 +511,43 @@ void main() {
 
       verifyNever(mockSpamDbSyncService.pushForAccount(any, any));
       expect(await db.getPendingOperations('acct-1'), isEmpty);
+    });
+  });
+
+  group('ordering against the calendar outbox', () {
+    test('queued calendar mutations are replayed before any mail mutation',
+        () async {
+      when(mockRemoteDatasource.deleteEmail(any)).thenAnswer((_) async {});
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'invite-1',
+        opType: PendingOperationType.delete,
+        payload: '{}',
+      );
+
+      await service.drainForAccount('acct-1');
+
+      // An RSVP is addressed to the *invitation email's* id, so deleting the
+      // invitation first would turn the queued RSVP into a 404.
+      verifyInOrder([
+        mockCalendarDrainService.drainForAccount('acct-1'),
+        mockRemoteDatasource.deleteEmail('invite-1'),
+      ]);
+    });
+
+    test('nothing is drained at all while offline', () async {
+      when(mockConnectivityService.isOnline).thenAnswer((_) async => false);
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'invite-1',
+        opType: PendingOperationType.delete,
+        payload: '{}',
+      );
+
+      await service.drainForAccount('acct-1');
+
+      verifyNever(mockCalendarDrainService.drainForAccount(any));
+      verifyNever(mockRemoteDatasource.deleteEmail(any));
     });
   });
 }

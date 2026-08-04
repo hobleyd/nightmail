@@ -7,6 +7,8 @@ import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/error/exceptions.dart';
 import 'package:nightmail/core/error/failures.dart';
+import 'package:nightmail/data/datasources/local/calendar_local_datasource.dart';
+import 'package:nightmail/data/datasources/local/pending_calendar_operations_datasource.dart';
 import 'package:nightmail/data/datasources/remote/calendar_remote_datasource.dart';
 import 'package:nightmail/data/datasources/remote/email_remote_datasource.dart';
 import 'package:nightmail/data/models/calendar_event_model.dart';
@@ -14,8 +16,12 @@ import 'package:nightmail/data/repositories/calendar_repository_impl.dart';
 import 'package:nightmail/domain/entities/attendee_availability.dart';
 import 'package:nightmail/domain/entities/calendar_event.dart';
 import 'package:nightmail/domain/entities/local_attachment.dart';
+import 'package:nightmail/domain/entities/meeting_invite.dart';
+import 'package:nightmail/domain/usecases/update_calendar_event.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
+import 'package:nightmail/infrastructure/sync/calendar_outbox_drain_service.dart';
+import 'package:nightmail/infrastructure/sync/calendar_pending_op_reconciler.dart';
 
 import 'calendar_repository_impl_test.mocks.dart';
 
@@ -30,18 +36,118 @@ final _tEventModel = CalendarEventModel(
   isAllDay: false,
 );
 
-@GenerateMocks(
-    [AccountManager, CalendarRemoteDatasource, EmailRemoteDatasource])
+@GenerateMocks([
+  AccountManager,
+  CalendarRemoteDatasource,
+  EmailRemoteDatasource,
+  CalendarLocalDatasource,
+  PendingCalendarOperationsDatasource,
+  CalendarOutboxDrainService,
+  CalendarPendingOpReconciler,
+])
 void main() {
   late CalendarRepositoryImpl repository;
   late MockAccountManager mockAccountManager;
   late MockCalendarRemoteDatasource mockDatasource;
+  late MockCalendarLocalDatasource mockLocal;
+  late MockPendingCalendarOperationsDatasource mockPendingOps;
+  late MockCalendarOutboxDrainService mockDrain;
+  late MockCalendarPendingOpReconciler mockReconciler;
 
   setUp(() {
     mockAccountManager = MockAccountManager();
     mockDatasource = MockCalendarRemoteDatasource();
-    repository = CalendarRepositoryImpl(accountManager: mockAccountManager);
+    mockLocal = MockCalendarLocalDatasource();
+    mockPendingOps = MockPendingCalendarOperationsDatasource();
+    mockDrain = MockCalendarOutboxDrainService();
+    mockReconciler = MockCalendarPendingOpReconciler();
+    repository = CalendarRepositoryImpl(
+      accountManager: mockAccountManager,
+      localDatasource: mockLocal,
+      pendingOperations: mockPendingOps,
+      outboxDrainService: mockDrain,
+      pendingOpReconciler: mockReconciler,
+    );
+
+    // Default: no active account and nothing cached, which is the combination
+    // that sends every mutation down the network-first path. Tests of the
+    // cache-first behaviour opt in via [givenCached]; the rest are unaffected.
+    when(mockAccountManager.activeAccount).thenReturn(null);
+    when(mockLocal.getCachedEventById(
+      accountId: anyNamed('accountId'),
+      eventId: anyNamed('eventId'),
+    )).thenAnswer((_) async => null);
+    when(mockLocal.getCachedEventByICalUid(
+      accountId: anyNamed('accountId'),
+      iCalUid: anyNamed('iCalUid'),
+    )).thenAnswer((_) async => null);
+    when(mockLocal.getCachedEvents(
+      accountId: anyNamed('accountId'),
+      start: anyNamed('start'),
+      end: anyNamed('end'),
+    )).thenAnswer((_) async => const []);
+    when(mockLocal.cacheEvents(
+      accountId: anyNamed('accountId'),
+      windowStart: anyNamed('windowStart'),
+      windowEnd: anyNamed('windowEnd'),
+      events: anyNamed('events'),
+    )).thenAnswer((_) async {});
+    when(mockLocal.upsertEvent(
+      accountId: anyNamed('accountId'),
+      event: anyNamed('event'),
+    )).thenAnswer((_) async {});
+    when(mockLocal.deleteEvent(
+      accountId: anyNamed('accountId'),
+      eventId: anyNamed('eventId'),
+    )).thenAnswer((_) async {});
+    when(mockLocal.deleteSeries(
+      accountId: anyNamed('accountId'),
+      eventId: anyNamed('eventId'),
+      seriesMasterId: anyNamed('seriesMasterId'),
+    )).thenAnswer((_) async {});
+    when(mockPendingOps.enqueueCalendarOperation(
+      accountId: anyNamed('accountId'),
+      targetId: anyNamed('targetId'),
+      opType: anyNamed('opType'),
+      payload: anyNamed('payload'),
+    )).thenAnswer((_) async => 1);
+    when(mockDrain.drainForAccount(any)).thenAnswer((_) async {});
+    when(mockReconciler.reconcile(
+      accountId: anyNamed('accountId'),
+      events: anyNamed('events'),
+    )).thenAnswer((inv) async =>
+        inv.namedArguments[const Symbol('events')] as List<CalendarEvent>);
   });
+
+  /// Makes the repository see an active account with [cached] on its calendar.
+  void givenCached(CalendarEvent cached) {
+    when(mockAccountManager.activeAccount).thenReturn(const GmailAccount(
+      id: 'acct-1',
+      displayName: 'Test',
+      emailAddress: 'me@example.com',
+    ));
+    when(mockLocal.getCachedEventById(
+      accountId: anyNamed('accountId'),
+      eventId: cached.id,
+    )).thenAnswer((_) async => cached);
+    when(mockLocal.getCachedEvents(
+      accountId: anyNamed('accountId'),
+      start: anyNamed('start'),
+      end: anyNamed('end'),
+    )).thenAnswer((_) async => [cached]);
+    if (cached.iCalUid != null) {
+      when(mockLocal.getCachedEventByICalUid(
+        accountId: anyNamed('accountId'),
+        iCalUid: cached.iCalUid!,
+      )).thenAnswer((_) async => cached);
+    }
+  }
+
+  /// The event handed to [CalendarLocalDatasource.upsertEvent].
+  CalendarEvent capturedUpsert() => verify(mockLocal.upsertEvent(
+        accountId: anyNamed('accountId'),
+        event: captureAnyNamed('event'),
+      )).captured.last as CalendarEvent;
 
   group('CalendarRepositoryImpl.getCalendarEvents', () {
     test('returns Right(events) on success', () async {
@@ -920,6 +1026,352 @@ END:VCALENDAR''';
         },
         (_) => fail('Expected Left'),
       );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Cache-first mutations
+  // ---------------------------------------------------------------------------
+
+  group('CalendarRepositoryImpl caches the fetched window', () {
+    test('reconciles a fetch against queued ops before caching it', () async {
+      when(mockAccountManager.activeAccount).thenReturn(const GmailAccount(
+        id: 'acct-1',
+        displayName: 'Test',
+        emailAddress: 'me@example.com',
+      ));
+      when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+      when(mockDatasource.getCalendarEvents(
+        startDateTime: anyNamed('startDateTime'),
+        endDateTime: anyNamed('endDateTime'),
+      )).thenAnswer((_) async => [_tEventModel]);
+      // A queued decline the server snapshot doesn't know about yet.
+      final reconciled = _tEventModel.copyWith(
+          participation: MeetingParticipation.declined);
+      when(mockReconciler.reconcile(
+        accountId: anyNamed('accountId'),
+        events: anyNamed('events'),
+      )).thenAnswer((_) async => [reconciled]);
+
+      final result = await repository.getCalendarEvents(
+        startDateTime: _tStart,
+        endDateTime: _tEnd,
+      );
+
+      // The reconciled view is what the caller sees, not the raw response.
+      result.fold(
+        (_) => fail('Expected Right'),
+        (events) =>
+            expect(events.single.participation, MeetingParticipation.declined),
+      );
+      // …and it is what gets written, keyed to the window that was fetched.
+      final captured = verify(mockLocal.cacheEvents(
+        accountId: 'acct-1',
+        windowStart: captureAnyNamed('windowStart'),
+        windowEnd: captureAnyNamed('windowEnd'),
+        events: captureAnyNamed('events'),
+      )).captured;
+      expect(captured[0], _tStart);
+      expect(captured[1], _tEnd);
+      expect((captured[2] as List<CalendarEvent>).single.participation,
+          MeetingParticipation.declined);
+    });
+
+    test('does not cache when there is no active account', () async {
+      when(mockAccountManager.activeAccount).thenReturn(null);
+      when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+      when(mockDatasource.getCalendarEvents(
+        startDateTime: anyNamed('startDateTime'),
+        endDateTime: anyNamed('endDateTime'),
+      )).thenAnswer((_) async => [_tEventModel]);
+
+      await repository.getCalendarEvents(
+          startDateTime: _tStart, endDateTime: _tEnd);
+
+      verifyNever(mockLocal.cacheEvents(
+        accountId: anyNamed('accountId'),
+        windowStart: anyNamed('windowStart'),
+        windowEnd: anyNamed('windowEnd'),
+        events: anyNamed('events'),
+      ));
+    });
+  });
+
+  group('CalendarRepositoryImpl.declineCalendarEvent', () {
+    test('marks the cache declined and queues, without calling the provider',
+        () async {
+      when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+      givenCached(_tEventModel);
+
+      final result = await repository.declineCalendarEvent(eventId: 'event-1');
+
+      expect(result.isRight(), isTrue);
+      expect(capturedUpsert().participation, MeetingParticipation.declined);
+      verify(mockPendingOps.enqueueCalendarOperation(
+        accountId: 'acct-1',
+        targetId: 'event-1',
+        opType: PendingCalendarOperationType.declineEvent,
+        payload: anyNamed('payload'),
+      )).called(1);
+      verify(mockDrain.drainForAccount('acct-1')).called(1);
+      verifyNever(mockDatasource.declineCalendarEvent(
+        eventId: anyNamed('eventId'),
+        userEmail: anyNamed('userEmail'),
+      ));
+    });
+
+    test('falls back to the provider when the event is not cached', () async {
+      when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+      when(mockAccountManager.activeAccount).thenReturn(const GmailAccount(
+        id: 'acct-1',
+        displayName: 'Test',
+        emailAddress: 'me@example.com',
+      ));
+      when(mockDatasource.declineCalendarEvent(
+        eventId: anyNamed('eventId'),
+        userEmail: anyNamed('userEmail'),
+      )).thenAnswer((_) async {});
+
+      final result = await repository.declineCalendarEvent(eventId: 'nope');
+
+      expect(result.isRight(), isTrue);
+      verify(mockDatasource.declineCalendarEvent(
+              eventId: 'nope', userEmail: 'me@example.com'))
+          .called(1);
+      verifyNever(mockPendingOps.enqueueCalendarOperation(
+        accountId: anyNamed('accountId'),
+        targetId: anyNamed('targetId'),
+        opType: anyNamed('opType'),
+        payload: anyNamed('payload'),
+      ));
+    });
+  });
+
+  group('CalendarRepositoryImpl.cancelCalendarEvent', () {
+    test('drops the cached row and queues the cancellation', () async {
+      when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+      givenCached(_tEventModel);
+
+      final result = await repository.cancelCalendarEvent(eventId: 'event-1');
+
+      expect(result.isRight(), isTrue);
+      verify(mockLocal.deleteEvent(accountId: 'acct-1', eventId: 'event-1'))
+          .called(1);
+      verify(mockPendingOps.enqueueCalendarOperation(
+        accountId: 'acct-1',
+        targetId: 'event-1',
+        opType: PendingCalendarOperationType.cancelEvent,
+        payload: anyNamed('payload'),
+      )).called(1);
+      verifyNever(mockDatasource.cancelCalendarEvent(
+          eventId: anyNamed('eventId')));
+    });
+
+    test('cancelling a series drops every cached occurrence', () async {
+      when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+      givenCached(_tEventModel);
+
+      await repository.cancelCalendarEventSeries(
+        eventId: 'event-1',
+        seriesMasterId: 'master-1',
+        occurrenceStart: DateTime.utc(2026, 6, 10, 9),
+      );
+
+      verify(mockLocal.deleteSeries(
+        accountId: 'acct-1',
+        eventId: 'event-1',
+        seriesMasterId: 'master-1',
+      )).called(1);
+    });
+  });
+
+  group('CalendarRepositoryImpl.respondToMeetingInvite', () {
+    const ics = 'BEGIN:VCALENDAR\r\n'
+        'BEGIN:VEVENT\r\n'
+        'UID:meeting-uid-1\r\n'
+        'SUMMARY:Stand-up\r\n'
+        'DTSTART:20260610T090000Z\r\n'
+        'DTEND:20260610T091500Z\r\n'
+        'END:VEVENT\r\n'
+        'END:VCALENDAR';
+
+    test('accepting marks the copy found by iCalendar UID accepted', () async {
+      when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+      givenCached(_tEventModel.copyWith(iCalUid: 'meeting-uid-1'));
+
+      final result = await repository.respondToMeetingInvite(
+        emailId: 'mail-1',
+        response: MeetingInviteResponseType.accept,
+        icsData: ics,
+      );
+
+      expect(result.isRight(), isTrue);
+      final upserted = capturedUpsert();
+      expect(upserted.participation, MeetingParticipation.accepted);
+      expect(upserted.status, CalendarEventStatus.busy);
+      // Queued against the *email* id — that is all the provider is given.
+      verify(mockPendingOps.enqueueCalendarOperation(
+        accountId: 'acct-1',
+        targetId: 'mail-1',
+        opType: PendingCalendarOperationType.respondToInvite,
+        payload: anyNamed('payload'),
+      )).called(1);
+      verifyNever(mockDatasource.respondToMeetingInvite(
+        emailId: anyNamed('emailId'),
+        response: anyNamed('response'),
+        icsData: anyNamed('icsData'),
+        meetingStart: anyNamed('meetingStart'),
+        userEmail: anyNamed('userEmail'),
+        message: anyNamed('message'),
+      ));
+    });
+
+    test('tentative sets a tentative free/busy status too', () async {
+      when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+      givenCached(_tEventModel.copyWith(iCalUid: 'meeting-uid-1'));
+
+      await repository.respondToMeetingInvite(
+        emailId: 'mail-1',
+        response: MeetingInviteResponseType.tentative,
+        icsData: ics,
+      );
+
+      final upserted = capturedUpsert();
+      expect(upserted.participation, MeetingParticipation.tentative);
+      expect(upserted.status, CalendarEventStatus.tentative);
+    });
+
+    test('with no ICS, matches an unambiguous start time', () async {
+      when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+      givenCached(_tEventModel);
+
+      final result = await repository.respondToMeetingInvite(
+        emailId: 'mail-1',
+        response: MeetingInviteResponseType.accept,
+        meetingStart: DateTime.utc(2026, 6, 10, 9, 0),
+      );
+
+      expect(result.isRight(), isTrue);
+      expect(capturedUpsert().participation, MeetingParticipation.accepted);
+    });
+
+    test('two meetings at the same time are too ambiguous to patch', () async {
+      when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+      when(mockAccountManager.activeAccount).thenReturn(const GmailAccount(
+        id: 'acct-1',
+        displayName: 'Test',
+        emailAddress: 'me@example.com',
+      ));
+      when(mockLocal.getCachedEvents(
+        accountId: anyNamed('accountId'),
+        start: anyNamed('start'),
+        end: anyNamed('end'),
+      )).thenAnswer((_) async => [
+            _tEventModel,
+            _tEventModel.copyWith(id: 'event-2', subject: 'Other'),
+          ]);
+      when(mockDatasource.respondToMeetingInvite(
+        emailId: anyNamed('emailId'),
+        response: anyNamed('response'),
+        icsData: anyNamed('icsData'),
+        meetingStart: anyNamed('meetingStart'),
+        userEmail: anyNamed('userEmail'),
+        message: anyNamed('message'),
+      )).thenAnswer((_) async {});
+
+      final result = await repository.respondToMeetingInvite(
+        emailId: 'mail-1',
+        response: MeetingInviteResponseType.accept,
+        meetingStart: DateTime.utc(2026, 6, 10, 9, 0),
+      );
+
+      // Rather than move the wrong meeting, this waits for the provider.
+      expect(result.isRight(), isTrue);
+      verify(mockDatasource.respondToMeetingInvite(
+        emailId: 'mail-1',
+        response: MeetingInviteResponseType.accept,
+        icsData: anyNamed('icsData'),
+        meetingStart: anyNamed('meetingStart'),
+        userEmail: anyNamed('userEmail'),
+        message: anyNamed('message'),
+      )).called(1);
+      verifyNever(mockLocal.upsertEvent(
+        accountId: anyNamed('accountId'),
+        event: anyNamed('event'),
+      ));
+    });
+  });
+
+  group('CalendarRepositoryImpl.updateCalendarEvent', () {
+    test('rewrites the cached row from the save params and queues it', () async {
+      when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+      givenCached(_tEventModel.copyWith(
+        iCalUid: 'meeting-uid-1',
+        seriesMasterId: 'master-1',
+        isOrganizer: true,
+      ));
+
+      final newStart = DateTime.utc(2026, 6, 11, 14, 0);
+      final result = await repository.updateCalendarEvent(
+        params: UpdateCalendarEventParams(
+          id: 'event-1',
+          subject: 'Stand-up (moved)',
+          start: newStart,
+          end: newStart.add(const Duration(minutes: 15)),
+          isAllDay: false,
+          timezone: 'Australia/Sydney',
+        ),
+      );
+
+      expect(result.isRight(), isTrue);
+      final optimistic = result.getOrElse((_) => fail('Expected Right'));
+      expect(optimistic.start, newStart);
+      expect(optimistic.subject, 'Stand-up (moved)');
+      // Fields the params cannot carry survive the rewrite.
+      expect(optimistic.iCalUid, 'meeting-uid-1');
+      expect(optimistic.seriesMasterId, 'master-1');
+      expect(optimistic.isOrganizer, isTrue);
+
+      verify(mockPendingOps.enqueueCalendarOperation(
+        accountId: 'acct-1',
+        targetId: 'event-1',
+        opType: PendingCalendarOperationType.updateEvent,
+        payload: anyNamed('payload'),
+      )).called(1);
+      verifyNever(
+          mockDatasource.updateCalendarEvent(params: anyNamed('params')));
+    });
+
+    test('an uncached event still goes to the provider for its real result',
+        () async {
+      when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+      when(mockAccountManager.activeAccount).thenReturn(const GmailAccount(
+        id: 'acct-1',
+        displayName: 'Test',
+        emailAddress: 'me@example.com',
+      ));
+      when(mockDatasource.updateCalendarEvent(params: anyNamed('params')))
+          .thenAnswer((_) async => _tEventModel);
+
+      final result = await repository.updateCalendarEvent(
+        params: UpdateCalendarEventParams(
+          id: 'not-cached',
+          subject: 'x',
+          start: _tStart,
+          end: _tEnd,
+          isAllDay: false,
+          timezone: 'UTC',
+        ),
+      );
+
+      expect(result.isRight(), isTrue);
+      verify(mockDatasource.updateCalendarEvent(params: anyNamed('params')))
+          .called(1);
+      // Cached anyway, so the week it lands in has it next time.
+      verify(mockLocal.upsertEvent(
+        accountId: 'acct-1',
+        event: anyNamed('event'),
+      )).called(1);
     });
   });
 }

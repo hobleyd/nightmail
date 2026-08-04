@@ -7,7 +7,9 @@ import '../../../domain/usecases/cancel_calendar_event.dart'
         CancelCalendarEventParams,
         CancelCalendarEventSeries,
         CancelCalendarEventSeriesParams;
+import '../../../domain/entities/calendar_event.dart' as domain;
 import '../../../domain/usecases/decline_calendar_event.dart';
+import '../../../domain/usecases/get_cached_calendar_events.dart';
 import '../../../domain/usecases/get_calendar_events.dart';
 import '../../../domain/usecases/propose_new_time.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
@@ -19,6 +21,7 @@ import 'calendar_state.dart';
 class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
   CalendarBloc({
     required GetCalendarEvents getCalendarEvents,
+    required GetCachedCalendarEvents getCachedCalendarEvents,
     required CancelCalendarEvent cancelCalendarEvent,
     required CancelCalendarEventSeries cancelCalendarEventSeries,
     required DeclineCalendarEvent declineCalendarEvent,
@@ -27,6 +30,7 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
     required NotificationService notificationService,
     required AccountManager accountManager,
   })  : _getCalendarEvents = getCalendarEvents,
+        _getCachedCalendarEvents = getCachedCalendarEvents,
         _cancelCalendarEvent = cancelCalendarEvent,
         _cancelCalendarEventSeries = cancelCalendarEventSeries,
         _declineCalendarEvent = declineCalendarEvent,
@@ -49,6 +53,7 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
   }
 
   final GetCalendarEvents _getCalendarEvents;
+  final GetCachedCalendarEvents _getCachedCalendarEvents;
   final CancelCalendarEvent _cancelCalendarEvent;
   final CancelCalendarEventSeries _cancelCalendarEventSeries;
   final DeclineCalendarEvent _declineCalendarEvent;
@@ -67,18 +72,14 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
   Future<void> _onLoadRequested(
     CalendarWeekLoadRequested event,
     Emitter<CalendarState> emit,
-  ) async {
-    emit(CalendarLoading(weekStart: event.weekStart));
-    await _fetchWeek(event.weekStart, emit);
-  }
+  ) =>
+      _fetchWeek(event.weekStart, emit);
 
   Future<void> _onWeekNavigated(
     CalendarWeekNavigated event,
     Emitter<CalendarState> emit,
-  ) async {
-    emit(CalendarLoading(weekStart: event.weekStart));
-    await _fetchWeek(event.weekStart, emit);
-  }
+  ) =>
+      _fetchWeek(event.weekStart, emit);
 
   Future<void> _onCancelRequested(
     CalendarEventCancelRequested event,
@@ -260,21 +261,81 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
     emit(CalendarInitial(weekStart: _mondayOfWeek(DateTime.now())));
   }
 
+  /// Draws the week from the local cache, then again from the provider.
+  ///
+  /// The cache read comes first on every path, including after a mutation:
+  /// mutations are applied to the cache before they are queued, so re-reading it
+  /// is what puts an RSVP or a drag on screen immediately. The provider fetch
+  /// then follows and repaints — reconciled against anything still queued, so it
+  /// cannot undo a change that hasn't reached the server yet (see
+  /// `CalendarPendingOpReconciler`).
+  ///
+  /// A spinner is only shown when the cache had nothing for this week: replacing
+  /// a drawn week with one is a worse trade than letting it sit a moment longer
+  /// while [CalendarLoaded.isSyncing] says a refresh is in flight.
   Future<void> _fetchWeek(
     DateTime weekStart,
     Emitter<CalendarState> emit,
   ) async {
     final start = weekStart.toUtc();
     final end = start.add(const Duration(days: 7));
+    final params = GetCalendarEventsParams(startDateTime: start, endDateTime: end);
 
-    final result = await _getCalendarEvents(
-      GetCalendarEventsParams(startDateTime: start, endDateTime: end),
-    );
+    final selected = state is CalendarLoaded
+        ? (state as CalendarLoaded).selectedEventIds
+        : const <String>{};
+
+    var cached = const <domain.CalendarEvent>[];
+    final cacheResult = await _getCachedCalendarEvents(params);
+    cacheResult.fold((_) {}, (events) => cached = events);
+
+    if (cached.isEmpty) {
+      emit(CalendarLoading(weekStart: weekStart));
+    } else {
+      emit(CalendarLoaded(
+        weekStart: weekStart,
+        events: cached,
+        // Keep a multi-select alive across the repaint, but only for events the
+        // cache still has — a selection pointing at a cancelled meeting would
+        // leave the toolbar claiming a count it cannot act on.
+        selectedEventIds: _retained(selected, cached),
+        isSyncing: true,
+      ));
+    }
+
+    final result = await _getCalendarEvents(params);
 
     result.fold(
-      (failure) => emit(CalendarError(weekStart: weekStart, message: failure.message)),
-      (events) => emit(CalendarLoaded(weekStart: weekStart, events: events)),
+      (failure) {
+        // A refresh that failed with a usable cache keeps the week on screen and
+        // says so in the banner, rather than throwing away events that are
+        // almost certainly still correct.
+        if (cached.isNotEmpty) {
+          emit(CalendarLoaded(
+            weekStart: weekStart,
+            events: cached,
+            selectedEventIds: _retained(selected, cached),
+            syncError: failure.message,
+          ));
+        } else {
+          emit(CalendarError(weekStart: weekStart, message: failure.message));
+        }
+      },
+      (events) => emit(CalendarLoaded(
+        weekStart: weekStart,
+        events: events,
+        selectedEventIds: _retained(selected, events),
+      )),
     );
+  }
+
+  static Set<String> _retained(
+    Set<String> selected,
+    List<domain.CalendarEvent> events,
+  ) {
+    if (selected.isEmpty) return const {};
+    final ids = {for (final e in events) e.id};
+    return selected.where(ids.contains).toSet();
   }
 
   static DateTime _mondayOfWeek(DateTime date) {

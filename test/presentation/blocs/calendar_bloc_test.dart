@@ -7,6 +7,7 @@ import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/domain/entities/calendar_event.dart';
 import 'package:nightmail/domain/usecases/cancel_calendar_event.dart';
 import 'package:nightmail/domain/usecases/decline_calendar_event.dart';
+import 'package:nightmail/domain/usecases/get_cached_calendar_events.dart';
 import 'package:nightmail/domain/usecases/get_calendar_events.dart';
 import 'package:nightmail/domain/usecases/propose_new_time.dart';
 import 'package:nightmail/domain/usecases/update_calendar_event.dart';
@@ -37,6 +38,7 @@ final _tEvents = <CalendarEvent>[
 
 @GenerateMocks([
   GetCalendarEvents,
+  GetCachedCalendarEvents,
   CancelCalendarEvent,
   CancelCalendarEventSeries,
   DeclineCalendarEvent,
@@ -49,6 +51,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late MockGetCalendarEvents mockGetCalendarEvents;
+  late MockGetCachedCalendarEvents mockGetCachedCalendarEvents;
   late MockCancelCalendarEvent mockCancelCalendarEvent;
   late MockCancelCalendarEventSeries mockCancelCalendarEventSeries;
   late MockDeclineCalendarEvent mockDeclineCalendarEvent;
@@ -59,6 +62,7 @@ void main() {
 
   CalendarBloc makeBloc() => CalendarBloc(
         getCalendarEvents: mockGetCalendarEvents,
+        getCachedCalendarEvents: mockGetCachedCalendarEvents,
         cancelCalendarEvent: mockCancelCalendarEvent,
         cancelCalendarEventSeries: mockCancelCalendarEventSeries,
         declineCalendarEvent: mockDeclineCalendarEvent,
@@ -70,6 +74,7 @@ void main() {
 
   setUp(() {
     mockGetCalendarEvents = MockGetCalendarEvents();
+    mockGetCachedCalendarEvents = MockGetCachedCalendarEvents();
     mockCancelCalendarEvent = MockCancelCalendarEvent();
     mockCancelCalendarEventSeries = MockCancelCalendarEventSeries();
     mockDeclineCalendarEvent = MockDeclineCalendarEvent();
@@ -101,6 +106,12 @@ void main() {
     );
     provideDummy<Either<Failure, List<CalendarEvent>>>(_emptyRight);
     provideDummy<Either<Failure, void>>(_voidRight);
+    // Default: an empty cache, so the tests written against the network-first
+    // flow still see [CalendarLoading] before their result. Registered after
+    // provideDummy, which mockito needs in place before an fpdart-returning
+    // method is stubbed.
+    when(mockGetCachedCalendarEvents(any))
+        .thenAnswer((_) async => Right(<CalendarEvent>[]));
   });
 
   group('CalendarBloc', () {
@@ -247,6 +258,121 @@ void main() {
 
       verify(mockProposeNewTime(any)).called(1);
       verify(mockGetCalendarEvents(any)).called(1);
+    });
+  });
+
+  group('CalendarBloc cache-first loading', () {
+    final cached = <CalendarEvent>[
+      CalendarEvent(
+        id: 'cached-1',
+        subject: 'From cache',
+        start: DateTime.utc(2026, 6, 10, 11, 0),
+        end: DateTime.utc(2026, 6, 10, 12, 0),
+        isAllDay: false,
+      ),
+    ];
+
+    test('shows the cache first, then the fetched week — no spinner', () async {
+      when(mockGetCachedCalendarEvents(any))
+          .thenAnswer((_) async => Right(cached));
+      when(mockGetCalendarEvents(any)).thenAnswer((_) async => Right(_tEvents));
+
+      final bloc = makeBloc();
+      final states = <CalendarState>[];
+      final sub = bloc.stream.listen(states.add);
+
+      bloc.add(CalendarWeekLoadRequested(weekStart: _tMonday));
+      await bloc.stream.firstWhere(
+          (s) => s is CalendarLoaded && !s.isSyncing || s is CalendarError);
+      await sub.cancel();
+      await bloc.close();
+
+      expect(states.whereType<CalendarLoading>(), isEmpty,
+          reason: 'a drawn week must not be replaced by a spinner');
+      expect(states[0], isA<CalendarLoaded>());
+      final first = states[0] as CalendarLoaded;
+      expect(first.events, cached);
+      expect(first.isSyncing, isTrue);
+
+      final last = states.last as CalendarLoaded;
+      expect(last.events, _tEvents);
+      expect(last.isSyncing, isFalse);
+      expect(last.syncError, isNull);
+    });
+
+    test('still spins when the cache has nothing for the week', () async {
+      when(mockGetCalendarEvents(any)).thenAnswer((_) async => Right(_tEvents));
+
+      final bloc = makeBloc();
+      final states = <CalendarState>[];
+      final sub = bloc.stream.listen(states.add);
+
+      bloc.add(CalendarWeekLoadRequested(weekStart: _tMonday));
+      await bloc.stream
+          .firstWhere((s) => s is CalendarLoaded || s is CalendarError);
+      await sub.cancel();
+      await bloc.close();
+
+      expect(states[0], isA<CalendarLoading>());
+      expect(states[1], isA<CalendarLoaded>());
+    });
+
+    test('keeps the cached week visible when the refresh fails', () async {
+      when(mockGetCachedCalendarEvents(any))
+          .thenAnswer((_) async => Right(cached));
+      when(mockGetCalendarEvents(any)).thenAnswer(
+        (_) async => const Left(NetworkFailure(message: 'No connection')),
+      );
+
+      final bloc = makeBloc();
+      bloc.add(CalendarWeekLoadRequested(weekStart: _tMonday));
+      final settled = await bloc.stream.firstWhere(
+          (s) => s is CalendarError || (s is CalendarLoaded && !s.isSyncing));
+      await bloc.close();
+
+      // Not CalendarError: the cached meetings are stale, not wrong, so they
+      // stay on screen with the reason reported beside them.
+      expect(settled, isA<CalendarLoaded>());
+      final loaded = settled as CalendarLoaded;
+      expect(loaded.events, cached);
+      expect(loaded.syncError, 'No connection');
+      expect(loaded.isSyncing, isFalse);
+    });
+
+    test('reports an error only when there is no cache to fall back on',
+        () async {
+      when(mockGetCalendarEvents(any)).thenAnswer(
+        (_) async => const Left(NetworkFailure(message: 'No connection')),
+      );
+
+      final bloc = makeBloc();
+      bloc.add(CalendarWeekLoadRequested(weekStart: _tMonday));
+      final settled = await bloc.stream
+          .firstWhere((s) => s is CalendarError || s is CalendarLoaded);
+      await bloc.close();
+
+      expect(settled, isA<CalendarError>());
+    });
+
+    test('drops a selection whose event the refresh removed', () async {
+      when(mockGetCachedCalendarEvents(any))
+          .thenAnswer((_) async => Right(cached));
+      when(mockGetCalendarEvents(any))
+          .thenAnswer((_) async => Right(<CalendarEvent>[]));
+
+      final bloc = makeBloc();
+      bloc.add(CalendarWeekLoadRequested(weekStart: _tMonday));
+      await bloc.stream.firstWhere((s) => s is CalendarLoaded && s.isSyncing);
+      bloc.add(const CalendarEventSelectionToggled(eventId: 'cached-1'));
+      await bloc.stream.firstWhere((s) =>
+          s is CalendarLoaded && s.selectedEventIds.contains('cached-1'));
+
+      bloc.add(CalendarWeekNavigated(weekStart: _tMonday));
+      final after = await bloc.stream
+          .firstWhere((s) => s is CalendarLoaded && !s.isSyncing);
+      await bloc.close();
+
+      expect((after as CalendarLoaded).selectedEventIds, isEmpty);
     });
   });
 }

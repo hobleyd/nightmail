@@ -267,6 +267,47 @@ That is why the whole Gmail message path uses one response type (the thread and
 search *indexes* are plain too, decoded locally since they are only ids), and why
 these tests stub `get<String>` with `jsonEncode`d bodies.
 
+## Calendar Cache
+
+The calendar is offline-first: it paints from `cached_calendar_events` and then
+repaints from the provider. `CalendarCacheSyncService` keeps **today through four
+weeks ahead** warm for every account and expires anything that finished more than
+a **fortnight** ago. It runs in the **main window only** (started from
+`HomePage.build`); the calendar sub-window reads the same SQLite file and writes
+back whichever week it fetches.
+
+Mutations go **cache first, then queue, then send** — the reverse of the mail
+outbox, which enqueues before touching the cache. The asymmetry is deliberate: a
+calendar row is entirely re-derived from the provider by every sync pass, so a
+crash between the local write and the enqueue heals itself; mail read-state has
+no such authority to fall back on.
+
+Three things here are load-bearing:
+
+- **A fetch is reconciled against the queue before it is cached or returned**
+  (`CalendarPendingOpReconciler`). A mutation and the refresh that follows it go
+  out together, so the response routinely predates the queued op reaching the
+  provider. Writing it back un-reconciled is exactly what makes a just-declined
+  meeting flick back to unanswered. Same role as
+  `EmailRepositoryImpl._reconcileAgainstPendingOps`.
+- **`OutboxDrainService` drains the calendar queue first.** An RSVP or a
+  remove-from-calendar is addressed to the *invitation email's* id (Graph
+  resolves `/messages/{id}/accept` itself; the others read the `UID` from that
+  message's ICS), and the reading pane deletes the invitation as soon as it is
+  answered. Draining mail first would delete the message the calendar op needs.
+- **Not every mutation is queued.** Anything that emails other people
+  (`proposeNewTimeFromEmail`, `acceptProposedTimeFromEmail`) stays network-first,
+  because a blind retry would send the same proposal twice; `createCalendarEvent`
+  stays network-first because the cache row needs the provider's id;
+  `cancelMeetingFromEmail` carries no ICS, so there is no `UID` to find the
+  cached copy by. See `PendingCalendarOperationType` for the full list.
+
+Locating the cached copy of a meeting from an invitation uses the ICS `UID`
+first, then falls back to an *unambiguous* start-time match (Microsoft
+invitations carry no calendar part). Two meetings at the same instant are left
+alone and the caller waits for the provider — moving the wrong meeting is worse
+than being slow.
+
 ## Contacts Typeahead Architecture
 
 **The dropdown never hits the network.** Every address book is pulled down at

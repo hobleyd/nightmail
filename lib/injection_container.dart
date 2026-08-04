@@ -13,9 +13,12 @@ import 'data/datasources/local/delta_token_datasource.dart';
 import 'data/datasources/local/email_local_datasource.dart';
 import 'data/datasources/local/email_local_datasource_impl.dart';
 import 'data/datasources/local/folder_local_datasource.dart';
+import 'data/datasources/local/pending_calendar_operations_datasource.dart';
 import 'data/datasources/local/pending_operations_datasource.dart';
 import 'data/datasources/local/reminder_schedule_local_datasource.dart';
 import 'data/datasources/local/task_reminder_schedule_local_datasource.dart';
+import 'data/datasources/local/calendar_local_datasource.dart';
+import 'data/datasources/local/calendar_local_datasource_impl.dart';
 import 'data/datasources/local/contact_cache_local_datasource.dart';
 import 'data/datasources/local/contact_cache_local_datasource_impl.dart';
 import 'data/datasources/local/sender_local_datasource.dart';
@@ -82,6 +85,7 @@ import 'domain/usecases/move_folder.dart';
 import 'domain/usecases/rename_folder.dart';
 import 'domain/usecases/empty_folder.dart';
 import 'domain/usecases/get_calendar_event.dart';
+import 'domain/usecases/get_cached_calendar_events.dart';
 import 'domain/usecases/get_calendar_events.dart';
 import 'domain/usecases/get_contact_details.dart';
 import 'domain/usecases/get_conversation_thread.dart';
@@ -115,12 +119,15 @@ import 'infrastructure/accounts/account_manager.dart';
 import 'infrastructure/accounts/account_storage.dart';
 import 'infrastructure/badge/badge_service.dart';
 import 'infrastructure/cache/cache_encryption_service.dart';
+import 'infrastructure/calendar/calendar_cache_sync_service.dart';
 import 'infrastructure/contacts/contact_cache_sync_service.dart';
 import 'infrastructure/network/connectivity_service.dart';
 import 'infrastructure/notifications/calendar_reminder_service.dart';
 import 'infrastructure/notifications/task_reminder_service.dart';
 import 'infrastructure/notifications/notification_service.dart';
 import 'infrastructure/sync/body_prefetch_service.dart';
+import 'infrastructure/sync/calendar_outbox_drain_service.dart';
+import 'infrastructure/sync/calendar_pending_op_reconciler.dart';
 import 'infrastructure/sync/outbox_drain_service.dart';
 import 'infrastructure/sync/removal_tombstone_store.dart';
 import 'infrastructure/sync/spam_db_sync_service.dart';
@@ -198,6 +205,8 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton<TaskReminderScheduleLocalDatasource>(
       () => sl<AppDatabase>());
   sl.registerLazySingleton<PendingOperationsDatasource>(() => sl<AppDatabase>());
+  sl.registerLazySingleton<PendingCalendarOperationsDatasource>(
+      () => sl<AppDatabase>());
   sl.registerLazySingleton(() => InlineAttachmentCache());
   sl.registerLazySingleton<EmailLocalDatasource>(
     () => EmailLocalDatasourceImpl(
@@ -212,6 +221,12 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton<ContactCacheLocalDatasource>(
     () => ContactCacheLocalDatasourceImpl(database: sl<AppDatabase>()),
   );
+  sl.registerLazySingleton<CalendarLocalDatasource>(
+    () => CalendarLocalDatasourceImpl(
+      database: sl<AppDatabase>(),
+      encryption: sl<CacheEncryptionService>(),
+    ),
+  );
   sl.registerLazySingleton<ConnectivityService>(() => ConnectivityServiceImpl());
   sl.registerLazySingleton(() => RemovalTombstoneStore());
   sl.registerLazySingleton(
@@ -221,7 +236,19 @@ Future<void> configureDependencies() async {
       accountManager: sl<AccountManager>(),
       connectivityService: sl<ConnectivityService>(),
       spamDbSyncService: sl<SpamDbSyncService>(),
+      calendarDrainService: sl<CalendarOutboxDrainService>(),
     ),
+  );
+  sl.registerLazySingleton(
+    () => CalendarOutboxDrainService(
+      pendingOperations: sl<PendingCalendarOperationsDatasource>(),
+      accountManager: sl<AccountManager>(),
+      connectivityService: sl<ConnectivityService>(),
+    ),
+  );
+  sl.registerLazySingleton(
+    () => CalendarPendingOpReconciler(
+        sl<PendingCalendarOperationsDatasource>()),
   );
   sl.registerLazySingleton(
     () => BodyPrefetchService(localDatasource: sl<EmailLocalDatasource>()),
@@ -264,7 +291,21 @@ Future<void> configureDependencies() async {
     () => ContactDetailsRepositoryImpl(accountManager: sl<AccountManager>()),
   );
   sl.registerLazySingleton<CalendarRepository>(
-    () => CalendarRepositoryImpl(accountManager: sl<AccountManager>()),
+    () => CalendarRepositoryImpl(
+      accountManager: sl<AccountManager>(),
+      localDatasource: sl<CalendarLocalDatasource>(),
+      pendingOperations: sl<PendingCalendarOperationsDatasource>(),
+      outboxDrainService: sl<CalendarOutboxDrainService>(),
+      pendingOpReconciler: sl<CalendarPendingOpReconciler>(),
+    ),
+  );
+  sl.registerLazySingleton(
+    () => CalendarCacheSyncService(
+      accountManager: sl<AccountManager>(),
+      cache: sl<CalendarLocalDatasource>(),
+      pendingOperations: sl<PendingCalendarOperationsDatasource>(),
+      outboxDrainService: sl<CalendarOutboxDrainService>(),
+    ),
   );
   sl.registerLazySingleton<TasksRepository>(
     () => TasksRepositoryImpl(accountManager: sl<AccountManager>()),
@@ -314,6 +355,8 @@ Future<void> configureDependencies() async {
       ));
   sl.registerLazySingleton(() => GetContactDetails(sl<ContactDetailsRepository>()));
   sl.registerLazySingleton(() => GetCalendarEvents(sl<CalendarRepository>()));
+  sl.registerLazySingleton(
+      () => GetCachedCalendarEvents(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => GetCalendarEvent(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => CreateCalendarEvent(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => UpdateCalendarEvent(sl<CalendarRepository>()));
@@ -367,6 +410,7 @@ Future<void> configureDependencies() async {
       accountManager: sl<AccountManager>(),
       emailRepository: sl<EmailRepository>(),
       calendarReminderService: sl<CalendarReminderService>(),
+      calendarCacheSync: sl<CalendarCacheSyncService>(),
       contactCacheSync: sl<ContactCacheSyncService>(),
       taskReminderService: sl<TaskReminderService>(),
     ),
@@ -430,6 +474,7 @@ Future<void> configureDependencies() async {
   sl.registerFactory(
     () => CalendarBloc(
           getCalendarEvents: sl<GetCalendarEvents>(),
+          getCachedCalendarEvents: sl<GetCachedCalendarEvents>(),
           cancelCalendarEvent: sl<CancelCalendarEvent>(),
           cancelCalendarEventSeries: sl<CancelCalendarEventSeries>(),
           declineCalendarEvent: sl<DeclineCalendarEvent>(),

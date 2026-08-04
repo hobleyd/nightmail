@@ -58,11 +58,19 @@ class _CalendarPageState extends State<CalendarPage> {
                         strokeWidth: 2,
                       ),
                     ),
-                  CalendarLoaded(:final events, :final weekStart) =>
+                  // A failed refresh that still had a cache to fall back on
+                  // draws the week *and* the banner — the events are stale, not
+                  // missing, so hiding them would be the worse answer.
+                  CalendarLoaded(
+                    :final events,
+                    :final weekStart,
+                    :final syncError
+                  ) =>
                     _WeekView(
                         weekStart: weekStart,
                         events: events,
-                        dayCount: _dayCount),
+                        dayCount: _dayCount,
+                        errorMessage: syncError),
                   CalendarError(:final message, :final weekStart) =>
                     _WeekView(
                         weekStart: weekStart,
@@ -155,6 +163,20 @@ class _WeekNavBarState extends State<_WeekNavBar> {
               label: 'Today',
               onTap: () => _goToToday(context),
             ),
+          // The week itself is already drawn from the cache; this is the only
+          // sign a refresh is still running, in place of the spinner that would
+          // otherwise have replaced it.
+          if (widget.state case CalendarLoaded(isSyncing: true)) ...[
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 12,
+              height: 12,
+              child: CircularProgressIndicator(
+                strokeWidth: 1.5,
+                color: c.textSecondary,
+              ),
+            ),
+          ],
           const Spacer(),
           if (widget.state case final CalendarLoaded loaded when loaded.selectedEventIds.isNotEmpty) ...[
             Tooltip(
@@ -490,6 +512,9 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
         final isLoading = state is CalendarLoading;
         final errorMessage = switch (state) {
           CalendarError(:final message) => message,
+          // A refresh that failed over a usable cache: the day is still drawn
+          // below, with the reason banner above it.
+          CalendarLoaded(:final syncError) => syncError,
           _ => null,
         };
         final allDayEvents = switch (state) {

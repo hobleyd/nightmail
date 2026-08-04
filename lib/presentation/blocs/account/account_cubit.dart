@@ -10,6 +10,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../domain/repositories/email_repository.dart';
 import '../../../infrastructure/accounts/account.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
+import '../../../infrastructure/calendar/calendar_cache_sync_service.dart';
 import '../../../infrastructure/contacts/contact_cache_sync_service.dart';
 import '../../../infrastructure/notifications/calendar_reminder_service.dart';
 import '../../../infrastructure/notifications/task_reminder_service.dart';
@@ -76,6 +77,7 @@ class AccountCubit extends Cubit<AccountState> {
     required this._accountManager,
     required this._emailRepository,
     required this._calendarReminderService,
+    required this._calendarCacheSync,
     required this._contactCacheSync,
     required TaskReminderService taskReminderService,
   })  : _taskReminderService = taskReminderService,
@@ -87,6 +89,7 @@ class AccountCubit extends Cubit<AccountState> {
   final AccountManager _accountManager;
   final EmailRepository _emailRepository;
   final CalendarReminderService _calendarReminderService;
+  final CalendarCacheSyncService _calendarCacheSync;
   final ContactCacheSyncService _contactCacheSync;
   final TaskReminderService _taskReminderService;
   late final StreamSubscription<String> _authFailureSub;
@@ -229,6 +232,10 @@ class AccountCubit extends Cubit<AccountState> {
     // staleness tick, so the recipient typeahead is useful straight away.
     unawaited(_syncContacts(() =>
         _contactCacheSync.syncAccount(account.id, force: true)));
+    // Likewise its calendar, so opening the calendar on a freshly added account
+    // shows meetings rather than an empty week.
+    unawaited(_backgroundRefresh(
+        'Calendar', () => _calendarCacheSync.syncAccount(account.id)));
   }
 
   Future<void> updateAccount(Account account) async {
@@ -253,6 +260,8 @@ class AccountCubit extends Cubit<AccountState> {
     await _emailRepository.clearCacheForAccount(accountId);
     await _calendarReminderService.clearAccount(accountId);
     await _taskReminderService.clearAccount(accountId);
+    await _backgroundRefresh(
+        'Calendar', () => _calendarCacheSync.clearAccount(accountId));
     await _syncContacts(() => _contactCacheSync.clearAccount(accountId));
     if (_accountManager.hasAccounts) {
       await _emitLoaded();
@@ -305,11 +314,20 @@ class AccountCubit extends Cubit<AccountState> {
 
   /// A contact refresh is a background nicety — never let one surface as an
   /// error on an account operation that otherwise succeeded.
-  Future<void> _syncContacts(Future<void> Function() run) async {
+  Future<void> _syncContacts(Future<void> Function() run) =>
+      _backgroundRefresh('Contacts', run);
+
+  /// Runs a cache refresh that hangs off an account change, swallowing failures:
+  /// none of them make the account operation itself unsuccessful, and the
+  /// periodic sync will pick up whatever this missed.
+  Future<void> _backgroundRefresh(
+    String label,
+    Future<void> Function() run,
+  ) async {
     try {
       await run();
     } catch (e) {
-      debugPrint('[Contacts] refresh after account change failed: $e');
+      debugPrint('[$label] refresh after account change failed: $e');
     }
   }
 

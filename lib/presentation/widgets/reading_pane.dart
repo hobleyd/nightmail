@@ -1744,7 +1744,7 @@ class _EmailHeader extends StatelessWidget {
   }
 }
 
-class _AnomalousFromRow extends StatefulWidget {
+class _AnomalousFromRow extends StatelessWidget {
   const _AnomalousFromRow({
     required this.email,
     this.highlightColor,
@@ -1755,15 +1755,8 @@ class _AnomalousFromRow extends StatefulWidget {
   final Color? highlightColor;
   final List<({String address, String name})>? anomalyMatches;
 
-  @override
-  State<_AnomalousFromRow> createState() => _AnomalousFromRowState();
-}
-
-class _AnomalousFromRowState extends State<_AnomalousFromRow> {
-  bool _hovering = false;
-
   void _showMatchesMenu(BuildContext context, Offset position) {
-    final matches = widget.anomalyMatches;
+    final matches = anomalyMatches;
     if (matches == null || matches.isEmpty) return;
     // Capture bloc before entering the overlay subtree — context.read won't
     // work inside PopupMenuItem because it's mounted outside the BlocProvider.
@@ -1826,53 +1819,16 @@ class _AnomalousFromRowState extends State<_AnomalousFromRow> {
     );
   }
 
-  void _openCompose() {
-    final from = widget.email.from;
-    ComposeWindowApp.open(
-      context,
-      mode: ComposeMode.newEmail,
-      draftEmail: Email(
-        id: '',
-        subject: '',
-        from: const EmailAddress(address: '', name: null),
-        toRecipients: [from],
-        ccRecipients: const [],
-        bodyPreview: '',
-        body: '',
-        bodyType: EmailBodyType.text,
-        isRead: true,
-        receivedDateTime: DateTime.now(),
-        importance: EmailImportance.normal,
-      ),
-    );
-  }
-
-  Future<void> _copyAddress() async {
-    await Clipboard.setData(ClipboardData(text: widget.email.from.address));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Email address copied to clipboard'),
-        duration: Duration(milliseconds: 1200),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final from = widget.email.from;
-    final matches = widget.anomalyMatches;
-    final highlight = widget.highlightColor;
+    final from = email.from;
+    final matches = anomalyMatches;
+    final highlight = highlightColor;
 
     Widget sender = Text(
       '${from.displayName} <${from.address}>',
-      style: TextStyle(
-        color: _hovering ? c.textSecondary : c.textTertiary,
-        fontSize: 12,
-        decoration: _hovering ? TextDecoration.underline : null,
-        decorationColor: c.textSecondary,
-      ),
+      style: TextStyle(color: c.textTertiary, fontSize: 12),
       overflow: TextOverflow.ellipsis,
     );
 
@@ -1887,33 +1843,14 @@ class _AnomalousFromRowState extends State<_AnomalousFromRow> {
           child: sender,
         ),
       );
-    }
 
-    sender = GestureDetector(
-      onTap: _openCompose,
-      onSecondaryTapUp: (highlight != null && matches != null && matches.isNotEmpty)
-          ? (d) => _showMatchesMenu(context, d.globalPosition)
-          : null,
-      child: sender,
-    );
-
-    // The header sits in a SelectionArea, and inside one every Text installs
-    // its own MouseRegion with SystemMouseCursors.text *below* ours — so it
-    // wins the cursor. Overriding the selection style is the only way to get
-    // the click cursor onto the sender line.
-    sender = DefaultSelectionStyle.merge(
-      mouseCursor: SystemMouseCursors.click,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hovering = true),
-        onExit: (_) => setState(() => _hovering = false),
-        child: Tooltip(
-          message: 'Write a new email to ${from.address}',
-          waitDuration: const Duration(milliseconds: 600),
+      if (matches != null && matches.isNotEmpty) {
+        sender = GestureDetector(
+          onSecondaryTapUp: (d) => _showMatchesMenu(context, d.globalPosition),
           child: sender,
-        ),
-      ),
-    );
+        );
+      }
+    }
 
     return Row(
       children: [
@@ -1930,32 +1867,47 @@ class _AnomalousFromRowState extends State<_AnomalousFromRow> {
             ),
           ),
         ),
-        Flexible(child: sender),
-        const SizedBox(width: 2),
-        _CopyAddressButton(onCopy: _copyAddress),
+        Flexible(child: _withContactCard(context, from, sender)),
       ],
     );
   }
 }
 
-class _CopyAddressButton extends StatelessWidget {
-  const _CopyAddressButton({required this.onCopy});
+/// Opens a new compose window addressed to [address].
+void _composeTo(BuildContext context, EmailAddress address) {
+  ComposeWindowApp.open(
+    context,
+    mode: ComposeMode.newEmail,
+    draftEmail: Email(
+      id: '',
+      subject: '',
+      from: const EmailAddress(address: '', name: null),
+      toRecipients: [address],
+      ccRecipients: const [],
+      bodyPreview: '',
+      body: '',
+      bodyType: EmailBodyType.text,
+      isRead: true,
+      receivedDateTime: DateTime.now(),
+      importance: EmailImportance.normal,
+    ),
+  );
+}
 
-  final VoidCallback onCopy;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return IconButton(
-      icon: Icon(Icons.copy_rounded, size: 13, color: c.textDimmed),
-      iconSize: 13,
-      tooltip: 'Copy email address',
-      padding: EdgeInsets.zero,
-      visualDensity: VisualDensity.compact,
-      constraints: const BoxConstraints(minWidth: 22, minHeight: 22),
-      onPressed: onCopy,
-    );
-  }
+/// The hover contact card, which is where the compose action now lives.
+/// Shared by the From row and the recipient rows so every address in the
+/// header behaves the same way. Only Gmail and Microsoft can fill the card
+/// with directory details, but every account type gets one so the compose
+/// button is always reachable.
+Widget _withContactCard(BuildContext context, EmailAddress a, Widget child) {
+  final account = sl<AccountManager>().activeAccount;
+  if (account == null) return child;
+  return ContactHoverTarget(
+    address: a.address,
+    accountId: account.id,
+    onCompose: () => _composeTo(context, a),
+    child: child,
+  );
 }
 
 class _RecipientRow extends StatelessWidget {
@@ -1992,7 +1944,8 @@ class _RecipientRow extends StatelessWidget {
           child: Wrap(
             children: [
               for (int i = 0; i < recipients.length; i++)
-                _buildChip(context, recipients[i], isLast: i == recipients.length - 1),
+                _buildChip(context, recipients[i],
+                    isLast: i == recipients.length - 1),
             ],
           ),
         ),
@@ -2000,30 +1953,19 @@ class _RecipientRow extends StatelessWidget {
     );
   }
 
-  Widget _buildChip(BuildContext context, EmailAddress r, {required bool isLast}) {
+  Widget _buildChip(BuildContext context, EmailAddress r,
+      {required bool isLast}) {
     final c = context.colors;
-    final display = isLast ? r.displayName : '${r.displayName}, ';
-    final text = Text(
-      display,
+    Widget label = Text(
+      isLast ? r.displayName : '${r.displayName}, ',
       style: TextStyle(color: c.textTertiary, fontSize: 12),
     );
 
-    final account = sl<AccountManager>().activeAccount;
-    if (account is GmailAccount || account is MicrosoftAccount) {
-      final wrapped = r.name?.isNotEmpty == true
-          ? Tooltip(message: r.address, child: text)
-          : text;
-      return ContactHoverTarget(
-        address: r.address,
-        accountId: account!.id,
-        child: wrapped,
-      );
+    if (r.name?.isNotEmpty == true) {
+      label = Tooltip(message: r.address, child: label);
     }
 
-    if (r.name?.isNotEmpty == true) {
-      return Tooltip(message: r.address, child: text);
-    }
-    return text;
+    return _withContactCard(context, r, label);
   }
 }
 

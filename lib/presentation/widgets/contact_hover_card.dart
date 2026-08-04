@@ -11,19 +11,28 @@ import '../../injection_container.dart';
 
 /// Wraps a recipient chip so hovering it fetches and shows a contact-details
 /// card (job title, department, phone, etc.) via [GetContactDetails], with a
-/// copy-icon button per field. Only meant to be used for Gmail/Microsoft
-/// accounts — callers should keep the plain address [Tooltip] for other
-/// account types.
+/// copy-icon button per field and a compose button at the foot.
+///
+/// Only Gmail and Microsoft accounts can serve details; on the others the
+/// card still appears, carrying the address and the compose button, so every
+/// address in a header offers the same actions.
 class ContactHoverTarget extends StatefulWidget {
   const ContactHoverTarget({
     super.key,
     required this.address,
     required this.accountId,
+    required this.onCompose,
     required this.child,
   });
 
   final String address;
   final String accountId;
+
+  /// Invoked by the card's compose button. Supplied by the caller so this
+  /// widget stays out of the compose-window plumbing, and so the callback
+  /// runs against a context that outlives the card's overlay.
+  final VoidCallback onCompose;
+
   final Widget child;
 
   @override
@@ -74,12 +83,16 @@ class _ContactHoverTargetState extends State<ContactHoverTarget> {
   void _scheduleHide() {
     _showTimer?.cancel();
     _hideTimer?.cancel();
-    _hideTimer = Timer(const Duration(milliseconds: 150), () {
-      if (mounted && _overlayController.isShowing) {
-        _overlayController.hide();
-        _releaseGuard();
-      }
-    });
+    _hideTimer = Timer(const Duration(milliseconds: 150), () => _hideNow());
+  }
+
+  void _hideNow() {
+    _showTimer?.cancel();
+    _hideTimer?.cancel();
+    if (mounted && _overlayController.isShowing) {
+      _overlayController.hide();
+      _releaseGuard();
+    }
   }
 
   @override
@@ -99,7 +112,14 @@ class _ContactHoverTargetState extends State<ContactHoverTarget> {
             child: MouseRegion(
               onEnter: (_) => _cancelHide(),
               onExit: (_) => _scheduleHide(),
-              child: _ContactDetailsCard(future: _future),
+              child: _ContactDetailsCard(
+                future: _future,
+                address: widget.address,
+                onCompose: () {
+                  _hideNow();
+                  widget.onCompose();
+                },
+              ),
             ),
           ),
         ),
@@ -114,9 +134,19 @@ class _ContactHoverTargetState extends State<ContactHoverTarget> {
 }
 
 class _ContactDetailsCard extends StatelessWidget {
-  const _ContactDetailsCard({required this.future});
+  const _ContactDetailsCard({
+    required this.future,
+    required this.address,
+    required this.onCompose,
+  });
 
   final Future<ContactDetails?>? future;
+
+  /// The address hovered, shown when the lookup returns no details of its own
+  /// (an IMAP account, or a sender who isn't in the directory).
+  final String address;
+
+  final VoidCallback onCompose;
 
   Future<void> _copy(BuildContext context, String value) async {
     await Clipboard.setData(ClipboardData(text: value));
@@ -190,7 +220,7 @@ class _ContactDetailsCard extends StatelessWidget {
     }
 
     addField('Name', details?.name);
-    addField('Email', details?.address);
+    addField('Email', details?.address ?? address);
     addField('Title', details?.jobTitle);
     addField('Department', details?.department);
     addField('Company', details?.companyName);
@@ -200,7 +230,10 @@ class _ContactDetailsCard extends StatelessWidget {
       addField(phones.length > 1 ? 'Phone ${i + 1}' : 'Phone', phones[i]);
     }
 
-    if (rows.isEmpty) return const SizedBox.shrink();
+    rows.add(const SizedBox(height: 8));
+    rows.add(Divider(height: 1, thickness: 1, color: c.separator));
+    rows.add(const SizedBox(height: 6));
+    rows.add(Center(child: _ComposeIconButton(onCompose: onCompose)));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -318,6 +351,49 @@ class _CopyIconButtonState extends State<_CopyIconButton> {
             borderRadius: BorderRadius.circular(4),
           ),
           child: Icon(Icons.copy_rounded, size: 13, color: c.textDimmed),
+        ),
+      ),
+    );
+  }
+}
+
+/// The card's one action: write a new email to this contact. Bigger than the
+/// per-field copy buttons because it acts on the whole card, and hand-rolled
+/// for the same reason [_CopyIconButton] is.
+class _ComposeIconButton extends StatefulWidget {
+  const _ComposeIconButton({required this.onCompose});
+
+  final VoidCallback onCompose;
+
+  @override
+  State<_ComposeIconButton> createState() => _ComposeIconButtonState();
+}
+
+class _ComposeIconButtonState extends State<_ComposeIconButton> {
+  bool _hovering = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovering = true),
+      onExit: (_) => setState(() => _hovering = false),
+      child: GestureDetector(
+        onTap: widget.onCompose,
+        child: Container(
+          width: 36,
+          height: 30,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: _hovering ? c.separatorStrong : null,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Icon(
+            Icons.mail_outline_rounded,
+            size: 20,
+            color: _hovering ? AppColors.accent : c.textSecondary,
+          ),
         ),
       ),
     );

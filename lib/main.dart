@@ -11,6 +11,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'core/platform/window_utils.dart';
+import 'core/platform/windows_app_data_migration.dart';
 import 'core/settings/window_bounds_service.dart';
 import 'data/database/app_database.dart';
 import 'data/services/inline_attachment_cache.dart';
@@ -194,7 +195,12 @@ void main(List<String> args) async {
     return;
   }
 
-await configureDependencies();
+  // Relocates app data left in the directory the old Windows `CompanyName`
+  // resolved to. Main window only — a sub-window cannot exist until this has
+  // run — and before configureDependencies(), because the service locator
+  // reads the support directory (secure storage lives there on Windows).
+  await migrateWindowsAppDataDirectory();
+  await configureDependencies();
   // Sweeps inline-image directories left behind by emails whose id the server
   // reassigned (a move), which per-email eviction cannot know about.
   unawaited(sl<InlineAttachmentCache>().prune());

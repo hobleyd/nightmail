@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:html_view/html_view.dart';
+import 'package:nightmail/domain/entities/contact_suggestion.dart';
+import 'package:nightmail/domain/repositories/system_contacts_repository.dart';
+import 'package:nightmail/injection_container.dart';
 import 'package:nightmail/presentation/widgets/recipient_input_field.dart';
 
 Widget _wrap({
@@ -19,6 +24,25 @@ Widget _wrap({
       ),
     ),
   );
+}
+
+/// Drives the dropdown through the no-account path, which reads the OS address
+/// book directly instead of going through `SearchContacts` and its four
+/// repositories.
+class _FakeSystemContacts implements SystemContactsRepository {
+  List<ContactSuggestion> results = const [];
+
+  @override
+  Future<List<ContactSuggestion>> search(String query) async => results;
+
+  @override
+  Future<void> warmUp() async {}
+
+  @override
+  Future<bool> isAvailable() async => true;
+
+  @override
+  Future<List<ContactSuggestion>> fetchAll() async => results;
 }
 
 void main() {
@@ -218,6 +242,105 @@ void main() {
 
       expect(find.text('alice@example.com'), findsOneWidget);
       expect(find.byType(Icon), findsNothing);
+    });
+  });
+
+  // The dropdown is an OverlayPortal, not a ModalRoute, so HtmlViewWidget's own
+  // ModalRoute check never fires for it. Without the guard the native WebView2
+  // hosting the compose body keeps painting over Flutter on Windows and the
+  // list is invisible even though the search returned rows.
+  group('RecipientInputField — HtmlViewOverlayGuard', () {
+    late _FakeSystemContacts contacts;
+
+    setUp(() {
+      contacts = _FakeSystemContacts();
+      sl.registerLazySingleton<SystemContactsRepository>(() => contacts);
+    });
+
+    tearDown(() async {
+      await sl.reset();
+      HtmlViewOverlayGuard.activeCount.value = 0;
+    });
+
+    testWidgets('is held while the dropdown is up and freed when it closes',
+        (tester) async {
+      contacts.results = const [
+        ContactSuggestion(address: 'alice@example.com', name: 'Alice'),
+      ];
+
+      await tester.pumpWidget(_wrap(recipients: const [], onChanged: (_) {}));
+      expect(HtmlViewOverlayGuard.activeCount.value, 0);
+
+      await tester.enterText(find.byType(TextField), 'ali');
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pump();
+
+      expect(find.text('Alice'), findsOneWidget);
+      expect(HtmlViewOverlayGuard.activeCount.value, 1);
+
+      // Escape dismisses the list, which must hand the body editor back.
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+
+      expect(find.text('Alice'), findsNothing);
+      expect(HtmlViewOverlayGuard.activeCount.value, 0);
+    });
+
+    testWidgets('is taken once across a run of keystrokes', (tester) async {
+      contacts.results = const [
+        ContactSuggestion(address: 'alice@example.com', name: 'Alice'),
+      ];
+
+      await tester.pumpWidget(_wrap(recipients: const [], onChanged: (_) {}));
+
+      for (final text in ['a', 'al', 'ali']) {
+        await tester.enterText(find.byType(TextField), text);
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.pump();
+      }
+
+      // Re-acquiring per keystroke would flicker the body editor.
+      expect(HtmlViewOverlayGuard.activeCount.value, 1);
+    });
+
+    testWidgets('is freed when a search comes back empty', (tester) async {
+      contacts.results = const [
+        ContactSuggestion(address: 'alice@example.com', name: 'Alice'),
+      ];
+
+      await tester.pumpWidget(_wrap(recipients: const [], onChanged: (_) {}));
+
+      await tester.enterText(find.byType(TextField), 'ali');
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pump();
+      expect(HtmlViewOverlayGuard.activeCount.value, 1);
+
+      contacts.results = const [];
+      await tester.enterText(find.byType(TextField), 'aliz');
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pump();
+
+      expect(HtmlViewOverlayGuard.activeCount.value, 0);
+    });
+
+    testWidgets('is freed when the field is disposed with the list open',
+        (tester) async {
+      contacts.results = const [
+        ContactSuggestion(address: 'alice@example.com', name: 'Alice'),
+      ];
+
+      await tester.pumpWidget(_wrap(recipients: const [], onChanged: (_) {}));
+      await tester.enterText(find.byType(TextField), 'ali');
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pump();
+      expect(HtmlViewOverlayGuard.activeCount.value, 1);
+
+      // Closing the compose window tears the field down without dismissing the
+      // dropdown first; leaking the guard would leave every WebView2 in the
+      // process permanently hidden.
+      await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+
+      expect(HtmlViewOverlayGuard.activeCount.value, 0);
     });
   });
 }

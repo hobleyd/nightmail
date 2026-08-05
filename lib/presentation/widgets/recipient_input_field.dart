@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:html_view/html_view.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/contact_suggestion.dart';
@@ -79,6 +80,12 @@ class RecipientInputFieldState extends State<RecipientInputField> {
   int _searchRequestId = 0;
   bool _suppressNextFocusLoss = false;
 
+  /// Whether this field currently holds [HtmlViewOverlayGuard]. The dropdown is
+  /// an [OverlayPortal], not a [ModalRoute], so nothing else tells the compose
+  /// body's native WebView2 to get out of the way — and on Windows that HWND
+  /// always paints over Flutter, swallowing the list.
+  bool _guardAcquired = false;
+
   @override
   void initState() {
     super.initState();
@@ -101,6 +108,7 @@ class RecipientInputFieldState extends State<RecipientInputField> {
   @override
   void dispose() {
     _searchDebounce?.cancel();
+    _releaseGuard();
     _inputController.dispose();
     _inputFocus.removeListener(_onInputFocusChanged);
     _inputFocus.dispose();
@@ -186,8 +194,25 @@ class RecipientInputFieldState extends State<RecipientInputField> {
     });
   }
 
+  /// Held for as long as the dropdown is up, not per keystroke: both calls are
+  /// idempotent, so a run of keystrokes keeps the count at one and the body
+  /// editor doesn't flicker back and forth between letters.
+  void _acquireGuard() {
+    if (_guardAcquired) return;
+    HtmlViewOverlayGuard.acquire();
+    _guardAcquired = true;
+  }
+
+  void _releaseGuard() {
+    if (!_guardAcquired) return;
+    HtmlViewOverlayGuard.release();
+    _guardAcquired = false;
+  }
+
   void _clearSuggestions() {
-    if (!mounted || _suggestions.isEmpty) return;
+    if (!mounted) return;
+    _releaseGuard();
+    if (_suggestions.isEmpty) return;
     setState(() {
       _suggestions = [];
       _suggestionIndex = -1;
@@ -201,8 +226,10 @@ class RecipientInputFieldState extends State<RecipientInputField> {
       _suggestionIndex = -1;
     });
     if (suggestions.isNotEmpty) {
+      _acquireGuard();
       if (!_overlayController.isShowing) _overlayController.show();
     } else {
+      _releaseGuard();
       if (_overlayController.isShowing) _overlayController.hide();
     }
   }

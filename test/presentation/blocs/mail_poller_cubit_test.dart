@@ -156,6 +156,10 @@ void main() {
       folderId: anyNamed('folderId'),
       emails: anyNamed('emails'),
     )).thenAnswer((_) async {});
+    when(mockEmailLocalDatasource.clearCacheForFolder(
+      accountId: anyNamed('accountId'),
+      folderId: anyNamed('folderId'),
+    )).thenAnswer((_) async {});
     when(mockEmailLocalDatasource.deleteEmailFromCache(
       accountId: anyNamed('accountId'),
       emailId: anyNamed('emailId'),
@@ -854,6 +858,87 @@ void main() {
       await pumpEventQueue();
 
       expect(cubit.state.pollGeneration, 1);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Gmail active account — the synced inbox page must *replace* the folder's
+  // cache, not merge into it.
+  //
+  // Regression: cacheEmails is an upsert, so it can only ever add. A thread
+  // filed into another folder is never returned by the inbox fetch again, so
+  // its rows sat in the cache untouched — and because the list repaints from
+  // cache as soon as pollGeneration bumps, the just-filed thread reappeared in
+  // the Inbox and stayed there until a manual folder refresh.
+  // ---------------------------------------------------------------------------
+
+  group('MailPollerCubit — Gmail active account, inbox cache replacement', () {
+    late MockEmailRemoteDatasource mockGmailDs;
+
+    setUp(() {
+      mockGmailDs = MockEmailRemoteDatasource();
+      when(mockAccountManager.accounts).thenReturn([_gmailAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(_gmailAccount);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(mockGmailDs);
+    });
+
+    // Two polls: the first sets the baseline, the second sees the count change
+    // and takes the fetch-and-cache branch.
+    void stubTwoPolls({required List<EmailModel> page}) {
+      var callCount = 0;
+      when(mockGmailDs.getMailFolders()).thenAnswer((_) async {
+        callCount++;
+        return [_inbox(unread: callCount == 1 ? 3 : 6)];
+      });
+      when(mockGmailDs.getEmails(
+              folderId: anyNamed('folderId'), top: anyNamed('top')))
+          .thenAnswer((_) async => page);
+    }
+
+    test('clears the folder cache before writing the freshly synced page',
+        () async {
+      stubTwoPolls(page: [_email('still-here')]);
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+      await cubit.updatePollInterval(9999);
+      await pumpEventQueue();
+
+      verifyInOrder([
+        mockEmailLocalDatasource.clearCacheForFolder(
+          accountId: _gmailAccount.id,
+          folderId: 'inbox-id',
+        ),
+        mockEmailLocalDatasource.cacheEmails(
+          accountId: _gmailAccount.id,
+          folderId: 'inbox-id',
+          emails: anyNamed('emails'),
+        ),
+      ]);
+    });
+
+    // An empty page is far more likely a transient than a genuinely emptied
+    // folder, and clearing on it would blank the cache for an offline repaint.
+    test('leaves the cache alone when the synced page comes back empty',
+        () async {
+      stubTwoPolls(page: const []);
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+      await cubit.updatePollInterval(9999);
+      await pumpEventQueue();
+
+      verifyNever(mockEmailLocalDatasource.clearCacheForFolder(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+      ));
     });
   });
 

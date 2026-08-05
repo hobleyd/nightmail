@@ -85,15 +85,30 @@ class Email extends Equatable {
 
   /// Whether a delete scoped to [folderId] is allowed to remove this message.
   ///
+  /// See [_isFolderScopedActionTarget] for the rule.
+  bool isDeletableFrom(String? folderId) =>
+      _isFolderScopedActionTarget(folderId);
+
+  /// Whether a move scoped to [folderId] is allowed to relocate this message.
+  ///
+  /// Same rule as [isDeletableFrom] — see [_isFolderScopedActionTarget]. Filing
+  /// a thread out of the Inbox must move what the Inbox holds and nothing else:
+  /// on Gmail a "move" is a relabel, so sweeping the whole thread would drop the
+  /// destination label onto the copies in Sent *and* strip whatever labels they
+  /// already carried; on Graph it would physically pull them out of Sent Items.
+  bool isMovableFrom(String? folderId) => _isFolderScopedActionTarget(folderId);
+
+  /// Whether a folder-scoped action on [folderId] may act on this message.
+  ///
   /// [isInFolder], plus a guard for the copy of a message that lives in Sent or
   /// Drafts: on Gmail the same message can carry SENT *and* the label being
-  /// viewed, and deleting a thread out of the Inbox must never take the record
-  /// of what was sent with it. Graph and IMAP put a message in exactly one
-  /// folder, so for them [isInFolder] has already ruled those out.
+  /// viewed, and acting on a thread in the Inbox must never take the record of
+  /// what was sent with it. Graph and IMAP put a message in exactly one folder,
+  /// so for them [isInFolder] has already ruled those out.
   ///
   /// Viewing Sent or Drafts itself, or an unscoped view (search, thread focus),
   /// lifts the guard — there the messages are what the user is looking at.
-  bool isDeletableFrom(String? folderId) {
+  bool _isFolderScopedActionTarget(String? folderId) {
     if (!isInFolder(folderId)) return false;
     if (folderId == null || _sentLabelIds.contains(folderId)) return true;
     return !folderIds.any(_sentLabelIds.contains);

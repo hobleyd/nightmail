@@ -436,10 +436,28 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     final current = state;
     if (current is! EmailListLoaded) return;
 
+    // Move only the messages the folder being viewed actually holds. Both Graph
+    // and Gmail surface a thread's other-folder messages in this list — replies
+    // already filed elsewhere, and the copies in Sent — and filing the thread
+    // out of this folder must not drag those along. Same rule the delete path
+    // applies; see [Email.isMovableFrom].
+    final folderId = current.currentFolderId;
+    final byId = {for (final e in current.emails) e.id: e};
+    final idsToMove = event.emailIds
+        .where((id) => byId[id]?.isMovableFrom(folderId) ?? true)
+        .toList();
+
+    // Nothing of this selection is in this folder: it is on screen purely as
+    // other-folder context. Leave both the server and the list alone rather
+    // than hiding messages that no move would have relocated.
+    if (idsToMove.isEmpty) return;
+
     // When a conversationId is present, remove the entire thread from view
-    // (including cross-folder display emails not in emailIds). This prevents
-    // the thread stub from reappearing after the optimistic update.
-    final movedIds = event.emailIds.toSet();
+    // (including the cross-folder rows just spared above). With its in-folder
+    // members gone the conversation no longer belongs in this folder, so the
+    // rows kept on screen purely as context should go with it rather than
+    // leave a stub that reappears after the optimistic update.
+    final movedIds = idsToMove.toSet();
     final removedEmails = event.conversationId != null
         ? current.emails
             .where((e) => e.conversationId == event.conversationId)
@@ -453,15 +471,15 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     emit(current.copyWith(emails: filteredEmails));
 
     final results = await Future.wait(
-      event.emailIds.map((id) => _moveEmail(MoveEmailParams(
+      idsToMove.map((id) => _moveEmail(MoveEmailParams(
             id: id,
             destinationFolderId: event.destinationFolderId,
           ))),
     );
 
     final failedIds = {
-      for (var i = 0; i < event.emailIds.length; i++)
-        if (results[i].isLeft()) event.emailIds[i],
+      for (var i = 0; i < idsToMove.length; i++)
+        if (results[i].isLeft()) idsToMove[i],
     };
     if (failedIds.isNotEmpty) {
       final after = state;

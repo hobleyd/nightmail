@@ -252,6 +252,105 @@ void main() {
 
       verify(mockMoveEmail(any)).called(3);
     });
+
+    // Returns the ids _onEmailsMoved actually sent to the use case.
+    List<String> movedIds() => verify(mockMoveEmail(captureAny))
+        .captured
+        .cast<MoveEmailParams>()
+        .map((p) => p.id)
+        .toList();
+
+    // The same rule the delete path applies. On Gmail a move is a relabel, so
+    // filing an Inbox thread by sweeping every id in it drops the destination
+    // label onto the copies in Sent — and strips whatever labels they already
+    // carried, because moveEmail removes every Label_* it finds on the message.
+    test('leaves the copies in Sent alone when filing from another folder',
+        () async {
+      await _loadEmails([
+        _email('id1',
+            conversationId: 'conv-a',
+            parentFolderId: 'INBOX',
+            folderIds: ['INBOX']),
+        _email('sent1', conversationId: 'conv-a', folderIds: ['SENT']),
+        _email('id2',
+            conversationId: 'conv-a',
+            parentFolderId: 'INBOX',
+            folderIds: ['INBOX']),
+      ], folderId: 'INBOX');
+
+      when(mockMoveEmail(any)).thenAnswer((_) async => const Right(unit));
+
+      bloc.add(const EmailListEmailsMoved(
+        emailIds: ['id1', 'sent1', 'id2'],
+        destinationFolderId: 'Label_18',
+        conversationId: 'conv-a',
+      ));
+
+      await bloc.stream.firstWhere((s) => s is EmailListLoaded);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final moved = movedIds();
+      expect(moved, containsAll(['id1', 'id2']));
+      expect(moved, isNot(contains('sent1')));
+    });
+
+    // The thread's in-folder members are gone, so the conversation no longer
+    // belongs in this folder — the Sent rows kept on screen purely as context
+    // go with it rather than leaving a stub behind.
+    test('still clears the whole thread from view when sparing Sent copies',
+        () async {
+      await _loadEmails([
+        _email('id1',
+            conversationId: 'conv-a',
+            parentFolderId: 'INBOX',
+            folderIds: ['INBOX']),
+        _email('sent1', conversationId: 'conv-a', folderIds: ['SENT']),
+        _email('other',
+            conversationId: 'conv-b',
+            parentFolderId: 'INBOX',
+            folderIds: ['INBOX']),
+      ], folderId: 'INBOX');
+
+      when(mockMoveEmail(any)).thenAnswer((_) async => const Right(unit));
+
+      bloc.add(const EmailListEmailsMoved(
+        emailIds: ['id1', 'sent1'],
+        destinationFolderId: 'Label_18',
+        conversationId: 'conv-a',
+      ));
+
+      final state = await bloc.stream
+          .firstWhere((s) => s is EmailListLoaded) as EmailListLoaded;
+      final ids = state.emails.map((e) => e.id).toSet();
+
+      expect(ids, isNot(contains('id1')));
+      expect(ids, isNot(contains('sent1')));
+      expect(ids, contains('other'));
+    });
+
+    // A thread on screen purely as other-folder context: no move would have
+    // relocated anything, so neither the server nor the list should be touched.
+    test('does nothing when no message in the thread is in this folder',
+        () async {
+      await _loadEmails([
+        _email('sent1', conversationId: 'conv-a', folderIds: ['SENT']),
+        _email('sent2', conversationId: 'conv-a', folderIds: ['SENT']),
+      ], folderId: 'INBOX');
+
+      when(mockMoveEmail(any)).thenAnswer((_) async => const Right(unit));
+
+      bloc.add(const EmailListEmailsMoved(
+        emailIds: ['sent1', 'sent2'],
+        destinationFolderId: 'Label_18',
+        conversationId: 'conv-a',
+      ));
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      verifyNever(mockMoveEmail(any));
+      final state = bloc.state as EmailListLoaded;
+      expect(state.emails.map((e) => e.id), containsAll(['sent1', 'sent2']));
+    });
   });
 
   // ---------------------------------------------------------------------------

@@ -377,6 +377,24 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                     await ds.getEmails(folderId: inboxes.first.id, top: 25);
                 final reconciled = await _reconcileAgainstPendingOps(
                     account.id, freshEmails);
+                // Replace the folder's rows rather than merge into them, the
+                // same way EmailListBloc's refresh does. A plain cacheEmails is
+                // an upsert, so it can only ever *add* — a thread that has left
+                // this folder is never returned again and its rows would sit in
+                // the cache untouched, and since the list repaints from cache
+                // right after this poll, a just-filed thread reappears in the
+                // Inbox and stays there until a manual folder refresh.
+                //
+                // Skipped when the reconciled page is empty: an empty result is
+                // far more likely a transient (or every message tombstoned by an
+                // in-flight mutation) than a genuinely emptied folder, and
+                // clearing on it would blank the cache for an offline repaint.
+                if (reconciled.isNotEmpty) {
+                  await _emailLocalDatasource.clearCacheForFolder(
+                    accountId: account.id,
+                    folderId: inboxes.first.id,
+                  );
+                }
                 await _emailLocalDatasource.cacheEmails(
                   accountId: account.id,
                   folderId: inboxes.first.id,

@@ -180,17 +180,26 @@ class OutboxDrainService {
         }
         await _pendingOperations.removeOperation(op.id);
       } catch (e) {
-        // A delete/move/junk that 404s means the target message no longer
-        // exists server-side, so the mutation's intent — that message gone
-        // from its old location — is already satisfied; retrying can never
-        // succeed. Drop it. Likewise drop any op that has exhausted its retry
-        // budget, so one permanently-failing mutation can't re-fail on every
-        // poll indefinitely. Everything else is recorded and left queued to
-        // retry next pass.
+        // A delete/junk that 404s means the target message no longer exists
+        // server-side, so the mutation's intent — that message gone from its
+        // old location — is already satisfied; retrying can never succeed.
+        // Drop it. Likewise drop any op that has exhausted its retry budget,
+        // so one permanently-failing mutation can't re-fail on every poll
+        // indefinitely. Everything else is recorded and left queued to retry
+        // next pass.
+        //
+        // A **move** is deliberately not in that set. Its intent is that the
+        // message *arrives* somewhere, which a 404 says nothing about: the id
+        // is either stale (the message is still sitting in the source folder
+        // under an id the server has since replaced) or genuinely gone. In the
+        // stale case the move simply has not happened, and recording it as done
+        // discards it silently — the repository already dropped the cache row
+        // and returned success, so the message vanishes locally and comes back
+        // on the next folder sync with nothing queued to explain it. Leaving it
+        // queued preserves last_error and lets the retry budget be what ends it.
         final targetGone = e is ServerException &&
             e.statusCode == 404 &&
             (op.opType == PendingOperationType.delete ||
-                op.opType == PendingOperationType.move ||
                 op.opType == PendingOperationType.junk);
         final exhausted = op.retryCount + 1 >= _maxOpRetries;
         if (targetGone || exhausted) {

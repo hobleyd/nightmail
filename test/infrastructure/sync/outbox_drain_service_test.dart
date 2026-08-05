@@ -303,10 +303,10 @@ void main() {
   });
 
   group('giving up on doomed ops', () {
-    // Regression: a delete/move/junk whose target 404s ("not found in the
-    // store") can never succeed — the message is already gone. It used to be
-    // requeued and re-fail on every single poll forever (live-observed at
-    // thousands of retries). It must be dropped instead.
+    // Regression: a delete/junk whose target 404s ("not found in the store")
+    // can never succeed — the message is already gone. It used to be requeued
+    // and re-fail on every single poll forever (live-observed at thousands of
+    // retries). It must be dropped instead.
     test('drops a delete whose target 404s instead of retrying forever',
         () async {
       await db.enqueue(
@@ -323,7 +323,14 @@ void main() {
       expect(await db.getPendingOperations('acct-1'), isEmpty);
     });
 
-    test('drops a move whose target 404s', () async {
+    // A move is the exception: unlike a delete, its intent is that the message
+    // *arrives* somewhere, which a 404 does not report on. The id may simply be
+    // stale, leaving the message sitting in the source folder — and dropping the
+    // op there loses the move silently, because the repository already deleted
+    // the cache row and told the caller it succeeded. It stays queued so the
+    // error is recorded and the retry budget is what finally ends it.
+    test('keeps a move whose target 404s queued rather than dropping it',
+        () async {
       await db.enqueue(
         accountId: 'acct-1',
         emailId: 'gone-id',
@@ -335,7 +342,10 @@ void main() {
 
       await service.drainForAccount('acct-1');
 
-      expect(await db.getPendingOperations('acct-1'), isEmpty);
+      final remaining = await db.getPendingOperations('acct-1');
+      expect(remaining, hasLength(1));
+      expect(remaining.first.retryCount, 1);
+      expect(remaining.first.lastError, contains('not found'));
     });
 
     // A non-404 failure (e.g. transient server/throttle) is still retryable,

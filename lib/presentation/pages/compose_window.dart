@@ -220,13 +220,28 @@ class _ComposeWindowPage extends StatefulWidget {
   State<_ComposeWindowPage> createState() => _ComposeWindowPageState();
 }
 
-class _ComposeWindowPageState extends State<_ComposeWindowPage> {
+class _ComposeWindowPageState extends State<_ComposeWindowPage>
+    with WindowListener {
   EmailBodyType _defaultComposeFormat = AppSettings.defaultComposeFormat;
   String _signatureHtml = '';
+
+  // Lets [onWindowClose] reach the same save-or-discard prompt the Cancel
+  // button runs.
+  final _formKey = GlobalKey<ComposeFormState>();
+
+  // Set once the prompt has been answered (or there was nothing to save), so
+  // the close that _close() then asks for isn't mistaken for a fresh one.
+  bool _closing = false;
 
   @override
   void initState() {
     super.initState();
+    // The title-bar close button destroys the window without running dispose,
+    // so intercept it and route it through the same prompt as Cancel. Both
+    // window_manager and desktop_multi_window resolve the *calling engine's*
+    // window, so this only holds the compose window, not the app.
+    windowManager.addListener(this);
+    windowManager.setPreventClose(true).catchError((_) {});
     sl<AppSettings>().loadDefaultComposeFormat().then((format) {
       if (mounted) setState(() => _defaultComposeFormat = format);
     });
@@ -245,7 +260,41 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage> {
     }
   }
 
-  void _close() => windowManager.close();
+  @override
+  void dispose() {
+    windowManager.removeListener(this);
+    super.dispose();
+  }
+
+  /// The title-bar close button. `setPreventClose` has already turned the OS
+  /// close into an event, so ask the form what to do with the draft first and
+  /// only then let the window go.
+  ///
+  /// If the form isn't mounted there is nothing to save, so close immediately —
+  /// leaving the window un-closable would be worse than losing an empty draft.
+  @override
+  void onWindowClose() {
+    if (_closing) return;
+    final form = _formKey.currentState;
+    if (form == null) {
+      _close();
+      return;
+    }
+    form.requestClose();
+  }
+
+  /// `windowManager.destroy()` is not an option here: on macOS it is
+  /// `NSApp.terminate` and on Windows `PostQuitMessage`, either of which would
+  /// take the whole app down with the compose window. Drop the guard instead
+  /// and let the ordinary close proceed.
+  Future<void> _close() async {
+    if (_closing) return;
+    _closing = true;
+    try {
+      await windowManager.setPreventClose(false);
+    } catch (_) {}
+    await windowManager.close();
+  }
 
   Email? _originalEmail() {
     final raw = widget.arguments['originalEmail'];
@@ -352,6 +401,7 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage> {
             }
           },
           child: ComposeForm(
+            key: _formKey,
             mode: widget.mode,
             originalEmail: _originalEmail(),
             draftEmail: _draftEmail(),

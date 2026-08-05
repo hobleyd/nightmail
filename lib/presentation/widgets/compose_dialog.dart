@@ -182,10 +182,10 @@ class ComposeForm extends StatefulWidget {
   final String signatureHtml;
 
   @override
-  State<ComposeForm> createState() => _ComposeFormState();
+  State<ComposeForm> createState() => ComposeFormState();
 }
 
-class _ComposeFormState extends State<ComposeForm> {
+class ComposeFormState extends State<ComposeForm> {
   late List<String> _toRecipients;
   late List<String> _ccRecipients;
   final _toFieldKey = GlobalKey<RecipientInputFieldState>();
@@ -639,7 +639,18 @@ class _ComposeFormState extends State<ComposeForm> {
         _localAttachments.where((a) => !a.isInline).isNotEmpty;
   }
 
+  /// Runs the same save-or-discard flow as the Cancel button.
+  ///
+  /// The compose sub-window calls this from `onWindowClose` so the title-bar
+  /// close button can't drop a draft on the floor. Re-entrant calls (clicking
+  /// the native close button again while the prompt is up) are ignored rather
+  /// than stacking a second dialog.
+  Future<void> requestClose() => _requestClose(context);
+
+  bool _closePromptOpen = false;
+
   Future<void> _requestClose(BuildContext context) async {
+    if (_closePromptOpen) return;
     if (!_hasContent) {
       widget.onClose();
       return;
@@ -648,11 +659,13 @@ class _ComposeFormState extends State<ComposeForm> {
     final editorState = _htmlEditorKey.currentState;
     if (editorState != null) await editorState.hide();
 
+    _closePromptOpen = true;
     final action = await showDialog<_CloseAction>(
       context: context,
       barrierDismissible: true,
       builder: (_) => const _CloseDraftDialog(),
     );
+    _closePromptOpen = false;
 
     if (!mounted) return;
     switch (action) {
@@ -673,6 +686,10 @@ class _ComposeFormState extends State<ComposeForm> {
           );
         }
       case _CloseAction.delete:
+        // Cancel before deleting: a pending autosave would otherwise re-upload
+        // the draft the user just discarded — either when the timer fires or
+        // via the flush in dispose(), which reads `_draftTimer.isActive`.
+        _draftTimer?.cancel();
         await _deleteDraft();
         unawaited(_kDraftsRefreshChannel
             .invokeMethod<void>('notifyDraftChanged')

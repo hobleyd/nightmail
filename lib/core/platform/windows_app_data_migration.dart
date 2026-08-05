@@ -68,7 +68,11 @@ void mergeAppDataInto(Directory from, Directory to) {
   to.createSync(recursive: true);
   for (final entity in from.listSync(followLinks: false)) {
     final name = entity.path.split(RegExp(r'[/\\]')).last;
-    final target = '${to.path}\\$name';
+    // Separator from the host, not a literal `\`: on Linux (where the tests
+    // run) a backslash is an ordinary filename character, so a hardcoded one
+    // makes a single file called `NightMail\<name>` beside the destination
+    // directory instead of an entry inside it.
+    final target = '${to.path}${Platform.pathSeparator}$name';
 
     if (entity is Directory) {
       mergeAppDataInto(entity, Directory(target));

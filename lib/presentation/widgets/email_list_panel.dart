@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../core/platform/touch_metrics.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/business_days.dart';
 import '../../domain/entities/email.dart';
@@ -596,7 +597,8 @@ class _ThreadFocusBanner extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
           child: Row(
             children: [
-              Icon(Icons.forum_outlined, size: 14, color: AppColors.accent),
+              Icon(Icons.forum_outlined,
+                  size: touchIcon(14), color: AppColors.accent),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -611,10 +613,13 @@ class _ThreadFocusBanner extends StatelessWidget {
                 ),
               ),
               IconButton(
-                icon: Icon(Icons.close, size: 14, color: c.textMuted),
+                icon: Icon(Icons.close, size: touchIcon(14), color: c.textMuted),
                 tooltip: 'Back to folder',
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                constraints: BoxConstraints(
+                  minWidth: touchTarget(24),
+                  minHeight: touchTarget(24),
+                ),
                 onPressed: () => context
                     .read<EmailListBloc>()
                     .add(const EmailListThreadFocusCleared()),
@@ -741,7 +746,7 @@ class _ListHeader extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(12, 13, 8, 13),
         child: Row(
           children: [
-            Icon(Icons.search, size: 16, color: c.textMuted),
+            Icon(Icons.search, size: touchIcon(16), color: c.textMuted),
             const SizedBox(width: 6),
             Expanded(
               child: TextField(
@@ -788,77 +793,116 @@ class _ListHeader extends StatelessWidget {
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+      // Tighter side gutters on touch: the 48 px targets already carry their own
+      // breathing room, and with six of them plus a refresh spinner this row has
+      // barely 320 px to work with.
+      padding: EdgeInsets.all(isTouchPlatform ? 4 : 8),
       child: Row(
         children: [
           if (onBack != null)
             IconButton(
-              icon: Icon(Icons.arrow_back_ios_new_rounded, size: 18, color: c.textMuted),
+              icon: Icon(Icons.arrow_back_ios_new_rounded,
+                  size: touchIcon(18), color: c.textMuted),
               tooltip: 'Back',
               padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              constraints: BoxConstraints(
+                minWidth: touchTarget(32),
+                minHeight: touchTarget(32),
+              ),
               onPressed: onBack,
             ),
-          Padding(
-            padding: EdgeInsets.only(left: onBack != null ? 0 : 8),
-            child: Text(
-              folderName,
-              style: TextStyle(
-                color: c.textPrimary,
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-                letterSpacing: -0.3,
-              ),
+          // The folder name yields before the buttons do: with six 48 px touch
+          // targets in this row a long name is what would otherwise push the
+          // trailing actions off a narrow phone.
+          Expanded(
+            child: Row(
+              children: [
+                Flexible(
+                  child: Padding(
+                    padding: EdgeInsets.only(left: onBack != null ? 0 : 8),
+                    child: Text(
+                      folderName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: c.textPrimary,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.3,
+                      ),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: Icon(Icons.refresh_rounded,
+                      size: touchIcon(20), color: c.textMuted),
+                  tooltip: 'Refresh',
+                  padding: EdgeInsets.zero,
+                  constraints: BoxConstraints(
+                    minWidth: touchTarget(32),
+                    minHeight: touchTarget(32),
+                  ),
+                  onPressed: onRefresh,
+                ),
+                if (isLoadingFresh) ...[
+                  const SizedBox(width: 4),
+                  SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.5,
+                      color: c.textMuted,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
           IconButton(
-            icon: Icon(Icons.refresh_rounded, size: 20, color: c.textMuted),
-            tooltip: 'Refresh',
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            onPressed: onRefresh,
-          ),
-          if (isLoadingFresh) ...[
-            const SizedBox(width: 4),
-            SizedBox(
-              width: 14,
-              height: 14,
-              child: CircularProgressIndicator(
-                strokeWidth: 1.5,
-                color: c.textMuted,
-              ),
-            ),
-          ],
-          const Spacer(),
-          IconButton(
-            icon: Icon(Icons.edit_square, size: 20, color: c.textMuted),
+            icon: Icon(Icons.edit_square,
+                size: touchIcon(20), color: c.textMuted),
             tooltip: 'Compose',
             padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            constraints: BoxConstraints(
+              minWidth: touchTarget(32),
+              minHeight: touchTarget(32),
+            ),
             onPressed: onCompose,
           ),
           if (onMarkUnread != null)
             IconButton(
-              icon: Icon(Icons.mark_email_unread_outlined, size: 20, color: c.textMuted),
+              icon: Icon(Icons.mark_email_unread_outlined,
+                  size: touchIcon(20), color: c.textMuted),
               tooltip: 'Mark as unread',
               padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              constraints: BoxConstraints(
+                minWidth: touchTarget(32),
+                minHeight: touchTarget(32),
+              ),
               onPressed: onMarkUnread,
             ),
           if (onReportJunk != null)
             IconButton(
-              icon: Icon(Icons.report_outlined, size: 20, color: c.textMuted),
+              icon: Icon(Icons.report_outlined,
+                  size: touchIcon(20), color: c.textMuted),
               tooltip: 'Report junk',
               padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              constraints: BoxConstraints(
+                minWidth: touchTarget(32),
+                minHeight: touchTarget(32),
+              ),
               onPressed: onReportJunk,
             ),
           if (onDelete != null)
             IconButton(
-              icon: Icon(Icons.delete_outline_rounded, size: 20, color: c.textMuted),
+              icon: Icon(Icons.delete_outline_rounded,
+                  size: touchIcon(20), color: c.textMuted),
               tooltip: 'Delete selected',
               padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              constraints: BoxConstraints(
+                minWidth: touchTarget(32),
+                minHeight: touchTarget(32),
+              ),
               onPressed: onDelete,
             ),
         ],
@@ -1157,7 +1201,10 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
               margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              // Left padding is the gutter the expand chevron floats in, so it
+              // grows with the chevron's touch target. EmailListItem matches it
+              // to keep single emails aligned with conversation rows.
+              padding: EdgeInsets.fromLTRB(touchIcon(12), 8, 12, 8),
               decoration: BoxDecoration(
                 color: highlighted
                     ? c.selectionEmailBg
@@ -1180,7 +1227,7 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
                               widget.isMultiSelected
                                   ? Icons.check_circle_rounded
                                   : Icons.radio_button_unchecked_rounded,
-                              size: 18,
+                              size: touchIcon(18),
                               color:
                                   widget.isMultiSelected ? AppColors.accent : c.textMuted,
                             ),
@@ -1266,7 +1313,7 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
                                 padding: const EdgeInsets.only(left: 4),
                                 child: Icon(
                                   Icons.attach_file_rounded,
-                                  size: 12,
+                                  size: touchIcon(12),
                                   color: c.textMuted,
                                 ),
                               ),
@@ -1320,13 +1367,13 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
               behavior: HitTestBehavior.opaque,
               onTap: widget.onToggleExpand,
               child: SizedBox(
-                width: 12,
+                width: touchIcon(12),
                 child: Center(
                   child: Icon(
                     widget.isExpanded
                         ? Icons.expand_more_rounded
                         : Icons.chevron_right_rounded,
-                    size: 12,
+                    size: touchIcon(12),
                     color: c.textMuted,
                   ),
                 ),
@@ -1507,7 +1554,9 @@ class _SwipeableEmailItem extends StatefulWidget {
 
 class _SwipeableEmailItemState extends State<_SwipeableEmailItem>
     with SingleTickerProviderStateMixin {
-  static const double _actionWidth = 160.0;
+  /// Four equal action cells. Wide enough on a touch screen to seat a doubled
+  /// glyph in each without cramping it.
+  double get _actionWidth => isTouchPlatform ? 4 * kTouchTargetSize : 160.0;
 
   double _offset = 0.0;
   late AnimationController _snapController;
@@ -1589,7 +1638,8 @@ class _SwipeableEmailItemState extends State<_SwipeableEmailItem>
             child: Container(
               color: Colors.blue.shade600,
               alignment: Alignment.center,
-              child: const Icon(Icons.mark_email_unread_outlined, color: Colors.white, size: 22),
+              child: Icon(Icons.mark_email_unread_outlined,
+                  color: Colors.white, size: touchIcon(22)),
             ),
           ),
         ),
@@ -1602,7 +1652,8 @@ class _SwipeableEmailItemState extends State<_SwipeableEmailItem>
             child: Container(
               color: Colors.orange.shade700,
               alignment: Alignment.center,
-              child: const Icon(Icons.report_outlined, color: Colors.white, size: 22),
+              child: Icon(Icons.report_outlined,
+                  color: Colors.white, size: touchIcon(22)),
             ),
           ),
         ),
@@ -1615,7 +1666,8 @@ class _SwipeableEmailItemState extends State<_SwipeableEmailItem>
             child: Container(
               color: AppColors.accent,
               alignment: Alignment.center,
-              child: const Icon(Icons.flag_rounded, color: Colors.white, size: 22),
+              child: Icon(Icons.flag_rounded,
+                  color: Colors.white, size: touchIcon(22)),
             ),
           ),
         ),
@@ -1628,7 +1680,8 @@ class _SwipeableEmailItemState extends State<_SwipeableEmailItem>
             child: Container(
               color: Colors.red.shade600,
               alignment: Alignment.center,
-              child: const Icon(Icons.delete_outline_rounded, color: Colors.white, size: 22),
+              child: Icon(Icons.delete_outline_rounded,
+                  color: Colors.white, size: touchIcon(22)),
             ),
           ),
         ),

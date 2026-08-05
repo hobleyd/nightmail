@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/foundation.dart';
 
+import '../../core/platform/touch_metrics.dart';
 import '../../core/platform/window_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -329,8 +330,8 @@ class _PanelHeader extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       child: Row(
         children: [
-          const Icon(Icons.mail_outline_rounded,
-              size: 18, color: AppColors.accent),
+          Icon(Icons.mail_outline_rounded,
+              size: touchIcon(18), color: AppColors.accent),
           const SizedBox(width: 8),
           Expanded(
             child: BlocBuilder<AccountCubit, AccountState>(
@@ -355,10 +356,13 @@ class _PanelHeader extends StatelessWidget {
             ),
           ),
           IconButton(
-            icon: Icon(Icons.search, size: 18, color: c.textMuted),
+            icon: Icon(Icons.search, size: touchIcon(18), color: c.textMuted),
             tooltip: 'Search',
             padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+            constraints: BoxConstraints(
+              minWidth: touchTarget(24),
+              minHeight: touchTarget(24),
+            ),
             onPressed: () {
               final bloc = context.read<EmailListBloc>();
               if (bloc.state is EmailListLoaded) {
@@ -572,7 +576,7 @@ class _FolderItemState extends State<_FolderItem>
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(_iconFor(widget.folder.displayName),
-                size: 14, color: AppColors.accent),
+                size: touchIcon(14), color: AppColors.accent),
             const SizedBox(width: 6),
             Text(
               widget.folder.displayName,
@@ -604,7 +608,7 @@ class _FolderItemState extends State<_FolderItem>
                 widget.isExpanded
                     ? Icons.expand_more_rounded
                     : Icons.chevron_right_rounded,
-                size: 16,
+                size: touchIcon(16),
                 color: (widget.isSelected || isDragHovering)
                     ? AppColors.accent
                     : c.textMuted,
@@ -612,10 +616,10 @@ class _FolderItemState extends State<_FolderItem>
             ),
           )
         else
-          const SizedBox(width: 20),
+          SizedBox(width: touchIcon(20)),
         Icon(
           _iconFor(widget.folder.displayName),
-          size: 16,
+          size: touchIcon(16),
           color: (widget.isSelected || isDragHovering)
               ? AppColors.accent
               : c.textMuted,
@@ -902,7 +906,7 @@ class _SignInPromptState extends State<_SignInPrompt> {
                       color: Colors.white,
                     ),
                   )
-                : const Icon(Icons.login_rounded, size: 16),
+                : Icon(Icons.login_rounded, size: touchIcon(16)),
             label: const Text('Sign in'),
           ),
         ],
@@ -1007,7 +1011,7 @@ class _SettingsFooter extends StatelessWidget {
     final hasReauthIssue = pollerState.accountsNeedingReauth.isNotEmpty;
 
     return SizedBox(
-      height: 28,
+      height: touchRowHeight(28),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8),
         child: Row(
@@ -1017,18 +1021,21 @@ class _SettingsFooter extends StatelessWidget {
                 ? 'Accounts (re-authorization needed)'
                 : 'Accounts',
             padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            constraints: BoxConstraints(
+              minWidth: touchTarget(28),
+              minHeight: touchTarget(28),
+            ),
             icon: Stack(
               clipBehavior: Clip.none,
               children: [
                 Icon(Icons.manage_accounts_outlined,
-                    size: 16, color: c.textMuted),
+                    size: touchIcon(16), color: c.textMuted),
                 if (hasReauthIssue)
-                  const Positioned(
+                  Positioned(
                     top: -3,
                     right: -3,
                     child: Icon(Icons.error_rounded,
-                        size: 12, color: Color(0xFFE57373)),
+                        size: touchIcon(12), color: const Color(0xFFE57373)),
                   )
                 else if (hasNewMail)
                   Positioned(
@@ -1131,13 +1138,15 @@ class _SettingsFooter extends StatelessWidget {
                             ),
                           ),
                           if (needsReauthForAccount)
-                            const Padding(
-                              padding: EdgeInsets.only(left: 8),
+                            Padding(
+                              padding: const EdgeInsets.only(left: 8),
                               child: Icon(Icons.error_rounded,
-                                  size: 14, color: Color(0xFFE57373)),
+                                  size: touchIcon(14),
+                                  color: const Color(0xFFE57373)),
                             ),
                           if (isActive)
-                            Icon(Icons.check, size: 14, color: AppColors.accent)
+                            Icon(Icons.check,
+                                size: touchIcon(14), color: AppColors.accent)
                           else if (hasNewMailForAccount)
                             Container(
                               width: 7,
@@ -1172,10 +1181,14 @@ class _SettingsFooter extends StatelessWidget {
                       ),
                     ),
             child: IconButton(
-              icon: Icon(Icons.calendar_month_outlined, size: 16, color: c.textMuted),
+              icon: Icon(Icons.calendar_month_outlined,
+                  size: touchIcon(16), color: c.textMuted),
               tooltip: 'Calendar',
               padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+              constraints: BoxConstraints(
+                minWidth: touchTarget(28),
+                minHeight: touchTarget(28),
+              ),
               onPressed: onCalendarTapped,
             ),
           ),
@@ -1188,33 +1201,49 @@ class _SettingsFooter extends StatelessWidget {
                       ),
                     ),
             child: IconButton(
-              icon: Icon(Icons.checklist_rounded, size: 16, color: c.textMuted),
+              icon: Icon(Icons.checklist_rounded,
+                  size: touchIcon(16), color: c.textMuted),
               tooltip: 'Tasks',
               padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+              constraints: BoxConstraints(
+                minWidth: touchTarget(28),
+                minHeight: touchTarget(28),
+              ),
               onPressed: onTasksTapped,
             ),
           ),
           IconButton(
-            icon: Icon(Icons.auto_awesome_rounded, size: 16, color: c.textMuted),
+            icon: Icon(Icons.auto_awesome_rounded,
+                size: touchIcon(16), color: c.textMuted),
             tooltip: 'AI',
             padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            constraints: BoxConstraints(
+              minWidth: touchTarget(28),
+              minHeight: touchTarget(28),
+            ),
             onPressed: onAiTapped,
           ),
           const Spacer(),
           IconButton(
-            icon: Icon(Icons.settings_outlined, size: 16, color: c.textMuted),
+            icon: Icon(Icons.settings_outlined,
+                size: touchIcon(16), color: c.textMuted),
             tooltip: 'Settings',
             padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            constraints: BoxConstraints(
+              minWidth: touchTarget(28),
+              minHeight: touchTarget(28),
+            ),
             onPressed: () => SettingsDialog.open(context),
           ),
           IconButton(
-            icon: Icon(Icons.logout_rounded, size: 16, color: c.textMuted),
+            icon: Icon(Icons.logout_rounded,
+                size: touchIcon(16), color: c.textMuted),
             tooltip: 'Sign out',
             padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            constraints: BoxConstraints(
+              minWidth: touchTarget(28),
+              minHeight: touchTarget(28),
+            ),
             onPressed: () =>
                 context.read<AccountCubit>().signOutActiveAccount(),
           ),
@@ -1293,8 +1322,9 @@ class _FolderCreatingRowState extends State<_FolderCreatingRow> {
       ),
       child: Row(
         children: [
-          const SizedBox(width: 20),
-          const Icon(Icons.folder_outlined, size: 16, color: AppColors.accent),
+          SizedBox(width: touchIcon(20)),
+          Icon(Icons.folder_outlined,
+              size: touchIcon(16), color: AppColors.accent),
           const SizedBox(width: 10),
           Expanded(
             child: TextField(
@@ -1390,8 +1420,9 @@ class _FolderRenamingRowState extends State<_FolderRenamingRow> {
       ),
       child: Row(
         children: [
-          const SizedBox(width: 20),
-          const Icon(Icons.folder_outlined, size: 16, color: AppColors.accent),
+          SizedBox(width: touchIcon(20)),
+          Icon(Icons.folder_outlined,
+              size: touchIcon(16), color: AppColors.accent),
           const SizedBox(width: 10),
           Expanded(
             child: TextField(

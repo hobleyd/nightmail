@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_gen_ai_chat_ui/flutter_gen_ai_chat_ui.dart';
 
+import '../../core/platform/touch_metrics.dart';
 import '../../core/theme/app_colors.dart';
 import '../blocs/ai/ai_folder_chat_state.dart';
 import '../blocs/ai/ai_folder_cubit.dart';
@@ -13,9 +14,15 @@ class AiDayPanel extends StatefulWidget {
     required this.onClose,
     this.folderIdProvider,
     this.contextProvider,
+    this.useBackNavigation = false,
   });
 
   final VoidCallback onClose;
+
+  /// True when the panel was pushed as a route rather than docked as a side
+  /// pane — the mobile shell. It then dismisses through a leading back arrow,
+  /// like the reading pane, instead of a trailing close button.
+  final bool useBackNavigation;
 
   /// Called just before each turn to resolve the current folder's id, which the
   /// agent's tools default to. Returns null when no folder is selected.
@@ -215,7 +222,11 @@ class _AiDayPanelState extends State<AiDayPanel> {
       color: c.surfacePanel,
       child: Column(
         children: [
-          _Header(onClose: widget.onClose, onNewChat: _newChat),
+          _Header(
+            onClose: widget.onClose,
+            onNewChat: _newChat,
+            useBackNavigation: widget.useBackNavigation,
+          ),
           Divider(height: 1, color: c.separatorStrong),
           Expanded(
             child: BlocListener<AiFolderCubit, AiFolderChatState>(
@@ -323,25 +334,49 @@ class _AiDayPanelState extends State<AiDayPanel> {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.onClose, required this.onNewChat});
+  const _Header({
+    required this.onClose,
+    required this.onNewChat,
+    this.useBackNavigation = false,
+  });
 
   final VoidCallback onClose;
   final VoidCallback onNewChat;
+  final bool useBackNavigation;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     return SizedBox(
-      height: 48,
+      height: touchRowHeight(48),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 8, 0),
+        padding: useBackNavigation
+            ? const EdgeInsets.fromLTRB(4, 0, 8, 0)
+            : const EdgeInsets.fromLTRB(16, 0, 8, 0),
         child: Row(
           children: [
-            Icon(Icons.auto_awesome_rounded, size: 16, color: AppColors.accent),
+            if (useBackNavigation) ...[
+              IconButton(
+                icon: Icon(Icons.arrow_back_ios_new_rounded,
+                    size: touchIcon(16), color: c.textMuted),
+                tooltip: 'Back',
+                padding: EdgeInsets.zero,
+                constraints: BoxConstraints(
+                  minWidth: touchTarget(28),
+                  minHeight: touchTarget(28),
+                ),
+                onPressed: onClose,
+              ),
+              const SizedBox(width: 4),
+            ],
+            Icon(Icons.auto_awesome_rounded,
+                size: touchIcon(16), color: AppColors.accent),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
                 'AI Assistant',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: c.textPrimary,
                   fontSize: 14,
@@ -351,19 +386,27 @@ class _Header extends StatelessWidget {
               ),
             ),
             IconButton(
-              icon: Icon(Icons.add_comment_outlined, size: 16, color: c.textMuted),
+              icon: Icon(Icons.add_comment_outlined,
+                  size: touchIcon(16), color: c.textMuted),
               tooltip: 'New Chat',
               padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+              constraints: BoxConstraints(
+                minWidth: touchTarget(28),
+                minHeight: touchTarget(28),
+              ),
               onPressed: onNewChat,
             ),
-            IconButton(
-              icon: Icon(Icons.close, size: 16, color: c.textMuted),
-              tooltip: 'Close',
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-              onPressed: onClose,
-            ),
+            if (!useBackNavigation)
+              IconButton(
+                icon: Icon(Icons.close, size: touchIcon(16), color: c.textMuted),
+                tooltip: 'Close',
+                padding: EdgeInsets.zero,
+                constraints: BoxConstraints(
+                  minWidth: touchTarget(28),
+                  minHeight: touchTarget(28),
+                ),
+                onPressed: onClose,
+              ),
           ],
         ),
       ),

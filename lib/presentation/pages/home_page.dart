@@ -220,6 +220,7 @@ class _HomeViewState extends State<_HomeView> {
                 value: calendarBloc,
                 child: CalendarDayPanel(
                   onClose: () => Navigator.of(ctx).pop(),
+                  useBackNavigation: true,
                 ),
               ),
             ),
@@ -287,7 +288,10 @@ class _HomeViewState extends State<_HomeView> {
                 BlocProvider.value(value: emailDetailBloc),
                 BlocProvider.value(value: accountCubit),
               ],
-              child: TasksDayPanel(onClose: () => Navigator.of(ctx).pop()),
+              child: TasksDayPanel(
+                onClose: () => Navigator.of(ctx).pop(),
+                useBackNavigation: true,
+              ),
             ),
           ),
         ),
@@ -587,6 +591,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
                                 value: calendarBloc,
                                 child: CalendarDayPanel(
                                   onClose: () => Navigator.of(ctx).pop(),
+                                  useBackNavigation: true,
                                 ),
                               ),
                             ),
@@ -611,6 +616,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
                                 ],
                                 child: TasksDayPanel(
                                   onClose: () => Navigator.of(ctx).pop(),
+                                  useBackNavigation: true,
                                 ),
                               ),
                             ),
@@ -630,6 +636,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
                                 value: aiFolderCubit,
                                 child: AiDayPanel(
                                   onClose: () => Navigator.of(ctx).pop(),
+                                  useBackNavigation: true,
                                   folderIdProvider: () {
                                     final s = emailListBloc.state;
                                     return s is EmailListLoaded

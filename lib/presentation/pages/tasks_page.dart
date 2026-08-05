@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/platform/touch_metrics.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/task_email_link.dart';
 import '../../domain/entities/todo_task.dart';
@@ -19,9 +20,18 @@ import '../blocs/tasks/tasks_state.dart';
 import '../widgets/flag_icon_button.dart';
 
 class TasksDayPanel extends StatelessWidget {
-  const TasksDayPanel({super.key, required this.onClose});
+  const TasksDayPanel({
+    super.key,
+    required this.onClose,
+    this.useBackNavigation = false,
+  });
 
   final VoidCallback onClose;
+
+  /// True when the panel was pushed as a route rather than docked as a side
+  /// pane — the mobile shell. It then dismisses through a leading back arrow,
+  /// like the reading pane, instead of a trailing close button.
+  final bool useBackNavigation;
 
   @override
   Widget build(BuildContext context) {
@@ -46,7 +56,7 @@ class TasksDayPanel extends StatelessWidget {
         color: c.surfacePanel,
         child: Column(
           children: [
-            _Header(onClose: onClose),
+            _Header(onClose: onClose, useBackNavigation: useBackNavigation),
             Divider(height: 1, color: c.separatorStrong),
             Expanded(
               child: BlocBuilder<TasksBloc, TasksState>(
@@ -85,20 +95,38 @@ class TasksDayPanel extends StatelessWidget {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.onClose});
+  const _Header({required this.onClose, this.useBackNavigation = false});
 
   final VoidCallback onClose;
+  final bool useBackNavigation;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     return SizedBox(
-      height: 48,
+      height: touchRowHeight(48),
       child: Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 8, 0),
+      padding: useBackNavigation
+          ? const EdgeInsets.fromLTRB(4, 0, 8, 0)
+          : const EdgeInsets.fromLTRB(16, 0, 8, 0),
       child: Row(
         children: [
-          Icon(Icons.checklist_rounded, size: 16, color: AppColors.accent),
+          if (useBackNavigation) ...[
+            IconButton(
+              icon: Icon(Icons.arrow_back_ios_new_rounded,
+                  size: touchIcon(16), color: c.textMuted),
+              tooltip: 'Back',
+              padding: EdgeInsets.zero,
+              constraints: BoxConstraints(
+                minWidth: touchTarget(28),
+                minHeight: touchTarget(28),
+              ),
+              onPressed: onClose,
+            ),
+            const SizedBox(width: 4),
+          ],
+          Icon(Icons.checklist_rounded,
+              size: touchIcon(16), color: AppColors.accent),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -111,13 +139,17 @@ class _Header extends StatelessWidget {
               ),
             ),
           ),
-          IconButton(
-            icon: Icon(Icons.close, size: 16, color: c.textMuted),
-            tooltip: 'Close',
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-            onPressed: onClose,
-          ),
+          if (!useBackNavigation)
+            IconButton(
+              icon: Icon(Icons.close, size: touchIcon(16), color: c.textMuted),
+              tooltip: 'Close',
+              padding: EdgeInsets.zero,
+              constraints: BoxConstraints(
+                minWidth: touchTarget(28),
+                minHeight: touchTarget(28),
+              ),
+              onPressed: onClose,
+            ),
         ],
       ),
       ),
@@ -315,17 +347,22 @@ class _TaskTileState extends State<_TaskTile> {
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: Checkbox(
-                    value: isCompleted,
-                    onChanged: (_) => _toggleStatus(),
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    visualDensity: VisualDensity.compact,
-                    activeColor: AppColors.accent,
-                    side: BorderSide(color: c.textMuted, width: 1.5),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(4),
+                  width: touchIcon(20),
+                  height: touchIcon(20),
+                  // Checkbox draws at a fixed intrinsic size, so the box alone
+                  // would only centre it — scale it to fill the larger target.
+                  child: Transform.scale(
+                    scale: isTouchPlatform ? 2.0 : 1.0,
+                    child: Checkbox(
+                      value: isCompleted,
+                      onChanged: (_) => _toggleStatus(),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                      activeColor: AppColors.accent,
+                      side: BorderSide(color: c.textMuted, width: 1.5),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(4),
+                      ),
                     ),
                   ),
                 ),
@@ -384,7 +421,7 @@ class _TaskTileState extends State<_TaskTile> {
                   const SizedBox(width: 2),
                 ],
                 FlagIconButton(
-                  size: 14,
+                  size: touchIcon(14),
                   onTap: () {},
                   onSchedule: (date) => context.read<TasksBloc>().add(
                         TaskDueDateUpdateRequested(
@@ -396,13 +433,14 @@ class _TaskTileState extends State<_TaskTile> {
                 ),
                 if (task.importance == TodoTaskImportance.high) ...[
                   const SizedBox(width: 2),
-                  Icon(Icons.flag_rounded, size: 14, color: Colors.redAccent),
+                  Icon(Icons.flag_rounded,
+                      size: touchIcon(14), color: Colors.redAccent),
                 ],
                 if (hasNotes) ...[
                   const SizedBox(width: 2),
                   Icon(
                     _expanded ? Icons.expand_less : Icons.expand_more,
-                    size: 16,
+                    size: touchIcon(16),
                     color: c.textMuted,
                   ),
                 ],
@@ -461,7 +499,7 @@ class _RowIconButton extends StatelessWidget {
         customBorder: const CircleBorder(),
         child: Padding(
           padding: const EdgeInsets.all(2),
-          child: Icon(icon, size: 14, color: AppColors.accent),
+          child: Icon(icon, size: touchIcon(14), color: AppColors.accent),
         ),
       ),
     );
@@ -484,8 +522,8 @@ class _TaskNotes extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     return Padding(
-      // Indent to line up under the title (checkbox + gap = 30px + 12 padding).
-      padding: const EdgeInsets.fromLTRB(42, 0, 12, 8),
+      // Indent to line up under the title (checkbox + 10 gap + 12 row padding).
+      padding: EdgeInsets.fromLTRB(touchIcon(20) + 22, 0, 12, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -501,7 +539,8 @@ class _TaskNotes extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.email_outlined, size: 13, color: AppColors.accent),
+                  Icon(Icons.email_outlined,
+                      size: touchIcon(13), color: AppColors.accent),
                   const SizedBox(width: 4),
                   Text(
                     'View source email',
@@ -562,7 +601,7 @@ class _AddTaskBarState extends State<_AddTaskBar> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Row(
         children: [
-          Icon(Icons.add, size: 16, color: AppColors.accent),
+          Icon(Icons.add, size: touchIcon(16), color: AppColors.accent),
           const SizedBox(width: 8),
           Expanded(
             child: KeyboardListener(

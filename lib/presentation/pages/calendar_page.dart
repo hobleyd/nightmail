@@ -6,6 +6,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/platform/touch_metrics.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/timezone_utils.dart';
 import '../../domain/entities/calendar_event.dart';
@@ -347,7 +348,7 @@ class _IconNavButton extends StatelessWidget {
         borderRadius: BorderRadius.circular(6),
         child: Padding(
           padding: const EdgeInsets.all(4),
-          child: Icon(icon, size: 20, color: c.textMuted),
+          child: Icon(icon, size: touchIcon(20), color: c.textMuted),
         ),
       ),
     );
@@ -417,8 +418,17 @@ class _NewEventButton extends StatelessWidget {
 // ─── Day panel (today only, shown inline in the main window) ─────────────────
 
 class CalendarDayPanel extends StatefulWidget {
-  const CalendarDayPanel({super.key, required this.onClose});
+  const CalendarDayPanel({
+    super.key,
+    required this.onClose,
+    this.useBackNavigation = false,
+  });
   final VoidCallback onClose;
+
+  /// True when the panel was pushed as a route rather than docked as a side
+  /// pane — the mobile shell. It then dismisses through a leading back arrow,
+  /// like the reading pane, instead of a trailing close button.
+  final bool useBackNavigation;
 
   @override
   State<CalendarDayPanel> createState() => _CalendarDayPanelState();
@@ -539,6 +549,7 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
                 onNext: () => _navigateDay(context, 1),
                 onToday: () => _goToToday(context),
                 onClose: widget.onClose,
+                useBackNavigation: widget.useBackNavigation,
               ),
               Divider(height: 1, color: c.separatorStrong),
               if (errorMessage != null) _ErrorBanner(message: errorMessage),
@@ -661,6 +672,7 @@ class _DayPanelHeader extends StatelessWidget {
     required this.onNext,
     required this.onToday,
     required this.onClose,
+    this.useBackNavigation = false,
   });
   final DateTime selectedDay;
   final bool isToday;
@@ -668,16 +680,31 @@ class _DayPanelHeader extends StatelessWidget {
   final VoidCallback onNext;
   final VoidCallback onToday;
   final VoidCallback onClose;
+  final bool useBackNavigation;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     return SizedBox(
-      height: 48,
+      height: touchRowHeight(48),
       child: Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 8, 0),
+      padding: useBackNavigation
+          ? const EdgeInsets.fromLTRB(4, 0, 8, 0)
+          : const EdgeInsets.fromLTRB(12, 0, 8, 0),
       child: Row(
         children: [
+          if (useBackNavigation)
+            IconButton(
+              icon: Icon(Icons.arrow_back_ios_new_rounded,
+                  size: touchIcon(16), color: c.textMuted),
+              tooltip: 'Back',
+              padding: EdgeInsets.zero,
+              constraints: BoxConstraints(
+                minWidth: touchTarget(28),
+                minHeight: touchTarget(28),
+              ),
+              onPressed: onClose,
+            ),
           Container(
             width: 28,
             height: 28,
@@ -698,26 +725,34 @@ class _DayPanelHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                DateFormat('EEEE').format(selectedDay),
-                style: TextStyle(
-                  color: c.textPrimary,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: -0.2,
+          // Expanded (in place of a trailing Spacer) so the date label, not the
+          // day-navigation buttons, is what gives way when the header runs out
+          // of room on a narrow phone.
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  DateFormat('EEEE').format(selectedDay),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: c.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.2,
+                  ),
                 ),
-              ),
-              Text(
-                DateFormat('MMMM y').format(selectedDay),
-                style: TextStyle(color: c.textMuted, fontSize: 10),
-              ),
-            ],
+                Text(
+                  DateFormat('MMMM y').format(selectedDay),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: c.textMuted, fontSize: 10),
+                ),
+              ],
+            ),
           ),
-          const Spacer(),
           _IconNavButton(
             icon: Icons.chevron_left_rounded,
             tooltip: 'Previous day',
@@ -769,7 +804,8 @@ class _DayPanelHeader extends StatelessWidget {
                       borderRadius: BorderRadius.circular(6),
                       child: Padding(
                         padding: const EdgeInsets.all(4),
-                        child: Icon(Icons.delete_outline_rounded, size: 16, color: Colors.red.shade400),
+                        child: Icon(Icons.delete_outline_rounded,
+                            size: touchIcon(16), color: Colors.red.shade400),
                       ),
                     ),
                   ),
@@ -778,14 +814,16 @@ class _DayPanelHeader extends StatelessWidget {
               );
             },
           ),
-          InkWell(
-            onTap: onClose,
-            borderRadius: BorderRadius.circular(6),
-            child: Padding(
-              padding: const EdgeInsets.all(4),
-              child: Icon(Icons.close_rounded, size: 16, color: c.textMuted),
+          if (!useBackNavigation)
+            InkWell(
+              onTap: onClose,
+              borderRadius: BorderRadius.circular(6),
+              child: Padding(
+                padding: const EdgeInsets.all(4),
+                child: Icon(Icons.close_rounded,
+                    size: touchIcon(16), color: c.textMuted),
+              ),
             ),
-          ),
         ],
       ),
       ),

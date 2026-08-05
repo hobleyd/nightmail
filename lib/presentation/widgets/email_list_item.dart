@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/platform/touch_metrics.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import 'email_date_formatter.dart';
@@ -79,7 +80,9 @@ class _EmailListItemState extends State<EmailListItem> {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 120),
           margin: EdgeInsets.fromLTRB(8 + widget.indent, 1, 8, 1),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          // Left padding tracks the conversation row's chevron gutter so the
+          // two stay pixel-aligned — see _ConversationHeader.
+          padding: EdgeInsets.fromLTRB(touchIcon(12), 8, 12, 8),
           decoration: BoxDecoration(
             color: highlighted
                 ? c.selectionEmailBg
@@ -104,7 +107,7 @@ class _EmailListItemState extends State<EmailListItem> {
                           widget.isMultiSelected
                               ? Icons.check_circle_rounded
                               : Icons.radio_button_unchecked_rounded,
-                          size: 18,
+                          size: touchIcon(18),
                           color: widget.isMultiSelected ? AppColors.accent : c.textMuted,
                         ),
                       )
@@ -179,7 +182,7 @@ class _EmailListItemState extends State<EmailListItem> {
                             padding: const EdgeInsets.only(left: 4),
                             child: Icon(
                               Icons.attach_file_rounded,
-                              size: 12,
+                              size: touchIcon(12),
                               color: c.textMuted,
                             ),
                           ),

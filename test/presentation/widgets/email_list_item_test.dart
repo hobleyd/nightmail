@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/domain/entities/email.dart';
@@ -247,6 +248,33 @@ void main() {
 
       expect(find.byType(FlagIconButton), findsNothing);
       expect(find.byIcon(Icons.delete_outline_rounded), findsNothing);
+    });
+  });
+
+  group('EmailListItem — touch metrics', () {
+    double iconSize(WidgetTester tester, IconData icon) =>
+        tester.widget<Icon>(find.byIcon(icon)).size!;
+
+    testWidgets('draws the row icons at double size on a touch platform',
+        (tester) async {
+      // Widget tests report android by default, so pin both sides explicitly.
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      await pumpItem(tester, _email(hasAttachments: true), showCheckbox: true);
+      final paperclip = iconSize(tester, Icons.attach_file_rounded);
+      final checkbox = iconSize(tester, Icons.radio_button_unchecked_rounded);
+
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      await pumpItem(tester, _email(hasAttachments: true),
+          showCheckbox: true, isDesktop: false);
+      final touchPaperclip = iconSize(tester, Icons.attach_file_rounded);
+      final touchCheckbox =
+          iconSize(tester, Icons.radio_button_unchecked_rounded);
+
+      // Reset inside the body: the binding checks for leaked foundation debug
+      // variables before tearDown runs.
+      debugDefaultTargetPlatformOverride = null;
+      expect(touchPaperclip, paperclip * 2);
+      expect(touchCheckbox, checkbox * 2);
     });
   });
 }

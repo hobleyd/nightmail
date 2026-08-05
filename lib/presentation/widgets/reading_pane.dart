@@ -19,6 +19,7 @@ import 'html_body_view.dart';
 import 'contact_hover_card.dart';
 import 'date_time_fields.dart';
 
+import '../../core/platform/touch_metrics.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/meeting_conflicts.dart';
@@ -126,7 +127,8 @@ class _ErrorState extends StatelessWidget {
       children: [
         if (onBack != null)
           IconButton(
-            icon: Icon(Icons.arrow_back_ios_new_rounded, size: 16, color: c.textMuted),
+            icon: Icon(Icons.arrow_back_ios_new_rounded,
+                size: touchIcon(16), color: c.textMuted),
             tooltip: 'Back',
             onPressed: onBack,
           ),
@@ -498,27 +500,39 @@ class _ReadingPaneToolbar extends StatelessWidget {
             color: c.textMuted,
             onPressed: () => _openComposeWindow(context, ComposeMode.forward),
           ),
-          const Spacer(),
-          _ToolbarButton(
-            icon: Icons.content_copy_outlined,
-            tooltip: 'Debug: copy body to clipboard',
-            color: c.textMuted,
-            onPressed: () => _copyToClipboard(context),
-          ),
-          if (onPrint != null)
-            _ToolbarButton(
-              icon: Icons.print_outlined,
-              tooltip: 'Print',
-              color: c.textMuted,
-              iconSize: 20,
-              onPressed: onPrint!,
+          // Takes the place of a Spacer: `reverse` pins the group to the right
+          // edge exactly as one would, but scrolls instead of overflowing when
+          // seven touch-sized targets do not fit a narrow phone.
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              reverse: true,
+              child: Row(
+                children: [
+                  _ToolbarButton(
+                    icon: Icons.content_copy_outlined,
+                    tooltip: 'Debug: copy body to clipboard',
+                    color: c.textMuted,
+                    onPressed: () => _copyToClipboard(context),
+                  ),
+                  if (onPrint != null)
+                    _ToolbarButton(
+                      icon: Icons.print_outlined,
+                      tooltip: 'Print',
+                      color: c.textMuted,
+                      iconSize: 20,
+                      onPressed: onPrint!,
+                    ),
+                  _ToolbarButton(
+                    icon: Icons.delete_outline_rounded,
+                    tooltip: 'Delete',
+                    color: c.textMuted,
+                    iconSize: 20,
+                    onPressed: () => _confirmAndDelete(context),
+                  ),
+                ],
+              ),
             ),
-          _ToolbarButton(
-            icon: Icons.delete_outline_rounded,
-            tooltip: 'Delete',
-            color: c.textMuted,
-            iconSize: 20,
-            onPressed: () => _confirmAndDelete(context),
           ),
         ],
       ),
@@ -1653,10 +1667,13 @@ class _ToolbarButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return IconButton(
-      icon: Icon(icon, size: iconSize, color: color),
+      icon: Icon(icon, size: touchIcon(iconSize), color: color),
       tooltip: tooltip,
       padding: EdgeInsets.zero,
-      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+      constraints: BoxConstraints(
+        minWidth: touchTarget(32),
+        minHeight: touchTarget(32),
+      ),
       onPressed: onPressed,
     );
   }
@@ -2630,7 +2647,8 @@ class _PreviewHeader extends StatelessWidget {
           const SizedBox(width: 8),
           GestureDetector(
             onTap: onClose,
-            child: Icon(Icons.close_rounded, size: 16, color: c.textMuted),
+            child: Icon(Icons.close_rounded,
+                size: touchIcon(16), color: c.textMuted),
           ),
         ],
       ),

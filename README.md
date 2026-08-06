@@ -23,6 +23,9 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - Spell-checking with inline suggestions in the compose editor (macOS, Windows, Linux)
 - Compose editor: font-family dropdown, custom font-colour palette, and pasting/resizing images inline
 - Select and copy message text (subject, sender, recipients, date, body) with standard platform shortcuts (Cmd/Ctrl+C)
+- URLs typed as plain text in a message become clickable links, with a hover preview and a copy-link button
+- The sender's address is clickable to compose a reply, with a copy button on hover
+- A thread's collapsed row shows the newest message from someone else, not just the newest overall
 
 ### Folders
 - Full folder hierarchy with unread counts
@@ -44,6 +47,10 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - Guest RSVP status (accepted / declined / tentative) shown on each guest chip
 - Timezone-aware scheduling
 - Google Meet toggle for Gmail meetings
+- Book meeting rooms directly from the event's Location field — booking invites the room as a resource, and only the invitation reserves it
+- Hover a meeting tile to preview its full details without opening it
+- Calendar opens to the working week by default, with hour gutters on both edges
+- Meetings load instantly from a local cache while the calendar syncs in the background
 - Supported backends: Microsoft Graph, Google Calendar, Nextcloud CalDAV, macOS/iOS EventKit
 
 **Meeting colours** are driven by your relationship to each meeting (your
@@ -102,6 +109,9 @@ Settings → Accounts.
   - Previously known senders (local database)
   - System contacts (macOS Contacts app)
   - Organisational directory (Microsoft People API / Google Directory)
+
+### Mobile
+- Touch-sized icons and back-button navigation between panels on Android and iOS
 
 ### Accounts
 - Multiple accounts from different providers simultaneously

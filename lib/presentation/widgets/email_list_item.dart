@@ -19,6 +19,7 @@ class EmailListItem extends StatefulWidget {
     this.showCheckbox = false,
     this.isSpam = false,
     this.isDesktop = true,
+    this.isDuplicate = false,
     this.onLongPress,
     this.onDoubleTap,
     this.flagFocusNode,
@@ -31,6 +32,11 @@ class EmailListItem extends StatefulWidget {
   final bool showCheckbox;
   final bool isSpam;
   final bool isDesktop;
+
+  /// True when this row repeats a message already shown by the thread header
+  /// above it. Drawn in italics to say so, and without the hover actions — they
+  /// belong to the row this one echoes.
+  final bool isDuplicate;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
   final VoidCallback? onDoubleTap;
@@ -70,6 +76,7 @@ class _EmailListItemState extends State<EmailListItem> {
   Widget build(BuildContext context) {
     final c = context.colors;
     final highlighted = widget.isSelected || widget.isMultiSelected;
+    final fontStyle = widget.isDuplicate ? FontStyle.italic : null;
     return MouseRegion(
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
@@ -141,6 +148,7 @@ class _EmailListItemState extends State<EmailListItem> {
                             style: TextStyle(
                               color: c.textPrimary,
                               fontSize: 13,
+                              fontStyle: fontStyle,
                               fontWeight: widget.email.isRead
                                   ? FontWeight.w400
                                   : FontWeight.w600,
@@ -154,6 +162,7 @@ class _EmailListItemState extends State<EmailListItem> {
                           style: TextStyle(
                             color: c.textTertiary,
                             fontSize: 11,
+                            fontStyle: fontStyle,
                             fontWeight: widget.email.isRead
                                 ? FontWeight.w400
                                 : FontWeight.w500,
@@ -170,6 +179,7 @@ class _EmailListItemState extends State<EmailListItem> {
                             style: TextStyle(
                               color: c.textSecondary,
                               fontSize: 12,
+                              fontStyle: fontStyle,
                               fontWeight: widget.email.isRead
                                   ? FontWeight.w400
                                   : FontWeight.w500,
@@ -194,6 +204,7 @@ class _EmailListItemState extends State<EmailListItem> {
                       style: TextStyle(
                         color: c.textTertiary,
                         fontSize: 11,
+                        fontStyle: fontStyle,
                         height: 1.3,
                       ),
                       maxLines: 1,
@@ -202,7 +213,7 @@ class _EmailListItemState extends State<EmailListItem> {
                   ],
                 ),
               ),
-              if (widget.isDesktop) ...[
+              if (widget.isDesktop && !widget.isDuplicate) ...[
                 const SizedBox(width: 4),
                 Column(
                   mainAxisAlignment: MainAxisAlignment.center,

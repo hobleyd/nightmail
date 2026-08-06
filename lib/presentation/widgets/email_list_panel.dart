@@ -13,6 +13,8 @@ import '../../domain/entities/email_address.dart';
 import '../../domain/entities/task_email_link.dart';
 import 'email_drag_data.dart';
 import '../../domain/entities/email_folder.dart';
+import '../../infrastructure/accounts/account_manager.dart';
+import '../../injection_container.dart';
 import '../pages/compose_window.dart';
 import '../../domain/usecases/send_email.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
@@ -157,9 +159,11 @@ class _EmailListPanelState extends State<EmailListPanel> {
       _selectEmailAtIndex(items, 0);
       return;
     }
-    final idx = _indexOfEmail(items, currentId);
-    if (idx == -1 || idx >= items.length - 1) return;
-    _selectEmailAtIndex(items, idx + 1);
+    final idx = _rowIndexOfEmail(items, currentId);
+    if (idx == -1) return;
+    final next = _stepIndex(items, idx, 1);
+    if (next == -1) return;
+    _selectEmailAtIndex(items, next);
   }
 
   void _selectPrevEmail() {
@@ -167,17 +171,12 @@ class _EmailListPanelState extends State<EmailListPanel> {
     if (items.isEmpty) return;
     final currentId = widget.selectedEmailId;
     if (currentId == null) return;
-    final idx = _indexOfEmail(items, currentId);
+    final idx = _rowIndexOfEmail(items, currentId);
     if (idx <= 0) return;
-    _selectEmailAtIndex(items, idx - 1);
+    final prev = _stepIndex(items, idx, -1);
+    if (prev == -1) return;
+    _selectEmailAtIndex(items, prev);
   }
-
-  int _indexOfEmail(List<_ListItem> items, String emailId) =>
-      items.indexWhere((item) => switch (item) {
-            _SingleEmailItem(:final email) => email.id == emailId,
-            _ConversationHeaderItem(:final latestEmail) =>
-              latestEmail.id == emailId,
-          });
 
   void _selectEmailAtIndex(List<_ListItem> items, int index) {
     if (_selectedEmailIds.isNotEmpty || _isMultiSelectMode) {
@@ -187,11 +186,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
       });
     }
     _lastSelectedIndex = index;
-    final email = switch (items[index]) {
-      _SingleEmailItem(:final email) => email,
-      _ConversationHeaderItem(:final latestEmail) => latestEmail,
-    };
-    widget.onEmailSelected(email);
+    widget.onEmailSelected(_emailOfItem(items[index]));
   }
 
   @override
@@ -247,10 +242,19 @@ class _EmailListPanelState extends State<EmailListPanel> {
     return keys.any((k) => k == LogicalKeyboardKey.controlLeft || k == LogicalKeyboardKey.controlRight);
   }
 
+  /// The account's own address, for telling the user's messages in a thread
+  /// from everyone else's. The list only ever shows one account at a time, so
+  /// the active one is the right answer for every row on screen.
+  String? get _selfAddress => sl<AccountManager>().activeAccount?.emailAddress;
+
   List<_ListItem> _currentFlatItems() {
     final state = context.read<EmailListBloc>().state;
     if (state is EmailListLoaded) {
-      return _buildListItems(state.emails, state.expandedConversationIds);
+      return _buildListItems(
+        state.emails,
+        state.expandedConversationIds,
+        selfAddress: _selfAddress,
+      );
     }
     return [];
   }
@@ -281,7 +285,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
       for (var i = lo; i <= hi; i++) {
         final item = items[i];
         if (item is _SingleEmailItem) ids.add(item.email.id);
-        if (item is _ConversationHeaderItem) ids.add(item.latestEmail.id);
+        if (item is _ConversationHeaderItem) ids.add(item.anchorEmail.id);
       }
       setState(() {
         _selectedEmailIds = ids;
@@ -366,6 +370,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
       emails: state is EmailListLoaded ? state.emails : const [],
       selectedIds: ids,
       currentFolderId: state is EmailListLoaded ? state.currentFolderId : null,
+      selfAddress: _selfAddress,
     );
   }
 
@@ -535,6 +540,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
                               )
                             : _EmailListView(
                                 emails: emails,
+                                selfAddress: _selfAddress,
                                 isLoadingMore: isLoadingMore,
                                 selectedEmailId: widget.selectedEmailId,
                                 selectedEmailIds: _selectedEmailIds,
@@ -639,22 +645,33 @@ class _ThreadFocusBanner extends StatelessWidget {
 sealed class _ListItem {}
 
 class _SingleEmailItem extends _ListItem {
-  _SingleEmailItem({required this.email, this.isChild = false});
+  _SingleEmailItem({
+    required this.email,
+    this.isChild = false,
+    this.isDuplicate = false,
+  });
   final Email email;
   final bool isChild;
+
+  /// True for the child row that repeats the thread header's own message, so it
+  /// can be drawn as the echo it is. It carries the header's id, so it is the
+  /// same message for every purpose but drawing — see [_isNavigable].
+  final bool isDuplicate;
 }
 
 class _ConversationHeaderItem extends _ListItem {
   _ConversationHeaderItem({
     required this.conversationId,
-    required this.latestEmail,
+    required this.anchorEmail,
     required this.allEmailIds,
     required this.totalCount,
     required this.isExpanded,
     required this.hasUnread,
   });
   final String conversationId;
-  final Email latestEmail;
+
+  /// The message the row shows — see [EmailConversation.anchor].
+  final Email anchorEmail;
   final List<String> allEmailIds;
   final int totalCount;
   final bool isExpanded;
@@ -663,9 +680,11 @@ class _ConversationHeaderItem extends _ListItem {
 
 List<_ListItem> _buildListItems(
   List<Email> emails,
-  Set<String> expandedIds,
-) {
-  final conversations = groupIntoConversations(emails);
+  Set<String> expandedIds, {
+  String? selfAddress,
+}) {
+  final conversations =
+      groupIntoConversations(emails, selfAddress: selfAddress);
   final items = <_ListItem>[];
 
   for (final conv in conversations) {
@@ -675,15 +694,19 @@ List<_ListItem> _buildListItems(
       final isExpanded = expandedIds.contains(conv.id);
       items.add(_ConversationHeaderItem(
         conversationId: conv.id,
-        latestEmail: conv.latest,
+        anchorEmail: conv.anchor,
         allEmailIds: conv.emails.map((e) => e.id).toList(),
         totalCount: conv.emails.length,
         isExpanded: isExpanded,
         hasUnread: conv.hasUnread,
       ));
       if (isExpanded) {
-        for (final email in conv.emails.skip(1)) {
-          items.add(_SingleEmailItem(email: email, isChild: true));
+        for (final email in conv.expandedEmails) {
+          items.add(_SingleEmailItem(
+            email: email,
+            isChild: true,
+            isDuplicate: conv.isAnchor(email),
+          ));
         }
       }
     }
@@ -692,17 +715,42 @@ List<_ListItem> _buildListItems(
   return items;
 }
 
+/// Whether a row is one the selection may land *on*.
+///
+/// A thread's repeat of its own anchor is not: it holds the same id as the
+/// header, so stepping onto it would select what is already selected and then
+/// bounce straight back to the header on the next press.
+bool _isNavigable(_ListItem item) =>
+    item is! _SingleEmailItem || !item.isDuplicate;
+
+/// The next navigable index [step] away from [from], or -1 if the list runs out.
+int _stepIndex(List<_ListItem> items, int from, int step) {
+  for (var i = from + step; i >= 0 && i < items.length; i += step) {
+    if (_isNavigable(items[i])) return i;
+  }
+  return -1;
+}
+
+int _rowIndexOfEmail(List<_ListItem> items, String emailId) =>
+    items.indexWhere((item) => switch (item) {
+          _SingleEmailItem(:final email, :final isDuplicate) =>
+            !isDuplicate && email.id == emailId,
+          _ConversationHeaderItem(:final anchorEmail) =>
+            anchorEmail.id == emailId,
+        });
+
+Email _emailOfItem(_ListItem item) => switch (item) {
+      _SingleEmailItem(email: final e) => e,
+      _ConversationHeaderItem(anchorEmail: final e) => e,
+    };
+
 Email? _findNextEmail(List<_ListItem> items, String emailId) {
-  final index = items.indexWhere((item) => switch (item) {
-    _SingleEmailItem(:final email) => email.id == emailId,
-    _ConversationHeaderItem(:final latestEmail) => latestEmail.id == emailId,
-  });
-  if (index == -1 || items.length <= 1) return null;
-  final nextIndex = index < items.length - 1 ? index + 1 : index - 1;
-  return switch (items[nextIndex]) {
-    _SingleEmailItem(email: final e) => e,
-    _ConversationHeaderItem(latestEmail: final e) => e,
-  };
+  final index = _rowIndexOfEmail(items, emailId);
+  if (index == -1) return null;
+  var nextIndex = _stepIndex(items, index, 1);
+  if (nextIndex == -1) nextIndex = _stepIndex(items, index, -1);
+  if (nextIndex == -1) return null;
+  return _emailOfItem(items[nextIndex]);
 }
 
 // ---------------------------------------------------------------------------
@@ -957,6 +1005,7 @@ String _formatAddress(EmailAddress a) {
 class _EmailListView extends StatelessWidget {
   const _EmailListView({
     required this.emails,
+    required this.selfAddress,
     required this.isLoadingMore,
     required this.selectedEmailId,
     required this.selectedEmailIds,
@@ -975,6 +1024,9 @@ class _EmailListView extends StatelessWidget {
   });
 
   final List<Email> emails;
+
+  /// The account's own address — see [_EmailListPanelState._selfAddress].
+  final String? selfAddress;
   final bool isLoadingMore;
   final String? selectedEmailId;
   final Set<String> selectedEmailIds;
@@ -993,7 +1045,11 @@ class _EmailListView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final items = _buildListItems(emails, expandedConversationIds);
+    final items = _buildListItems(
+      emails,
+      expandedConversationIds,
+      selfAddress: selfAddress,
+    );
     return ListView.builder(
       controller: scrollController,
       padding: const EdgeInsets.symmetric(vertical: 6),
@@ -1026,10 +1082,14 @@ class _EmailListView extends StatelessWidget {
           }
           void onFlag(DateTime? date) => _createTaskFromEmail(context, email, dueDate: date);
           final isSelected = email.id == selectedEmailId;
+          final isDuplicate = item.isDuplicate;
           final child = EmailListItem(
-            key: ValueKey('item_${email.id}'),
+            // The echo of the header's own message shares that message's id, so
+            // it needs a key of its own or the two rows collide.
+            key: ValueKey(isDuplicate ? 'echo_${email.id}' : 'item_${email.id}'),
             email: email,
             isDesktop: isDesktop,
+            isDuplicate: isDuplicate,
             isSelected: isSelected,
             isMultiSelected: selectedEmailIds.contains(email.id),
             showCheckbox: showCheckboxes,
@@ -1040,9 +1100,16 @@ class _EmailListView extends StatelessWidget {
             onLongPress: () => onEmailLongPressed?.call(email, i),
             onDelete: onDelete,
             onFlag: onFlag,
-            flagFocusNode: isSelected ? flagFocusNode : null,
-            deleteFocusNode: isSelected ? deleteFocusNode : null,
+            // Withheld from the echo along with the buttons they drive: one
+            // FocusNode cannot be attached to two widgets at once, and the
+            // header row is already holding these.
+            flagFocusNode: isSelected && !isDuplicate ? flagFocusNode : null,
+            deleteFocusNode: isSelected && !isDuplicate ? deleteFocusNode : null,
           );
+          // The echo is a marker of where the header's message sits in the
+          // order, not a second copy to act on — dragging or swiping it would
+          // be acting on the row above.
+          if (isDuplicate) return child;
           if (isDesktop) {
             return _DraggableEmailItem(
               key: ValueKey('drag_${email.id}'),
@@ -1068,8 +1135,8 @@ class _EmailListView extends StatelessWidget {
         // _ConversationHeaderItem
         final conv = item as _ConversationHeaderItem;
         void onConvDelete() {
-          if (conv.latestEmail.id == selectedEmailId) {
-            final nextEmail = _findNextEmail(items, conv.latestEmail.id);
+          if (conv.anchorEmail.id == selectedEmailId) {
+            final nextEmail = _findNextEmail(items, conv.anchorEmail.id);
             if (nextEmail != null) {
               onAutoSelectEmail?.call(nextEmail);
             } else {
@@ -1083,20 +1150,20 @@ class _EmailListView extends StatelessWidget {
               );
         }
         void onConvFlag(DateTime? date) =>
-            _createTaskFromEmail(context, conv.latestEmail, dueDate: date);
-        final isConvSelected = conv.latestEmail.id == selectedEmailId;
+            _createTaskFromEmail(context, conv.anchorEmail, dueDate: date);
+        final isConvSelected = conv.anchorEmail.id == selectedEmailId;
         final convChild = _ConversationHeader(
           key: ValueKey('conv_${conv.conversationId}'),
-          latestEmail: conv.latestEmail,
+          anchorEmail: conv.anchorEmail,
           totalCount: conv.totalCount,
           isExpanded: conv.isExpanded,
           hasUnread: conv.hasUnread,
           isDesktop: isDesktop,
           isSelected: isConvSelected,
-          isMultiSelected: selectedEmailIds.contains(conv.latestEmail.id),
+          isMultiSelected: selectedEmailIds.contains(conv.anchorEmail.id),
           showCheckbox: showCheckboxes,
-          onTap: () => onEmailTapped(conv.latestEmail, i),
-          onLongPress: () => onEmailLongPressed?.call(conv.latestEmail, i),
+          onTap: () => onEmailTapped(conv.anchorEmail, i),
+          onLongPress: () => onEmailLongPressed?.call(conv.anchorEmail, i),
           onToggleExpand: () => onToggleConversation(conv.conversationId),
           onDelete: onConvDelete,
           onFlag: onConvFlag,
@@ -1109,7 +1176,7 @@ class _EmailListView extends StatelessWidget {
             emailIds: conv.allEmailIds,
             conversationId: conv.conversationId,
             selectedEmailIds: selectedEmailIds,
-            dragLabel: '${conv.totalCount} emails – ${conv.latestEmail.subject}',
+            dragLabel: '${conv.totalCount} emails – ${conv.anchorEmail.subject}',
             child: convChild,
           );
         }
@@ -1119,7 +1186,7 @@ class _EmailListView extends StatelessWidget {
           onFlag: onConvFlag,
           onMarkUnread: () => context.read<EmailListBloc>().add(
                 EmailListMarkReadRequested(
-                    emailId: conv.latestEmail.id, isRead: false),
+                    emailId: conv.anchorEmail.id, isRead: false),
               ),
           onMarkJunk: () => context.read<EmailListBloc>().add(
                 EmailListJunkReported(emailIds: conv.allEmailIds),
@@ -1134,7 +1201,7 @@ class _EmailListView extends StatelessWidget {
 class _ConversationHeader extends StatefulWidget {
   const _ConversationHeader({
     super.key,
-    required this.latestEmail,
+    required this.anchorEmail,
     required this.totalCount,
     required this.isExpanded,
     required this.hasUnread,
@@ -1151,7 +1218,9 @@ class _ConversationHeader extends StatefulWidget {
     this.deleteFocusNode,
   });
 
-  final Email latestEmail;
+  /// The message the row stands for — the thread's newest that the user did not
+  /// send, not necessarily its newest. See [EmailConversation.anchor].
+  final Email anchorEmail;
   final int totalCount;
   final bool isExpanded;
   final bool hasUnread;
@@ -1258,7 +1327,7 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
                           children: [
                             Expanded(
                               child: Text(
-                                widget.latestEmail.from.displayName,
+                                widget.anchorEmail.from.displayName,
                                 style: TextStyle(
                                   color: c.textPrimary,
                                   fontSize: 13,
@@ -1285,7 +1354,7 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              formatEmailDate(widget.latestEmail.receivedDateTime),
+                              formatEmailDate(widget.anchorEmail.receivedDateTime),
                               style: TextStyle(
                                 color: c.textTertiary,
                                 fontSize: 11,
@@ -1299,7 +1368,7 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
                           children: [
                             Expanded(
                               child: Text(
-                                widget.latestEmail.subject,
+                                widget.anchorEmail.subject,
                                 style: TextStyle(
                                   color: c.textSecondary,
                                   fontSize: 12,
@@ -1308,7 +1377,7 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ),
-                            if (widget.latestEmail.hasAttachments)
+                            if (widget.anchorEmail.hasAttachments)
                               Padding(
                                 padding: const EdgeInsets.only(left: 4),
                                 child: Icon(
@@ -1321,7 +1390,7 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
                         ),
                         const SizedBox(height: 3),
                         Text(
-                          widget.latestEmail.bodyPreview,
+                          widget.anchorEmail.bodyPreview,
                           style: TextStyle(
                             color: c.textTertiary,
                             fontSize: 11,

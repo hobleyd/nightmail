@@ -299,6 +299,44 @@ that is how a query string's own separators arrive.
 Only `http`/`https` and `www.`-prefixed hosts are linked. Guessing at bare
 `example.com/x` turns file names and version numbers into links.
 
+## A Thread Row Is Not Its Newest Message
+
+A collapsed thread row shows its **anchor**: the newest message the user did not
+send (`EmailConversation.anchor`, `email_list_conversations.dart`). Graph and
+Gmail both surface a thread's copies in Sent inside a folder listing, so a
+folder the user has replied in was otherwise full of rows headed by their own
+replies — which tell them nothing they don't already know, and hide whoever is
+waiting on them. A thread of nothing but the user's own messages (one they
+started and nobody has answered, or anything seen from Sent) falls back to its
+newest, because the row still has to show something.
+
+`selfAddress` — `AccountManager.activeAccount?.emailAddress`, threaded in from
+the panel — is what tells the two apart; the list only ever shows one account, so
+the active one answers for every row. An **empty** from address counts as the
+user's own: that is an unsent draft. Omitting `selfAddress` restores
+newest-heads-everything, which is what the pure grouping tests exercise.
+
+Three consequences, none incidental:
+
+- **Threads sort by `anchorDate`, not `latestDate`.** The row shows the anchor,
+  so ordering on the thread's newest message runs the *visible* dates down the
+  list out of sequence. A thread answered long after it arrived therefore sits
+  where the incoming message put it, not at the top.
+- **An expanded thread repeats its own anchor**, drawn in italics
+  (`EmailListItem.isDuplicate`). Leaving it out would strand the reply above it
+  over a gap, and the back-and-forth is the only thing the order conveys. The
+  one exception is an anchor that is *also* the newest message: repeating it
+  directly beneath the header it just filled is noise, so
+  `expandedEmails` drops it there — which is the whole of the old `skip(1)`
+  behaviour, now a special case rather than the rule.
+- **The echo row carries the header's id**, so it is the same message for every
+  purpose but drawing. That makes it the header's equal for selection and delete
+  (`resolveDeleteTargets` keys threads off `anchor.id`), and rules three things
+  out: it takes no flag/delete buttons (one `FocusNode` cannot be attached to two
+  widgets), no drag or swipe wrapper (both would act on the row above), and no
+  keyboard stop — `_isNavigable` skips it, or arrow-down would select what is
+  already selected and bounce back to the header on the next press.
+
 ## Calendar Cache
 
 The calendar is offline-first: it paints from `cached_calendar_events` and then

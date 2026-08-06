@@ -47,6 +47,7 @@ void main() {
     bool isMultiSelected = false,
     bool showCheckbox = false,
     bool isDesktop = true,
+    bool isDuplicate = false,
     VoidCallback? onDoubleTap,
   }) async {
     await tester.pumpWidget(MaterialApp(
@@ -59,6 +60,7 @@ void main() {
             isMultiSelected: isMultiSelected,
             showCheckbox: showCheckbox,
             isDesktop: isDesktop,
+            isDuplicate: isDuplicate,
             onTap: () => taps++,
             onDelete: () => deletes++,
             onFlag: flags.add,
@@ -170,6 +172,45 @@ void main() {
         tester.widget<AnimatedOpacity>(find.byType(AnimatedOpacity)).opacity,
         0.0,
       );
+    });
+  });
+
+  // An expanded thread repeats the message its own header is showing, so that
+  // the back-and-forth reads in order. Italics are what say "you have seen this
+  // one already, at the top of this thread".
+  group('EmailListItem — the thread header echo', () {
+    testWidgets('italicises every line of the repeated row', (tester) async {
+      await pumpItem(tester, _email(), isDuplicate: true);
+
+      expect(styleOf(tester, 'Ada').fontStyle, FontStyle.italic);
+      expect(styleOf(tester, 'Quarterly numbers').fontStyle, FontStyle.italic);
+      expect(
+        styleOf(tester, 'Here are the figures you asked for').fontStyle,
+        FontStyle.italic,
+      );
+    });
+
+    testWidgets('leaves an ordinary row upright', (tester) async {
+      await pumpItem(tester, _email());
+
+      expect(styleOf(tester, 'Ada').fontStyle, isNull);
+      expect(styleOf(tester, 'Quarterly numbers').fontStyle, isNull);
+    });
+
+    // The actions belong to the header row this one echoes — and its FocusNodes
+    // cannot be attached to two widgets at once.
+    testWidgets('drops the hover actions', (tester) async {
+      await pumpItem(tester, _email(), isDuplicate: true);
+
+      expect(find.byType(FlagIconButton), findsNothing);
+      expect(find.byIcon(Icons.delete_outline_rounded), findsNothing);
+    });
+
+    testWidgets('still reports a tap, so it opens the message', (tester) async {
+      await pumpItem(tester, _email(), isDuplicate: true);
+
+      await tester.tap(find.text('Quarterly numbers'));
+      expect(taps, 1);
     });
   });
 

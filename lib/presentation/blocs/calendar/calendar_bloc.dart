@@ -181,7 +181,17 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
       timezone: e.timezone ?? 'UTC',
       location: e.location,
       description: e.bodyPreview,
-      attendeeEmails: e.attendees.map((a) => a.email).toList(),
+      // Split the roster back apart: a booked room resent as a person attendee
+      // loses its resource type, which is what makes the provider run the room's
+      // booking policy. Dragging a meeting must not quietly unbook its room.
+      attendeeEmails: e.attendees
+          .where((a) => !a.isResource)
+          .map((a) => a.email)
+          .toList(),
+      roomEmails: e.attendees
+          .where((a) => a.isResource)
+          .map((a) => a.email)
+          .toList(),
       recurrence: e.recurrence,
       reminderMinutes: e.reminderMinutes,
     ));

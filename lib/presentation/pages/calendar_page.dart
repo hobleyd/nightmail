@@ -1682,7 +1682,8 @@ class _EventTile extends StatelessWidget {
               Positioned(
                 right: 0,
                 bottom: 0,
-                child: _JoinButton(url: event.location!, color: color),
+                child:
+                    _JoinButton(url: event.onlineMeetingUrl!, color: color),
               ),
           ],
         ),
@@ -1693,11 +1694,10 @@ class _EventTile extends StatelessWidget {
 }
 
 /// A meeting is "joinable" from 3 minutes before it starts until it ends,
-/// provided it carries an online-meeting link (an `https://` [location], the
-/// same signal the context menu uses for "Join Meeting").
+/// provided it carries an online-meeting link — the same
+/// [CalendarEvent.onlineMeetingUrl] the context menu uses for "Join Meeting".
 bool _isJoinable(CalendarEvent event, DateTime now) {
-  final url = event.location;
-  if (url == null || !url.startsWith('https://')) return false;
+  if (!event.hasOnlineMeeting) return false;
   final start = event.start.toLocal();
   final end = event.end.toLocal();
   return !now.isBefore(start.subtract(const Duration(minutes: 3))) &&
@@ -1910,10 +1910,18 @@ Future<void> _confirmAndDeleteSelected(
       .add(const CalendarSelectedEventsDeleteRequested());
 }
 
-/// Teams meetup-join URLs carry a long opaque meeting-id/context token that's
-/// meaningless to display; show a clean stand-in while the real URL (used for
-/// "Join Meeting" and editing) stays in [CalendarEvent.location].
 // ─── Context menu ─────────────────────────────────────────────────────────────
+
+/// Opens the event context menu. Exposed so the "Join Meeting" item can be
+/// tested directly — it is driven by [CalendarEvent.onlineMeetingUrl], which
+/// used to be [CalendarEvent.location], and a regression there is silent.
+@visibleForTesting
+void showEventContextMenuForTesting(
+  BuildContext context,
+  CalendarEvent event,
+  Offset position,
+) =>
+    _showEventContextMenu(context, event, position);
 
 void _showEventContextMenu(
   BuildContext context,
@@ -1927,9 +1935,8 @@ void _showEventContextMenu(
     position.dy,
   );
 
-  final meetingUrl = event.location;
-  final hasMeetingLink =
-      meetingUrl != null && meetingUrl.startsWith('https://');
+  final meetingUrl = event.onlineMeetingUrl;
+  final hasMeetingLink = event.hasOnlineMeeting;
 
   final isRecurring = event.isRecurringOccurrence;
 

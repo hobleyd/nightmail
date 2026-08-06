@@ -86,6 +86,15 @@ class MicrosoftAuthService implements AuthService {
     // and still caches the Entra directory, which only needs User.Read.All.
     'https://graph.microsoft.com/Contacts.Read',
     'https://graph.microsoft.com/People.Read',
+    // The tenant's room directory (`/places/microsoft.graph.room`), for the
+    // event form's Location picker. Added after release, so accounts authorised
+    // earlier hold a token without it and 403 on /places until they are
+    // re-authenticated from Settings — GraphApiDatasourceImpl.getMeetingRooms
+    // falls back to the beta findRooms endpoint (names and addresses only,
+    // covered by the calendar permissions above) rather than showing an empty
+    // picker. Free/busy for a room needs nothing extra: Calendars.ReadWrite
+    // already covers getSchedule, which answers for rooms as it does for people.
+    'https://graph.microsoft.com/Place.Read.All',
   ];
 
   String get _baseUrl =>

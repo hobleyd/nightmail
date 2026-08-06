@@ -101,6 +101,121 @@ void main() {
       expect(event.attendees[2].responseStatus, AttendeeResponseStatus.declined);
     });
 
+    test('marks a resource attendee as a room, and required/optional as people',
+        () {
+      final json = <String, dynamic>{
+        'id': 'with-a-room',
+        'subject': 'Review',
+        'isAllDay': false,
+        'start': {'dateTime': '2026-06-10T14:00:00.0000000', 'timeZone': 'UTC'},
+        'end': {'dateTime': '2026-06-10T15:00:00.0000000', 'timeZone': 'UTC'},
+        'attendees': [
+          {
+            'emailAddress': {'address': 'alice@example.com'},
+            'type': 'required',
+            'status': {'response': 'accepted'},
+          },
+          {
+            'emailAddress': {'address': 'bob@example.com'},
+            'type': 'optional',
+            'status': {'response': 'none'},
+          },
+          {
+            'emailAddress': {'address': 'boardroom@example.com', 'name': 'Boardroom'},
+            'type': 'resource',
+            'status': {'response': 'accepted'},
+          },
+        ],
+      };
+
+      final event = CalendarEventModel.fromJson(json);
+
+      // Without this the event form puts a booked room in the Guests field and
+      // re-invites it as a person on save, losing the room booking.
+      expect(event.attendees[0].isResource, isFalse);
+      expect(event.attendees[1].isResource, isFalse);
+      expect(event.attendees[2].isResource, isTrue);
+    });
+
+    test('a Teams meeting keeps its room as the location and its link apart',
+        () {
+      final json = <String, dynamic>{
+        'id': 'teams-1',
+        'subject': 'Review',
+        'isAllDay': false,
+        'start': {'dateTime': '2026-06-10T14:00:00.0000000', 'timeZone': 'UTC'},
+        'end': {'dateTime': '2026-06-10T15:00:00.0000000', 'timeZone': 'UTC'},
+        'location': {'displayName': 'Boardroom'},
+        'onlineMeeting': {
+          'joinUrl': 'https://teams.microsoft.com/l/meetup-join/19%3ax/0',
+        },
+      };
+
+      final event = CalendarEventModel.fromJson(json);
+
+      // Both, not one or the other: a meeting is held in a room *and* streamed.
+      expect(event.location, 'Boardroom');
+      expect(event.onlineMeetingUrl,
+          'https://teams.microsoft.com/l/meetup-join/19%3ax/0');
+      expect(event.hasOnlineMeeting, isTrue);
+    });
+
+    test('a join URL sitting in the location — how every event saved under the '
+        'old single-field convention looks — is recovered as the link', () {
+      final json = <String, dynamic>{
+        'id': 'legacy-1',
+        'subject': 'Review',
+        'isAllDay': false,
+        'start': {'dateTime': '2026-06-10T14:00:00.0000000', 'timeZone': 'UTC'},
+        'end': {'dateTime': '2026-06-10T15:00:00.0000000', 'timeZone': 'UTC'},
+        'location': {
+          'displayName': 'https://teams.microsoft.com/l/meetup-join/19%3ax/0',
+        },
+      };
+
+      final event = CalendarEventModel.fromJson(json);
+
+      expect(event.onlineMeetingUrl,
+          'https://teams.microsoft.com/l/meetup-join/19%3ax/0');
+      // Not also echoed back as a place, or it would land in the form's
+      // location box and be saved as one all over again.
+      expect(event.location, isNull);
+    });
+
+    test('an event with no online meeting has no link', () {
+      final json = <String, dynamic>{
+        'id': 'plain-1',
+        'subject': 'Review',
+        'isAllDay': false,
+        'start': {'dateTime': '2026-06-10T14:00:00.0000000', 'timeZone': 'UTC'},
+        'end': {'dateTime': '2026-06-10T15:00:00.0000000', 'timeZone': 'UTC'},
+        'location': {'displayName': 'Level 3 kitchen'},
+      };
+
+      final event = CalendarEventModel.fromJson(json);
+
+      expect(event.location, 'Level 3 kitchen');
+      expect(event.onlineMeetingUrl, isNull);
+      expect(event.hasOnlineMeeting, isFalse);
+    });
+
+    test('an attendee with no type is a person — Graph omits it on older events',
+        () {
+      final json = <String, dynamic>{
+        'id': 'untyped',
+        'subject': 'Review',
+        'isAllDay': false,
+        'start': {'dateTime': '2026-06-10T14:00:00.0000000', 'timeZone': 'UTC'},
+        'end': {'dateTime': '2026-06-10T15:00:00.0000000', 'timeZone': 'UTC'},
+        'attendees': [
+          {'emailAddress': {'address': 'alice@example.com'}},
+        ],
+      };
+
+      expect(CalendarEventModel.fromJson(json).attendees.single.isResource,
+          isFalse);
+    });
+
     test('filters out attendees with empty email', () {
       final json = <String, dynamic>{
         'id': 'empty-email',

@@ -151,6 +151,7 @@ class AccountManager {
       clientSecret: _googleClientSecret ?? '',
       redirectUri: AppConfig.gmailRedirectUri,
       tokenStorage: tokenStorage,
+      accountEmail: account.emailAddress,
     );
     final ds = GmailContactsDatasourceImpl(
       client: GooglePeopleHttpClient(
@@ -454,11 +455,14 @@ class AccountManager {
           redirectUri: AppConfig.microsoftRedirectUri,
           tokenStorage: tokenStorage,
         ),
+      // The email is what lets a Workspace account pick up the room-directory
+      // scope on re-auth; see GmailAuthService._requestedScopes.
       GmailAccount() => GmailAuthService(
           clientId: _googleClientId ?? AppConfig.gmailClientId,
           clientSecret: _googleClientSecret ?? '',
           redirectUri: AppConfig.gmailRedirectUri,
           tokenStorage: tokenStorage,
+          accountEmail: account.emailAddress,
         ),
       ImapAccount() => null,
     };
@@ -505,6 +509,7 @@ class AccountManager {
           clientSecret: _googleClientSecret ?? '',
           redirectUri: AppConfig.gmailRedirectUri,
           tokenStorage: tokenStorage,
+          accountEmail: account.emailAddress,
         );
         return GmailDatasourceImpl(
           client: GmailHttpClient(
@@ -603,6 +608,7 @@ class AccountManager {
           clientSecret: _googleClientSecret ?? '',
           redirectUri: AppConfig.gmailRedirectUri,
           tokenStorage: tokenStorage,
+          accountEmail: account.emailAddress,
         );
         void onGmailAuthFailure() => _authFailureController.add(account.id);
         void onGmailAuthSuccess() => _authSuccessController.add(account.id);
@@ -684,6 +690,7 @@ class AccountManager {
           clientSecret: _googleClientSecret ?? '',
           redirectUri: AppConfig.gmailRedirectUri,
           tokenStorage: tokenStorage,
+          accountEmail: account.emailAddress,
         );
         return GoogleCalendarDatasourceImpl(
           client: GoogleCalendarHttpClient(
@@ -734,6 +741,7 @@ class AccountManager {
           clientSecret: _googleClientSecret ?? '',
           redirectUri: AppConfig.gmailRedirectUri,
           tokenStorage: tokenStorage,
+          accountEmail: account.emailAddress,
         );
         return GoogleTasksDatasourceImpl(
           client: GoogleTasksHttpClient(

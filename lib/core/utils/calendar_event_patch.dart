@@ -64,6 +64,10 @@ CalendarEvent applyUpdate(
     isAllDay: params.isAllDay,
     iCalUid: event.iCalUid,
     location: params.location,
+    // Carried over, not taken from the params: an edit cannot change the join
+    // link (no field offers it), and rebuilding without it would drop the Join
+    // Meeting affordance from the cached copy until the next sync.
+    onlineMeetingUrl: event.onlineMeetingUrl,
     bodyPreview: params.description,
     status: event.status,
     participation: event.participation,
@@ -73,6 +77,13 @@ CalendarEvent applyUpdate(
       for (final email in params.attendeeEmails)
         existingByEmail[email.toLowerCase()] ??
             CalendarEventAttendee(email: email),
+      // Rooms are attendees too, just resource ones. Omitting them here would
+      // make a just-booked room vanish from the reopened form until the next
+      // sync — and reopening in that window would then save the meeting without
+      // it, releasing the room the user just took.
+      for (final email in params.roomEmails)
+        existingByEmail[email.toLowerCase()] ??
+            CalendarEventAttendee(email: email, isResource: true),
     ],
     recurrence: params.recurrence,
     reminderMinutes: params.reminderMinutes,

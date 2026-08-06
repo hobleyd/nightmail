@@ -79,6 +79,51 @@ void main() {
 
   tearDown(() => db.close());
 
+  group('online meeting link', () {
+    const meetUrl = 'https://meet.google.com/abc-defg-hij';
+
+    Future<CalendarEvent> roundTrip(CalendarEvent e) async {
+      await seed([e], windowStart: at(0, 0), windowEnd: at(1, 0));
+      final read = await ds.getCachedEvents(
+          accountId: accountId, start: at(0, 0), end: at(1, 0));
+      return read.single;
+    }
+
+    test('a room and a link both survive — they are separate fields', () async {
+      final read = await roundTrip(CalendarEvent(
+        id: 'e1',
+        subject: 'Design review',
+        start: at(0, 9),
+        end: at(0, 10),
+        isAllDay: false,
+        location: 'Boardroom',
+        onlineMeetingUrl: meetUrl,
+      ));
+
+      expect(read.location, 'Boardroom');
+      expect(read.onlineMeetingUrl, meetUrl);
+    });
+
+    test('a row written before the link had a field of its own still joins — '
+        'the cache is not migrated, it is split on read', () async {
+      // What the old serialiser wrote: the join URL as the location.
+      final read = await roundTrip(CalendarEvent(
+        id: 'e1',
+        subject: 'Design review',
+        start: at(0, 9),
+        end: at(0, 10),
+        isAllDay: false,
+        location: meetUrl,
+      ));
+
+      expect(read.onlineMeetingUrl, meetUrl);
+      expect(read.hasOnlineMeeting, isTrue);
+      // And it does not come back as a place, or reopening the event would put
+      // the URL in the location box and save it as one again.
+      expect(read.location, isNull);
+    });
+  });
+
   group('cacheEvents / getCachedEvents', () {
     test('round-trips every field of an event', () async {
       final original = CalendarEvent(

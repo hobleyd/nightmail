@@ -1,3 +1,4 @@
+import '../../core/utils/online_meeting_url.dart';
 import '../../domain/entities/calendar_event.dart';
 import '../../domain/entities/calendar_event_attendee.dart';
 import '../../domain/entities/calendar_recurrence.dart';
@@ -11,6 +12,7 @@ class CalendarEventModel extends CalendarEvent {
     required super.isAllDay,
     super.iCalUid,
     super.location,
+    super.onlineMeetingUrl,
     super.bodyPreview,
     super.status,
     super.participation,
@@ -23,6 +25,14 @@ class CalendarEventModel extends CalendarEvent {
   });
 
   factory CalendarEventModel.fromJson(Map<String, dynamic> json) {
+    final split = splitMeetingLocation(
+      rawLocation:
+          (json['location'] as Map<String, dynamic>?)?['displayName'] as String?,
+      onlineMeetingUrl:
+          (json['onlineMeeting'] as Map<String, dynamic>?)?['joinUrl']
+                  as String? ??
+              json['onlineMeetingUrl'] as String?,
+    );
     return CalendarEventModel(
       id: json['id'] as String,
       subject: json['subject'] as String? ?? '(No title)',
@@ -30,10 +40,8 @@ class CalendarEventModel extends CalendarEvent {
       end: _parseDateTime(json['end'] as Map<String, dynamic>?),
       isAllDay: json['isAllDay'] as bool? ?? false,
       iCalUid: json['iCalUId'] as String?,
-      location: _parseLocation(
-        json['location'] as Map<String, dynamic>?,
-        json['onlineMeeting'] as Map<String, dynamic>?,
-      ),
+      location: split.location,
+      onlineMeetingUrl: split.onlineMeetingUrl,
       bodyPreview: json['bodyPreview'] as String?,
       status: _parseStatus(json['showAs'] as String?),
       participation: _parseParticipation(
@@ -60,16 +68,6 @@ class CalendarEventModel extends CalendarEvent {
     final normalized =
         (tz == 'UTC' && !dt.endsWith('Z')) ? '${dt}Z' : dt;
     return DateTime.tryParse(normalized)?.toUtc() ?? DateTime.now().toUtc();
-  }
-
-  static String? _parseLocation(
-    Map<String, dynamic>? locationMap,
-    Map<String, dynamic>? onlineMeetingMap,
-  ) {
-    final joinUrl = onlineMeetingMap?['joinUrl'] as String?;
-    if (joinUrl != null && joinUrl.isNotEmpty) return joinUrl;
-    final name = locationMap?['displayName'] as String?;
-    return (name == null || name.isEmpty) ? null : name;
   }
 
   static CalendarEventStatus _parseStatus(String? value) {
@@ -110,6 +108,10 @@ class CalendarEventModel extends CalendarEvent {
         email: emailMap['address'] as String? ?? '',
         displayName: emailMap['name'] as String?,
         responseStatus: _parseAttendeeStatus(a['status'] as Map<String, dynamic>?),
+        // Graph reports a booked room as attendee type "resource". "optional"
+        // and "required" are both people.
+        isResource:
+            (a['type'] as String?)?.toLowerCase() == 'resource',
       );
     }).where((a) => a.email.isNotEmpty).toList();
   }

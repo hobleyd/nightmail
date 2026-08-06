@@ -340,6 +340,143 @@ invitations carry no calendar part). Two meetings at the same instant are left
 alone and the caller waits for the provider — moving the wrong meeting is worse
 than being slow.
 
+## Room Booking
+
+The event form's Location field is a room picker as well as a text box
+(`room_location_field.dart`). Booked rooms are chips; anything typed alongside
+them stays free text.
+
+**Selecting a room invites it.** A room is a mailbox (Exchange) or a resource
+calendar (Google) with a booking policy, and only the invitation triggers that
+policy — naming a room in `location` reserves nothing. So rooms travel as
+`roomEmails` on Create/UpdateCalendarEventParams, apart from `attendeeEmails`,
+and each datasource sends them as *resource* attendees (Graph `type: resource`,
+Google `resource: true`). `CalendarEventAttendee.isResource` carries that back.
+
+Because the two lists are sent differently, anything that rebuilds an event from
+its own attendees has to split them apart again. `CalendarBloc`'s
+drag-to-reschedule is the one that bites: sending a room back as a person
+attendee silently unbooks it.
+
+**Free/busy needs no new permission.** Graph `getSchedule` and Google `freeBusy`
+answer for rooms exactly as for people, so the picker's dots come from
+`CheckAttendeesAvailability` with `organizerEmail: null` — no organizer, because
+a room's dot needs a status, not a list of what it is booked for. The room being
+edited is excluded from its own clash the same way its guests are.
+
+Listing rooms is where the providers diverge, and both paths degrade rather than
+fail — an empty dropdown must never block saving an event:
+
+| Provider | Primary | Fallback |
+|---|---|---|
+| Microsoft | `/places/microsoft.graph.room` (`Place.Read.All`) — capacity, building, floor | `beta/me/findRooms` — names and addresses only, covered by the calendar scopes already held |
+| Google | Admin SDK `resources.calendars.list` | `calendarList` filtered to `@resource.calendar.google.com` — only rooms the user subscribed to |
+| IMAP / CalDAV / EventKit | none — the field is plain text | |
+
+Three things here are load-bearing:
+
+- **The Google Admin SDK scope is requested per account, never unconditionally.**
+  Google rejects the *whole* authorization request with `invalid_scope` when an
+  `admin.directory.*` scope is asked for on a personal @gmail.com account, so
+  putting it in `GmailAuthService._scopes` would break adding one at all. It is
+  appended only when the account's domain is already known not to be a consumer
+  one (`scopesForAccount`), which means: **adding** a Gmail account never
+  requests it and falls back to `calendarList`; **re-authenticating** a Workspace
+  account from Settings does. `login_hint` pins the flow to that account so a
+  browser session cannot land the admin scope on a personal one. The endpoint is
+  admin-only regardless, so a non-admin Workspace user 403s and takes the same
+  fallback.
+- **The dropdown never hits the network for the room list.** `getMeetingRooms`
+  is memoised per account in `CalendarRepositoryImpl` for the process' lifetime
+  (a room directory changes on the timescale of an office fit-out) and filtered
+  in memory. The *future* is cached, not just the result, so two forms opening at
+  once make one request; a failure is not cached. Free/busy is the deliberate
+  exception, since it depends on the slot.
+- **Only the visible rooms get a free/busy lookup.** The picker reports what it
+  is showing via `onVisibleRoomsChanged`, capped at 12 rows, and answers are
+  memoised per slot and cleared when the meeting moves. A tenant with hundreds of
+  rooms would otherwise turn one keystroke into hundreds of lookups.
+  `getAttendeesSchedule` also chunks (20 for Graph, 50 for Google), because a
+  room batch is far longer than any guest roster.
+
+`location` and `attendees` are now sent on **every** create and update, empty
+included. An omitted field on a PATCH means "leave unchanged", so releasing the
+last room or clearing a location would otherwise silently not take effect.
+
+Reopening a meeting splits its roster back apart and strips the room names out of
+the provider's `location` string (`_stripRoomNames`), or the room would be shown
+— and saved — twice, once as a chip and once as typed-in text.
+
+### A join link is not a place
+
+`CalendarEvent` keeps them in **separate fields**: `location` is where you go,
+`onlineMeetingUrl` is what you click. A meeting routinely has both — a room for
+the people in the building and a Meet for the ones dialling in.
+
+They used to be one field. Both parsers handed the provider's join URL up *as*
+the location, so it overwrote whatever the user had typed, and everything that
+asked "is this joinable" tested `location.startsWith('https://')`. That made
+composing anything in front of it destructive: prefixing a room name onto a Meet
+URL left a location that no longer started with `https://`, so **adding a room to
+an online meeting silently took the Join Meeting item, the tile's join chip and
+`_isJoinable` away**.
+
+Everything that decides joinability now reads `CalendarEvent.hasOnlineMeeting`.
+
+`core/utils/online_meeting_url.dart` holds the three pieces:
+
+- `splitMeetingLocation` — what every parser runs its raw location through. The
+  provider's own field wins (Graph `onlineMeeting.joinUrl`, Google
+  `conferenceData`); failing that **a location that is itself a join URL is
+  treated as one**, which is how events saved under the old convention — on the
+  server *and* in the local cache — stay joinable without a migration pass. A
+  location that is a join URL is never echoed back as a location, or it would
+  land straight back in the form's location box and be saved as a place again.
+- `isOnlineMeetingUrl` — the predicate, also used by both event body builders so
+  a join URL is never composed into a location string.
+- `onlineMeetingPlatformName` — "Microsoft Teams" / "Google Meet" / "Zoom", shown
+  wherever the URL itself would be meaningless noise (the hover card's own row,
+  the event form's join line).
+
+**Google must send `conferenceDataVersion=1` on every create and update**, not
+only when attaching a Meet. Version 0 declares that the client has no conference
+support and Google then omits `conferenceData` from the *response* — and since
+the cache is rewritten from that response, editing anything about a Meet meeting
+made its join link disappear from the app until the next full sync.
+
+**The online-meeting toggle is locked on a meeting that already has one.**
+`isOnlineMeeting` on the save params means *attach one*, not *should have one*:
+asking again is not idempotent, because Google answers a second `createRequest`
+by minting a new conference and stranding everyone holding the old link. So the
+form initialises the toggle from `hasOnlineMeeting`, sends the flag only on a
+false→true transition, and disables the control otherwise rather than offering a
+removal neither provider supports here.
+
+### Two Flutter traps in the picker
+
+Both of these broke "open an existing meeting and add a room", and neither shows
+up when testing with a new meeting, whose Location field starts empty:
+
+- **`OverlayPortalController.show()` flips `isShowing` but only materialises the
+  overlay child if the portal's own subtree rebuilds in that frame.** Typing gets
+  that for free — the controller notifies the TextField — so the recipient
+  typeahead has never needed to care. A *button* press does not, so opening the
+  dropdown from inside a tap handler leaves `isShowing == true` with nothing on
+  screen. `_openBrowse` defers its refresh to a post-frame callback for exactly
+  this reason.
+- **`TextEditingController` notifies on selection changes, not just text
+  changes.** Focusing the field or moving the caret fires the same listener as a
+  keystroke. The browse button focuses the field, so its "browse" mode was being
+  cancelled by its own focus request one microtask later. `_lastText` gates the
+  listener on the text having actually changed.
+
+The field's text is also the room query, so an existing location would poison the
+search ("Level 3 kitchen" + "board" matches nothing). Two things resolve that: the
+browse button ignores the text entirely, and the search retries on the last word
+when the whole field matches nothing. `_queryUsed` records which of the two was
+used, so selecting a room removes only the query and leaves the rest of the
+location — clearing the whole field would delete what the user typed.
+
 ## Contacts Typeahead Architecture
 
 **The dropdown never hits the network.** Every address book is pulled down at

@@ -6,12 +6,14 @@ import 'package:flutter/foundation.dart';
 
 import '../../../core/error/exceptions.dart';
 import '../../../core/utils/ics_parser.dart';
+import '../../../core/utils/online_meeting_url.dart';
 import '../../../domain/entities/contact_details.dart';
 import '../../../domain/entities/local_attachment.dart';
 import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/calendar_recurrence.dart';
 import '../../../domain/entities/meeting_invite.dart';
+import '../../../domain/entities/meeting_room.dart';
 import '../../../domain/entities/todo_task.dart';
 import '../../../domain/usecases/create_calendar_event.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
@@ -497,6 +499,7 @@ class GraphApiDatasourceImpl
         location: params.location,
         description: params.description,
         attendeeEmails: params.attendeeEmails,
+        roomEmails: params.roomEmails,
         recurrence: params.recurrence,
         isOnlineMeeting: params.isOnlineMeeting,
         reminderMinutes: params.reminderMinutes,
@@ -532,6 +535,7 @@ class GraphApiDatasourceImpl
         location: params.location,
         description: params.description,
         attendeeEmails: params.attendeeEmails,
+        roomEmails: params.roomEmails,
         recurrence: params.recurrence,
         isOnlineMeeting: params.isOnlineMeeting,
         reminderMinutes: params.reminderMinutes,
@@ -1308,6 +1312,7 @@ class GraphApiDatasourceImpl
     String? location,
     String? description,
     List<String> attendeeEmails = const [],
+    List<String> roomEmails = const [],
     CalendarRecurrence? recurrence,
     bool isOnlineMeeting = false,
     int? reminderMinutes,
@@ -1345,18 +1350,69 @@ class GraphApiDatasourceImpl
       };
     }
 
-    if (location != null && location.isNotEmpty) {
-      body['location'] = {'displayName': location};
-    }
+    // `location` and `locations` are always sent, even when empty. On a PATCH an
+    // omitted field means "leave unchanged", so clearing the location — or
+    // releasing the last room — would otherwise silently not take effect
+    // server-side. Every caller passes the whole location, so an empty value
+    // here really does mean "no location".
+    //
+    // Rooms go in `locations` as conferenceRoom entries carrying their mailbox
+    // address, which is what makes Outlook render them as rooms rather than as
+    // a typed-in string. `location` is the single primary that older clients
+    // read, so it gets the first entry.
+    final roomLocations = roomEmails
+        .map((e) => <String, dynamic>{
+              'displayName': _roomDisplayName(e),
+              'locationEmailAddress': e,
+              'locationType': 'conferenceRoom',
+            })
+        .toList();
+    // A join link is not a place. `CalendarEventModel._parseLocation` hands
+    // `onlineMeeting.joinUrl` up as the location, so that is what comes back
+    // down here for a Teams meeting — storing it as a location entry would
+    // duplicate something Graph already holds, and on an event with no room it
+    // is the entry that `location` gets, which is how the join link survives
+    // today. So it is kept as the location only while there is no room to
+    // supersede it; the joinUrl itself lives in `onlineMeeting` regardless and
+    // is what the Join Meeting affordance reads back.
+    final locationIsJoinUrl = isOnlineMeetingUrl(location);
+    final freeTextLocation = (location != null &&
+            location.isNotEmpty &&
+            !(locationIsJoinUrl && roomEmails.isNotEmpty))
+        ? <String, dynamic>{'displayName': location}
+        : null;
 
-    if (attendeeEmails.isNotEmpty) {
-      body['attendees'] = attendeeEmails
-          .map((e) => {
-                'emailAddress': {'address': e},
-                'type': 'required',
-              })
-          .toList();
-    }
+    // The free text goes first when there is no room, and after the rooms when
+    // there is: with a room booked the room is the meeting's real place, and
+    // Graph mirrors locations[0] into location.
+    final locations = <Map<String, dynamic>>[
+      ...roomLocations,
+      if (freeTextLocation != null &&
+          !_locationNamesARoom(location!, roomEmails))
+        freeTextLocation,
+    ];
+
+    body['locations'] = locations;
+    body['location'] = locations.isEmpty
+        ? {'displayName': ''}
+        : Map<String, dynamic>.from(locations.first);
+
+    // People are `required`, rooms are `resource` — the type is what tells
+    // Exchange to run the room's booking policy (auto-accept, decline on
+    // conflict) instead of emailing a human. Always sent for the same
+    // PATCH-semantics reason as the locations above.
+    body['attendees'] = [
+      for (final e in attendeeEmails)
+        {
+          'emailAddress': {'address': e},
+          'type': 'required',
+        },
+      for (final e in roomEmails)
+        {
+          'emailAddress': {'address': e, 'name': _roomDisplayName(e)},
+          'type': 'resource',
+        },
+    ];
 
     if (recurrence != null) {
       body['recurrence'] = _buildGraphRecurrence(recurrence, start);
@@ -2323,8 +2379,32 @@ class GraphApiDatasourceImpl
         message: 'Delta query completed without returning a delta link');
   }
 
+  /// Addresses per `getSchedule` call. The room picker asks about every room it
+  /// is showing at once, which is a much longer list than a guest roster, and
+  /// Exchange starts refusing large batches outright rather than truncating.
+  static const _scheduleBatchSize = 20;
+
   @override
   Future<List<AttendeeAvailability>> getAttendeesSchedule({
+    required List<String> emails,
+    required DateTime start,
+    required DateTime end,
+  }) async {
+    if (emails.length <= _scheduleBatchSize) {
+      return _getAttendeesScheduleBatch(emails: emails, start: start, end: end);
+    }
+
+    final batches = <List<String>>[];
+    for (var i = 0; i < emails.length; i += _scheduleBatchSize) {
+      batches.add(emails.sublist(
+          i, (i + _scheduleBatchSize).clamp(0, emails.length)));
+    }
+    final results = await Future.wait(batches.map((batch) =>
+        _getAttendeesScheduleBatch(emails: batch, start: start, end: end)));
+    return results.expand((r) => r).toList();
+  }
+
+  Future<List<AttendeeAvailability>> _getAttendeesScheduleBatch({
     required List<String> emails,
     required DateTime start,
     required DateTime end,
@@ -2378,6 +2458,148 @@ class GraphApiDatasourceImpl
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
+  }
+
+  /// Rooms in the tenant, by lower-cased address, once [getMeetingRooms] has
+  /// run. Only used to label a booked room in the event body — the picker gets
+  /// its copy through the repository, which caches for itself.
+  final Map<String, MeetingRoom> _roomsByEmail = {};
+
+  /// Graph's page size for rooms is 100 and `$top` raises it. Asked for
+  /// explicitly so a tenant with a few hundred rooms is one or two requests
+  /// rather than three or four.
+  static const _roomPageSize = 500;
+
+  /// Guard against a pathological tenant (or a nextLink loop) turning the room
+  /// picker into an unbounded fetch.
+  static const _maxRoomPages = 10;
+
+  @override
+  Future<List<MeetingRoom>> getMeetingRooms() async {
+    final rooms = await _fetchRoomsFromPlaces() ?? await _fetchRoomsFromFindRooms();
+    _roomsByEmail
+      ..clear()
+      ..addEntries(
+          rooms.map((r) => MapEntry(r.email.toLowerCase(), r)));
+    return rooms;
+  }
+
+  /// `/places/microsoft.graph.room` — the v1.0 room directory, which carries
+  /// capacity, building and floor.
+  ///
+  /// Returns null (rather than an empty list) when the tenant will not answer,
+  /// so the caller can tell "no permission" from "no rooms" and fall back.
+  /// `Place.Read.All` was added to the requested scopes after release, so an
+  /// account authorised earlier holds a token without it and 403s here until it
+  /// is re-authenticated from Settings.
+  Future<List<MeetingRoom>?> _fetchRoomsFromPlaces() async {
+    final rooms = <MeetingRoom>[];
+    var path = '/places/microsoft.graph.room?\$top=$_roomPageSize';
+
+    for (var page = 0; page < _maxRoomPages; page++) {
+      final Response<Map<String, dynamic>> response;
+      try {
+        response = await _dio.get<Map<String, dynamic>>(path);
+      } on DioException catch (e) {
+        final status = e.response?.statusCode;
+        if (status == 401 || status == 403 || status == 404) {
+          debugPrint('[Graph] /places denied ($status) — the account most '
+              'likely predates the Place.Read.All scope; falling back to '
+              'findRooms. Sign in again from Settings to restore the full '
+              'room directory.');
+          return null;
+        }
+        // A partial first page is still worth showing; a partial later page
+        // means we keep what we already read rather than losing all of it.
+        if (rooms.isEmpty) return null;
+        debugPrint('[Graph] /places paging stopped early: ${e.message}');
+        return rooms;
+      }
+
+      final value = response.data?['value'] as List<dynamic>? ?? const [];
+      rooms.addAll(value
+          .cast<Map<String, dynamic>>()
+          .map(_roomFromPlace)
+          .whereType<MeetingRoom>());
+
+      final next = response.data?['@odata.nextLink'] as String?;
+      if (next == null || next.isEmpty) return rooms;
+      path = next;
+    }
+    return rooms;
+  }
+
+  /// `beta/me/findRooms` — every room the *mailbox* can see, with nothing but a
+  /// name and an address.
+  ///
+  /// The fallback for a token without `Place.Read.All`: it needs only the
+  /// calendar permissions the app already holds, so it keeps the picker working
+  /// for accounts that have not been re-authenticated. Beta because Graph never
+  /// promoted it to v1.0 — `/places` is its v1.0 replacement, which is exactly
+  /// the endpoint we could not reach if we are here.
+  Future<List<MeetingRoom>> _fetchRoomsFromFindRooms() async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        'https://graph.microsoft.com/beta/me/findRooms',
+      );
+      final value = response.data?['value'] as List<dynamic>? ?? const [];
+      return value
+          .cast<Map<String, dynamic>>()
+          .map((r) {
+            final email = r['address'] as String? ?? '';
+            if (email.isEmpty) return null;
+            return MeetingRoom(
+              email: email,
+              displayName: (r['name'] as String?)?.trim().isNotEmpty == true
+                  ? r['name'] as String
+                  : email,
+            );
+          })
+          .whereType<MeetingRoom>()
+          .toList();
+    } on DioException catch (e) {
+      // Nothing left to try. An empty dropdown is the honest outcome — a
+      // failure here must not stop the user saving the event.
+      debugPrint('[Graph] findRooms unavailable: ${e.message}');
+      return const [];
+    }
+  }
+
+  MeetingRoom? _roomFromPlace(Map<String, dynamic> json) {
+    final email = json['emailAddress'] as String? ?? '';
+    if (email.isEmpty) return null;
+    final floor = json['floorNumber'];
+    return MeetingRoom(
+      email: email,
+      displayName: (json['displayName'] as String?)?.trim().isNotEmpty == true
+          ? json['displayName'] as String
+          : email,
+      capacity: json['capacity'] as int?,
+      building: json['building'] as String?,
+      floorLabel: floor == null ? null : '$floor',
+      isWheelchairAccessible:
+          json['isWheelChairAccessible'] as bool? ?? false,
+    );
+  }
+
+  /// The directory name for a booked room, falling back to the address' local
+  /// part when the room directory was never read (a saved event whose rooms came
+  /// from the cache rather than the picker).
+  String _roomDisplayName(String email) {
+    final known = _roomsByEmail[email.toLowerCase()];
+    if (known != null) return known.displayName;
+    final localPart = email.split('@').first;
+    return localPart.isEmpty ? email : localPart;
+  }
+
+  /// Whether the free-text location is just a room's name repeated, which is
+  /// what happens when the form shows "Room A" in the field and also books it.
+  /// Adding it again would give the meeting two locations for one place.
+  bool _locationNamesARoom(String location, List<String> roomEmails) {
+    final needle = location.trim().toLowerCase();
+    return roomEmails.any((e) =>
+        _roomDisplayName(e).trim().toLowerCase() == needle ||
+        e.trim().toLowerCase() == needle);
   }
 
   AttendeeAvailabilityStatus _parseItemStatus(String? status) =>

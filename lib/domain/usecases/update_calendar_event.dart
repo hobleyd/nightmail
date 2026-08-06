@@ -32,6 +32,7 @@ class UpdateCalendarEventParams extends Equatable {
     this.location,
     this.description,
     this.attendeeEmails = const [],
+    this.roomEmails = const [],
     this.recurrence,
     this.isOnlineMeeting = false,
     this.reminderMinutes,
@@ -49,6 +50,14 @@ class UpdateCalendarEventParams extends Equatable {
   final String? location;
   final String? description;
   final List<String> attendeeEmails;
+
+  /// Room mailboxes to book, invited as resource attendees. See
+  /// [CreateCalendarEventParams.roomEmails].
+  ///
+  /// This is the whole room roster, not a delta: a room dropped from the form
+  /// is released by its absence here, the same way a removed guest is.
+  final List<String> roomEmails;
+
   final CalendarRecurrence? recurrence;
 
   /// Whether to attach a provider-native online meeting (Teams for Microsoft,
@@ -73,6 +82,7 @@ class UpdateCalendarEventParams extends Equatable {
         location,
         description,
         attendeeEmails,
+        roomEmails,
         recurrence,
         isOnlineMeeting,
         reminderMinutes,

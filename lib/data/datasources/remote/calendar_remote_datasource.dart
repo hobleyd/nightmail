@@ -1,5 +1,6 @@
 import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/meeting_invite.dart';
+import '../../../domain/entities/meeting_room.dart';
 import '../../../domain/usecases/create_calendar_event.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
 import '../../models/calendar_event_model.dart';
@@ -105,4 +106,12 @@ abstract interface class CalendarRemoteDatasource {
     required DateTime start,
     required DateTime end,
   });
+
+  /// The bookable rooms this account's directory offers.
+  ///
+  /// Returns an empty list — never throws — when the provider has no room
+  /// directory, or when this account is not allowed to read the one it has.
+  /// Listing rooms is an optional enrichment of the Location field, so a
+  /// tenant that will not answer must not break saving an event.
+  Future<List<MeetingRoom>> getMeetingRooms();
 }

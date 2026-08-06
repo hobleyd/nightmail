@@ -4,6 +4,7 @@ import '../../core/error/failures.dart';
 import '../entities/attendee_availability.dart';
 import '../entities/calendar_event.dart';
 import '../entities/meeting_invite.dart';
+import '../entities/meeting_room.dart';
 import '../usecases/create_calendar_event.dart';
 import '../usecases/update_calendar_event.dart';
 
@@ -117,5 +118,21 @@ abstract interface class CalendarRepository {
     String? excludeEventId,
     DateTime? excludeStart,
     DateTime? excludeEnd,
+  });
+
+  /// The bookable rooms [accountId]'s directory offers, for the event form's
+  /// Location field.
+  ///
+  /// Cached in memory for the process' lifetime — a room directory changes on
+  /// the timescale of an office fit-out, and the picker must not pay a
+  /// round-trip every time the field is focused. Free/busy for these rooms is
+  /// *not* cached; it comes from [checkAttendeesAvailability] per slot.
+  ///
+  /// Returns an empty list rather than a failure for providers and accounts
+  /// with no room directory to read (IMAP/CalDAV always; a Google account whose
+  /// token lacks the Admin SDK scope, or whose user is not a Workspace admin).
+  /// An empty dropdown is the honest answer there — there is nothing to pick.
+  Future<Either<Failure, List<MeetingRoom>>> getMeetingRooms({
+    String? accountId,
   });
 }

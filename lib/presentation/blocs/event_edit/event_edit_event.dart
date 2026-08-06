@@ -21,6 +21,7 @@ final class EventEditSubmitted extends EventEditBlocEvent {
     this.location,
     this.description,
     this.attendeeEmails = const [],
+    this.roomEmails = const [],
     this.recurrence,
     this.isOnlineMeeting = false,
     this.reminderMinutes,
@@ -37,6 +38,12 @@ final class EventEditSubmitted extends EventEditBlocEvent {
   final String? location;
   final String? description;
   final List<String> attendeeEmails;
+
+  /// Rooms to book, as mailbox addresses. Kept apart from [attendeeEmails]
+  /// because they are invited as resources rather than people; see
+  /// `CreateCalendarEventParams.roomEmails`.
+  final List<String> roomEmails;
+
   final CalendarRecurrence? recurrence;
 
   /// Whether to attach a provider-native online meeting (Teams or Google Meet).
@@ -60,6 +67,7 @@ final class EventEditSubmitted extends EventEditBlocEvent {
         location,
         description,
         attendeeEmails,
+        roomEmails,
         recurrence,
         isOnlineMeeting,
         reminderMinutes,

@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/html_entities.dart';
+import '../../core/utils/online_meeting_url.dart';
 import '../../domain/entities/calendar_event.dart';
 import '../../domain/entities/calendar_event_attendee.dart';
 import '../../domain/entities/calendar_recurrence.dart';
@@ -285,6 +286,9 @@ class EventDetailsCard extends StatelessWidget {
       Icons.place_outlined,
       location == null ? null : displayEventLocation(location),
     );
+    // Its own row rather than folded into the location: a meeting can be held in
+    // a room *and* streamed, and the two used to fight over one line.
+    detail(Icons.videocam_outlined, describeOnlineMeeting(event));
     detail(Icons.notifications_none_rounded, describeEventReminder(event));
     detail(Icons.person_outline_rounded, describeEventParticipation(event));
 
@@ -425,11 +429,26 @@ Color eventColor(CalendarEvent event) {
 
 /// A Teams join URL is a wall of opaque query string that tells the reader
 /// nothing, so it is shown as the bare join address.
+/// Defensive only, now that `splitMeetingLocation` keeps join URLs out of
+/// [CalendarEvent.location] — a Teams URL carries a long opaque token that would
+/// swamp the row if one ever did reach here. The meeting's platform is named on
+/// its own row by [describeOnlineMeeting].
 String displayEventLocation(String location) {
   if (location.startsWith('https://teams.microsoft.com')) {
     return 'https://teams.microsoft.com/join-meeting';
   }
   return location;
+}
+
+/// Names the meeting's online platform, or null when it has none.
+///
+/// Shown instead of the join URL, which is a long opaque token that tells the
+/// reader nothing. The link itself is reached through "Join Meeting" and the
+/// tile's join button.
+String? describeOnlineMeeting(CalendarEvent event) {
+  final url = event.onlineMeetingUrl;
+  if (url == null || url.isEmpty) return null;
+  return onlineMeetingPlatformName(url);
 }
 
 /// When the meeting is: `Tue, 4 Aug · 9:00 AM – 9:30 AM · 30 min`, with

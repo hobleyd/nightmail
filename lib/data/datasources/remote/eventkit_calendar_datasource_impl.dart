@@ -1,8 +1,10 @@
 import 'package:flutter/services.dart';
 
 import '../../../core/error/exceptions.dart';
+import '../../../core/utils/online_meeting_url.dart';
 import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/meeting_invite.dart';
+import '../../../domain/entities/meeting_room.dart';
 import '../../../domain/usecases/create_calendar_event.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
 import '../../models/calendar_event_model.dart';
@@ -243,19 +245,34 @@ class EventKitCalendarDatasourceImpl implements CalendarRemoteDatasource {
         .toList();
   }
 
+  @override
+  Future<List<MeetingRoom>> getMeetingRooms() async {
+    // EventKit exposes the local calendar database, not an organisation
+    // directory, so there are no rooms to enumerate.
+    return const [];
+  }
+
   // ─── Helpers ────────────────────────────────────────────────────────────────
 
   CalendarEventModel _parseEvent(Map<dynamic, dynamic> map) {
     final startMs = map['startMs'] as int? ?? 0;
     final endMs = map['endMs'] as int? ?? 0;
+    final notes = map['notes'] as String?;
+    // EventKit exposes no conference field either, so the link is wherever the
+    // organiser put it.
+    final split = splitMeetingLocation(
+      rawLocation: map['location'] as String?,
+      description: notes,
+    );
     return CalendarEventModel(
       id: map['id'] as String? ?? '',
       subject: map['title'] as String? ?? '(No title)',
       start: DateTime.fromMillisecondsSinceEpoch(startMs, isUtc: true),
       end: DateTime.fromMillisecondsSinceEpoch(endMs, isUtc: true),
       isAllDay: map['isAllDay'] as bool? ?? false,
-      location: map['location'] as String?,
-      bodyPreview: map['notes'] as String?,
+      location: split.location,
+      onlineMeetingUrl: split.onlineMeetingUrl,
+      bodyPreview: notes,
       isOrganizer: true,
       reminderMinutes: map['reminderMinutes'] as int?,
     );

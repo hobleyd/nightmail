@@ -7,6 +7,7 @@ import '../../domain/entities/calendar_event.dart';
 import '../../domain/entities/calendar_event_attendee.dart';
 import '../../domain/entities/calendar_recurrence.dart';
 import '../../domain/usecases/check_attendees_availability.dart';
+import '../../domain/usecases/get_meeting_rooms.dart';
 import '../../domain/usecases/create_calendar_event.dart';
 import '../../domain/usecases/update_calendar_event.dart';
 import '../../infrastructure/notifications/notification_service.dart';
@@ -95,6 +96,7 @@ class EventEditWindowApp extends StatelessWidget {
       isAllDay: raw['isAllDay'] as bool? ?? false,
       isOrganizer: raw['isOrganizer'] as bool? ?? false,
       location: raw['location'] as String?,
+      onlineMeetingUrl: raw['onlineMeetingUrl'] as String?,
       bodyPreview: raw['bodyPreview'] as String?,
       timezone: raw['timezone'] as String?,
       attendees: _parseAttendees(raw['attendees'] as List<dynamic>?),
@@ -117,6 +119,10 @@ class EventEditWindowApp extends StatelessWidget {
         email: a['email'] as String,
         displayName: a['displayName'] as String?,
         responseStatus: status,
+        // Written by EventEditDialog._eventToArgs only when true. Without it the
+        // form would put this meeting's booked rooms in the Guests field and
+        // re-invite them as people on save.
+        isResource: a['isResource'] as bool? ?? false,
       );
     }).toList();
   }
@@ -190,6 +196,7 @@ class _EventEditWindowPage extends StatelessWidget {
             onClose: _close,
             onTitleChanged: (title) => windowManager.setTitle(title),
             checkAttendeesAvailability: sl<CheckAttendeesAvailability>(),
+            getMeetingRooms: sl<GetMeetingRooms>(),
             onSchedulePaneToggled: (expanded) async {
               // Make room for the pane at its natural width. Anything the
               // organizer resizes the window to after that is the pane's to

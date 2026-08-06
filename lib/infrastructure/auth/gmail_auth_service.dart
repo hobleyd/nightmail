@@ -4,7 +4,7 @@ import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 
 import '../../core/error/exceptions.dart';
@@ -25,6 +25,7 @@ class GmailAuthService implements AuthService {
     required this.clientSecret,
     required this.redirectUri,
     required this._tokenStorage,
+    this.accountEmail,
     Dio? httpClient,
   }) : _http = httpClient ?? Dio();
 
@@ -33,6 +34,11 @@ class GmailAuthService implements AuthService {
   final String redirectUri;
   final TokenStorage _tokenStorage;
   final Dio _http;
+
+  /// The account being signed in, when it is already known — i.e. every path
+  /// except adding a brand-new account. Used only to decide whether the
+  /// Workspace-admin room scope may be requested; see [_requestedScopes].
+  final String? accountEmail;
 
   static const _scopes = [
     'openid',
@@ -59,6 +65,49 @@ class GmailAuthService implements AuthService {
     'https://www.googleapis.com/auth/contacts.other.readonly',
     'https://www.googleapis.com/auth/directory.readonly',
   ];
+
+  /// Lists the Workspace tenant's bookable rooms (Admin SDK
+  /// `resources.calendars.list`) for the event form's Location picker.
+  ///
+  /// Deliberately *not* in [_scopes]: Google rejects the whole authorization
+  /// request with `invalid_scope` when an `admin.directory.*` scope is asked for
+  /// on a personal @gmail.com account, which would break adding one entirely.
+  /// So it is only appended once we know the account is on a Workspace domain —
+  /// see [_requestedScopes].
+  static const _roomDirectoryScope =
+      'https://www.googleapis.com/auth/admin.directory.resource.calendar.readonly';
+
+  /// Google's consumer domains. Anything else is a Workspace (or Cloud Identity)
+  /// domain, where the room scope is at worst refused by the API rather than by
+  /// the authorization endpoint.
+  static const _consumerDomains = {'gmail.com', 'googlemail.com'};
+
+  /// The scopes to ask for, which depend on whether we already know who is
+  /// signing in.
+  ///
+  /// Adding a new account cannot know — the whole point of the flow is to find
+  /// out — so it asks for [_scopes] only, and that account's room picker falls
+  /// back to the resource calendars the user has subscribed to
+  /// (`GoogleCalendarDatasourceImpl._fetchRoomsFromCalendarList`). Signing the
+  /// same account in again from Settings *does* know, and a Workspace account
+  /// picks up [_roomDirectoryScope] then. Non-admin Workspace users are granted
+  /// the scope and still get 403 from the Admin SDK, which is handled the same
+  /// way as not having it.
+  List<String> get _requestedScopes => scopesForAccount(accountEmail);
+
+  @visibleForTesting
+  static List<String> scopesForAccount(String? accountEmail) {
+    final email = accountEmail?.trim().toLowerCase();
+    if (email == null || !email.contains('@')) return _scopes;
+    final domain = email.split('@').last;
+    if (domain.isEmpty || _consumerDomains.contains(domain)) return _scopes;
+    return [..._scopes, _roomDirectoryScope];
+  }
+
+  /// Visible for testing so the gating above can be asserted without driving a
+  /// browser flow — getting it wrong breaks adding a personal Gmail account.
+  @visibleForTesting
+  static String get roomDirectoryScope => _roomDirectoryScope;
 
   static const _authEndpoint = 'https://accounts.google.com/o/oauth2/v2/auth';
   static const _tokenEndpoint = 'https://oauth2.googleapis.com/token';
@@ -95,11 +144,17 @@ class GmailAuthService implements AuthService {
         'client_id': clientId,
         'response_type': 'code',
         'redirect_uri': _effectiveRedirectUri,
-        'scope': _scopes.join(' '),
+        'scope': _requestedScopes.join(' '),
         'code_challenge': codeChallenge,
         'code_challenge_method': 'S256',
         'access_type': 'offline',
         'prompt': 'consent',
+        // Pins the flow to the account we built the scope list for. Without it a
+        // re-auth can land on a different account in the browser's session — and
+        // if that one is a personal @gmail.com, the Workspace room scope it was
+        // never meant to see comes with it and Google answers `invalid_scope`.
+        if (accountEmail != null && accountEmail!.isNotEmpty)
+          'login_hint': accountEmail!,
       },
     );
 

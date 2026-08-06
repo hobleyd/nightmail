@@ -15,6 +15,7 @@ import '../../domain/entities/attendee_availability.dart';
 import '../../domain/entities/calendar_event.dart';
 import '../../domain/entities/local_attachment.dart';
 import '../../domain/entities/meeting_invite.dart';
+import '../../domain/entities/meeting_room.dart';
 import '../../domain/repositories/calendar_repository.dart';
 import '../../domain/usecases/create_calendar_event.dart';
 import '../../domain/usecases/update_calendar_event.dart';
@@ -41,7 +42,7 @@ import '../datasources/remote/calendar_remote_datasource.dart';
 /// on [PendingCalendarOperationType]; the short version is that anything which
 /// emails other people is not safe to replay blindly.
 class CalendarRepositoryImpl implements CalendarRepository {
-  const CalendarRepositoryImpl({
+  CalendarRepositoryImpl({
     required AccountManager accountManager,
     required CalendarLocalDatasource localDatasource,
     required PendingCalendarOperationsDatasource pendingOperations,
@@ -63,6 +64,15 @@ class CalendarRepositoryImpl implements CalendarRepository {
   /// round these to the second, and an invitation's stated start can differ
   /// from the calendar copy's by a hair.
   static const _startSlack = Duration(minutes: 1);
+
+  /// Room directory per account id, for the process' lifetime. A room list
+  /// changes on the timescale of an office fit-out, and the Location field's
+  /// dropdown must open at typing speed rather than pay a round-trip — the same
+  /// reason the recipient typeahead reads a cache instead of the network.
+  ///
+  /// The future itself is cached, not just its result, so a form that opens and
+  /// immediately filters issues one fetch rather than several.
+  final Map<String, Future<List<MeetingRoom>>> _roomsByAccount = {};
 
   String? get _accountId => _accountManager.activeAccount?.id;
 
@@ -1139,6 +1149,45 @@ class CalendarRepositoryImpl implements CalendarRepository {
   /// stands up an independent auth pipeline against the same stored token —
   /// running that alongside the active one races on refresh (see
   /// CalendarReminderService._reconcileAccount for the same trade-off).
+  @override
+  Future<Either<Failure, List<MeetingRoom>>> getMeetingRooms({
+    String? accountId,
+  }) async {
+    final ds = _availabilityDatasource(accountId);
+    if (ds == null) return const Right([]);
+
+    final key = accountId ?? _accountManager.activeAccount?.id ?? '__active__';
+    final cached = _roomsByAccount[key];
+    if (cached != null) {
+      try {
+        return Right(await cached);
+      } catch (_) {
+        // A cached *failure* would otherwise stick for the whole session, so
+        // drop it and fall through to a fresh attempt.
+        _roomsByAccount.remove(key);
+      }
+    }
+
+    final pending = ds.getMeetingRooms();
+    _roomsByAccount[key] = pending;
+    try {
+      final rooms = await pending;
+      return Right(rooms);
+    } on AuthException catch (e) {
+      _roomsByAccount.remove(key);
+      return Left(AuthFailure(message: e.message));
+    } on NetworkException catch (e) {
+      _roomsByAccount.remove(key);
+      return Left(NetworkFailure(message: e.message));
+    } on ServerException catch (e) {
+      _roomsByAccount.remove(key);
+      return Left(ServerFailure(message: e.message, statusCode: e.statusCode));
+    } catch (e) {
+      _roomsByAccount.remove(key);
+      return Left(ServerFailure(message: e.toString()));
+    }
+  }
+
   CalendarRemoteDatasource? _availabilityDatasource(String? accountId) {
     if (accountId == null || accountId == _accountManager.activeAccount?.id) {
       return _accountManager.calendarDatasource;

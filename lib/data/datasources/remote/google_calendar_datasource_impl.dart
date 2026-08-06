@@ -4,11 +4,13 @@ import 'package:uuid/uuid.dart';
 
 import '../../../core/error/exceptions.dart';
 import '../../../core/utils/ics_parser.dart';
+import '../../../core/utils/online_meeting_url.dart';
 import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/calendar_event.dart';
 import '../../../domain/entities/calendar_event_attendee.dart';
 import '../../../domain/entities/calendar_recurrence.dart';
 import '../../../domain/entities/meeting_invite.dart';
+import '../../../domain/entities/meeting_room.dart';
 import '../../../domain/usecases/create_calendar_event.dart';
 import '../../../domain/entities/meeting_notify_scope.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
@@ -155,6 +157,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
         location: params.location,
         description: params.description,
         attendeeEmails: params.attendeeEmails,
+        roomEmails: params.roomEmails,
         recurrence: params.recurrence,
         reminderMinutes: params.reminderMinutes,
         isOnlineMeeting: params.isOnlineMeeting,
@@ -163,8 +166,11 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       final response = await _dio.post<Map<String, dynamic>>(
         '/calendars/primary/events',
         data: body,
-        queryParameters:
-            params.isOnlineMeeting ? {'conferenceDataVersion': 1} : null,
+        // Always 1, not only when creating a conference. Version 0 declares
+        // that this client has no conference support, and Google then leaves
+        // `conferenceData` out of the *response* — so the event we cache and
+        // paint from would have no join link even though the meeting has one.
+        queryParameters: const {'conferenceDataVersion': 1},
       );
 
       if (response.data == null) {
@@ -192,6 +198,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
         location: params.location,
         description: params.description,
         attendeeEmails: params.attendeeEmails,
+        roomEmails: params.roomEmails,
         recurrence: params.recurrence,
         reminderMinutes: params.reminderMinutes,
         isOnlineMeeting: params.isOnlineMeeting,
@@ -214,7 +221,11 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
         data: body,
         queryParameters: {
           'sendUpdates': sendUpdates,
-          if (params.isOnlineMeeting) 'conferenceDataVersion': 1,
+          // Always 1 — see createCalendarEvent. Editing an existing Meet with
+          // version 0 returned an event with no `conferenceData`, and the cache
+          // was rewritten from that response, so the join link vanished from the
+          // app the moment anything else about the meeting was saved.
+          'conferenceDataVersion': 1,
         },
       );
 
@@ -608,8 +619,31 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     );
   }
 
+  /// Calendars per `freeBusy` query. Google caps the `items` array, and the
+  /// room picker asks about every room it is showing at once.
+  static const _freeBusyBatchSize = 50;
+
   @override
   Future<List<AttendeeAvailability>> getAttendeesSchedule({
+    required List<String> emails,
+    required DateTime start,
+    required DateTime end,
+  }) async {
+    if (emails.length <= _freeBusyBatchSize) {
+      return _getAttendeesScheduleBatch(emails: emails, start: start, end: end);
+    }
+
+    final batches = <List<String>>[];
+    for (var i = 0; i < emails.length; i += _freeBusyBatchSize) {
+      batches.add(
+          emails.sublist(i, (i + _freeBusyBatchSize).clamp(0, emails.length)));
+    }
+    final results = await Future.wait(batches.map((batch) =>
+        _getAttendeesScheduleBatch(emails: batch, start: start, end: end)));
+    return results.expand((r) => r).toList();
+  }
+
+  Future<List<AttendeeAvailability>> _getAttendeesScheduleBatch({
     required List<String> emails,
     required DateTime start,
     required DateTime end,
@@ -694,6 +728,157 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     }
   }
 
+  /// Rooms by lower-cased address, once [getMeetingRooms] has run. Only used to
+  /// name a booked room in the event's free-text `location`.
+  final Map<String, MeetingRoom> _roomsByEmail = {};
+
+  /// Google marks every resource calendar with this address suffix, which is the
+  /// only signal available without the Admin SDK.
+  static const _resourceCalendarSuffix = '@resource.calendar.google.com';
+
+  /// Rooms per directory page. The Admin SDK caps `maxResults` at 500.
+  static const _roomPageSize = 500;
+
+  /// Guard against a pathological tenant (or a pageToken loop) turning the room
+  /// picker into an unbounded fetch.
+  static const _maxRoomPages = 10;
+
+  @override
+  Future<List<MeetingRoom>> getMeetingRooms() async {
+    // The directory is the real answer when we can have it: it covers every
+    // room in the tenant, not only the ones this user happens to have added.
+    final directory = await _fetchRoomsFromDirectory();
+    final rooms = directory ?? await _fetchRoomsFromCalendarList();
+    _roomsByEmail
+      ..clear()
+      ..addEntries(rooms.map((r) => MapEntry(r.email.toLowerCase(), r)));
+    return rooms;
+  }
+
+  /// Admin SDK `resources.calendars.list` — every calendar resource in the
+  /// Workspace tenant, with capacity, building and floor.
+  ///
+  /// Returns null when the tenant will not answer, so the caller can tell "no
+  /// permission" from "no rooms". Two ordinary reasons to land there, neither of
+  /// them an error worth surfacing:
+  ///  * the signed-in user is not a Workspace administrator — this endpoint is
+  ///    admin-only, and there is no user-level equivalent;
+  ///  * the token predates `admin.directory.resource.calendar.readonly`, which
+  ///    is only requested for accounts already known to be on a Workspace
+  ///    domain (see `GmailAuthService`), so it is absent for every account added
+  ///    before the room picker existed.
+  ///
+  /// Absolute URL because the Admin SDK lives on a different host to the
+  /// Calendar API this client is based at; the auth interceptor still applies.
+  Future<List<MeetingRoom>?> _fetchRoomsFromDirectory() async {
+    final rooms = <MeetingRoom>[];
+    String? pageToken;
+
+    for (var page = 0; page < _maxRoomPages; page++) {
+      final Response<Map<String, dynamic>> response;
+      try {
+        response = await _dio.get<Map<String, dynamic>>(
+          'https://admin.googleapis.com/admin/directory/v1/customer/my_customer'
+          '/resources/calendars',
+          queryParameters: {
+            'maxResults': _roomPageSize,
+            if (pageToken != null) 'pageToken': pageToken,
+          },
+        );
+      } on DioException catch (e) {
+        final status = e.response?.statusCode;
+        if (status == 401 || status == 403 || status == 404) {
+          debugPrint('[GoogleCalendar] resource directory denied ($status) — '
+              'the account is either not a Workspace admin or predates the '
+              'admin.directory.resource.calendar.readonly scope; falling back '
+              'to subscribed resource calendars.');
+          return null;
+        }
+        if (rooms.isEmpty) return null;
+        debugPrint('[GoogleCalendar] room paging stopped early: ${e.message}');
+        return rooms;
+      }
+
+      final items = response.data?['items'] as List<dynamic>? ?? const [];
+      rooms.addAll(items
+          .cast<Map<String, dynamic>>()
+          .map(_roomFromCalendarResource)
+          .whereType<MeetingRoom>());
+
+      pageToken = response.data?['nextPageToken'] as String?;
+      if (pageToken == null || pageToken.isEmpty) return rooms;
+    }
+    return rooms;
+  }
+
+  /// The rooms this user has added to their own calendar list, identified by
+  /// Google's resource-calendar address suffix.
+  ///
+  /// The fallback for the (common) non-admin case. It needs only the
+  /// `calendar.calendarlist.readonly` scope the app already holds, but it can
+  /// only see rooms the user — or a domain-wide default — has subscribed to, and
+  /// it carries no capacity or building. An empty result here means the user has
+  /// no room calendars added, which is a real and unremarkable state.
+  Future<List<MeetingRoom>> _fetchRoomsFromCalendarList() async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(
+        '/users/me/calendarList',
+        queryParameters: {'maxResults': 250, 'minAccessRole': 'freeBusyReader'},
+      );
+      final items = response.data?['items'] as List<dynamic>? ?? const [];
+      return items
+          .cast<Map<String, dynamic>>()
+          .where((c) => (c['id'] as String? ?? '')
+              .toLowerCase()
+              .endsWith(_resourceCalendarSuffix))
+          .map((c) {
+            final id = c['id'] as String;
+            final name = (c['summaryOverride'] as String?) ??
+                (c['summary'] as String?) ??
+                id;
+            return MeetingRoom(email: id, displayName: name);
+          })
+          .toList();
+    } on DioException catch (e) {
+      // Nothing left to try. An empty dropdown must not stop the user saving.
+      debugPrint('[GoogleCalendar] calendarList unavailable: ${e.message}');
+      return const [];
+    }
+  }
+
+  MeetingRoom? _roomFromCalendarResource(Map<String, dynamic> json) {
+    final email = json['resourceEmail'] as String? ?? '';
+    if (email.isEmpty) return null;
+    // `generatedResourceName` is what Google Calendar itself shows — it folds in
+    // the building and floor ("SYD-2-Boardroom (10)"). Prefer the plain name and
+    // let building/floor render as the dropdown's own subtitle instead.
+    final name = (json['resourceName'] as String?)?.trim();
+    return MeetingRoom(
+      email: email,
+      displayName: name != null && name.isNotEmpty
+          ? name
+          : (json['generatedResourceName'] as String? ?? email),
+      capacity: json['capacity'] as int?,
+      building: json['buildingId'] as String?,
+      floorLabel: json['floorName'] as String?,
+    );
+  }
+
+  /// The directory name for a booked room, falling back to the address' local
+  /// part when the room directory was never read. A Google resource address'
+  /// local part is an opaque id, so the bare address is the better fallback.
+  String _roomDisplayName(String email) =>
+      _roomsByEmail[email.toLowerCase()]?.displayName ?? email;
+
+  /// Whether the free-text location is just a room's name repeated, which is
+  /// what happens when the form shows the room in the field and also books it.
+  bool _locationNamesARoom(String location, List<String> roomEmails) {
+    final needle = location.trim().toLowerCase();
+    return roomEmails.any((e) =>
+        _roomDisplayName(e).trim().toLowerCase() == needle ||
+        e.trim().toLowerCase() == needle);
+  }
+
   Map<String, dynamic> _buildEventBody({
     required String subject,
     required DateTime start,
@@ -703,14 +888,41 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     String? location,
     String? description,
     List<String> attendeeEmails = const [],
+    List<String> roomEmails = const [],
     CalendarRecurrence? recurrence,
     int? reminderMinutes,
     bool isOnlineMeeting = false,
     bool isUpdate = false,
   }) {
+    // Google has no structured location — `location` is one free-text string —
+    // so a booked room has to be named in it as well as invited, or the event
+    // reads as having no place at all. Rooms first, then any typed-in text.
+    //
+    // Except when the location *is* a join link. `_parseLocation` hands the
+    // conference URL up as the location, so that is what comes back down here
+    // for an online meeting; prefixing a room name to it would leave a location
+    // that no longer starts with `https://`, which is the signal the whole app
+    // uses for "this meeting is joinable" (`_isJoinable`, the Join Meeting menu
+    // item, the tile's join chip). Adding a room to a Meet would silently take
+    // the join button away. The room is booked as a resource attendee either
+    // way, and both Google's UI and ours show it from there.
+    final keepJoinUrl = isOnlineMeetingUrl(location);
+    final locationText = keepJoinUrl
+        ? location!.trim()
+        : [
+            ...roomEmails.map(_roomDisplayName),
+            if (location != null &&
+                location.isNotEmpty &&
+                !_locationNamesARoom(location, roomEmails))
+              location,
+          ].join(', ');
+
     final body = <String, dynamic>{
       'summary': subject,
-      if (location != null && location.isNotEmpty) 'location': location,
+      // Sent even when empty, unlike most fields here: on a PATCH an omitted
+      // field means "leave unchanged", so clearing the location or releasing the
+      // last room would otherwise not take effect server-side.
+      'location': locationText,
       if (description != null && description.isNotEmpty)
         'description': description,
     };
@@ -742,10 +954,14 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       };
     }
 
-    if (attendeeEmails.isNotEmpty) {
-      body['attendees'] =
-          attendeeEmails.map((e) => {'email': e}).toList();
-    }
+    // `resource: true` is what makes Google run the room's booking policy —
+    // auto-accepting or declining on conflict — instead of treating the room
+    // calendar as a person who was invited. Always sent for the same
+    // PATCH-semantics reason as `location` above.
+    body['attendees'] = [
+      for (final e in attendeeEmails) {'email': e},
+      for (final e in roomEmails) {'email': e, 'resource': true},
+    ];
 
     if (recurrence != null) {
       body['recurrence'] = [_buildRRule(recurrence)];
@@ -1059,11 +1275,23 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
               email: a['email'] as String? ?? '',
               displayName: a['displayName'] as String?,
               responseStatus: _parseAttendeeStatus(a['responseStatus'] as String?),
+              // Google flags a booked room on the attendee itself. Fall back to
+              // the resource-calendar address suffix for a room added by another
+              // client that omitted the flag.
+              isResource: a['resource'] as bool? ??
+                  (a['email'] as String? ?? '')
+                      .toLowerCase()
+                      .endsWith(_resourceCalendarSuffix),
             ))
         .where((a) => a.email.isNotEmpty)
         .toList();
 
     final description = json['description'] as String?;
+    final split = splitMeetingLocation(
+      rawLocation: json['location'] as String?,
+      onlineMeetingUrl: _conferenceJoinUrl(json),
+      description: description,
+    );
     return CalendarEventModel(
       id: json['id'] as String? ?? '',
       subject: json['summary'] as String? ?? '(No title)',
@@ -1071,11 +1299,8 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       end: end,
       isAllDay: isAllDay,
       iCalUid: json['iCalUID'] as String?,
-      location: _parseLocation(
-        json['location'] as String?,
-        description,
-        _conferenceJoinUrl(json),
-      ),
+      location: split.location,
+      onlineMeetingUrl: split.onlineMeetingUrl,
       bodyPreview: description,
       status: status,
       participation: participation,
@@ -1126,24 +1351,6 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       if (uri != null && uri.isNotEmpty) return uri;
     }
     return json['hangoutLink'] as String?;
-  }
-
-  static String? _parseLocation(
-    String? location,
-    String? description,
-    String? conferenceJoinUrl,
-  ) {
-    if (conferenceJoinUrl != null && conferenceJoinUrl.isNotEmpty) {
-      return conferenceJoinUrl;
-    }
-    if (location != null && location.startsWith('https://')) return location;
-    if (description != null) {
-      final match = RegExp(
-        r'https://(?:teams\.microsoft\.com/l/meetup-join|meet\.google\.com)/[^\s<>"]*',
-      ).firstMatch(description);
-      if (match != null) return match.group(0);
-    }
-    return (location != null && location.isNotEmpty) ? location : null;
   }
 
   /// Free/busy status, used for conflict detection (not colouring).

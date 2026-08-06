@@ -2,9 +2,11 @@ import 'package:caldav/caldav.dart' as caldav;
 import 'package:uuid/uuid.dart';
 
 import '../../../core/error/exceptions.dart';
+import '../../../core/utils/online_meeting_url.dart';
 import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/calendar_recurrence.dart';
 import '../../../domain/entities/meeting_invite.dart';
+import '../../../domain/entities/meeting_room.dart';
 import '../../../domain/usecases/create_calendar_event.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
 import '../../models/calendar_event_model.dart';
@@ -356,16 +358,32 @@ class CalDavCalendarDatasourceImpl implements CalendarRemoteDatasource {
         .toList();
   }
 
+  @override
+  Future<List<MeetingRoom>> getMeetingRooms() async {
+    // CalDAV has no room directory to enumerate. A CalDAV server may expose
+    // room principals via RFC 6638 scheduling, but that is the same extension
+    // getAttendeesSchedule above cannot rely on, so the Location field stays
+    // free text for these accounts.
+    return const [];
+  }
+
   // ─── Helpers ────────────────────────────────────────────────────────────────
 
   CalendarEventModel _toModel(caldav.CalendarEvent e) {
+    // CalDAV has no conference field, so a join link is only ever in the
+    // LOCATION or DESCRIPTION an organiser pasted it into.
+    final split = splitMeetingLocation(
+      rawLocation: e.location,
+      description: e.description,
+    );
     return CalendarEventModel(
       id: e.uid,
       subject: e.summary,
       start: e.start,
       end: e.end ?? e.start.add(const Duration(hours: 1)),
       isAllDay: e.isAllDay,
-      location: e.location,
+      location: split.location,
+      onlineMeetingUrl: split.onlineMeetingUrl,
       bodyPreview: e.description,
       isOrganizer: true,
       // Read-only: the caldav package's CalendarEvent.toIcalendar() emits no

@@ -30,6 +30,7 @@ class CreateCalendarEventParams extends Equatable {
     this.location,
     this.description,
     this.attendeeEmails = const [],
+    this.roomEmails = const [],
     this.recurrence,
     this.isOnlineMeeting = false,
     this.reminderMinutes,
@@ -45,6 +46,15 @@ class CreateCalendarEventParams extends Equatable {
   final String? location;
   final String? description;
   final List<String> attendeeEmails;
+
+  /// Room mailboxes to book, invited as *resource* attendees rather than people
+  /// (Graph `type: resource`, Google `resource: true`). Naming a room in
+  /// [location] does not reserve it — only the invitation does, and only then
+  /// does the room's booking policy auto-accept or decline. Kept apart from
+  /// [attendeeEmails] because the two are sent differently and because a room
+  /// must not appear in the Guests field.
+  final List<String> roomEmails;
+
   final CalendarRecurrence? recurrence;
 
   /// Whether to attach a provider-native online meeting (Teams for Microsoft,
@@ -64,6 +74,7 @@ class CreateCalendarEventParams extends Equatable {
         location,
         description,
         attendeeEmails,
+        roomEmails,
         recurrence,
         isOnlineMeeting,
         reminderMinutes,

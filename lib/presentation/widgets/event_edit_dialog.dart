@@ -13,20 +13,25 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/online_meeting_url.dart';
 import '../../core/utils/timezone_utils.dart';
 import '../../domain/entities/attendee_availability.dart';
 import '../../domain/entities/calendar_event.dart';
 import '../../domain/entities/calendar_event_attendee.dart';
 import '../../domain/entities/calendar_recurrence.dart';
 import '../../domain/entities/meeting_notify_scope.dart';
+import '../../domain/entities/meeting_room.dart';
 import '../../domain/usecases/check_attendees_availability.dart';
+import '../../domain/usecases/get_meeting_rooms.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../../injection_container.dart';
 import '../blocs/event_edit/event_edit_bloc.dart';
 import '../blocs/event_edit/event_edit_event.dart';
 import '../blocs/event_edit/event_edit_state.dart';
+import 'availability_status_style.dart';
 import 'date_time_fields.dart';
 import 'recipient_input_field.dart';
+import 'room_location_field.dart';
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
@@ -76,6 +81,8 @@ class EventEditDialog extends StatelessWidget {
         'isAllDay': e.isAllDay,
         'isOrganizer': e.isOrganizer,
         if (e.location != null) 'location': e.location,
+        if (e.onlineMeetingUrl != null)
+          'onlineMeetingUrl': e.onlineMeetingUrl,
         if (e.bodyPreview != null) 'bodyPreview': e.bodyPreview,
         if (e.timezone != null) 'timezone': e.timezone,
         'attendees': e.attendees
@@ -83,6 +90,10 @@ class EventEditDialog extends StatelessWidget {
                   'email': a.email,
                   if (a.displayName != null) 'displayName': a.displayName,
                   'responseStatus': a.responseStatus.name,
+                  // Without this the sub-window cannot tell a booked room from a
+                  // guest, and reopening a meeting would move its rooms into the
+                  // Guests field — and then re-invite them as people on save.
+                  if (a.isResource) 'isResource': true,
                 })
             .toList(),
         if (e.recurrence != null) 'recurrence': _recurrenceToArgs(e.recurrence!),
@@ -134,6 +145,7 @@ class EventEditDialog extends StatelessWidget {
             accountId: accountId,
             onClose: () => Navigator.of(context).pop(false),
             checkAttendeesAvailability: sl<CheckAttendeesAvailability>(),
+            getMeetingRooms: sl<GetMeetingRooms>(),
           ),
         ),
       ),
@@ -171,6 +183,7 @@ class EventEditForm extends StatefulWidget {
     required this.onClose,
     this.onTitleChanged,
     this.checkAttendeesAvailability,
+    this.getMeetingRooms,
     this.onSchedulePaneToggled,
   });
   final CalendarEvent? event;
@@ -181,6 +194,12 @@ class EventEditForm extends StatefulWidget {
   final VoidCallback onClose;
   final ValueChanged<String>? onTitleChanged;
   final CheckAttendeesAvailability? checkAttendeesAvailability;
+
+  /// Null leaves the Location field as plain free text — which is what the
+  /// account-less previews and tests want, and what an account with no room
+  /// directory ends up with anyway.
+  final GetMeetingRooms? getMeetingRooms;
+
   final void Function(bool expanded)? onSchedulePaneToggled;
 
   @override
@@ -216,6 +235,22 @@ class _EventEditFormState extends State<EventEditForm> {
   String? _organizerEmail;
   String? _hoveredLocationUrl;
 
+  /// Rooms this meeting books. Separate from [_attendees] all the way to the
+  /// provider: they are invited as resources, not people.
+  late List<MeetingRoom> _selectedRooms;
+
+  /// The account's room directory, and the rooms currently shown by the picker.
+  List<MeetingRoom> _rooms = const [];
+  bool _loadingRooms = false;
+  List<MeetingRoom> _visibleRooms = const [];
+
+  /// Free/busy per room address, lower-cased. Keyed by address rather than held
+  /// as a list so a room's dot survives the picker's list changing under it, and
+  /// so a room stays answered once asked about at this slot.
+  final Map<String, AttendeeAvailabilityStatus> _roomAvailability = {};
+  bool _checkingRoomAvailability = false;
+  Timer? _roomAvailabilityDebounce;
+
   // Snapshot of the form's initial values, captured at the end of initState so
   // a save can tell what the organizer actually changed. Used to decide which
   // attendees to notify: any content change notifies everyone, an
@@ -233,6 +268,7 @@ class _EventEditFormState extends State<EventEditForm> {
   late final CalendarRecurrence? _initialRecurrence;
   late final bool _initialIsOnlineMeeting;
   late final Set<String> _initialAttendees;
+  late final Set<String> _initialRooms;
 
   @override
   void initState() {
@@ -245,7 +281,27 @@ class _EventEditFormState extends State<EventEditForm> {
         : DateTime(now.year, now.month, now.day, now.hour + 1);
 
     _titleController = TextEditingController(text: e?.subject ?? '');
-    _locationController = TextEditingController(text: e?.location ?? '');
+
+    // Rooms arrive back as resource attendees. Everything known about them at
+    // this point is a name and an address; the room directory fills in capacity
+    // and building once it loads (see [_loadRooms]).
+    _selectedRooms = (e?.attendees ?? const <CalendarEventAttendee>[])
+        .where((a) => a.isResource && a.email.isNotEmpty)
+        .map((a) => MeetingRoom(
+              email: a.email,
+              displayName: a.displayName?.trim().isNotEmpty == true
+                  ? a.displayName!
+                  : a.email,
+            ))
+        .toList();
+
+    // The provider's `location` names the booked rooms as well as any free text
+    // (Graph mirrors locations[0] into it; Google has only the one string), so
+    // the room names have to come back out or they would be shown twice — once
+    // as a chip and once as typed-in text — and saved twice.
+    _locationController = TextEditingController(
+      text: _stripRoomNames(e?.location ?? '', _selectedRooms),
+    );
     _descriptionController = TextEditingController(text: e?.bodyPreview ?? '');
 
     _titleController.addListener(_onTitleChanged);
@@ -269,12 +325,19 @@ class _EventEditFormState extends State<EventEditForm> {
     _timezone = (storedTz == null || storedTz == 'UTC')
         ? _localIanaTimezone()
         : storedTz;
-    _attendees =
-        e?.attendees.map((a) => a.email).toList() ?? const [];
+    _attendees = e?.attendees
+            .where((a) => !a.isResource)
+            .map((a) => a.email)
+            .toList() ??
+        const [];
     _attendeeStatuses = {
       for (final a in e?.attendees ?? const <CalendarEventAttendee>[])
         if (a.email.isNotEmpty) a.email.toLowerCase(): a.responseStatus,
     };
+    // Reflects what the meeting actually is. It used to start false even for a
+    // meeting that plainly had a Teams link, because the join URL was only ever
+    // visible as the location text.
+    _isOnlineMeeting = e?.hasOnlineMeeting ?? false;
     _recurrence = e?.recurrence;
     // A new meeting defaults to a 15-minute reminder; an existing one keeps
     // whatever the server has, including no reminder at all.
@@ -305,6 +368,7 @@ class _EventEditFormState extends State<EventEditForm> {
         .map(_extractEmail)
         .map((a) => a.toLowerCase())
         .toSet();
+    _initialRooms = _selectedRooms.map((r) => r.email.toLowerCase()).toSet();
 
     // An existing meeting opens with its guest list already filled in, so the
     // first free/busy fetch has to be kicked off here. Every other trigger is a
@@ -314,6 +378,8 @@ class _EventEditFormState extends State<EventEditForm> {
     if (!_readOnly && !_isAllDay && _attendees.isNotEmpty) {
       _scheduleAvailabilityCheck();
     }
+
+    if (!_readOnly) _loadRooms();
   }
 
   static String? _nullIfBlank(String s) {
@@ -321,8 +387,64 @@ class _EventEditFormState extends State<EventEditForm> {
     return t.isNotEmpty ? t : null;
   }
 
+  /// Removes the booked rooms' names from a provider-supplied location string,
+  /// leaving whatever free text was typed alongside them.
+  ///
+  /// Splits on the separators the two datasources join with (", " for Google's
+  /// single string, "; " for a hand-typed list) and drops any segment that is a
+  /// room's name or address. A segment that merely *contains* a room name is
+  /// kept: "Meet outside Room 3" is free text, not a duplicated chip.
+  static String _stripRoomNames(String location, List<MeetingRoom> rooms) {
+    if (location.isEmpty || rooms.isEmpty) return location;
+    final roomLabels = {
+      for (final r in rooms) ...[
+        r.displayName.trim().toLowerCase(),
+        r.email.trim().toLowerCase(),
+      ],
+    };
+    return location
+        .split(RegExp(r'\s*[;,]\s*'))
+        .where((segment) =>
+            segment.trim().isNotEmpty &&
+            !roomLabels.contains(segment.trim().toLowerCase()))
+        .join(', ');
+  }
+
+  /// Fetches the account's room directory once, on open.
+  ///
+  /// The repository caches it for the process' lifetime, so this is a round-trip
+  /// on the first event window of a session and free afterwards. A failure is
+  /// deliberately silent: the Location field falls back to being a text box,
+  /// which is exactly what it was before rooms existed.
+  Future<void> _loadRooms() async {
+    final loader = widget.getMeetingRooms;
+    if (loader == null) return;
+
+    setState(() => _loadingRooms = true);
+    final result = await loader(accountId: widget.accountId);
+    if (!mounted) return;
+
+    final rooms = result.getRight().toNullable() ?? const <MeetingRoom>[];
+    setState(() {
+      _loadingRooms = false;
+      _rooms = rooms;
+      // Upgrade the chips built from bare resource attendees to the directory's
+      // full records, so a reopened meeting shows its room's capacity and floor
+      // rather than just the name it was saved with.
+      final byEmail = {for (final r in rooms) r.email.toLowerCase(): r};
+      _selectedRooms = _selectedRooms
+          .map((r) => byEmail[r.email.toLowerCase()] ?? r)
+          .toList();
+    });
+
+    // An already-booked room's status is worth showing straight away — it is how
+    // the organizer sees that the room they had has been taken by someone else.
+    if (_selectedRooms.isNotEmpty) _scheduleRoomAvailabilityCheck();
+  }
+
   @override
   void dispose() {
+    _roomAvailabilityDebounce?.cancel();
     _availabilityDebounce?.cancel();
     _titleController.removeListener(_onTitleChanged);
     _titleController.dispose();
@@ -389,7 +511,15 @@ class _EventEditFormState extends State<EventEditForm> {
       _endTime = TimeOfDay(hour: newEnd.hour, minute: newEnd.minute);
       _availabilities = null;
     });
+    _onSlotEdited();
+  }
+
+  /// The meeting moved. Every free/busy answer — guests' and rooms' alike — was
+  /// about the old slot, so both are dropped and re-asked.
+  void _onSlotEdited() {
+    setState(_roomAvailability.clear);
     _scheduleAvailabilityCheck();
+    _scheduleRoomAvailabilityCheck();
   }
 
   void _scheduleAvailabilityCheck() {
@@ -437,6 +567,92 @@ class _EventEditFormState extends State<EventEditForm> {
       _checkingAvailability = false;
       _availabilities = result.fold((_) => null, (a) => a);
     });
+  }
+
+  /// Re-asks for room free/busy, coalescing a burst of edits.
+  ///
+  /// Kept separate from [_scheduleAvailabilityCheck] because the two are driven
+  /// by different things: guests change when the roster does, rooms change as the
+  /// picker's filter moves. Sharing one debounce would let scrolling the room
+  /// list keep re-querying every guest's calendar.
+  void _scheduleRoomAvailabilityCheck() {
+    if (widget.checkAttendeesAvailability == null) return;
+    _roomAvailabilityDebounce?.cancel();
+    _roomAvailabilityDebounce = Timer(
+      const Duration(milliseconds: 350),
+      _checkRoomAvailability,
+    );
+  }
+
+  Future<void> _checkRoomAvailability() async {
+    final checker = widget.checkAttendeesAvailability;
+    if (checker == null || _isAllDay) return;
+
+    // The rooms on screen plus the ones already booked — the booked ones are
+    // shown as chips whether or not the dropdown is open.
+    final wanted = <String, MeetingRoom>{
+      for (final r in [..._selectedRooms, ..._visibleRooms])
+        r.email.toLowerCase(): r,
+    };
+    // Only ask about rooms with no answer for this slot yet. The map is cleared
+    // whenever the slot moves, so this is a per-slot memo rather than a stale one.
+    final toQuery = wanted.keys
+        .where((email) => !_roomAvailability.containsKey(email))
+        .toList();
+    if (toQuery.isEmpty) return;
+
+    final start = _computedStart;
+    final end = _computedEnd;
+    if (!end.isAfter(start)) return;
+
+    setState(() => _checkingRoomAvailability = true);
+
+    final edited = widget.event;
+    final result = await checker(CheckAttendeesAvailabilityParams(
+      emails: toQuery,
+      start: start,
+      end: end,
+      // Rooms only — no organizer. Passing one would make the repository fetch
+      // the whole calendar for subjects, which is wasted work here: a room's
+      // dot needs a status, not a list of what it is booked for.
+      organizerEmail: null,
+      accountId: widget.accountId,
+      // A room already held by the meeting being edited must not be reported as
+      // clashing with itself, exactly as for its guests.
+      excludeEventId: edited?.id,
+      excludeStart: edited?.start,
+      excludeEnd: edited?.end,
+    ));
+
+    if (!mounted) return;
+    setState(() {
+      _checkingRoomAvailability = false;
+      result.match((_) {}, (availabilities) {
+        for (final a in availabilities) {
+          _roomAvailability[a.email.toLowerCase()] = a.status;
+        }
+      });
+    });
+  }
+
+  /// The location as one line, rooms first — what a read-only viewer sees, and
+  /// the inverse of the [_stripRoomNames] the form did on load.
+  String get _displayLocation => [
+        ..._selectedRooms.map((r) => r.displayName),
+        if (_locationController.text.trim().isNotEmpty)
+          _locationController.text.trim(),
+      ].join(', ');
+
+  /// The picker telling us which rooms it is showing. Anything already answered
+  /// for this slot costs nothing, so this only ever fetches the newcomers.
+  void _onVisibleRoomsChanged(List<MeetingRoom> rooms) {
+    _visibleRooms = rooms;
+    _scheduleRoomAvailabilityCheck();
+  }
+
+  void _onSelectedRoomsChanged(List<MeetingRoom> rooms) {
+    setState(() => _selectedRooms = rooms);
+    _scheduleRoomAvailabilityCheck();
   }
 
   static final _emailInAngle = RegExp(r'<([^>]+)>');
@@ -497,9 +713,13 @@ class _EventEditFormState extends State<EventEditForm> {
       return;
     }
 
+    // Only the free text. The rooms travel as roomEmails and each datasource
+    // names them in the provider's own location shape — Graph's structured
+    // `locations` array, Google's single string.
     final location = _nullIfBlank(_locationController.text);
     final description = _nullIfBlank(_descriptionController.text);
     final attendeeEmails = _attendees.map(_extractEmail).toList();
+    final roomEmails = _selectedRooms.map((r) => r.email).toList();
 
     context.read<EventEditBloc>().add(EventEditSubmitted(
           id: widget.event?.id,
@@ -511,9 +731,14 @@ class _EventEditFormState extends State<EventEditForm> {
           location: location,
           description: description,
           attendeeEmails: attendeeEmails,
+          roomEmails: roomEmails,
+          // Only ever a request to *attach* one. Asking again for a meeting that
+          // already has a link is not a no-op: Google answers a second
+          // createRequest by minting a new conference, which would strand
+          // everyone holding the old link.
+          isOnlineMeeting: _isOnlineMeeting && !_initialIsOnlineMeeting,
           // Editing a single occurrence must not touch the series' recurrence.
           recurrence: _isSeriesOccurrence ? null : _recurrence,
-          isOnlineMeeting: _isOnlineMeeting,
           reminderMinutes: _reminderMinutes,
           notifyScope: _computeNotifyScope(
             subject: title,
@@ -536,7 +761,16 @@ class _EventEditFormState extends State<EventEditForm> {
   }) {
     if (widget.event == null) return MeetingNotifyScope.all;
 
-    final contentChanged = subject != _initialSubject ||
+    // A room change is a change of *where the meeting is*, so it notifies
+    // everyone — unlike a guest joining or leaving, which only concerns the
+    // guests who moved. Both directions matter: a guest who walks to the old
+    // room finds someone else's meeting in it.
+    final roomsNow = _selectedRooms.map((r) => r.email.toLowerCase()).toSet();
+    final roomsChanged = roomsNow.length != _initialRooms.length ||
+        !roomsNow.containsAll(_initialRooms);
+
+    final contentChanged = roomsChanged ||
+        subject != _initialSubject ||
         location != _initialLocation ||
         description != _initialDescription ||
         _startDate != _initialStartDate ||
@@ -613,7 +847,7 @@ class _EventEditFormState extends State<EventEditForm> {
                               _endDate = DateTime(newEnd.year, newEnd.month, newEnd.day);
                               _endTime = TimeOfDay(hour: newEnd.hour, minute: newEnd.minute);
                             });
-                            _scheduleAvailabilityCheck();
+                            _onSlotEdited();
                           },
                           onStartTimeChanged: (t) {
                             setState(() {
@@ -625,7 +859,7 @@ class _EventEditFormState extends State<EventEditForm> {
                               _endDate = DateTime(newEnd.year, newEnd.month, newEnd.day);
                               _endTime = TimeOfDay(hour: newEnd.hour, minute: newEnd.minute);
                             });
-                            _scheduleAvailabilityCheck();
+                            _onSlotEdited();
                           },
                           onEndDateChanged: (d) {
                             setState(() {
@@ -634,7 +868,7 @@ class _EventEditFormState extends State<EventEditForm> {
                                   _endTime.hour, _endTime.minute);
                               _duration = newEnd.difference(_computedStart);
                             });
-                            _scheduleAvailabilityCheck();
+                            _onSlotEdited();
                           },
                           onEndTimeChanged: (t) {
                             setState(() {
@@ -643,7 +877,7 @@ class _EventEditFormState extends State<EventEditForm> {
                                   _endDate.month, _endDate.day, t.hour, t.minute);
                               _duration = newEnd.difference(_computedStart);
                             });
-                            _scheduleAvailabilityCheck();
+                            _onSlotEdited();
                           },
                         ),
                       ),
@@ -656,7 +890,7 @@ class _EventEditFormState extends State<EventEditForm> {
                           // exists to negotiate, so collapse it (and shrink the
                           // window back) rather than leaving a stale grid open.
                           if (v && _showSchedulePane) _toggleSchedulePane();
-                          _scheduleAvailabilityCheck();
+                          _onSlotEdited();
                         },
                       ),
                     ],
@@ -680,53 +914,57 @@ class _EventEditFormState extends State<EventEditForm> {
                   label: 'Location',
                   child: _readOnly
                       ? _LinkifiedText(
-                          text: _locationController.text,
+                          // The rooms were split out of the location text on
+                          // load, so a viewer has to be shown them again — a
+                          // guest reading an invitation needs to know which room
+                          // to walk to.
+                          text: _displayLocation,
                           style: TextStyle(color: c.textPrimary, fontSize: 13),
                           onHoverUrl: (u) =>
                               setState(() => _hoveredLocationUrl = u),
                         )
-                      : Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller: _locationController,
-                                style: TextStyle(color: c.textPrimary, fontSize: 13),
-                                decoration: InputDecoration(
-                                  hintText: 'Add location',
-                                  hintStyle:
-                                      TextStyle(color: c.textMuted, fontSize: 13),
-                                  border: InputBorder.none,
-                                  contentPadding: EdgeInsets.zero,
-                                  isDense: true,
-                                ),
-                              ),
-                            ),
-                            if (widget.isO365Account ||
-                                widget.isGmailAccount) ...[
-                              const SizedBox(width: 8),
-                              _OnlineMeetingButton(
-                                active: _isOnlineMeeting,
-                                label:
-                                    widget.isGmailAccount ? 'Meet' : 'Teams',
-                                onToggle: (v) {
-                                  setState(() => _isOnlineMeeting = v);
-                                  final placeholder = widget.isGmailAccount
-                                      ? 'Google Meet'
-                                      : 'Microsoft Teams Meeting';
-                                  if (v &&
-                                      _locationController.text.trim().isEmpty) {
-                                    _locationController.text = placeholder;
-                                  } else if (!v &&
-                                      _locationController.text.trim() ==
-                                          placeholder) {
-                                    _locationController.text = '';
-                                  }
-                                },
-                              ),
-                            ],
-                          ],
+                      : RoomLocationField(
+                          locationController: _locationController,
+                          selectedRooms: _selectedRooms,
+                          onSelectedRoomsChanged: _onSelectedRoomsChanged,
+                          rooms: _rooms,
+                          loadingRooms: _loadingRooms,
+                          availability: _roomAvailability,
+                          checkingAvailability: _checkingRoomAvailability,
+                          onVisibleRoomsChanged: _onVisibleRoomsChanged,
+                          trailing: (widget.isO365Account ||
+                                  widget.isGmailAccount)
+                              ? _OnlineMeetingButton(
+                                  active: _isOnlineMeeting,
+                                  locked: _initialIsOnlineMeeting,
+                                  label:
+                                      widget.isGmailAccount ? 'Meet' : 'Teams',
+                                  onToggle: (v) {
+                                    setState(() => _isOnlineMeeting = v);
+                                    final placeholder = widget.isGmailAccount
+                                        ? 'Google Meet'
+                                        : 'Microsoft Teams Meeting';
+                                    if (v &&
+                                        _locationController.text
+                                            .trim()
+                                            .isEmpty) {
+                                      _locationController.text = placeholder;
+                                    } else if (!v &&
+                                        _locationController.text.trim() ==
+                                            placeholder) {
+                                      _locationController.text = '';
+                                    }
+                                  },
+                                )
+                              : null,
                         ),
                 ),
+                // The join link used to be visible only because it *was* the
+                // location text. Now that the two are separate fields it needs
+                // somewhere of its own, or editing a meeting would hide the one
+                // thing most attendees actually want from it.
+                if (widget.event?.onlineMeetingUrl case final url?)
+                  _JoinLinkRow(url: url),
                 const SizedBox(height: 10),
                 AbsorbPointer(
                   absorbing: _readOnly,
@@ -1757,24 +1995,6 @@ class _AvailabilityRow extends StatelessWidget {
   final AttendeeAvailability availability;
   final VoidCallback? onScheduleTap;
 
-  static const _statusLabels = {
-    AttendeeAvailabilityStatus.free: 'Free',
-    AttendeeAvailabilityStatus.tentative: 'Tentative',
-    AttendeeAvailabilityStatus.busy: 'Busy',
-    AttendeeAvailabilityStatus.outOfOffice: 'Out of office',
-    AttendeeAvailabilityStatus.workingElsewhere: 'Working elsewhere',
-    AttendeeAvailabilityStatus.unknown: '',
-  };
-
-  static Color _statusColor(AttendeeAvailabilityStatus s) => switch (s) {
-        AttendeeAvailabilityStatus.free => const Color(0xFF34C759),
-        AttendeeAvailabilityStatus.tentative => const Color(0xFFFF9F0A),
-        AttendeeAvailabilityStatus.busy => const Color(0xFFFF3B30),
-        AttendeeAvailabilityStatus.outOfOffice => const Color(0xFFFF3B30),
-        AttendeeAvailabilityStatus.workingElsewhere => const Color(0xFF5E5CE6),
-        AttendeeAvailabilityStatus.unknown => const Color(0xFF8E8E93),
-      };
-
   /// The status word doubles as a shortcut into the schedule pane. Free guests
   /// are included: the pane is how you pick a slot, so it has to be reachable
   /// when everyone is free — which is the normal case, not the exception.
@@ -1783,8 +2003,8 @@ class _AvailabilityRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final color = _statusColor(availability.status);
-    final label = _statusLabels[availability.status] ?? '';
+    final color = availabilityStatusColor(availability.status);
+    final label = availabilityStatusLabels[availability.status] ?? '';
     return Padding(
       padding: const EdgeInsets.only(bottom: 2),
       child: Row(
@@ -2291,16 +2511,24 @@ class _OnlineMeetingButton extends StatelessWidget {
     required this.active,
     required this.onToggle,
     required this.label,
+    this.locked = false,
   });
   final bool active;
   final ValueChanged<bool> onToggle;
   final String label;
 
+  /// Set once the meeting already has an online meeting attached. Neither
+  /// provider lets one be added or removed after the fact through this form —
+  /// Google would answer a second `createRequest` by minting a *new* link, and
+  /// Graph will not flip `isOnlineMeeting` on an existing event — so the toggle
+  /// reports the state rather than pretending to change it.
+  final bool locked;
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return GestureDetector(
-      onTap: () => onToggle(!active),
+    final button = GestureDetector(
+      onTap: locked ? null : () => onToggle(!active),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
@@ -2326,6 +2554,62 @@ class _OnlineMeetingButton extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+
+    if (!locked) return button;
+    return Tooltip(
+      message: '$label meeting — the link cannot be added or removed here',
+      child: button,
+    );
+  }
+}
+
+/// The meeting's join link, under the Location field.
+///
+/// Shows the platform's name rather than the URL: a Teams or Meet link is a long
+/// opaque token that tells the reader nothing and would swamp the row.
+class _JoinLinkRow extends StatelessWidget {
+  const _JoinLinkRow({required this.url});
+
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, left: 68),
+      child: Row(
+        children: [
+          Icon(Icons.videocam_outlined, size: 13, color: c.textMuted),
+          const SizedBox(width: 5),
+          Text(
+            onlineMeetingPlatformName(url),
+            style: TextStyle(color: c.textMuted, fontSize: 11),
+          ),
+          const SizedBox(width: 8),
+          Tooltip(
+            message: url,
+            child: GestureDetector(
+              onTap: () => unawaited(
+                launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+              ),
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: Text(
+                  'Join',
+                  style: TextStyle(
+                    color: AppColors.accent,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    decoration: TextDecoration.underline,
+                    decorationColor: AppColors.accent,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

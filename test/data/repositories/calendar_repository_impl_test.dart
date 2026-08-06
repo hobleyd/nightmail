@@ -17,6 +17,7 @@ import 'package:nightmail/domain/entities/attendee_availability.dart';
 import 'package:nightmail/domain/entities/calendar_event.dart';
 import 'package:nightmail/domain/entities/local_attachment.dart';
 import 'package:nightmail/domain/entities/meeting_invite.dart';
+import 'package:nightmail/domain/entities/meeting_room.dart';
 import 'package:nightmail/domain/usecases/update_calendar_event.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
@@ -1372,6 +1373,100 @@ END:VCALENDAR''';
         accountId: 'acct-1',
         event: anyNamed('event'),
       )).called(1);
+    });
+  });
+
+  group('getMeetingRooms', () {
+    const rooms = [
+      MeetingRoom(email: 'boardroom@example.com', displayName: 'Boardroom'),
+    ];
+
+    void givenActiveAccount() {
+      when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+      when(mockAccountManager.activeAccount).thenReturn(const GmailAccount(
+        id: 'acct-1',
+        displayName: 'Test',
+        emailAddress: 'me@example.com',
+      ));
+    }
+
+    test('returns the account\'s rooms', () async {
+      givenActiveAccount();
+      when(mockDatasource.getMeetingRooms()).thenAnswer((_) async => rooms);
+
+      final result = await repository.getMeetingRooms();
+
+      expect(result.getRight().toNullable(), rooms);
+    });
+
+    test('fetches once and serves the rest of the session from memory — the '
+        'picker must open at typing speed, not at network speed', () async {
+      givenActiveAccount();
+      when(mockDatasource.getMeetingRooms()).thenAnswer((_) async => rooms);
+
+      await repository.getMeetingRooms();
+      await repository.getMeetingRooms();
+      await repository.getMeetingRooms();
+
+      verify(mockDatasource.getMeetingRooms()).called(1);
+    });
+
+    test('caches the in-flight future, so two forms opening at once make one '
+        'request', () async {
+      givenActiveAccount();
+      when(mockDatasource.getMeetingRooms()).thenAnswer((_) async => rooms);
+
+      await Future.wait([
+        repository.getMeetingRooms(),
+        repository.getMeetingRooms(),
+      ]);
+
+      verify(mockDatasource.getMeetingRooms()).called(1);
+    });
+
+    test('caches per account', () async {
+      givenActiveAccount();
+      when(mockAccountManager.accountById('acct-2'))
+          .thenReturn(const GmailAccount(
+        id: 'acct-2',
+        displayName: 'Other',
+        emailAddress: 'other@example.com',
+      ));
+      when(mockAccountManager
+              .buildCalendarDatasourceForAccount(argThat(isNotNull)))
+          .thenReturn(mockDatasource);
+      when(mockDatasource.getMeetingRooms()).thenAnswer((_) async => rooms);
+
+      await repository.getMeetingRooms(accountId: 'acct-1');
+      await repository.getMeetingRooms(accountId: 'acct-2');
+
+      verify(mockDatasource.getMeetingRooms()).called(2);
+    });
+
+    test('does not cache a failure — a room list that failed once must be '
+        'retried, not dead for the session', () async {
+      givenActiveAccount();
+      var calls = 0;
+      when(mockDatasource.getMeetingRooms()).thenAnswer((_) async {
+        calls++;
+        if (calls == 1) throw const ServerException(message: 'boom');
+        return rooms;
+      });
+
+      final first = await repository.getMeetingRooms();
+      final second = await repository.getMeetingRooms();
+
+      expect(first.isLeft(), isTrue);
+      expect(second.getRight().toNullable(), rooms);
+    });
+
+    test('an account type with no calendar answers with no rooms', () async {
+      when(mockAccountManager.calendarDatasource).thenReturn(null);
+      when(mockAccountManager.activeAccount).thenReturn(null);
+
+      final result = await repository.getMeetingRooms();
+
+      expect(result.getRight().toNullable(), isEmpty);
     });
   });
 }

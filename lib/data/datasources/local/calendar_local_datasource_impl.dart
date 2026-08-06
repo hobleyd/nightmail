@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:drift/drift.dart';
 
+import '../../../core/utils/online_meeting_url.dart';
 import '../../../domain/entities/calendar_event.dart';
 import '../../../domain/entities/calendar_event_attendee.dart';
 import '../../../domain/entities/calendar_recurrence.dart';
@@ -243,6 +244,7 @@ class CalendarLocalDatasourceImpl implements CalendarLocalDatasource {
         'isAllDay': e.isAllDay,
         'iCalUid': e.iCalUid,
         'location': e.location,
+        'onlineMeetingUrl': e.onlineMeetingUrl,
         'bodyPreview': e.bodyPreview,
         'status': e.status.name,
         'participation': e.participation.name,
@@ -254,14 +256,24 @@ class CalendarLocalDatasourceImpl implements CalendarLocalDatasource {
         'seriesMasterId': e.seriesMasterId,
       };
 
-  static CalendarEvent _fromJson(Map<String, dynamic> j) => CalendarEvent(
+  static CalendarEvent _fromJson(Map<String, dynamic> j) {
+    // Blobs written before the join link had a field of its own hold it in
+    // `location`. Splitting on read keeps those meetings joinable — and keeps
+    // the URL out of the event form's location box — without a migration pass
+    // over the cache, which the next sync rewrites anyway.
+    final split = splitMeetingLocation(
+      rawLocation: j['location'] as String?,
+      onlineMeetingUrl: j['onlineMeetingUrl'] as String?,
+    );
+    return CalendarEvent(
         id: j['id'] as String,
         subject: j['subject'] as String? ?? '(No title)',
         start: DateTime.parse(j['start'] as String),
         end: DateTime.parse(j['end'] as String),
         isAllDay: j['isAllDay'] as bool? ?? false,
         iCalUid: j['iCalUid'] as String?,
-        location: j['location'] as String?,
+        location: split.location,
+        onlineMeetingUrl: split.onlineMeetingUrl,
         bodyPreview: j['bodyPreview'] as String?,
         status: _enumByName(
           CalendarEventStatus.values,
@@ -284,6 +296,7 @@ class CalendarLocalDatasourceImpl implements CalendarLocalDatasource {
         reminderMinutes: j['reminderMinutes'] as int?,
         seriesMasterId: j['seriesMasterId'] as String?,
       );
+  }
 
   /// Tolerant enum read: a blob written by a build with a different set of
   /// enum names must not make the whole event undecodable.
@@ -300,6 +313,7 @@ class CalendarLocalDatasourceImpl implements CalendarLocalDatasource {
         'email': a.email,
         'displayName': a.displayName,
         'responseStatus': a.responseStatus.name,
+        'isResource': a.isResource,
       };
 
   static CalendarEventAttendee _attendeeFromJson(Map<String, dynamic> j) =>
@@ -311,6 +325,11 @@ class CalendarLocalDatasourceImpl implements CalendarLocalDatasource {
           j['responseStatus'] as String?,
           AttendeeResponseStatus.none,
         ),
+        // Absent in blobs written before rooms were bookable. Those events show
+        // their rooms as guests until the next sync pass rewrites the row from
+        // the provider, which is the same self-healing the cache relies on
+        // everywhere else.
+        isResource: j['isResource'] as bool? ?? false,
       );
 
   static Map<String, dynamic>? _recurrenceToJson(CalendarRecurrence? r) {

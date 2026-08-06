@@ -214,6 +214,7 @@ class CalendarOutboxDrainService {
         'location': p.location,
         'description': p.description,
         'attendeeEmails': p.attendeeEmails,
+        'roomEmails': p.roomEmails,
         'recurrence': _recurrenceToJson(p.recurrence),
         'isOnlineMeeting': p.isOnlineMeeting,
         'reminderMinutes': p.reminderMinutes,
@@ -235,6 +236,11 @@ class CalendarOutboxDrainService {
         description: j['description'] as String?,
         attendeeEmails:
             (j['attendeeEmails'] as List<dynamic>? ?? const []).cast<String>(),
+        // Absent in ops queued before rooms were bookable. Replaying one of
+        // those releases its rooms, which is the safe direction: the alternative
+        // is guessing which of its attendees were rooms and re-booking them.
+        roomEmails:
+            (j['roomEmails'] as List<dynamic>? ?? const []).cast<String>(),
         recurrence: _recurrenceFromJson(j['recurrence'] as Map<String, dynamic>?),
         isOnlineMeeting: j['isOnlineMeeting'] as bool? ?? false,
         reminderMinutes: j['reminderMinutes'] as int?,

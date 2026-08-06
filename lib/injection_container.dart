@@ -70,6 +70,7 @@ import 'domain/usecases/check_sender_anomaly.dart';
 import 'domain/usecases/merge_sender_addresses.dart';
 import 'domain/usecases/cancel_calendar_event.dart';
 import 'domain/usecases/check_attendees_availability.dart';
+import 'domain/usecases/get_meeting_rooms.dart';
 import 'domain/usecases/create_calendar_event.dart';
 import 'domain/usecases/decline_calendar_event.dart';
 import 'domain/usecases/create_task.dart';
@@ -361,6 +362,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => CreateCalendarEvent(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => UpdateCalendarEvent(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => CheckAttendeesAvailability(sl<CalendarRepository>()));
+  sl.registerLazySingleton(() => GetMeetingRooms(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => RespondToMeetingInvite(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => RemoveCancelledMeeting(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => CancelMeetingFromEmail(sl<CalendarRepository>()));

@@ -41,6 +41,7 @@ class CalendarEvent extends Equatable {
     required this.isAllDay,
     this.iCalUid,
     this.location,
+    this.onlineMeetingUrl,
     this.bodyPreview,
     this.status = CalendarEventStatus.busy,
     this.participation = MeetingParticipation.none,
@@ -65,7 +66,25 @@ class CalendarEvent extends Equatable {
   /// providers that don't expose it.
   final String? iCalUid;
 
+  /// Where the meeting is held — a room, an address, whatever was typed. Never
+  /// a join link: those live in [onlineMeetingUrl].
   final String? location;
+
+  /// The link that joins the meeting (Teams, Google Meet, Zoom), when it has
+  /// one. Held apart from [location] because the two answer different questions
+  /// and a meeting routinely has both — a room *and* a Meet for the people
+  /// dialling in. Folding them into one field meant the provider's join URL
+  /// overwrote whatever the user had typed, and anything composed in front of
+  /// the URL took the Join Meeting affordance away.
+  ///
+  /// Providers report it in their own field (Graph `onlineMeeting.joinUrl`,
+  /// Google `conferenceData`); `splitMeetingLocation` also recovers it from a
+  /// [location] left behind by the single-field convention this replaced.
+  final String? onlineMeetingUrl;
+
+  bool get hasOnlineMeeting =>
+      onlineMeetingUrl != null && onlineMeetingUrl!.isNotEmpty;
+
   final String? bodyPreview;
   final CalendarEventStatus status;
 
@@ -106,6 +125,7 @@ class CalendarEvent extends Equatable {
     bool? isAllDay,
     String? iCalUid,
     String? location,
+    String? onlineMeetingUrl,
     String? bodyPreview,
     CalendarEventStatus? status,
     MeetingParticipation? participation,
@@ -124,6 +144,7 @@ class CalendarEvent extends Equatable {
         isAllDay: isAllDay ?? this.isAllDay,
         iCalUid: iCalUid ?? this.iCalUid,
         location: location ?? this.location,
+        onlineMeetingUrl: onlineMeetingUrl ?? this.onlineMeetingUrl,
         bodyPreview: bodyPreview ?? this.bodyPreview,
         status: status ?? this.status,
         participation: participation ?? this.participation,

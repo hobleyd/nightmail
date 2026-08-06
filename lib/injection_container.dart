@@ -149,7 +149,6 @@ Future<void> configureDependencies() async {
   // Infrastructure — storage
   sl.registerLazySingleton<FlutterSecureStorage>(
     () => FlutterSecureStorage(
-      aOptions: const AndroidOptions(encryptedSharedPreferences: true),
       // kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly: accessible after first
       // unlock since reboot (including background execution contexts). Prevents
       // errSecInteractionNotAllowed (-25308) when the app cold-starts via a
@@ -634,7 +633,6 @@ const _kMigrationSentinel = 'nightmail_keychain_migration_v1';
 // returns items regardless of their kSecAttrAccessible attribute.
 const _kMigrationStorage = FlutterSecureStorage(
   iOptions: IOSOptions(accessibility: null),
-  aOptions: AndroidOptions(encryptedSharedPreferences: true),
 );
 
 // Migrates all iOS keychain items from kSecAttrAccessibleWhenUnlocked (the

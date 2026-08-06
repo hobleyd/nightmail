@@ -18,7 +18,6 @@ class AccountStorage {
   // so they can be lazily migrated to AfterFirstUnlockThisDeviceOnly.
   static const _migrationStorage = FlutterSecureStorage(
     iOptions: IOSOptions(accessibility: null),
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
   );
 
   static const _accountsKey = 'nightmail_accounts';

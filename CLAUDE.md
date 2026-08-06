@@ -267,6 +267,38 @@ That is why the whole Gmail message path uses one response type (the thread and
 search *indexes* are plain too, decoded locally since they are only ids), and why
 these tests stub `get<String>` with `jsonEncode`d bodies.
 
+## Bare URLs in a Message Body
+
+A URL a sender typed as text is turned into a real link at render time
+(`core/utils/linkify.dart`). Both body renderers use it and each needs its own
+half, because they have nothing else in common:
+
+- **HTML** — `linkifyHtml` writes `<a href>` into the document `HtmlBodyView`
+  hands the webview. That is the whole reason it happens there rather than at
+  parse time: link hover reporting, click-to-open-externally and copy-link are
+  already wired to anchors in the page, so a linkified URL picks up all three
+  for free. It is a *scanner*, not a parse — the body is about to be handed over
+  as text, so re-serialising a DOM would risk changing far more than the links —
+  and it runs before the `cid:` substitution so it scans the sender's body
+  rather than the same body with every inline image expanded into it. Text
+  inside `<a>`, `<script>`, `<style>`, `<title>` and comments is left alone;
+  nesting an anchor loses the outer link.
+- **Plain text** — `PlainTextBodyView` builds spans, and uses `SelectionArea` +
+  `Text.rich` rather than `SelectableText.rich`: `SelectableText` renders through
+  `RenderEditable`, which never dispatches to a span's `recognizer`, so the links
+  would look right and do nothing. It carries its own `BodyStatusBar` so hover
+  offers copy-link in the same place the webview path does.
+
+The fiddly part is not matching `https://` but deciding where the URL *ends* —
+the full stop after `.../timesheets.` closed the sentence, the `)` closed the aside
+(unless the URL's own brackets are unbalanced), and in HTML an escaped `&nbsp;`
+or `&gt;` is made of URL-legal characters, so it ends the URL wherever it
+appears rather than only at the tail. `&amp;` is deliberately not a boundary —
+that is how a query string's own separators arrive.
+
+Only `http`/`https` and `www.`-prefixed hosts are linked. Guessing at bare
+`example.com/x` turns file names and version numbers into links.
+
 ## Calendar Cache
 
 The calendar is offline-first: it paints from `cached_calendar_events` and then

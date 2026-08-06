@@ -9,6 +9,7 @@ import '../../injection_container.dart';
 import '../blocs/theme/theme_cubit.dart';
 import '../blocs/theme/theme_state.dart';
 import '../widgets/html_body_view.dart';
+import '../widgets/plain_text_body_view.dart';
 
 class EmailViewWindowApp extends StatelessWidget {
   const EmailViewWindowApp({
@@ -164,16 +165,9 @@ class _EmailViewPage extends StatelessWidget {
                     senderDomain: _senderDomain(email.from.address),
                     cacheKey: email.id,
                   )
-                : SingleChildScrollView(
+                : PlainTextBodyView(
+                    text: email.body,
                     padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-                    child: SelectableText(
-                      email.body,
-                      style: TextStyle(
-                        color: c.textBody,
-                        fontSize: 14,
-                        height: 1.6,
-                      ),
-                    ),
                   ),
           ),
         ],

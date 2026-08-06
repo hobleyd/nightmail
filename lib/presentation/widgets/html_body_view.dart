@@ -11,6 +11,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../../core/platform/window_utils.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/linkify.dart';
 import '../../data/services/inline_attachment_cache.dart';
 import '../../domain/entities/inline_attachment.dart';
 import '../../injection_container.dart';
@@ -367,12 +368,16 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
     required bool allowExternal,
     required Map<String, String> cidReplacements,
   }) {
+    // Ahead of the cid substitution, so the scan is over the sender's body
+    // rather than over the same body with every inline image expanded into it.
+    final body = linkifyHtml(widget.html);
+
     // One pass over the body. Substituting per attachment instead rescans the
     // whole (already-expanded) document once per image — quadratic, and
     // painful once the document is megabytes of base64.
     var resolved = cidReplacements.isEmpty
-        ? widget.html
-        : widget.html.replaceAllMapped(
+        ? body
+        : body.replaceAllMapped(
             RegExp('''cid:([^"'\\s>)]+)''', caseSensitive: false),
             (m) => cidReplacements[m.group(1)!] ?? m.group(0)!,
           );

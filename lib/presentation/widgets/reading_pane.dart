@@ -16,6 +16,7 @@ import 'package:printing/printing.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'html_body_view.dart';
+import 'plain_text_body_view.dart';
 import 'contact_hover_card.dart';
 import 'date_time_fields.dart';
 
@@ -2524,8 +2525,6 @@ class _EmailBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = context.colors;
-
     if (email.bodyType == EmailBodyType.html) {
       return HtmlBodyView(
         html: email.body,
@@ -2536,17 +2535,7 @@ class _EmailBody extends StatelessWidget {
       );
     }
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(28, 20, 28, 40),
-      child: SelectableText(
-        email.body,
-        style: TextStyle(
-          color: c.textBody,
-          fontSize: 14,
-          height: 1.6,
-        ),
-      ),
-    );
+    return PlainTextBodyView(text: email.body);
   }
 }
 

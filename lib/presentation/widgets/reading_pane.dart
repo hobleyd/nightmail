@@ -796,27 +796,28 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
     final location = invite?.location;
     final hasDetails = timeStr.isNotEmpty || location != null;
 
-    final buttons = Row(
-      mainAxisSize: MainAxisSize.min,
+    // A Wrap rather than a Row: the buttons keep their intrinsic width, so in a
+    // narrow reading pane a Row would starve the details column instead of
+    // giving way — the date then wraps one character per line.
+    final buttons = Wrap(
+      spacing: 6,
+      runSpacing: 6,
       children: [
         _InviteResponseButton(
           label: 'Accept',
           icon: Icons.check_rounded,
           onPressed: () => _respond(MeetingInviteResponseType.accept),
         ),
-        const SizedBox(width: 6),
         _InviteResponseButton(
           label: 'Maybe',
           icon: Icons.help_outline_rounded,
           onPressed: () => _respond(MeetingInviteResponseType.tentative),
         ),
-        const SizedBox(width: 6),
         _InviteResponseButton(
           label: 'Decline',
           icon: Icons.close_rounded,
           onPressed: () => _respond(MeetingInviteResponseType.decline),
         ),
-        const SizedBox(width: 6),
         _InviteResponseButton(
           label: 'Propose New Time',
           icon: Icons.schedule_rounded,
@@ -825,56 +826,62 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
       ],
     );
 
+    final details = Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 1),
+          child:
+              Icon(Icons.calendar_today_rounded, size: 14, color: c.textDimmed),
+        ),
+        const SizedBox(width: 8),
+        if (hasDetails)
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (timeStr.isNotEmpty)
+                  Text(timeStr,
+                      style: TextStyle(
+                          color: c.textPrimary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500)),
+                if (location != null) ...[
+                  const SizedBox(height: 2),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.place_outlined,
+                          size: 12, color: c.textDimmed),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(location,
+                            style:
+                                TextStyle(color: c.textTertiary, fontSize: 11),
+                            overflow: TextOverflow.ellipsis),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          )
+        else
+          Text('Meeting invitation',
+              style: TextStyle(color: c.textTertiary, fontSize: 12)),
+      ],
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(top: 1),
-              child: Icon(Icons.calendar_today_rounded,
-                  size: 14, color: c.textDimmed),
-            ),
-            const SizedBox(width: 8),
-            if (hasDetails)
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (timeStr.isNotEmpty)
-                      Text(timeStr,
-                          style: TextStyle(
-                              color: c.textPrimary,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500)),
-                    if (location != null) ...[
-                      const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          Icon(Icons.place_outlined,
-                              size: 12, color: c.textDimmed),
-                          const SizedBox(width: 4),
-                          Flexible(
-                            child: Text(location,
-                                style: TextStyle(
-                                    color: c.textTertiary, fontSize: 11),
-                                overflow: TextOverflow.ellipsis),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ],
-                ),
-              )
-            else ...[
-              Text('Meeting invitation',
-                  style: TextStyle(color: c.textTertiary, fontSize: 12)),
-              const Spacer(),
-            ],
-            const SizedBox(width: 12),
-            buttons,
-          ],
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 12,
+          runSpacing: 8,
+          children: [details, buttons],
         ),
         if (_conflicts.isNotEmpty) ...[
           const SizedBox(height: 6),

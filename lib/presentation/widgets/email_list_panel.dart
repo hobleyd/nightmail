@@ -1773,8 +1773,7 @@ class _FolderCountFooter extends StatelessWidget {
       height: 28,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: Align(
-          alignment: Alignment.centerLeft,
+        child: Center(
           child: Text(
             label,
             style: TextStyle(

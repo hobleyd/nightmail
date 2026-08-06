@@ -34,6 +34,9 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Library packages don't commit pubspec.lock (only the app does)
+packages/*/pubspec.lock
+
 # Generated files
 *.mocks.dart
 *.g.dart

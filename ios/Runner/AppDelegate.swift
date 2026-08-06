@@ -33,7 +33,8 @@ private let kMailCheckInterval: TimeInterval = 15 * 60
       WorkmanagerPlugin.handlePeriodicTask(
         identifier: kMailCheckIdentifier,
         task: refreshTask,
-        earliestBeginInSeconds: kMailCheckInterval
+        earliestBeginInSeconds: NSNumber(value: kMailCheckInterval),
+        inputData: nil
       )
     }
 

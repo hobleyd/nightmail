@@ -15,6 +15,9 @@ presentation/ — BLoCs/Cubits, Pages, Widgets
 - Error handling: `fpdart` `Either<Failure, T>` (not `dartz`)
 - State: `flutter_bloc`
 - Bundle IDs: always `au.com.sharpblue` prefix (never `com.sharpblue`)
+- An `AuthException` from a token refresh means "replace these credentials": it
+  flags the account for re-auth and makes `AuthBloc` discard the token. Offline
+  is a `NetworkException` — see `infrastructure/auth/token_refresh_error.dart`
 
 ## Building
 

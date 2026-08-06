@@ -22,6 +22,12 @@ class AuthInterceptor extends Interceptor {
   /// request for this account passes through, so it's the reliable place to
   /// surface "needs re-authentication" to the UI — relying on every caller of
   /// the datasource to individually catch AuthException is easy to miss.
+  ///
+  /// Fires only on an [AuthException]. A refresh that never reached the token
+  /// endpoint throws [NetworkException] instead (see `tokenRefreshFailure`) and
+  /// is deliberately *not* reported: an offline machine has not learnt anything
+  /// about its credentials, and telling the user to sign in again is both wrong
+  /// and something they cannot act on until the network is back.
   final void Function()? onAuthFailure;
 
   /// Notified whenever a token refresh succeeds. The mirror of [onAuthFailure]:
@@ -45,6 +51,9 @@ class AuthInterceptor extends Interceptor {
       onAuthFailure?.call();
       rethrow;
     }
+    // A NetworkException from the refresh is left to propagate unreported: the
+    // request fails as a network error (each datasource's _mapException unwraps
+    // it) and the account keeps whatever auth state it already had.
   }
 
   @override
@@ -67,6 +76,9 @@ class AuthInterceptor extends Interceptor {
         }
       } on AuthException {
         onAuthFailure?.call();
+      } on NetworkException {
+        // Offline mid-retry: pass the original 401 on rather than flagging the
+        // account. The credentials may well be fine — we never got to ask.
       } catch (_) {}
     }
     handler.next(err);

@@ -36,6 +36,11 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
           ? await _authService.refreshToken(token)
           : token;
       emit(AuthAuthenticated(userEmail: _extractEmail(valid)));
+    } on NetworkException catch (e) {
+      // The refresh never reached the token endpoint, so the stored credentials
+      // have not been disproved — signing out here would discard a working
+      // refresh token because the machine happened to be offline.
+      emit(AuthError(message: e.message));
     } on AuthException catch (e) {
       await _authService.signOut();
       emit(AuthError(message: e.message));

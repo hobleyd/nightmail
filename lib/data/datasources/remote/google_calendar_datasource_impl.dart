@@ -1431,6 +1431,10 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     // it must be unwrapped here or it falls through to a generic
     // ServerException and the UI never learns re-authentication is needed.
     if (e.error is AuthException) return e.error as AuthException;
+    // The same unwrap for a proactive refresh that never reached the token
+    // endpoint: offline is neither a credential problem nor a server error, and
+    // falling through would replace it with Dio's own boilerplate message.
+    if (e.error is NetworkException) return e.error as NetworkException;
 
     debugPrint('[GoogleCalendar] ${e.requestOptions.method} '
         '${e.requestOptions.path} failed: status=${e.response?.statusCode} '

@@ -11,6 +11,7 @@ import '../../core/error/exceptions.dart';
 import 'auth_service.dart';
 import 'auth_token.dart';
 import 'token_refresh_coordinator.dart';
+import 'token_refresh_error.dart';
 import 'token_storage.dart';
 import 'web_auth_stub.dart' if (dart.library.html) 'web_auth_web.dart';
 
@@ -267,7 +268,9 @@ class GmailAuthService implements AuthService {
       return token;
     } on DioException catch (e) {
       final message = _extractErrorMessage(e) ?? e.message ?? e.toString();
-      throw AuthException(message: 'Token refresh failed: $message');
+      // NetworkException when the token endpoint was never reached; being
+      // offline says nothing about the credentials. See tokenRefreshFailure.
+      throw tokenRefreshFailure(e, message);
     }
   }
 

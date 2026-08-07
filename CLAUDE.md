@@ -270,6 +270,14 @@ That is why the whole Gmail message path uses one response type (the thread and
 search *indexes* are plain too, decoded locally since they are only ids), and why
 these tests stub `get<String>` with `jsonEncode`d bodies.
 
+## Graph Never Says Whether a Body Was Plain Text
+
+`body.contentType` reports the format Graph *rendered*, not the one the sender
+wrote, so it always echoes the request. `getEmail` therefore probes the
+message's own `Content-Type` header alongside the main fetch
+(`declaresPlainTextBody`); a plain-text message with an attachment is
+`multipart/mixed` and still renders as HTML.
+
 ## Bare URLs in a Message Body
 
 A URL a sender typed as text is turned into a real link at render time

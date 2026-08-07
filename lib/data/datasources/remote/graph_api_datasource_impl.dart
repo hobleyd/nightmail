@@ -11,6 +11,7 @@ import '../../../domain/entities/contact_details.dart';
 import '../../../domain/entities/local_attachment.dart';
 import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/email.dart';
+import '../../../domain/entities/inline_attachment.dart';
 import '../../../domain/entities/calendar_recurrence.dart';
 import '../../../domain/entities/meeting_invite.dart';
 import '../../../domain/entities/meeting_room.dart';
@@ -44,6 +45,31 @@ import 'tasks_remote_datasource.dart';
 /// Visible for testing.
 String linkedEventPath(String messageId) =>
     '/me/messages/$messageId/microsoft.graph.eventMessage/event';
+
+/// Whether a message's own MIME headers declare its body as plain text.
+///
+/// Graph will not tell us this. `body.contentType` reports the format Graph
+/// *rendered*, not the one the sender wrote: absent a
+/// `Prefer: outlook.body-content-type` header it renders HTML and converts a
+/// text/plain message on the way, and asking for text instead converts real
+/// HTML in the other direction. Either way the answer echoes the request. The
+/// message's own `Content-Type` header is the only thing that still remembers.
+///
+/// Visible for testing.
+bool declaresPlainTextBody(List<dynamic> internetMessageHeaders) {
+  for (final header in internetMessageHeaders) {
+    if (header is! Map) continue;
+    if ((header['name'] as String?)?.trim().toLowerCase() != 'content-type') {
+      continue;
+    }
+    final value = (header['value'] as String?)?.trim().toLowerCase() ?? '';
+    // Only a wholly plain-text message. A `multipart/*` top level means the
+    // body is one part among several, and which one Graph rendered is exactly
+    // what this header cannot say.
+    return value.startsWith('text/plain');
+  }
+  return false;
+}
 
 final _emailListSelect = [
   'id',
@@ -223,6 +249,10 @@ class GraphApiDatasourceImpl
   @override
   Future<EmailModel> getEmail(String id) async {
     try {
+      // Started before the message itself and awaited after, so the extra round
+      // trip overlaps the one that matters instead of adding to it.
+      final plainTextFuture = _fetchPlainTextBody(id);
+
       // Undecoded: the message body and every inline image arrive as one JSON
       // document, so the jsonDecode is a large share of the cost and belongs in
       // the parser isolate along with the parse itself.
@@ -249,60 +279,124 @@ class GraphApiDatasourceImpl
       }
 
       final parsed = await compute(parseGraphFullMessage, raw);
+      var email = parsed.email;
+
       final pendingIds = parsed.pendingInlineAttachmentIds;
-      if (pendingIds.isEmpty) return parsed.email;
-
-      // contentId and contentBytes are on the fileAttachment subtype and cannot
-      // be requested via $select in $expand (which targets the base attachment
-      // type), so each inline image needs its own GET. Fetched undecoded and
-      // decoded in one more isolate hop — these are images, so the base64 is
-      // exactly what must not run here.
-      final rawInline = <String>[];
-      for (final attachId in pendingIds) {
-        try {
-          final detail = await _dio.get<String>(
-            '/me/messages/$id/attachments/$attachId',
-            options: Options(responseType: ResponseType.plain),
-          );
-          final body = detail.data;
-          if (body != null && body.isNotEmpty) rawInline.add(body);
-        } catch (_) {}
+      if (pendingIds.isNotEmpty) {
+        // contentId and contentBytes are on the fileAttachment subtype and
+        // cannot be requested via $select in $expand (which targets the base
+        // attachment type), so each inline image needs its own GET. Fetched
+        // undecoded and decoded in one more isolate hop — these are images, so
+        // the base64 is exactly what must not run here.
+        final rawInline = <String>[];
+        for (final attachId in pendingIds) {
+          try {
+            final detail = await _dio.get<String>(
+              '/me/messages/$id/attachments/$attachId',
+              options: Options(responseType: ResponseType.plain),
+            );
+            final body = detail.data;
+            if (body != null && body.isNotEmpty) rawInline.add(body);
+          } catch (_) {}
+        }
+        if (rawInline.isNotEmpty) {
+          final inlineAttachments =
+              await compute(parseGraphInlineAttachments, rawInline);
+          if (inlineAttachments.isNotEmpty) {
+            email = _rebuild(
+              email,
+              inlineAttachments: [
+                ...email.inlineAttachments,
+                ...inlineAttachments,
+              ],
+            );
+          }
+        }
       }
-      if (rawInline.isEmpty) return parsed.email;
 
-      final inlineAttachments =
-          await compute(parseGraphInlineAttachments, rawInline);
-      if (inlineAttachments.isEmpty) return parsed.email;
-
-      // Rebuilt rather than re-parsed: the decode already happened in the
-      // isolate, so this is pure object construction.
-      final email = parsed.email;
-      return EmailModel(
-        id: email.id,
-        subject: email.subject,
-        from: EmailAddressModel.fromEntity(email.from),
-        toRecipients:
-            email.toRecipients.map(EmailAddressModel.fromEntity).toList(),
-        ccRecipients:
-            email.ccRecipients.map(EmailAddressModel.fromEntity).toList(),
-        bodyPreview: email.bodyPreview,
-        body: email.body,
-        bodyType: email.bodyType,
-        isRead: email.isRead,
-        receivedDateTime: email.receivedDateTime,
-        importance: email.importance,
-        sentDateTime: email.sentDateTime,
-        conversationId: email.conversationId,
-        hasAttachments: email.hasAttachments,
-        attachments: email.attachments,
-        inlineAttachments: [...email.inlineAttachments, ...inlineAttachments],
-        parentFolderId: email.parentFolderId,
-        folderIds: email.folderIds,
-        meetingInvite: email.meetingInvite,
-      );
+      final plainText = await plainTextFuture;
+      if (plainText != null) {
+        email =
+            _rebuild(email, body: plainText, bodyType: EmailBodyType.text);
+      }
+      return email;
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
+  }
+
+  /// Graph's own plain-text rendition of a message, when the message's MIME
+  /// headers say the sender wrote plain text. Null means "keep the HTML".
+  ///
+  /// Taking Graph's rendition rather than converting its HTML back to text
+  /// keeps the round trip honest: the HTML is Exchange's own lossy transcription
+  /// of the text, and undoing it here would be a second guess at the first.
+  ///
+  /// Everything failing lands on null — no headers (Exchange does not always
+  /// keep them for internal mail), a throttled request, a malformed body — and
+  /// null is exactly what the app did before this existed, so a message renders
+  /// as it always has rather than not at all.
+  Future<String?> _fetchPlainTextBody(String id) async {
+    try {
+      final response = await _dio.get<String>(
+        '/me/messages/$id',
+        queryParameters: {'\$select': 'internetMessageHeaders,body'},
+        options: Options(
+          headers: {'Prefer': 'outlook.body-content-type="text"'},
+          responseType: ResponseType.plain,
+        ),
+      );
+      final raw = response.data;
+      if (raw == null || raw.isEmpty) return null;
+
+      // Decoded here rather than in an isolate, unlike every other message
+      // fetch: $select holds this down to headers plus a text body, with no
+      // attachments expanded, so none of the base64 that makes the full
+      // document worth handing off is in it.
+      final json = jsonDecode(raw) as Map<String, dynamic>;
+      final headers =
+          json['internetMessageHeaders'] as List<dynamic>? ?? const [];
+      if (!declaresPlainTextBody(headers)) return null;
+      return (json['body'] as Map<String, dynamic>?)?['content'] as String? ??
+          '';
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Rebuilds [email] with the given overrides.
+  ///
+  /// Rebuilt rather than re-parsed: the decode already happened in the isolate,
+  /// so this is pure object construction.
+  EmailModel _rebuild(
+    EmailModel email, {
+    String? body,
+    EmailBodyType? bodyType,
+    List<InlineAttachment>? inlineAttachments,
+  }) {
+    return EmailModel(
+      id: email.id,
+      subject: email.subject,
+      from: EmailAddressModel.fromEntity(email.from),
+      toRecipients:
+          email.toRecipients.map(EmailAddressModel.fromEntity).toList(),
+      ccRecipients:
+          email.ccRecipients.map(EmailAddressModel.fromEntity).toList(),
+      bodyPreview: email.bodyPreview,
+      body: body ?? email.body,
+      bodyType: bodyType ?? email.bodyType,
+      isRead: email.isRead,
+      receivedDateTime: email.receivedDateTime,
+      importance: email.importance,
+      sentDateTime: email.sentDateTime,
+      conversationId: email.conversationId,
+      hasAttachments: email.hasAttachments,
+      attachments: email.attachments,
+      inlineAttachments: inlineAttachments ?? email.inlineAttachments,
+      parentFolderId: email.parentFolderId,
+      folderIds: email.folderIds,
+      meetingInvite: email.meetingInvite,
+    );
   }
 
   @override

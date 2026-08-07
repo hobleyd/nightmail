@@ -1699,17 +1699,18 @@ class GraphApiDatasourceImpl
   }) async {
     try {
       final attachmentsList = await _buildGraphAttachments(newAttachments);
-      final bodyContent = bodyType == EmailBodyType.html
-          ? body
-          : const HtmlEscape().convert(body).replaceAll('\n', '<br>');
       await _dio.post<void>(
         '/me/sendMail',
         data: {
           'message': {
             'subject': subject,
+            // Sent verbatim under whichever contentType it was composed as.
+            // Escaping a plain-text body and turning its newlines into <br>
+            // while still declaring `text` puts markup into a text/plain part,
+            // so the recipient reads the tags and loses every line break.
             'body': {
               'contentType': bodyType == EmailBodyType.html ? 'html' : 'text',
-              'content': bodyContent,
+              'content': body,
             },
             'toRecipients': toAddresses
                 .map((a) => {'emailAddress': {'address': _bareEmail(a)}})

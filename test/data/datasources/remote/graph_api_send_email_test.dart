@@ -142,7 +142,7 @@ void main() {
     });
   });
 
-  group('GraphApiDatasourceImpl.sendEmail — body HTML conversion', () {
+  group('GraphApiDatasourceImpl.sendEmail — body content type', () {
     test('sends body as text content type by default', () async {
       when(mockDio.post<void>(any, data: anyNamed('data')))
           .thenAnswer((_) async => _voidResp());
@@ -193,7 +193,7 @@ void main() {
       expect(content, '<p>Line 1</p><p>Line 2</p>');
     });
 
-    test('converts newlines to <br> tags', () async {
+    test('keeps newlines as newlines rather than <br> tags', () async {
       when(mockDio.post<void>(any, data: anyNamed('data')))
           .thenAnswer((_) async => _voidResp());
 
@@ -206,10 +206,10 @@ void main() {
       final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
           .captured.single as Map<String, dynamic>;
       final content = (body['message'] as Map)['body']['content'] as String;
-      expect(content, 'Line 1<br>Line 2<br>Line 3');
+      expect(content, 'Line 1\nLine 2\nLine 3');
     });
 
-    test('escapes < and > characters', () async {
+    test('leaves < and > unescaped in a text/plain body', () async {
       when(mockDio.post<void>(any, data: anyNamed('data')))
           .thenAnswer((_) async => _voidResp());
 
@@ -222,12 +222,10 @@ void main() {
       final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
           .captured.single as Map<String, dynamic>;
       final content = (body['message'] as Map)['body']['content'] as String;
-      expect(content, contains('&lt;100'));
-      expect(content, contains('&gt;50'));
-      expect(content, contains('&amp;'));
+      expect(content, 'Price: <100 & >50');
     });
 
-    test('escapes ampersands', () async {
+    test('leaves ampersands unescaped in a text/plain body', () async {
       when(mockDio.post<void>(any, data: anyNamed('data')))
           .thenAnswer((_) async => _voidResp());
 
@@ -240,7 +238,27 @@ void main() {
       final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
           .captured.single as Map<String, dynamic>;
       final content = (body['message'] as Map)['body']['content'] as String;
-      expect(content, 'R&amp;D team');
+      expect(content, 'R&D team');
+    });
+
+    // The reported bug: an apostrophe and a slash came out as `&#39;` and
+    // `&#47;` in a text/plain part, because HtmlEscapeMode.unknown escapes
+    // both. Nothing downstream unescapes a plain-text body, so the recipient
+    // read the entities verbatim.
+    test('leaves apostrophes and slashes unescaped', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _voidResp());
+
+      await datasource.sendEmail(
+        toAddresses: ['to@example.com'],
+        subject: 'Subject',
+        body: "it's in ~/.claude/hooks/scope-gate.sh",
+      );
+
+      final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      final content = (body['message'] as Map)['body']['content'] as String;
+      expect(content, "it's in ~/.claude/hooks/scope-gate.sh");
     });
 
     test('preserves plain text with no special characters unchanged', () async {

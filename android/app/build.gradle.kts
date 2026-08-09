@@ -9,7 +9,7 @@ plugins {
 
 android {
     namespace = "au.com.sharpblue.nightmail"
-    compileSdk = 36
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

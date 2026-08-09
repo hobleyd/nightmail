@@ -348,6 +348,15 @@ Three consequences, none incidental:
   keyboard stop — `_isNavigable` skips it, or arrow-down would select what is
   already selected and bounce back to the header on the next press.
 
+## A Failed First Load Must Not Freeze the Cache On Screen
+
+`FolderListBloc` and `EmailListBloc` both load cache-then-network and swallow the
+network failure while cached data is showing. So both retry it
+(`core/utils/stale_data_retry.dart`), and `MailPollerCubit._shouldPrimeBaseline`
+lets the first poll compare the active account against the counts the badge was
+primed from — otherwise a cold start whose first fetch failed silently sat on
+yesterday's counts until the user pressed Refresh.
+
 ## Calendar Cache
 
 The calendar is offline-first: it paints from `cached_calendar_events` and then

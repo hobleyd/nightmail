@@ -1169,6 +1169,106 @@ void main() {
       ]);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // EmailListLoadRequested — a first fetch that fails behind a populated cache
+  //
+  // Regression: the failure is swallowed so the cached mail stays on screen,
+  // which is right, but nothing then re-fetched the folder — so a cold start
+  // whose first request lost a race with the machine's network coming up sat
+  // there showing yesterday's mail until the user pressed Refresh.
+  // ---------------------------------------------------------------------------
+
+  group('EmailListLoadRequested retry (active account)', () {
+    EmailListBloc makeBloc({required List<Duration> retryDelays}) {
+      final mockRecordKnownSenders = MockRecordKnownSenders();
+      when(mockRecordKnownSenders(any))
+          .thenAnswer((_) async => const Right(unit));
+      return EmailListBloc(
+        getEmails: mockGetEmails,
+        getCachedEmails: mockGetCachedEmails,
+        cacheEmails: MockCacheEmails(),
+        clearEmailCacheForFolder: MockClearEmailCacheForFolder(),
+        markEmailAsRead: MockMarkEmailAsRead(),
+        moveEmail: mockMoveEmail,
+        reportJunk: MockReportJunk(),
+        deleteEmail: MockDeleteEmail(),
+        emptyFolder: mockEmptyFolder,
+        accountManager: _FakeActiveAccountManager(),
+        recordKnownSenders: mockRecordKnownSenders,
+        classifyEmails: MockClassifyEmails(),
+        trainSpamFilter: MockTrainSpamFilter(),
+        searchEmails: MockSearchEmails(),
+        getEmail: MockGetEmail(),
+        getConversationThread: MockGetConversationThread(),
+        spamDbSyncService: MockSpamDbSyncService(),
+        outboxDrainService: MockOutboxDrainService(),
+        staleRetryDelays: retryDelays,
+      );
+    }
+
+    test('retries and replaces the cached page with the fresh one', () async {
+      final retryBloc = makeBloc(retryDelays: const [Duration.zero]);
+      addTearDown(retryBloc.close);
+
+      when(mockGetCachedEmails(any))
+          .thenAnswer((_) async => Right([_email('yesterday')]));
+      var calls = 0;
+      when(mockGetEmails(any)).thenAnswer((_) async {
+        calls++;
+        return calls == 1
+            ? const Left(NetworkFailure(message: 'No network connection'))
+            : Right([_email('this-morning')]);
+      });
+
+      retryBloc.add(const EmailListLoadRequested(folderId: 'folder-1'));
+      final state = await retryBloc.stream.firstWhere((s) =>
+              s is EmailListLoaded &&
+              s.emails.any((e) => e.id == 'this-morning'))
+          as EmailListLoaded;
+
+      expect(calls, 2);
+      expect(state.emails.first.id, 'this-morning');
+      expect(state.isLoadingFresh, isFalse);
+    });
+
+    test('gives up after the configured attempts, cached mail still showing',
+        () async {
+      final retryBloc =
+          makeBloc(retryDelays: const [Duration.zero, Duration.zero]);
+      addTearDown(retryBloc.close);
+
+      when(mockGetCachedEmails(any))
+          .thenAnswer((_) async => Right([_email('yesterday')]));
+      when(mockGetEmails(any)).thenAnswer(
+        (_) async => const Left(NetworkFailure(message: 'No network')),
+      );
+
+      retryBloc.add(const EmailListLoadRequested(folderId: 'folder-1'));
+      await pumpEventQueue(times: 50);
+
+      verify(mockGetEmails(any)).called(3);
+      final state = retryBloc.state as EmailListLoaded;
+      expect(state.emails.single.id, 'yesterday');
+      expect(state.isLoadingFresh, isFalse);
+    });
+
+    test('does not retry when there was nothing cached to go stale', () async {
+      final retryBloc = makeBloc(retryDelays: const [Duration.zero]);
+      addTearDown(retryBloc.close);
+
+      when(mockGetCachedEmails(any)).thenAnswer((_) async => const Right([]));
+      when(mockGetEmails(any)).thenAnswer(
+        (_) async => const Left(NetworkFailure(message: 'No network')),
+      );
+
+      retryBloc.add(const EmailListLoadRequested(folderId: 'folder-1'));
+      await retryBloc.stream.firstWhere((s) => s is EmailListError);
+      await pumpEventQueue();
+
+      verify(mockGetEmails(any)).called(1);
+    });
+  });
 }
 
 class _FakeActiveAccountManager extends Fake implements AccountManager {

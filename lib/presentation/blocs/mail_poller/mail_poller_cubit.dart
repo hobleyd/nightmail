@@ -131,12 +131,41 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
         if (inbox.isNotEmpty) {
           final count = inbox.first.unreadItemCount;
           _latestPolledUnread[account.id] = count;
+          // Both baselines are primed, not just the badge's unread count:
+          // they are what the first poll compares the server against to work
+          // out whether the counts already on screen are stale. See
+          // [_shouldPrimeBaseline].
           _baselineUnread[account.id] = count;
+          _baselineTotal[account.id] = inbox.first.totalItemCount;
           total += count;
         }
       });
     }
     if (total > 0) await _badgeService.setBadgeCount(total);
+  }
+
+  /// Whether this cycle should merely *establish* the account's baseline
+  /// rather than report a change against it.
+  ///
+  /// The first cycle normally primes, so unread mail that already existed
+  /// before NightMail was opened doesn't announce itself as newly arrived.
+  /// The active account is the exception, and deliberately so: it already has
+  /// a baseline from the folder cache ([_primeBadgeFromCache]), and comparing
+  /// against that is the only thing that catches a cold-start folder fetch
+  /// which failed *silently* — an OAuth refresh that raced the machine's
+  /// network coming up, or the connectivity probe fast-failing before the
+  /// route settled. Both leave [FolderListBloc] showing yesterday's cached
+  /// counts with no error and nothing queued to re-request them.
+  ///
+  /// Priming over that baseline instead would notice the discrepancy exactly
+  /// once, overwrite it, and then agree with the server on every later cycle —
+  /// so the stale count sat on screen until the user refreshed by hand. The
+  /// active account never raises a notification, so comparing it on the first
+  /// cycle cannot produce a spurious alert; the worst case is one redundant
+  /// refresh of a folder list that was already correct.
+  bool _shouldPrimeBaseline(String accountId, String? activeAccountId) {
+    if (!_baselineUnread.containsKey(accountId)) return true;
+    return !_initialized && accountId != activeAccountId;
   }
 
   void _startTimer(int seconds) {
@@ -218,7 +247,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
               final totalCount = inboxes.first.totalItemCount;
               _latestPolledUnread[account.id] = unreadCount;
 
-              if (!_initialized || !_baselineUnread.containsKey(account.id)) {
+              if (_shouldPrimeBaseline(account.id, activeId)) {
                 _baselineUnread[account.id] = unreadCount;
                 _baselineTotal[account.id] = totalCount;
                 if (account.id != activeId && unreadCount > 0) {
@@ -348,7 +377,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
 
             final totalCount = inboxes.first.totalItemCount;
 
-            if (!_initialized || !_baselineUnread.containsKey(account.id)) {
+            if (_shouldPrimeBaseline(account.id, activeId)) {
               _baselineUnread[account.id] = unreadCount;
               _baselineTotal[account.id] = totalCount;
               if (account.id != activeId && unreadCount > 0) {
@@ -438,6 +467,14 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
       final totalUnread =
           _latestPolledUnread.values.fold(0, (sum, n) => sum + n);
       await _badgeService.setBadgeCount(totalUnread);
+      if (activeInboxChanged) {
+        // On the first cycle this is the report that the counts and list the
+        // app opened with were stale — i.e. that the cold-start fetch failed
+        // and this poll is what repaired it. See [_shouldPrimeBaseline].
+        debugPrint('[MailPoller] active inbox changed — reloading folders '
+            'and list${wasInitialized ? '' : ' (first cycle: what the app '
+                'opened with was stale)'}');
+      }
       if ((changed || activeInboxChanged) && !isClosed) {
         emit(state.copyWith(
           accountsWithNewMail: Set.of(_newMailAccounts),

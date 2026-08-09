@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../core/utils/stale_data_retry.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/usecases/cache_emails.dart';
 import '../../../domain/usecases/classify_emails.dart';
@@ -48,7 +50,9 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     required GetConversationThread getConversationThread,
     required SpamDbSyncService spamDbSyncService,
     required OutboxDrainService outboxDrainService,
-  })  : _getEmails = getEmails,
+    List<Duration> staleRetryDelays = staleDataRetryDelays,
+  })  : _staleRetryDelays = staleRetryDelays,
+        _getEmails = getEmails,
         _getCachedEmails = getCachedEmails,
         _cacheEmails = cacheEmails,
         _clearEmailCacheForFolder = clearEmailCacheForFolder,
@@ -106,6 +110,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   final GetConversationThread _getConversationThread;
   final SpamDbSyncService _spamDbSyncService;
   final OutboxDrainService _outboxDrainService;
+  final List<Duration> _staleRetryDelays;
 
   /// Tracks the server-side skip offset for the current folder independently
   /// of the in-memory email count, which may be inflated by cross-folder
@@ -165,45 +170,75 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       emit(const EmailListLoading());
     }
 
-    // Phase 2: network fetch — always attempted regardless of cache state
-    final result = await _getEmails(GetEmailsParams(
-      folderId: event.folderId,
-      top: _pageSize,
-    ));
-    if (myGeneration != _activeRequestGeneration) return;
-
+    // Phase 2: network fetch — always attempted regardless of cache state.
+    //
+    // A failure with cached mail on screen keeps that mail visible and says
+    // nothing, which is right, but on its own leaves the folder frozen at
+    // whatever was on disk when the app was last closed — nothing loads it
+    // again until the user refreshes by hand. So retry a few times: the first
+    // fetch of a session is the one most likely to fail transiently (see
+    // [staleDataRetryDelays]).
     List<Email>? loaded;
-    result.fold(
-      (failure) {
-        if (cachedEmails.isNotEmpty) {
-          // Keep cached emails visible; just clear the refresh indicator
+    for (var attempt = 0;; attempt++) {
+      final result = await _getEmails(GetEmailsParams(
+        folderId: event.folderId,
+        top: _pageSize,
+      ));
+      if (isClosed || myGeneration != _activeRequestGeneration) return;
+
+      result.fold(
+        (failure) {
+          debugPrint('[EmailList] fetch failed on attempt ${attempt + 1} for '
+              '${event.folderDisplayName ?? event.folderId ?? 'default folder'} '
+              '(${cachedEmails.isEmpty ? 'nothing to show' : '${cachedEmails.length} cached rows on screen'}): '
+              '${failure.runtimeType} — ${failure.message}');
+          if (cachedEmails.isNotEmpty) {
+            // Keep cached emails visible; just clear the refresh indicator
+            final s = state;
+            if (s is EmailListLoaded) emit(s.copyWith(isLoadingFresh: false));
+          } else {
+            emit(EmailListError(message: failure.message));
+          }
+        },
+        (freshEmails) {
+          if (attempt > 0) {
+            debugPrint('[EmailList] fetch recovered on attempt ${attempt + 1}');
+          }
+          _serverOffset = _pageSize;
+          loaded = freshEmails;
+          // Merge: use fresh data for page-1 emails, keep cached beyond page 1.
+          final freshIds = freshEmails.map((e) => e.id).toSet();
+          final merged = [
+            ...freshEmails,
+            ...cachedEmails.where((e) => !freshIds.contains(e.id)),
+          ];
           final s = state;
-          if (s is EmailListLoaded) emit(s.copyWith(isLoadingFresh: false));
-        } else {
-          emit(EmailListError(message: failure.message));
+          emit(EmailListLoaded(
+            emails: merged,
+            hasMore: freshEmails.length >= _pageSize,
+            isLoadingFresh: false,
+            currentFolderId: event.folderId,
+            currentFolderName: event.folderDisplayName,
+            emptyingFolderIds: s is EmailListLoaded ? s.emptyingFolderIds : priorEmptyingIds,
+          ));
+          _recordSenders(freshEmails, event.folderDisplayName);
+        },
+      );
+
+      // Only a stale list is worth retrying behind the user's back: with
+      // nothing cached, the error emitted above is on screen already.
+      if (loaded != null ||
+          cachedEmails.isEmpty ||
+          attempt >= _staleRetryDelays.length) {
+        if (loaded == null && cachedEmails.isNotEmpty) {
+          debugPrint('[EmailList] giving up after ${attempt + 1} attempts — '
+              'the list on screen is the cached one');
         }
-      },
-      (freshEmails) {
-        _serverOffset = _pageSize;
-        loaded = freshEmails;
-        // Merge: use fresh data for page-1 emails, keep cached beyond page 1.
-        final freshIds = freshEmails.map((e) => e.id).toSet();
-        final merged = [
-          ...freshEmails,
-          ...cachedEmails.where((e) => !freshIds.contains(e.id)),
-        ];
-        final s = state;
-        emit(EmailListLoaded(
-          emails: merged,
-          hasMore: freshEmails.length >= _pageSize,
-          isLoadingFresh: false,
-          currentFolderId: event.folderId,
-          currentFolderName: event.folderDisplayName,
-          emptyingFolderIds: s is EmailListLoaded ? s.emptyingFolderIds : priorEmptyingIds,
-        ));
-        _recordSenders(freshEmails, event.folderDisplayName);
-      },
-    );
+        break;
+      }
+      await Future<void>.delayed(_staleRetryDelays[attempt]);
+      if (isClosed || myGeneration != _activeRequestGeneration) return;
+    }
     if (loaded != null) {
       await _classifyAndTrainIfImap(emit, loaded!);
     }

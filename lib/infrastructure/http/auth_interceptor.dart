@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../core/error/exceptions.dart';
 import '../auth/auth_service.dart';
@@ -92,9 +93,25 @@ class AuthInterceptor extends Interceptor {
     }
 
     if (stored.isAboutToExpire && stored.refreshToken != null) {
-      final refreshed = await authService.refreshToken(stored);
-      onAuthSuccess?.call();
-      return refreshed;
+      try {
+        final refreshed = await authService.refreshToken(stored);
+        onAuthSuccess?.call();
+        return refreshed;
+      } catch (e) {
+        // The first request of a session is usually the one that has to do
+        // this refresh, and a NetworkException here is reported nowhere else
+        // by design (see [onAuthFailure]) — which makes it invisible as the
+        // cause of a first load that fell back to the cache. Log it.
+        final detail = switch (e) {
+          AuthException(:final message) => message,
+          NetworkException(:final message) => message,
+          ServerException(:final message) => message,
+          _ => '$e',
+        };
+        debugPrint(
+            '[Auth] in-request token refresh failed: ${e.runtimeType} — $detail');
+        rethrow;
+      }
     }
 
     if (stored.isExpired) {

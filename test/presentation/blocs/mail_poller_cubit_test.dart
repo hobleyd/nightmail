@@ -943,6 +943,142 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
+  // The very first poll must report the active account's counts as changed when
+  // they disagree with the cache the badge was primed from.
+  //
+  // Regression: NightMail opened showing 2 in the Inbox when 27 were waiting.
+  // A cold-start folder fetch that fails is swallowed in favour of the cache
+  // (FolderListBloc), so the first poll is the only thing that can notice the
+  // counts on screen are yesterday's — and it used to spend that one look
+  // establishing its baseline, overwriting the primed value and then agreeing
+  // with the server forever after.
+  // ---------------------------------------------------------------------------
+
+  group('MailPollerCubit — first poll against a stale primed cache', () {
+    late MockEmailRemoteDatasource mockGmailDs;
+
+    EmailFolder cachedInbox({required int unread, required int total}) =>
+        EmailFolder(
+          id: 'inbox-id',
+          displayName: 'Inbox',
+          totalItemCount: total,
+          unreadItemCount: unread,
+          isHidden: false,
+          childFolderCount: 0,
+        );
+
+    setUp(() {
+      mockGmailDs = MockEmailRemoteDatasource();
+      when(mockAccountManager.accounts).thenReturn([_gmailAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(_gmailAccount);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(mockGmailDs);
+      when(mockGmailDs.getEmails(
+              folderId: anyNamed('folderId'), top: anyNamed('top')))
+          .thenAnswer((_) async => [_email('fresh-1')]);
+    });
+
+    test('increments pollGeneration when the cached count is stale', () async {
+      when(mockGetCachedFolders(any)).thenAnswer(
+        (_) async => Right([cachedInbox(unread: 2, total: 2)]),
+      );
+      when(mockGmailDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: 27)]);
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      expect(cubit.state.pollGeneration, 1);
+    });
+
+    test('re-caches the inbox page so the list repaints with the real mail',
+        () async {
+      when(mockGetCachedFolders(any)).thenAnswer(
+        (_) async => Right([cachedInbox(unread: 2, total: 2)]),
+      );
+      when(mockGmailDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: 27)]);
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      verify(mockEmailLocalDatasource.cacheEmails(
+        accountId: _gmailAccount.id,
+        folderId: 'inbox-id',
+        emails: anyNamed('emails'),
+      )).called(1);
+    });
+
+    // The common case: nothing arrived while the app was closed. One cold start
+    // must not cost a redundant inbox fetch and repaint.
+    test('does not increment when the cached count already agrees', () async {
+      when(mockGetCachedFolders(any)).thenAnswer(
+        (_) async => Right([cachedInbox(unread: 7, total: 100)]),
+      );
+      when(mockGmailDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: 7)]);
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      expect(cubit.state.pollGeneration, 0);
+      verifyNever(mockGmailDs.getEmails(
+          folderId: anyNamed('folderId'), top: anyNamed('top')));
+    });
+
+    // A total that moved while unread did not is still a stale list: mail was
+    // read elsewhere and new mail arrived, or something was deleted.
+    test('increments when only the cached total is stale', () async {
+      when(mockGetCachedFolders(any)).thenAnswer(
+        (_) async => Right([cachedInbox(unread: 7, total: 40)]),
+      );
+      when(mockGmailDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: 7)]); // total 100
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      expect(cubit.state.pollGeneration, 1);
+    });
+
+    // Non-active accounts keep priming on the first cycle, so unread mail that
+    // was already there when NightMail opened doesn't announce itself as new.
+    test('a non-active account still primes silently', () async {
+      when(mockAccountManager.activeAccount).thenReturn(null);
+      when(mockGetCachedFolders(any)).thenAnswer(
+        (_) async => Right([cachedInbox(unread: 2, total: 2)]),
+      );
+      when(mockGmailDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: 27)]);
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      expect(cubit.state.pollGeneration, 0);
+      verifyNever(mockEmailLocalDatasource.cacheEmails(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+        emails: anyNamed('emails'),
+      ));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Microsoft pre-delta active account — pollGeneration must increment on
   // unread increase (regression: same missing flag before delta token exists)
   // ---------------------------------------------------------------------------

@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 /// Cheap "do we have a route to the internet" check — not a full
 /// reachability guarantee, but enough to skip network calls outright while
 /// offline instead of waiting on an HTTP client's connect timeout (tens of
@@ -58,8 +60,20 @@ class ConnectivityServiceImpl implements ConnectivityService {
           await Socket.connect(_probeIp, _probePort, timeout: _timeout);
       socket.destroy();
       return true;
-    } catch (_) {
-      return stopwatch.elapsed >= _fastFailureThreshold;
+    } catch (e) {
+      final online = stopwatch.elapsed >= _fastFailureThreshold;
+      // Logged because a `false` here short-circuits every network call in the
+      // app before it is even attempted, and the two reasons for one are
+      // indistinguishable afterwards: a genuinely offline machine, or a probe
+      // that failed fast for its own reasons (this IP refused by policy, the
+      // interface still coming up after a cold start or a wake) on a network
+      // where the real mail host was reachable all along. The elapsed time is
+      // what tells them apart.
+      debugPrint('[Connectivity] probe failed after '
+          '${stopwatch.elapsedMilliseconds}ms → '
+          '${online ? 'online (too slow to be a confident offline)' : 'OFFLINE'}'
+          ': $e');
+      return online;
     }
   }
 

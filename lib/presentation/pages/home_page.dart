@@ -420,19 +420,50 @@ class _HomeViewState extends State<_HomeView> {
                 .updateBadgeFromFolders(inboxes.first.unreadItemCount);
           },
         ),
+        // Keeps the poller pointed at the folder on screen, so its cycle syncs
+        // that folder as well as the Inbox. Without this the poller only ever
+        // wrote the Inbox's cache while the repaint below re-read whichever
+        // folder was showing — so on any other folder the repaint was a no-op
+        // and nothing on desktop ever refreshed it.
+        BlocListener<HomeCubit, HomeState>(
+          listenWhen: (prev, curr) =>
+              prev.selectedFolderId != curr.selectedFolderId,
+          listener: (context, state) {
+            context
+                .read<MailPollerCubit>()
+                .setWatchedFolder(state.selectedFolderId);
+          },
+        ),
         BlocListener<MailPollerCubit, MailPollerState>(
           listenWhen: (prev, curr) =>
               prev.pollGeneration != curr.pollGeneration,
-          listener: (context, _) {
-            // The poller already wrote fresh data into the cache before
-            // bumping pollGeneration — repaint from cache instantly rather
-            // than triggering a second, redundant network fetch.
-            context
-                .read<EmailListBloc>()
-                .add(const EmailListCacheRefreshRequested());
+          listener: (context, state) {
             context
                 .read<FolderListBloc>()
                 .add(const FolderListLoadRequested());
+
+            final listState = context.read<EmailListBloc>().state;
+            // A search result or a focused thread is not the folder's contents;
+            // refreshing either from the folder would wipe out what the user is
+            // looking at. EmailListBloc defers the repaint until it clears.
+            if (listState is EmailListLoaded && !listState.isShowingFolder) {
+              context
+                  .read<EmailListBloc>()
+                  .add(const EmailListCacheRefreshRequested());
+              return;
+            }
+
+            final showing =
+                listState is EmailListLoaded ? listState.currentFolderId : null;
+            // Repainting from cache is only valid for a folder the poller
+            // actually wrote this cycle. For anything else the cache is
+            // untouched, so the repaint would re-read the same rows and change
+            // nothing — go to the network instead.
+            final cacheIsFresh =
+                showing != null && state.syncedFolderIds.contains(showing);
+            context.read<EmailListBloc>().add(cacheIsFresh
+                ? const EmailListCacheRefreshRequested()
+                : const EmailListRefreshRequested());
           },
         ),
       ],

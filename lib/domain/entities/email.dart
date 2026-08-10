@@ -27,6 +27,7 @@ class Email extends Equatable {
     required this.isRead,
     required this.receivedDateTime,
     required this.importance,
+    this.isFlagged = false,
     this.sentDateTime,
     this.conversationId,
     this.hasAttachments = false,
@@ -46,6 +47,15 @@ class Email extends Equatable {
   final String body;
   final EmailBodyType bodyType;
   final bool isRead;
+
+  /// Whether the message is flagged on the server — Graph `flag.flagStatus`,
+  /// Gmail's `STARRED` label, IMAP's `\Flagged`.
+  ///
+  /// Distinct from NightMail's flag *button*, which creates a follow-up task.
+  /// This is the provider's own per-message bit, and it is here so a flag set on
+  /// another client arrives as an ordinary field change on the next sync.
+  final bool isFlagged;
+
   final DateTime receivedDateTime;
   final DateTime? sentDateTime;
   final EmailImportance importance;
@@ -114,7 +124,7 @@ class Email extends Equatable {
     return !folderIds.any(_sentLabelIds.contains);
   }
 
-  Email copyWith({bool? isRead}) {
+  Email copyWith({bool? isRead, bool? isFlagged}) {
     return Email(
       id: id,
       subject: subject,
@@ -125,6 +135,7 @@ class Email extends Equatable {
       body: body,
       bodyType: bodyType,
       isRead: isRead ?? this.isRead,
+      isFlagged: isFlagged ?? this.isFlagged,
       receivedDateTime: receivedDateTime,
       sentDateTime: sentDateTime,
       importance: importance,
@@ -147,6 +158,9 @@ class Email extends Equatable {
         ccRecipients,
         bodyPreview,
         isRead,
+        // In props deliberately: a flag-only change is otherwise content-equal,
+        // so the repaint after a sync that carried nothing else would be dropped.
+        isFlagged,
         receivedDateTime,
         sentDateTime,
         importance,

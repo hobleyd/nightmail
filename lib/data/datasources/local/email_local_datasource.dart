@@ -11,10 +11,24 @@ abstract interface class EmailLocalDatasource {
   /// Upserts the given [emails] into the cache for [accountId]/[folderId].
   /// Call this after a successful network fetch so that future offline
   /// launches can display the emails without a network connection.
+  ///
+  /// A thin row (empty body) never clobbers a full body already cached for the
+  /// same message — see the impl's preservation lookup.
+  ///
+  /// Pass [replaceFolder] when [emails] is a complete page that should *become*
+  /// the folder's contents, so a message removed remotely stops being listed.
+  /// The rows are dropped inside the same transaction as the inserts and
+  /// *after* the body-preservation lookups — which is why this replaces
+  /// [clearCacheForFolder] followed by a plain cacheEmails, a sequence that
+  /// silently discarded every cached body in the folder.
+  ///
+  /// An empty [emails] list is always a no-op, including with [replaceFolder]:
+  /// an empty fetch is far more likely transient than a genuinely empty folder.
   Future<void> cacheEmails({
     required String accountId,
     required String folderId,
     required List<Email> emails,
+    bool replaceFolder,
   });
 
   /// Returns the cached email with [emailId] for [accountId], regardless of

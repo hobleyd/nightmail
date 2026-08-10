@@ -109,10 +109,18 @@ abstract interface class EmailRepository {
   });
 
   /// Writes [emails] to the local cache for [accountId]/[folderId].
+  ///
+  /// Pass [replaceFolder] when [emails] is a complete page that should become
+  /// the folder's contents, so a message removed remotely stops being listed.
+  /// Prefer it over [clearCacheForFolder] followed by a plain write: the clear
+  /// runs inside the same transaction and *after* the cache's body-preservation
+  /// lookups, which the two-call sequence defeated. An empty [emails] list is a
+  /// no-op either way.
   Future<Either<Failure, Unit>> cacheEmails({
     required String accountId,
     required String folderId,
     required List<Email> emails,
+    bool replaceFolder = false,
   });
 
   /// Deletes all cached emails belonging to [accountId].

@@ -622,12 +622,14 @@ class EmailRepositoryImpl implements EmailRepository {
     required String accountId,
     required String folderId,
     required List<Email> emails,
+    bool replaceFolder = false,
   }) async {
     try {
       await _localDatasource.cacheEmails(
         accountId: accountId,
         folderId: folderId,
         emails: emails,
+        replaceFolder: replaceFolder,
       );
       return const Right(unit);
     } on CacheException catch (e) {

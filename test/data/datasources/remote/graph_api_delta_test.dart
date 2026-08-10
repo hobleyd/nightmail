@@ -71,7 +71,7 @@ void main() {
       expect(captured.first, '/me/mailFolders/inbox/messages/delta');
     });
 
-    test('includes \$select and receivedDateTime \$filter query params', () async {
+    test('sends \$select and \$top but never a date \$filter', () async {
       when(mockDio.get<String>(
         any,
         queryParameters: anyNamed('queryParameters'),
@@ -90,7 +90,10 @@ void main() {
       )).captured.first as Map<String, dynamic>;
 
       expect(params.containsKey(r'$select'), isTrue);
-      expect(params[r'$filter'], contains('receivedDateTime ge'));
+      expect(params[r'$top'], 50);
+      // A receivedDateTime cutoff would be frozen into the delta link Graph
+      // hands back, hiding every later change to an older message for ever.
+      expect(params.containsKey(r'$filter'), isFalse);
     });
 
     test('returns upserted messages and empty removedIds', () async {

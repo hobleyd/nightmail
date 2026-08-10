@@ -7,7 +7,6 @@ import '../../../core/utils/stale_data_retry.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/usecases/cache_emails.dart';
 import '../../../domain/usecases/classify_emails.dart';
-import '../../../domain/usecases/clear_email_cache_for_folder.dart';
 import '../../../domain/usecases/delete_email.dart';
 import '../../../domain/usecases/get_conversation_thread.dart';
 import '../../../domain/usecases/get_email.dart';
@@ -35,7 +34,6 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     required GetEmails getEmails,
     required GetCachedEmails getCachedEmails,
     required CacheEmails cacheEmails,
-    required ClearEmailCacheForFolder clearEmailCacheForFolder,
     required MarkEmailAsRead markEmailAsRead,
     required MoveEmail moveEmail,
     required ReportJunk reportJunk,
@@ -55,7 +53,6 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         _getEmails = getEmails,
         _getCachedEmails = getCachedEmails,
         _cacheEmails = cacheEmails,
-        _clearEmailCacheForFolder = clearEmailCacheForFolder,
         _markEmailAsRead = markEmailAsRead,
         _moveEmail = moveEmail,
         _reportJunk = reportJunk,
@@ -95,7 +92,6 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   final GetEmails _getEmails;
   final GetCachedEmails _getCachedEmails;
   final CacheEmails _cacheEmails;
-  final ClearEmailCacheForFolder _clearEmailCacheForFolder;
   final MarkEmailAsRead _markEmailAsRead;
   final MoveEmail _moveEmail;
   final ReportJunk _reportJunk;
@@ -336,22 +332,26 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         }
       },
       (emails) async {
-        // Only clear stale cache rows once we have confirmed fresh data to
-        // replace them with, so deleted/moved emails don't persist without
-        // ever risking wiping the cache out from under an offline retry.
-        // Clear then explicitly re-write the fresh page ourselves — the
-        // repository's own cache write inside getEmails() above is a fire-
-        // and-forget side effect that isn't ordered against this clear, so
-        // relying on it here would race and could leave the folder's cache
-        // empty after a successful refresh.
+        // Replace the folder's rows with the fresh page, so an email deleted or
+        // moved elsewhere stops being listed. Written explicitly here rather
+        // than relying on the repository's own cache write inside getEmails()
+        // above, which is a fire-and-forget side effect and isn't ordered
+        // against this one.
+        //
+        // `replaceFolder` rather than clear-then-write: the drop happens inside
+        // the same transaction and *after* cacheEmails' body-preservation
+        // lookups. Clearing first made those lookups find nothing, so every
+        // refresh discarded every cached body in the folder and
+        // BodyPrefetchService re-downloaded them. An empty page is a no-op, so
+        // a transient that returns nothing can no longer blank the cache an
+        // offline repaint reads from.
         if (accountId != null) {
           final key = folderId ?? _defaultFolderKey;
-          await _clearEmailCacheForFolder(
-              ClearEmailCacheForFolderParams(accountId: accountId, folderId: key));
           await _cacheEmails(CacheEmailsParams(
             accountId: accountId,
             folderId: key,
             emails: emails,
+            replaceFolder: true,
           ));
         }
         _serverOffset = _pageSize;

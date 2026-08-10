@@ -69,7 +69,16 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     required String accountId,
     required String folderId,
     required List<Email> emails,
+    bool replaceFolder = false,
   }) async {
+    // An empty page never rewrites anything — and with [replaceFolder] it must
+    // not *clear* anything either. An empty fetch is far more likely a
+    // transient (or every message tombstoned by an in-flight mutation) than a
+    // genuinely emptied folder, and clearing on it blanks the cache the app
+    // repaints from offline. Callers used to guard this individually; it lives
+    // here so every caller gets it.
+    if (emails.isEmpty) return;
+
     final now = DateTime.now().millisecondsSinceEpoch;
 
     // Encrypt all emails concurrently before opening the batch transaction
@@ -126,14 +135,33 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
       );
     }));
 
-    await _database.batch((batch) {
-      for (final companion in companions) {
-        batch.insert(
-          _database.cachedEmails,
-          companion,
-          mode: InsertMode.insertOrReplace,
-        );
-      }
+    Future<void> insertAll() => _database.batch((batch) {
+          for (final companion in companions) {
+            batch.insert(
+              _database.cachedEmails,
+              companion,
+              mode: InsertMode.insertOrReplace,
+            );
+          }
+        });
+
+    if (!replaceFolder) {
+      await insertAll();
+      return;
+    }
+
+    // The delete runs *after* the preservation lookups above and inside the
+    // same transaction as the inserts. Doing it the other way round — the
+    // caller clearing the folder and then calling cacheEmails — is what made
+    // the preservation above dead code: the lookup found nothing, so every
+    // refresh blanked every cached body in the folder and BodyPrefetchService
+    // re-downloaded them.
+    await _database.transaction(() async {
+      await (_database.delete(_database.cachedEmails)
+            ..where((t) =>
+                t.accountId.equals(accountId) & t.folderId.equals(folderId)))
+          .go();
+      await insertAll();
     });
   }
 
@@ -295,6 +323,7 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
       'body': email.body,
       'bodyType': email.bodyType == EmailBodyType.html ? 'html' : 'text',
       'isRead': email.isRead,
+      'isFlagged': email.isFlagged,
       'receivedDateTime': email.receivedDateTime.toIso8601String(),
       'sentDateTime': email.sentDateTime?.toIso8601String(),
       'importance': switch (email.importance) {
@@ -373,6 +402,9 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
       bodyType:
           j['bodyType'] == 'html' ? EmailBodyType.html : EmailBodyType.text,
       isRead: j['isRead'] as bool,
+      // Absent on rows cached before the flag was recorded — not flagged is the
+      // honest answer, and the next sync of that message fills it in.
+      isFlagged: j['isFlagged'] as bool? ?? false,
       receivedDateTime: DateTime.parse(j['receivedDateTime'] as String),
       sentDateTime: j['sentDateTime'] != null
           ? DateTime.parse(j['sentDateTime'] as String)

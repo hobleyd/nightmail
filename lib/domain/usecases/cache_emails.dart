@@ -11,14 +11,19 @@ class CacheEmailsParams extends Equatable {
     required this.accountId,
     required this.folderId,
     required this.emails,
+    this.replaceFolder = false,
   });
 
   final String accountId;
   final String folderId;
   final List<Email> emails;
 
+  /// Whether [emails] is a complete page that should *become* the folder's
+  /// contents, dropping cached rows the fetch no longer lists.
+  final bool replaceFolder;
+
   @override
-  List<Object?> get props => [accountId, folderId, emails];
+  List<Object?> get props => [accountId, folderId, emails, replaceFolder];
 }
 
 class CacheEmails implements UseCase<Unit, CacheEmailsParams> {
@@ -32,6 +37,7 @@ class CacheEmails implements UseCase<Unit, CacheEmailsParams> {
       accountId: params.accountId,
       folderId: params.folderId,
       emails: params.emails,
+      replaceFolder: params.replaceFolder,
     );
   }
 }

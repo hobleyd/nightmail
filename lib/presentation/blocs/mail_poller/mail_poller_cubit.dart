@@ -10,11 +10,13 @@ import '../../../core/error/exceptions.dart';
 import '../../../core/settings/app_settings.dart';
 import '../../../data/datasources/local/delta_token_datasource.dart';
 import '../../../data/datasources/local/email_local_datasource.dart';
+import '../../../data/datasources/local/folder_local_datasource.dart';
 import '../../../data/datasources/local/pending_operations_datasource.dart';
 import '../../../data/datasources/remote/email_remote_datasource.dart';
 import '../../../data/datasources/remote/graph_delta_datasource.dart';
 import '../../../data/datasources/remote/spam_db_sync_datasource.dart';
 import '../../../domain/entities/email.dart';
+import '../../../domain/entities/email_folder.dart';
 import '../../../domain/usecases/get_cached_folders.dart';
 import '../../../infrastructure/accounts/account.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
@@ -36,6 +38,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     required ConnectivityService connectivityService,
     required DeltaTokenDatasource database,
     required EmailLocalDatasource emailLocalDatasource,
+    required FolderLocalDatasource folderLocalDatasource,
     required GetCachedFolders getCachedFolders,
     required NotificationService notificationService,
     required OutboxDrainService outboxDrainService,
@@ -49,6 +52,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
         _connectivityService = connectivityService,
         _database = database,
         _emailLocalDatasource = emailLocalDatasource,
+        _folderLocalDatasource = folderLocalDatasource,
         _getCachedFolders = getCachedFolders,
         _notificationService = notificationService,
         _outboxDrainService = outboxDrainService,
@@ -67,6 +71,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   final ConnectivityService _connectivityService;
   final DeltaTokenDatasource _database;
   final EmailLocalDatasource _emailLocalDatasource;
+  final FolderLocalDatasource _folderLocalDatasource;
   final GetCachedFolders _getCachedFolders;
   final NotificationService _notificationService;
   final OutboxDrainService _outboxDrainService;
@@ -85,8 +90,78 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   final Set<String> _reauthAccounts = {};
   StreamSubscription<void>? _reconnectSub;
 
+  /// Consecutive delta failures per [_folderKey]. A delta stream that keeps
+  /// failing has its token dropped so the next cycle re-bootstraps — see
+  /// [_maxDeltaFailuresBeforeReset].
+  final Map<String, int> _deltaFailures = {};
+
+  /// Consecutive delta *bootstrap* failures per account. Counted here because
+  /// the bootstrap runs unawaited, so its throw never reaches the poll loop's
+  /// per-account handlers.
+  final Map<String, int> _bootstrapFailures = {};
+
+  /// Per-account failure from the current cycle, published on the state.
+  final Map<String, String> _errors = {};
+
+  /// The folder the user is looking at on the active account, or null when it is
+  /// the Inbox (or nothing). Set by the UI — the poller has no route to the
+  /// email list's state, and syncing only the Inbox is why a machine parked on
+  /// another folder never updated.
+  String? _watchedFolderId;
+
   static const _systemEventsChannel =
       MethodChannel('au.com.sharpblue.nightmail/system_events');
+
+  /// Ceiling on one whole cycle. Nothing here can be cancelled — the timeout
+  /// only stops us *awaiting* — so this is deliberately generous: its job is to
+  /// unlatch [_polling] after a genuine wedge, not to police slow networks.
+  /// Overlapping cycles are the lesser evil against polling stopping for the
+  /// lifetime of the process.
+  static const _cycleDeadline = Duration(minutes: 5);
+
+  // There is deliberately no *per-account* deadline here. Bounding one
+  // account's turn means wrapping the loop body in a closure, which the body's
+  // `continue`s cannot cross; and the right place for that bound is the
+  // transport anyway, where a timeout can actually abort the request instead of
+  // merely stopping us awaiting it. Each client owns its own timeouts;
+  // [_cycleDeadline] is the backstop for anything that slips past them.
+
+  /// After this many consecutive failures on one folder's delta stream, drop the
+  /// token and re-bootstrap. A stored delta link the server rejects is otherwise
+  /// permanent: it survives restart in [DeltaSyncTokens], and only a 410 used to
+  /// clear it.
+  static const _maxDeltaFailuresBeforeReset = 3;
+
+  /// How much of a folder a poll re-fetches. Matches EmailListBloc's page size,
+  /// so the cache the list repaints from holds exactly one page.
+  static const _watchedPageSize = 25;
+
+  /// Graph's well-known name for the Inbox, which it resolves itself. Used as
+  /// the delta path segment and the delta-token key — deliberately not the
+  /// folder's real id, so tokens issued before per-folder watching stay valid
+  /// instead of forcing every account to re-bootstrap on upgrade.
+  static const _inboxWellKnownName = 'inbox';
+
+  static String _folderKey(String accountId, String folderId) =>
+      '$accountId|$folderId';
+
+  // Keys in [_errors] for failures that belong to the cycle rather than to one
+  // account. Prefixed so they cannot collide with a real account id.
+  static const _cycleKey = '__cycle__';
+  static const _outboxKey = '__outbox__';
+  static const _offlineKey = '__offline__';
+
+  /// Tells the poller which folder is on screen for the active account, so the
+  /// cycle syncs it as well as the Inbox.
+  ///
+  /// Pass the Inbox's own id (or null) when the Inbox is showing — it is always
+  /// synced anyway. Changing folders re-polls straight away rather than leaving
+  /// the user on a cache that may be a full interval old.
+  void setWatchedFolder(String? folderId) {
+    if (_watchedFolderId == folderId) return;
+    _watchedFolderId = folderId;
+    if (folderId != null) _poll();
+  }
 
   Future<void> initialize() async {
     // Remove before add to guard against multiple initialize() calls (e.g.
@@ -182,14 +257,57 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     // network call run out its connect timeout (tens of seconds) in turn —
     // there's nothing to sync, and onReconnected already triggers a poll the
     // moment connectivity returns.
-    if (!await _connectivityService.isOnline) return;
+    if (!await _connectivityService.isOnline) {
+      // Reported rather than silent: a probe stuck on offline (a captive
+      // portal, a VPN, a fast-failing route) looks exactly like a quiet
+      // mailbox otherwise, and onReconnected needs a false→true edge that a
+      // stuck probe never produces.
+      debugPrint('[MailPoller] cycle skipped — connectivity reports offline');
+      _errors
+        ..clear()
+        ..[_offlineKey] = 'connectivity reports offline';
+      if (!isClosed) {
+        emit(state.copyWith(
+          lastPollAt: DateTime.now(),
+          lastPollErrors: Map.of(_errors),
+        ));
+      }
+      return;
+    }
     _polling = true;
+    try {
+      await _runCycle().timeout(_cycleDeadline);
+    } on TimeoutException {
+      // Nothing here is cancellable, so the abandoned work may still land. That
+      // is accepted: the alternative was _polling latched true forever, which
+      // stopped polling for *every* account for the lifetime of the process.
+      debugPrint('[MailPoller] cycle abandoned after '
+          '${_cycleDeadline.inMinutes} min — something never completed');
+      _errors[_cycleKey] = 'poll cycle timed out';
+    } catch (e) {
+      // _runCycle reports per-account failures itself; this is the backstop
+      // that keeps an unexpected throw from escaping the timer callback.
+      debugPrint('[MailPoller] cycle failed: $e');
+      _errors[_cycleKey] = '$e';
+    } finally {
+      _polling = false;
+      if (!isClosed) {
+        emit(state.copyWith(
+          lastPollAt: DateTime.now(),
+          lastPollErrors: Map.of(_errors),
+        ));
+      }
+    }
+  }
+
+  Future<void> _runCycle() async {
     // Captured so we can notify only for accounts that newly gained unread
     // mail *this cycle* — not ones already flagged from a previous poll, and
     // not the very first poll, which just establishes the baseline from
     // whatever unread mail already existed before NightMail was opened.
     final wasInitialized = _initialized;
     final previousNewMailAccounts = Set<String>.of(_newMailAccounts);
+    _errors.clear();
 
     // Replays any queued offline mutations, and awaits it before syncing
     // server state below — draining first means a locally-queued delete or
@@ -201,15 +319,32 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     // was made; a connectivity-triggered drain (faster than waiting for the
     // next tick) is a responsiveness improvement on top of this, not a
     // correctness dependency.
-    await _outboxDrainService.drainAll();
-
+    //
+    // Guarded: this used to sit *outside* the try whose finally cleared
+    // _polling, so a throw here latched the flag and killed polling for good.
     try {
+      await _outboxDrainService.drainAll();
+    } catch (e) {
+      debugPrint('[MailPoller] outbox drain failed: $e');
+      _errors[_outboxKey] = 'outbox drain failed: $e';
+    }
+
+    {
       final accounts = _accountManager.accounts;
       if (accounts.isEmpty) return;
 
       final activeId = _accountManager.activeAccount?.id;
       bool changed = false;
       bool activeInboxChanged = false;
+
+      /// The active account's folders this cycle actually wrote cache for. The
+      /// UI can only repaint from cache for a folder in here; anything else has
+      /// to go to the network.
+      final syncedForActive = <String>{};
+
+      /// The resolved Inbox id per account, so the watched-folder step can tell
+      /// "the user is on the Inbox" (already synced) from a real second folder.
+      final inboxIdByAccount = <String, String>{};
 
       // Full-body prefetch jobs collected as new mail is cached this cycle,
       // then run after the UI-refresh emit below (see the tail of the try).
@@ -243,6 +378,8 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
               final inboxes = folders
                   .where((f) => f.displayName.toLowerCase() == 'inbox');
               if (inboxes.isEmpty) continue;
+              inboxIdByAccount[account.id] = inboxes.first.id;
+              await _persistFolderCounts(account.id, folders);
               final unreadCount = inboxes.first.unreadItemCount;
               final totalCount = inboxes.first.totalItemCount;
               _latestPolledUnread[account.id] = unreadCount;
@@ -279,8 +416,9 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
               // Incremental delta sync — only fetch changes since last call.
               final result = await deltaDs.syncMailDelta('inbox',
                   deltaLink: savedToken);
-              await _database.saveDeltaToken(
-                  account.id, 'inbox', result.deltaLink);
+              // The stream answered, so whatever streak of failures it was on
+              // is over.
+              _deltaFailures.remove(_folderKey(account.id, 'inbox'));
 
               if (result.hasChanges) {
                 // Mirror the delta straight into the cache so the message
@@ -301,11 +439,15 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                     emails: result.upserted,
                   ));
                 }
+                // Awaited, not fire-and-forget: pollGeneration bumps right
+                // after this loop and the list repaints from cache, so a
+                // removal still in flight would let a message the user deleted
+                // elsewhere survive the repaint and reappear.
                 for (final removedId in result.removedIds) {
-                  unawaited(_emailLocalDatasource.deleteEmailFromCache(
+                  await _emailLocalDatasource.deleteEmailFromCache(
                     accountId: account.id,
                     emailId: removedId,
-                  ));
+                  );
                 }
 
                 // Refresh unread count only when something actually changed.
@@ -313,6 +455,8 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                 final inboxes = folders
                     .where((f) => f.displayName.toLowerCase() == 'inbox');
                 if (inboxes.isEmpty) continue;
+                inboxIdByAccount[account.id] = inboxes.first.id;
+                await _persistFolderCounts(account.id, folders);
                 final unreadCount = inboxes.first.unreadItemCount;
                 _latestPolledUnread[account.id] = unreadCount;
 
@@ -322,6 +466,10 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                   _baselineUnread[account.id] = unreadCount;
                   if (_newMailAccounts.remove(account.id)) changed = true;
                   activeInboxChanged = true;
+                  // _cacheUpserted files each message under its own
+                  // parentFolderId, which for an inbox delta is this id — so a
+                  // repaint from the Inbox's cache is valid.
+                  syncedForActive.add(inboxes.first.id);
                 } else if (hasNewUnread) {
                   if (_newMailAccounts.add(account.id)) changed = true;
                   // Send one notification per new unread email (capped at 5).
@@ -346,11 +494,23 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                 final inboxes = folders
                     .where((f) => f.displayName.toLowerCase() == 'inbox');
                 if (inboxes.isEmpty) continue;
+                inboxIdByAccount[account.id] = inboxes.first.id;
+                await _persistFolderCounts(account.id, folders);
                 final unreadCount = inboxes.first.unreadItemCount;
                 _latestPolledUnread[account.id] = unreadCount;
                 _baselineUnread[account.id] = unreadCount;
               }
               // No changes and count already known → badge count is unchanged.
+
+              // Persisted only now that every change the page carried has been
+              // applied. A delta link is a one-shot receipt: advancing it first
+              // meant a failed cache write lost those changes permanently,
+              // because the next cycle asked from the *new* link and was told
+              // hasChanges == false. Replaying a page is harmless by contrast —
+              // cacheEmails upserts and deleteEmailFromCache no-ops on a row
+              // that has already gone.
+              await _database.saveDeltaToken(
+                  account.id, 'inbox', result.deltaLink);
             }
           } else {
             // Non-delta path: Gmail / IMAP — existing unread-count polling.
@@ -372,6 +532,8 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
             final inboxes =
                 folders.where((f) => f.displayName.toLowerCase() == 'inbox');
             if (inboxes.isEmpty) continue;
+            inboxIdByAccount[account.id] = inboxes.first.id;
+            await _persistFolderCounts(account.id, folders);
             final unreadCount = inboxes.first.unreadItemCount;
             _latestPolledUnread[account.id] = unreadCount;
 
@@ -386,26 +548,46 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
               continue;
             }
 
-            if (account.id == activeId) {
-              final prevUnread = _baselineUnread[account.id];
-              final prevTotal = _baselineTotal[account.id];
-              // Any change — not just an increase — must refresh the UI: a
-              // decrease can come from reading/deleting mail on another
-              // client, or from an in-app action whose optimistic local
-              // update was missed, and would otherwise never self-heal.
-              if ((prevUnread != null && unreadCount != prevUnread) ||
-                  (prevTotal != null && totalCount != prevTotal)) {
-                activeInboxChanged = true;
-                // Gmail/IMAP have no delta feed, so unlike the Graph branch
-                // above there's no upserted-message list — fetch the inbox
-                // page directly and cache it (awaited: pollGeneration bumps
-                // right after this loop and the list repaints from cache,
-                // so the write must land first) instead of showing stale
-                // data until a manual refresh.
-                final freshEmails =
-                    await ds.getEmails(folderId: inboxes.first.id, top: 25);
-                final reconciled = await _reconcileAgainstPendingOps(
-                    account.id, freshEmails);
+            final prevUnread = _baselineUnread[account.id];
+            final prevTotal = _baselineTotal[account.id];
+            // Any change — not just an increase — must refresh: a decrease can
+            // come from reading/deleting mail on another client, or from an
+            // in-app action whose optimistic local update was missed, and would
+            // otherwise never self-heal.
+            final countsChanged =
+                (prevUnread != null && unreadCount != prevUnread) ||
+                    (prevTotal != null && totalCount != prevTotal);
+
+            if (countsChanged && account.id == activeId) {
+              // Flagged as soon as the *counts* disagree, before the fetch
+              // below: "something changed" is knowledge worth acting on even if
+              // our own attempt to cache the new page then fails, and the UI's
+              // refresh can go to the network itself. Only syncedForActive is
+              // conditional on the write landing.
+              activeInboxChanged = true;
+            }
+
+            if (countsChanged) {
+              // Gmail/IMAP have no delta feed, so unlike the Graph branch
+              // above there's no upserted-message list — fetch the inbox
+              // page directly and cache it (awaited: pollGeneration bumps
+              // right after this loop and the list repaints from cache,
+              // so the write must land first) instead of showing stale
+              // data until a manual refresh.
+              //
+              // Done for EVERY account, not just the active one. A non-active
+              // account used to have nothing but a boolean "has new mail" flag
+              // toggled, so switching to it showed a cache frozen at whenever
+              // it was last selected until a manual refresh landed.
+              //
+              // Guarded on its own so a failure here still leaves the baselines
+              // below updated and the other accounts polled — this is a cache
+              // warm, not the cycle's purpose.
+              try {
+                final freshEmails = await ds.getEmails(
+                    folderId: inboxes.first.id, top: _watchedPageSize);
+                final reconciled =
+                    await _reconcileAgainstPendingOps(account.id, freshEmails);
                 // Replace the folder's rows rather than merge into them, the
                 // same way EmailListBloc's refresh does. A plain cacheEmails is
                 // an upsert, so it can only ever *add* — a thread that has left
@@ -414,32 +596,46 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                 // right after this poll, a just-filed thread reappears in the
                 // Inbox and stays there until a manual folder refresh.
                 //
-                // Skipped when the reconciled page is empty: an empty result is
-                // far more likely a transient (or every message tombstoned by an
-                // in-flight mutation) than a genuinely emptied folder, and
-                // clearing on it would blank the cache for an offline repaint.
-                if (reconciled.isNotEmpty) {
-                  await _emailLocalDatasource.clearCacheForFolder(
-                    accountId: account.id,
-                    folderId: inboxes.first.id,
-                  );
-                }
+                // `replaceFolder` rather than clearCacheForFolder then write:
+                // the drop runs inside the same transaction and *after*
+                // cacheEmails' body-preservation lookups, so a poll no longer
+                // discards every cached body in the Inbox (and make
+                // BodyPrefetchService re-download them). An empty page is a
+                // no-op inside cacheEmails, which is also where the "never
+                // clear on an empty result" rule now lives.
                 await _emailLocalDatasource.cacheEmails(
                   accountId: account.id,
                   folderId: inboxes.first.id,
                   emails: reconciled,
+                  replaceFolder: true,
                 );
-                // Warm the body cache for the page we just synced so tapping a
-                // message opens instantly instead of fetching on demand.
-                prefetchJobs.add((
-                  accountId: account.id,
-                  datasource: ds,
-                  folderId: inboxes.first.id,
-                  emails: reconciled,
-                ));
+                if (account.id == activeId) {
+                  // Only now that the write has landed: this is what tells the
+                  // UI a repaint from this folder's cache is valid.
+                  syncedForActive.add(inboxes.first.id);
+                  // Warm the body cache for the page we just synced so tapping a
+                  // message opens instantly instead of fetching on demand.
+                  // Active account only — 20 body fetches per background
+                  // account per change is bandwidth spent on mail nobody is
+                  // looking at.
+                  prefetchJobs.add((
+                    accountId: account.id,
+                    datasource: ds,
+                    folderId: inboxes.first.id,
+                    emails: reconciled,
+                  ));
+                }
+              } catch (e) {
+                debugPrint('[MailPoller] ${account.id}: inbox page sync failed '
+                    'after a count change: $e');
+                _errors[account.id] = 'inbox page sync failed: $e';
               }
-              _baselineUnread[account.id] = unreadCount;
-              _baselineTotal[account.id] = totalCount;
+            }
+
+            _baselineUnread[account.id] = unreadCount;
+            _baselineTotal[account.id] = totalCount;
+
+            if (account.id == activeId) {
               if (_newMailAccounts.remove(account.id)) changed = true;
             } else if (unreadCount > 0) {
               if (_newMailAccounts.add(account.id)) changed = true;
@@ -447,19 +643,74 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
               if (_newMailAccounts.remove(account.id)) changed = true;
             }
           }
-        } on ServerException catch (e) {
-          if (e.statusCode == 410) {
-            // Delta token expired (tokens are valid for 7 days). Clear it so
-            // the next poll bootstraps a fresh one.
-            await _database.clearDeltaTokensForAccount(account.id);
+
+          // Sync the folder on screen as well as the Inbox.
+          //
+          // This is the whole of the reported bug on any provider: the list
+          // repaints from the cache of the folder *showing*, and the poll only
+          // ever wrote the Inbox — so a machine parked on Archive, Sent, Junk, a
+          // subfolder or a Gmail label re-read its own untouched cache and never
+          // changed, with no other automatic refresh anywhere on desktop.
+          if (account.id == activeId) {
+            final watched = _watchedFolderId;
+            if (watched != null && watched != inboxIdByAccount[account.id]) {
+              if (await _syncWatchedFolder(
+                account: account,
+                ds: ds,
+                folderId: watched,
+                prefetchJobs: prefetchJobs,
+              )) {
+                activeInboxChanged = true;
+              }
+              syncedForActive.add(watched);
+            }
           }
-        } on AuthException catch (_) {
+        } on ServerException catch (e) {
+          // 410 is the documented "delta token expired" (tokens live 7 days).
+          // 400 and 404 are the undocumented but real equivalents: Graph
+          // escapes its own separators inside a delta link, so a link the app
+          // stored and replayed verbatim can be rejected outright — and
+          // graph_message_parser's unescaping only covers some of them. A
+          // statusCode of null is the "delta query completed without returning
+          // a delta link" case. All three used to leave the bad token on disk
+          // in the persistent DeltaSyncTokens table, so the account did nothing
+          // at all on every cycle for the rest of the install's life.
+          final fatal = e.statusCode == null ||
+              e.statusCode == 410 ||
+              e.statusCode == 400 ||
+              e.statusCode == 404;
+          if (fatal) {
+            debugPrint('[MailPoller] ${account.id}: delta token rejected '
+                '(status ${e.statusCode}) — clearing so the next cycle '
+                'bootstraps: ${e.message}');
+            await _database.clearDeltaTokensForAccount(account.id);
+            _deltaFailures.remove(_folderKey(account.id, 'inbox'));
+          } else {
+            await _noteDeltaFailure(account.id, 'inbox',
+                'HTTP ${e.statusCode}: ${e.message}');
+          }
+          _errors[account.id] = 'HTTP ${e.statusCode}: ${e.message}';
+        } on AuthException catch (e) {
           // Refresh token rejected/revoked — surface this account as needing
           // re-authentication instead of silently freezing its counts forever.
           if (_reauthAccounts.add(account.id)) changed = true;
-        } catch (_) {
-          // Silently skip accounts that fail to poll for other reasons
-          // (network blips, etc.) — the next poll cycle will retry.
+          _errors[account.id] = 'authentication failed: ${e.message}';
+        } on TimeoutException {
+          // Raised by a client's own transport timeout. Reported so a provider
+          // that is reachable but never answers is distinguishable from one
+          // with nothing to say, and counted so a delta stream that only ever
+          // times out eventually gets re-bootstrapped.
+          debugPrint('[MailPoller] ${account.id}: request timed out — '
+              'moving on to the next account');
+          _errors[account.id] = 'timed out';
+          await _noteDeltaFailure(account.id, 'inbox', 'timed out');
+        } catch (e) {
+          // Other accounts still get their turn and the next cycle retries —
+          // but it is *reported* now. Every one of these was silent, which is
+          // how a deterministic failure came to look like a quiet mailbox.
+          debugPrint('[MailPoller] ${account.id}: poll failed: $e');
+          _errors[account.id] = '$e';
+          await _noteDeltaFailure(account.id, 'inbox', '$e');
         }
       }
 
@@ -471,10 +722,14 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
         // On the first cycle this is the report that the counts and list the
         // app opened with were stale — i.e. that the cold-start fetch failed
         // and this poll is what repaired it. See [_shouldPrimeBaseline].
-        debugPrint('[MailPoller] active inbox changed — reloading folders '
-            'and list${wasInitialized ? '' : ' (first cycle: what the app '
+        debugPrint('[MailPoller] active account changed in '
+            '${syncedForActive.join(', ')} — reloading folders and list'
+            '${wasInitialized ? '' : ' (first cycle: what the app '
                 'opened with was stale)'}');
       }
+      // syncedFolderIds is published on every cycle, not only a changed one:
+      // it tells the UI which folders a *repaint from cache* is valid for, and
+      // that answer is just as true when nothing changed.
       if ((changed || activeInboxChanged) && !isClosed) {
         emit(state.copyWith(
           accountsWithNewMail: Set.of(_newMailAccounts),
@@ -482,7 +737,10 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
               ? state.pollGeneration + 1
               : state.pollGeneration,
           accountsNeedingReauth: Set.of(_reauthAccounts),
+          syncedFolderIds: Set.of(syncedForActive),
         ));
+      } else if (!isClosed && !setEquals(state.syncedFolderIds, syncedForActive)) {
+        emit(state.copyWith(syncedFolderIds: Set.of(syncedForActive)));
       }
 
       // Prefetch full bodies for the mail synced this cycle. Runs here — after
@@ -506,8 +764,6 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
           }
         }
       }
-    } finally {
-      _polling = false;
     }
 
     // Windows/Linux have no OS-level badge/dock affordance for background
@@ -575,6 +831,130 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     }
   }
 
+  /// Writes the freshly-fetched folder rows into the folder cache.
+  ///
+  /// The poll fetches counts from the *datasource* on every cycle and used to
+  /// throw them away — only `EmailRepositoryImpl.getMailFolders` (i.e. the UI
+  /// asking) and the mobile background isolate ever wrote `cached_folders`. So a
+  /// background account's on-disk counts were frozen at whenever it was last
+  /// selected, and [_primeBadgeFromCache] seeded the next cold start from them.
+  ///
+  /// Merged, never cleared: the poll only sees top-level folders, so replacing
+  /// the cache wholesale would drop every known subfolder. `cacheFolders` is an
+  /// upsert, which is exactly the merge wanted.
+  Future<void> _persistFolderCounts(
+    String accountId,
+    List<EmailFolder> folders,
+  ) async {
+    if (folders.isEmpty) return;
+    try {
+      await _folderLocalDatasource.cacheFolders(
+        accountId: accountId,
+        folders: folders,
+      );
+    } catch (e) {
+      // Never fail a poll over the folder cache — the counts are still correct
+      // in memory for the badge, and the next cycle retries.
+      debugPrint('[MailPoller] $accountId: folder count cache write failed: $e');
+    }
+  }
+
+  /// Syncs one non-Inbox folder for the active account and returns whether
+  /// anything about it changed.
+  ///
+  /// Deliberately count-driven rather than delta-driven even on Graph: this runs
+  /// for whichever folder the user happens to be looking at, and minting a delta
+  /// token per browsed folder would leave a growing pile of tokens to expire and
+  /// recover. The Inbox — the one folder that is synced every cycle whether or
+  /// not it is on screen — keeps the delta stream.
+  Future<bool> _syncWatchedFolder({
+    required Account account,
+    required EmailRemoteDatasource ds,
+    required String folderId,
+    required List<
+            ({
+              String accountId,
+              EmailRemoteDatasource datasource,
+              String folderId,
+              List<Email> emails,
+            })>
+        prefetchJobs,
+  }) async {
+    final fresh =
+        await ds.getEmails(folderId: folderId, top: _watchedPageSize);
+    final reconciled = await _reconcileAgainstPendingOps(account.id, fresh);
+
+    // Compared against the *cache* rather than a count, because there is no
+    // per-folder count to compare for an arbitrary folder on every provider —
+    // and because the page is already in hand, so the comparison is free.
+    // Equality is Email's own, which now includes isFlagged, so a flag or
+    // read-state change on another machine registers as a change.
+    final cached = await _emailLocalDatasource.getCachedEmails(
+      accountId: account.id,
+      folderId: folderId,
+    );
+    final changed = !_samePage(cached, reconciled);
+
+    await _emailLocalDatasource.cacheEmails(
+      accountId: account.id,
+      folderId: folderId,
+      emails: reconciled,
+      replaceFolder: true,
+    );
+    if (changed) {
+      prefetchJobs.add((
+        accountId: account.id,
+        datasource: ds,
+        folderId: folderId,
+        emails: reconciled,
+      ));
+    }
+    return changed;
+  }
+
+  /// Whether two pages are the same mail in the same order and the same state.
+  ///
+  /// Only the first [_watchedPageSize] rows are compared: the cache may hold
+  /// more than a page if the user has loaded more, and the fetch only ever
+  /// returns the first page.
+  static bool _samePage(List<Email> cached, List<Email> fresh) {
+    if (cached.length < fresh.length) return false;
+    for (var i = 0; i < fresh.length; i++) {
+      if (cached[i] != fresh[i]) return false;
+    }
+    // The fetch is a full page but the cache holds fewer rows than a page —
+    // nothing was dropped, so this is the same folder seen twice.
+    return cached.length == fresh.length || fresh.length == _watchedPageSize;
+  }
+
+  /// Counts a delta failure for one folder and, once the streak reaches
+  /// [_maxDeltaFailuresBeforeReset], drops the account's tokens so the next
+  /// cycle bootstraps from scratch.
+  ///
+  /// The status-coded cases are handled directly by the caller; this catches
+  /// everything else — a parse that keeps failing, a repeated timeout, a
+  /// transport error that always reproduces. Without it, any failure the
+  /// status-code check does not recognise is permanent, because nothing else in
+  /// the app ever clears a stored delta token.
+  Future<void> _noteDeltaFailure(
+    String accountId,
+    String folderId,
+    String reason,
+  ) async {
+    final key = _folderKey(accountId, folderId);
+    final count = (_deltaFailures[key] ?? 0) + 1;
+    _deltaFailures[key] = count;
+    if (count < _maxDeltaFailuresBeforeReset) return;
+    debugPrint('[MailPoller] $accountId/$folderId: $count consecutive delta '
+        'failures ($reason) — dropping the token to force a re-bootstrap');
+    _deltaFailures.remove(key);
+    try {
+      await _database.clearDeltaTokensForAccount(accountId);
+    } catch (e) {
+      debugPrint('[MailPoller] $accountId: could not clear delta tokens: $e');
+    }
+  }
+
   /// Performs the initial full delta sync for [accountId] to establish a delta
   /// token. Runs in the background so it does not block the poll cycle.
   Future<void> _bootstrapDeltaToken(
@@ -585,19 +965,33 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     _bootstrapping.add(accountId);
     try {
       final result = await ds.syncMailDelta('inbox');
-      await _database.saveDeltaToken(accountId, 'inbox', result.deltaLink);
-      // The bootstrap fetch already pulled the last 30 days of messages to
+      // The bootstrap fetch already pulled a first window of messages to
       // establish the delta token — cache them now instead of discarding,
       // so a fresh account is usable offline without a separate fetch.
+      //
+      // Before the token, for the same reason as the steady-state path: the
+      // token is a receipt for changes we have applied, so persisting it ahead
+      // of the write would lose them if the write failed.
       await _cacheUpserted(accountId, result.upserted);
+      await _database.saveDeltaToken(accountId, 'inbox', result.deltaLink);
+      _bootstrapFailures.remove(accountId);
       // The fresh delta snapshot reflects the inbox at this moment. The email
       // list cache may be stale (e.g. emails deleted before/during bootstrap),
       // so force a UI refresh now that we have a reliable baseline.
       if (!isClosed && accountId == _accountManager.activeAccount?.id) {
         emit(state.copyWith(pollGeneration: state.pollGeneration + 1));
       }
-    } catch (_) {
-      // Bootstrap failed; next poll cycle will retry when savedToken is null.
+    } catch (e) {
+      // The next cycle retries, because savedToken stays null. Counted and
+      // logged because this runs unawaited from the poll loop, so its throw
+      // never reaches the per-account handlers there — a bootstrap that fails
+      // every time left the account in the no-token branch for good, where the
+      // badge and folder counts moved but the message list never did.
+      final count = (_bootstrapFailures[accountId] ?? 0) + 1;
+      _bootstrapFailures[accountId] = count;
+      debugPrint('[MailPoller] $accountId: delta bootstrap failed '
+          '($count consecutive): $e');
+      _errors[accountId] = 'delta bootstrap failed ($count consecutive): $e';
     } finally {
       _bootstrapping.remove(accountId);
     }
@@ -609,12 +1003,20 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   /// the same string as that folder's actual id used elsewhere for cache
   /// lookups/UI navigation — grouping by parentFolderId keeps cache keys
   /// consistent with what the email list reads.
-  Future<void> _cacheUpserted(String accountId, List<Email> upserted) async {
+  Future<void> _cacheUpserted(
+    String accountId,
+    List<Email> upserted, {
+    String? inboxFolderId,
+  }) async {
     if (upserted.isEmpty) return;
     final reconciled = await _reconcileAgainstPendingOps(accountId, upserted);
     final byFolder = <String, List<Email>>{};
     for (final email in reconciled) {
-      final folderId = email.parentFolderId ?? 'inbox';
+      // A delta item with no parentFolderId belongs to the folder the delta was
+      // scoped to. Falling back to the literal 'inbox' filed it under a key the
+      // email list never reads, so the row was cached and then invisible.
+      final folderId =
+          email.parentFolderId ?? inboxFolderId ?? _inboxWellKnownName;
       byFolder.putIfAbsent(folderId, () => []).add(email);
     }
     for (final entry in byFolder.entries) {

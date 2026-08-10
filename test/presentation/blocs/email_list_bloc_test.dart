@@ -9,7 +9,6 @@ import 'package:nightmail/domain/entities/email.dart';
 import 'package:nightmail/domain/entities/email_address.dart';
 import 'package:nightmail/domain/usecases/cache_emails.dart';
 import 'package:nightmail/domain/usecases/classify_emails.dart';
-import 'package:nightmail/domain/usecases/clear_email_cache_for_folder.dart';
 import 'package:nightmail/domain/usecases/delete_email.dart';
 import 'package:nightmail/domain/usecases/empty_folder.dart';
 import 'package:nightmail/domain/usecases/get_cached_emails.dart';
@@ -88,7 +87,6 @@ class _FakeAccountManager extends Fake implements AccountManager {
   SearchEmails,
   GetEmail,
   GetConversationThread,
-  ClearEmailCacheForFolder,
   SpamDbSyncService,
   OutboxDrainService,
 ])
@@ -125,7 +123,6 @@ void main() {
       getEmails: mockGetEmails,
       getCachedEmails: mockGetCachedEmails,
       cacheEmails: MockCacheEmails(),
-      clearEmailCacheForFolder: MockClearEmailCacheForFolder(),
       markEmailAsRead: mockMarkEmailAsRead,
       moveEmail: mockMoveEmail,
       reportJunk: MockReportJunk(),
@@ -1114,25 +1111,24 @@ void main() {
   // ---------------------------------------------------------------------------
 
   group('EmailListRefreshRequested cache ordering (active account)', () {
-    // Regression: the folder cache must be cleared and then explicitly
-    // re-written with the fresh page, strictly in that order. The repository
-    // also fires its own unawaited cache write as a side effect of
-    // getEmails() succeeding; if the clear ran after that write (or nothing
-    // re-wrote the cache after the clear), the folder's on-disk cache would
-    // be left empty after a successful refresh — a poll-triggered
-    // EmailListCacheRefreshRequested right after would then show a blank
-    // inbox. Asserting the explicit clear-then-write order here is what
-    // guarantees the final cache state is correct regardless of how the
-    // repository's own fire-and-forget write happens to interleave.
-    test('clears the folder cache before re-writing the fresh page', () async {
+    // Regression: the fresh page must *replace* the folder's rows, so an email
+    // deleted or moved elsewhere stops being listed. The repository also fires
+    // its own unawaited cache write as a side effect of getEmails() succeeding,
+    // which isn't ordered against this one — so the bloc writes explicitly.
+    //
+    // It must do that in ONE call with replaceFolder, not clear-then-write.
+    // cacheEmails preserves an already-cached full body by looking the old row
+    // up first; a separate clear on the line before guaranteed that lookup
+    // found nothing, so every refresh discarded every cached body in the folder
+    // and BodyPrefetchService re-downloaded up to 20 messages. The delete now
+    // happens inside the same transaction and after the preservation lookups.
+    test('replaces the folder cache in a single write', () async {
       final mockCacheEmails = MockCacheEmails();
-      final mockClearEmailCacheForFolder = MockClearEmailCacheForFolder();
       final mockRecordKnownSenders = MockRecordKnownSenders();
       final orderedBloc = EmailListBloc(
         getEmails: mockGetEmails,
         getCachedEmails: mockGetCachedEmails,
         cacheEmails: mockCacheEmails,
-        clearEmailCacheForFolder: mockClearEmailCacheForFolder,
         markEmailAsRead: MockMarkEmailAsRead(),
         moveEmail: mockMoveEmail,
         reportJunk: MockReportJunk(),
@@ -1153,8 +1149,6 @@ void main() {
       when(mockGetCachedEmails(any)).thenAnswer((_) async => const Right([]));
       when(mockGetEmails(any))
           .thenAnswer((_) async => Right([_email('id1')]));
-      when(mockClearEmailCacheForFolder(any))
-          .thenAnswer((_) async => const Right(unit));
       when(mockCacheEmails(any)).thenAnswer((_) async => const Right(unit));
       when(mockRecordKnownSenders(any))
           .thenAnswer((_) async => const Right(unit));
@@ -1163,10 +1157,14 @@ void main() {
           .add(const EmailListRefreshRequested(folderId: 'folder-1'));
       await orderedBloc.stream.firstWhere((s) => s is EmailListLoaded);
 
-      verifyInOrder([
-        mockClearEmailCacheForFolder(any),
-        mockCacheEmails(any),
-      ]);
+      final captured = verify(mockCacheEmails(captureAny)).captured;
+      expect(captured, hasLength(1),
+          reason: 'one write, not a clear followed by a write');
+      final params = captured.single as CacheEmailsParams;
+      expect(params.replaceFolder, isTrue,
+          reason: 'the fresh page must replace the folder, not merge into it');
+      expect(params.folderId, 'folder-1');
+      expect(params.emails.map((e) => e.id), ['id1']);
     });
   });
 
@@ -1188,7 +1186,6 @@ void main() {
         getEmails: mockGetEmails,
         getCachedEmails: mockGetCachedEmails,
         cacheEmails: MockCacheEmails(),
-        clearEmailCacheForFolder: MockClearEmailCacheForFolder(),
         markEmailAsRead: MockMarkEmailAsRead(),
         moveEmail: mockMoveEmail,
         reportJunk: MockReportJunk(),

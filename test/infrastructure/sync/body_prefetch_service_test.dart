@@ -49,7 +49,11 @@ class _FakeLocal extends Fake implements EmailLocalDatasource {
     required String accountId,
     required String folderId,
     required List<Email> emails,
+    bool replaceFolder = false,
   }) async {
+    if (replaceFolder) {
+      cached.removeWhere((_, e) => (e.parentFolderId ?? folderId) == folderId);
+    }
     for (final e in emails) {
       cached[e.id] = e;
       writes.add((folderId: folderId, email: e));

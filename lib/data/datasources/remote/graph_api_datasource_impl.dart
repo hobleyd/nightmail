@@ -79,6 +79,10 @@ final _emailListSelect = [
   'ccRecipients',
   'bodyPreview',
   'isRead',
+  // The provider's own follow-up bit. In the projection so a flag set or
+  // cleared elsewhere arrives as an ordinary field update — including on the
+  // delta feed, which reuses this list.
+  'flag',
   'receivedDateTime',
   'sentDateTime',
   'importance',
@@ -420,6 +424,7 @@ class GraphApiDatasourceImpl
       body: body ?? email.body,
       bodyType: bodyType ?? email.bodyType,
       isRead: email.isRead,
+      isFlagged: email.isFlagged,
       receivedDateTime: email.receivedDateTime,
       importance: email.importance,
       sentDateTime: email.sentDateTime,
@@ -2439,6 +2444,21 @@ class GraphApiDatasourceImpl
   // Graph delta sync
   // ---------------------------------------------------------------------------
 
+  /// Messages per delta page, and how many pages one call will follow.
+  ///
+  /// This is what bounds an initial sync, and it is deliberately a *client-side*
+  /// bound: Graph encodes the originating request's query options into the
+  /// `@odata.deltaLink` it hands back, so a `$filter` on `receivedDateTime`
+  /// would be frozen into the token for its whole life and every change to a
+  /// message older than that cutoff would be invisible for ever after.
+  ///
+  /// 20 × 50 is ~1000 messages — years of inbox for most people, and a bounded
+  /// number of sequential round trips for a mailbox with far more. Nothing is
+  /// lost when the budget runs out: the page cursor is handed back in place of
+  /// the token, so the next poll carries on from there.
+  static const _deltaPageSize = 50;
+  static const _deltaPageBudget = 20;
+
   @override
   Future<MailDeltaResult> syncMailDelta(
     String folderId, {
@@ -2449,17 +2469,9 @@ class GraphApiDatasourceImpl
     // known once that page has arrived.
     final rawPages = <String>[];
 
-    // For the initial sync (no saved token), restrict to the last 30 days so
-    // the first pass is fast. The returned delta link tracks ALL future changes
-    // regardless of this filter.
-    final cutoff = DateTime.now().subtract(const Duration(days: 30)).toUtc();
-    final cutoffStr =
-        '${cutoff.year.toString().padLeft(4, '0')}-'
-        '${cutoff.month.toString().padLeft(2, '0')}-'
-        '${cutoff.day.toString().padLeft(2, '0')}T00:00:00Z';
-
     String? nextUrl = deltaLink;
     bool isInitial = deltaLink == null;
+    var pagesFetched = 0;
 
     try {
       while (true) {
@@ -2471,8 +2483,7 @@ class GraphApiDatasourceImpl
             '/me/mailFolders/$folderId/messages/delta',
             queryParameters: {
               '\$select': _emailListSelect,
-              '\$filter': 'receivedDateTime ge $cutoffStr',
-              '\$top': 50,
+              '\$top': _deltaPageSize,
             },
             options: Options(responseType: ResponseType.plain),
           );
@@ -2486,14 +2497,20 @@ class GraphApiDatasourceImpl
 
         final raw = response.data ?? '';
         if (raw.isNotEmpty) rawPages.add(raw);
+        pagesFetched++;
 
-        final dl = graphDeltaLink(raw);
-        if (dl != null) {
+        // A delta link means the sync is complete. Without one, the page cursor
+        // stands in as the token once the budget is spent — the replay branch
+        // above follows a nextLink exactly as it follows a delta link, so the
+        // next poll resumes where this one stopped rather than starting over.
+        final link = graphDeltaLink(raw) ??
+            (pagesFetched >= _deltaPageBudget ? graphNextLink(raw) : null);
+        if (link != null) {
           final parsed = await compute(parseGraphDeltaPages, rawPages);
           return MailDeltaResult(
             upserted: parsed.upserted,
             removedIds: parsed.removedIds,
-            deltaLink: dl,
+            deltaLink: link,
           );
         }
 

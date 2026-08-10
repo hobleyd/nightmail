@@ -32,6 +32,15 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   /// Cleared on skip==0 (new list load); used on skip>0 (load-more).
   final Map<String?, String> _pageTokens = {};
 
+  /// `(unread, total)` as each label last actually reported it.
+  ///
+  /// Counts come from one request per label, so a single transient failure in
+  /// that burst must not be reported as a count of 0: the badge clears, the
+  /// poller reads the drop as a change and recaches the folder, then overwrites
+  /// its baseline with the zero — so the true count is never noticed again.
+  /// A folder whose request failed keeps its last known count instead.
+  final Map<String, (int, int)> _labelCounts = {};
+
   @override
   Future<List<EmailFolderModel>> getMailFolders() async {
     try {
@@ -126,23 +135,25 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
           .where((f) => !f.id.startsWith('__virtual__'))
           .map((f) => f.id)
           .toList();
-      final countMap = <String, (int, int)>{};
       await Future.wait(realIds.map((id) async {
         try {
           final resp =
               await _dio.get<Map<String, dynamic>>('/users/me/labels/$id');
           final d = resp.data;
           if (d == null) return;
-          countMap[id] = (
+          _labelCounts[id] = (
             d['messagesUnread'] as int? ?? 0,
             d['messagesTotal'] as int? ?? 0,
           );
-        } catch (_) {}
+        } catch (e) {
+          // Leave the last known count in place — see [_labelCounts].
+          debugPrint('[Gmail] label count fetch failed for $id: $e');
+        }
       }));
 
       return folders.map((f) {
         final childCount = childCountByParent[f.id] ?? 0;
-        final counts = countMap[f.id];
+        final counts = _labelCounts[f.id];
         if (childCount == 0 && counts == null) return f;
         return EmailFolderModel(
           id: f.id,
@@ -401,6 +412,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
         body: email.body,
         bodyType: email.bodyType,
         isRead: email.isRead,
+        isFlagged: email.isFlagged,
         receivedDateTime: email.receivedDateTime,
         importance: email.importance,
         parentFolderId: email.parentFolderId,

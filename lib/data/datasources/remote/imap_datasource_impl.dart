@@ -478,9 +478,9 @@ class ImapDatasourceImpl
       final msg = fetchResult.messages.first;
       final folderId = _selectedMailboxPath ?? mailboxPath;
 
-      // Hand the raw MIME to a background isolate to decode. The UID and
-      // `\Seen` flag come from the FETCH rather than the MIME, so they travel
-      // alongside it.
+      // Hand the raw MIME to a background isolate to decode. The UID and the
+      // `\Seen`/`\Flagged` flags come from the FETCH rather than the MIME, so
+      // they travel alongside it.
       String? rawMime;
       try {
         rawMime = msg.renderMessage();
@@ -500,6 +500,7 @@ class ImapDatasourceImpl
           folderId: folderId,
           uid: msg.uid ?? msg.sequenceId ?? 0,
           isRead: msg.isSeen,
+          isFlagged: msg.isFlagged,
           receivedAt: msg.decodeDate(),
         ),
       );
@@ -595,18 +596,19 @@ class ImapDatasourceImpl
       fullBody: true,
       uid: params.uid,
       isRead: params.isRead,
+      isFlagged: params.isFlagged,
       receivedAt: params.receivedAt,
     );
   }
 
   /// Builds the model for a fetched message.
   ///
-  /// [uid], [isRead] and [receivedAt] exist because they are **IMAP-level**
-  /// facts, not MIME ones: the UID and the `\Seen` flag come from the FETCH
-  /// response, so a message reconstructed from its raw MIME alone (which is what
-  /// [parseFullImapMessage] does on a background isolate) has no way to know
-  /// them. Callers holding the fetched message leave them null and they are read
-  /// off it as before.
+  /// [uid], [isRead], [isFlagged] and [receivedAt] exist because they are
+  /// **IMAP-level** facts, not MIME ones: the UID and the `\Seen`/`\Flagged`
+  /// flags come from the FETCH response, so a message reconstructed from its raw
+  /// MIME alone (which is what [parseFullImapMessage] does on a background
+  /// isolate) has no way to know them. Callers holding the fetched message leave
+  /// them null and they are read off it as before.
   ///
   /// Static so [compute] can reach it; it never touched instance state.
   static EmailModel _parseToModel(
@@ -615,11 +617,13 @@ class ImapDatasourceImpl
     bool fullBody = false,
     int? uid,
     bool? isRead,
+    bool? isFlagged,
     DateTime? receivedAt,
   }) {
     final resolvedUid = uid ?? msg.uid ?? msg.sequenceId ?? 0;
     final id = '$folderId:$resolvedUid';
     final resolvedIsRead = isRead ?? msg.isSeen;
+    final resolvedIsFlagged = isFlagged ?? msg.isFlagged;
     final date = receivedAt ?? msg.decodeDate() ?? DateTime.now().toUtc();
 
     String body = '';
@@ -695,6 +699,7 @@ class ImapDatasourceImpl
       body: body,
       bodyType: bodyType,
       isRead: resolvedIsRead,
+      isFlagged: resolvedIsFlagged,
       receivedDateTime: date,
       importance: EmailImportance.normal,
       conversationId: _normalizeSubject(msg.decodeSubject() ?? ''),
@@ -2008,7 +2013,7 @@ String _buildDraftMimeText(_DraftMimeParams p) {
 
 /// Inputs for [ImapDatasourceImpl.parseFullImapMessage].
 ///
-/// Kept as plain, isolate-transferable data — a raw MIME string plus the two
+/// Kept as plain, isolate-transferable data — a raw MIME string plus the
 /// IMAP-level facts that are not represented in the MIME itself. Deliberately
 /// not a [MimeMessage]: that is a lazily-parsed object graph rather than data,
 /// which is the reason the source text is what crosses the boundary.
@@ -2018,6 +2023,7 @@ class ImapFullMessageParams {
     required this.folderId,
     required this.uid,
     required this.isRead,
+    this.isFlagged = false,
     this.receivedAt,
   });
 
@@ -2032,6 +2038,9 @@ class ImapFullMessageParams {
 
   /// The `\Seen` flag, likewise from the FETCH response.
   final bool isRead;
+
+  /// The `\Flagged` flag — the provider's own per-message bit, also FETCH-only.
+  final bool isFlagged;
 
   /// Decoded on the fetching isolate so the reconstructed message cannot
   /// disagree with what the list row already shows.

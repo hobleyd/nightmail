@@ -9,6 +9,7 @@ import 'package:nightmail/core/error/exceptions.dart';
 import 'package:nightmail/core/settings/app_settings.dart';
 import 'package:nightmail/data/datasources/local/delta_token_datasource.dart';
 import 'package:nightmail/data/datasources/local/email_local_datasource.dart';
+import 'package:nightmail/data/datasources/local/folder_local_datasource.dart';
 import 'package:nightmail/data/datasources/local/pending_operations_datasource.dart';
 import 'package:nightmail/data/datasources/remote/email_remote_datasource.dart';
 import 'package:nightmail/data/datasources/remote/graph_api_datasource_impl.dart';
@@ -100,6 +101,7 @@ MailDeltaResult _emptyDelta() => MailDeltaResult(
   ConnectivityService,
   DeltaTokenDatasource,
   EmailLocalDatasource,
+  FolderLocalDatasource,
   GraphApiDatasourceImpl,
   EmailRemoteDatasource,
   GetCachedFolders,
@@ -117,6 +119,7 @@ void main() {
   late MockConnectivityService mockConnectivityService;
   late MockDeltaTokenDatasource mockDatabase;
   late MockEmailLocalDatasource mockEmailLocalDatasource;
+  late MockFolderLocalDatasource mockFolderLocalDatasource;
   late MockGraphApiDatasourceImpl mockGraphDs;
   late MockGetCachedFolders mockGetCachedFolders;
   late MockNotificationService mockNotificationService;
@@ -134,6 +137,7 @@ void main() {
         connectivityService: mockConnectivityService,
         database: mockDatabase,
         emailLocalDatasource: mockEmailLocalDatasource,
+        folderLocalDatasource: mockFolderLocalDatasource,
         getCachedFolders: mockGetCachedFolders,
         notificationService: mockNotificationService,
         outboxDrainService: mockOutboxDrainService,
@@ -155,6 +159,15 @@ void main() {
       accountId: anyNamed('accountId'),
       folderId: anyNamed('folderId'),
       emails: anyNamed('emails'),
+      replaceFolder: anyNamed('replaceFolder'),
+    )).thenAnswer((_) async {});
+    when(mockEmailLocalDatasource.getCachedEmails(
+      accountId: anyNamed('accountId'),
+      folderId: anyNamed('folderId'),
+    )).thenAnswer((_) async => const []);
+    when(mockFolderLocalDatasource.cacheFolders(
+      accountId: anyNamed('accountId'),
+      folders: anyNamed('folders'),
     )).thenAnswer((_) async {});
     when(mockEmailLocalDatasource.clearCacheForFolder(
       accountId: anyNamed('accountId'),
@@ -194,6 +207,7 @@ void main() {
     mockConnectivityService = MockConnectivityService();
     mockDatabase = MockDeltaTokenDatasource();
     mockEmailLocalDatasource = MockEmailLocalDatasource();
+    mockFolderLocalDatasource = MockFolderLocalDatasource();
     mockGraphDs = MockGraphApiDatasourceImpl();
     mockGetCachedFolders = MockGetCachedFolders();
     mockOutboxDrainService = MockOutboxDrainService();
@@ -896,8 +910,12 @@ void main() {
           .thenAnswer((_) async => page);
     }
 
-    test('clears the folder cache before writing the freshly synced page',
-        () async {
+    // The replacement is one write with replaceFolder, not a clear followed by
+    // a write: cacheEmails preserves an already-cached full body by looking the
+    // old row up first, and a separate clear on the line before guaranteed that
+    // lookup found nothing — so every poll that detected a change blanked every
+    // cached body in the Inbox and BodyPrefetchService re-downloaded them.
+    test('replaces the folder cache in a single write', () async {
       stubTwoPolls(page: [_email('still-here')]);
 
       final cubit = _makeCubit();
@@ -908,21 +926,22 @@ void main() {
       await cubit.updatePollInterval(9999);
       await pumpEventQueue();
 
-      verifyInOrder([
-        mockEmailLocalDatasource.clearCacheForFolder(
-          accountId: _gmailAccount.id,
-          folderId: 'inbox-id',
-        ),
-        mockEmailLocalDatasource.cacheEmails(
-          accountId: _gmailAccount.id,
-          folderId: 'inbox-id',
-          emails: anyNamed('emails'),
-        ),
-      ]);
+      verifyNever(mockEmailLocalDatasource.clearCacheForFolder(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+      ));
+      verify(mockEmailLocalDatasource.cacheEmails(
+        accountId: _gmailAccount.id,
+        folderId: 'inbox-id',
+        emails: anyNamed('emails'),
+        replaceFolder: true,
+      )).called(1);
     });
 
     // An empty page is far more likely a transient than a genuinely emptied
-    // folder, and clearing on it would blank the cache for an offline repaint.
+    // folder, and replacing on it would blank the cache for an offline repaint.
+    // The guard now lives inside cacheEmails — which the poller calls
+    // unconditionally — so what matters here is that nothing clears the folder.
     test('leaves the cache alone when the synced page comes back empty',
         () async {
       stubTwoPolls(page: const []);
@@ -1012,6 +1031,7 @@ void main() {
         accountId: _gmailAccount.id,
         folderId: 'inbox-id',
         emails: anyNamed('emails'),
+        replaceFolder: true,
       )).called(1);
     });
 

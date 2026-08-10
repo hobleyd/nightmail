@@ -269,6 +269,11 @@ EmailModel _parseMessage(Map<String, dynamic> json, {required bool fullBody}) {
   final threadId = json['threadId'] as String?;
   final labelIds = (json['labelIds'] as List<dynamic>? ?? []).cast<String>();
   final isRead = !labelIds.contains('UNREAD');
+  // STARRED is Gmail's flag, read the same way UNREAD is: it is a label, but a
+  // hidden one that never becomes a folder (see [isHiddenGmailSystemLabel]), so
+  // dropping it from [folderIds] below is what makes it a bit rather than a
+  // place.
+  final isFlagged = labelIds.contains('STARRED');
   final snippet = decodeHtmlEntities(json['snippet'] as String? ?? '');
 
   final payload = json['payload'] as Map<String, dynamic>? ?? {};
@@ -369,6 +374,7 @@ EmailModel _parseMessage(Map<String, dynamic> json, {required bool fullBody}) {
     body: body,
     bodyType: bodyType,
     isRead: isRead,
+    isFlagged: isFlagged,
     receivedDateTime: receivedAt,
     importance: EmailImportance.normal,
     parentFolderId: parentFolderId,

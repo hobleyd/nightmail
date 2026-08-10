@@ -146,6 +146,130 @@ void main() {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // replaceFolder — the fresh page *becomes* the folder's contents.
+  //
+  // Regression: callers used to do this as clearCacheForFolder followed by a
+  // plain cacheEmails. That defeated the body preservation above — the lookup
+  // ran against a folder that had just been emptied, so it never found the old
+  // row — and every poll that detected a change discarded every cached body in
+  // the folder, which BodyPrefetchService then re-downloaded. Doing the delete
+  // inside cacheEmails puts it after the preservation lookups and inside the
+  // same transaction.
+  // ---------------------------------------------------------------------------
+
+  group('cacheEmails(replaceFolder: true)', () {
+    test('drops rows the fresh page no longer lists', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [
+          _email('stays', body: ''),
+          _email('moved-away', body: ''),
+        ],
+      );
+
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('stays', body: '')],
+        replaceFolder: true,
+      );
+
+      final rows = await datasource.getCachedEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+      );
+      expect(rows.map((e) => e.id), ['stays']);
+    });
+
+    test('preserves an existing full body while replacing the folder',
+        () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '<p>full content</p>')],
+      );
+
+      // The poll's page carries only a preview, exactly as a list fetch does.
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '')],
+        replaceFolder: true,
+      );
+
+      final cached = await datasource.getCachedEmailById(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+      );
+      expect(cached!.body, '<p>full content</p>',
+          reason: 'the delete must run after the preservation lookup');
+    });
+
+    test('leaves the folder alone when the page is empty', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '')],
+      );
+
+      // An empty fetch is far more likely a transient — or every message
+      // tombstoned by an in-flight mutation — than a genuinely emptied folder,
+      // and clearing on it blanks the cache an offline repaint reads from.
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: const [],
+        replaceFolder: true,
+      );
+
+      final rows = await datasource.getCachedEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+      );
+      expect(rows.map((e) => e.id), ['email-1']);
+    });
+
+    test('does not touch another folder or another account', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('a', body: '', folderId: 'folder-1')],
+      );
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-2',
+        emails: [_email('b', body: '', folderId: 'folder-2')],
+      );
+      await datasource.cacheEmails(
+        accountId: 'acct-2',
+        folderId: 'folder-1',
+        emails: [_email('c', body: '', folderId: 'folder-1')],
+      );
+
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('a2', body: '', folderId: 'folder-1')],
+        replaceFolder: true,
+      );
+
+      expect(
+        (await datasource.getCachedEmails(
+                accountId: 'acct-1', folderId: 'folder-2'))
+            .map((e) => e.id),
+        ['b'],
+      );
+      expect(
+        (await datasource.getCachedEmails(
+                accountId: 'acct-2', folderId: 'folder-1'))
+            .map((e) => e.id),
+        ['c'],
+      );
+    });
+  });
+
   group('attachment parse version', () {
     test('a row this version wrote is not stale', () async {
       await datasource.cacheEmails(

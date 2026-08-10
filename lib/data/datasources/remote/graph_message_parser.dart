@@ -4,6 +4,9 @@ import 'dart:typed_data';
 import '../../../domain/entities/inline_attachment.dart';
 import '../../../domain/entities/meeting_invite.dart';
 import '../../models/email_model.dart';
+// `isGraphUrl` lives beside `graphNextLink`, which is the other half of the same
+// job — reading a continuation link out of a raw Graph page.
+import 'contact_bulk_parser.dart' show isGraphUrl;
 import 'ics_meeting_invite.dart';
 
 /// Microsoft Graph message parsing, off the UI isolate.
@@ -234,13 +237,21 @@ final _graphDeltaLinkPattern =
 /// pages remain. Unescaped the same way `graphNextLink` is — Graph escapes the
 /// separators inside the URL (`\/` for a slash, `&` for an ampersand), and
 /// following the link verbatim otherwise 400s the next sync.
+///
+/// Scanning the raw page cannot pick up a link out of a message's own content,
+/// even though the pattern is unanchored and `bodyPreview` is in the projection:
+/// the pattern needs an *unescaped* `"` on both sides of the key, and a `"`
+/// inside a JSON string value is always `\"`. It is still passed through
+/// [isGraphUrl] before being returned, so a link this app would go on to GET
+/// with the account's bearer token attached has to be Graph's own host.
 String? graphDeltaLink(String body) {
   // Written as two adjacent literals so the sequence is not itself read as a
   // Dart escape.
   const ampersandEscape = '\\' 'u0026';
   final raw = _graphDeltaLinkPattern.firstMatch(body)?.group(1);
   if (raw == null) return null;
-  return raw.replaceAll(r'\/', '/').replaceAll(ampersandEscape, '&');
+  final url = raw.replaceAll(r'\/', '/').replaceAll(ampersandEscape, '&');
+  return isGraphUrl(url) ? url : null;
 }
 
 /// Decodes a Graph attachment response's `contentBytes` to bytes. `compute()`

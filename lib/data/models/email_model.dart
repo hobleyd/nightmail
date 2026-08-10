@@ -21,6 +21,7 @@ class EmailModel extends Email {
     required super.isRead,
     required super.receivedDateTime,
     required super.importance,
+    super.isFlagged,
     super.sentDateTime,
     super.conversationId,
     super.hasAttachments,
@@ -53,6 +54,7 @@ class EmailModel extends Email {
       body: bodyContent,
       bodyType: bodyTypeStr == 'html' ? EmailBodyType.html : EmailBodyType.text,
       isRead: json['isRead'] as bool? ?? false,
+      isFlagged: _parseGraphFlag(json['flag']),
       // Some delta-sync items (e.g. transient system-generated messages)
       // arrive without receivedDateTime populated yet — falling back instead
       // of throwing keeps one such item from discarding an entire poll's
@@ -80,6 +82,17 @@ class EmailModel extends Email {
         json,
       ),
     );
+  }
+
+  /// Graph reports the flag as `flag: {flagStatus: notFlagged|flagged|complete}`.
+  ///
+  /// `complete` is a *cleared* follow-up, not a live one, so only `flagged`
+  /// counts. An absent `flag` object means the projection did not ask for it —
+  /// read as not flagged rather than throwing, the same way every other optional
+  /// field here degrades.
+  static bool _parseGraphFlag(dynamic raw) {
+    if (raw is! Map<String, dynamic>) return false;
+    return (raw['flagStatus'] as String?)?.toLowerCase() == 'flagged';
   }
 
   static List<EmailAttachment> _parseAttachments(dynamic raw) {
@@ -201,6 +214,7 @@ class EmailModel extends Email {
       body: entity.body,
       bodyType: entity.bodyType,
       isRead: entity.isRead,
+      isFlagged: entity.isFlagged,
       receivedDateTime: entity.receivedDateTime,
       sentDateTime: entity.sentDateTime,
       importance: entity.importance,

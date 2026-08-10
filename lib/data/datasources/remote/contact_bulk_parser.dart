@@ -260,13 +260,31 @@ String? googleNextPageToken(String body) =>
 /// page. Graph escapes the separators inside that URL as JSON string escapes -
 /// a slash as `\/` and an ampersand as `\u0026` - so both are unescaped here.
 /// Following the link verbatim otherwise 400s on the request for the next page.
+/// Checked against [isGraphUrl] before being returned, for the same reason
+/// `graphDeltaLink` is: this URL is then requested with the account's access
+/// token attached, so its host is verified rather than assumed.
 String? graphNextLink(String body) {
   // Written as two adjacent literals so the sequence is not itself read as a
   // Dart escape.
   const ampersandEscape = '\\' 'u0026';
   final raw = _graphNextLinkPattern.firstMatch(body)?.group(1);
   if (raw == null) return null;
-  return raw.replaceAll(r'\/', '/').replaceAll(ampersandEscape, '&');
+  final url = raw.replaceAll(r'\/', '/').replaceAll(ampersandEscape, '&');
+  return isGraphUrl(url) ? url : null;
+}
+
+/// Whether [url] is an absolute `https` URL on Microsoft Graph's own host.
+///
+/// Every continuation link this app follows is an absolute URL taken out of a
+/// response and requested with the account's access token attached, so the host
+/// is checked rather than assumed. A link that fails this is treated as no link
+/// at all, which ends the paging loop instead of issuing an authenticated
+/// request somewhere unintended.
+bool isGraphUrl(String url) {
+  final uri = Uri.tryParse(url);
+  if (uri == null || !uri.isAbsolute || uri.scheme != 'https') return false;
+  final host = uri.host.toLowerCase();
+  return host == 'graph.microsoft.com' || host.endsWith('.graph.microsoft.com');
 }
 
 // --- shared -----------------------------------------------------------------

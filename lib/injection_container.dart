@@ -115,6 +115,7 @@ import 'domain/usecases/update_task_status.dart';
 import 'domain/usecases/get_cached_emails.dart';
 import 'domain/usecases/cache_emails.dart';
 import 'domain/usecases/clear_email_cache_for_folder.dart';
+import 'domain/usecases/forget_cached_emails.dart';
 import 'domain/usecases/get_cached_folders.dart';
 import 'infrastructure/accounts/account_manager.dart';
 import 'infrastructure/accounts/account_storage.dart';
@@ -343,6 +344,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => GetCachedEmails(sl<EmailRepository>()));
   sl.registerLazySingleton(() => CacheEmails(sl<EmailRepository>()));
   sl.registerLazySingleton(() => ClearEmailCacheForFolder(sl<EmailRepository>()));
+  sl.registerLazySingleton(() => ForgetCachedEmails(sl<EmailRepository>()));
   sl.registerLazySingleton(() => GetCachedFolders(sl<EmailRepository>()));
   sl.registerLazySingleton(() => RecordKnownSenders(sl<SenderRepository>()));
   sl.registerLazySingleton(() => CheckSenderAnomaly(sl<SenderRepository>()));
@@ -450,6 +452,7 @@ Future<void> configureDependencies() async {
         getEmails: sl<GetEmails>(),
         getCachedEmails: sl<GetCachedEmails>(),
         cacheEmails: sl<CacheEmails>(),
+        forgetCachedEmails: sl<ForgetCachedEmails>(),
         markEmailAsRead: sl<MarkEmailAsRead>(),
         moveEmail: sl<MoveEmail>(),
         reportJunk: sl<ReportJunk>(),

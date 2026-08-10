@@ -123,6 +123,16 @@ abstract interface class EmailRepository {
     bool replaceFolder = false,
   });
 
+  /// Forgets [emailIds] locally — drops their cached rows and suppresses them
+  /// from a server snapshot already in flight. Sends nothing to the server.
+  ///
+  /// For rows a folder-scoped action deliberately spared. Moving or deleting a
+  /// thread out of a folder must not touch the copies of it that live in Sent or
+  /// another folder, but those were only on screen as context for a thread that
+  /// has now left — so they have to leave this folder's cache with it, or the
+  /// next repaint from cache resurrects them as orphan rows.
+  Future<Either<Failure, Unit>> forgetCachedEmails(List<String> emailIds);
+
   /// Deletes all cached emails belonging to [accountId].
   Future<Either<Failure, Unit>> clearCacheForAccount(String accountId);
 

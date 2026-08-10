@@ -640,6 +640,29 @@ class EmailRepositoryImpl implements EmailRepository {
   }
 
   @override
+  Future<Either<Failure, Unit>> forgetCachedEmails(List<String> emailIds) async {
+    final accountId = _accountManager.activeAccount?.id;
+    if (accountId == null || emailIds.isEmpty) return const Right(unit);
+    return _executeLocal(() async {
+      for (final id in emailIds) {
+        // Tombstoned as well as deleted, for the same reason every other
+        // removal here is: a server snapshot built before this ran can still be
+        // in flight, and re-caching it would put the row straight back.
+        _tombstoneRemoval(accountId, id);
+        // The message itself is untouched — it still exists, in Sent or
+        // wherever it was already filed — so its inline images stay put rather
+        // than being re-downloaded when that folder is next opened.
+        await _localDatasource.deleteEmailFromCache(
+          accountId: accountId,
+          emailId: id,
+          evictInlineAttachments: false,
+        );
+      }
+      return unit;
+    });
+  }
+
+  @override
   Future<Either<Failure, Unit>> clearCacheForAccount(String accountId) async {
     try {
       await _localDatasource.clearCacheForAccount(accountId);

@@ -8,6 +8,7 @@ import '../../../domain/entities/email.dart';
 import '../../../domain/usecases/cache_emails.dart';
 import '../../../domain/usecases/classify_emails.dart';
 import '../../../domain/usecases/delete_email.dart';
+import '../../../domain/usecases/forget_cached_emails.dart';
 import '../../../domain/usecases/get_conversation_thread.dart';
 import '../../../domain/usecases/get_email.dart';
 import '../../../domain/usecases/report_junk.dart';
@@ -34,6 +35,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     required GetEmails getEmails,
     required GetCachedEmails getCachedEmails,
     required CacheEmails cacheEmails,
+    required ForgetCachedEmails forgetCachedEmails,
     required MarkEmailAsRead markEmailAsRead,
     required MoveEmail moveEmail,
     required ReportJunk reportJunk,
@@ -53,6 +55,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         _getEmails = getEmails,
         _getCachedEmails = getCachedEmails,
         _cacheEmails = cacheEmails,
+        _forgetCachedEmails = forgetCachedEmails,
         _markEmailAsRead = markEmailAsRead,
         _moveEmail = moveEmail,
         _reportJunk = reportJunk,
@@ -92,6 +95,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   final GetEmails _getEmails;
   final GetCachedEmails _getCachedEmails;
   final CacheEmails _cacheEmails;
+  final ForgetCachedEmails _forgetCachedEmails;
   final MarkEmailAsRead _markEmailAsRead;
   final MoveEmail _moveEmail;
   final ReportJunk _reportJunk;
@@ -572,6 +576,14 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         : current.emails.where((e) => !movedIds.contains(e.id)).toList();
     emit(current.copyWith(emails: filteredEmails));
 
+    // The rows spared above leave this folder's *cache* as well as its list.
+    // Only the moved messages go through moveEmail, which is what drops a row
+    // from the cache — so without this the thread's copy in Sent stayed cached
+    // under this folder, and the next repaint from cache brought it back on its
+    // own, a reply sitting in the folder its thread had just left. It survived
+    // until a network refresh replaced the folder wholesale.
+    await _forgetSparedRows(removedEmails, movedIds);
+
     final results = await Future.wait(
       idsToMove.map((id) => _moveEmail(MoveEmailParams(
             id: id,
@@ -599,6 +611,25 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         }
       }
     }
+  }
+
+  /// Drops the cached rows of messages a folder-scoped move or delete removed
+  /// from the list but deliberately did not touch on the server.
+  ///
+  /// [removed] is everything that left the list; [acted] is the subset the
+  /// server action was actually addressed to, which the repository already
+  /// tombstones and un-caches itself. The difference is the thread's copies in
+  /// Sent or another folder — real messages that must survive, but not here.
+  Future<void> _forgetSparedRows(
+    List<Email> removed,
+    Set<String> acted,
+  ) async {
+    final spared = [
+      for (final email in removed)
+        if (!acted.contains(email.id)) email.id,
+    ];
+    if (spared.isEmpty) return;
+    await _forgetCachedEmails(ForgetCachedEmailsParams(emailIds: spared));
   }
 
   Future<void> _onEmailDeleted(
@@ -663,6 +694,13 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
           .where((e) => e.conversationId != event.conversationId)
           .toList(),
     ));
+
+    // ...and out of this folder's cache too, or a later repaint from cache
+    // brings the spared rows back on their own. Same reasoning as the move path.
+    await _forgetSparedRows(
+      threadEmails,
+      {for (final e in toDelete) e.id},
+    );
 
     final results = await Future.wait(
       toDelete.map((e) => _deleteEmail(DeleteEmailParams(id: e.id))),

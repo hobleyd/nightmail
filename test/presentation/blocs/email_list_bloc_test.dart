@@ -8,6 +8,7 @@ import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/domain/entities/email.dart';
 import 'package:nightmail/domain/entities/email_address.dart';
 import 'package:nightmail/domain/usecases/cache_emails.dart';
+import 'package:nightmail/domain/usecases/forget_cached_emails.dart';
 import 'package:nightmail/domain/usecases/classify_emails.dart';
 import 'package:nightmail/domain/usecases/delete_email.dart';
 import 'package:nightmail/domain/usecases/empty_folder.dart';
@@ -86,6 +87,7 @@ const _account = MicrosoftAccount(
   GetEmails,
   GetCachedEmails,
   CacheEmails,
+  ForgetCachedEmails,
   MarkEmailAsRead,
   MoveEmail,
   ReportJunk,
@@ -113,6 +115,7 @@ void main() {
   late MockSearchEmails mockSearchEmails;
   late MockRecordKnownSenders mockRecordKnownSenders;
   late MockCacheEmails mockCacheEmails;
+  late MockForgetCachedEmails mockForgetCachedEmails;
   late _FakeAccountManager fakeAccountManager;
 
   setUpAll(() {
@@ -135,6 +138,8 @@ void main() {
     mockSearchEmails = MockSearchEmails();
     mockRecordKnownSenders = MockRecordKnownSenders();
     mockCacheEmails = MockCacheEmails();
+    mockForgetCachedEmails = MockForgetCachedEmails();
+    when(mockForgetCachedEmails(any)).thenAnswer((_) async => const Right(unit));
     fakeAccountManager = _FakeAccountManager();
     when(mockRecordKnownSenders(any)).thenAnswer((_) async => const Right(unit));
     when(mockCacheEmails(any)).thenAnswer((_) async => const Right(unit));
@@ -143,6 +148,7 @@ void main() {
       getEmails: mockGetEmails,
       getCachedEmails: mockGetCachedEmails,
       cacheEmails: mockCacheEmails,
+      forgetCachedEmails: mockForgetCachedEmails,
       markEmailAsRead: mockMarkEmailAsRead,
       moveEmail: mockMoveEmail,
       reportJunk: MockReportJunk(),
@@ -246,6 +252,71 @@ void main() {
       await bloc.stream.firstWhere((s) => s is EmailListLoaded);
 
       verifyNever(mockGetEmails(any));
+    });
+
+    // Regression: reply to a message, then file the thread out of the folder.
+    // The reply's copy in Sent is surfaced in this folder's listing purely as
+    // thread context, and a folder-scoped move deliberately does not relocate
+    // it — so nothing sent it through moveEmail, which is what drops a row from
+    // the cache. It stayed cached under this folder, and the next repaint from
+    // cache brought it back on its own: a reply sitting in the folder its thread
+    // had just left. It only went away when a network refresh replaced the
+    // folder wholesale, which is exactly the "disappears on the next refresh"
+    // half of the report.
+    test('forgets the cached rows a folder-scoped move spared', () async {
+      await _loadEmails([
+        // In this folder, and the target of the move.
+        _email('original',
+            conversationId: 'conv-a',
+            parentFolderId: 'INBOX',
+            folderIds: ['INBOX']),
+        // The reply's copy in Sent — same thread, listed here as context only.
+        _email('reply-in-sent', conversationId: 'conv-a', folderIds: ['SENT']),
+      ], folderId: 'INBOX');
+
+      when(mockMoveEmail(any)).thenAnswer((_) async => const Right(unit));
+
+      bloc.add(const EmailListEmailsMoved(
+        emailIds: ['original', 'reply-in-sent'],
+        destinationFolderId: 'folder-x',
+        conversationId: 'conv-a',
+      ));
+      await bloc.stream.firstWhere((s) => s is EmailListLoaded);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      // The Sent copy is not relocated on the server...
+      final movedIds = verify(mockMoveEmail(captureAny))
+          .captured
+          .cast<MoveEmailParams>()
+          .map((p) => p.id);
+      expect(movedIds, ['original']);
+
+      // ...but it does leave this folder's cache, or it comes back alone.
+      final forgotten = verify(mockForgetCachedEmails(captureAny))
+          .captured
+          .cast<ForgetCachedEmailsParams>()
+          .expand((p) => p.emailIds);
+      expect(forgotten, ['reply-in-sent']);
+    });
+
+    test('does not forget anything when nothing was spared', () async {
+      await _loadEmails([
+        _email('id1',
+            conversationId: 'conv-a',
+            parentFolderId: 'INBOX',
+            folderIds: ['INBOX']),
+      ], folderId: 'INBOX');
+      when(mockMoveEmail(any)).thenAnswer((_) async => const Right(unit));
+
+      bloc.add(const EmailListEmailsMoved(
+        emailIds: ['id1'],
+        destinationFolderId: 'folder-x',
+        conversationId: 'conv-a',
+      ));
+      await bloc.stream.firstWhere((s) => s is EmailListLoaded);
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      verifyNever(mockForgetCachedEmails(any));
     });
 
     test('calls moveEmail once per id in emailIds', () async {
@@ -1149,6 +1220,7 @@ void main() {
         getEmails: mockGetEmails,
         getCachedEmails: mockGetCachedEmails,
         cacheEmails: mockCacheEmails,
+        forgetCachedEmails: mockForgetCachedEmails,
         markEmailAsRead: MockMarkEmailAsRead(),
         moveEmail: mockMoveEmail,
         reportJunk: MockReportJunk(),
@@ -1206,6 +1278,7 @@ void main() {
         getEmails: mockGetEmails,
         getCachedEmails: mockGetCachedEmails,
         cacheEmails: MockCacheEmails(),
+        forgetCachedEmails: mockForgetCachedEmails,
         markEmailAsRead: MockMarkEmailAsRead(),
         moveEmail: mockMoveEmail,
         reportJunk: MockReportJunk(),

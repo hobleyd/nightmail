@@ -2,7 +2,9 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import '../../../domain/entities/inline_attachment.dart';
+import '../../../domain/entities/meeting_invite.dart';
 import '../../models/email_model.dart';
+import 'ics_meeting_invite.dart';
 
 /// Microsoft Graph message parsing, off the UI isolate.
 ///
@@ -72,12 +74,21 @@ class GraphFullMessage {
   const GraphFullMessage({
     required this.email,
     required this.pendingInlineAttachmentIds,
+    required this.icsAttachmentId,
   });
 
   final EmailModel email;
 
   /// Attachment ids declared `isInline` whose bytes were not included.
   final List<String> pendingInlineAttachmentIds;
+
+  /// Attachment id of a calendar part, or null when the message has none or
+  /// Graph already classified the message itself (`meetingMessageType`).
+  ///
+  /// `$expand` returns an attachment's name and contentType but never its
+  /// bytes, so the ICS behind this id still needs its own GET — the same shape
+  /// as Gmail's `GmailFullMessage.icsAttachmentId`, for the same reason.
+  final String? icsAttachmentId;
 }
 
 /// Parses a single-message response and reports its inline attachment ids.
@@ -87,9 +98,18 @@ GraphFullMessage parseGraphFullMessage(String rawJson) {
   final email = EmailModel.fromJson(json);
 
   final pending = <String>[];
+  String? icsAttachmentId;
   for (final a
       in (json['attachments'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>()) {
-    if (a['isInline'] != true) continue;
+    if (a['isInline'] != true) {
+      if (email.meetingInvite == null && icsAttachmentId == null) {
+        final id = a['id'] as String?;
+        if (id != null && id.isNotEmpty && _isCalendarAttachment(a)) {
+          icsAttachmentId = id;
+        }
+      }
+      continue;
+    }
     final id = a['id'] as String?;
     if (id == null || id.isEmpty) continue;
     // Guarded rather than assumed: if Graph ever does include the bytes, the
@@ -99,7 +119,37 @@ GraphFullMessage parseGraphFullMessage(String rawJson) {
     pending.add(id);
   }
 
-  return GraphFullMessage(email: email, pendingInlineAttachmentIds: pending);
+  return GraphFullMessage(
+    email: email,
+    pendingInlineAttachmentIds: pending,
+    icsAttachmentId: icsAttachmentId,
+  );
+}
+
+/// Whether an expanded attachment is a calendar part. Matched on filename as
+/// well as content type: senders routinely attach an `.ics` as
+/// `application/octet-stream`.
+bool _isCalendarAttachment(Map<String, dynamic> attachment) {
+  final contentType =
+      (attachment['contentType'] as String? ?? '').toLowerCase();
+  if (contentType.startsWith('text/calendar') ||
+      contentType.startsWith('application/ics')) {
+    return true;
+  }
+  return (attachment['name'] as String? ?? '').toLowerCase().endsWith('.ics');
+}
+
+/// Decodes a separately-fetched `/attachments/{id}` response holding an ICS
+/// part and turns it into a [MeetingInvite]. `compute()` entry point.
+MeetingInvite? parseGraphIcsAttachment(String rawJson) {
+  try {
+    final json = jsonDecode(rawJson) as Map<String, dynamic>;
+    final contentBytes = json['contentBytes'] as String?;
+    if (contentBytes == null || contentBytes.isEmpty) return null;
+    return buildMeetingInviteFromIcs(utf8.decode(base64Decode(contentBytes)));
+  } catch (_) {
+    return null;
+  }
 }
 
 /// Decodes separately-fetched inline attachment responses into attachments.

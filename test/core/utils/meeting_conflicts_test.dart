@@ -221,4 +221,29 @@ void main() {
       expect(_conflictIds(events), isEmpty);
     });
   });
+
+  group('isSameMeetingUid', () {
+    test('matches across the mangling providers apply', () {
+      expect(isSameMeetingUid('abc123uid@google.com', '  ABC123UID '), isTrue);
+      // Google's expanded instance of a series against the series' own UID.
+      expect(
+        isSameMeetingUid('abc123uid_20260730T100000Z@google.com', _inviteUid),
+        isTrue,
+      );
+    });
+
+    test('a missing UID matches nothing, not everything', () {
+      // The add-to-calendar banner reads this as "not already there" and keeps
+      // offering the button; the opposite would silently refuse to add.
+      expect(isSameMeetingUid(null, _inviteUid), isFalse);
+      expect(isSameMeetingUid(_inviteUid, null), isFalse);
+      expect(isSameMeetingUid(null, null), isFalse);
+      expect(isSameMeetingUid('  ', _inviteUid), isFalse);
+    });
+
+    test('different meetings do not match', () {
+      expect(isSameMeetingUid('abc123uid@google.com', 'xyz789@google.com'),
+          isFalse);
+    });
+  });
 }

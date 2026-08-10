@@ -2,13 +2,13 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import '../../../core/utils/html_entities.dart';
-import '../../../core/utils/ics_parser.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/email_attachment.dart';
 import '../../../domain/entities/inline_attachment.dart';
 import '../../../domain/entities/meeting_invite.dart';
 import '../../models/email_address_model.dart';
 import '../../models/email_model.dart';
+import 'ics_meeting_invite.dart';
 
 /// Gmail message parsing, off the UI isolate.
 ///
@@ -189,7 +189,7 @@ MeetingInvite? parseGmailIcsAttachment(String rawJson) {
     final data = (jsonDecode(rawJson) as Map<String, dynamic>)['data'] as String?;
     if (data == null || data.isEmpty) return null;
     final icsStr = utf8.decode(base64Url.decode(padGmailBase64(data)));
-    return _buildMeetingInvite(icsStr);
+    return buildMeetingInviteFromIcs(icsStr);
   } catch (_) {
     return null;
   }
@@ -316,7 +316,7 @@ EmailModel _parseMessage(Map<String, dynamic> json, {required bool fullBody}) {
     body = extractedBody;
     bodyType = extractedType;
     final icsData = _extractIcsData(payload);
-    if (icsData != null) meetingInvite = _buildMeetingInvite(icsData);
+    if (icsData != null) meetingInvite = buildMeetingInviteFromIcs(icsData);
 
     final parsed = _extractAttachments(payload, _referencedCids(body));
     attachments = parsed
@@ -380,29 +380,6 @@ EmailModel _parseMessage(Map<String, dynamic> json, {required bool fullBody}) {
   );
 }
 
-/// Builds the invite for an iCalendar string, falling back to method-only when
-/// the body itself will not parse.
-MeetingInvite _buildMeetingInvite(String icsData) {
-  final type = _icsInviteType(icsData);
-  try {
-    final event = IcsParser.parse(icsData);
-    return MeetingInvite(
-      icsData: icsData,
-      type: type,
-      uid: event.uid,
-      meetingStart: event.start,
-      meetingEnd: event.end,
-      location: event.location,
-      isAllDay: event.isAllDay,
-      proposedStart:
-          type == MeetingEmailType.proposedNewTime ? event.start : null,
-      proposedEnd: type == MeetingEmailType.proposedNewTime ? event.end : null,
-    );
-  } catch (_) {
-    return MeetingInvite(icsData: icsData, type: type);
-  }
-}
-
 (String, EmailBodyType) _extractBody(Map<String, dynamic> payload) {
   final mimeType = payload['mimeType'] as String? ?? '';
 
@@ -452,31 +429,6 @@ MeetingInvite _buildMeetingInvite(String icsData) {
   if (htmlBody != null) return (htmlBody!, EmailBodyType.html);
   if (textBody != null) return (textBody!, EmailBodyType.text);
   return ('', EmailBodyType.text);
-}
-
-/// Returns the METHOD value (e.g. 'REQUEST', 'CANCEL') from an iCalendar string.
-String? _icsMethod(String icsData) {
-  for (final rawLine in icsData.split(RegExp(r'\r?\n'))) {
-    final line = rawLine.trim();
-    if (line.toUpperCase().startsWith('METHOD:')) {
-      return line.substring('METHOD:'.length).trim().toUpperCase();
-    }
-  }
-  return null;
-}
-
-/// Classifies an iCalendar part by its `METHOD`.
-///
-/// `COUNTER` is an attendee proposing a different time for a meeting we
-/// organize (RFC 5546 §3.2.7) — it must not fall through to [invitation], or
-/// the organizer is offered Accept/Decline/Propose on their own meeting
-/// instead of a way to act on the proposal.
-MeetingEmailType _icsInviteType(String icsData) {
-  return switch (_icsMethod(icsData)) {
-    'CANCEL' => MeetingEmailType.cancellation,
-    'COUNTER' => MeetingEmailType.proposedNewTime,
-    _ => MeetingEmailType.invitation,
-  };
 }
 
 /// Recursively scan MIME parts for a text/calendar part and return its decoded

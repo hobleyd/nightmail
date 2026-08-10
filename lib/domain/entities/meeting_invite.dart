@@ -11,12 +11,38 @@ enum MeetingEmailType {
   /// from [declineNotification] because there is a time to accept, not just a
   /// meeting to cancel.
   proposedNewTime,
+
+  /// An attendee's RSVP arriving back at the organizer — a `METHOD:REPLY` part,
+  /// "Accepted: …"/"Declined: …" from Google Calendar. The recipient has
+  /// nothing to respond to (the meeting is already theirs), so this draws no
+  /// banner; it exists so a reply is not mistaken for an [invitation].
+  ///
+  /// Graph reaches the same outcome by a different route: it reports these as
+  /// `meetingAccepted`/`meetingTentativelyAccepted`, which
+  /// `EmailModel._parseMeetingInvite` maps to no invite at all. Only
+  /// `meetingDeclined` is singled out, because Outlook can cancel a meeting
+  /// from the notification and Google cannot.
+  responseNotification,
+
+  /// A `METHOD:PUBLISH` part — an event handed over as information, not as an
+  /// invitation: a booking confirmation, a ticket, a fixture list. Nobody is
+  /// waiting on an answer (there is usually no `ORGANIZER` to answer to), so
+  /// the only useful action is to copy it onto the user's own calendar.
+  ///
+  /// An iCalendar part with no `METHOD` at all stays [invitation]. RFC 5545
+  /// says an absent method means the object is not an iTIP message, which
+  /// argues for treating it this way too — but plenty of senders omit it on a
+  /// genuine request, and losing the Accept button on a real invitation is the
+  /// worse of the two mistakes.
+  publishedEvent,
 }
 
 class MeetingInvite {
   const MeetingInvite({
     this.icsData,
     this.uid,
+    this.summary,
+    this.description,
     this.meetingStart,
     this.meetingEnd,
     this.location,
@@ -35,6 +61,13 @@ class MeetingInvite {
   /// calendar, so conflict detection can tell that copy apart from a real
   /// clash. Null for O365 (no ICS part) and for unparseable ICS.
   final String? uid;
+
+  /// The event's own title and body, from the ICS `SUMMARY` and `DESCRIPTION`.
+  /// Set only where an event may have to be *created* from the invite —
+  /// [MeetingEmailType.publishedEvent] — since every other type acts on a
+  /// meeting the provider already knows about. Null for O365 eventMessages.
+  final String? summary;
+  final String? description;
 
   /// Start time of the meeting (UTC). Parsed from icsData for Gmail;
   /// from eventMessage.startDateTime for O365.

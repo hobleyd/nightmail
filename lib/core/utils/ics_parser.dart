@@ -11,6 +11,7 @@ class IcsEvent {
     required this.isAllDay,
     this.uid,
     this.location,
+    this.description,
     this.attendees = const [],
     this.organizer,
     this.organizerName,
@@ -23,6 +24,12 @@ class IcsEvent {
   final bool isAllDay;
   final String? uid;
   final String? location;
+
+  /// The `DESCRIPTION` property — the event's own body text, which is not the
+  /// same thing as the covering email's. Read when an event is built *from* the
+  /// iCalendar rather than merely identified by it.
+  final String? description;
+
   final List<String> attendees;
 
   /// Organizer's address, from the `ORGANIZER` property's `mailto:` value.
@@ -53,6 +60,7 @@ class IcsParser {
     Duration? duration;
     bool isAllDay = false;
     String? location;
+    String? description;
     String? organizer;
     String? organizerName;
     int? sequence;
@@ -81,7 +89,10 @@ class IcsParser {
       final value = line.substring(colonIdx + 1);
 
       if (namePart == 'SUMMARY') {
-        summary = value;
+        summary = _unescapeText(value);
+      } else if (namePart == 'DESCRIPTION') {
+        final text = _unescapeText(value);
+        description = text.isEmpty ? null : text;
       } else if (namePart == 'UID') {
         uid = value;
       } else if (namePart.startsWith('DTSTART')) {
@@ -96,7 +107,8 @@ class IcsParser {
       } else if (namePart == 'DURATION') {
         duration = parseDuration(value);
       } else if (namePart == 'LOCATION') {
-        location = value.isNotEmpty ? value : null;
+        final text = _unescapeText(value);
+        location = text.isNotEmpty ? text : null;
       } else if (namePart.startsWith('ATTENDEE')) {
         final mailto = value.toLowerCase().startsWith('mailto:')
             ? value.substring('mailto:'.length)
@@ -124,6 +136,7 @@ class IcsParser {
                   .add(const Duration(hours: 1))),
       isAllDay: isAllDay,
       location: location,
+      description: description,
       attendees: attendees,
       organizer: organizer,
       organizerName: organizerName,
@@ -149,6 +162,35 @@ class IcsParser {
       }
     }
     return -1;
+  }
+
+  /// Undoes the escaping RFC 5545 applies to a TEXT value: `\n`/`\N` are line
+  /// breaks, and a comma, semicolon or backslash of its own is written with a
+  /// backslash in front of it. Left as-is, a description arrives full of
+  /// literal `\n`s and a location reads "Level 3\, Building A".
+  ///
+  /// One left-to-right pass, not a chain of `replaceAll`s: `\\n` is an escaped
+  /// backslash followed by the letter n, and unescaping the pair separately
+  /// turns it into a line break.
+  static String _unescapeText(String value) {
+    if (!value.contains(r'\')) return value;
+    final out = StringBuffer();
+    for (var i = 0; i < value.length; i++) {
+      final ch = value[i];
+      if (ch != r'\' || i == value.length - 1) {
+        out.write(ch);
+        continue;
+      }
+      final next = value[++i];
+      out.write(switch (next) {
+        'n' || 'N' => '\n',
+        ',' || ';' || r'\' => next,
+        // Not an escape the spec defines — keep both characters, since the
+        // backslash is likelier to be part of the text than a typo.
+        _ => '\\$next',
+      });
+    }
+    return out.toString();
   }
 
   /// Extracts the `CN` (common name) parameter from a property name+parameters

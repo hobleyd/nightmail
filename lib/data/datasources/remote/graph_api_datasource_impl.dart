@@ -314,6 +314,12 @@ class GraphApiDatasourceImpl
         }
       }
 
+      final icsAttachmentId = parsed.icsAttachmentId;
+      if (icsAttachmentId != null) {
+        final invite = await _fetchPublishedEventInvite(id, icsAttachmentId);
+        if (invite != null) email = _rebuild(email, meetingInvite: invite);
+      }
+
       final plainText = await plainTextFuture;
       if (plainText != null) {
         email =
@@ -322,6 +328,33 @@ class GraphApiDatasourceImpl
       return email;
     } on DioException catch (e) {
       throw _mapDioException(e);
+    }
+  }
+
+  /// The invite behind an `.ics` attachment, but **only** when it is a
+  /// [MeetingEmailType.publishedEvent].
+  ///
+  /// Graph classifies meeting mail itself, through `meetingMessageType`, and
+  /// every action those banners offer is addressed to the message id — which
+  /// only works for a real `eventMessage`. An ordinary message that merely
+  /// carries an invitation as a file is not one, so anything but a published
+  /// event is dropped rather than given buttons with nothing behind them.
+  /// `PUBLISH` is safe because its action creates a fresh event and never
+  /// refers back to the message.
+  Future<MeetingInvite?> _fetchPublishedEventInvite(
+      String messageId, String attachmentId) async {
+    try {
+      final response = await _dio.get<String>(
+        '/me/messages/$messageId/attachments/$attachmentId',
+        options: Options(responseType: ResponseType.plain),
+      );
+      final raw = response.data;
+      if (raw == null || raw.isEmpty) return null;
+      final invite = await compute(parseGraphIcsAttachment, raw);
+      return invite?.type == MeetingEmailType.publishedEvent ? invite : null;
+    } catch (_) {
+      // An attachment that will not fetch or parse just means no banner.
+      return null;
     }
   }
 
@@ -373,6 +406,7 @@ class GraphApiDatasourceImpl
     String? body,
     EmailBodyType? bodyType,
     List<InlineAttachment>? inlineAttachments,
+    MeetingInvite? meetingInvite,
   }) {
     return EmailModel(
       id: email.id,
@@ -395,7 +429,7 @@ class GraphApiDatasourceImpl
       inlineAttachments: inlineAttachments ?? email.inlineAttachments,
       parentFolderId: email.parentFolderId,
       folderIds: email.folderIds,
-      meetingInvite: email.meetingInvite,
+      meetingInvite: meetingInvite ?? email.meetingInvite,
     );
   }
 

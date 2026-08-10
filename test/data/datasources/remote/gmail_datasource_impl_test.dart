@@ -951,6 +951,71 @@ void main() {
       expect(email.meetingInvite!.type, MeetingEmailType.cancellation);
       expect(email.meetingInvite!.proposedStart, isNull);
     });
+
+    test('classifies METHOD:REPLY as a response notification', () async {
+      // Google attaches the RSVP as invite.ics to the "Accepted: ..." mail the
+      // organizer receives. Left as `invitation`, they were offered
+      // Accept/Decline/Propose on their own meeting.
+      stubIcsMessage(ics('REPLY'));
+
+      final email = await datasource.getEmail('msg1');
+
+      expect(email.meetingInvite!.type, MeetingEmailType.responseNotification);
+      expect(email.meetingInvite!.proposedStart, isNull);
+    });
+
+    test('classifies METHOD:PUBLISH as a published event, title and all',
+        () async {
+      // An event sent as information — a booking, a ticket, a fixture list.
+      // The banner creates the event from scratch, so unlike every other type
+      // the ICS has to yield a title and a body, not just times.
+      stubIcsMessage(
+        'BEGIN:VCALENDAR\r\n'
+        'METHOD:PUBLISH\r\n'
+        'BEGIN:VEVENT\r\n'
+        'UID:pub-1@example.com\r\n'
+        r'SUMMARY:Rehearsal\, Hall B' '\r\n'
+        r'DESCRIPTION:Bring a music stand.\nDoors at 6.' '\r\n'
+        'LOCATION:Hall B\r\n'
+        'DTSTART:20260805T013000Z\r\n'
+        'DTEND:20260805T020000Z\r\n'
+        'END:VEVENT\r\n'
+        'END:VCALENDAR',
+      );
+
+      final invite = (await datasource.getEmail('msg1')).meetingInvite!;
+
+      expect(invite.type, MeetingEmailType.publishedEvent);
+      expect(invite.summary, 'Rehearsal, Hall B');
+      expect(invite.description, 'Bring a music stand.\nDoors at 6.');
+      expect(invite.location, 'Hall B');
+      expect(invite.meetingStart, DateTime.utc(2026, 8, 5, 1, 30));
+    });
+
+    test('carries no title for the types that act on an existing meeting',
+        () async {
+      stubIcsMessage(ics('REQUEST'));
+
+      final invite = (await datasource.getEmail('msg1')).meetingInvite!;
+
+      expect(invite.summary, isNull);
+      expect(invite.description, isNull);
+    });
+
+    test('classifies a declining METHOD:REPLY as a response notification too',
+        () async {
+      // Not `declineNotification`: that banner offers "Cancel meeting", which
+      // Google's datasource cannot serve from a message id.
+      stubIcsMessage(ics('REPLY').replaceFirst(
+        'UID:evt-1@example.com',
+        'UID:evt-1@example.com\r\n'
+            'ATTENDEE;PARTSTAT=DECLINED:mailto:bob@example.com',
+      ));
+
+      final email = await datasource.getEmail('msg1');
+
+      expect(email.meetingInvite!.type, MeetingEmailType.responseNotification);
+    });
   });
 
   // ---------------------------------------------------------------------------

@@ -258,6 +258,61 @@ void main() {
     test('reports nothing for a message with no attachments', () {
       final parsed = parseGraphFullMessage(jsonEncode(message([])));
       expect(parsed.pendingInlineAttachmentIds, isEmpty);
+      expect(parsed.icsAttachmentId, isNull);
+    });
+
+    test('reports a calendar attachment, whose bytes are never in the message',
+        () {
+      final parsed = parseGraphFullMessage(jsonEncode(message([
+        {'id': 'att-1', 'name': 'agenda.pdf', 'isInline': false},
+        {
+          'id': 'att-2',
+          'name': 'event.ics',
+          'contentType': 'text/calendar; method=PUBLISH',
+          'isInline': false,
+        },
+      ])));
+
+      expect(parsed.icsAttachmentId, 'att-2');
+    });
+
+    test('recognises an .ics sent as application/octet-stream', () {
+      final parsed = parseGraphFullMessage(jsonEncode(message([
+        {
+          'id': 'att-1',
+          'name': 'Booking.ics',
+          'contentType': 'application/octet-stream',
+          'isInline': false,
+        },
+      ])));
+
+      expect(parsed.icsAttachmentId, 'att-1');
+    });
+  });
+
+  group('parseGraphIcsAttachment', () {
+    test('classifies a fetched METHOD:PUBLISH part', () {
+      const ics = 'BEGIN:VCALENDAR\r\n'
+          'METHOD:PUBLISH\r\n'
+          'BEGIN:VEVENT\r\n'
+          'UID:pub-1\r\n'
+          'SUMMARY:Season opener\r\n'
+          'DTSTART:20260901T090000Z\r\n'
+          'DTEND:20260901T100000Z\r\n'
+          'END:VEVENT\r\n'
+          'END:VCALENDAR';
+      final invite = parseGraphIcsAttachment(jsonEncode({
+        'contentBytes': base64.encode(utf8.encode(ics)),
+      }))!;
+
+      expect(invite.type, MeetingEmailType.publishedEvent);
+      expect(invite.summary, 'Season opener');
+      expect(invite.meetingStart, DateTime.utc(2026, 9, 1, 9));
+    });
+
+    test('returns null for a response carrying no bytes', () {
+      expect(parseGraphIcsAttachment(jsonEncode({'name': 'x.ics'})), isNull);
+      expect(parseGraphIcsAttachment('not json'), isNull);
     });
   });
 

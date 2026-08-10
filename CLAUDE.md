@@ -357,6 +357,15 @@ lets the first poll compare the active account against the counts the badge was
 primed from — otherwise a cold start whose first fetch failed silently sat on
 yesterday's counts until the user pressed Refresh.
 
+## An ICS METHOD Decides Which Meeting Banner Appears
+
+`icsInviteType` (`data/datasources/remote/ics_meeting_invite.dart`) maps
+REQUEST/CANCEL/COUNTER/REPLY/PUBLISH onto `MeetingEmailType`: a REPLY draws no
+banner and a PUBLISH offers only "Add to calendar". Graph classifies from its own
+`meetingMessageType` and consults an attached ICS **only** for PUBLISH — every
+other banner's action is addressed to the message id, which needs a real
+`eventMessage`.
+
 ## Calendar Cache
 
 The calendar is offline-first: it paints from `cached_calendar_events` and then

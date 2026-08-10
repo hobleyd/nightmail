@@ -43,6 +43,20 @@ List<CalendarEvent> findMeetingConflicts({
   }).toList();
 }
 
+/// Whether two iCalendar UIDs name the same meeting, allowing for the mangling
+/// described on [_uidKey]. False when either side has no UID: an unknown UID
+/// matches nothing, rather than everything.
+///
+/// Used to tell whether an event is *already* on the calendar — the question
+/// [findMeetingConflicts] answers in passing for an invite the provider
+/// auto-added, and the one a published event has to ask outright, since nothing
+/// adds it but the user pressing the button.
+bool isSameMeetingUid(String? a, String? b) {
+  final keyA = _uidKey(a);
+  final keyB = _uidKey(b);
+  return keyA != null && keyA == keyB;
+}
+
 /// Reduces an iCalendar UID to a form comparable across providers.
 ///
 /// Google gives each expanded instance of a recurring series an `iCalUID` of

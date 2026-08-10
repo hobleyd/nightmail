@@ -162,4 +162,44 @@ END:VCALENDAR''');
       expect(event.sequence, isNull);
     });
   });
+
+  group('IcsParser.parse TEXT values', () {
+    IcsEvent parseWith(List<String> lines) => IcsParser.parse('''
+BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:evt-1
+DTSTART:20260615T100000Z
+${lines.join('\n')}
+END:VEVENT
+END:VCALENDAR''');
+
+    test('DESCRIPTION is read, with its escaped line breaks restored', () {
+      final event = parseWith([r'DESCRIPTION:Bring a stand.\nDoors at 6.']);
+      expect(event.description, 'Bring a stand.\nDoors at 6.');
+    });
+
+    test('DESCRIPTION is null when absent or empty, never an empty string', () {
+      expect(parseWith(const []).description, isNull);
+      expect(parseWith(['DESCRIPTION:']).description, isNull);
+    });
+
+    test('an escaped comma in a location is not part of the text', () {
+      // Every LOCATION with a comma in it arrives this way, so unescaped the
+      // room picker and the event form both show the backslash.
+      final event = parseWith([r'LOCATION:Level 3\, Building A']);
+      expect(event.location, 'Level 3, Building A');
+    });
+
+    test('an escaped backslash does not turn the next letter into an escape',
+        () {
+      // `\\n` is a backslash followed by the letter n — not a line break.
+      final event = parseWith([r'SUMMARY:Path C:\\name']);
+      expect(event.summary, r'Path C:\name');
+    });
+
+    test('a backslash before an undefined escape is left alone', () {
+      final event = parseWith([r'SUMMARY:50\% off']);
+      expect(event.summary, r'50\% off');
+    });
+  });
 }

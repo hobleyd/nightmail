@@ -17,7 +17,9 @@ import 'package:share_plus/share_plus.dart';
 
 import 'html_body_view.dart';
 import 'plain_text_body_view.dart';
+import 'add_to_calendar_banner.dart';
 import 'contact_hover_card.dart';
+import 'invite_banner_parts.dart';
 import 'date_time_fields.dart';
 
 import '../../core/platform/touch_metrics.dart';
@@ -303,6 +305,12 @@ class _EmailViewState extends State<_EmailView> {
           _MeetingProposedTimeBanner(email: widget.email),
           Divider(height: 1, color: c.border),
         ],
+        if (calendarAvailable && meetingType == MeetingEmailType.publishedEvent) ...[
+          AddToCalendarBanner(email: widget.email),
+          Divider(height: 1, color: c.border),
+        ],
+        // MeetingEmailType.responseNotification draws no banner on purpose: an
+        // attendee's RSVP coming back to the organizer asks nothing of them.
         Expanded(
           child: switch (_previewKind) {
             _AttachmentPreviewKind.webFile => _WebFilePreview(
@@ -600,23 +608,6 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
     });
   }
 
-  String _formatMeetingTime(MeetingInvite invite) {
-    final start = invite.meetingStart;
-    final end = invite.meetingEnd;
-    if (start == null) return '';
-    final local = start.toLocal();
-    if (invite.isAllDay) {
-      return DateFormat('EEE d MMM yyyy').format(local);
-    }
-    final datePart = DateFormat('EEE d MMM yyyy').format(local);
-    final startTime = DateFormat('h:mm a').format(local);
-    if (end != null) {
-      final endTime = DateFormat('h:mm a').format(end.toLocal());
-      return '$datePart  $startTime – $endTime';
-    }
-    return '$datePart  $startTime';
-  }
-
   Future<void> _respond(MeetingInviteResponseType response) async {
     if (_state == _InviteState.loading) return;
     setState(() {
@@ -792,7 +783,7 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
 
   Widget _buildIdleState(AppColors c) {
     final invite = widget.email.meetingInvite;
-    final timeStr = invite != null ? _formatMeetingTime(invite) : '';
+    final timeStr = invite != null ? formatMeetingTime(invite) : '';
     final location = invite?.location;
     final hasDetails = timeStr.isNotEmpty || location != null;
 
@@ -803,22 +794,22 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
       spacing: 6,
       runSpacing: 6,
       children: [
-        _InviteResponseButton(
+        InviteResponseButton(
           label: 'Accept',
           icon: Icons.check_rounded,
           onPressed: () => _respond(MeetingInviteResponseType.accept),
         ),
-        _InviteResponseButton(
+        InviteResponseButton(
           label: 'Maybe',
           icon: Icons.help_outline_rounded,
           onPressed: () => _respond(MeetingInviteResponseType.tentative),
         ),
-        _InviteResponseButton(
+        InviteResponseButton(
           label: 'Decline',
           icon: Icons.close_rounded,
           onPressed: () => _respond(MeetingInviteResponseType.decline),
         ),
-        _InviteResponseButton(
+        InviteResponseButton(
           label: 'Propose New Time',
           icon: Icons.schedule_rounded,
           onPressed: () => setState(() => _state = _InviteState.proposing),
@@ -962,13 +953,13 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
               onChanged: (t) => _pickTime(isStart: false, time: t),
             ),
             const Spacer(),
-            _InviteResponseButton(
+            InviteResponseButton(
               label: 'Send',
               icon: Icons.send_rounded,
               onPressed: _sendProposal,
             ),
             const SizedBox(width: 6),
-            _InviteResponseButton(
+            InviteResponseButton(
               label: 'Cancel',
               icon: Icons.close_rounded,
               onPressed: () => setState(() => _state = _InviteState.idle),
@@ -1090,7 +1081,7 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              _InviteResponseButton(
+              InviteResponseButton(
                 label: 'Retry',
                 icon: Icons.refresh_rounded,
                 onPressed: () => setState(() => _state = _InviteState.idle),
@@ -1220,7 +1211,7 @@ class _MeetingCancellationBannerState
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              _InviteResponseButton(
+              InviteResponseButton(
                 label: 'Retry',
                 icon: Icons.refresh_rounded,
                 onPressed: () => setState(() => _state = _InviteState.idle),
@@ -1236,7 +1227,7 @@ class _MeetingCancellationBannerState
                 style: TextStyle(color: c.textTertiary, fontSize: 12),
               ),
               const Spacer(),
-              _InviteResponseButton(
+              InviteResponseButton(
                 label: 'Remove from calendar',
                 icon: Icons.delete_outline_rounded,
                 onPressed: _remove,
@@ -1365,7 +1356,7 @@ class _MeetingDeclineNotificationBannerState
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              _InviteResponseButton(
+              InviteResponseButton(
                 label: 'Retry',
                 icon: Icons.refresh_rounded,
                 onPressed: () => setState(() => _state = _InviteState.idle),
@@ -1381,7 +1372,7 @@ class _MeetingDeclineNotificationBannerState
                 style: TextStyle(color: c.textTertiary, fontSize: 12),
               ),
               const Spacer(),
-              _InviteResponseButton(
+              InviteResponseButton(
                 label: 'Cancel meeting',
                 icon: Icons.cancel_outlined,
                 onPressed: _cancel,
@@ -1558,7 +1549,7 @@ class _MeetingProposedTimeBannerState
                 ),
               ),
               const SizedBox(width: 8),
-              _InviteResponseButton(
+              InviteResponseButton(
                 label: 'Retry',
                 icon: Icons.refresh_rounded,
                 onPressed: () => setState(() => _state = _InviteState.idle),
@@ -1582,14 +1573,14 @@ class _MeetingProposedTimeBannerState
               const SizedBox(width: 12),
               // Only offer Accept when there is a time to move the meeting to.
               if (proposed != null) ...[
-                _InviteResponseButton(
+                InviteResponseButton(
                   label: 'Accept',
                   icon: Icons.check_rounded,
                   onPressed: _accept,
                 ),
                 const SizedBox(width: 6),
               ],
-              _InviteResponseButton(
+              InviteResponseButton(
                 label: 'Cancel meeting',
                 icon: Icons.cancel_outlined,
                 onPressed: _cancelMeeting,
@@ -1601,61 +1592,6 @@ class _MeetingProposedTimeBannerState
   }
 }
 
-class _InviteResponseButton extends StatefulWidget {
-  const _InviteResponseButton({
-    required this.label,
-    required this.icon,
-    required this.onPressed,
-  });
-
-  final String label;
-  final IconData icon;
-  final VoidCallback onPressed;
-
-  @override
-  State<_InviteResponseButton> createState() => _InviteResponseButtonState();
-}
-
-class _InviteResponseButtonState extends State<_InviteResponseButton> {
-  bool _isPressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return GestureDetector(
-      onTap: widget.onPressed,
-      onTapDown: (_) => setState(() => _isPressed = true),
-      onTapUp: (_) => setState(() => _isPressed = false),
-      onTapCancel: () => setState(() => _isPressed = false),
-      child: AnimatedScale(
-        scale: _isPressed ? 0.93 : 1.0,
-        duration: const Duration(milliseconds: 70),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: _isPressed
-                ? AppColors.accent.withAlpha(70)
-                : AppColors.accent.withAlpha(30),
-            borderRadius: BorderRadius.circular(5),
-            border: Border.all(
-                color: AppColors.accent.withAlpha(80), width: 0.5),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(widget.icon, size: 11, color: c.textTertiary),
-              const SizedBox(width: 4),
-              Text(
-                widget.label,
-                style: TextStyle(color: c.textTertiary, fontSize: 11),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 class _ToolbarButton extends StatelessWidget {
   const _ToolbarButton({

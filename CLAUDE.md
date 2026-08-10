@@ -232,7 +232,7 @@ hands the **undecoded** response body to `compute()`:
 
 | Provider | Parser | Entry points |
 |---|---|---|
-| Gmail | `gmail_message_parser.dart` | `parseGmailFullMessage`, `parseGmailThreads`, `parseGmailMetadataMessages`, `parseGmailForwardSource` |
+| Gmail | `gmail_message_parser.dart` | `parseGmailFullMessage`, `parseGmailThreads`, `parseGmailMetadataMessages`, `parseGmailForwardSource`, `parseGmailHistoryPages` |
 | Microsoft | `graph_message_parser.dart` | `parseGraphFullMessage`, `parseGraphMessageCollection(s)`, `parseGraphDeltaPages` |
 | IMAP | `ImapDatasourceImpl.parseFullImapMessage` | raw MIME in, `EmailModel` out |
 
@@ -371,6 +371,40 @@ yesterday's counts until the user pressed Refresh.
 (`_loadedAccountId`): an account switch only re-requests, never clears the bloc,
 and re-emitting the old mailbox's folders makes HomePage auto-select an Inbox id
 the new account does not have (`folderToAutoSelect`).
+
+## The Poll Syncs the Folder On Screen, Not Just the Inbox
+
+`HomePage` tells `MailPollerCubit.setWatchedFolder` which folder is showing; the
+cycle syncs that as well as the Inbox and publishes the folders it wrote as
+`MailPollerState.syncedFolderIds`. A repaint from cache is only valid for a
+folder in that set — HomePage goes to the network for anything else, because the
+poll wrote nothing there. Every account's cache is refreshed, not just the active
+one. Adding a field to `MailPollerState` means adding it to `props`, or `emit`
+drops the change.
+
+A **delta cursor is a one-shot receipt**: save it only after the page it
+acknowledges has been applied, or a failed write loses those changes for good.
+400/404/410 and a missing delta link all clear it, as does any three consecutive
+failures — nothing else in the app ever clears one, and the table is persistent.
+`MailDeltaDatasource` is the provider-neutral interface (Graph delta link, Gmail
+`historyId`); both store their cursor under the `'inbox'` key.
+
+Failures are reported on `lastPollAt`/`lastPollErrors`, including the
+offline skip. A silent `catch (_)` here is how a deterministic failure came to
+look like a quiet mailbox for the life of an install.
+
+## One IMAP Connection, One Selected Mailbox — So Serialise It
+
+Every IMAP command goes through `withConnection`/`_withMailbox`, which chain so a
+SELECT+FETCH pair is atomic. **Never `await` a sibling public method from inside
+one** — it deadlocks on the link it is already holding; call an `_…Inner` helper.
+IDLE runs through the same chain and yields the connection the moment anything
+else queues, main window only (`AppWindow.isMain`).
+
+A UIDVALIDITY change means the server rebuilt the mailbox and every cached
+`folderId:uid` now names a different message, so that folder's cache is dropped.
+The reading is persisted, because a rebuild while the app was closed is the case
+an in-memory comparison cannot see.
 
 ## Which Folder an Account Switch Lands On
 

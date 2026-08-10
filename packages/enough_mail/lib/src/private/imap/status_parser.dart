@@ -50,6 +50,13 @@ class StatusParser extends ResponseParser<Mailbox> {
           case 'UNSEEN':
             box.messagesUnseen = value;
             break;
+          // NightMail local change — keep across a package bump.
+          // Upstream has no case for it, so a server answering STATUS with
+          // HIGHESTMODSEQ (asked for, or volunteered under CONDSTORE) fell into
+          // the `default:` below and printed a warning instead of recording it.
+          case 'HIGHESTMODSEQ':
+            box.highestModSequence = value;
+            break;
           default:
             print(
               'unexpected STATUS: $entry=${listEntries[i + 1]}\nin $details',

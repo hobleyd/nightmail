@@ -54,6 +54,7 @@ import '../blocs/email_detail/email_detail_event.dart';
 import '../blocs/email_detail/email_detail_state.dart';
 import '../blocs/email_list/email_list_bloc.dart';
 import '../blocs/email_list/email_list_event.dart';
+import '../blocs/email_list/email_list_state.dart';
 import '../blocs/folder_list/folder_list_bloc.dart';
 import '../blocs/folder_list/folder_list_event.dart';
 import '../blocs/home/home_cubit.dart';
@@ -76,20 +77,146 @@ class ReadingPane extends StatelessWidget {
     final c = context.colors;
     return ColoredBox(
       color: c.surfaceReading,
-      child: BlocBuilder<EmailDetailBloc, EmailDetailState>(
-        builder: (context, state) {
-          return switch (state) {
-            EmailDetailInitial() => const _EmptyState(),
-            EmailDetailLoading() => Center(
-                child: CircularProgressIndicator(
-                    color: AppColors.accent, strokeWidth: 2),
-              ),
-            EmailDetailLoaded(:final email, :final senderAnomaly) =>
-              _EmailView(key: ValueKey(email.id), email: email, senderAnomaly: senderAnomaly, onBack: onBack),
-            EmailDetailError(:final message) => _ErrorState(message: message, onBack: onBack),
-          };
-        },
+      child: _OpenMessageListSync(
+        child: BlocBuilder<EmailDetailBloc, EmailDetailState>(
+          builder: (context, state) {
+            return switch (state) {
+              EmailDetailInitial() => const _EmptyState(),
+              EmailDetailLoading() => Center(
+                  child: CircularProgressIndicator(
+                      color: AppColors.accent, strokeWidth: 2),
+                ),
+              EmailDetailLoaded(:final email, :final senderAnomaly) =>
+                _EmailView(key: ValueKey(email.id), email: email, senderAnomaly: senderAnomaly, onBack: onBack),
+              EmailDetailError(:final message) => _ErrorState(message: message, onBack: onBack),
+            };
+          },
+        ),
       ),
+    );
+  }
+}
+
+/// What the pane should do about the message it is showing, given the folder
+/// listing that has just arrived.
+enum OpenMessageSyncAction { none, refresh, close }
+
+/// Decides [OpenMessageSyncAction] for [open] against the folder listing in
+/// [list]. [knownIds] is the same listing as the previous check saw it, or null
+/// if there was no comparable previous one.
+///
+/// Kept pure and separate from the widget so the rules below can be tested
+/// without a webview.
+@visibleForTesting
+OpenMessageSyncAction openMessageSyncAction({
+  required Email open,
+  required EmailListLoaded list,
+  required Set<String>? knownIds,
+}) {
+  // Search results and a focused thread are not the folder's contents, so
+  // nothing about them says whether the open message still exists.
+  if (!list.isShowingFolder) return OpenMessageSyncAction.none;
+
+  for (final row in list.emails) {
+    if (row.id != open.id) continue;
+    // Only the fields the pane and its toolbar act on. A stale isRead or
+    // parentFolderId sends the wrong delta to the wrong folder's badge when
+    // the message is deleted from here.
+    final changed = row.isRead != open.isRead ||
+        row.isFlagged != open.isFlagged ||
+        row.parentFolderId != open.parentFolderId;
+    return changed
+        ? OpenMessageSyncAction.refresh
+        : OpenMessageSyncAction.none;
+  }
+
+  // Absent from the folder it was listed in. That is not proof on its own:
+  //  - a message opened from a task, from another folder, or parsed out of a
+  //    .eml attachment was never in this listing at all, hence [knownIds];
+  //  - a network refresh truncates the list back to its first page, so
+  //    anything older than the oldest row left simply fell out of the loaded
+  //    window rather than off the server.
+  if (knownIds == null || !knownIds.contains(open.id)) {
+    return OpenMessageSyncAction.none;
+  }
+  if (list.emails.isEmpty) return OpenMessageSyncAction.none;
+  var oldest = list.emails.first.receivedDateTime;
+  for (final e in list.emails) {
+    if (e.receivedDateTime.isBefore(oldest)) oldest = e.receivedDateTime;
+  }
+  if (open.receivedDateTime.isBefore(oldest)) {
+    return OpenMessageSyncAction.none;
+  }
+  return OpenMessageSyncAction.close;
+}
+
+/// Keeps the open message in step with the email list.
+///
+/// The pane is built from [EmailDetailBloc] alone, which never hears about a
+/// poll — so a message read, flagged, moved or deleted on another machine left
+/// it showing a stale copy, and after a remote delete Reply/Delete/Print acted
+/// on a message that is no longer there. The list is what learns about all
+/// four: the poller writes the folder's cache and the list repaints from it.
+/// So watch the list rather than re-fetching the open message on a timer.
+class _OpenMessageListSync extends StatefulWidget {
+  const _OpenMessageListSync({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_OpenMessageListSync> createState() => _OpenMessageListSyncState();
+}
+
+class _OpenMessageListSyncState extends State<_OpenMessageListSync> {
+  Set<String>? _knownIds;
+  String? _knownFolderId;
+
+  void _onListChanged(BuildContext context, EmailListState listState) {
+    if (listState is! EmailListLoaded || !listState.isShowingFolder) {
+      // Whatever is on screen now is not a folder listing this can be compared
+      // against, so start again from the next one that is.
+      _knownIds = null;
+      return;
+    }
+    final knownIds =
+        _knownFolderId == listState.currentFolderId ? _knownIds : null;
+    _knownIds = {for (final e in listState.emails) e.id};
+    _knownFolderId = listState.currentFolderId;
+
+    final detail = context.read<EmailDetailBloc>().state;
+    if (detail is! EmailDetailLoaded) return;
+    final open = detail.email;
+
+    switch (openMessageSyncAction(
+      open: open,
+      list: listState,
+      knownIds: knownIds,
+    )) {
+      case OpenMessageSyncAction.none:
+        break;
+      case OpenMessageSyncAction.refresh:
+        context
+            .read<EmailDetailBloc>()
+            .add(EmailDetailRefreshRequested(emailId: open.id));
+      case OpenMessageSyncAction.close:
+        context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+        context.read<HomeCubit>().clearEmail();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocListener<EmailListBloc, EmailListState>(
+      // Identity, not contents: every handler that changes the list emits a new
+      // list instance, and the ones that don't (a spinner flipping) have
+      // nothing here to react to.
+      listenWhen: (prev, curr) {
+        final p = prev is EmailListLoaded ? prev.emails : null;
+        final c = curr is EmailListLoaded ? curr.emails : null;
+        return !identical(p, c);
+      },
+      listener: _onListChanged,
+      child: widget.child,
     );
   }
 }

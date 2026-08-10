@@ -187,6 +187,20 @@ class _EmailListItemState extends State<EmailListItem> {
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
+                        // The provider's own flag — Graph's follow-up flag,
+                        // Gmail's star, IMAP's `\Flagged` — set on this or any
+                        // other client. Read-only here on purpose: NightMail's
+                        // flag *button* creates a follow-up task, which is a
+                        // different thing, so this must not look like a control.
+                        if (widget.email.isFlagged)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 4),
+                            child: Icon(
+                              Icons.star_rounded,
+                              size: touchIcon(13),
+                              color: AppColors.accent,
+                            ),
+                          ),
                         if (widget.email.hasAttachments)
                           Padding(
                             padding: const EdgeInsets.only(left: 4),

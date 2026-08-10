@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show SocketException, TlsException;
 import 'dart:typed_data';
 
@@ -5,6 +6,7 @@ import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/foundation.dart' show compute, visibleForTesting;
 
 import '../../../core/error/exceptions.dart';
+import '../../../core/platform/window_utils.dart';
 import '../../../core/utils/html_entities.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/local_attachment.dart';
@@ -33,6 +35,21 @@ class ImapDatasourceImpl
 
   /// Ceiling on the whole SMTP connect → EHLO → STARTTLS → AUTH exchange.
   static const _smtpConnectTimeout = Duration(seconds: 30);
+
+  /// Ceiling on the whole IMAP TCP connect → TLS → server greeting exchange.
+  static const _imapConnectTimeout = Duration(seconds: 30);
+
+  /// Ceiling on one IMAP command's response, and on flushing one command line.
+  ///
+  /// These are not niceties. `ImapClient` leaves `responseTimeout` null when
+  /// they are not given, which makes `CommandTask.timeout(null)` a no-op — so a
+  /// command whose response never arrives is awaited forever. That does not
+  /// merely stall this account: the poll cycle visits accounts in turn, so
+  /// every account after this one loses its turn too. 60s is long enough for a
+  /// SEARCH or a large FETCH on a slow server, short enough that a wedged
+  /// connection is noticed inside one cycle.
+  static const _imapResponseTimeout = Duration(seconds: 60);
+  static const _imapWriteTimeout = Duration(seconds: 30);
 
   ImapClient? _client;
   String? _selectedMailboxPath;
@@ -92,12 +109,15 @@ class ImapDatasourceImpl
 
   Future<ImapClient> _getConnectedClient() async {
     if (_client != null && _client!.isConnected) return _client!;
-    _connectingFuture ??= _doConnect();
+    final connecting = _connectingFuture ??= _doConnect();
     try {
-      return await _connectingFuture!;
-    } catch (_) {
-      _connectingFuture = null;
-      rethrow;
+      return await connecting;
+    } finally {
+      // Cleared in a `finally`, not only on failure: a connect that stalled —
+      // or that our own timeout abandoned — otherwise left this future behind
+      // for the process lifetime, and every later call awaited that same dead
+      // connect instead of trying again.
+      if (identical(_connectingFuture, connecting)) _connectingFuture = null;
     }
   }
 
@@ -107,16 +127,45 @@ class ImapDatasourceImpl
       throw const AuthException(message: 'No IMAP credentials stored');
     }
 
-    final client = ImapClient(isLogEnabled: false);
-    await client.connectToServer(
-      _account.host,
-      _account.port,
-      isSecure: _account.useSsl,
+    final client = ImapClient(
+      isLogEnabled: false,
+      defaultResponseTimeout: _imapResponseTimeout,
+      defaultWriteTimeout: _imapWriteTimeout,
     );
-    await client.login(_account.emailAddress, password);
+    final server = '${_account.host}:${_account.port}';
+    try {
+      // `connectToServer`'s own timeout covers the TCP connect only, not the
+      // greeting that follows — so plaintext against an implicit-TLS port
+      // (usually 993) leaves the server waiting for a handshake and this
+      // waiting for a greeting, forever. Bound the whole exchange, exactly as
+      // the SMTP path does.
+      await client
+          .connectToServer(
+            _account.host,
+            _account.port,
+            isSecure: _account.useSsl,
+          )
+          .timeout(
+            _imapConnectTimeout,
+            onTimeout: () => throw TimeoutException(
+              'The IMAP server $server did not respond within '
+              '${_imapConnectTimeout.inSeconds}s.'
+              '${_account.useSsl ? '' : ' If this is an implicit-TLS port '
+                  '(usually 993), it is waiting for a TLS handshake that never '
+                  'comes — turn "Use SSL" on for incoming mail.'}',
+            ),
+          );
+      await client.login(_account.emailAddress, password);
+    } catch (_) {
+      // Half-open socket left behind by a timed-out greeting or a rejected
+      // login: drop it rather than leak it until the process ends.
+      try {
+        await client.disconnect();
+      } catch (_) {}
+      rethrow;
+    }
     _client = client;
     _selectedMailboxPath = null;
-    _connectingFuture = null;
     return client;
   }
 
@@ -153,7 +202,118 @@ class ImapDatasourceImpl
     }
   }
 
-  /// Issues STATUS (MESSAGES UNSEEN) for each selectable mailbox, mutating
+  // ---------------------------------------------------------------------------
+  // Serialising the one shared connection
+  // ---------------------------------------------------------------------------
+
+  /// Tail of the chain of connection users. See [withConnection].
+  Future<void> _connectionChain = Future<void>.value();
+
+  /// Callers queued behind (or currently holding) the connection. IDLE holds
+  /// the connection open, so it watches this to know when to let go.
+  int _waitingCallers = 0;
+
+  /// Runs [body] as the sole user of this account's connection.
+  ///
+  /// One [ImapClient] with one selected mailbox is shared by every caller of
+  /// this datasource (`AccountManager` caches one instance per account), and
+  /// every piece of IMAP state — the selected mailbox above all — is
+  /// per-connection. Two concurrent reads of different mailboxes could
+  /// otherwise interleave their SELECT and FETCH and hand back the wrong
+  /// folder's mail. Chaining is the same pattern
+  /// `OutboxDrainService.drainForAccount` already uses for the write path; this
+  /// applies it to the reads as well, which matters more now that one poll
+  /// cycle can sync two folders.
+  ///
+  /// **Not re-entrant.** A body must never call another chaining method of this
+  /// class: it would wait on the link it is itself holding. Flows that need two
+  /// steps (read-modify-read) take one link and call the `…Inner` helper
+  /// directly.
+  ///
+  /// [isIdle] marks the IDLE watcher's own link, which must neither count
+  /// itself as a waiting caller nor nudge itself to stop.
+  @visibleForTesting
+  Future<T> withConnection<T>(
+    Future<T> Function() body, {
+    bool isIdle = false,
+  }) {
+    if (!isIdle) {
+      _waitingCallers++;
+      // Synchronous, and before the chain is captured: a live IDLE has to be
+      // told to let go *now*, or this caller waits out the whole idle stretch.
+      _wakeIdle();
+    }
+    final next = _connectionChain.then((_) async {
+      try {
+        return await body();
+      } finally {
+        // Decremented inside the link, so the count is already right by the
+        // time the next link (possibly IDLE's) starts.
+        if (!isIdle) _waitingCallers--;
+      }
+    });
+    // A failed link must not wedge every later caller, and the tail must never
+    // carry an unhandled error.
+    _connectionChain = next.then((_) {}, onError: (_) {});
+    return next;
+  }
+
+  /// Runs [body] with [path] selected, serialised against every other caller
+  /// by [withConnection] — which is what makes a SELECT+FETCH pair atomic.
+  Future<T> _withMailbox<T>(
+    String path,
+    Future<T> Function() body, {
+    bool isIdle = false,
+  }) =>
+      withConnection(
+        () async {
+          final client = await _getConnectedClient();
+          await _selectMailboxPath(client, path);
+          return body();
+        },
+        isIdle: isIdle,
+      );
+
+  /// The STATUS items asked for on every folder listing.
+  ///
+  /// `MESSAGES`/`UNSEEN` alone cancel out: read one message and receive
+  /// another in the same interval and both counts come back unchanged, so a
+  /// poll sees no reason to refetch. `UIDNEXT` moves for every arrival and
+  /// never moves back, which turns the pair into a triple that cannot alias.
+  ///
+  /// Deliberately no `HIGHESTMODSEQ`: it needs CONDSTORE/QRESYNC enabled first,
+  /// and nothing here uses mod-sequences yet.
+  static const _statusItems = ['MESSAGES', 'UNSEEN', 'UIDNEXT', 'UIDVALIDITY'];
+
+  static const _statusFlags = [
+    StatusFlags.messages,
+    StatusFlags.unseen,
+    StatusFlags.uidNext,
+    StatusFlags.uidValidity,
+  ];
+
+  final Map<String, ImapFolderStatus> _folderStatuses = {};
+
+  /// Per-mailbox STATUS as of the last [getMailFolders]/[getChildFolders],
+  /// keyed by the same folder id the returned models carry.
+  ///
+  /// Exposed here rather than on `EmailFolder`, which has no IMAP-only fields:
+  /// change detection persists the `(uidNext, messages, unseen)` triple and
+  /// refetches a folder whose triple moved. [ImapFolderStatus.uidValidity]
+  /// guards the other half of the problem — see its own doc comment.
+  Map<String, ImapFolderStatus> get folderStatuses =>
+      Map.unmodifiable(_folderStatuses);
+
+  void _recordStatus(String folderId, Mailbox mb) {
+    _folderStatuses[folderId] = ImapFolderStatus(
+      messages: mb.messagesExists,
+      unseen: mb.messagesUnseen,
+      uidNext: mb.uidNext,
+      uidValidity: mb.uidValidity,
+    );
+  }
+
+  /// Issues STATUS ([_statusItems]) for each selectable mailbox, mutating
   /// [mb.messagesExists] and [mb.messagesUnseen] in-place. Used on servers
   /// that don't support the LIST-STATUS extension (RFC 5819).
   Future<void> _fetchStatusForMailboxes(
@@ -163,10 +323,7 @@ class ImapDatasourceImpl
     for (final mb in mailboxes) {
       if (mb.isNotSelectable) continue;
       try {
-        await client.statusMailbox(
-          mb,
-          [StatusFlags.messages, StatusFlags.unseen],
-        );
+        await client.statusMailbox(mb, _statusFlags);
       } on ImapException {
         // Ignore — some virtual/special mailboxes reject STATUS.
       }
@@ -174,7 +331,10 @@ class ImapDatasourceImpl
   }
 
   @override
-  Future<List<EmailFolderModel>> getMailFolders() async {
+  Future<List<EmailFolderModel>> getMailFolders() =>
+      withConnection(_getMailFoldersInner);
+
+  Future<List<EmailFolderModel>> _getMailFoldersInner() async {
     try {
       final client = await _getConnectedClient();
 
@@ -189,7 +349,7 @@ class ImapDatasourceImpl
         recursive: false,
         returnOptions: supportsListStatus
             ? [
-                ReturnOption.status(['MESSAGES', 'UNSEEN']),
+                ReturnOption.status([..._statusItems]),
                 if (supportsChildren) ReturnOption.children(),
               ]
             : null,
@@ -216,6 +376,8 @@ class ImapDatasourceImpl
         final parentPath =
             parts.length > 1 ? parts.sublist(0, parts.length - 1).join(_pathSeparator) : null;
 
+        _recordStatus(fullPath, mb);
+
         return EmailFolderModel(
           id: fullPath,
           displayName: mb.name,
@@ -234,7 +396,12 @@ class ImapDatasourceImpl
   }
 
   @override
-  Future<List<EmailFolderModel>> getChildFolders(String parentFolderId) async {
+  Future<List<EmailFolderModel>> getChildFolders(String parentFolderId) =>
+      withConnection(() => _getChildFoldersInner(parentFolderId));
+
+  Future<List<EmailFolderModel>> _getChildFoldersInner(
+    String parentFolderId,
+  ) async {
     try {
       final client = await _getConnectedClient();
 
@@ -253,7 +420,7 @@ class ImapDatasourceImpl
         recursive: false,
         returnOptions: supportsListStatus
             ? [
-                ReturnOption.status(['MESSAGES', 'UNSEEN']),
+                ReturnOption.status([..._statusItems]),
                 if (supportsChildren) ReturnOption.children(),
               ]
             : null,
@@ -268,6 +435,8 @@ class ImapDatasourceImpl
         final parentPath = parts.length > 1
             ? parts.sublist(0, parts.length - 1).join(sep)
             : null;
+
+        _recordStatus(mb.path, mb);
 
         return EmailFolderModel(
           id: mb.path,
@@ -291,42 +460,48 @@ class ImapDatasourceImpl
     int skip = 0,
     String? filter,
     String orderBy = 'receivedDateTime desc',
-  }) async {
+  }) {
     final mailboxPath = folderId ?? 'INBOX';
-    try {
-      final client = await _getConnectedClient();
-      await _selectMailboxPath(client, mailboxPath);
+    return _withMailbox(mailboxPath, () async {
+      try {
+        final client = await _getConnectedClient();
 
-      // UID SEARCH returns UIDs directly; plain SEARCH returns sequence numbers.
-      final searchResult = await client.uidSearchMessages(
-        searchCriteria: 'ALL',
-      );
-      final allUids = searchResult.matchingSequence?.toList() ?? [];
-      if (allUids.isEmpty) return [];
+        // UID SEARCH returns UIDs directly; plain SEARCH returns sequence
+        // numbers. `UNDELETED`, not `ALL`: `ALL` includes messages another
+        // client has flagged `\Deleted` but that the server has not expunged
+        // yet, and nothing here reads that flag — so they kept showing in the
+        // list until the expunge finally happened.
+        final searchResult = await client.uidSearchMessages(
+          searchCriteria: 'UNDELETED',
+        );
+        final allUids = searchResult.matchingSequence?.toList() ?? [];
+        if (allUids.isEmpty) return <EmailModel>[];
 
-      // Most recent first (IMAP UID sequences are ascending).
-      final reversed = allUids.reversed.toList();
-      final page = reversed.skip(skip).take(top).toList();
-      if (page.isEmpty) return [];
+        // Most recent first (IMAP UID sequences are ascending).
+        final reversed = allUids.reversed.toList();
+        final page = reversed.skip(skip).take(top).toList();
+        if (page.isEmpty) return <EmailModel>[];
 
-      final sequence = MessageSequence.fromIds(page, isUid: true);
-      final fetchResult = await client.uidFetchMessages(
-        sequence,
-        // BODYSTRUCTURE so `collectAttachments` can flag attachments on list
-        // rows without the cost of fetching each body (`msg.body` is only
-        // populated by a BODYSTRUCTURE/BODY[] fetch — ENVELOPE alone leaves it
-        // null and every message reads as attachment-free).
-        '(FLAGS INTERNALDATE ENVELOPE BODYSTRUCTURE)',
-      );
+        final sequence = MessageSequence.fromIds(page, isUid: true);
+        final fetchResult = await client.uidFetchMessages(
+          sequence,
+          // BODYSTRUCTURE so `collectAttachments` can flag attachments on list
+          // rows without the cost of fetching each body (`msg.body` is only
+          // populated by a BODYSTRUCTURE/BODY[] fetch — ENVELOPE alone leaves
+          // it null and every message reads as attachment-free).
+          '(FLAGS INTERNALDATE ENVELOPE BODYSTRUCTURE)',
+        );
 
-      return fetchResult.messages
-          .map((msg) => _parseToModel(msg, folderId: _selectedMailboxPath ?? mailboxPath))
-          .toList();
-    } on ImapException catch (e) {
-      throw ServerException(message: e.message ?? 'IMAP error');
-    } on AuthException {
-      rethrow;
-    }
+        return fetchResult.messages
+            .map((msg) =>
+                _parseToModel(msg, folderId: _selectedMailboxPath ?? mailboxPath))
+            .toList();
+      } on ImapException catch (e) {
+        throw ServerException(message: e.message ?? 'IMAP error');
+      } on AuthException {
+        rethrow;
+      }
+    });
   }
 
   @override
@@ -334,38 +509,39 @@ class ImapDatasourceImpl
     String? folderId,
     required String query,
     int top = 50,
-  }) async {
+  }) {
     final mailboxPath = folderId ?? 'INBOX';
-    try {
-      final client = await _getConnectedClient();
-      await _selectMailboxPath(client, mailboxPath);
+    return _withMailbox(mailboxPath, () async {
+      try {
+        final client = await _getConnectedClient();
 
-      final criteria = _buildImapCriteria(query);
-      final searchResult =
-          await client.uidSearchMessages(searchCriteria: criteria);
-      final allUids = searchResult.matchingSequence?.toList() ?? [];
-      if (allUids.isEmpty) return [];
+        final criteria = _buildImapCriteria(query);
+        final searchResult =
+            await client.uidSearchMessages(searchCriteria: criteria);
+        final allUids = searchResult.matchingSequence?.toList() ?? [];
+        if (allUids.isEmpty) return <EmailModel>[];
 
-      final page = allUids.reversed.take(top).toList();
-      final sequence = MessageSequence.fromIds(page, isUid: true);
-      final fetchResult = await client.uidFetchMessages(
-        sequence,
-        // BODYSTRUCTURE so `collectAttachments` can flag attachments on list
-        // rows without the cost of fetching each body (`msg.body` is only
-        // populated by a BODYSTRUCTURE/BODY[] fetch — ENVELOPE alone leaves it
-        // null and every message reads as attachment-free).
-        '(FLAGS INTERNALDATE ENVELOPE BODYSTRUCTURE)',
-      );
+        final page = allUids.reversed.take(top).toList();
+        final sequence = MessageSequence.fromIds(page, isUid: true);
+        final fetchResult = await client.uidFetchMessages(
+          sequence,
+          // BODYSTRUCTURE so `collectAttachments` can flag attachments on list
+          // rows without the cost of fetching each body (`msg.body` is only
+          // populated by a BODYSTRUCTURE/BODY[] fetch — ENVELOPE alone leaves
+          // it null and every message reads as attachment-free).
+          '(FLAGS INTERNALDATE ENVELOPE BODYSTRUCTURE)',
+        );
 
-      return fetchResult.messages
-          .map((msg) =>
-              _parseToModel(msg, folderId: _selectedMailboxPath ?? mailboxPath))
-          .toList();
-    } on ImapException catch (e) {
-      throw ServerException(message: e.message ?? 'IMAP error');
-    } on AuthException {
-      rethrow;
-    }
+        return fetchResult.messages
+            .map((msg) => _parseToModel(msg,
+                folderId: _selectedMailboxPath ?? mailboxPath))
+            .toList();
+      } on ImapException catch (e) {
+        throw ServerException(message: e.message ?? 'IMAP error');
+      } on AuthException {
+        rethrow;
+      }
+    });
   }
 
   /// IMAP has no thread API. [conversationId] here *is* the normalized subject
@@ -380,40 +556,42 @@ class ImapDatasourceImpl
   Future<List<EmailModel>> getConversationMessages(
     String conversationId, {
     String? folderId,
-  }) async {
+  }) {
     final mailboxPath = folderId ?? 'INBOX';
-    try {
-      final client = await _getConnectedClient();
-      await _selectMailboxPath(client, mailboxPath);
+    return _withMailbox(mailboxPath, () async {
+      try {
+        final client = await _getConnectedClient();
 
-      final escaped =
-          conversationId.replaceAll(r'\', r'\\').replaceAll('"', r'\"');
-      final searchResult =
-          await client.uidSearchMessages(searchCriteria: 'SUBJECT "$escaped"');
-      final uids = searchResult.matchingSequence?.toList() ?? [];
-      if (uids.isEmpty) return [];
+        final escaped =
+            conversationId.replaceAll(r'\', r'\\').replaceAll('"', r'\"');
+        final searchResult = await client.uidSearchMessages(
+          searchCriteria: 'SUBJECT "$escaped"',
+        );
+        final uids = searchResult.matchingSequence?.toList() ?? [];
+        if (uids.isEmpty) return <EmailModel>[];
 
-      final page = uids.reversed.take(_threadFetchLimit).toList();
-      final sequence = MessageSequence.fromIds(page, isUid: true);
-      final fetchResult = await client.uidFetchMessages(
-        sequence,
-        // BODYSTRUCTURE so `collectAttachments` can flag attachments on list
-        // rows without the cost of fetching each body (`msg.body` is only
-        // populated by a BODYSTRUCTURE/BODY[] fetch — ENVELOPE alone leaves it
-        // null and every message reads as attachment-free).
-        '(FLAGS INTERNALDATE ENVELOPE BODYSTRUCTURE)',
-      );
+        final page = uids.reversed.take(_threadFetchLimit).toList();
+        final sequence = MessageSequence.fromIds(page, isUid: true);
+        final fetchResult = await client.uidFetchMessages(
+          sequence,
+          // BODYSTRUCTURE so `collectAttachments` can flag attachments on list
+          // rows without the cost of fetching each body (`msg.body` is only
+          // populated by a BODYSTRUCTURE/BODY[] fetch — ENVELOPE alone leaves
+          // it null and every message reads as attachment-free).
+          '(FLAGS INTERNALDATE ENVELOPE BODYSTRUCTURE)',
+        );
 
-      return fetchResult.messages
-          .map((msg) =>
-              _parseToModel(msg, folderId: _selectedMailboxPath ?? mailboxPath))
-          .where((e) => e.conversationId == conversationId)
-          .toList();
-    } on ImapException catch (e) {
-      throw ServerException(message: e.message ?? 'IMAP error');
-    } on AuthException {
-      rethrow;
-    }
+        return fetchResult.messages
+            .map((msg) => _parseToModel(msg,
+                folderId: _selectedMailboxPath ?? mailboxPath))
+            .where((e) => e.conversationId == conversationId)
+            .toList();
+      } on ImapException catch (e) {
+        throw ServerException(message: e.message ?? 'IMAP error');
+      } on AuthException {
+        rethrow;
+      }
+    });
   }
 
   /// Upper bound on messages fetched for a single thread.
@@ -448,16 +626,29 @@ class ImapDatasourceImpl
   }
 
   @override
-  Future<EmailModel> getEmail(String id) async {
+  Future<EmailModel> getEmail(String id) {
     // id format: "mailboxPath:uid"
     final separatorIdx = id.lastIndexOf(':');
     final mailboxPath =
         separatorIdx > 0 ? id.substring(0, separatorIdx) : 'INBOX';
     final uid = int.tryParse(id.substring(separatorIdx + 1)) ?? 0;
 
+    return _withMailbox(
+      mailboxPath,
+      () => _getEmailInner(id, mailboxPath, uid),
+    );
+  }
+
+  /// The body of [getEmail], assuming [mailboxPath] is already selected and the
+  /// caller already holds the connection. Called directly by
+  /// [updateEmailReadStatus], which must not take a second link.
+  Future<EmailModel> _getEmailInner(
+    String id,
+    String mailboxPath,
+    int uid,
+  ) async {
     try {
       final client = await _getConnectedClient();
-      await _selectMailboxPath(client, mailboxPath);
 
       final sequence = MessageSequence.fromId(uid, isUid: true);
       // BODY[] only — deliberately NOT BODYSTRUCTURE. `collectAttachments`
@@ -515,58 +706,62 @@ class ImapDatasourceImpl
   Future<EmailModel> updateEmailReadStatus({
     required String id,
     required bool isRead,
-  }) async {
+  }) {
     final separatorIdx = id.lastIndexOf(':');
     final mailboxPath =
         separatorIdx > 0 ? id.substring(0, separatorIdx) : 'INBOX';
     final uid = int.tryParse(id.substring(separatorIdx + 1)) ?? 0;
 
-    try {
-      final client = await _getConnectedClient();
-      await _selectMailboxPath(client, mailboxPath);
+    return _withMailbox(mailboxPath, () async {
+      try {
+        final client = await _getConnectedClient();
 
-      final sequence = MessageSequence.fromId(uid, isUid: true);
-      await client.uidStore(
-        sequence,
-        [MessageFlags.seen],
-        action: isRead ? StoreAction.add : StoreAction.remove,
-      );
+        final sequence = MessageSequence.fromId(uid, isUid: true);
+        await client.uidStore(
+          sequence,
+          [MessageFlags.seen],
+          action: isRead ? StoreAction.add : StoreAction.remove,
+        );
 
-      return getEmail(id);
-    } on ImapException catch (e) {
-      throw ServerException(message: e.message ?? 'IMAP error');
-    }
+        // The inner form deliberately: `getEmail` would queue behind the link
+        // this body is holding and deadlock. Same mailbox, already selected.
+        return await _getEmailInner(id, mailboxPath, uid);
+      } on ImapException catch (e) {
+        throw ServerException(message: e.message ?? 'IMAP error');
+      }
+    });
   }
 
   @override
-  Future<Uint8List> getRawEmailBytes(String id) async {
+  Future<Uint8List> getRawEmailBytes(String id) {
     final separatorIdx = id.lastIndexOf(':');
     final mailboxPath =
         separatorIdx > 0 ? id.substring(0, separatorIdx) : 'INBOX';
     final uid = int.tryParse(id.substring(separatorIdx + 1)) ?? 0;
 
-    try {
-      final client = await _getConnectedClient();
-      await _selectMailboxPath(client, mailboxPath);
+    return _withMailbox(mailboxPath, () async {
+      try {
+        final client = await _getConnectedClient();
 
-      final sequence = MessageSequence.fromId(uid, isUid: true);
-      final fetchResult = await client.uidFetchMessages(
-        sequence,
-        'BODY.PEEK[]',
-      );
+        final sequence = MessageSequence.fromId(uid, isUid: true);
+        final fetchResult = await client.uidFetchMessages(
+          sequence,
+          'BODY.PEEK[]',
+        );
 
-      if (fetchResult.messages.isEmpty) {
-        throw ServerException(message: 'Message not found: $id');
+        if (fetchResult.messages.isEmpty) {
+          throw ServerException(message: 'Message not found: $id');
+        }
+
+        final buffer = StringBuffer();
+        fetchResult.messages.first.render(buffer);
+        return Uint8List.fromList(buffer.toString().codeUnits);
+      } on ImapException catch (e) {
+        throw ServerException(message: e.message ?? 'IMAP error');
+      } on AuthException {
+        rethrow;
       }
-
-      final buffer = StringBuffer();
-      fetchResult.messages.first.render(buffer);
-      return Uint8List.fromList(buffer.toString().codeUnits);
-    } on ImapException catch (e) {
-      throw ServerException(message: e.message ?? 'IMAP error');
-    } on AuthException {
-      rethrow;
-    }
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -621,6 +816,12 @@ class ImapDatasourceImpl
     DateTime? receivedAt,
   }) {
     final resolvedUid = uid ?? msg.uid ?? msg.sequenceId ?? 0;
+    // A message's identity is its mailbox plus its UID — and a UID is only
+    // unique *within one UIDVALIDITY*. If a server rebuilds a mailbox it
+    // reissues UIDVALIDITY, at which point every cached `folderId:uid` row
+    // points at a different message (or none). Nothing invalidates on that
+    // here: the value is surfaced as [ImapFolderStatus.uidValidity] and the
+    // cache layer must drop the folder's rows when it changes.
     final id = '$folderId:$resolvedUid';
     final resolvedIsRead = isRead ?? msg.isSeen;
     final resolvedIsFlagged = isFlagged ?? msg.isFlagged;
@@ -910,7 +1111,160 @@ class ImapDatasourceImpl
     return normalized.isEmpty ? null : normalized;
   }
 
+  // ---------------------------------------------------------------------------
+  // IDLE (RFC 2177)
+  // ---------------------------------------------------------------------------
+
+  /// How long one IDLE stretch lasts before it is renewed. RFC 2177 requires
+  /// the client to re-issue IDLE at least every 29 minutes; servers and NAT
+  /// boxes are often less patient than that.
+  static const _idleStretchDuration = Duration(minutes: 10);
+
+  /// How often an idling stretch re-checks whether somebody is waiting for the
+  /// connection. [_wakeIdle] normally makes that instant; this is the belt to
+  /// its braces, so a missed nudge costs a caller two seconds rather than the
+  /// whole stretch. It costs no server traffic.
+  static const _idleWaiterPollInterval = Duration(seconds: 2);
+
+  final _mailboxChangeController = StreamController<String>.broadcast();
+
+  /// Emits the path of the watched mailbox whenever the server reports that it
+  /// changed — a new message, a flag change, an expunge. Only ever emits while
+  /// [startIdleWatch] is in force.
+  Stream<String> get mailboxChanges => _mailboxChangeController.stream;
+
+  String? _idlePath;
+  bool _idleLoopRunning = false;
+  Completer<void>? _idleWake;
+
+  /// Starts watching [path] with IMAP IDLE, so a change made on another machine
+  /// arrives in seconds instead of at the next poll tick. Idempotent, and a
+  /// no-op on a server without the IDLE capability.
+  ///
+  /// **Main window only.** IDLE owns a long-lived socket and a timer for the
+  /// process' lifetime; a `desktop_multi_window` sub-window gets its own
+  /// isolate and service locator and dies with the window (see the
+  /// "Sub-Windows and FFI Plugins" section of CLAUDE.md), so anything
+  /// process-wide belongs to the main engine alone.
+  void startIdleWatch(String path) {
+    if (!AppWindow.isMain) return;
+    if (_idlePath == path && _idleLoopRunning) return;
+    _idlePath = path;
+    // Wake a stretch that is watching the *previous* folder so it re-selects.
+    _wakeIdle();
+    if (_idleLoopRunning) return;
+    _idleLoopRunning = true;
+    unawaited(_idleLoop());
+  }
+
+  /// Stops the watch started by [startIdleWatch].
+  void stopIdleWatch() {
+    _idlePath = null;
+    _wakeIdle();
+  }
+
+  /// Ends the current IDLE stretch, if any. Synchronous by design: every caller
+  /// of [withConnection] runs this *before* it queues, so the stretch is
+  /// already unwinding by the time the caller reaches the head of the chain.
+  void _wakeIdle() {
+    final wake = _idleWake;
+    if (wake != null && !wake.isCompleted) wake.complete();
+  }
+
+  Future<void> _idleLoop() async {
+    try {
+      while (_idlePath != null) {
+        final path = _idlePath!;
+        try {
+          final idled =
+              await _withMailbox(path, () => _idleStretch(path), isIdle: true);
+          if (!idled) {
+            // Somebody else wanted the connection. Give them the floor rather
+            // than spinning on the chain.
+            await Future<void>.delayed(_idleWaiterPollInterval);
+          }
+        } catch (_) {
+          // A stretch that failed — connection lost, IDLE refused, a DONE that
+          // never came back — stops the watch instead of reconnecting in a
+          // loop. The next poll tick calls [startIdleWatch] again.
+          _idlePath = null;
+        }
+      }
+    } finally {
+      _idleLoopRunning = false;
+    }
+  }
+
+  /// One IDLE stretch. Returns false without touching the server when the
+  /// connection is wanted elsewhere or cannot idle at all.
+  Future<bool> _idleStretch(String path) async {
+    if (_waitingCallers > 0 || _idlePath != path) return false;
+    final client = await _getConnectedClient();
+    if (!client.serverInfo.supportsIdle) {
+      // Nothing to renew and nothing to wait for — stop rather than re-queue.
+      _idlePath = null;
+      return false;
+    }
+
+    final wake = Completer<void>();
+    _idleWake = wake;
+    final subscription = client.eventBus.on<ImapEvent>().listen((event) {
+      switch (event.eventType) {
+        case ImapEventType.exists:
+        case ImapEventType.recent:
+        case ImapEventType.expunge:
+        case ImapEventType.vanished:
+        case ImapEventType.fetch:
+          if (!_mailboxChangeController.isClosed) {
+            _mailboxChangeController.add(path);
+          }
+          _wakeIdle();
+        case ImapEventType.connectionLost:
+          _wakeIdle();
+      }
+    });
+
+    var clean = true;
+    try {
+      await client.idleStart();
+      final deadline = DateTime.now().add(_idleStretchDuration);
+      while (!wake.isCompleted &&
+          _waitingCallers == 0 &&
+          _idlePath == path &&
+          client.isConnected &&
+          DateTime.now().isBefore(deadline)) {
+        await Future.any([
+          wake.future,
+          Future<void>.delayed(_idleWaiterPollInterval),
+        ]);
+      }
+    } finally {
+      _idleWake = null;
+      await subscription.cancel();
+      try {
+        await client.idleDone();
+      } catch (_) {
+        // DONE was never acknowledged, so the server may still believe it is
+        // idling and the next command's response would arrive against the
+        // wrong request. Drop the connection; the next call reconnects.
+        clean = false;
+      }
+    }
+    if (!clean) {
+      // Stop watching too, rather than reconnecting on a loop against a server
+      // that has just dropped us. The next poll tick restarts the watch.
+      _idlePath = null;
+      await _disconnectClient();
+    }
+    return true;
+  }
+
   Future<void> disconnect() async {
+    stopIdleWatch();
+    await _disconnectClient();
+  }
+
+  Future<void> _disconnectClient() async {
     _connectingFuture = null;
     final client = _client;
     _client = null;
@@ -1070,16 +1424,21 @@ class ImapDatasourceImpl
     // explicit APPEND after a successful send. Best-effort: a missing Sent
     // folder or a failed APPEND must not surface as a send failure, since
     // the message has already been delivered.
+    //
+    // Chained like every other connection user: the LIST and the APPEND must
+    // not land between another flow's SELECT and its FETCH.
     try {
-      final imapClient = await _getConnectedClient();
-      final sentPath = await _findSentPath(imapClient);
-      if (sentPath != null) {
-        await imapClient.appendMessageText(
-          message.renderMessage(),
-          targetMailboxPath: sentPath,
-          flags: [MessageFlags.seen],
-        );
-      }
+      await withConnection(() async {
+        final imapClient = await _getConnectedClient();
+        final sentPath = await _findSentPath(imapClient);
+        if (sentPath != null) {
+          await imapClient.appendMessageText(
+            message.renderMessage(),
+            targetMailboxPath: sentPath,
+            flags: [MessageFlags.seen],
+          );
+        }
+      });
     } catch (_) {}
   }
 
@@ -1150,22 +1509,23 @@ class ImapDatasourceImpl
     return (messageId.substring(0, sep), uid);
   }
 
-  Future<MimeMessage> _fetchOriginal(String messageId) async {
+  Future<MimeMessage> _fetchOriginal(String messageId) {
     final parsed = _parseMessageId(messageId);
     if (parsed == null) throw ServerException(message: 'Invalid message ID');
     final (folderId, uid) = parsed;
 
-    final client = await _getConnectedClient();
-    try {
-      await _selectMailboxPath(client, folderId);
-      final seq = MessageSequence.fromId(uid, isUid: true);
-      final result = await client.uidFetchMessages(seq, 'BODY.PEEK[]');
-      final msg = result.messages.firstOrNull;
-      if (msg == null) throw ServerException(message: 'Message not found');
-      return msg;
-    } on ImapException catch (e) {
-      throw ServerException(message: e.message ?? 'IMAP error');
-    }
+    return _withMailbox(folderId, () async {
+      final client = await _getConnectedClient();
+      try {
+        final seq = MessageSequence.fromId(uid, isUid: true);
+        final result = await client.uidFetchMessages(seq, 'BODY.PEEK[]');
+        final msg = result.messages.firstOrNull;
+        if (msg == null) throw ServerException(message: 'Message not found');
+        return msg;
+      } on ImapException catch (e) {
+        throw ServerException(message: e.message ?? 'IMAP error');
+      }
+    });
   }
 
   @override
@@ -1272,15 +1632,21 @@ class ImapDatasourceImpl
   }
 
   @override
-  Future<String?> moveEmail(String id, String destinationFolderId) async {
+  Future<String?> moveEmail(String id, String destinationFolderId) {
     final separatorIdx = id.lastIndexOf(':');
     final mailboxPath =
         separatorIdx > 0 ? id.substring(0, separatorIdx) : 'INBOX';
     final uid = int.tryParse(id.substring(separatorIdx + 1)) ?? 0;
 
+    return _withMailbox(
+      mailboxPath,
+      () => _moveEmailInner(destinationFolderId, uid),
+    );
+  }
+
+  Future<String?> _moveEmailInner(String destinationFolderId, int uid) async {
     try {
       final client = await _getConnectedClient();
-      await _selectMailboxPath(client, mailboxPath);
 
       // Apply INBOX prefix normalization to the destination path using the
       // same logic as getMailFolders(). On abbreviated-namespace servers
@@ -1319,7 +1685,10 @@ class ImapDatasourceImpl
   }
 
   @override
-  Future<String?> reportJunk(String id) async {
+  Future<String?> reportJunk(String id) =>
+      withConnection(() => _reportJunkInner(id));
+
+  Future<String?> _reportJunkInner(String id) async {
     final separatorIdx = id.lastIndexOf(':');
     final mailboxPath =
         separatorIdx > 0 ? id.substring(0, separatorIdx) : 'INBOX';
@@ -1453,7 +1822,9 @@ class ImapDatasourceImpl
   }
 
   @override
-  Future<int?> peekSpamDbVersion() async {
+  Future<int?> peekSpamDbVersion() => withConnection(_peekSpamDbVersionInner);
+
+  Future<int?> _peekSpamDbVersionInner() async {
     try {
       final client = await _getConnectedClient();
       final path = await _findSpamDbPath(client);
@@ -1510,7 +1881,10 @@ class ImapDatasourceImpl
   }
 
   @override
-  Future<String?> downloadSpamDbPayload() async {
+  Future<String?> downloadSpamDbPayload() =>
+      withConnection(_downloadSpamDbPayloadInner);
+
+  Future<String?> _downloadSpamDbPayloadInner() async {
     try {
       final client = await _getConnectedClient();
       final path = await _findSpamDbPath(client);
@@ -1534,7 +1908,13 @@ class ImapDatasourceImpl
   }
 
   @override
-  Future<void> pushSpamDb({required int version, required String payload}) async {
+  Future<void> pushSpamDb({required int version, required String payload}) =>
+      withConnection(() => _pushSpamDbInner(version: version, payload: payload));
+
+  Future<void> _pushSpamDbInner({
+    required int version,
+    required String payload,
+  }) async {
     try {
       final client = await _getConnectedClient();
       final path = await _findSpamDbPath(client, create: true);
@@ -1583,7 +1963,10 @@ class ImapDatasourceImpl
   }
 
   @override
-  Future<void> deleteEmail(String id) async {
+  Future<void> deleteEmail(String id) =>
+      withConnection(() => _deleteEmailInner(id));
+
+  Future<void> _deleteEmailInner(String id) async {
     final separatorIdx = id.lastIndexOf(':');
     final mailboxPath =
         separatorIdx > 0 ? id.substring(0, separatorIdx) : 'INBOX';
@@ -1620,8 +2003,15 @@ class ImapDatasourceImpl
   }
 
   @override
-  Future<void> emptyFolder(String folderId,
-      {bool permanentDelete = false}) async {
+  Future<void> emptyFolder(String folderId, {bool permanentDelete = false}) =>
+      withConnection(
+        () => _emptyFolderInner(folderId, permanentDelete: permanentDelete),
+      );
+
+  Future<void> _emptyFolderInner(
+    String folderId, {
+    bool permanentDelete = false,
+  }) async {
     final mailboxPath = folderId;
     try {
       final client = await _getConnectedClient();
@@ -1662,6 +2052,23 @@ class ImapDatasourceImpl
 
   @override
   Future<String> createServerDraft({
+    required List<String> toAddresses,
+    List<String> ccAddresses = const [],
+    required String subject,
+    required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
+    List<LocalAttachment> newAttachments = const [],
+  }) =>
+      withConnection(() => _createServerDraftInner(
+            toAddresses: toAddresses,
+            ccAddresses: ccAddresses,
+            subject: subject,
+            body: body,
+            bodyType: bodyType,
+            newAttachments: newAttachments,
+          ));
+
+  Future<String> _createServerDraftInner({
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
     required String subject,
@@ -1717,6 +2124,25 @@ class ImapDatasourceImpl
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
+  }) =>
+      withConnection(() => _updateServerDraftInner(
+            draftId: draftId,
+            toAddresses: toAddresses,
+            ccAddresses: ccAddresses,
+            subject: subject,
+            body: body,
+            bodyType: bodyType,
+            newAttachments: newAttachments,
+          ));
+
+  Future<String> _updateServerDraftInner({
+    required String draftId,
+    required List<String> toAddresses,
+    List<String> ccAddresses = const [],
+    required String subject,
+    required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
+    List<LocalAttachment> newAttachments = const [],
   }) async {
     final separatorIdx = draftId.lastIndexOf(':');
     final draftsPath =
@@ -1764,45 +2190,57 @@ class ImapDatasourceImpl
   }
 
   @override
-  Future<void> deleteServerDraft({required String draftId}) async {
+  Future<void> deleteServerDraft({required String draftId}) {
     final separatorIdx = draftId.lastIndexOf(':');
     final mailboxPath =
         separatorIdx > 0 ? draftId.substring(0, separatorIdx) : 'Drafts';
     final uid = int.tryParse(draftId.substring(separatorIdx + 1)) ?? 0;
-    if (uid == 0) return;
-    try {
-      final client = await _getConnectedClient();
-      await _selectMailboxPath(client, mailboxPath);
-      final sequence = MessageSequence.fromId(uid, isUid: true);
-      await client.uidStore(
-        sequence,
-        [MessageFlags.deleted],
-        action: StoreAction.add,
-      );
-      await client.expunge();
-    } on ImapException catch (e) {
-      throw ServerException(message: e.message ?? 'IMAP error');
-    }
+    if (uid == 0) return Future.value();
+    return _withMailbox(mailboxPath, () async {
+      try {
+        final client = await _getConnectedClient();
+        final sequence = MessageSequence.fromId(uid, isUid: true);
+        await client.uidStore(
+          sequence,
+          [MessageFlags.deleted],
+          action: StoreAction.add,
+        );
+        await client.expunge();
+      } on ImapException catch (e) {
+        throw ServerException(message: e.message ?? 'IMAP error');
+      }
+    });
   }
 
   @override
   Future<void> createFolder({
     required String parentFolderId,
     required String displayName,
-  }) async {
-    try {
-      final client = await _getConnectedClient();
-      // _pathSeparator is set by getMailFolders; folders are always listed before
-      // any create action is triggered from the UI so this will be populated.
-      final newPath = '$parentFolderId$_pathSeparator$displayName';
-      await client.createMailbox(newPath);
-    } on ImapException catch (e) {
-      throw ServerException(message: e.message ?? 'IMAP error');
-    }
-  }
+  }) =>
+      withConnection(() async {
+        try {
+          final client = await _getConnectedClient();
+          // _pathSeparator is set by getMailFolders; folders are always listed
+          // before any create action is triggered from the UI so this will be
+          // populated.
+          final newPath = '$parentFolderId$_pathSeparator$displayName';
+          await client.createMailbox(newPath);
+        } on ImapException catch (e) {
+          throw ServerException(message: e.message ?? 'IMAP error');
+        }
+      });
 
   @override
   Future<void> renameFolder({
+    required String folderId,
+    required String newDisplayName,
+  }) =>
+      withConnection(() => _renameFolderInner(
+            folderId: folderId,
+            newDisplayName: newDisplayName,
+          ));
+
+  Future<void> _renameFolderInner({
     required String folderId,
     required String newDisplayName,
   }) async {
@@ -1828,6 +2266,15 @@ class ImapDatasourceImpl
 
   @override
   Future<void> moveFolder({
+    required String folderId,
+    required String newParentFolderId,
+  }) =>
+      withConnection(() => _moveFolderInner(
+            folderId: folderId,
+            newParentFolderId: newParentFolderId,
+          ));
+
+  Future<void> _moveFolderInner({
     required String folderId,
     required String newParentFolderId,
   }) async {
@@ -1904,44 +2351,90 @@ class ImapDatasourceImpl
   }
 
   @override
-  Future<Uint8List> downloadAttachment(
-      String messageId, String attachmentId) async {
+  Future<Uint8List> downloadAttachment(String messageId, String attachmentId) {
     final separatorIdx = messageId.lastIndexOf(':');
     final mailboxPath =
         separatorIdx > 0 ? messageId.substring(0, separatorIdx) : 'INBOX';
     final uid = int.tryParse(messageId.substring(separatorIdx + 1)) ?? 0;
 
-    try {
-      final client = await _getConnectedClient();
-      await _selectMailboxPath(client, mailboxPath);
+    return _withMailbox(mailboxPath, () async {
+      try {
+        final client = await _getConnectedClient();
 
-      final sequence = MessageSequence.fromId(uid, isUid: true);
-      final fetchResult = await client.uidFetchMessages(
-        sequence,
-        'BODY.PEEK[]',
-      );
+        final sequence = MessageSequence.fromId(uid, isUid: true);
+        final fetchResult = await client.uidFetchMessages(
+          sequence,
+          'BODY.PEEK[]',
+        );
 
-      if (fetchResult.messages.isEmpty) {
-        throw ServerException(message: 'Message not found: $messageId');
+        if (fetchResult.messages.isEmpty) {
+          throw ServerException(message: 'Message not found: $messageId');
+        }
+
+        final part = fetchResult.messages.first.getPart(attachmentId);
+        if (part == null) {
+          throw ServerException(message: 'Attachment not found: $attachmentId');
+        }
+
+        final bytes = part.decodeContentBinary();
+        if (bytes == null) {
+          throw ServerException(
+              message: 'Could not decode attachment: $attachmentId');
+        }
+        return bytes;
+      } on ImapException catch (e) {
+        throw ServerException(message: e.message ?? 'IMAP error');
+      } on AuthException {
+        rethrow;
       }
-
-      final part = fetchResult.messages.first.getPart(attachmentId);
-      if (part == null) {
-        throw ServerException(message: 'Attachment not found: $attachmentId');
-      }
-
-      final bytes = part.decodeContentBinary();
-      if (bytes == null) {
-        throw ServerException(
-            message: 'Could not decode attachment: $attachmentId');
-      }
-      return bytes;
-    } on ImapException catch (e) {
-      throw ServerException(message: e.message ?? 'IMAP error');
-    } on AuthException {
-      rethrow;
-    }
+    });
   }
+}
+
+/// A mailbox's STATUS as of the last folder listing.
+///
+/// The `(uidNext, messages, unseen)` triple is what change detection persists
+/// and compares: `messages`/`unseen` on their own cancel out — read one message
+/// and receive another between two polls and both counts are unchanged — while
+/// `uidNext` only ever moves forward, once per arrival.
+///
+/// [uidValidity] is a different guarantee, not part of the triple. A message's
+/// identity in the cache is `mailboxPath:uid`, and a UID means nothing outside
+/// the UIDVALIDITY it was issued under: when a server rebuilds a mailbox it
+/// issues a new one and every cached row silently points at a different message.
+/// A change here therefore has to invalidate that folder's cached rows outright,
+/// not merely refetch a page of them.
+class ImapFolderStatus {
+  const ImapFolderStatus({
+    required this.messages,
+    required this.unseen,
+    this.uidNext,
+    this.uidValidity,
+  });
+
+  final int messages;
+  final int unseen;
+
+  /// Null on a server that answered the LIST/STATUS without it.
+  final int? uidNext;
+  final int? uidValidity;
+
+  /// Whether this differs from [other] in any way that means "refetch".
+  bool differsFrom(ImapFolderStatus other) =>
+      messages != other.messages ||
+      unseen != other.unseen ||
+      uidNext != other.uidNext;
+
+  /// Whether the mailbox was rebuilt between the two readings, invalidating
+  /// every `mailboxPath:uid` the cache holds for it.
+  bool wasRebuiltSince(ImapFolderStatus other) =>
+      uidValidity != null &&
+      other.uidValidity != null &&
+      uidValidity != other.uidValidity;
+
+  @override
+  String toString() => 'ImapFolderStatus(messages: $messages, unseen: $unseen, '
+      'uidNext: $uidNext, uidValidity: $uidValidity)';
 }
 
 /// Inputs for [_buildDraftMimeText]. Kept as plain, isolate-transferable

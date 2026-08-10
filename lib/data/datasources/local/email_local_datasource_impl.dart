@@ -277,11 +277,14 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
   Future<void> deleteEmailFromCache({
     required String accountId,
     required String emailId,
+    bool evictInlineAttachments = true,
   }) async {
     await (_database.delete(_database.cachedEmails)
           ..where((t) => t.accountId.equals(accountId) & t.emailId.equals(emailId)))
         .go();
-    await _inlineAttachments.evictEmail(emailId);
+    if (evictInlineAttachments) {
+      await _inlineAttachments.evictEmail(emailId);
+    }
   }
 
   @override

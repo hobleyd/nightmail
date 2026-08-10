@@ -187,10 +187,24 @@ class GraphDeltaParseResult {
   const GraphDeltaParseResult({
     required this.upserted,
     required this.removedIds,
+    this.movedOutIds = const [],
   });
 
   final List<EmailModel> upserted;
+
+  /// Messages Graph reported as `@removed` with `reason: 'deleted'` — genuinely
+  /// gone from the mailbox.
   final List<String> removedIds;
+
+  /// Messages Graph reported as `@removed` with `reason: 'changed'` — no longer
+  /// in the folder being synced, but still in the mailbox somewhere. Almost
+  /// always a move.
+  ///
+  /// Kept apart from [removedIds] because the two want different treatment: a
+  /// delete should take the message's cached inline images with it, whereas a
+  /// move only means the row belongs to a different folder now, and evicting
+  /// those images makes the destination folder re-download every one.
+  final List<String> movedOutIds;
 }
 
 /// Parses every page of a delta sync in one pass. `compute()` entry point.
@@ -204,6 +218,7 @@ class GraphDeltaParseResult {
 GraphDeltaParseResult parseGraphDeltaPages(List<String> rawPages) {
   final upserted = <EmailModel>[];
   final removedIds = <String>[];
+  final movedOutIds = <String>[];
 
   for (final raw in rawPages) {
     try {
@@ -212,7 +227,18 @@ GraphDeltaParseResult parseGraphDeltaPages(List<String> rawPages) {
           in (data['value'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>()) {
         if (item.containsKey('@removed')) {
           final id = item['id'] as String?;
-          if (id != null) removedIds.add(id);
+          if (id == null) continue;
+          // Graph distinguishes 'deleted' (gone from the mailbox) from
+          // 'changed' (still in the mailbox, no longer in this folder — a move).
+          // An unrecognised or absent reason is treated as a delete, which is
+          // the conservative reading: the row leaves this folder either way, and
+          // the only cost of being wrong is re-downloading inline images.
+          final reason = (item['@removed'] as Map<String, dynamic>?)?['reason'];
+          if (reason == 'changed') {
+            movedOutIds.add(id);
+          } else {
+            removedIds.add(id);
+          }
         } else {
           try {
             upserted.add(EmailModel.fromJson(item));
@@ -227,7 +253,11 @@ GraphDeltaParseResult parseGraphDeltaPages(List<String> rawPages) {
     }
   }
 
-  return GraphDeltaParseResult(upserted: upserted, removedIds: removedIds);
+  return GraphDeltaParseResult(
+    upserted: upserted,
+    removedIds: removedIds,
+    movedOutIds: movedOutIds,
+  );
 }
 
 final _graphDeltaLinkPattern =

@@ -64,9 +64,16 @@ abstract interface class EmailLocalDatasource {
   });
 
   /// Deletes the cached email with [emailId] for [accountId].
+  ///
+  /// Pass `evictInlineAttachments: false` when the message has only *moved* —
+  /// the row belongs to a different folder now, but the message still exists, so
+  /// throwing its cached inline images away only makes the destination folder
+  /// download every one of them again. Orphans left this way are swept by
+  /// `InlineAttachmentCache.prune` on startup.
   Future<void> deleteEmailFromCache({
     required String accountId,
     required String emailId,
+    bool evictInlineAttachments,
   });
 
   /// Updates the isRead flag on the cached email with [emailId] for [accountId].

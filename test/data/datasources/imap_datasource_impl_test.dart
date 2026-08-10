@@ -1,6 +1,10 @@
 import 'package:enough_mail/enough_mail.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nightmail/core/error/exceptions.dart';
 import 'package:nightmail/data/datasources/remote/imap_datasource_impl.dart';
+import 'package:nightmail/infrastructure/accounts/account.dart';
+import 'package:nightmail/infrastructure/auth/imap_credential_storage.dart';
 
 /// Builds a leaf [BodyPart] the way enough_mail's BODYSTRUCTURE parser does:
 /// the header objects are constructed from the bare media-type/disposition
@@ -603,4 +607,144 @@ void main() {
       expect(attachments.single.id, '2'); // second top-level part
     });
   });
+
+  group('ImapDatasourceImpl connection serialisation', () {
+    ImapDatasourceImpl build() => ImapDatasourceImpl(
+          account: _account,
+          credentialStorage: _NoPasswordStorage(),
+        );
+
+    test('runs one body at a time, in the order they were queued', () async {
+      final ds = build();
+      final order = <String>[];
+
+      Future<void> slowBody(String name, int hops) async {
+        order.add('$name-start');
+        for (var i = 0; i < hops; i++) {
+          await Future<void>.delayed(Duration.zero);
+        }
+        order.add('$name-end');
+      }
+
+      // The first body yields repeatedly: without the chain its awaits are
+      // exactly where the second body would interleave — which on a real
+      // connection is a SELECT landing between another caller's SELECT and
+      // its FETCH.
+      final first = ds.withConnection(() => slowBody('a', 3));
+      final second = ds.withConnection(() => slowBody('b', 1));
+      await Future.wait([first, second]);
+
+      expect(order, ['a-start', 'a-end', 'b-start', 'b-end']);
+    });
+
+    test('a body that throws does not wedge the callers behind it', () async {
+      final ds = build();
+
+      final failed = ds.withConnection<void>(
+        () async => throw StateError('boom'),
+      );
+      await expectLater(failed, throwsA(isA<StateError>()));
+
+      expect(await ds.withConnection(() async => 'ran'), 'ran');
+    });
+
+    test('a failed connect is retried rather than awaited forever', () async {
+      final ds = build();
+
+      // No stored password → AuthException from inside the chained link. The
+      // second call must reach the connect attempt again: _connectingFuture is
+      // cleared in a `finally`, so a stalled or abandoned connect cannot be
+      // handed to every later caller for the process lifetime.
+      await expectLater(
+        ds.getEmails(folderId: 'INBOX'),
+        throwsA(isA<AuthException>()),
+      );
+      await expectLater(
+        ds.getEmails(folderId: 'INBOX'),
+        throwsA(isA<AuthException>()),
+      );
+    });
+
+    test('an IDLE watch that cannot connect stops instead of blocking reads',
+        () async {
+      final ds = build();
+
+      ds.startIdleWatch('INBOX');
+      // The watch's own link fails at the connect, which ends the watch — a
+      // half-wired IDLE holding the connection would starve this caller.
+      expect(
+        await ds.withConnection(() async => 'ran').timeout(
+              const Duration(seconds: 5),
+            ),
+        'ran',
+      );
+      ds.stopIdleWatch();
+    });
+  });
+
+  group('ImapFolderStatus', () {
+    const base = ImapFolderStatus(
+      messages: 10,
+      unseen: 2,
+      uidNext: 100,
+      uidValidity: 7,
+    );
+
+    test('a read plus an arrival is a change, though both counts hold', () {
+      // The case two counts cannot see: one message read (unseen 2 → 1) and one
+      // new one arrived (unseen 1 → 2, messages 10 → 11... and one expunged).
+      const next = ImapFolderStatus(
+        messages: 10,
+        unseen: 2,
+        uidNext: 101,
+        uidValidity: 7,
+      );
+
+      expect(next.differsFrom(base), isTrue);
+    });
+
+    test('an unchanged mailbox reports no change', () {
+      expect(base.differsFrom(base), isFalse);
+      expect(base.wasRebuiltSince(base), isFalse);
+    });
+
+    test('a new UIDVALIDITY means every cached uid is meaningless', () {
+      const rebuilt = ImapFolderStatus(
+        messages: 10,
+        unseen: 2,
+        uidNext: 100,
+        uidValidity: 8,
+      );
+
+      expect(rebuilt.wasRebuiltSince(base), isTrue);
+    });
+
+    test('a server that reports no UIDVALIDITY never claims a rebuild', () {
+      const noValidity = ImapFolderStatus(messages: 10, unseen: 2, uidNext: 100);
+
+      expect(noValidity.wasRebuiltSince(base), isFalse);
+      expect(base.wasRebuiltSince(noValidity), isFalse);
+    });
+  });
+}
+
+const _account = ImapAccount(
+  id: 'acct-1',
+  displayName: 'Test',
+  emailAddress: 'test@example.com',
+  host: 'imap.example.com',
+  port: 993,
+  useSsl: true,
+  smtpHost: 'smtp.example.com',
+  smtpPort: 587,
+  smtpUseSsl: false,
+);
+
+/// Stands in for the keychain with nothing in it, so every connect attempt
+/// fails before a socket is opened — these tests never touch the network.
+class _NoPasswordStorage extends ImapCredentialStorage {
+  _NoPasswordStorage() : super(const FlutterSecureStorage());
+
+  @override
+  Future<String?> loadPassword(String accountId) async => null;
 }

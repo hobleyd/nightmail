@@ -61,12 +61,22 @@ Email _email(
       folderIds: folderIds,
     );
 
-// Fake AccountManager that always reports no active account — keeps the BLoC
-// from attempting cache writes or spam classification in tests.
+// Fake AccountManager. Reports no active account by default, which keeps the
+// BLoC from attempting cache writes or spam classification; tests that need the
+// cache paths (a repaint reads it) set [account].
 class _FakeAccountManager extends Fake implements AccountManager {
+  Account? account;
+
   @override
-  Account? get activeAccount => null;
+  Account? get activeAccount => account;
 }
+
+const _account = MicrosoftAccount(
+  id: 'account-1',
+  displayName: 'Test',
+  emailAddress: 'test@example.com',
+  tenantId: 'common',
+);
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -100,6 +110,10 @@ void main() {
   late MockDeleteEmail mockDeleteEmail;
   late MockGetEmail mockGetEmail;
   late MockGetConversationThread mockGetConversationThread;
+  late MockSearchEmails mockSearchEmails;
+  late MockRecordKnownSenders mockRecordKnownSenders;
+  late MockCacheEmails mockCacheEmails;
+  late _FakeAccountManager fakeAccountManager;
 
   setUpAll(() {
     // Mockito needs dummy values for sealed/generic types it can't construct.
@@ -118,21 +132,27 @@ void main() {
     mockDeleteEmail = MockDeleteEmail();
     mockGetEmail = MockGetEmail();
     mockGetConversationThread = MockGetConversationThread();
+    mockSearchEmails = MockSearchEmails();
+    mockRecordKnownSenders = MockRecordKnownSenders();
+    mockCacheEmails = MockCacheEmails();
+    fakeAccountManager = _FakeAccountManager();
+    when(mockRecordKnownSenders(any)).thenAnswer((_) async => const Right(unit));
+    when(mockCacheEmails(any)).thenAnswer((_) async => const Right(unit));
 
     bloc = EmailListBloc(
       getEmails: mockGetEmails,
       getCachedEmails: mockGetCachedEmails,
-      cacheEmails: MockCacheEmails(),
+      cacheEmails: mockCacheEmails,
       markEmailAsRead: mockMarkEmailAsRead,
       moveEmail: mockMoveEmail,
       reportJunk: MockReportJunk(),
       deleteEmail: mockDeleteEmail,
       emptyFolder: mockEmptyFolder,
-      accountManager: _FakeAccountManager(),
-      recordKnownSenders: MockRecordKnownSenders(),
+      accountManager: fakeAccountManager,
+      recordKnownSenders: mockRecordKnownSenders,
       classifyEmails: MockClassifyEmails(),
       trainSpamFilter: MockTrainSpamFilter(),
-      searchEmails: MockSearchEmails(),
+      searchEmails: mockSearchEmails,
       getEmail: mockGetEmail,
       getConversationThread: mockGetConversationThread,
       spamDbSyncService: MockSpamDbSyncService(),
@@ -1266,14 +1286,207 @@ void main() {
       verify(mockGetEmails(any)).called(1);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // EmailListCacheRefreshRequested — the poller's repaint must not be dropped
+  // ---------------------------------------------------------------------------
+
+  group('EmailListCacheRefreshRequested (active account)', () {
+    setUp(() => fakeAccountManager.account = _account);
+
+    // Regression: the handler returned when the state wasn't Loaded — which is
+    // precisely the cold start whose first fetch failed with an empty cache,
+    // the state MailPollerCubit's first-cycle staleness check exists to repair.
+    test('a repaint arriving on a failed cold start loads the folder instead',
+        () async {
+      when(mockGetCachedEmails(any)).thenAnswer((_) async => const Right([]));
+      when(mockGetEmails(any)).thenAnswer(
+          (_) async => const Left(NetworkFailure(message: 'No network')));
+      bloc.add(const EmailListLoadRequested(
+        folderId: 'folder-1',
+        folderDisplayName: 'Inbox',
+      ));
+      await bloc.stream.firstWhere((s) => s is EmailListError);
+
+      when(mockGetEmails(any))
+          .thenAnswer((_) async => Right([_email('id1')]));
+      bloc.add(const EmailListCacheRefreshRequested());
+
+      final state = await bloc.stream.firstWhere((s) => s is EmailListLoaded)
+          as EmailListLoaded;
+      expect(state.emails.map((e) => e.id), ['id1']);
+      expect(state.currentFolderId, 'folder-1',
+          reason: 'the reload must target the folder that failed to load');
+      expect(state.currentFolderName, 'Inbox');
+    });
+
+    // Regression: HomePage routes a poll here while a search or a focused
+    // thread is showing, expecting the bloc to defer the repaint. Standing
+    // down was right; losing the signal was not.
+    test('a repaint deferred during a search is spent when the search clears',
+        () async {
+      await _loadEmails([_email('id1')], folderId: 'folder-1');
+      when(mockSearchEmails(any))
+          .thenAnswer((_) async => Right([_email('hit')]));
+      bloc.add(const EmailListSearchRequested(query: 'q'));
+      await bloc.stream.firstWhere(
+          (s) => s is EmailListLoaded && s.activeSearchQuery == 'q');
+
+      clearInteractions(mockGetCachedEmails);
+      when(mockGetCachedEmails(any))
+          .thenAnswer((_) async => Right([_email('id1'), _email('id2')]));
+      bloc.add(const EmailListCacheRefreshRequested());
+      await pumpEventQueue();
+
+      expect((bloc.state as EmailListLoaded).emails.map((e) => e.id), ['hit'],
+          reason: 'the search results are what the user is looking at');
+      verifyNever(mockGetCachedEmails(any));
+
+      // Clearing the search re-fetches the folder and that fetch fails, so what
+      // is left on screen is the repaint that was owed — not the dismissed
+      // search results.
+      when(mockGetEmails(any)).thenAnswer(
+          (_) async => const Left(NetworkFailure(message: 'No network')));
+      bloc.add(const EmailListSearchCleared());
+      await pumpEventQueue();
+
+      expect((bloc.state as EmailListLoaded).emails.map((e) => e.id),
+          ['id1', 'id2']);
+    });
+
+    test('a repaint deferred during a focused thread is spent when it clears',
+        () async {
+      await _loadEmails([_email('id1', conversationId: 'conv-a')],
+          folderId: 'folder-1');
+      when(mockGetConversationThread(any)).thenAnswer((_) async =>
+          Right([_email('id1', conversationId: 'conv-a')]));
+      bloc.add(const EmailListThreadFocusRequested(emailId: 'id1'));
+      await bloc.stream.firstWhere(
+          (s) => s is EmailListLoaded && s.focusedThreadId == 'conv-a');
+
+      when(mockGetCachedEmails(any))
+          .thenAnswer((_) async => Right([_email('id1'), _email('id2')]));
+      bloc.add(const EmailListCacheRefreshRequested());
+      await pumpEventQueue();
+      expect((bloc.state as EmailListLoaded).focusedThreadId, 'conv-a');
+
+      when(mockGetEmails(any)).thenAnswer(
+          (_) async => const Left(NetworkFailure(message: 'No network')));
+      bloc.add(const EmailListThreadFocusCleared());
+      await pumpEventQueue();
+
+      expect((bloc.state as EmailListLoaded).emails.map((e) => e.id),
+          ['id1', 'id2']);
+    });
+
+    // Regression: a repaint that shortened the list left the server offset
+    // past the end of the folder, so the next Load-more skipped the rows that
+    // had shifted up into page one and left a hole nothing ever filled.
+    test('a repaint that shortens the folder pulls the server offset back',
+        () async {
+      final page = List.generate(25, (i) => _email('id$i'));
+      when(mockGetCachedEmails(any)).thenAnswer((_) async => const Right([]));
+      when(mockGetEmails(any)).thenAnswer((_) async => Right(page));
+      bloc.add(const EmailListLoadRequested(folderId: 'folder-1'));
+      await bloc.stream.firstWhere(
+          (s) => s is EmailListLoaded && s.emails.length == 25);
+
+      // Five were deleted elsewhere, so the poller's cache is 20 rows deep.
+      when(mockGetCachedEmails(any))
+          .thenAnswer((_) async => Right(page.take(20).toList()));
+      bloc.add(const EmailListCacheRefreshRequested());
+      await pumpEventQueue();
+      expect((bloc.state as EmailListLoaded).emails, hasLength(20));
+
+      clearInteractions(mockGetEmails);
+      when(mockGetEmails(any)).thenAnswer((_) async => const Right([]));
+      bloc.add(const EmailListLoadMoreRequested());
+      await pumpEventQueue();
+
+      final params =
+          verify(mockGetEmails(captureAny)).captured.single as GetEmailsParams;
+      expect(params.skip, 20,
+          reason: 'skip 25 would jump the five rows that moved up');
+    });
+
+    test('a repaint never raises the offset above what was paged in', () async {
+      // Cross-folder conversation expansion puts more rows on screen than the
+      // server was ever asked for, so the cached count is a ceiling rather
+      // than a measurement of how far in we have read.
+      when(mockGetCachedEmails(any)).thenAnswer((_) async => const Right([]));
+      when(mockGetEmails(any))
+          .thenAnswer((_) async => Right(List.generate(25, (i) => _email('id$i'))));
+      bloc.add(const EmailListLoadRequested(folderId: 'folder-1'));
+      await bloc.stream.firstWhere(
+          (s) => s is EmailListLoaded && s.emails.length == 25);
+
+      when(mockGetCachedEmails(any)).thenAnswer(
+          (_) async => Right(List.generate(40, (i) => _email('id$i'))));
+      bloc.add(const EmailListCacheRefreshRequested());
+      await pumpEventQueue();
+
+      clearInteractions(mockGetEmails);
+      when(mockGetEmails(any)).thenAnswer((_) async => const Right([]));
+      bloc.add(const EmailListLoadMoreRequested());
+      await pumpEventQueue();
+
+      final params =
+          verify(mockGetEmails(captureAny)).captured.single as GetEmailsParams;
+      expect(params.skip, 25);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // EmailListRefreshRequested — search guard
+  // ---------------------------------------------------------------------------
+
+  group('EmailListRefreshRequested during a search', () {
+    // Regression: the handler guarded a focused thread but not a search, so a
+    // network refresh — the manual Refresh button, the mobile foreground timer,
+    // or a poll on a folder whose cache the poller did not write — replaced the
+    // results with the folder's contents.
+    test('re-runs the query instead of replacing it with the folder', () async {
+      await _loadEmails([_email('folder-row')], folderId: 'folder-1');
+      when(mockSearchEmails(any))
+          .thenAnswer((_) async => Right([_email('hit')]));
+      bloc.add(const EmailListSearchRequested(query: 'q'));
+      await bloc.stream.firstWhere(
+          (s) => s is EmailListLoaded && s.activeSearchQuery == 'q');
+
+      clearInteractions(mockGetEmails);
+      when(mockSearchEmails(any)).thenAnswer(
+          (_) async => Right([_email('hit'), _email('hit-2')]));
+      bloc.add(const EmailListRefreshRequested());
+      await pumpEventQueue();
+
+      final state = bloc.state as EmailListLoaded;
+      expect(state.activeSearchQuery, 'q');
+      expect(state.emails.map((e) => e.id), ['hit', 'hit-2']);
+      expect(state.isLoadingFresh, isFalse);
+      verifyNever(mockGetEmails(any));
+    });
+
+    test('a failed re-run leaves the results on screen', () async {
+      await _loadEmails([_email('folder-row')], folderId: 'folder-1');
+      when(mockSearchEmails(any))
+          .thenAnswer((_) async => Right([_email('hit')]));
+      bloc.add(const EmailListSearchRequested(query: 'q'));
+      await bloc.stream.firstWhere(
+          (s) => s is EmailListLoaded && s.activeSearchQuery == 'q');
+
+      when(mockSearchEmails(any)).thenAnswer(
+          (_) async => const Left(NetworkFailure(message: 'No network')));
+      bloc.add(const EmailListRefreshRequested());
+      await pumpEventQueue();
+
+      final state = bloc.state as EmailListLoaded;
+      expect(state.emails.map((e) => e.id), ['hit']);
+      expect(state.isLoadingFresh, isFalse);
+    });
+  });
 }
 
 class _FakeActiveAccountManager extends Fake implements AccountManager {
   @override
-  Account? get activeAccount => const MicrosoftAccount(
-        id: 'account-1',
-        displayName: 'Test',
-        emailAddress: 'test@example.com',
-        tenantId: 'common',
-      );
+  Account? get activeAccount => _account;
 }

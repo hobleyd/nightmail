@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
+import 'package:nightmail/core/error/exceptions.dart';
 import 'package:nightmail/data/datasources/remote/gmail_datasource_impl.dart';
 import 'package:nightmail/domain/entities/meeting_invite.dart';
 
@@ -1110,6 +1111,424 @@ void main() {
 
       expect(filed.folderIds, ['Label_Archive']);
       expect(filed.isDeletableFrom('INBOX'), isFalse);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // syncMailDelta — users.history.list
+  // ---------------------------------------------------------------------------
+
+  // Change detection for a Gmail account used to be a comparison of two
+  // integers, so a message read and another arriving unread in the same interval
+  // cancelled out and were invisible for good — the baselines were overwritten
+  // afterwards, making the missed state the new truth. These lock in that the
+  // history feed reports each of those changes on its own.
+  group('GmailDatasourceImpl.syncMailDelta', () {
+    late List<Map<String, dynamic>> historyQueries;
+
+    setUp(() => historyQueries = []);
+
+    Map<String, dynamic> metaMessage(
+      String id, {
+      List<String> labelIds = const ['INBOX'],
+      String subject = 'Hello',
+    }) =>
+        {
+          'id': id,
+          'threadId': 'thread-$id',
+          'labelIds': labelIds,
+          'internalDate': '1780000000000',
+          'payload': {
+            'mimeType': 'text/plain',
+            'headers': [
+              {'name': 'Subject', 'value': subject},
+              {'name': 'From', 'value': 'alice@example.com'},
+            ],
+            'parts': <dynamic>[],
+          },
+        };
+
+    Map<String, dynamic> page(
+      List<Map<String, dynamic>> records, {
+      String historyId = '5100',
+      String? nextPageToken,
+    }) =>
+        {
+          'historyId': historyId,
+          if (records.isNotEmpty) 'history': records,
+          if (nextPageToken != null) 'nextPageToken': nextPageToken,
+        };
+
+    /// Answers the profile, the history pages (one per call, in order) and the
+    /// per-message metadata fetches — all as `get<String>` with the response
+    /// still encoded, which is what the parser isolate gets. One response type
+    /// throughout on purpose: Mockito cannot tell `get<Map>` from `get<String>`,
+    /// and `anyNamed` matches an absent named argument, so a second shape here
+    /// would answer the profile with a `Response<String>` cast to Map.
+    void stubHistory(
+      List<Map<String, dynamic>> pages, {
+      String profileHistoryId = '5000',
+      Map<String, dynamic> Function(String id)? message,
+    }) {
+      var pageIndex = 0;
+      when(mockDio.get<String>(
+        any,
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((inv) async {
+        final url = inv.positionalArguments[0] as String;
+        if (url == '/users/me/profile') {
+          return _plainResp(
+            {'emailAddress': 'me@example.com', 'historyId': profileHistoryId},
+            url,
+          );
+        }
+        if (url == '/users/me/history') {
+          historyQueries.add(inv.namedArguments[const Symbol('queryParameters')]
+              as Map<String, dynamic>);
+          final body = pages[pageIndex.clamp(0, pages.length - 1)];
+          pageIndex++;
+          return _plainResp(body, url);
+        }
+        final id = url.split('/').last;
+        return _plainResp((message ?? metaMessage)(id), url);
+      });
+    }
+
+    test('seeds the cursor from the profile and fetches nothing', () async {
+      stubHistory([page([])], profileHistoryId: '4242');
+
+      final result = await datasource.syncMailDelta('inbox');
+
+      expect(result.deltaLink, '4242');
+      expect(result.hasChanges, isFalse);
+      expect(historyQueries, isEmpty,
+          reason: 'a history stream can only start from a historyId');
+    });
+
+    test('asks for every folder-affecting change and does not filter by label',
+        () async {
+      stubHistory([page([])]);
+
+      await datasource.syncMailDelta('inbox', deltaLink: '5000');
+
+      expect(historyQueries.single['startHistoryId'], '5000');
+      expect(historyQueries.single['historyTypes'], [
+        'messageAdded',
+        'messageDeleted',
+        'labelAdded',
+        'labelRemoved',
+      ]);
+      // A message that has just *lost* INBOX no longer matches labelId=INBOX, so
+      // filtering server-side would hide exactly the moves this exists to see.
+      expect(historyQueries.single.containsKey('labelId'), isFalse);
+    });
+
+    test('advances the cursor and reports nothing when nothing changed',
+        () async {
+      stubHistory([page([], historyId: '5300')]);
+
+      final result = await datasource.syncMailDelta('inbox', deltaLink: '5000');
+
+      expect(result.deltaLink, '5300');
+      expect(result.hasChanges, isFalse);
+    });
+
+    test('a message added to the inbox comes back as an upsert', () async {
+      stubHistory([
+        page([
+          {
+            'id': '5001',
+            'messagesAdded': [
+              {'message': {'id': 'm1', 'labelIds': ['INBOX', 'UNREAD']}},
+            ],
+          },
+        ]),
+      ]);
+
+      final result = await datasource.syncMailDelta('inbox', deltaLink: '5000');
+
+      expect(result.upserted.map((e) => e.id), ['m1']);
+      expect(result.upserted.single.subject, 'Hello');
+      expect(result.removedIds, isEmpty);
+      expect(result.movedOutIds, isEmpty);
+    });
+
+    test('a message added to another folder is ignored', () async {
+      stubHistory([
+        page([
+          {
+            'id': '5001',
+            'messagesAdded': [
+              {'message': {'id': 'm1', 'labelIds': ['SENT']}},
+            ],
+          },
+        ]),
+      ]);
+
+      final result = await datasource.syncMailDelta('inbox', deltaLink: '5000');
+
+      expect(result.hasChanges, isFalse);
+    });
+
+    // The half of the offsetting pair the counts could never see: a message
+    // read elsewhere leaves total unchanged and unread down by one, which the
+    // arrival of another unread message cancels out exactly.
+    test('a message read elsewhere comes back as an upsert', () async {
+      stubHistory([
+        page([
+          {
+            'id': '5001',
+            'labelsRemoved': [
+              {
+                'message': {'id': 'm1', 'labelIds': ['INBOX']},
+                'labelIds': ['UNREAD'],
+              },
+            ],
+          },
+        ]),
+      ]);
+
+      final result = await datasource.syncMailDelta('inbox', deltaLink: '5000');
+
+      expect(result.upserted.map((e) => e.id), ['m1']);
+      expect(result.upserted.single.isRead, isTrue);
+    });
+
+    test('a message moved into the inbox is an upsert, not a bare id', () async {
+      stubHistory([
+        page([
+          {
+            'id': '5001',
+            'labelsAdded': [
+              {
+                'message': {'id': 'm1', 'labelIds': ['INBOX']},
+                'labelIds': ['INBOX'],
+              },
+            ],
+          },
+        ]),
+      ]);
+
+      final result = await datasource.syncMailDelta('inbox', deltaLink: '5000');
+
+      expect(result.upserted.map((e) => e.id), ['m1'],
+          reason: 'the row the folder shows is not in the history record');
+    });
+
+    test('losing the folder label is a move-out, not a delete', () async {
+      stubHistory([
+        page([
+          {
+            'id': '5001',
+            'labelsRemoved': [
+              {
+                'message': {'id': 'm1', 'labelIds': ['Label_7']},
+                'labelIds': ['INBOX'],
+              },
+            ],
+          },
+        ]),
+      ]);
+
+      final result = await datasource.syncMailDelta('inbox', deltaLink: '5000');
+
+      expect(result.movedOutIds, ['m1']);
+      expect(result.removedIds, isEmpty);
+      expect(result.upserted, isEmpty);
+    });
+
+    test('being trashed is a move-out', () async {
+      stubHistory([
+        page([
+          {
+            'id': '5001',
+            'labelsAdded': [
+              {
+                'message': {'id': 'm1', 'labelIds': ['INBOX', 'TRASH']},
+                'labelIds': ['TRASH'],
+              },
+            ],
+          },
+        ]),
+      ]);
+
+      final result = await datasource.syncMailDelta('inbox', deltaLink: '5000');
+
+      expect(result.movedOutIds, ['m1']);
+      expect(result.upserted, isEmpty);
+    });
+
+    test('a permanent delete is a removal', () async {
+      stubHistory([
+        page([
+          {
+            'id': '5001',
+            'messagesDeleted': [
+              {'message': {'id': 'm1', 'labelIds': ['INBOX']}},
+            ],
+          },
+        ]),
+      ]);
+
+      final result = await datasource.syncMailDelta('inbox', deltaLink: '5000');
+
+      expect(result.removedIds, ['m1']);
+      expect(result.movedOutIds, isEmpty);
+    });
+
+    test('the last record for a message wins', () async {
+      stubHistory([
+        page([
+          {
+            'id': '5001',
+            'messagesAdded': [
+              {'message': {'id': 'm1', 'labelIds': ['INBOX', 'UNREAD']}},
+            ],
+          },
+          {
+            'id': '5002',
+            'labelsAdded': [
+              {
+                'message': {'id': 'm1', 'labelIds': ['INBOX', 'TRASH']},
+                'labelIds': ['TRASH'],
+              },
+            ],
+          },
+        ]),
+      ]);
+
+      final result = await datasource.syncMailDelta('inbox', deltaLink: '5000');
+
+      expect(result.movedOutIds, ['m1']);
+      expect(result.upserted, isEmpty,
+          reason: 'arrived and was trashed inside one page');
+    });
+
+    test('pages to completion and carries the page token', () async {
+      stubHistory([
+        page([
+          {
+            'id': '5001',
+            'messagesAdded': [
+              {'message': {'id': 'm1', 'labelIds': ['INBOX']}},
+            ],
+          },
+        ], nextPageToken: 'tok2'),
+        page([
+          {
+            'id': '5002',
+            'messagesAdded': [
+              {'message': {'id': 'm2', 'labelIds': ['INBOX']}},
+            ],
+          },
+        ], historyId: '5400'),
+      ]);
+
+      final result = await datasource.syncMailDelta('inbox', deltaLink: '5000');
+
+      expect(historyQueries, hasLength(2));
+      expect(historyQueries.first.containsKey('pageToken'), isFalse);
+      expect(historyQueries[1]['pageToken'], 'tok2');
+      expect(result.upserted.map((e) => e.id).toSet(), {'m1', 'm2'});
+      expect(result.deltaLink, '5400');
+    });
+
+    test('a walk cut short by the page budget resumes from the last record',
+        () async {
+      // Every page hands back a token, so the budget is what ends the walk. The
+      // cursor then has to be the last record read: the mailbox's current
+      // historyId means "now", so storing that would skip everything the walk
+      // did not reach, permanently.
+      stubHistory([
+        for (var i = 1; i <= 10; i++)
+          page([
+            {
+              'id': '60${i.toString().padLeft(2, '0')}',
+              'messagesAdded': [
+                {'message': {'id': 'm$i', 'labelIds': ['INBOX']}},
+              ],
+            },
+          ], historyId: '9999', nextPageToken: 'tok$i'),
+      ]);
+
+      final result = await datasource.syncMailDelta('inbox', deltaLink: '5000');
+
+      expect(historyQueries, hasLength(10));
+      expect(result.deltaLink, '6010');
+      expect(result.upserted, hasLength(10));
+    });
+
+    test('too much changed is fatal rather than quietly truncated', () async {
+      stubHistory([
+        page([
+          {
+            'id': '5001',
+            'messagesAdded': [
+              for (var i = 0; i < 251; i++)
+                {'message': {'id': 'm$i', 'labelIds': ['INBOX']}},
+            ],
+          },
+        ]),
+      ]);
+
+      await expectLater(
+        datasource.syncMailDelta('inbox', deltaLink: '5000'),
+        // No status code, which the poller treats as "drop the cursor and
+        // re-bootstrap" — the one recovery that does not lose changes. Fetching
+        // several hundred messages is not worth it and dropping the surplus
+        // while the cursor advances past it is the bug this path removes.
+        throwsA(isA<ServerException>()
+            .having((e) => e.statusCode, 'statusCode', isNull)),
+      );
+    });
+
+    test('an expired startHistoryId is a 404 the poller can recover from',
+        () async {
+      when(mockDio.get<String>(
+        any,
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((_) async => throw DioException(
+            requestOptions: RequestOptions(path: '/users/me/history'),
+            response: Response(
+              statusCode: 404,
+              requestOptions: RequestOptions(path: '/users/me/history'),
+            ),
+          ));
+
+      await expectLater(
+        datasource.syncMailDelta('inbox', deltaLink: '1'),
+        throwsA(isA<ServerException>()
+            .having((e) => e.statusCode, 'statusCode', 404)),
+      );
+    });
+
+    test('a message whose re-fetch fails is skipped, not fatal', () async {
+      stubHistory([
+        page([
+          {
+            'id': '5001',
+            'messagesAdded': [
+              {'message': {'id': 'm1', 'labelIds': ['INBOX']}},
+              {'message': {'id': 'm2', 'labelIds': ['INBOX']}},
+            ],
+          },
+        ]),
+      ]);
+      // Re-stub the message fetch for m1 only; m2's fetch throws.
+      when(mockDio.get<String>(
+        '/users/me/messages/m2',
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((_) async => throw DioException(
+            requestOptions: RequestOptions(path: '/users/me/messages/m2'),
+            type: DioExceptionType.connectionError,
+          ));
+
+      final result = await datasource.syncMailDelta('inbox', deltaLink: '5000');
+
+      expect(result.upserted.map((e) => e.id), ['m1']);
     });
   });
 }

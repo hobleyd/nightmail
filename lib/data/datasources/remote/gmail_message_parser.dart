@@ -169,6 +169,188 @@ List<EmailModel> parseGmailMetadataMessages(List<String?> rawBodies) {
   return out;
 }
 
+/// Inputs for [parseGmailHistoryPages].
+class GmailHistoryParseParams {
+  const GmailHistoryParseParams({
+    required this.rawPages,
+    required this.folderLabelId,
+  });
+
+  /// Undecoded `users.history.list` page bodies, in the order they arrived.
+  final List<String> rawPages;
+
+  /// The label whose membership is being synced — Gmail's `INBOX`, or a user
+  /// label's id. A history feed is mailbox-wide, so this is what turns it into
+  /// a per-folder answer.
+  final String folderLabelId;
+}
+
+/// What one `users.history.list` run says changed for a single label.
+///
+/// Ids, not messages: a history record carries only `id`, `threadId` and
+/// `labelIds`, so anything that has to be cached needs its own metadata fetch —
+/// which the isolate cannot make. Reported as three disjoint lists so the caller
+/// fetches exactly the ids it is going to keep.
+class GmailHistoryChanges {
+  const GmailHistoryChanges({
+    required this.upsertedIds,
+    required this.removedIds,
+    required this.movedOutIds,
+    this.currentHistoryId,
+    this.lastRecordId,
+  });
+
+  /// Messages that now belong in the folder, or whose state changed while they
+  /// were in it. Need a metadata fetch before they can be cached.
+  final List<String> upsertedIds;
+
+  /// Messages gone from the mailbox outright (`messagesDeleted`).
+  final List<String> removedIds;
+
+  /// Messages that have left this label but still exist — archived, filed,
+  /// trashed. See `MailDeltaResult.movedOutIds` for why the two are apart.
+  final List<String> movedOutIds;
+
+  /// The mailbox's current `historyId`, taken from the last page. The cursor to
+  /// store when every page was read.
+  final String? currentHistoryId;
+
+  /// The id of the last history *record* seen — the cursor to store instead when
+  /// paging was cut short, since [currentHistoryId] is the mailbox's id *now*
+  /// and would skip whatever was not paged through.
+  final String? lastRecordId;
+}
+
+/// Folds every history page into one per-folder answer. `compute()` entry point.
+///
+/// Batched for the same reason the thread parse is: one isolate per run, not one
+/// per page. Paging itself stays on the calling isolate — the next request needs
+/// this page's token — which is why the pages arrive here already collected.
+GmailHistoryChanges parseGmailHistoryPages(GmailHistoryParseParams params) {
+  final label = params.folderLabelId;
+  // Trash and Spam are labels like any other, so "added to Trash" only means
+  // "left this folder" when the folder being synced is not Trash itself.
+  final elsewhere = label == 'TRASH' || label == 'SPAM'
+      ? const <String>{}
+      : const {'TRASH', 'SPAM'};
+
+  // One verdict per message id, last record wins: history is chronological, so
+  // a message that arrived and was then trashed inside the same page has to end
+  // up moved-out rather than upserted, and a delete must outrank the label
+  // changes that preceded it.
+  final verdicts = <String, _GmailHistoryVerdict>{};
+  String? currentHistoryId;
+  String? lastRecordId;
+
+  for (final raw in params.rawPages) {
+    Map<String, dynamic> page;
+    try {
+      page = jsonDecode(raw) as Map<String, dynamic>;
+    } catch (_) {
+      // A page that will not decode loses that page, not the whole sync.
+      continue;
+    }
+    currentHistoryId = page['historyId']?.toString() ?? currentHistoryId;
+
+    for (final record
+        in (page['history'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>()) {
+      lastRecordId = record['id']?.toString() ?? lastRecordId;
+
+      for (final m in _historyMessages(record['messagesAdded'])) {
+        // The record carries the message's own labels, so mail that arrived in
+        // another folder is skipped here rather than fetched and thrown away.
+        if (_labelsOf(m).contains(label)) {
+          verdicts[_historyId(m)] = _GmailHistoryVerdict.upsert;
+        }
+      }
+
+      for (final m in _historyMessages(record['messagesDeleted'])) {
+        verdicts[_historyId(m)] = _GmailHistoryVerdict.removed;
+      }
+
+      for (final entry in _historyEntries(record['labelsAdded'])) {
+        final m = entry['message'] as Map<String, dynamic>?;
+        if (m == null) continue;
+        final added = (entry['labelIds'] as List<dynamic>? ?? []).cast<String>();
+        // Gaining the folder's own label *is* the arrival: this is the whole of
+        // a cross-folder move and of "filed under a label", and neither shows up
+        // as messagesAdded. It has to be an upsert rather than a bare id,
+        // because the row the folder needs (subject, sender, date, snippet) is
+        // not in the history record.
+        if (added.contains(label)) {
+          verdicts[_historyId(m)] = _GmailHistoryVerdict.upsert;
+        } else if (added.any(elsewhere.contains)) {
+          // Trashed or marked spam: still in the mailbox, no longer here.
+          verdicts[_historyId(m)] = _GmailHistoryVerdict.movedOut;
+        } else if (_labelsOf(m).contains(label)) {
+          // Something else changed about a message this folder holds — UNREAD
+          // and STARRED arrive this way, and they are exactly the changes the
+          // old count comparison could not see.
+          verdicts[_historyId(m)] = _GmailHistoryVerdict.upsert;
+        }
+      }
+
+      for (final entry in _historyEntries(record['labelsRemoved'])) {
+        final m = entry['message'] as Map<String, dynamic>?;
+        if (m == null) continue;
+        final removed =
+            (entry['labelIds'] as List<dynamic>? ?? []).cast<String>();
+        if (removed.contains(label)) {
+          // Losing the label is losing membership — archived, or moved on.
+          verdicts[_historyId(m)] = _GmailHistoryVerdict.movedOut;
+        } else if (_labelsOf(m).contains(label)) {
+          // Read, unstarred, restored from Trash: re-fetch and rewrite the row.
+          verdicts[_historyId(m)] = _GmailHistoryVerdict.upsert;
+        }
+      }
+    }
+  }
+
+  final upsertedIds = <String>[];
+  final removedIds = <String>[];
+  final movedOutIds = <String>[];
+  verdicts.forEach((id, verdict) {
+    if (id.isEmpty) return;
+    switch (verdict) {
+      case _GmailHistoryVerdict.upsert:
+        upsertedIds.add(id);
+      case _GmailHistoryVerdict.removed:
+        removedIds.add(id);
+      case _GmailHistoryVerdict.movedOut:
+        movedOutIds.add(id);
+    }
+  });
+
+  return GmailHistoryChanges(
+    upsertedIds: upsertedIds,
+    removedIds: removedIds,
+    movedOutIds: movedOutIds,
+    currentHistoryId: currentHistoryId,
+    lastRecordId: lastRecordId,
+  );
+}
+
+enum _GmailHistoryVerdict { upsert, removed, movedOut }
+
+/// `messagesAdded`/`messagesDeleted` entries, unwrapped to their messages.
+List<Map<String, dynamic>> _historyMessages(dynamic entries) {
+  final out = <Map<String, dynamic>>[];
+  for (final entry in _historyEntries(entries)) {
+    final m = entry['message'];
+    if (m is Map<String, dynamic>) out.add(m);
+  }
+  return out;
+}
+
+List<Map<String, dynamic>> _historyEntries(dynamic entries) =>
+    entries is List ? entries.whereType<Map<String, dynamic>>().toList() : const [];
+
+String _historyId(Map<String, dynamic> message) =>
+    message['id'] as String? ?? '';
+
+List<String> _labelsOf(Map<String, dynamic> message) =>
+    (message['labelIds'] as List<dynamic>? ?? []).cast<String>();
+
 /// Decodes an `/attachments/{id}` response body to bytes. `compute()` entry
 /// point — base64 of a multi-megabyte image is exactly the kind of synchronous
 /// work that must not run on the UI isolate.

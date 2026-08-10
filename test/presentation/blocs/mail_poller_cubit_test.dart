@@ -176,6 +176,7 @@ void main() {
     when(mockEmailLocalDatasource.deleteEmailFromCache(
       accountId: anyNamed('accountId'),
       emailId: anyNamed('emailId'),
+      evictInlineAttachments: anyNamed('evictInlineAttachments'),
     )).thenAnswer((_) async {});
     when(mockNotificationService.showNewMailNotification(
       accountLabel: anyNamed('accountLabel'),
@@ -706,6 +707,55 @@ void main() {
   // aggregate alert, with a graceful fallback if that fetch fails.
   // ---------------------------------------------------------------------------
 
+  // ---------------------------------------------------------------------------
+  // A background account's cache must move too.
+  //
+  // Regression: a non-active account had nothing but a boolean "has new mail"
+  // flag toggled — no cache write of any kind — so switching to it showed rows
+  // frozen at whenever it was last selected until a manual refresh landed.
+  // ---------------------------------------------------------------------------
+
+  group('MailPollerCubit — non-active account caching', () {
+    late MockEmailRemoteDatasource mockGmailDs;
+
+    setUp(() {
+      mockGmailDs = MockEmailRemoteDatasource();
+      when(mockAccountManager.accounts).thenReturn([_gmailAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(null);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(mockGmailDs);
+    });
+
+    test('replaces a background account\'s inbox cache on a count change',
+        () async {
+      var callCount = 0;
+      when(mockGmailDs.getMailFolders()).thenAnswer((_) async {
+        callCount++;
+        return [_inbox(unread: callCount == 1 ? 1 : 4)];
+      });
+      when(mockGmailDs.getEmails(
+              folderId: anyNamed('folderId'), top: anyNamed('top')))
+          .thenAnswer((_) async => [_email('bg-1')]);
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+      await cubit.updatePollInterval(9999);
+      await pumpEventQueue();
+
+      verify(mockEmailLocalDatasource.cacheEmails(
+        accountId: _gmailAccount.id,
+        folderId: 'inbox-id',
+        emails: anyNamed('emails'),
+        replaceFolder: true,
+      )).called(greaterThanOrEqualTo(1));
+      // Not the active account, so nothing tells the UI to repaint from it.
+      expect(cubit.state.syncedFolderIds, isEmpty);
+    });
+  });
+
   group('MailPollerCubit — Gmail non-active account, new unread mail', () {
     late MockEmailRemoteDatasource mockGmailDs;
 
@@ -1210,6 +1260,161 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
+  // The delta stream must always have a way back.
+  //
+  // Regression: only a 410 cleared a stored delta token, and the token lives in
+  // a persistent table. So a link Graph answers 400 or 404 — Graph escapes its
+  // own separators inside a delta link, so a stored one can be rejected
+  // outright — left the account fetching nothing, caching nothing and bumping
+  // nothing on every cycle for the rest of the install's life, silently.
+  // ---------------------------------------------------------------------------
+
+  group('MailPollerCubit — delta recovery', () {
+    setUp(() {
+      when(mockAccountManager.accounts).thenReturn([_msAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(_msAccount);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(mockGraphDs);
+      when(mockDatabase.loadDeltaToken(any, any))
+          .thenAnswer((_) async => _savedToken);
+      when(mockGraphDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: 3)]);
+    });
+
+    for (final status in [400, 404, 410]) {
+      test('a $status from syncMailDelta clears the stored token', () async {
+        when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
+            .thenThrow(ServerException(
+                message: 'rejected', statusCode: status));
+
+        final cubit = _makeCubit();
+        addTearDown(cubit.close);
+
+        await cubit.initialize();
+        await pumpEventQueue();
+
+        verify(mockDatabase.clearDeltaTokensForAccount(_msAccount.id))
+            .called(1);
+        expect(cubit.state.lastPollErrors, contains(_msAccount.id));
+      });
+    }
+
+    // "Delta query completed without returning a delta link" arrives with no
+    // status at all, and was the one case that could never recover.
+    test('a status-less ServerException clears the stored token', () async {
+      when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
+          .thenThrow(const ServerException(message: 'no delta link'));
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      verify(mockDatabase.clearDeltaTokensForAccount(_msAccount.id)).called(1);
+    });
+
+    // A failure with no recognised status must not be permanent either.
+    test('three consecutive unrecognised failures clear the token', () async {
+      when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
+          .thenThrow(Exception('transport blew up'));
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+      verifyNever(mockDatabase.clearDeltaTokensForAccount(any));
+
+      await cubit.updatePollInterval(9999);
+      await pumpEventQueue();
+      verifyNever(mockDatabase.clearDeltaTokensForAccount(any));
+
+      await cubit.updatePollInterval(9998);
+      await pumpEventQueue();
+      verify(mockDatabase.clearDeltaTokensForAccount(_msAccount.id)).called(1);
+    });
+
+    // A delta link is a one-shot receipt. Advancing it before the page it
+    // acknowledges has been applied loses those changes for good: the next cycle
+    // asks from the new link and is told nothing has changed.
+    test('does not save the delta token when the cache write fails', () async {
+      when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
+          .thenAnswer((_) async => MailDeltaResult(
+                upserted: [_email('new-msg')],
+                removedIds: const [],
+                deltaLink: _newToken,
+              ));
+      when(mockEmailLocalDatasource.cacheEmails(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+        emails: anyNamed('emails'),
+        replaceFolder: anyNamed('replaceFolder'),
+      )).thenThrow(Exception('disk full'));
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      verifyNever(mockDatabase.saveDeltaToken(any, any, _newToken));
+    });
+
+    // The list repaints from cache as soon as pollGeneration bumps, so a removal
+    // still in flight would let a message deleted elsewhere survive the repaint.
+    test('deletes removed ids before emitting pollGeneration', () async {
+      when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
+          .thenAnswer((_) async => MailDeltaResult(
+                upserted: const [],
+                removedIds: const ['gone-1'],
+                deltaLink: _newToken,
+              ));
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+      final generationSeen = <int>[];
+      cubit.stream.listen((s) => generationSeen.add(s.pollGeneration));
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      verifyInOrder([
+        mockEmailLocalDatasource.deleteEmailFromCache(
+          accountId: _msAccount.id,
+          emailId: 'gone-1',
+        ),
+        mockBadgeService.setBadgeCount(any),
+      ]);
+      expect(generationSeen, isNotEmpty);
+    });
+
+    // A move, not a delete: the message still exists, so its cached inline
+    // images must not be thrown away for the destination folder to re-download.
+    test('a moved-out message keeps its cached inline images', () async {
+      when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
+          .thenAnswer((_) async => MailDeltaResult(
+                upserted: const [],
+                removedIds: const [],
+                movedOutIds: const ['moved-1'],
+                deltaLink: _newToken,
+              ));
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      verify(mockEmailLocalDatasource.deleteEmailFromCache(
+        accountId: _msAccount.id,
+        emailId: 'moved-1',
+        evictInlineAttachments: false,
+      )).called(1);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // markAccountViewed
   // ---------------------------------------------------------------------------
 
@@ -1250,6 +1455,179 @@ void main() {
   // ---------------------------------------------------------------------------
   // Auth failures must surface instead of being silently swallowed
   // ---------------------------------------------------------------------------
+
+  // ---------------------------------------------------------------------------
+  // A poll that fails must not look like a quiet mailbox.
+  //
+  // Regression: every failure other than a 410 hit a bare `catch (_)`. The
+  // account wrote no cache, bumped no generation, raised no banner and logged
+  // nothing — so a *deterministic* failure (a stored delta link the server
+  // answers 400, a delta response carrying no delta link) persisted across
+  // restarts with mail simply never updating.
+  // ---------------------------------------------------------------------------
+
+  group('MailPollerCubit — failure reporting', () {
+    late MockEmailRemoteDatasource mockGmailDs;
+
+    setUp(() {
+      mockGmailDs = MockEmailRemoteDatasource();
+      when(mockAccountManager.accounts).thenReturn([_gmailAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(_gmailAccount);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(mockGmailDs);
+    });
+
+    test('records a per-account error and still stamps lastPollAt', () async {
+      when(mockGmailDs.getMailFolders())
+          .thenThrow(Exception('connection reset'));
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      expect(cubit.state.lastPollErrors, contains(_gmailAccount.id));
+      expect(cubit.state.lastPollErrors[_gmailAccount.id],
+          contains('connection reset'));
+      expect(cubit.state.hasPollErrors, isTrue);
+      expect(cubit.state.lastPollAt, isNotNull);
+    });
+
+    test('a successful cycle clears the previous cycle\'s errors', () async {
+      var callCount = 0;
+      when(mockGmailDs.getMailFolders()).thenAnswer((_) async {
+        callCount++;
+        if (callCount == 1) throw Exception('transient');
+        return [_inbox(unread: 1)];
+      });
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+      expect(cubit.state.hasPollErrors, isTrue);
+
+      await cubit.updatePollInterval(9999);
+      await pumpEventQueue();
+
+      expect(cubit.state.lastPollErrors, isEmpty);
+    });
+
+    // The offline branch returns before the cycle runs, so it has to stamp the
+    // state itself — a probe stuck on offline is otherwise indistinguishable
+    // from a mailbox with nothing in it, and `onReconnected` needs a false→true
+    // edge a stuck probe never produces.
+    test('reports being skipped while offline', () async {
+      when(mockConnectivityService.isOnline).thenAnswer((_) async => false);
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      expect(cubit.state.hasPollErrors, isTrue);
+      expect(cubit.state.lastPollErrors.values.join(), contains('offline'));
+      expect(cubit.state.lastPollAt, isNotNull);
+    });
+
+    // Regression: `_polling = true` was latched before the try whose finally
+    // cleared it, with drainAll() in between. One throw there stopped polling
+    // for every account for the lifetime of the process.
+    test('a throwing outbox drain does not stop the next cycle polling',
+        () async {
+      when(mockOutboxDrainService.drainAll())
+          .thenThrow(Exception('drain exploded'));
+      when(mockGmailDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: 2)]);
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+      await cubit.updatePollInterval(9999);
+      await pumpEventQueue();
+
+      // Two cycles reached the provider, so _polling was released each time.
+      verify(mockGmailDs.getMailFolders()).called(2);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // The folder on screen is synced too, and the UI is told which folders a
+  // repaint-from-cache is valid for.
+  // ---------------------------------------------------------------------------
+
+  group('MailPollerCubit — watched folder', () {
+    late MockEmailRemoteDatasource mockGmailDs;
+
+    setUp(() {
+      mockGmailDs = MockEmailRemoteDatasource();
+      when(mockAccountManager.accounts).thenReturn([_gmailAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(_gmailAccount);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(mockGmailDs);
+      when(mockGmailDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: 3)]);
+    });
+
+    test('fetches and replaces the cache of the folder on screen', () async {
+      when(mockGmailDs.getEmails(
+              folderId: anyNamed('folderId'), top: anyNamed('top')))
+          .thenAnswer((_) async => [_email('archived-1')]);
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      // Selecting a folder polls straight away rather than leaving the user on
+      // a cache that may be a whole interval old.
+      cubit.setWatchedFolder('archive-id');
+      await pumpEventQueue();
+
+      verify(mockGmailDs.getEmails(folderId: 'archive-id', top: 25)).called(1);
+      verify(mockEmailLocalDatasource.cacheEmails(
+        accountId: _gmailAccount.id,
+        folderId: 'archive-id',
+        emails: anyNamed('emails'),
+        replaceFolder: true,
+      )).called(1);
+      expect(cubit.state.syncedFolderIds, contains('archive-id'));
+    });
+
+    // The Inbox is synced every cycle whether or not it is showing, so naming it
+    // as the watched folder must not fetch it twice.
+    test('does not double-sync when the Inbox is the folder on screen',
+        () async {
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      cubit.setWatchedFolder('inbox-id');
+      await pumpEventQueue();
+
+      verifyNever(mockGmailDs.getEmails(folderId: 'inbox-id', top: 25));
+    });
+
+    // A repaint is only valid for a folder whose cache this cycle actually
+    // wrote; the UI reads this to decide cache-repaint versus network refresh.
+    test('reports no synced folders when nothing changed', () async {
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      expect(cubit.state.syncedFolderIds, isEmpty);
+    });
+  });
 
   group('MailPollerCubit — auth failure handling', () {
     late MockEmailRemoteDatasource mockGmailDs;

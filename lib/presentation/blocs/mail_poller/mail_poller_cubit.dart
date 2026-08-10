@@ -7,13 +7,15 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/error/exceptions.dart';
+import '../../../core/platform/window_utils.dart';
 import '../../../core/settings/app_settings.dart';
 import '../../../data/datasources/local/delta_token_datasource.dart';
 import '../../../data/datasources/local/email_local_datasource.dart';
 import '../../../data/datasources/local/folder_local_datasource.dart';
 import '../../../data/datasources/local/pending_operations_datasource.dart';
 import '../../../data/datasources/remote/email_remote_datasource.dart';
-import '../../../data/datasources/remote/graph_delta_datasource.dart';
+import '../../../data/datasources/remote/imap_datasource_impl.dart';
+import '../../../data/datasources/remote/mail_delta_datasource.dart';
 import '../../../data/datasources/remote/spam_db_sync_datasource.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/email_folder.dart';
@@ -100,6 +102,11 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   /// per-account handlers.
   final Map<String, int> _bootstrapFailures = {};
 
+  /// One subscription per IMAP account to its datasource's change stream, so a
+  /// server push turns into a poll. Kept for the cubit's lifetime — the stream
+  /// belongs to the datasource, which AccountManager caches per account.
+  final Map<String, StreamSubscription<String>> _idleSubs = {};
+
   /// Per-account failure from the current cycle, published on the state.
   final Map<String, String> _errors = {};
 
@@ -141,6 +148,11 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   /// folder's real id, so tokens issued before per-folder watching stay valid
   /// instead of forcing every account to re-bootstrap on upgrade.
   static const _inboxWellKnownName = 'inbox';
+
+  /// Appended to a folder id to key its persisted IMAP UIDVALIDITY in the
+  /// delta-token store, so it cannot be mistaken for a delta cursor. `#` cannot
+  /// appear in a Graph folder id or an IMAP mailbox path.
+  static const _uidValiditySuffix = '#uidvalidity';
 
   static String _folderKey(String accountId, String folderId) =>
       '$accountId|$folderId';
@@ -309,6 +321,13 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     final previousNewMailAccounts = Set<String>.of(_newMailAccounts);
     _errors.clear();
 
+    // Accounts that took the delta branch this cycle. The aggregate new-mail
+    // toast at the tail must skip them, because the delta branch already raised
+    // a notification per message with a real subject and sender. This used to be
+    // an `is MicrosoftAccount` test, which became silently wrong the moment
+    // Gmail gained a delta path of its own.
+    final deltaSyncedAccounts = <String>{};
+
     // Replays any queued offline mutations, and awaits it before syncing
     // server state below — draining first means a locally-queued delete or
     // mark-read has already reached the server by the time the delta/list
@@ -346,6 +365,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
       /// "the user is on the Inbox" (already synced) from a real second folder.
       final inboxIdByAccount = <String, String>{};
 
+
       // Full-body prefetch jobs collected as new mail is cached this cycle,
       // then run after the UI-refresh emit below (see the tail of the try).
       // Deferred rather than run inline so the list still repaints from the
@@ -366,8 +386,14 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
           if (_reauthAccounts.remove(account.id)) changed = true;
           final ds = _accountManager.buildEmailDatasourceForAccount(account);
 
-          if (account is MicrosoftAccount && ds is GraphDeltaDatasource) {
-            final deltaDs = ds as GraphDeltaDatasource;
+          // Any provider that can answer "what changed" takes the delta path —
+          // Graph via its delta link, Gmail via users.history.list. Both store
+          // their cursor under the same ('inbox') key: the Gmail datasource
+          // resolves that name to the INBOX label itself, so there is no
+          // per-provider key logic and no migration.
+          if (ds is MailDeltaDatasource) {
+            final deltaDs = ds as MailDeltaDatasource;
+            deltaSyncedAccounts.add(account.id);
             final savedToken =
                 await _database.loadDeltaToken(account.id, 'inbox');
 
@@ -426,16 +452,21 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                 // separate network round-trip. Awaited: pollGeneration bumps
                 // right after this loop and the list repaints from cache, so
                 // the write must land first.
-                await _cacheUpserted(account.id, result.upserted);
+                await _cacheUpserted(
+                  account.id,
+                  result.upserted,
+                  inboxFolderId: inboxIdByAccount[account.id],
+                );
                 if (result.upserted.isNotEmpty) {
                   // Newly-arrived delta messages carry only bodyPreview — queue
                   // a background body fetch so opening them is instant. Not
-                  // done in the null-token bootstrap path, which pulls 30 days
-                  // of mail and would flood the network.
+                  // done in the null-token bootstrap path, whose first pass can
+                  // run to a page budget and would flood the network.
                   prefetchJobs.add((
                     accountId: account.id,
                     datasource: ds,
-                    folderId: 'inbox',
+                    folderId: inboxIdByAccount[account.id] ??
+                        _inboxWellKnownName,
                     emails: result.upserted,
                   ));
                 }
@@ -447,6 +478,16 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                   await _emailLocalDatasource.deleteEmailFromCache(
                     accountId: account.id,
                     emailId: removedId,
+                  );
+                }
+                // A move, not a delete: the message is still in the mailbox, so
+                // its cached inline images stay put rather than being downloaded
+                // again the first time the destination folder is opened.
+                for (final movedId in result.movedOutIds) {
+                  await _emailLocalDatasource.deleteEmailFromCache(
+                    accountId: account.id,
+                    emailId: movedId,
+                    evictInlineAttachments: false,
                   );
                 }
 
@@ -534,6 +575,9 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
             if (inboxes.isEmpty) continue;
             inboxIdByAccount[account.id] = inboxes.first.id;
             await _persistFolderCounts(account.id, folders);
+            // Before anything reads or writes this account's cache: the
+            // getMailFolders above is what supplies the UIDVALIDITY readings.
+            await _dropCacheForRebuiltImapFolders(account.id, ds);
             final unreadCount = inboxes.first.unreadItemCount;
             _latestPolledUnread[account.id] = unreadCount;
 
@@ -764,17 +808,22 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
           }
         }
       }
+
+      // Last, so nothing in the cycle has to wait for IDLE to hand the
+      // connection back.
+      _startIdleWatches(inboxIdByAccount);
     }
 
     // Windows/Linux have no OS-level badge/dock affordance for background
     // accounts the way macOS (dock badge) and mobile (background isolate +
     // WorkManager notification) do, so the foreground poller raises a toast
-    // itself here. Excludes MicrosoftAccount: once it has a delta token, the
-    // per-account loop above already calls showEmailNotification with actual
-    // message detail for it — this aggregate fallback would double-notify.
+    // itself here. Skips any account that took the delta branch this cycle:
+    // that branch already called showEmailNotification with real message
+    // detail, so this aggregate fallback would double-notify.
     if (wasInitialized && (Platform.isWindows || Platform.isLinux)) {
       final newlyFlagged = _newMailAccounts.difference(previousNewMailAccounts);
       for (final accountId in newlyFlagged) {
+        if (deltaSyncedAccounts.contains(accountId)) continue;
         Account? account;
         for (final a in _accountManager.accounts) {
           if (a.id == accountId) {
@@ -782,7 +831,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
             break;
           }
         }
-        if (account == null || account is MicrosoftAccount) continue;
+        if (account == null) continue;
         unawaited(_notifyNewMail(account));
       }
     }
@@ -856,6 +905,102 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
       // Never fail a poll over the folder cache — the counts are still correct
       // in memory for the badge, and the next cycle retries.
       debugPrint('[MailPoller] $accountId: folder count cache write failed: $e');
+    }
+  }
+
+  /// Puts every IMAP account's connection into IDLE on the folder being watched,
+  /// so a change made elsewhere arrives in seconds instead of at the next tick.
+  ///
+  /// Called at the end of a cycle rather than the start: IDLE holds the
+  /// connection, and although the datasource yields it the moment another caller
+  /// queues, there is no reason to make the cycle's own fetches wait behind that
+  /// handover. The watcher stops itself on any failure, so calling this every
+  /// cycle *is* the recovery path — it is idempotent and re-selects when the
+  /// folder changes.
+  ///
+  /// Main window only, and that is enforced inside `startIdleWatch` too: a
+  /// sub-window must not own a long-lived connection (see the sub-window rules
+  /// in CLAUDE.md).
+  void _startIdleWatches(Map<String, String> inboxIdByAccount) {
+    if (!AppWindow.isMain) return;
+    final activeId = _accountManager.activeAccount?.id;
+    for (final account in _accountManager.accounts) {
+      if (account is! ImapAccount) continue;
+      final EmailRemoteDatasource ds;
+      try {
+        ds = _accountManager.buildEmailDatasourceForAccount(account);
+      } catch (_) {
+        continue;
+      }
+      if (ds is! ImapDatasourceImpl) continue;
+      // Captured into its own local because the promotion above does not reach
+      // inside the closure below.
+      final imapDs = ds;
+
+      // Watch what the user is looking at, falling back to the Inbox — the same
+      // choice the cycle itself makes about which folders to sync.
+      final watched = account.id == activeId ? _watchedFolderId : null;
+      final path = watched ?? inboxIdByAccount[account.id];
+      if (path == null) continue;
+
+      _idleSubs.putIfAbsent(
+        account.id,
+        () => imapDs.mailboxChanges.listen(
+          (changedPath) {
+            debugPrint('[MailPoller] ${account.id}: IMAP reported a change in '
+                '$changedPath — polling now');
+            _poll();
+          },
+          onError: (Object e) => debugPrint(
+              '[MailPoller] ${account.id}: IMAP change stream failed: $e'),
+        ),
+      );
+      imapDs.startIdleWatch(path);
+    }
+  }
+
+  /// Drops the cached rows of any IMAP folder the server has rebuilt.
+  ///
+  /// An IMAP message's identity here is `'$folderId:$uid'`, and a UID is only
+  /// unique within one *incarnation* of a mailbox. When a server rebuilds one it
+  /// issues a new UIDVALIDITY and starts UIDs again, so every cached row for
+  /// that folder now names a different message — the same id, silently pointing
+  /// somewhere else. Nothing detected that before: the STATUS reply carried
+  /// UIDVALIDITY and it was discarded.
+  ///
+  /// The reading is persisted rather than kept in memory because the cache
+  /// outlives the process: a rebuild while NightMail was closed is exactly the
+  /// case an in-memory comparison cannot see. It goes in the delta-token store,
+  /// which is already a keyed string of "where this folder's sync got to", under
+  /// a suffixed key so it cannot collide with a real delta cursor.
+  Future<void> _dropCacheForRebuiltImapFolders(
+    String accountId,
+    EmailRemoteDatasource ds,
+  ) async {
+    if (ds is! ImapDatasourceImpl) return;
+    for (final entry in ds.folderStatuses.entries) {
+      final uidValidity = entry.value.uidValidity;
+      if (uidValidity == null) continue;
+      final key = '${entry.key}$_uidValiditySuffix';
+      final current = '$uidValidity';
+      try {
+        final stored = await _database.loadDeltaToken(accountId, key);
+        if (stored == current) continue;
+        if (stored != null) {
+          debugPrint('[MailPoller] $accountId/${entry.key}: UIDVALIDITY '
+              '$stored -> $current, mailbox was rebuilt — dropping its cache');
+          await _emailLocalDatasource.clearCacheForFolder(
+            accountId: accountId,
+            folderId: entry.key,
+          );
+        }
+        await _database.saveDeltaToken(accountId, key, current);
+      } catch (e) {
+        // Never fail a poll over this. Leaving the stored value alone means the
+        // next cycle tries again rather than concluding all is well.
+        debugPrint('[MailPoller] $accountId/${entry.key}: UIDVALIDITY check '
+            'failed: $e');
+      }
     }
   }
 
@@ -959,7 +1104,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   /// token. Runs in the background so it does not block the poll cycle.
   Future<void> _bootstrapDeltaToken(
     String accountId,
-    GraphDeltaDatasource ds,
+    MailDeltaDatasource ds,
   ) async {
     if (_bootstrapping.contains(accountId)) return;
     _bootstrapping.add(accountId);
@@ -1131,6 +1276,10 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _reconnectSub?.cancel();
+    for (final sub in _idleSubs.values) {
+      sub.cancel();
+    }
+    _idleSubs.clear();
     return super.close();
   }
 }

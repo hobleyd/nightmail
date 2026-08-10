@@ -22,6 +22,7 @@ class EmailDetailBloc extends Bloc<EmailDetailEvent, EmailDetailState> {
         _accountManager = accountManager,
         super(const EmailDetailInitial()) {
     on<EmailDetailLoadRequested>(_onLoadRequested);
+    on<EmailDetailRefreshRequested>(_onRefreshRequested);
     on<EmailDetailLoadedFromEml>(_onLoadedFromEml);
     on<EmailDetailCleared>(_onCleared);
     on<EmailDetailMergeSenderRequested>(_onMergeSenderRequested);
@@ -68,6 +69,38 @@ class EmailDetailBloc extends Bloc<EmailDetailEvent, EmailDetailState> {
             : null;
         if (_latestRequestedEmailId != event.emailId) return;
         emit(EmailDetailLoaded(email: email, senderAnomaly: senderAnomaly));
+      },
+    );
+  }
+
+  Future<void> _onRefreshRequested(
+    EmailDetailRefreshRequested event,
+    Emitter<EmailDetailState> emit,
+  ) async {
+    final current = state;
+    // Only the message on screen can be refreshed in place — anything else is
+    // a stale signal from a list that has moved on, or an attempt to open a
+    // message this event deliberately isn't a route to.
+    if (current is! EmailDetailLoaded || current.email.id != event.emailId) {
+      return;
+    }
+    // Deliberately no Loading emit: this runs off a background poll and a
+    // spinner would take a perfectly readable message off screen mid-read.
+    // GetEmail serves a cached full copy without a network call, which is what
+    // the poll has just rewritten the read/flag/folder state of.
+    final result = await _getEmail(GetEmailParams(id: event.emailId));
+    result.fold(
+      // A refresh that fails changes nothing. Replacing a message the user is
+      // reading with an error because a background fetch went wrong would be
+      // worse than showing it a cycle out of date.
+      (_) {},
+      (email) {
+        final s = state;
+        if (s is! EmailDetailLoaded || s.email.id != event.emailId) return;
+        // The sender's name and address are what the anomaly check was run
+        // against, and neither can change under a refresh — carry it over
+        // rather than pay for it again.
+        emit(EmailDetailLoaded(email: email, senderAnomaly: s.senderAnomaly));
       },
     );
   }

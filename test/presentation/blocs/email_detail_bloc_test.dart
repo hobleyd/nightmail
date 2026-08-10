@@ -19,7 +19,8 @@ import 'package:nightmail/presentation/blocs/email_detail/email_detail_state.dar
 
 import 'email_detail_bloc_test.mocks.dart';
 
-Email _email(String id) => EmailModel(
+Email _email(String id, {bool isRead = true, bool isFlagged = false}) =>
+    EmailModel(
       id: id,
       subject: 'Subject $id',
       from: const EmailAddressModel(address: 'a@b.com'),
@@ -28,7 +29,8 @@ Email _email(String id) => EmailModel(
       bodyPreview: '',
       body: 'body for $id',
       bodyType: EmailBodyType.text,
-      isRead: true,
+      isRead: isRead,
+      isFlagged: isFlagged,
       receivedDateTime: DateTime(2026, 6, 1),
       importance: EmailImportance.normal,
     );
@@ -106,5 +108,62 @@ void main() {
     final loaded = await bloc.stream.firstWhere((s) => s is EmailDetailLoaded)
         as EmailDetailLoaded;
     expect(loaded.email.id, 'email-1');
+  });
+
+  // The pane used to build from this bloc alone, which never heard about a
+  // poll — so a message read, flagged or moved on another machine left it
+  // showing a stale copy, and the folder-count deltas its delete sends were
+  // computed from that copy.
+  group('EmailDetailRefreshRequested', () {
+    Future<void> open(String id) async {
+      when(mockGetEmail(GetEmailParams(id: id)))
+          .thenAnswer((_) async => Right(_email(id)));
+      bloc.add(EmailDetailLoadRequested(emailId: id));
+      await bloc.stream.firstWhere((s) => s is EmailDetailLoaded);
+    }
+
+    test('replaces the open message in place, without a loading state',
+        () async {
+      await open('email-1');
+      when(mockGetEmail(const GetEmailParams(id: 'email-1'))).thenAnswer(
+          (_) async => Right(_email('email-1', isRead: false, isFlagged: true)));
+
+      final seen = <EmailDetailState>[];
+      final sub = bloc.stream.listen(seen.add);
+      bloc.add(const EmailDetailRefreshRequested(emailId: 'email-1'));
+      await pumpEventQueue();
+      await sub.cancel();
+
+      expect(seen.whereType<EmailDetailLoading>(), isEmpty,
+          reason: 'a spinner would take the message off screen mid-read');
+      final state = bloc.state as EmailDetailLoaded;
+      expect(state.email.isFlagged, isTrue);
+      expect(state.email.isRead, isFalse);
+    });
+
+    test('a failed refresh leaves the message on screen', () async {
+      await open('email-1');
+      when(mockGetEmail(const GetEmailParams(id: 'email-1'))).thenAnswer(
+          (_) async => const Left(NetworkFailure(message: 'No network')));
+
+      bloc.add(const EmailDetailRefreshRequested(emailId: 'email-1'));
+      await pumpEventQueue();
+
+      expect(bloc.state, isA<EmailDetailLoaded>());
+      expect((bloc.state as EmailDetailLoaded).email.id, 'email-1');
+    });
+
+    // A poll can land a beat after the user has opened something else. Refresh
+    // is not a way to open a message, so it must not resurrect the old one.
+    test('a refresh for anything but the open message is ignored', () async {
+      await open('email-1');
+      clearInteractions(mockGetEmail);
+
+      bloc.add(const EmailDetailRefreshRequested(emailId: 'email-2'));
+      await pumpEventQueue();
+
+      verifyNever(mockGetEmail(any));
+      expect((bloc.state as EmailDetailLoaded).email.id, 'email-1');
+    });
   });
 }

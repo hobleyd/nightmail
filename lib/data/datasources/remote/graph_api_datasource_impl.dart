@@ -30,7 +30,7 @@ import '../../models/todo_task_model.dart';
 import 'calendar_remote_datasource.dart';
 import 'contact_bulk_parser.dart';
 import 'email_remote_datasource.dart';
-import 'graph_delta_datasource.dart';
+import 'mail_delta_datasource.dart';
 import 'graph_message_parser.dart';
 import 'tasks_remote_datasource.dart';
 
@@ -97,7 +97,7 @@ class GraphApiDatasourceImpl
         EmailRemoteDatasource,
         CalendarRemoteDatasource,
         TasksRemoteDatasource,
-        GraphDeltaDatasource {
+        MailDeltaDatasource {
   GraphApiDatasourceImpl({required GraphHttpClient client})
       : _dio = client.dio;
 
@@ -2510,6 +2510,7 @@ class GraphApiDatasourceImpl
           return MailDeltaResult(
             upserted: parsed.upserted,
             removedIds: parsed.removedIds,
+            movedOutIds: parsed.movedOutIds,
             deltaLink: link,
           );
         }

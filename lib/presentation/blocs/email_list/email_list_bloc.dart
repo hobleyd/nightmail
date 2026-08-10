@@ -122,11 +122,27 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   /// different folders can resolve out of order.
   int _activeRequestGeneration = 0;
 
+  /// The folder [_onLoadRequested] last asked for. A repaint that arrives while
+  /// the list is in a non-loaded state has no state to read the folder off, so
+  /// it reloads this one.
+  String? _lastLoadedFolderId;
+  String? _lastLoadedFolderName;
+
+  /// A cache repaint that arrived while search results or a focused thread were
+  /// on screen. Repainting from the folder then would wipe out what the user is
+  /// looking at, so the signal is held rather than dropped and applied when the
+  /// folder listing comes back — see [_onSearchCleared] / [_onThreadFocusCleared].
+  bool _pendingCacheRepaint = false;
+
   Future<void> _onLoadRequested(
     EmailListLoadRequested event,
     Emitter<EmailListState> emit,
   ) async {
     _serverOffset = 0;
+    // This load supersedes any repaint owed to a view that is going away.
+    _pendingCacheRepaint = false;
+    _lastLoadedFolderId = event.folderId;
+    _lastLoadedFolderName = event.folderDisplayName;
     final myGeneration = ++_activeRequestGeneration;
     final accountId = _accountManager.activeAccount?.id;
     final folderKey = event.folderId ?? _defaultFolderKey;
@@ -298,6 +314,14 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       await _refreshFocusedThread(prior, emit);
       return;
     }
+    // Search results are not the folder's contents either. HomePage routes a
+    // poll to the cache-refresh event while a search is up, but the manual
+    // Refresh button and the mobile foreground timer both arrive here, so
+    // re-run the query instead of replacing it with the folder listing.
+    if (prior != null && prior.activeSearchQuery != null) {
+      await _refreshSearch(prior, emit);
+      return;
+    }
 
     _serverOffset = 0;
     final myGeneration = _activeRequestGeneration;
@@ -377,11 +401,37 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     Emitter<EmailListState> emit,
   ) async {
     final s = state;
-    if (s is! EmailListLoaded) return;
+    if (s is! EmailListLoaded) {
+      // A load already running will emit on its own account.
+      if (s is EmailListLoading) return;
+      // Nothing on screen to repaint — which is exactly the cold start whose
+      // first fetch failed, sitting on an error with an empty cache. This
+      // signal is the poller saying it has data now, so load the folder
+      // properly rather than discard it.
+      await _onLoadRequested(
+        EmailListLoadRequested(
+          folderId: _lastLoadedFolderId,
+          folderDisplayName: _lastLoadedFolderName,
+        ),
+        emit,
+      );
+      return;
+    }
     // Search results and a focused thread aren't the folder's contents —
     // repainting them from the folder cache would wipe out what the user is
-    // looking at.
-    if (!s.isShowingFolder) return;
+    // looking at. HomePage routes those here on purpose, expecting the repaint
+    // to be deferred rather than lost.
+    if (!s.isShowingFolder) {
+      _pendingCacheRepaint = true;
+      return;
+    }
+    await _repaintFromCache(emit);
+  }
+
+  /// Repaints the list from the current folder's cached rows.
+  Future<void> _repaintFromCache(Emitter<EmailListState> emit) async {
+    final s = state;
+    if (s is! EmailListLoaded) return;
     final accountId = _accountManager.activeAccount?.id;
     if (accountId == null) return;
 
@@ -398,8 +448,25 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
           current.currentFolderId != s.currentFolderId) {
         return;
       }
+      // A folder that shrank (mail deleted or moved elsewhere) leaves the
+      // server offset past the end of it, so the next Load-more would skip the
+      // rows that shifted up and leave a hole nothing ever fills. Only ever
+      // lower it: cross-folder conversation expansion inflates the row count
+      // above what was actually paged in, so the cached length is a ceiling
+      // rather than a measurement.
+      if (cached.length < _serverOffset) _serverOffset = cached.length;
       emit(current.copyWith(emails: cached));
     });
+  }
+
+  /// Spends a repaint deferred by [_onCacheRefreshRequested]. Called as the
+  /// folder listing comes back, *before* the network fetch that follows: the
+  /// cached rows are the poller's, so a fetch that fails leaves the folder on
+  /// screen rather than the search results the user has just dismissed.
+  Future<void> _applyPendingCacheRepaint(Emitter<EmailListState> emit) async {
+    if (!_pendingCacheRepaint) return;
+    _pendingCacheRepaint = false;
+    await _repaintFromCache(emit);
   }
 
   Future<void> _onMarkReadRequested(
@@ -810,6 +877,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       activeSearchQuery: null,
       isLoadingFresh: true,
     ));
+    await _applyPendingCacheRepaint(emit);
 
     final result = await _getEmails(GetEmailsParams(
       folderId: folderId,
@@ -898,6 +966,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       focusedThreadSubject: null,
       isLoadingFresh: true,
     ));
+    await _applyPendingCacheRepaint(emit);
 
     _serverOffset = 0;
     final result = await _getEmails(GetEmailsParams(
@@ -950,6 +1019,37 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         // An empty result means the lookup found nothing, not that the thread
         // vanished — keep showing what's there rather than emptying the pane.
         emails: emails.isEmpty ? s.emails : emails,
+        hasMore: false,
+        isLoadingFresh: false,
+      )),
+    );
+  }
+
+  /// Re-runs the query currently on screen, leaving search mode intact.
+  Future<void> _refreshSearch(
+    EmailListLoaded current,
+    Emitter<EmailListState> emit,
+  ) async {
+    final query = current.activeSearchQuery;
+    if (query == null) return;
+
+    final myGeneration = _activeRequestGeneration;
+    emit(current.copyWith(isLoadingFresh: true));
+
+    final result = await _searchEmails(SearchEmailsParams(
+      folderId: current.currentFolderId,
+      query: query,
+    ));
+    if (myGeneration != _activeRequestGeneration) return;
+
+    final s = state;
+    if (s is! EmailListLoaded || s.activeSearchQuery != query) return;
+    result.fold(
+      (_) => emit(s.copyWith(isLoadingFresh: false)),
+      // Unlike a thread refresh, an empty result is a real answer: the mail
+      // that matched has been read, filed or deleted since.
+      (emails) => emit(s.copyWith(
+        emails: emails,
         hasMore: false,
         isLoadingFresh: false,
       )),

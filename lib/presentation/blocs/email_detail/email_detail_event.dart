@@ -17,6 +17,19 @@ final class EmailDetailLoadRequested extends EmailDetailEvent {
   List<Object?> get props => [emailId];
 }
 
+/// Re-reads the message already on screen. Dispatched when the email list's
+/// copy of it changed under a background poll — read, flagged or moved on
+/// another machine — so the pane and the actions in its toolbar work from
+/// current data. It is not a way to open a different message: a refresh for
+/// anything but what is showing is ignored.
+final class EmailDetailRefreshRequested extends EmailDetailEvent {
+  const EmailDetailRefreshRequested({required this.emailId});
+  final String emailId;
+
+  @override
+  List<Object?> get props => [emailId];
+}
+
 final class EmailDetailLoadedFromEml extends EmailDetailEvent {
   const EmailDetailLoadedFromEml({required this.bytes, this.sourceId});
   final Uint8List bytes;

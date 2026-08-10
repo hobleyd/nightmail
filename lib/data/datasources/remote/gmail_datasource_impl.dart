@@ -14,10 +14,13 @@ import '../../../infrastructure/http/gmail_http_client.dart';
 import '../../models/email_address_model.dart';
 import '../../models/email_folder_model.dart';
 import '../../models/email_model.dart';
+import '../../models/mail_delta_result.dart';
+import 'contact_bulk_parser.dart' show googleNextPageToken;
 import 'email_remote_datasource.dart';
 import 'gmail_message_parser.dart';
+import 'mail_delta_datasource.dart';
 
-class GmailDatasourceImpl implements EmailRemoteDatasource {
+class GmailDatasourceImpl implements EmailRemoteDatasource, MailDeltaDatasource {
   GmailDatasourceImpl({required GmailHttpClient client, this.displayName = ''})
       : _dio = client.dio;
 
@@ -279,6 +282,25 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
     );
   }
 
+  /// Fetches one message's list-projection response **undecoded**, for a parser
+  /// isolate to decode. Returns null when the fetch fails, which the batch
+  /// parser skips. Shared by the search path and the history sync.
+  Future<String?> _fetchMessageMetadataRaw(String id) async {
+    try {
+      final resp = await _dio.get<String>(
+        '/users/me/messages/$id',
+        queryParameters: {
+          'format': 'metadata',
+          'metadataHeaders': ['From', 'To', 'Cc', 'Subject', 'Date'],
+        },
+        options: Options(responseType: ResponseType.plain),
+      );
+      return resp.data;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Fetches one thread's response **undecoded**, for a parser isolate to
   /// decode. Returns null when the fetch fails, which the batch parser skips.
   Future<String?> _fetchThreadRaw(String threadId) async {
@@ -319,22 +341,8 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       final messages = data['messages'] as List<dynamic>? ?? [];
       if (messages.isEmpty) return [];
 
-      final futures = messages.map((m) async {
-        final id = (m as Map<String, dynamic>)['id'] as String;
-        try {
-          final resp = await _dio.get<String>(
-            '/users/me/messages/$id',
-            queryParameters: {
-              'format': 'metadata',
-              'metadataHeaders': ['From', 'To', 'Cc', 'Subject', 'Date'],
-            },
-            options: Options(responseType: ResponseType.plain),
-          );
-          return resp.data;
-        } catch (_) {
-          return null;
-        }
-      });
+      final futures = messages.map((m) =>
+          _fetchMessageMetadataRaw((m as Map<String, dynamic>)['id'] as String));
 
       // As in getEmails: fetch concurrently, decode once off the UI isolate.
       final rawBodies = await Future.wait(futures);
@@ -711,15 +719,31 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
   Future<String> _getUserEmail() async {
     if (_cachedUserEmail != null) return _cachedUserEmail!;
     try {
-      final resp =
-          await _dio.get<Map<String, dynamic>>('/users/me/profile');
-      _cachedUserEmail = resp.data?['emailAddress'] as String? ?? '';
+      _cachedUserEmail =
+          (await _profile())['emailAddress'] as String? ?? '';
       return _cachedUserEmail!;
     } catch (_) {
       return '';
     }
   }
 
+  /// `users.getProfile`, decoded here rather than in an isolate: it is four
+  /// fields, the same reason the thread and search indexes are decoded locally.
+  ///
+  /// Plain like every other request this class makes, and that is not a detail —
+  /// Mockito cannot tell `get<Map>` from `get<String>` (a Dart `Invocation` does
+  /// not carry the type argument), so a second response type on any endpoint the
+  /// message path also touches makes the stubs collide and the last one
+  /// registered win.
+  Future<Map<String, dynamic>> _profile() async {
+    final resp = await _dio.get<String>(
+      '/users/me/profile',
+      options: Options(responseType: ResponseType.plain),
+    );
+    final raw = resp.data;
+    if (raw == null || raw.isEmpty) return const {};
+    return jsonDecode(raw) as Map<String, dynamic>;
+  }
 
   @override
   Future<String?> moveEmail(String id, String destinationFolderId) async {
@@ -1040,6 +1064,192 @@ class GmailDatasourceImpl implements EmailRemoteDatasource {
       }
       throw _mapException(e);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Incremental sync — users.history.list
+  // ---------------------------------------------------------------------------
+
+  /// History records per page, and how many pages one call will follow.
+  ///
+  /// 500 is Gmail's own maximum. The budget bounds a mailbox that has changed
+  /// enormously since the last poll — a bulk archive, a filter run over an
+  /// import — into a fixed number of sequential round trips, the same way the
+  /// Graph delta path bounds an initial sync. Nothing is lost when it runs out:
+  /// the cursor is left at the last record read, so the next poll carries on
+  /// from there.
+  static const _historyPageSize = 500;
+  static const _historyPageBudget = 10;
+
+  /// Messages one call will re-fetch before giving up on being incremental.
+  ///
+  /// A change set larger than this is not worth several hundred round trips, and
+  /// truncating it is not an option — a change dropped while the cursor advances
+  /// past it is invisible for ever, which is the whole class of bug this path
+  /// exists to remove. Reported as a `ServerException` with no status instead,
+  /// which the poller treats as fatal: it drops the cursor and re-bootstraps
+  /// from the mailbox's current `historyId`.
+  static const _historyUpsertBudget = 250;
+
+  /// Messages fetched concurrently while resolving a change set. A steady-state
+  /// poll has a handful; this only bites after a burst.
+  static const _historyFetchConcurrency = 25;
+
+  /// The label a cursor is scoped to.
+  ///
+  /// The poller addresses the Inbox by Graph's well-known folder name, so
+  /// `inbox` in any case means Gmail's `INBOX` label. Resolving it here is what
+  /// lets the cursor live under the same `(accountId, 'inbox')` key for both
+  /// providers, with nothing in the poller having to know which one it is
+  /// talking to. Anything else is already a label id.
+  static String _deltaLabelId(String folderId) =>
+      folderId.toUpperCase() == 'INBOX' ? 'INBOX' : folderId;
+
+  @override
+  Future<MailDeltaResult> syncMailDelta(
+    String folderId, {
+    String? deltaLink,
+  }) async {
+    final label = _deltaLabelId(folderId);
+
+    try {
+      if (deltaLink == null) {
+        // Bootstrap: seed the cursor and fetch nothing. Unlike Graph's initial
+        // delta call there is no page to walk — a history stream can only start
+        // from a historyId, and the endpoint has no "as of now" form — so this
+        // costs one request and reports no messages. The poller bumps
+        // pollGeneration after a bootstrap, and that refresh is what pulls the
+        // folder itself.
+        return MailDeltaResult(
+          upserted: const [],
+          removedIds: const [],
+          deltaLink: await _currentHistoryId(),
+        );
+      }
+
+      // Pages are collected undecoded and folded together at the end, off the
+      // UI isolate. Paging has to stay here: each page's token is only known
+      // once that page has arrived.
+      final rawPages = <String>[];
+      String? pageToken;
+      var truncated = false;
+
+      for (var page = 0;; page++) {
+        final resp = await _dio.get<String>(
+          '/users/me/history',
+          queryParameters: {
+            'startHistoryId': deltaLink,
+            // Everything that can change a folder's contents or a row's state.
+            // labelAdded/labelRemoved are the important pair: a cross-folder
+            // move, an archive, a read and a star are all label changes, and
+            // none of them shifts the unread/total counts the poller used to
+            // compare — two offsetting ones cancelled out and were invisible
+            // for good.
+            'historyTypes': const [
+              'messageAdded',
+              'messageDeleted',
+              'labelAdded',
+              'labelRemoved',
+            ],
+            'maxResults': _historyPageSize,
+            'pageToken': ?pageToken,
+          },
+          options: Options(responseType: ResponseType.plain),
+        );
+
+        final raw = resp.data ?? '';
+        if (raw.isNotEmpty) rawPages.add(raw);
+
+        // Scanned out of the raw body rather than decoded, exactly as the
+        // contacts fetchers do it: this one field is all the fetching isolate
+        // needs, and decoding the page here would put back the cost of handing
+        // it to compute() below.
+        pageToken = raw.isEmpty ? null : googleNextPageToken(raw);
+        if (pageToken == null) break;
+        if (page + 1 >= _historyPageBudget) {
+          truncated = true;
+          break;
+        }
+      }
+
+      // No labelId filter on the request, deliberately: a message that has just
+      // *lost* the folder's label no longer matches it, so filtering
+      // server-side would hide the moves and archives this path was added to
+      // notice. The feed is mailbox-wide and the isolate reduces it to one
+      // label's answer.
+      final changes = await compute(
+        parseGmailHistoryPages,
+        GmailHistoryParseParams(rawPages: rawPages, folderLabelId: label),
+      );
+
+      // Where the next poll starts. The mailbox's current historyId is only the
+      // right answer when every page was read — it means "now", not "the end of
+      // what was applied", so storing it after a truncated walk would skip the
+      // remainder for ever. A truncated walk resumes from the last record
+      // instead, and a run that reported neither leaves the cursor where it
+      // was: replaying a history range is idempotent, losing one is not.
+      final cursor =
+          (truncated ? changes.lastRecordId : changes.currentHistoryId) ??
+              deltaLink;
+
+      if (changes.upsertedIds.length > _historyUpsertBudget) {
+        throw ServerException(
+          message: '${changes.upsertedIds.length} messages changed since the '
+              'last sync — re-bootstrapping instead of fetching them all',
+        );
+      }
+
+      return MailDeltaResult(
+        upserted: await _fetchHistoryMessages(changes.upsertedIds),
+        removedIds: changes.removedIds,
+        movedOutIds: changes.movedOutIds,
+        deltaLink: cursor,
+      );
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) {
+        // Gmail's answer for a startHistoryId older than the week or so of
+        // history it keeps. Rethrown with the status intact because that is
+        // what the poller recognises as "drop the cursor and re-bootstrap".
+        throw const ServerException(
+          message: 'startHistoryId is no longer valid — history has expired',
+          statusCode: 404,
+        );
+      }
+      throw _mapException(e);
+    }
+  }
+
+  /// The mailbox's current `historyId`, the only way to start a history stream.
+  Future<String> _currentHistoryId() async {
+    final historyId = (await _profile())['historyId']?.toString();
+    if (historyId == null || historyId.isEmpty) {
+      // Without a cursor there is no incremental sync at all. No status code,
+      // so the poller treats it as fatal and tries a fresh bootstrap rather
+      // than counting it towards a streak against a token it never got.
+      throw const ServerException(message: 'Gmail profile carried no historyId');
+    }
+    return historyId;
+  }
+
+  /// Re-fetches the messages a history walk named, and parses them all in one
+  /// isolate call.
+  ///
+  /// A history record carries only ids and labels, so a row the folder can show
+  /// has to be fetched. A fetch that fails yields null and is skipped rather
+  /// than failing the sync: the usual cause is a message deleted between the
+  /// history page and now, and that deletion carries a higher historyId than
+  /// the cursor being stored, so the next poll reports it properly.
+  Future<List<EmailModel>> _fetchHistoryMessages(List<String> ids) async {
+    if (ids.isEmpty) return const [];
+    final rawBodies = <String?>[];
+    for (var i = 0; i < ids.length; i += _historyFetchConcurrency) {
+      final chunk = ids.sublist(
+          i, (i + _historyFetchConcurrency).clamp(0, ids.length));
+      rawBodies.addAll(await Future.wait(chunk.map(_fetchMessageMetadataRaw)));
+    }
+    // One compute() for the whole change set rather than one per message: each
+    // call spawns an isolate, so per-message would cost more than the parse.
+    return compute(parseGmailMetadataMessages, rawBodies);
   }
 
   Exception _mapException(DioException e) {

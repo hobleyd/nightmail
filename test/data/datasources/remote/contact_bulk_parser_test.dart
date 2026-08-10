@@ -7,6 +7,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/data/datasources/remote/contact_bulk_parser.dart';
+import 'package:nightmail/data/datasources/remote/graph_message_parser.dart'
+    show graphDeltaLink;
 import 'package:nightmail/domain/entities/cached_contact.dart';
 
 String _googlePage(
@@ -346,6 +348,53 @@ void main() {
 
     test('graphNextLink returns null on the last page', () {
       expect(graphNextLink('{"value":[]}'), isNull);
+    });
+
+    // These links are followed with the account's access token attached, so the
+    // host is verified rather than assumed. A link that fails the check reads as
+    // no link at all, which ends the paging loop (and, on the delta path, sends
+    // the poller down its clear-the-token-and-re-bootstrap route) instead of
+    // issuing an authenticated request somewhere unintended.
+    test('graphNextLink rejects a link that is not on Graph\'s host', () {
+      const body = r'{"value":[],'
+          r'"@odata.nextLink":"https:\/\/evil.example\/v1.0\/users"}';
+      expect(graphNextLink(body), isNull);
+    });
+
+    test('isGraphUrl accepts Graph hosts and rejects everything else', () {
+      expect(isGraphUrl('https://graph.microsoft.com/v1.0/me'), isTrue);
+      // Sovereign and national clouds are subdomains of the same host.
+      expect(isGraphUrl('https://canary.graph.microsoft.com/v1.0/me'), isTrue);
+
+      expect(isGraphUrl('http://graph.microsoft.com/v1.0/me'), isFalse,
+          reason: 'a token must never travel over plain http');
+      expect(isGraphUrl('https://evil.example/v1.0/me'), isFalse);
+      // The classic near-miss: Graph's host as a prefix of someone else's.
+      expect(isGraphUrl('https://graph.microsoft.com.evil.example/x'), isFalse);
+      expect(isGraphUrl('/v1.0/me'), isFalse, reason: 'not absolute');
+      expect(isGraphUrl('not a url at all'), isFalse);
+    });
+
+    // The pattern is unanchored and `bodyPreview` is in the delta projection, so
+    // it is worth pinning down that a sender cannot smuggle a link in: the
+    // pattern needs unescaped quotes around the key, and a quote inside a JSON
+    // string value is always escaped.
+    test('a delta link in a message body cannot displace the real one', () {
+      final page = jsonEncode({
+        'value': [
+          {
+            'id': '1',
+            'bodyPreview': '"@odata.deltaLink":"https://evil.example/x"',
+          },
+        ],
+        '@odata.deltaLink':
+            'https://graph.microsoft.com/v1.0/me/messages/delta?token=REAL',
+      });
+
+      expect(
+        graphDeltaLink(page),
+        'https://graph.microsoft.com/v1.0/me/messages/delta?token=REAL',
+      );
     });
   });
 

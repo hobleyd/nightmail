@@ -332,7 +332,35 @@ class ImapClient extends ClientBase {
     logApp('onConnectionError: $error');
     _isInIdleMode = false;
     _selectedMailbox = null;
+    // NightMail local change — keep across a package bump.
+    // Upstream only fires the event below, so a command that was awaiting a
+    // response when the socket died never completed: with no responseTimeout
+    // set, `await sendCommand(...)` hung for the process lifetime, and even
+    // with one it waited out the full timeout for an error that had already
+    // arrived. Nothing in the app subscribes to the event bus for this, and it
+    // could not complete the caller's future anyway.
+    _completePendingTasksWithError(error);
     eventBus.fire(ImapConnectionLostEvent(this));
+  }
+
+  /// Error-completes every task that is queued or awaiting a response.
+  /// NightMail local change; see [onConnectionError].
+  void _completePendingTasksWithError(dynamic error) {
+    final pending = <CommandTask>[..._queue, ..._tasks.values];
+    _queue.clear();
+    _tasks.clear();
+    _currentCommandTask = null;
+    _idleCommandTask = null;
+    for (final task in pending) {
+      if (task.completer.isCompleted) continue;
+      try {
+        task.completer.completeError(
+          ImapException(this, 'connection lost: $error'),
+        );
+      } catch (e) {
+        logApp('unable to completeError for task $task: $e');
+      }
+    }
   }
 
   /// Logs in the user with the given [name] and [password].

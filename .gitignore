@@ -34,7 +34,9 @@ migrate_working_dir/
 /build/
 /coverage/
 
-# Library packages don't commit pubspec.lock (only the app does)
+# Only the app's own lockfile is pinned. The vendored packages resolve against
+# whatever the app already has, and running codegen in one of them (enough_mail
+# needs it before a Windows build) writes a lockfile that means nothing here.
 packages/*/pubspec.lock
 
 # Generated files

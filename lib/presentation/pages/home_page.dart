@@ -35,6 +35,7 @@ import '../blocs/email_list/email_list_event.dart';
 import '../blocs/folder_list/folder_list_bloc.dart';
 import '../blocs/folder_list/folder_list_event.dart';
 import '../blocs/folder_list/folder_list_state.dart';
+import '../blocs/home/folder_auto_selection.dart';
 import '../blocs/home/home_cubit.dart';
 import '../blocs/mail_poller/mail_poller_cubit.dart';
 import '../blocs/mail_poller/mail_poller_state.dart';
@@ -113,9 +114,20 @@ class _HomeViewState extends State<_HomeView> {
   StreamSubscription<Uri>? _mailtoSub;
   StreamSubscription<NotificationAction>? _notifSub;
 
+  /// The account whose folder selection is on screen, so a switch can file that
+  /// selection under the account being *left* rather than the one arriving —
+  /// the listener below is told only where it is going. Every switch comes
+  /// through it, the account menu and a notification tap on another account's
+  /// mail alike, so this is the one place the pairing has to hold.
+  String? _accountShowing;
+
   @override
   void initState() {
     super.initState();
+    final accountState = context.read<AccountCubit>().state;
+    if (accountState is AccountsLoaded) {
+      _accountShowing = accountState.activeAccount.id;
+    }
     _appLinks.getInitialLink().then((uri) {
       if (uri?.scheme == 'mailto' && mounted) _handleMailto(uri!);
     });
@@ -309,14 +321,29 @@ class _HomeViewState extends State<_HomeView> {
             }
             return false;
           },
-          listener: (context, _) {
-            context.read<HomeCubit>().clearFolder();
+          listener: (context, accountState) {
+            final homeCubit = context.read<HomeCubit>();
+            // Where this account was left, so switching back returns there
+            // rather than to the Inbox. Restoring it waits for the new folder
+            // list to land — see the FolderListLoaded listener below.
+            final leavingFolder = homeCubit.state.selectedFolderId;
+            if (_accountShowing != null &&
+                leavingFolder != null &&
+                leavingFolder.isNotEmpty) {
+              homeCubit.rememberFolderForAccount(
+                  _accountShowing!, leavingFolder);
+            }
+            if (accountState is AccountsLoaded) {
+              _accountShowing = accountState.activeAccount.id;
+            }
+
+            homeCubit.clearFolder();
             context.read<FolderListBloc>().add(const FolderListLoadRequested());
             context.read<EmailListBloc>().add(const EmailListCleared());
             context.read<EmailDetailBloc>().add(const EmailDetailCleared());
             final calendarBloc = context.read<CalendarBloc>();
             calendarBloc.add(const CalendarCleared());
-            if (context.read<HomeCubit>().state.view == HomeView.calendar) {
+            if (homeCubit.state.view == HomeView.calendar) {
               calendarBloc.add(
                 CalendarWeekLoadRequested(weekStart: _mondayOfWeek(DateTime.now())),
               );
@@ -331,6 +358,7 @@ class _HomeViewState extends State<_HomeView> {
         BlocListener<AccountCubit, AccountState>(
           listenWhen: (_, curr) => curr is AccountNoAccounts,
           listener: (context, _) {
+            _accountShowing = null;
             context.read<HomeCubit>().clearFolder();
             context.read<EmailListBloc>().add(const EmailListCleared());
             context.read<EmailDetailBloc>().add(const EmailDetailCleared());
@@ -354,22 +382,23 @@ class _HomeViewState extends State<_HomeView> {
           listener: (context, state) {
             if (state is FolderListLoaded) {
               final homeCubit = context.read<HomeCubit>();
-              if (homeCubit.state.selectedFolderId != null) return;
-              // Also skip auto-select when an email is already selected via a
-              // notification tap — selectFolder() constructs a new HomeState
-              // that zeroes selectedEmailId, which would unload the email view.
-              if (homeCubit.state.selectedEmailId != null) return;
-
-              final inbox = state.folders.firstWhere(
-                (f) => f.displayName.toLowerCase() == 'inbox',
-                orElse: () => state.folders.first,
+              final accountState = context.read<AccountCubit>().state;
+              final target = folderToAutoSelect(
+                folders: state.folders,
+                selectedFolderId: homeCubit.state.selectedFolderId,
+                selectedEmailId: homeCubit.state.selectedEmailId,
+                preferredFolderId: accountState is AccountsLoaded
+                    ? homeCubit
+                        .savedFolderForAccount(accountState.activeAccount.id)
+                    : null,
               );
+              if (target == null) return;
 
-              homeCubit.selectFolder(inbox.id);
+              homeCubit.selectFolder(target.id);
               context.read<EmailListBloc>().add(
                     EmailListLoadRequested(
-                      folderId: inbox.id,
-                      folderDisplayName: inbox.displayName,
+                      folderId: target.id,
+                      folderDisplayName: target.displayName,
                     ),
                   );
             }

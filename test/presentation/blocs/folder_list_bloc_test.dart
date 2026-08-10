@@ -32,13 +32,26 @@ EmailFolder _inbox({required int unread, required int total}) => EmailFolder(
       childFolderCount: 0,
     );
 
+EmailFolder _folder(String id, String name) => EmailFolder(
+      id: id,
+      displayName: name,
+      totalItemCount: 0,
+      unreadItemCount: 0,
+      isHidden: false,
+      childFolderCount: 0,
+    );
+
 class _FakeAccountManager extends Fake implements AccountManager {
+  _FakeAccountManager([this.activeAccount = _defaultAccount]);
+
+  static const _defaultAccount = GmailAccount(
+    id: 'acct-1',
+    displayName: 'Gmail',
+    emailAddress: 'a@b.com',
+  );
+
   @override
-  Account? get activeAccount => GmailAccount(
-        id: 'acct-1',
-        displayName: 'Gmail',
-        emailAddress: 'a@b.com',
-      );
+  Account? activeAccount;
 }
 
 int? _inboxUnread(FolderListState state) => state is FolderListLoaded
@@ -72,6 +85,7 @@ void main() {
   // it out would put 23s into the suite.
   FolderListBloc makeBloc({
     List<Duration> retryDelays = const [Duration.zero, Duration.zero],
+    AccountManager? accountManager,
   }) =>
       FolderListBloc(
         getMailFolders: mockGetMailFolders,
@@ -79,7 +93,7 @@ void main() {
         createFolder: MockCreateFolder(),
         renameFolder: MockRenameFolder(),
         moveFolder: MockMoveFolder(),
-        accountManager: _FakeAccountManager(),
+        accountManager: accountManager ?? _FakeAccountManager(),
         staleRetryDelays: retryDelays,
       );
 
@@ -227,6 +241,102 @@ void main() {
     expect(states.map(_inboxUnread), everyElement(27));
     expect((states.first as FolderListLoaded).isRefreshing, isTrue);
     verifyNever(mockGetCachedFolders(any));
+  });
+
+  // ---------------------------------------------------------------------------
+  // An account switch. Nothing clears this bloc — the switch only re-requests —
+  // so phase 1's prefer-state-over-cache shortcut used to re-emit the previous
+  // mailbox's folders. HomePage auto-selects the Inbox of the first loaded list
+  // it sees and then stands down, so it fastened onto an Inbox id the new
+  // account does not have: nothing highlighted, and a message list loading a
+  // dead id. Only two Gmail accounts hid it, both calling their inbox 'INBOX'.
+  // ---------------------------------------------------------------------------
+
+  group('FolderListBloc — the active account changes under the bloc', () {
+    const accountA = GmailAccount(
+      id: 'acct-a',
+      displayName: 'Gmail',
+      emailAddress: 'a@b.com',
+    );
+    const accountB = MicrosoftAccount(
+      id: 'acct-b',
+      displayName: 'Work',
+      emailAddress: 'c@d.com',
+      tenantId: 'tenant',
+    );
+
+    late _FakeAccountManager accounts;
+
+    List<String>? loadedFolderIds(FolderListState state) =>
+        state is FolderListLoaded
+            ? state.folders.map((f) => f.id).toList()
+            : null;
+
+    setUp(() {
+      accounts = _FakeAccountManager(accountA);
+      when(mockGetCachedFolders(any)).thenAnswer((invocation) async {
+        final id = invocation.positionalArguments.first as String;
+        return Right([_folder('inbox-$id', 'Inbox')]);
+      });
+      when(mockGetMailFolders(any)).thenAnswer((_) async {
+        final id = accounts.activeAccount!.id;
+        return Right([
+          _folder('inbox-$id', 'Inbox'),
+          _folder('sent-$id', 'Sent Items'),
+        ]);
+      });
+    });
+
+    test('never re-emits the previous account\'s folders', () async {
+      final bloc = makeBloc(accountManager: accounts);
+      addTearDown(bloc.close);
+
+      bloc.add(const FolderListLoadRequested());
+      await bloc.stream
+          .firstWhere((s) => s is FolderListLoaded && !s.isRefreshing);
+      expect(loadedFolderIds(bloc.state), ['inbox-acct-a', 'sent-acct-a']);
+
+      final states = <FolderListState>[];
+      final sub = bloc.stream.listen(states.add);
+      addTearDown(sub.cancel);
+
+      accounts.activeAccount = accountB;
+      bloc.add(const FolderListLoadRequested());
+      await bloc.stream.firstWhere(
+        (s) => s is FolderListLoaded && !s.isRefreshing,
+      );
+
+      // Every folder shown from the moment the switch is requested belongs to
+      // the account switched to — the cached list first, then the fetched one.
+      expect(
+        states.map(loadedFolderIds).whereType<List<String>>(),
+        everyElement(isNot(contains('inbox-acct-a'))),
+      );
+      expect(states.map(loadedFolderIds), [
+        ['inbox-acct-b'],
+        ['inbox-acct-b', 'sent-acct-b'],
+      ]);
+      verify(mockGetCachedFolders('acct-b')).called(1);
+    });
+
+    test('a reload on the same account still keeps its folders on screen',
+        () async {
+      final bloc = makeBloc(accountManager: accounts);
+      addTearDown(bloc.close);
+
+      bloc.add(const FolderListLoadRequested());
+      await bloc.stream
+          .firstWhere((s) => s is FolderListLoaded && !s.isRefreshing);
+      clearInteractions(mockGetCachedFolders);
+
+      // The guard is on the account, not on there having been a load: an
+      // ordinary refresh must not start reading the cache again.
+      bloc.add(const FolderListLoadRequested());
+      await pumpEventQueue();
+
+      expect(loadedFolderIds(bloc.state), ['inbox-acct-a', 'sent-acct-a']);
+      verifyNever(mockGetCachedFolders(any));
+    });
   });
 
   // ---------------------------------------------------------------------------

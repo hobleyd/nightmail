@@ -1070,42 +1070,20 @@ class _SettingsFooter extends StatelessWidget {
                     .markAccountViewed(currentState.accounts[index].id);
               }
 
-              // Save current folder before switching accounts.
-              final prevState = accountCubit.state;
-              if (prevState is AccountsLoaded) {
-                final currentFolder = homeCubit.state.selectedFolderId;
-                if (currentFolder != null && currentFolder.isNotEmpty) {
-                  homeCubit.rememberFolderForAccount(
-                      prevState.activeAccount.id, currentFolder);
-                }
-              }
-
               await accountCubit.switchToAccount(index);
 
+              // Everything else a switch entails — remembering the folder this
+              // account is being left in, dropping the selection, clearing the
+              // panes, re-requesting the folder list — belongs to HomePage's
+              // AccountCubit listener, which also covers the switches a
+              // notification tap makes. The saved folder is restored later
+              // still, once the new list has landed and the id can be checked
+              // against it; restoring it here selected a folder the listener
+              // then cleared, and could name one the account no longer has.
               if (context.mounted) {
-                final folderBloc = context.read<FolderListBloc>();
-                final emailListBloc = context.read<EmailListBloc>();
-                final emailDetailBloc = context.read<EmailDetailBloc>();
-
                 final newState = accountCubit.state;
                 if (newState is AccountsLoaded) {
                   homeCubit.setAccountLabel(newState.activeAccount.displayName);
-
-                  emailListBloc.add(const EmailListCleared());
-                  emailDetailBloc.add(const EmailDetailCleared());
-                  homeCubit.clearEmail();
-
-                  final savedFolder = homeCubit
-                      .savedFolderForAccount(newState.activeAccount.id);
-                  if (savedFolder != null) {
-                    homeCubit.selectFolder(savedFolder);
-                    emailListBloc
-                        .add(EmailListLoadRequested(folderId: savedFolder));
-                  } else {
-                    homeCubit.clearFolder();
-                  }
-
-                  folderBloc.add(const FolderListLoadRequested());
                 }
               }
             },

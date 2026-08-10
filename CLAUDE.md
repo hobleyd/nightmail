@@ -367,6 +367,20 @@ lets the first poll compare the active account against the counts the badge was
 primed from — otherwise a cold start whose first fetch failed silently sat on
 yesterday's counts until the user pressed Refresh.
 
+`FolderListBloc`'s prefer-state-over-cache shortcut is guarded on the account id
+(`_loadedAccountId`): an account switch only re-requests, never clears the bloc,
+and re-emitting the old mailbox's folders makes HomePage auto-select an Inbox id
+the new account does not have (`folderToAutoSelect`).
+
+## Which Folder an Account Switch Lands On
+
+`HomePage`'s `AccountCubit` listener owns the whole switch — it files the
+outgoing folder under the account being left (`_accountShowing`) and drops the
+selection; `folderToAutoSelect` restores it when the new folder list *lands*, so
+the saved id is checked against real folders and falls back to the Inbox.
+Nothing may select a folder at switch time: that listener clears it a beat
+later, which is what made the old restore in `folder_panel.dart` a no-op.
+
 ## An ICS METHOD Decides Which Meeting Banner Appears
 
 `icsInviteType` (`data/datasources/remote/ics_meeting_invite.dart`) maps

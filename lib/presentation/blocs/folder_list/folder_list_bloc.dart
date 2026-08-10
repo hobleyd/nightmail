@@ -49,6 +49,14 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
   /// can resolve last and walk the counts backwards.
   int _loadGeneration = 0;
 
+  /// The account the folders in [state] belong to. An account switch does not
+  /// clear this bloc — it only re-requests — so without this the phase-1
+  /// shortcut below would re-emit the *previous* account's folders. HomePage
+  /// auto-selects the Inbox of the first loaded list it sees and then stands
+  /// down, so it would fasten onto an Inbox id the new account does not have:
+  /// no folder highlighted and a message list loading a dead id.
+  String? _loadedAccountId;
+
   Future<void> _onLoadRequested(
     FolderListLoadRequested event,
     Emitter<FolderListState> emit,
@@ -61,9 +69,13 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
     // in state are preferred over the cache — re-reading the cache over a
     // fresher result would flick the counts back to what was on disk, and
     // would also discard the optimistic deltas applied by
-    // [FolderListUnreadCountChanged].
+    // [FolderListUnreadCountChanged]. That only holds for the account those
+    // folders came from: after a switch they are another mailbox's, and the
+    // cache is the newer of the two.
     final current = state;
-    if (current is FolderListLoaded && current.folders.isNotEmpty) {
+    if (current is FolderListLoaded &&
+        current.folders.isNotEmpty &&
+        _loadedAccountId == accountId) {
       hasFolders = true;
       emit(current.copyWith(isRefreshing: true));
     } else if (accountId != null) {
@@ -76,6 +88,7 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
             emit(const FolderListLoading());
           } else {
             hasFolders = true;
+            _loadedAccountId = accountId;
             emit(FolderListLoaded(
               folders: _sorted(cached),
               isRefreshing: true,
@@ -122,6 +135,7 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
             debugPrint(
                 '[FolderList] fetch recovered on attempt ${attempt + 1}');
           }
+          _loadedAccountId = accountId;
           emit(FolderListLoaded(folders: _sorted(folders)));
         },
       );

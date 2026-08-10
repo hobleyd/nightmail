@@ -432,6 +432,7 @@ void WebView2View::HandleMethod(
         std::move(result));
     auto h = *html;
     auto do_load = [this, h, shared]() {
+      if (!webview_) { shared->Error("disposed", "WebView2 is gone"); return; }
       std::wstring whtml = Utf8ToWide(h);
       HRESULT hr = webview_->NavigateToString(whtml.c_str());
       if (SUCCEEDED(hr)) shared->Success();
@@ -446,6 +447,7 @@ void WebView2View::HandleMethod(
         std::move(result));
     auto u = *url;
     auto do_load = [this, u, shared]() {
+      if (!webview_) { shared->Error("disposed", "WebView2 is gone"); return; }
       std::wstring wurl = Utf8ToWide(u);
       HRESULT hr = webview_->Navigate(wurl.c_str());
       if (SUCCEEDED(hr)) shared->Success();
@@ -539,9 +541,15 @@ void WebView2View::HandleMethod(
 // Operations
 // ---------------------------------------------------------------------------
 
+// `ready_` only says the controller was created once — it is never cleared, so
+// it is not the same question as "is the webview still there". SubclassProc
+// nulls webview_ on WM_DESTROY, which lands well before this view is destroyed,
+// so a queued call can still arrive with nothing left to call it on. Answer it
+// as an error rather than dereferencing null.
 void WebView2View::DoLoadAsset(
     const std::string& asset_key,
     std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (!webview_) { result->Error("disposed", "WebView2 is gone"); return; }
   std::wstring uri = PathToFileUri(AssetPath(asset_key));
   HRESULT hr = webview_->Navigate(uri.c_str());
   if (SUCCEEDED(hr)) {
@@ -554,6 +562,7 @@ void WebView2View::DoLoadAsset(
 void WebView2View::DoEval(
     const std::string& js,
     std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (!webview_) { result->Error("disposed", "WebView2 is gone"); return; }
   std::wstring wjs = Utf8ToWide(js);
   auto alive = alive_;
   HRESULT hr = webview_->ExecuteScript(

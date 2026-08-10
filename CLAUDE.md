@@ -465,6 +465,14 @@ invitations carry no calendar part). Two meetings at the same instant are left
 alone and the caller waits for the provider — moving the wrong meeting is worse
 than being slow.
 
+## The Overdue-Tasks Badge
+
+The red dot on the folder panel's Tasks icon counts `scheduled_task_reminders`
+rows (`OverdueTasksCubit`), not `TasksBloc` — the bloc holds one list of one
+account, and `TaskReminderService` already walks every list on a 15-min cycle.
+`isTaskOverdue` (`core/utils/task_due.dart`) is the shared rule, so the dot and
+the pane's red due line can't disagree.
+
 ## Room Booking
 
 The event form's Location field is a room picker as well as a text box

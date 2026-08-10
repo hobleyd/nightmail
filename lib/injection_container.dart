@@ -141,6 +141,7 @@ import 'presentation/blocs/email_detail/email_detail_bloc.dart';
 import 'presentation/blocs/email_list/email_list_bloc.dart';
 import 'presentation/blocs/folder_list/folder_list_bloc.dart';
 import 'presentation/blocs/mail_poller/mail_poller_cubit.dart';
+import 'presentation/blocs/tasks/overdue_tasks_cubit.dart';
 import 'presentation/blocs/tasks/tasks_bloc.dart';
 import 'presentation/blocs/theme/theme_cubit.dart';
 
@@ -434,6 +435,13 @@ Future<void> configureDependencies() async {
       pendingOperations: sl<PendingOperationsDatasource>(),
       removalTombstones: sl<RemovalTombstoneStore>(),
       spamDbSyncService: sl<SpamDbSyncService>(),
+    ),
+  );
+  sl.registerLazySingleton(
+    () => OverdueTasksCubit(
+      accountManager: sl<AccountManager>(),
+      database: sl<TaskReminderScheduleLocalDatasource>(),
+      reminders: sl<TaskReminderService>(),
     ),
   );
 

@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 
 import '../../core/platform/touch_metrics.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/task_due.dart';
 import '../../domain/entities/task_email_link.dart';
 import '../../domain/entities/todo_task.dart';
 import '../../domain/entities/todo_task_list.dart';
@@ -462,20 +463,15 @@ class _TaskTileState extends State<_TaskTile> {
   String _formatDue(DateTime due) {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-    final dueDay = DateTime(due.year, due.month, due.day);
+    final dueDay = taskDueDay(due);
     final diff = dueDay.difference(today).inDays;
     if (diff == 0) return 'Due today';
     if (diff == 1) return 'Due tomorrow';
     if (diff == -1) return 'Due yesterday';
-    if (diff < 0) return 'Due ${DateFormat('MMM d').format(due)}';
-    return 'Due ${DateFormat('MMM d').format(due)}';
+    return 'Due ${DateFormat('MMM d').format(dueDay)}';
   }
 
-  bool _isDueOverdue(DateTime due) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    return due.isBefore(today);
-  }
+  bool _isDueOverdue(DateTime due) => isTaskOverdue(due);
 }
 
 /// A small tap target used for the inline row icons (source-email button).

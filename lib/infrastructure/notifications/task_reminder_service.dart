@@ -61,6 +61,16 @@ class TaskReminderService {
   Timer? _startupTimer;
   bool _reconciling = false;
   bool _rerunRequested = false;
+  final _changes = StreamController<void>.broadcast();
+
+  /// Fires whenever the persisted schedule rows may have moved — after a
+  /// reconcile pass, and after the fast-path removals below.
+  ///
+  /// The rows are a by-product of scheduling notifications, but they are also
+  /// the only local record of *which tasks are due*, across every list of an
+  /// account and without a fetch. [OverdueTasksCubit] rides on this rather than
+  /// polling the table or re-fetching the provider on its own cadence.
+  Stream<void> get changes => _changes.stream;
 
   /// How long the first reconcile waits after startup — see the same constant
   /// on [CalendarReminderService] for why this is deferred at all. Offset from
@@ -105,7 +115,12 @@ class TaskReminderService {
     } finally {
       _reconciling = false;
       _rerunRequested = false;
+      _notifyChanged();
     }
+  }
+
+  void _notifyChanged() {
+    if (!_changes.isClosed) _changes.add(null);
   }
 
   Future<void> _reconcileEveryAccount() async {
@@ -363,6 +378,7 @@ class TaskReminderService {
     await _notificationService.cancelTaskReminder(
         accountId: accountId, taskId: taskId);
     await _database.deleteScheduledTaskReminder(accountId, taskId);
+    _notifyChanged();
   }
 
   /// Cancels every pending task reminder for [accountId] and clears its
@@ -375,6 +391,7 @@ class TaskReminderService {
           accountId: accountId, taskId: r.taskId);
     }
     await _database.clearScheduledTaskRemindersForAccount(accountId);
+    _notifyChanged();
   }
 }
 

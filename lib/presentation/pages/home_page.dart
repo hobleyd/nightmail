@@ -25,6 +25,7 @@ import '../blocs/account/account_cubit.dart';
 import '../blocs/calendar/calendar_bloc.dart';
 import '../blocs/calendar/calendar_event.dart';
 import '../blocs/calendar/calendar_state.dart';
+import '../blocs/tasks/overdue_tasks_cubit.dart';
 import '../blocs/tasks/tasks_bloc.dart';
 import '../blocs/tasks/tasks_event.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
@@ -96,6 +97,7 @@ class HomePage extends StatelessWidget {
           create: (_) =>
               sl<TasksBloc>()..add(const TasksLoadRequested()),
         ),
+        BlocProvider.value(value: sl<OverdueTasksCubit>()..start()),
       ],
       child: const _HomeView(),
     );
@@ -353,6 +355,10 @@ class _HomeViewState extends State<_HomeView> {
             // bloc in TasksLoaded, and "create task from email" is a silent
             // no-op in any other state.
             context.read<TasksBloc>().add(const TasksLoadRequested());
+            // The overdue badge is per-account and its rows are already on
+            // disk for the arriving one — re-count now rather than showing the
+            // account being left until the next reconcile.
+            unawaited(context.read<OverdueTasksCubit>().refresh());
           },
         ),
         BlocListener<AccountCubit, AccountState>(
@@ -364,6 +370,7 @@ class _HomeViewState extends State<_HomeView> {
             context.read<EmailDetailBloc>().add(const EmailDetailCleared());
             context.read<CalendarBloc>().add(const CalendarCleared());
             context.read<TasksBloc>().add(const TasksCleared());
+            unawaited(context.read<OverdueTasksCubit>().refresh());
           },
         ),
         BlocListener<HomeCubit, HomeState>(

@@ -28,6 +28,7 @@ import '../blocs/folder_list/folder_list_event.dart';
 import '../blocs/folder_list/folder_list_state.dart';
 import '../blocs/home/home_cubit.dart';
 import '../blocs/mail_poller/mail_poller_cubit.dart';
+import '../blocs/tasks/overdue_tasks_cubit.dart';
 import '../blocs/theme/theme_cubit.dart';
 import '../pages/settings_page.dart';
 import '../pages/add_account_page.dart';
@@ -1009,6 +1010,9 @@ class _SettingsFooter extends StatelessWidget {
     final pollerState = context.watch<MailPollerCubit>().state;
     final hasNewMail = pollerState.accountsWithNewMail.isNotEmpty;
     final hasReauthIssue = pollerState.accountsNeedingReauth.isNotEmpty;
+    // Red dot on the Tasks icon: the active account has something already past
+    // due, in any of its lists — not only the one the pane last showed.
+    final overdueTasks = context.watch<OverdueTasksCubit>().state;
 
     return SizedBox(
       height: touchRowHeight(28),
@@ -1179,9 +1183,29 @@ class _SettingsFooter extends StatelessWidget {
                       ),
                     ),
             child: IconButton(
-              icon: Icon(Icons.checklist_rounded,
-                  size: touchIcon(16), color: c.textMuted),
-              tooltip: 'Tasks',
+              icon: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Icon(Icons.checklist_rounded,
+                      size: touchIcon(16), color: c.textMuted),
+                  if (overdueTasks > 0)
+                    Positioned(
+                      top: -2,
+                      right: -2,
+                      child: Container(
+                        width: 7,
+                        height: 7,
+                        decoration: const BoxDecoration(
+                          color: Colors.redAccent,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              tooltip: overdueTasks > 0
+                  ? 'Tasks ($overdueTasks overdue)'
+                  : 'Tasks',
               padding: EdgeInsets.zero,
               constraints: BoxConstraints(
                 minWidth: touchTarget(28),

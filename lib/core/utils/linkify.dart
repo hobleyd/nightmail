@@ -1,4 +1,5 @@
-/// Finds URLs that a sender typed as text rather than as links.
+/// Finds URLs and email addresses that a sender typed as text rather than as
+/// links.
 ///
 /// Both message body renderers need this and neither can share the other's
 /// machinery: an HTML body is handed to a webview, a plain text body is Flutter
@@ -14,18 +15,36 @@ library;
 /// not cover it, and mail is full of them.
 const _urlChar = r'''[^\s<>"'`\u00a0]''';
 
-/// A bare URL: an explicit `http`/`https` scheme, or a schemeless host that
-/// starts with `www.` and has at least two labels — enough to be sure it is a
-/// host and not prose. Anything without either marker is left alone; guessing
-/// at `example.com/page` turns file names and version numbers into links.
+/// An email address written as text. Deliberately stricter than the `www.`
+/// host rule below, because an address has no scheme to vouch for it: the
+/// final label must be alphabetic, so the `package@1.2.3` of a release note is
+/// not turned into a way to mail somebody. The local part stays conservative
+/// for the same reason — RFC 5321 allows `/`, `?` and `&` in it, which in a
+/// mail body are far more likely to be prose or an entity than an address.
 ///
-/// The lookbehind keeps a match from starting inside something longer. `@`
-/// stops the tail of an email address becoming a link of its own
-/// (`someone@www.example.com`), and the rest stop a match beginning part-way
-/// through a URL the pattern has already rejected.
+/// The local part is capped at the 64 characters RFC 5321 allows it, which is
+/// also what keeps the scan linear: an unbounded run would be re-tried from
+/// every position inside a long word before failing to find the `@`.
+const _emailAddress = r"[\w.%+-]{1,64}@[\w-]+(?:\.[\w-]+)*\.[a-zA-Z]{2,}";
+
+/// A bare URL or address: an explicit `http`/`https` scheme, a `mailto:`, a
+/// schemeless host that starts with `www.` and has at least two labels — enough
+/// to be sure it is a host and not prose — or a bare email address. Anything
+/// without one of those markers is left alone; guessing at `example.com/page`
+/// turns file names and version numbers into links.
+///
+/// `mailto:` is listed before the bare address because the lookbehind would
+/// otherwise reject the address that follows the colon and the whole thing
+/// would go unlinked.
+///
+/// The lookbehind keeps a match from starting inside something longer: the
+/// characters listed stop a match beginning part-way through a URL or an
+/// address the pattern has already passed over.
 final RegExp bareUrlPattern = RegExp(
   r'(?<![\w@./:-])'
-  '(?:https?://$_urlChar+'
+  '(?:mailto:$_emailAddress(?:[?]$_urlChar*)?'
+  '|$_emailAddress'
+  '|https?://$_urlChar+'
   r'|www\.[\w-]+(?:\.[\w-]+)+'
   '$_urlChar*)',
   caseSensitive: false,
@@ -73,20 +92,30 @@ int _count(String s, String ch) {
   return n;
 }
 
-/// The URL to actually open for text matched by [bareUrlPattern]. A `www.` host
-/// is displayed as the sender wrote it but needs a scheme to be navigable.
-String hrefForBareUrl(String matched) =>
-    matched.toLowerCase().startsWith('www.') ? 'https://$matched' : matched;
+/// The URL to actually open for text matched by [bareUrlPattern]. Both of the
+/// schemeless forms are displayed as the sender wrote them but need a scheme to
+/// be navigable: `https://` for a `www.` host, and `mailto:` for a bare address
+/// — which is the whole of what makes an address a link rather than words.
+String hrefForBareUrl(String matched) {
+  final lower = matched.toLowerCase();
+  if (lower.startsWith('www.')) return 'https://$matched';
+  if (lower.startsWith('http') || lower.startsWith('mailto:')) return matched;
+  return 'mailto:$matched';
+}
 
 /// A cheaper first look than [bareUrlPattern] — no lookbehind, nothing to
 /// backtrack. Worth having because most text nodes in a mail body are a few
 /// words long and the whole document is checked as well, and worth being a
 /// pattern rather than a `toLowerCase().contains(...)`, which would copy a
 /// megabyte-scale body to answer a question about six characters.
-final _urlHint = RegExp(r'https?://|www\.', caseSensitive: false);
+///
+/// A lone `@` is hint enough for an address; it costs a full scan of bodies
+/// that turn out to have none, which is the price of linking them at all.
+final _urlHint = RegExp(r'https?://|www\.|@', caseSensitive: false);
 
+/// `a@b.co` is the shortest thing that can match.
 bool _mayContainUrl(String text) =>
-    text.length >= 8 && _urlHint.hasMatch(text);
+    text.length >= 6 && _urlHint.hasMatch(text);
 
 // ---------------------------------------------------------------------------
 // Plain text bodies
@@ -140,7 +169,8 @@ const _opaqueElements = {'a', 'script', 'style', 'textarea', 'title', 'svg'};
 
 final _tagName = RegExp(r'^<\s*(/?)\s*([a-zA-Z][^\s/>]*)');
 
-/// Wraps bare URLs in [html]'s text with anchors, leaving markup untouched.
+/// Wraps bare URLs and addresses in [html]'s text with anchors, leaving markup
+/// untouched.
 ///
 /// Deliberately a scanner over the source rather than a parse: the body is
 /// about to be handed to a webview as text, so re-serialising a DOM would risk

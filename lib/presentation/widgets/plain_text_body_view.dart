@@ -2,13 +2,14 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/linkify.dart';
+import 'body_link_opener.dart';
 import 'body_status_bar.dart';
 
-/// A `text/plain` message body, with the URLs in it made clickable.
+/// A `text/plain` message body, with the URLs and addresses in it made
+/// clickable.
 ///
 /// The HTML path gets links for free — it hands a document to a webview, and
 /// [linkifyHtml] only has to write the anchors. Here the body *is* the text, so
@@ -91,9 +92,8 @@ class _PlainTextBodyViewState extends State<PlainTextBodyView> {
   }
 
   void _open(String url) {
-    final uri = Uri.tryParse(url);
-    if (uri == null) return;
-    unawaited(launchUrl(uri, mode: LaunchMode.externalApplication));
+    if (!mounted) return;
+    unawaited(openBodyLink(context, url));
   }
 
   @override

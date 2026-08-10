@@ -308,7 +308,17 @@ appears rather than only at the tail. `&amp;` is deliberately not a boundary —
 that is how a query string's own separators arrive.
 
 Only `http`/`https` and `www.`-prefixed hosts are linked. Guessing at bare
-`example.com/x` turns file names and version numbers into links.
+`example.com/x` turns file names and version numbers into links. Email
+addresses and `mailto:` URLs are linked too, but the last label must be
+alphabetic, or `package@1.2.3` becomes a way to mail somebody.
+
+## A mailto: Link Is Answered Here, Not by the OS
+
+Every body link goes to `launchUrl` except `mailto:`, which `openBodyLink`
+(`presentation/widgets/body_link_opener.dart`) sends to
+`ComposeWindowApp.openMailto` — the same entry point the OS uses when another
+app hands NightMail a `mailto:` URI. `bcc=` is dropped: nothing downstream
+carries a BCC list.
 
 ## A Thread Row Is Not Its Newest Message
 

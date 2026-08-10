@@ -32,9 +32,55 @@ void main() {
       expect(runs.single.isLink, isFalse);
     });
 
-    test('does not link the host part of an email address', () {
-      final runs = linkifyPlainText('mail someone@www.example.com today');
-      expect(runs.where((r) => r.isLink), isEmpty);
+    test('links a whole email address, never just the host inside it', () {
+      final links = linkifyPlainText('mail someone@www.example.com today')
+          .where((r) => r.isLink)
+          .toList();
+
+      expect(links, hasLength(1));
+      expect(links.single.text, 'someone@www.example.com');
+      expect(links.single.url, 'mailto:someone@www.example.com');
+    });
+
+    test('gives a bare address a mailto: to open, but not to display', () {
+      final link = linkifyPlainText('Ask helpdesk@example.com about it')
+          .firstWhere((r) => r.isLink);
+
+      expect(link.text, 'helpdesk@example.com');
+      expect(link.url, 'mailto:helpdesk@example.com');
+    });
+
+    test('keeps a mailto: URL the sender typed out in full', () {
+      final link =
+          linkifyPlainText('use mailto:sam@example.com?subject=Leave now')
+              .firstWhere((r) => r.isLink);
+
+      expect(link.text, 'mailto:sam@example.com?subject=Leave');
+      expect(link.url, 'mailto:sam@example.com?subject=Leave');
+    });
+
+    test('a full stop after an address closed the sentence', () {
+      final link = linkifyPlainText('Reply to sam@example.com.')
+          .firstWhere((r) => r.isLink);
+
+      expect(link.text, 'sam@example.com');
+    });
+
+    test('what only looks like an address is left alone', () {
+      // A version suffix: the last label has to be alphabetic to be a host.
+      expect(
+          linkifyPlainText('pinned to package@1.2.3 today').where((r) => r.isLink),
+          isEmpty);
+      // A handle has no domain at all.
+      expect(linkifyPlainText('ask @nightmail on the day').where((r) => r.isLink),
+          isEmpty);
+    });
+
+    test('does not mistake the userinfo of a URL for an address', () {
+      final link = linkifyPlainText('open https://user@example.com/a now')
+          .firstWhere((r) => r.isLink);
+
+      expect(link.url, 'https://user@example.com/a');
     });
 
     test('finds every URL in a multi-line body', () {
@@ -154,6 +200,27 @@ void main() {
     test('a body with no URL comes back unchanged', () {
       const html = '<p>Nothing here.</p>';
       expect(linkifyHtml(html), same(html));
+    });
+
+    test('links a bare address in body text', () {
+      expect(
+        linkifyHtml('<p>Ask helpdesk@example.com first</p>'),
+        '<p>Ask <a href="mailto:helpdesk@example.com">helpdesk@example.com</a>'
+        ' first</p>',
+      );
+    });
+
+    test('leaves an existing mailto anchor alone', () {
+      const html = '<p><a href="mailto:sam@example.com">sam@example.com</a></p>';
+      expect(linkifyHtml(html), html);
+    });
+
+    test('an address a sender wrapped in angle brackets keeps them out', () {
+      expect(
+        linkifyHtml('<p>Sam Chen &lt;sam@example.com&gt;</p>'),
+        '<p>Sam Chen &lt;<a href="mailto:sam@example.com">sam@example.com</a>'
+        '&gt;</p>',
+      );
     });
   });
 }

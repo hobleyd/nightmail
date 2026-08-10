@@ -5,10 +5,7 @@ import 'package:app_links/app_links.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 
 import '../../core/platform/window_utils.dart';
-import '../../core/utils/mailto_parser.dart';
 import '../../domain/entities/email.dart';
-import '../../domain/entities/email_address.dart';
-import '../../domain/usecases/send_email.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -299,23 +296,7 @@ class _HomeViewState extends State<_HomeView> {
     );
   }
 
-  void _handleMailto(Uri uri) {
-    final data = MailtoParser.parse(uri);
-    final draft = Email(
-      id: '',
-      subject: data.subject,
-      from: const EmailAddress(address: ''),
-      toRecipients: data.to.map((a) => EmailAddress(address: a)).toList(),
-      ccRecipients: data.cc.map((a) => EmailAddress(address: a)).toList(),
-      bodyPreview: '',
-      body: data.body,
-      bodyType: EmailBodyType.text,
-      isRead: false,
-      receivedDateTime: DateTime.now(),
-      importance: EmailImportance.normal,
-    );
-    ComposeWindowApp.open(context, mode: ComposeMode.newEmail, draftEmail: draft);
-  }
+  void _handleMailto(Uri uri) => ComposeWindowApp.openMailto(context, uri);
 
   @override
   Widget build(BuildContext context) {

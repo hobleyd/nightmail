@@ -5,7 +5,6 @@ import 'dart:io';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:html_view/html_view.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../../core/platform/window_utils.dart';
@@ -15,6 +14,7 @@ import '../../core/utils/linkify.dart';
 import '../../data/services/inline_attachment_cache.dart';
 import '../../domain/entities/inline_attachment.dart';
 import '../../injection_container.dart';
+import 'body_link_opener.dart';
 import 'body_status_bar.dart';
 
 /// A prepared document, ready to hand to the webview. Exactly one of
@@ -147,8 +147,7 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
     await ctrl.initialize();
     if (_disposed) { unawaited(ctrl.dispose()); return; }
     _linkSub = ctrl.onLinkOpened.listen((url) {
-      final uri = Uri.tryParse(url);
-      if (uri != null) unawaited(launchUrl(uri, mode: LaunchMode.externalApplication));
+      if (mounted) unawaited(openBodyLink(context, url));
     });
     // An empty URL means the pointer left a link — see [_hoveredLink].
     _linkHoverSub = ctrl.onLinkHovered.listen((url) {
@@ -182,10 +181,9 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
       ..setJavaScriptMode(JavaScriptMode.disabled)
       ..setNavigationDelegate(NavigationDelegate(
         onNavigationRequest: (request) {
-          final uri = Uri.tryParse(request.url);
-          final scheme = uri?.scheme ?? '';
+          final scheme = Uri.tryParse(request.url)?.scheme.toLowerCase() ?? '';
           if (scheme == 'http' || scheme == 'https' || scheme == 'mailto') {
-            launchUrl(uri!, mode: LaunchMode.externalApplication);
+            if (mounted) unawaited(openBodyLink(context, request.url));
             return NavigationDecision.prevent;
           }
           return NavigationDecision.navigate;

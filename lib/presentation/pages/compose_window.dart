@@ -11,6 +11,7 @@ import '../../core/platform/window_utils.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/signature/signature_merge_engine.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/mailto_parser.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_address.dart';
 import '../../domain/entities/email_attachment.dart';
@@ -34,6 +35,39 @@ class ComposeWindowApp extends StatelessWidget {
 
   final String windowId;
   final Map<String, dynamic> arguments;
+
+  /// Opens a compose screen prefilled from a `mailto:` URI (RFC 6068).
+  ///
+  /// Both ways of arriving at one land here: another application handing the
+  /// URI to the OS, which starts or raises NightMail as the registered handler,
+  /// and a `mailto:` link the reader clicked inside a message — see
+  /// `openBodyLink`, which deliberately does not send that one back out to the
+  /// OS only to be handed straight back.
+  ///
+  /// A `bcc` parameter is dropped, because nothing downstream of here — neither
+  /// [Email] nor the compose form — carries a BCC list yet.
+  static Future<void> openMailto(BuildContext context, Uri uri) {
+    final data = MailtoParser.parse(uri);
+    return open(
+      context,
+      mode: ComposeMode.newEmail,
+      draftEmail: Email(
+        id: '',
+        subject: data.subject,
+        from: const EmailAddress(address: ''),
+        toRecipients:
+            data.to.map((a) => EmailAddress(address: a)).toList(),
+        ccRecipients:
+            data.cc.map((a) => EmailAddress(address: a)).toList(),
+        bodyPreview: '',
+        body: data.body,
+        bodyType: EmailBodyType.text,
+        isRead: false,
+        receivedDateTime: DateTime.now(),
+        importance: EmailImportance.normal,
+      ),
+    );
+  }
 
   /// Opens a compose screen: a new push route on mobile, a sub-window on desktop.
   static Future<void> open(

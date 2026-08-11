@@ -134,6 +134,36 @@ void main() {
       expect(folders.first.childFolderCount, 0);
     });
 
+    // Regression: the labels list carries no counts, so every label costs a
+    // request of its own — and all of them went out at once. On a mailbox with a
+    // few dozen labels that was enough for Gmail to close connections
+    // mid-header, losing the counts the requests were there to fetch, on every
+    // folder-list load.
+    test('fetches label counts a bounded number at a time', () async {
+      final labels = [
+        for (var i = 0; i < 30; i++) _label('Label_$i', 'Label $i'),
+      ];
+      var inFlight = 0;
+      var peakInFlight = 0;
+      when(mockDio.get<Map<String, dynamic>>(any)).thenAnswer((inv) async {
+        final path = inv.positionalArguments.first as String;
+        if (path == '/users/me/labels') return _labelsResp(labels);
+        inFlight++;
+        if (inFlight > peakInFlight) peakInFlight = inFlight;
+        await Future<void>.delayed(Duration.zero);
+        inFlight--;
+        return _jsonResp({'messagesUnread': 1, 'messagesTotal': 2}, path);
+      });
+
+      final folders = await datasource.getMailFolders();
+
+      expect(peakInFlight, lessThanOrEqualTo(8));
+      // Bounded, not skipped: every label is still counted.
+      expect(folders.length, 30);
+      expect(folders.every((f) => f.unreadItemCount == 1), isTrue);
+      expect(folders.every((f) => f.totalItemCount == 2), isTrue);
+    });
+
     test('returns empty list when API returns no labels', () async {
       when(mockDio.get<Map<String, dynamic>>(any)).thenAnswer(
         (_) async => Response(

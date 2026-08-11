@@ -412,6 +412,11 @@ poll wrote nothing there. Every account's cache is refreshed, not just the activ
 one. Adding a field to `MailPollerState` means adding it to `props`, or `emit`
 drops the change.
 
+The watched folder is compared against the Inbox id the poller *remembers*
+(`_inboxIds`), because a quiet delta fetches no folders — and `_samePage` matches
+by id on what a row shows, since the two sides differ in order and in how much
+of each message they carry.
+
 A **delta cursor is a one-shot receipt**: save it only after the page it
 acknowledges has been applied, or a failed write loses those changes for good.
 400/404/410 and a missing delta link all clear it, as does any three consecutive

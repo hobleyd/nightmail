@@ -108,6 +108,22 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   /// belongs to the datasource, which AccountManager caches per account.
   final Map<String, StreamSubscription<String>> _idleSubs = {};
 
+  /// The Inbox's real folder id per account, as last resolved by a cycle that
+  /// fetched folders.
+  ///
+  /// Remembered across cycles rather than rebuilt by each one, because a delta
+  /// that reports no changes deliberately fetches no folders — so a per-cycle
+  /// map was empty exactly when the mailbox was quiet, and the watched-folder
+  /// step below could not tell "the user is on the Inbox" (already synced, or in
+  /// this case nothing to sync) from a second folder. It re-fetched and
+  /// re-cached the whole Inbox page on every quiet cycle, which is also what
+  /// made [_samePage] the only thing standing between a quiet mailbox and a
+  /// full UI reload every interval.
+  ///
+  /// An Inbox does not change its id, and any cycle that does fetch folders
+  /// overwrites this, so a remembered value is never staler than the account.
+  final Map<String, String> _inboxIds = {};
+
   /// Per-account failure from the current cycle, published on the state.
   final Map<String, String> _errors = {};
 
@@ -219,6 +235,12 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
         if (inbox.isNotEmpty) {
           final count = inbox.first.unreadItemCount;
           _latestPolledUnread[account.id] = count;
+          // Seeded here as well as from a live fetch, because this is the case
+          // where no cycle may ever fetch folders: priming the count from cache
+          // is what lets a quiet delta skip the folder request entirely, and
+          // without the id from the same rows the Inbox then looks like a second
+          // folder to the watched-folder step. See [_inboxIds].
+          _inboxIds[account.id] = inbox.first.id;
           // Both baselines are primed, not just the badge's unread count:
           // they are what the first poll compares the server against to work
           // out whether the counts already on screen are stale. See
@@ -364,7 +386,8 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
 
       /// The resolved Inbox id per account, so the watched-folder step can tell
       /// "the user is on the Inbox" (already synced) from a real second folder.
-      final inboxIdByAccount = <String, String>{};
+      /// Kept on the cubit, not this cycle — see [_inboxIds].
+      final inboxIdByAccount = _inboxIds;
 
 
       // Full-body prefetch jobs collected as new mail is cached this cycle,
@@ -1061,20 +1084,45 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     return changed;
   }
 
-  /// Whether two pages are the same mail in the same order and the same state.
+  /// Whether two pages are the same mail in the same state.
   ///
-  /// Only the first [_watchedPageSize] rows are compared: the cache may hold
-  /// more than a page if the user has loaded more, and the fetch only ever
-  /// returns the first page.
+  /// Matched **by id, not by position**: the two lists do not arrive in the same
+  /// order. A cached page comes back newest-first, while a provider's own listing
+  /// is grouped by thread (Gmail returns each thread's messages together; Graph
+  /// appends the cross-folder expansion after the folder's own rows). Comparing
+  /// index against index therefore reported a change on every cycle for any
+  /// folder holding a multi-message thread — i.e. every real mailbox.
+  ///
+  /// Compared on what a row *shows* rather than with `Email`'s own equality, for
+  /// a second version of the same mistake: a cached row whose body has since
+  /// been fetched carries the attachments that came with it, and a list
+  /// projection carries none, so full equality also disagreed for ever — on
+  /// precisely the messages the user reads most.
   static bool _samePage(List<Email> cached, List<Email> fresh) {
     if (cached.length < fresh.length) return false;
-    for (var i = 0; i < fresh.length; i++) {
-      if (cached[i] != fresh[i]) return false;
+    final cachedRows = {for (final email in cached) email.id: _rowState(email)};
+    for (final email in fresh) {
+      if (cachedRows[email.id] != _rowState(email)) return false;
     }
     // The fetch is a full page but the cache holds fewer rows than a page —
     // nothing was dropped, so this is the same folder seen twice.
     return cached.length == fresh.length || fresh.length == _watchedPageSize;
   }
+
+  /// Everything about a message a folder row draws, and nothing a list fetch
+  /// cannot answer for. Records compare by value, so this is the comparison.
+  ///
+  /// Read state and the flag are in here deliberately: changing either on
+  /// another machine has to register as a change, or the row would keep drawing
+  /// the state this machine last saw.
+  static (bool, bool, bool, int, String, String) _rowState(Email email) => (
+        email.isRead,
+        email.isFlagged,
+        email.hasAttachments,
+        email.receivedDateTime.millisecondsSinceEpoch,
+        email.subject,
+        email.from.address,
+      );
 
   /// Counts a delta failure for one folder and, once the streak reaches
   /// [_maxDeltaFailuresBeforeReset], drops the account's tokens so the next

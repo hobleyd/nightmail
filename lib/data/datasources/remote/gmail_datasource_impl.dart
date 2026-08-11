@@ -132,27 +132,18 @@ class GmailDatasourceImpl implements EmailRemoteDatasource, MailDeltaDatasource 
         }
       }
 
-      // The labels list endpoint omits message counts. Fetch them in parallel
-      // for all real (non-virtual) labels so the poller and folder list are correct.
+      // The labels list endpoint omits message counts. Fetch them for all real
+      // (non-virtual) labels so the poller and folder list are correct —
+      // concurrently, but a chunk at a time (see [_labelCountConcurrency]).
       final realIds = folders
           .where((f) => !f.id.startsWith('__virtual__'))
           .map((f) => f.id)
           .toList();
-      await Future.wait(realIds.map((id) async {
-        try {
-          final resp =
-              await _dio.get<Map<String, dynamic>>('/users/me/labels/$id');
-          final d = resp.data;
-          if (d == null) return;
-          _labelCounts[id] = (
-            d['messagesUnread'] as int? ?? 0,
-            d['messagesTotal'] as int? ?? 0,
-          );
-        } catch (e) {
-          // Leave the last known count in place — see [_labelCounts].
-          debugPrint('[Gmail] label count fetch failed for $id: $e');
-        }
-      }));
+      for (var i = 0; i < realIds.length; i += _labelCountConcurrency) {
+        final chunk = realIds.sublist(
+            i, (i + _labelCountConcurrency).clamp(0, realIds.length));
+        await Future.wait(chunk.map(_fetchLabelCount));
+      }
 
       return folders.map((f) {
         final childCount = childCountByParent[f.id] ?? 0;
@@ -170,6 +161,33 @@ class GmailDatasourceImpl implements EmailRemoteDatasource, MailDeltaDatasource 
       }).toList();
     } on DioException catch (e) {
       throw _mapException(e);
+    }
+  }
+
+  /// Label detail requests in flight at once while refreshing counts.
+  ///
+  /// The labels *list* carries no counts, so every label costs a request of its
+  /// own. Firing all of them at once is enough for Gmail to close connections
+  /// mid-header on a mailbox with a few dozen labels ("Connection closed before
+  /// full header was received"), which loses the counts this is here to fetch —
+  /// and every folder-list load pays it again.
+  static const _labelCountConcurrency = 8;
+
+  /// Reads one label's message counts into [_labelCounts]. Never throws: a label
+  /// that could not be counted keeps its last known figures rather than failing
+  /// the whole folder listing.
+  Future<void> _fetchLabelCount(String id) async {
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>('/users/me/labels/$id');
+      final d = resp.data;
+      if (d == null) return;
+      _labelCounts[id] = (
+        d['messagesUnread'] as int? ?? 0,
+        d['messagesTotal'] as int? ?? 0,
+      );
+    } catch (e) {
+      // Leave the last known count in place — see [_labelCounts].
+      debugPrint('[Gmail] label count fetch failed for $id: $e');
     }
   }
 

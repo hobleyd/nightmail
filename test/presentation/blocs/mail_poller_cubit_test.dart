@@ -66,7 +66,13 @@ EmailFolderModel _inbox({int unread = 0}) => EmailFolderModel.fromJson({
       'childFolderCount': 0,
     });
 
-EmailModel _email(String id, {bool isRead = false}) => EmailModel.fromJson({
+EmailModel _email(
+  String id, {
+  bool isRead = false,
+  String receivedDateTime = '2026-06-11T10:00:00Z',
+  List<Map<String, dynamic>> attachments = const [],
+}) =>
+    EmailModel.fromJson({
       'id': id,
       'subject': 'Subj',
       'from': {
@@ -76,7 +82,8 @@ EmailModel _email(String id, {bool isRead = false}) => EmailModel.fromJson({
       'ccRecipients': <dynamic>[],
       'bodyPreview': '',
       'isRead': isRead,
-      'receivedDateTime': '2026-06-11T10:00:00Z',
+      'attachments': attachments,
+      'receivedDateTime': receivedDateTime,
       'sentDateTime': '2026-06-11T09:59:00Z',
       'importance': 'normal',
       'conversationId': 'c1',
@@ -1726,6 +1733,157 @@ void main() {
       await pumpEventQueue();
 
       expect(cubit.state.syncedFolderIds, isEmpty);
+    });
+
+    // Regression: a page's two sides do not arrive in the same order — a cached
+    // page is newest-first, a provider's listing is grouped by thread — so
+    // comparing index against index found a change in an unchanged folder on
+    // every single cycle, and each one bumped pollGeneration: a full folder-list
+    // reload (one request per Gmail label) and list refresh, every interval,
+    // for ever.
+    test('reports no change when the same page arrives in another order',
+        () async {
+      final older = _email('older', receivedDateTime: '2026-06-11T09:00:00Z');
+      final newer = _email('newer', receivedDateTime: '2026-06-11T10:00:00Z');
+      // Thread-grouped, as a provider returns it.
+      when(mockGmailDs.getEmails(
+              folderId: anyNamed('folderId'), top: anyNamed('top')))
+          .thenAnswer((_) async => [older, newer]);
+      // Newest-first, as the cache returns it.
+      when(mockEmailLocalDatasource.getCachedEmails(
+        accountId: anyNamed('accountId'),
+        folderId: 'archive-id',
+      )).thenAnswer((_) async => [newer, older]);
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+      final generationBefore = cubit.state.pollGeneration;
+
+      cubit.setWatchedFolder('archive-id');
+      await pumpEventQueue();
+
+      expect(cubit.state.pollGeneration, generationBefore);
+    });
+
+    // The other half of the same regression: a cached row whose body has been
+    // fetched carries the attachments that came with it, and the list projection
+    // it is compared against carries none. Full entity equality therefore
+    // disagreed for ever — on exactly the messages the user opens.
+    test('reports no change when a cached row has a fetched body\'s extras',
+        () async {
+      when(mockGmailDs.getEmails(
+              folderId: anyNamed('folderId'), top: anyNamed('top')))
+          .thenAnswer((_) async => [_email('msg-1')]);
+      when(mockEmailLocalDatasource.getCachedEmails(
+        accountId: anyNamed('accountId'),
+        folderId: 'archive-id',
+      )).thenAnswer((_) async => [
+            _email('msg-1', attachments: [
+              {'id': 'att-1', 'name': 'report.pdf', 'size': 12},
+            ]),
+          ]);
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+      final generationBefore = cubit.state.pollGeneration;
+
+      cubit.setWatchedFolder('archive-id');
+      await pumpEventQueue();
+
+      expect(cubit.state.pollGeneration, generationBefore);
+    });
+
+    // ...but a real change still has to register.
+    test('reports a change when a row was read elsewhere', () async {
+      when(mockGmailDs.getEmails(
+              folderId: anyNamed('folderId'), top: anyNamed('top')))
+          .thenAnswer((_) async => [_email('msg-1', isRead: true)]);
+      when(mockEmailLocalDatasource.getCachedEmails(
+        accountId: anyNamed('accountId'),
+        folderId: 'archive-id',
+      )).thenAnswer((_) async => [_email('msg-1', isRead: false)]);
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+      final generationBefore = cubit.state.pollGeneration;
+
+      cubit.setWatchedFolder('archive-id');
+      await pumpEventQueue();
+
+      expect(cubit.state.pollGeneration, generationBefore + 1);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // A quiet delta must cost one request.
+  //
+  // Regression: the delta branch only resolved the Inbox's real id when it had
+  // changes to report, so on a quiet cycle the watched-folder step could not
+  // tell the Inbox from a second folder and re-fetched the whole page — then
+  // compared it against the cache, and (see _samePage above) declared it
+  // changed. A quiet mailbox reloaded the folder list and the message list on
+  // every interval.
+  // ---------------------------------------------------------------------------
+
+  group('MailPollerCubit — quiet delta with the Inbox on screen', () {
+    setUp(() {
+      when(mockAccountManager.accounts).thenReturn([_msAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(_msAccount);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(mockGraphDs);
+      when(mockDatabase.loadDeltaToken(any, any))
+          .thenAnswer((_) async => _savedToken);
+      when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
+          .thenAnswer((_) async => _emptyDelta());
+      when(mockGraphDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: 3)]);
+      when(mockGraphDs.getEmails(
+              folderId: anyNamed('folderId'), top: anyNamed('top')))
+          .thenAnswer((_) async => [_email('msg-1')]);
+    });
+
+    test('does not re-fetch the Inbox as if it were a second folder', () async {
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      // The first cycle primed the count, so the Inbox's id is known even though
+      // this cycle's delta has nothing to say.
+      cubit.setWatchedFolder('inbox-id');
+      await pumpEventQueue();
+
+      verifyNever(mockGraphDs.getEmails(
+          folderId: anyNamed('folderId'), top: anyNamed('top')));
+      expect(cubit.state.pollGeneration, 0);
+    });
+
+    // The same, for the cold start the badge was primed from cache on: no cycle
+    // fetches folders at all there, so the id has to come from the same cached
+    // rows the count did.
+    test('knows the Inbox from the cache the badge was primed from', () async {
+      when(mockGetCachedFolders(any))
+          .thenAnswer((_) async => Right([_inbox(unread: 3)]));
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
+      cubit.setWatchedFolder('inbox-id');
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      verifyNever(mockGraphDs.getEmails(
+          folderId: anyNamed('folderId'), top: anyNamed('top')));
     });
   });
 

@@ -181,6 +181,48 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
   }
 
   @override
+  Future<void> upgradeCachedEmailBody({
+    required String accountId,
+    required String folderId,
+    required Email email,
+  }) async {
+    // The encrypt is inside the transaction, unlike cacheEmails' batch — this
+    // writes one row, and doing it beforehand would reopen the very gap the
+    // transaction exists to close.
+    await _database.transaction(() async {
+      final row = await (_database.select(_database.cachedEmails)
+            ..where((t) =>
+                t.accountId.equals(accountId) & t.emailId.equals(email.id)))
+          .getSingleOrNull();
+      // Deleted, junked or moved while the body was being fetched. Writing it
+      // would put the message the user just got rid of back in the folder.
+      if (row == null) return;
+
+      // Applied to the entity, not just the column: the row is read back out of
+      // the encrypted JSON (see [getCachedEmailById]), so setting the column
+      // alone would leave the stale flag as the one the reading pane sees.
+      final merged = email.copyWith(isRead: row.isRead);
+      final encryptedData =
+          await _encryption.encrypt(jsonEncode(_emailToJson(merged)));
+      await _database.into(_database.cachedEmails).insert(
+            CachedEmailsCompanion.insert(
+              emailId: merged.id,
+              accountId: accountId,
+              folderId: folderId,
+              isRead: merged.isRead,
+              hasAttachments: merged.hasAttachments,
+              receivedDateTimeMs:
+                  merged.receivedDateTime.millisecondsSinceEpoch,
+              conversationId: Value(merged.conversationId),
+              cachedAtMs: DateTime.now().millisecondsSinceEpoch,
+              encryptedData: encryptedData,
+            ),
+            mode: InsertMode.insertOrReplace,
+          );
+    });
+  }
+
+  @override
   Future<bool> hasStaleAttachmentParse({
     required String accountId,
     required String emailId,

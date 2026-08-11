@@ -167,12 +167,29 @@ class GraphApiDatasourceImpl
       final crossFolderEmails =
           await compute(parseGraphMessageCollections, rawBatches);
 
+      // The expansion must not drag a *deleted* or junked copy back into the
+      // folder being listed. deleteEmail/reportJunk move the message to Deleted
+      // Items / Junk Email, where it keeps its conversationId — so the
+      // mailbox-wide fetch above hands it straight back, and the merge below
+      // re-lists it here. Sent Items, Drafts and user folders are deliberately
+      // kept: surfacing those is the whole point of the expansion (and
+      // EmailConversation.anchor relies on the Sent copies being there).
+      //
+      // A move also *changes* the message's id, so neither the outbox's
+      // pending-op reconciliation nor its removal tombstone — both keyed on the
+      // id that was deleted — recognises the copy that comes back. Deleting one
+      // message of a thread whose other messages are still in the folder
+      // therefore put it back on screen at every refresh, indefinitely. The
+      // Gmail thread listing excludes TRASH/SPAM for the same reason.
+      final excludedFolderIds = await _expansionExcludedFolderIds(folderId);
+
       // Merge: folder emails + cross-folder emails, de-duplicated by id.
       final byId = <String, EmailModel>{};
       for (final e in folderEmails) {
         byId[e.id] = e;
       }
       for (final e in crossFolderEmails) {
+        if (excludedFolderIds.contains(e.parentFolderId)) continue;
         byId.putIfAbsent(e.id, () => e);
       }
       return byId.values.toList();
@@ -194,6 +211,65 @@ class GraphApiDatasourceImpl
     } catch (_) {
       return [];
     }
+  }
+
+  /// Well-known folders whose copies of a conversation must not be surfaced by
+  /// the cross-folder expansion in [getEmails] — see there for why.
+  static const _expansionExcludedFolders = ['deleteditems', 'junkemail'];
+
+  /// Memoised [_expansionExcludedFolders] → this mailbox's folder ids.
+  ///
+  /// The *future* is memoised rather than the result, so a page holding 25
+  /// conversations makes one lookup instead of racing 25; a mailbox does not
+  /// re-home its Deleted Items, so it is good for the datasource's lifetime.
+  Future<Set<String>>? _excludedFolderIds;
+
+  /// The folder ids to drop from a cross-folder expansion made while listing
+  /// [folderId].
+  ///
+  /// Empty — and no lookup at all — when the folder being listed *is* one of
+  /// them (its own messages are the point), or when the listing is already
+  /// mailbox-wide (`folderId == null`, i.e. `/me/messages`) and so has no folder
+  /// to be dragged back into.
+  Future<Set<String>> _expansionExcludedFolderIds(String? folderId) async {
+    if (folderId == null) return const {};
+    if (_expansionExcludedFolders.contains(folderId.toLowerCase())) {
+      return const {};
+    }
+    final ids = await (_excludedFolderIds ??= _fetchExpansionExcludedIds());
+    // The caller may have addressed the folder by id rather than by well-known
+    // name, which the check above cannot see.
+    return ids.contains(folderId) ? const {} : ids;
+  }
+
+  /// Resolves [_expansionExcludedFolders] to ids, comparable against a message's
+  /// `parentFolderId`.
+  ///
+  /// A lookup that could not answer in full is deliberately *not* kept: a
+  /// folder listing must degrade rather than fail if this request is throttled,
+  /// but keeping a partial answer would expand deleted mail back into the folder
+  /// for the rest of the session instead of retrying on the next listing.
+  Future<Set<String>> _fetchExpansionExcludedIds() async {
+    final ids = <String>{};
+    var complete = true;
+    for (final wellKnownName in _expansionExcludedFolders) {
+      try {
+        final response = await _dio.get<Map<String, dynamic>>(
+          '/me/mailFolders/$wellKnownName',
+          queryParameters: {'\$select': 'id'},
+        );
+        final id = response.data?['id'] as String?;
+        if (id == null) {
+          complete = false;
+        } else {
+          ids.add(id);
+        }
+      } catch (_) {
+        complete = false;
+      }
+    }
+    if (!complete) _excludedFolderIds = null;
+    return ids;
   }
 
   /// Fetches one conversation's messages **undecoded**, for a parser isolate to

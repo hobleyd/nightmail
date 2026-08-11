@@ -9,7 +9,12 @@ import 'package:nightmail/domain/entities/email.dart';
 
 import 'graph_api_get_emails_test.mocks.dart';
 
-Map<String, dynamic> _messageJson(String id, String convId) => {
+Map<String, dynamic> _messageJson(
+  String id,
+  String convId, {
+  String parentFolderId = 'inbox',
+}) =>
+    {
       'id': id,
       'subject': 'Test',
       'from': {
@@ -23,7 +28,7 @@ Map<String, dynamic> _messageJson(String id, String convId) => {
       'importance': 'normal',
       'conversationId': convId,
       'hasAttachments': false,
-      'parentFolderId': 'inbox',
+      'parentFolderId': parentFolderId,
     };
 
 Response<String> _resp(
@@ -109,6 +114,213 @@ void main() {
 
       expect(capturedParams!['\$filter'],
           equals("conversationId eq 'my-conv-id'"));
+    });
+  });
+
+  // Regression: deleting one message of a thread whose other messages are still
+  // in the folder put it straight back on screen at every refresh. deleteEmail
+  // *moves* the message to Deleted Items, where it keeps its conversationId — so
+  // the mailbox-wide conversation fetch handed the deleted copy back — and the
+  // move changes its id, so the outbox's pending-op/tombstone reconciliation
+  // (keyed on the id that was deleted) could not recognise it either.
+  group('getEmails — cross-folder expansion excludes Deleted Items and Junk',
+      () {
+    const deletedItemsId = 'AQMk-deleted-items';
+    const junkId = 'AQMk-junk-email';
+
+    /// Stubs the folder page for [listedFolderId] plus the mailbox-wide
+    /// conversation fetch that follows it, and the two well-known folder lookups
+    /// the exclusion needs.
+    void stubMailbox({
+      required String listedFolderId,
+      required List<Map<String, dynamic>> folderPage,
+      required List<Map<String, dynamic>> conversation,
+    }) {
+      when(mockDio.get<String>(
+        '/me/mailFolders/$listedFolderId/messages',
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((_) async => _resp({'value': folderPage}));
+
+      when(mockDio.get<String>(
+        '/me/messages',
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((_) async => _resp({'value': conversation}));
+
+      for (final entry in const {
+        'deleteditems': deletedItemsId,
+        'junkemail': junkId,
+      }.entries) {
+        when(mockDio.get<Map<String, dynamic>>(
+          '/me/mailFolders/${entry.key}',
+          queryParameters: anyNamed('queryParameters'),
+          options: anyNamed('options'),
+        )).thenAnswer((_) async => Response(
+              data: {'id': entry.value},
+              statusCode: 200,
+              requestOptions: RequestOptions(path: '/me/mailFolders'),
+            ));
+      }
+    }
+
+    test('drops the Deleted Items copy of a thread still in the Inbox',
+        () async {
+      stubMailbox(
+        listedFolderId: 'inbox',
+        folderPage: [_messageJson('invitation', 'conv-1')],
+        conversation: [
+          _messageJson('invitation', 'conv-1'),
+          // The cancellation the user removed from the calendar: Graph moved it
+          // to Deleted Items and gave it a new id.
+          _messageJson('cancellation-moved', 'conv-1',
+              parentFolderId: deletedItemsId),
+        ],
+      );
+
+      final emails = await datasource.getEmails(folderId: 'inbox');
+
+      expect(emails.map((e) => e.id), ['invitation']);
+    });
+
+    test('drops the Junk Email copy too', () async {
+      stubMailbox(
+        listedFolderId: 'inbox',
+        folderPage: [_messageJson('msg1', 'conv-1')],
+        conversation: [
+          _messageJson('msg1', 'conv-1'),
+          _messageJson('junked', 'conv-1', parentFolderId: junkId),
+        ],
+      );
+
+      final emails = await datasource.getEmails(folderId: 'inbox');
+
+      expect(emails.map((e) => e.id), ['msg1']);
+    });
+
+    // Sent Items copies are what EmailConversation.anchor reads to decide which
+    // message heads a thread row, so the expansion must keep surfacing them.
+    test('keeps copies from Sent Items and user folders', () async {
+      stubMailbox(
+        listedFolderId: 'inbox',
+        folderPage: [_messageJson('msg1', 'conv-1')],
+        conversation: [
+          _messageJson('msg1', 'conv-1'),
+          _messageJson('my-reply', 'conv-1', parentFolderId: 'AQMk-sent'),
+          _messageJson('filed', 'conv-1', parentFolderId: 'AAMk-project'),
+        ],
+      );
+
+      final emails = await datasource.getEmails(folderId: 'inbox');
+
+      expect(emails.map((e) => e.id), ['msg1', 'my-reply', 'filed']);
+    });
+
+    test('keeps its own messages when Deleted Items is the folder being listed',
+        () async {
+      stubMailbox(
+        listedFolderId: deletedItemsId,
+        folderPage: [
+          _messageJson('deleted1', 'conv-1', parentFolderId: deletedItemsId),
+        ],
+        conversation: [
+          _messageJson('deleted1', 'conv-1', parentFolderId: deletedItemsId),
+          _messageJson('deleted2', 'conv-1', parentFolderId: deletedItemsId),
+        ],
+      );
+
+      final emails = await datasource.getEmails(folderId: deletedItemsId);
+
+      expect(emails.map((e) => e.id), ['deleted1', 'deleted2']);
+    });
+
+    // The poller addresses folders by Graph's well-known names, not by id.
+    test('recognises the folder addressed by its well-known name', () async {
+      stubMailbox(
+        listedFolderId: 'deleteditems',
+        folderPage: [
+          _messageJson('deleted1', 'conv-1', parentFolderId: deletedItemsId),
+        ],
+        conversation: [
+          _messageJson('deleted1', 'conv-1', parentFolderId: deletedItemsId),
+        ],
+      );
+
+      final emails = await datasource.getEmails(folderId: 'deleteditems');
+
+      expect(emails.map((e) => e.id), ['deleted1']);
+      verifyNever(mockDio.get<Map<String, dynamic>>(
+        '/me/mailFolders/deleteditems',
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      ));
+    });
+
+    // A folder listing must not depend on the lookup, and a partial answer must
+    // not be cached — otherwise one throttled request expands deleted mail back
+    // into the folder for the rest of the session.
+    test('lists the folder anyway when the lookup fails, and retries next time',
+        () async {
+      when(mockDio.get<String>(
+        '/me/mailFolders/inbox/messages',
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((_) async => _resp({
+            'value': [_messageJson('msg1', 'conv-1')],
+          }));
+      when(mockDio.get<String>(
+        '/me/messages',
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((_) async => _resp({
+            'value': [
+              _messageJson('msg1', 'conv-1'),
+              _messageJson('deleted', 'conv-1',
+                  parentFolderId: deletedItemsId),
+            ],
+          }));
+
+      var lookupAttempts = 0;
+      when(mockDio.get<Map<String, dynamic>>(
+        '/me/mailFolders/deleteditems',
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((_) async {
+        lookupAttempts++;
+        if (lookupAttempts == 1) {
+          throw DioException(
+            type: DioExceptionType.badResponse,
+            response: Response(
+              statusCode: 429,
+              requestOptions: RequestOptions(path: '/me/mailFolders'),
+            ),
+            requestOptions: RequestOptions(path: '/me/mailFolders'),
+          );
+        }
+        return Response(
+          data: const {'id': deletedItemsId},
+          statusCode: 200,
+          requestOptions: RequestOptions(path: '/me/mailFolders'),
+        );
+      });
+      when(mockDio.get<Map<String, dynamic>>(
+        '/me/mailFolders/junkemail',
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((_) async => Response(
+            data: const {'id': junkId},
+            statusCode: 200,
+            requestOptions: RequestOptions(path: '/me/mailFolders'),
+          ));
+
+      final first = await datasource.getEmails(folderId: 'inbox');
+      expect(first.map((e) => e.id), ['msg1', 'deleted'],
+          reason: 'the listing still answers when the lookup fails');
+
+      final second = await datasource.getEmails(folderId: 'inbox');
+      expect(second.map((e) => e.id), ['msg1'],
+          reason: 'the failed lookup was not memoised');
+      expect(lookupAttempts, 2);
     });
   });
 

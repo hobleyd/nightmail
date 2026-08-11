@@ -44,20 +44,21 @@ class _FakeLocal extends Fake implements EmailLocalDatasource {
   }) async =>
       cached[emailId];
 
+  /// Mirrors the real implementation's two load-bearing properties: the row
+  /// lookup and the write are one atomic step, and a row that has gone is not
+  /// re-inserted. [cacheEmails] is deliberately left unimplemented — `Fake`
+  /// throws on it, so going back to an inserting write fails these tests.
   @override
-  Future<void> cacheEmails({
+  Future<void> upgradeCachedEmailBody({
     required String accountId,
     required String folderId,
-    required List<Email> emails,
-    bool replaceFolder = false,
+    required Email email,
   }) async {
-    if (replaceFolder) {
-      cached.removeWhere((_, e) => (e.parentFolderId ?? folderId) == folderId);
-    }
-    for (final e in emails) {
-      cached[e.id] = e;
-      writes.add((folderId: folderId, email: e));
-    }
+    final row = cached[email.id];
+    if (row == null) return;
+    final merged = email.copyWith(isRead: row.isRead);
+    cached[email.id] = merged;
+    writes.add((folderId: folderId, email: merged));
   }
 }
 
@@ -182,6 +183,33 @@ void main() {
     expect(local.cached['a']!.body, 'A');
     expect(local.cached['c']!.body, 'C');
     expect(local.cached['b']!.body, isEmpty); // failed one left thin
+  });
+
+  // The pre-fetch check cannot cover this: it ran before the round-trip, and the
+  // message the prefetch is upgrading is the one the user is most likely reading
+  // — and deleting — while it is in flight. Before the write became a
+  // present-row-only upgrade, this put the message back in the folder, and the
+  // outbox's tombstone could not veto it because the write bypassed the
+  // repository entirely.
+  test('does not resurrect a message deleted while its body was in flight',
+      () async {
+    local.cached['m1'] = _email('m1');
+    final gate = Completer<EmailModel>();
+    remote.gate['m1'] = gate;
+
+    final inFlight = run([_email('m1')]);
+    await Future<void>.delayed(Duration.zero);
+
+    // The user deletes it: the repository drops the cache row before the body
+    // comes back.
+    local.cached.remove('m1');
+
+    gate.complete(_email('m1', body: 'FULL'));
+    await inFlight;
+
+    expect(remote.getEmailCalls, ['m1'], reason: 'the fetch had already gone');
+    expect(local.writes, isEmpty);
+    expect(local.cached.containsKey('m1'), isFalse);
   });
 
   test('drops a concurrent second batch for the same account', () async {

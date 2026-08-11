@@ -278,6 +278,20 @@ That is why the whole Gmail message path uses one response type (the thread and
 search *indexes* are plain too, decoded locally since they are only ids), and why
 these tests stub `get<String>` with `jsonEncode`d bodies.
 
+## A Folder Listing Expands Its Threads Across Folders
+
+Both providers return a thread's copies from *other* folders alongside the folder
+page — that is what puts the Sent replies `EmailConversation.anchor` reads in
+reach. Deleted Items/Junk (Graph `_expansionExcludedFolderIds`) and TRASH/SPAM
+(Gmail `excludeLabels`) are excluded, or a deleted message comes back on every
+refresh: a delete *moves* it, so it keeps its `conversationId` and gets a **new
+id** the outbox's pending-op and tombstone reconciliation cannot recognise.
+
+`BodyPrefetchService` writes through `upgradeCachedEmailBody`, never
+`cacheEmails`: its write lands a round-trip after its "still cached?" check, on
+the message the user is most likely reading, so only a present-row-only write
+inside one transaction can refuse to resurrect a delete that landed meanwhile.
+
 ## Graph Never Says Whether a Body Was Plain Text
 
 `body.contentType` reports the format Graph *rendered*, not the one the sender

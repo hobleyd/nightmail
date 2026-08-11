@@ -145,6 +145,137 @@ void main() {
       expect(cached!.body, '<p>opened now</p>');
     });
   });
+  // Regression: BodyPrefetchService wrote its fetched body through cacheEmails,
+  // which inserts. A message deleted while its body was in flight — the likeliest
+  // case, since the prefetch targets exactly the mail the user is reading — was
+  // put straight back into the folder by that write.
+  group('upgradeCachedEmailBody', () {
+    test('fills in the body of a row that is still cached', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '')],
+      );
+
+      await datasource.upgradeCachedEmailBody(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        email: _email('email-1', body: '<p>fetched</p>'),
+      );
+
+      final cached = await datasource.getCachedEmailById(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+      );
+      expect(cached!.body, '<p>fetched</p>');
+    });
+
+    test('writes nothing at all when the row has gone', () async {
+      await datasource.upgradeCachedEmailBody(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        email: _email('email-1', body: '<p>fetched</p>'),
+      );
+
+      final cached = await datasource.getCachedEmailById(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+      );
+      expect(cached, isNull, reason: 'a deleted message must not be inserted');
+    });
+
+    // Scoped by account as well as id, or an IMAP UID shared across two accounts
+    // would let one account's prefetch write into the other's cache.
+    test('does not treat another account\'s row as the one to upgrade',
+        () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-2',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '')],
+      );
+
+      await datasource.upgradeCachedEmailBody(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        email: _email('email-1', body: '<p>fetched</p>'),
+      );
+
+      expect(
+        await datasource.getCachedEmailById(
+            accountId: 'acct-1', emailId: 'email-1'),
+        isNull,
+      );
+      expect(
+        (await datasource.getCachedEmailById(
+                accountId: 'acct-2', emailId: 'email-1'))!
+            .body,
+        isEmpty,
+      );
+    });
+
+    // The row may carry an optimistic mark-as-read the outbox has not drained
+    // yet, and the fetched copy reports the server's stale value.
+    test('keeps the cached read state over the fetched one', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '')],
+      );
+      await datasource.updateEmailReadStatusInCache(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+        isRead: true,
+      );
+
+      // _email builds isRead: false — the server has not caught up.
+      await datasource.upgradeCachedEmailBody(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        email: _email('email-1', body: '<p>fetched</p>'),
+      );
+
+      final cached = await datasource.getCachedEmailById(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+      );
+      expect(cached!.body, '<p>fetched</p>');
+      expect(cached.isRead, isTrue);
+      // Read back off the row as well as out of the payload: the list orders and
+      // counts by the column.
+      final row = await (db.select(db.cachedEmails)
+            ..where((t) => t.emailId.equals('email-1')))
+          .getSingle();
+      expect(row.isRead, isTrue);
+    });
+
+    test('re-files the row under the folder it is given', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '')],
+      );
+
+      await datasource.upgradeCachedEmailBody(
+        accountId: 'acct-1',
+        folderId: 'folder-2',
+        email: _email('email-1', body: '<p>fetched</p>', folderId: 'folder-2'),
+      );
+
+      expect(
+        await datasource.getCachedEmails(
+            accountId: 'acct-1', folderId: 'folder-1'),
+        isEmpty,
+      );
+      expect(
+        (await datasource.getCachedEmails(
+                accountId: 'acct-1', folderId: 'folder-2'))
+            .single
+            .body,
+        '<p>fetched</p>',
+      );
+    });
+  });
+
 
   // ---------------------------------------------------------------------------
   // replaceFolder — the fresh page *becomes* the folder's contents.

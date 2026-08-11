@@ -38,6 +38,26 @@ abstract interface class EmailLocalDatasource {
     required String emailId,
   });
 
+  /// Upgrades an already-cached row to the full copy in [email] — body, inline
+  /// images and attachment metadata — and does **nothing at all** when that row
+  /// is no longer cached. Never inserts.
+  ///
+  /// This is [cacheEmails] with the insert taken away, and the difference is the
+  /// whole point: `BodyPrefetchService` is upgrading a message the user is quite
+  /// likely reading right now, and the row can be deleted from under it while
+  /// its body is in flight. Deciding "still cached?" in the caller cannot fix
+  /// that — the check and the write would be two transactions with the delete
+  /// free to commit between them — so the lookup happens inside this one.
+  ///
+  /// The cached row's `isRead` wins over [email]'s: the row may carry an
+  /// optimistic flag from a mark-as-read that has not drained to the server yet,
+  /// and a freshly-fetched copy reports the server's stale value.
+  Future<void> upgradeCachedEmailBody({
+    required String accountId,
+    required String folderId,
+    required Email email,
+  });
+
   /// Whether the cached row for [emailId] was written by an older version of
   /// the attachment-parsing code, so its attachment metadata cannot be trusted.
   ///

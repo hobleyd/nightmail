@@ -77,9 +77,8 @@ class BodyPrefetchService {
       for (final candidate in candidates) {
         try {
           // Skip if the row has since vanished (deleted/moved between the sync
-          // and now) or another path already filled its body: re-caching a
-          // removed message would resurrect it, and re-fetching a full one
-          // wastes a round-trip.
+          // and now) or another path already filled its body: nothing here
+          // should spend a round-trip on a message that no longer needs one.
           final cached = await _local.getCachedEmailById(
             accountId: accountId,
             emailId: candidate.id,
@@ -89,16 +88,19 @@ class BodyPrefetchService {
           final full = await datasource.getEmail(candidate.id);
           if (full.body.isEmpty) continue;
 
-          // Keep the already-cached read state rather than the freshly-fetched
-          // one. The thin row we're upgrading may carry an optimistic isRead
-          // from a mark-as-read that hasn't drained to the server yet; the
-          // full copy reports the server's stale value, and writing it here —
-          // the body is non-empty, so cacheEmails' body-merge does not run —
-          // would flip the message back to unread until the outbox drains.
-          await _local.cacheEmails(
+          // Never a plain cacheEmails: that inserts, and this write lands after
+          // a network fetch and an isolate parse — the window in which the user,
+          // who is most likely reading this very message, deletes it. The check
+          // above cannot cover that; it ran before the fetch, and re-doing it
+          // here would still leave the delete free to commit between the check
+          // and the insert. upgradeCachedEmailBody decides "still cached?"
+          // inside its own transaction and writes nothing if the answer is no.
+          //
+          // It also keeps the cached read state over the fetched one — see there.
+          await _local.upgradeCachedEmailBody(
             accountId: accountId,
             folderId: full.parentFolderId ?? folderId,
-            emails: [full.copyWith(isRead: cached.isRead)],
+            email: full,
           );
         } catch (_) {
           // Best-effort: leave this one to load lazily on tap.

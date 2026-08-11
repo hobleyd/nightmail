@@ -31,8 +31,25 @@ class WindowRestoreState {
   final Rect? displayBounds;
 }
 
+/// The compose window's saved geometry: one instance shared by `main()`, which
+/// restores it as a compose window opens, and the window itself, which records
+/// it — so the reader and the writer cannot drift onto different files.
+const composeWindowBounds = WindowBoundsService.forWindowKind('compose');
+
 class WindowBoundsService {
-  static const String _boundsFile = 'window_bounds.json';
+  /// The main window's geometry.
+  const WindowBoundsService() : _boundsFile = 'window_bounds.json';
+
+  /// The geometry of a *kind* of sub-window (`'compose'`, …) — one file per
+  /// kind rather than one namespace inside the main window's, so a sub-window
+  /// and the main window saving at the same moment cannot read each other's
+  /// half-written file. Two windows of the same kind still share a file, which
+  /// is the intent: the last one moved is the one the next one should open at.
+  const WindowBoundsService.forWindowKind(String kind)
+      : _boundsFile = 'window_bounds_$kind.json';
+
+  final String _boundsFile;
+
   static const double _minTitleBarOverlap = 100.0;
   static const double _titleBarHeight = 40.0;
 

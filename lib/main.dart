@@ -53,6 +53,33 @@ Future<void> _prePositionOnDisplay(Rect? displayBounds) async {
   } catch (_) {}
 }
 
+/// Puts the calling engine's window back where [restored] says it last was.
+///
+/// Shared by the main window and the compose sub-window, because every part of
+/// it is a platform quirk rather than a preference: the pre-position before
+/// maximize/full-screen picks the monitor, and the re-apply after the first
+/// frame fights Windows' `WM_DPICHANGED` rescale and the Linux compositor's
+/// override of position at map time.
+Future<void> _applyRestoreState(WindowRestoreState restored) async {
+  if (restored.fullScreen) {
+    await _prePositionOnDisplay(restored.displayBounds);
+    await windowManager.setFullScreen(true);
+  } else if (restored.maximized) {
+    await _prePositionOnDisplay(restored.displayBounds);
+    await windowManager.maximize();
+  } else if (restored.bounds != null) {
+    final bounds = restored.bounds!;
+    await windowManager.setBounds(bounds);
+    if (Platform.isWindows || Platform.isLinux) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        try {
+          await windowManager.setBounds(bounds);
+        } catch (_) {}
+      });
+    }
+  }
+}
+
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
@@ -73,12 +100,25 @@ void main(List<String> args) async {
     await configureDependencies();
     await sl<AccountManager>().initialize();
 
-    Future<void> showSubWindow(WindowOptions options) async {
+    // `restore` is the geometry this kind of window was last left at, for the
+    // kinds that record one. It wins over centring on the parent's screen — the
+    // user put the window somewhere deliberately — but only if it is still
+    // reachable on the displays connected now, which is what
+    // loadValidatedBounds returning null means.
+    Future<void> showSubWindow(
+      WindowOptions options, {
+      WindowRestoreState? restore,
+    }) async {
       final screenInfoRaw =
           arguments['_screenInfo'] as Map<dynamic, dynamic>?;
 
       try {
-        if (screenInfoRaw != null) {
+        if (restore != null) {
+          await windowManager.waitUntilReadyToShow(
+            WindowOptions(size: options.size, title: options.title),
+          );
+          await _applyRestoreState(restore);
+        } else if (screenInfoRaw != null) {
           final vx = (screenInfoRaw['x'] as num).toDouble();
           final vy = (screenInfoRaw['y'] as num).toDouble();
           final vw = (screenInfoRaw['width'] as num).toDouble();
@@ -189,6 +229,7 @@ void main(List<String> args) async {
 
     await showSubWindow(
       WindowOptions(size: const Size(640, 520), center: true, title: title),
+      restore: await composeWindowBounds.loadValidatedBounds(),
     );
 
     runApp(ComposeWindowApp(windowId: windowId, arguments: arguments));
@@ -222,37 +263,7 @@ void main(List<String> args) async {
   if (!kIsWeb && (Platform.isMacOS || Platform.isLinux || Platform.isWindows)) {
     try {
       final restored = await WindowBoundsService().loadValidatedBounds();
-      if (restored != null) {
-        if (restored.fullScreen) {
-          // Move onto the display this window was last full-screened on
-          // before entering full-screen; otherwise the OS applies it to
-          // whichever monitor it placed the window at launch.
-          await _prePositionOnDisplay(restored.displayBounds);
-          await windowManager.setFullScreen(true);
-        } else if (restored.maximized) {
-          // Move onto the display this window was last maximized on before
-          // maximizing — maximize() targets the monitor the window is
-          // currently on, which defaults to the primary monitor at launch.
-          await _prePositionOnDisplay(restored.displayBounds);
-          await windowManager.maximize();
-        } else if (restored.bounds != null) {
-          await windowManager.setBounds(restored.bounds!);
-          // Re-apply bounds after the first frame on Windows and Linux.
-          // Windows: WM_DPICHANGED rescales after setBounds when moving to a
-          //   monitor with different DPI; re-apply once devicePixelRatio settles.
-          // Linux: the compositor overrides position when the window is first
-          //   mapped (before the first frame). Re-applying after the frame is
-          //   rendered gives the WM a chance to honour our requested position.
-          if (Platform.isWindows || Platform.isLinux) {
-            final bounds = restored.bounds!;
-            WidgetsBinding.instance.addPostFrameCallback((_) async {
-              try {
-                await windowManager.setBounds(bounds);
-              } catch (_) {}
-            });
-          }
-        }
-      }
+      if (restored != null) await _applyRestoreState(restored);
     } catch (_) {}
   }
 

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -9,6 +10,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../../core/platform/window_utils.dart';
 import '../../core/settings/app_settings.dart';
+import '../../core/settings/window_bounds_service.dart';
 import '../../core/signature/signature_merge_engine.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/mailto_parser.dart';
@@ -267,6 +269,16 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage>
   // the close that _close() then asks for isn't mistaken for a fresh one.
   bool _closing = false;
 
+  // Where the next compose window opens. `main()` restores this before the
+  // window is shown; from here on the window records every move and resize.
+  Timer? _boundsDebounce;
+  Timer? _suppressBoundsSaveTimer;
+
+  // Suppress saves triggered by the compositor repositioning the window during
+  // startup (Linux/Wayland places a window after it is mapped, firing
+  // onWindowMove before the user has touched anything).
+  bool _suppressBoundsSave = Platform.isLinux;
+
   @override
   void initState() {
     super.initState();
@@ -276,6 +288,17 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage>
     // window, so this only holds the compose window, not the app.
     windowManager.addListener(this);
     windowManager.setPreventClose(true).catchError((_) {});
+    if (_suppressBoundsSave) {
+      _suppressBoundsSaveTimer =
+          Timer(const Duration(milliseconds: 1500), () {
+        if (!mounted) return;
+        _suppressBoundsSave = false;
+        // Record the position the compositor settled on, which may not be the
+        // one that was asked for — otherwise the next window opens at bounds
+        // Wayland has already refused once.
+        _scheduleBoundsSave();
+      });
+    }
     sl<AppSettings>().loadDefaultComposeFormat().then((format) {
       if (mounted) setState(() => _defaultComposeFormat = format);
     });
@@ -296,9 +319,66 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage>
 
   @override
   void dispose() {
+    _boundsDebounce?.cancel();
+    _suppressBoundsSaveTimer?.cancel();
     windowManager.removeListener(this);
     super.dispose();
   }
+
+  // ── Window geometry ──────────────────────────────────────────────────────
+  //
+  // The same debounce-and-save the main window uses, against its own file
+  // (`composeWindowBounds`), so a compose window opens where the last one was
+  // left rather than centred on the parent every time. Linux fires
+  // resize/move continuously, which is what the debounce is for.
+
+  void _scheduleBoundsSave() {
+    if (_suppressBoundsSave) return;
+    _boundsDebounce?.cancel();
+    _boundsDebounce = Timer(const Duration(milliseconds: 500), () async {
+      try {
+        // Maximize / full-screen have their own overrides below; saving plain
+        // bounds here would record the maximized rect as a normal one.
+        if (await windowManager.isMaximized()) return;
+        if (await windowManager.isFullScreen()) return;
+        await composeWindowBounds.saveBounds(await windowManager.getBounds());
+      } catch (_) {}
+    });
+  }
+
+  Future<void> _saveCurrentState() async {
+    try {
+      final fullScreen = await windowManager.isFullScreen();
+      final maximized = await windowManager.isMaximized();
+      await composeWindowBounds.saveBounds(
+        await windowManager.getBounds(),
+        fullScreen: fullScreen,
+        maximized: maximized,
+      );
+    } catch (_) {}
+  }
+
+  // macOS/Windows: fires once when the resize/move finishes.
+  @override
+  void onWindowResized() => _scheduleBoundsSave();
+
+  @override
+  void onWindowMoved() => _scheduleBoundsSave();
+
+  // Linux: fires continuously during a resize/move — the debounce handles it.
+  @override
+  void onWindowResize() => _scheduleBoundsSave();
+
+  @override
+  void onWindowMove() => _scheduleBoundsSave();
+
+  // Save at once on entering a special state, so a close straight afterwards
+  // doesn't have to re-query a window that is already going away.
+  @override
+  void onWindowMaximize() => _saveCurrentState();
+
+  @override
+  void onWindowEnterFullScreen() => _saveCurrentState();
 
   /// The title-bar close button. `setPreventClose` has already turned the OS
   /// close into an event, so ask the form what to do with the draft first and
@@ -338,6 +418,14 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage>
   Future<void> _close() async {
     if (_closing) return;
     _closing = true;
+    // Closing this window is what tears the engine down, so a pending
+    // debounced save would never fire — record the final geometry now instead.
+    // Timed out rather than merely try/caught: nothing about remembering where
+    // the window was is worth holding up a close the user asked for.
+    _boundsDebounce?.cancel();
+    try {
+      await _saveCurrentState().timeout(const Duration(seconds: 1));
+    } catch (_) {}
     for (var attempt = 1; attempt <= 3; attempt++) {
       try {
         await windowManager.setPreventClose(false);

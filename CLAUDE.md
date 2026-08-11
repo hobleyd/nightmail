@@ -108,6 +108,14 @@ turned its `setPreventClose` guard off — see `_close` in `compose_window.dart`
 which retries and puts the guard back. `destroy()` is never an option in a
 sub-window: it is `PostQuitMessage`/`NSApp.terminate` and takes the app with it.
 
+### Where a window opens
+
+`WindowBoundsService` persists geometry per display; the main window and each
+*kind* of sub-window get their own file (`WindowBoundsService.forWindowKind`).
+Compose is the only sub-window that records one — `main()` restores it instead of
+centring on the parent's screen, and `_close` saves before closing because the
+close tears the engine down and a debounced save would never fire.
+
 ### How the notification plugin applies the rule
 
 `NotificationService._plugin` returns null outside the main window, so every

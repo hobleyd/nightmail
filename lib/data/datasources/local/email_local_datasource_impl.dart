@@ -353,6 +353,38 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
         ));
   }
 
+  @override
+  Future<void> updateCachedEmailFields({
+    required String accountId,
+    required String emailId,
+    bool? isRead,
+    bool? isFlagged,
+  }) async {
+    if (isRead == null && isFlagged == null) return;
+
+    final row = await (_database.select(_database.cachedEmails)
+          ..where(
+              (t) => t.accountId.equals(accountId) & t.emailId.equals(emailId)))
+        .getSingleOrNull();
+    if (row == null) return;
+
+    final json = jsonDecode(await _encryption.decrypt(row.encryptedData))
+        as Map<String, dynamic>;
+    if (isRead != null) json['isRead'] = isRead;
+    if (isFlagged != null) json['isFlagged'] = isFlagged;
+    final encryptedData = await _encryption.encrypt(jsonEncode(json));
+
+    await (_database.update(_database.cachedEmails)
+          ..where(
+              (t) => t.accountId.equals(accountId) & t.emailId.equals(emailId)))
+        .write(CachedEmailsCompanion(
+          // isFlagged has no column of its own — it is read back out of the
+          // encrypted payload — so only isRead is mirrored here.
+          isRead: isRead == null ? const Value.absent() : Value(isRead),
+          encryptedData: Value(encryptedData),
+        ));
+  }
+
   // ---------------------------------------------------------------------------
   // Serialisation helpers
   // ---------------------------------------------------------------------------

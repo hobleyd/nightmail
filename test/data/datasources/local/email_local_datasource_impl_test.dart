@@ -288,6 +288,83 @@ void main() {
   // inside cacheEmails puts it after the preservation lookups and inside the
   // same transaction.
   // ---------------------------------------------------------------------------
+  // A partial delta item carries the changed property and nothing else, so it
+  // is applied to the row rather than written as one — see MailDeltaFieldUpdate.
+  group('updateCachedEmailFields', () {
+    setUp(() => datasource.cacheEmails(
+          accountId: 'acct-1',
+          folderId: 'folder-1',
+          emails: [_email('email-1', body: '<p>full content</p>')],
+        ));
+
+    test('changes only the fields it is given', () async {
+      await datasource.updateCachedEmailFields(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+        isRead: true,
+      );
+
+      final cached = await datasource.getCachedEmailById(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+      );
+      expect(cached!.isRead, isTrue);
+      // The whole point: everything the delta item did not mention survives.
+      expect(cached.subject, 'Subject email-1');
+      expect(cached.from.address, 'a@b.com');
+      expect(cached.receivedDateTime, DateTime(2026, 6, 1));
+      expect(cached.body, '<p>full content</p>');
+    });
+
+    test('mirrors isRead into the column the list reads', () async {
+      await datasource.updateCachedEmailFields(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+        isRead: true,
+      );
+
+      final rows = await datasource.getCachedEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+      );
+      expect(rows.single.isRead, isTrue);
+    });
+
+    test('leaves a field alone when it is null', () async {
+      await datasource.updateCachedEmailFields(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+        isRead: true,
+      );
+      await datasource.updateCachedEmailFields(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+        isFlagged: true,
+      );
+
+      final cached = await datasource.getCachedEmailById(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+      );
+      expect(cached!.isFlagged, isTrue);
+      expect(cached.isRead, isTrue);
+    });
+
+    test('no-ops on an email that is not cached', () async {
+      await datasource.updateCachedEmailFields(
+        accountId: 'acct-1',
+        emailId: 'never-seen',
+        isRead: true,
+      );
+
+      final rows = await datasource.getCachedEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+      );
+      expect(rows.single.id, 'email-1');
+    });
+  });
+
 
   group('cacheEmails(replaceFolder: true)', () {
     test('drops rows the fresh page no longer lists', () async {

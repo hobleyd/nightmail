@@ -133,6 +133,88 @@ void main() {
       expect(result.removedIds, ['msg-deleted']);
     });
 
+    group('items carrying only the properties that changed', () {
+      // Graph answers a read-state or flag change with the id and the changed
+      // property alone. Parsed as a message it becomes a row with no sender, no
+      // subject and an epoch date, which then replaces the real cached row.
+      Map<String, dynamic> partial(String id, Map<String, dynamic> changed) => {
+            '@odata.type': '#microsoft.graph.message',
+            '@odata.etag': 'W/"CQAAABYAAAA"',
+            'id': id,
+            ...changed,
+          };
+
+      void stub(List<dynamic> value) {
+        when(mockDio.get<String>(
+          any,
+          queryParameters: anyNamed('queryParameters'),
+          options: anyNamed('options'),
+        )).thenAnswer((_) async => _resp({
+              'value': value,
+              '@odata.deltaLink': 'https://graph.microsoft.com/v1.0/delta-1',
+            }));
+      }
+
+      test('are reported as field updates, not as upserted messages', () async {
+        stub([partial('msg-read', {'isRead': true})]);
+
+        final result = await datasource.syncMailDelta('inbox');
+
+        expect(result.upserted, isEmpty);
+        expect(result.fieldUpdates.length, 1);
+        expect(result.fieldUpdates.first.id, 'msg-read');
+        expect(result.fieldUpdates.first.isRead, isTrue);
+        expect(result.fieldUpdates.first.isFlagged, isNull);
+      });
+
+      test('leave a property they do not mention null', () async {
+        stub([
+          partial('msg-flagged', {
+            'flag': {'flagStatus': 'flagged'}
+          })
+        ]);
+
+        final update = (await datasource.syncMailDelta('inbox')).fieldUpdates.single;
+
+        expect(update.isFlagged, isTrue);
+        // Absent, not false: reading it as false would mark a read message
+        // unread on the strength of a flag change.
+        expect(update.isRead, isNull);
+      });
+
+      test('count as changes, so the poll applies and repaints them', () async {
+        stub([partial('msg-read', {'isRead': true})]);
+
+        expect((await datasource.syncMailDelta('inbox')).hasChanges, isTrue);
+      });
+
+      test('are dropped when they change nothing this app stores', () async {
+        stub([
+          partial('msg-categorised', {
+            'categories': <dynamic>['Red']
+          })
+        ]);
+
+        final result = await datasource.syncMailDelta('inbox');
+
+        expect(result.upserted, isEmpty);
+        expect(result.fieldUpdates, isEmpty);
+      });
+
+      test('do not stop whole messages on the same page being upserted',
+          () async {
+        stub([
+          _emailJson('msg-new'),
+          partial('msg-read', {'isRead': true}),
+        ]);
+
+        final result = await datasource.syncMailDelta('inbox');
+
+        expect(result.upserted.single.id, 'msg-new');
+        expect(result.fieldUpdates.single.id, 'msg-read');
+      });
+    });
+
     test('returns the @odata.deltaLink value', () async {
       const expected = 'https://graph.microsoft.com/v1.0/delta-token-abc';
       when(mockDio.get<String>(

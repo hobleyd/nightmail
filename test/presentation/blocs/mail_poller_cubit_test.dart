@@ -621,6 +621,106 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
+  // Delta items that name only the properties that changed.
+  //
+  // Regression: opening a message marks it read, and the next delta reports
+  // that change as the id and `isRead` alone. Cached as if it were a whole
+  // message, it replaced the real row with one that had no sender, no subject
+  // and an epoch date — so the message the user had just opened dropped to the
+  // bottom of the list, blank, until the next full fetch put it back.
+  // ---------------------------------------------------------------------------
+
+  group('MailPollerCubit — delta field updates', () {
+    setUp(() {
+      when(mockAccountManager.accounts).thenReturn([_msAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(null);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(mockGraphDs);
+      when(mockDatabase.loadDeltaToken(any, any))
+          .thenAnswer((_) async => _savedToken);
+      when(mockGraphDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: 0)]);
+      when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
+          .thenAnswer((_) async => MailDeltaResult(
+                upserted: const [],
+                removedIds: const [],
+                fieldUpdates: const [
+                  MailDeltaFieldUpdate(id: 'msg-1', isRead: true),
+                ],
+                deltaLink: _newToken,
+              ));
+    });
+
+    test('are applied to the cached row instead of rewriting it', () async {
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      verify(mockEmailLocalDatasource.updateCachedEmailFields(
+        accountId: _msId,
+        emailId: 'msg-1',
+        isRead: true,
+        isFlagged: null,
+      )).called(1);
+      // Nothing may go through the upsert path: that is what blanked the row.
+      verifyNever(mockEmailLocalDatasource.cacheEmails(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+        emails: anyNamed('emails'),
+      ));
+    });
+
+    test('do not overwrite isRead while a markRead op is still pending',
+        () async {
+      when(mockPendingOperations.getPendingOperations(_msId))
+          .thenAnswer((_) async => [
+                const PendingOperationRecord(
+                  id: 1,
+                  accountId: _msId,
+                  emailId: 'msg-1',
+                  folderId: null,
+                  opType: PendingOperationType.markRead,
+                  payload: '{"isRead":false}',
+                  createdAtMs: 0,
+                  retryCount: 0,
+                  lastError: null,
+                ),
+              ]);
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      verify(mockEmailLocalDatasource.updateCachedEmailFields(
+        accountId: _msId,
+        emailId: 'msg-1',
+        isRead: null,
+        isFlagged: null,
+      )).called(1);
+    });
+
+    test('are skipped for a message with a pending removal', () async {
+      when(mockPendingOperations.getPendingOperations(_msId))
+          .thenAnswer((_) async => []);
+      removalTombstones.record(_msId, 'msg-1');
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      verifyNever(mockEmailLocalDatasource.updateCachedEmailFields(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+        isRead: anyNamed('isRead'),
+        isFlagged: anyNamed('isFlagged'),
+      ));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Expired delta token (410)
   // ---------------------------------------------------------------------------
 

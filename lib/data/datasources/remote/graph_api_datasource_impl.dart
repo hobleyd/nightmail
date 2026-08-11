@@ -2587,6 +2587,7 @@ class GraphApiDatasourceImpl
             upserted: parsed.upserted,
             removedIds: parsed.removedIds,
             movedOutIds: parsed.movedOutIds,
+            fieldUpdates: parsed.fieldUpdates,
             deltaLink: link,
           );
         }

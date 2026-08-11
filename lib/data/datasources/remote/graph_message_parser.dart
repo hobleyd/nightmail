@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import '../../../domain/entities/inline_attachment.dart';
 import '../../../domain/entities/meeting_invite.dart';
 import '../../models/email_model.dart';
+import '../../models/mail_delta_result.dart';
 // `isGraphUrl` lives beside `graphNextLink`, which is the other half of the same
 // job — reading a continuation link out of a raw Graph page.
 import 'contact_bulk_parser.dart' show isGraphUrl;
@@ -188,6 +189,7 @@ class GraphDeltaParseResult {
     required this.upserted,
     required this.removedIds,
     this.movedOutIds = const [],
+    this.fieldUpdates = const [],
   });
 
   final List<EmailModel> upserted;
@@ -205,6 +207,30 @@ class GraphDeltaParseResult {
   /// move only means the row belongs to a different folder now, and evicting
   /// those images makes the destination folder re-download every one.
   final List<String> movedOutIds;
+
+  /// Items that carried only the properties that changed — see
+  /// [MailDeltaFieldUpdate].
+  final List<MailDeltaFieldUpdate> fieldUpdates;
+}
+
+/// Reads a delta item that is not a whole message as the field change it is.
+///
+/// A delta item with no `receivedDateTime` is the tell: the projection always
+/// asks for one and every real message has one, so its absence means Graph sent
+/// the changed properties rather than the message. Returns null when there is
+/// nothing here this app stores.
+MailDeltaFieldUpdate? _fieldUpdateFrom(Map<String, dynamic> item) {
+  final id = item['id'] as String?;
+  if (id == null) return null;
+  final rawFlag = item['flag'];
+  final update = MailDeltaFieldUpdate(
+    id: id,
+    isRead: item['isRead'] as bool?,
+    isFlagged: rawFlag is Map<String, dynamic>
+        ? (rawFlag['flagStatus'] as String?)?.toLowerCase() == 'flagged'
+        : null,
+  );
+  return update.isEmpty ? null : update;
 }
 
 /// Parses every page of a delta sync in one pass. `compute()` entry point.
@@ -219,6 +245,7 @@ GraphDeltaParseResult parseGraphDeltaPages(List<String> rawPages) {
   final upserted = <EmailModel>[];
   final removedIds = <String>[];
   final movedOutIds = <String>[];
+  final fieldUpdates = <MailDeltaFieldUpdate>[];
 
   for (final raw in rawPages) {
     try {
@@ -239,6 +266,12 @@ GraphDeltaParseResult parseGraphDeltaPages(List<String> rawPages) {
           } else {
             removedIds.add(id);
           }
+        } else if (!item.containsKey('receivedDateTime')) {
+          // Not a whole message — the changed properties on their own. Caching
+          // it as a message blanks the row it belongs to; apply it to that row
+          // instead.
+          final update = _fieldUpdateFrom(item);
+          if (update != null) fieldUpdates.add(update);
         } else {
           try {
             upserted.add(EmailModel.fromJson(item));
@@ -257,6 +290,7 @@ GraphDeltaParseResult parseGraphDeltaPages(List<String> rawPages) {
     upserted: upserted,
     removedIds: removedIds,
     movedOutIds: movedOutIds,
+    fieldUpdates: fieldUpdates,
   );
 }
 

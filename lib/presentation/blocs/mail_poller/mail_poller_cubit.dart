@@ -17,6 +17,7 @@ import '../../../data/datasources/remote/email_remote_datasource.dart';
 import '../../../data/datasources/remote/imap_datasource_impl.dart';
 import '../../../data/datasources/remote/mail_delta_datasource.dart';
 import '../../../data/datasources/remote/spam_db_sync_datasource.dart';
+import '../../../data/models/mail_delta_result.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/email_folder.dart';
 import '../../../domain/usecases/get_cached_folders.dart';
@@ -457,6 +458,9 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                   result.upserted,
                   inboxFolderId: inboxIdByAccount[account.id],
                 );
+                // Awaited for the same reason as the writes either side of it:
+                // the list repaints from cache as soon as this loop ends.
+                await _applyFieldUpdates(account.id, result.fieldUpdates);
                 if (result.upserted.isNotEmpty) {
                   // Newly-arrived delta messages carry only bodyPreview — queue
                   // a background body fetch so opening them is instant. Not
@@ -1173,6 +1177,66 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     }
   }
 
+  /// Applies delta items that named only the properties that changed to the
+  /// cached rows they belong to — see [MailDeltaFieldUpdate] for why they must
+  /// not travel with the upserts.
+  ///
+  /// An update for a message that is not cached is dropped: there is no row to
+  /// change, and a partial item never carries enough to build one. The next
+  /// full fetch of that folder brings the message down whole.
+  Future<void> _applyFieldUpdates(
+    String accountId,
+    List<MailDeltaFieldUpdate> updates,
+  ) async {
+    if (updates.isEmpty) return;
+    final pending = await _pendingMutations(accountId);
+
+    for (final update in updates) {
+      if (pending.tombstoned.contains(update.id)) continue;
+      await _emailLocalDatasource.updateCachedEmailFields(
+        accountId: accountId,
+        emailId: update.id,
+        // A queued markRead has not reached the server yet, so the server's
+        // isRead is the value this app is about to replace — applying it would
+        // flip the row back to what the user just changed it from.
+        isRead: pending.pendingReadIds.contains(update.id) ? null : update.isRead,
+        isFlagged: update.isFlagged,
+      );
+    }
+  }
+
+  /// The ids this account has mutations queued against: [tombstoned] is being
+  /// removed from view (delete/move/junk, plus removals that have drained but
+  /// whose tombstone is still live), [pendingReadIds] has a read-state change
+  /// the server has not been told about yet.
+  ///
+  /// Shared by both reconciliation paths here so they cannot drift apart.
+  Future<({Set<String> tombstoned, Set<String> pendingReadIds})>
+      _pendingMutations(String accountId) async {
+    final pendingOps = await _pendingOperations.getPendingOperations(accountId);
+    // Recently-removed tombstones outlive op dequeue, closing the race where a
+    // server snapshot built before the mutation propagated resolves after the
+    // outbox drain removed the pending op. Shared with EmailRepositoryImpl so
+    // both reconciliation paths agree; matters most for a multi-message action
+    // like deleting a whole thread, whose ops drain one at a time.
+    final recentlyRemovedIds = _removalTombstones.activeIds(accountId);
+
+    return (
+      tombstoned: <String>{
+        for (final op in pendingOps)
+          if (op.opType == PendingOperationType.delete ||
+              op.opType == PendingOperationType.move ||
+              op.opType == PendingOperationType.junk)
+            op.emailId,
+        ...recentlyRemovedIds,
+      },
+      pendingReadIds: <String>{
+        for (final op in pendingOps)
+          if (op.opType == PendingOperationType.markRead) op.emailId,
+      },
+    );
+  }
+
   /// Reconciles freshly-synced server data against mutations still sitting
   /// in the outbox for this account. drainAll() runs before every poll
   /// cycle, so this mainly guards a narrow window — a mutation queued after
@@ -1190,27 +1254,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     String accountId,
     List<Email> emails,
   ) async {
-    final pendingOps = await _pendingOperations.getPendingOperations(accountId);
-    // Recently-removed tombstones outlive op dequeue, closing the race where a
-    // server snapshot built before the mutation propagated resolves after the
-    // outbox drain removed the pending op. Shared with EmailRepositoryImpl so
-    // both reconciliation paths agree; matters most for a multi-message action
-    // like deleting a whole thread, whose ops drain one at a time.
-    final recentlyRemovedIds = _removalTombstones.activeIds(accountId);
-    if (pendingOps.isEmpty && recentlyRemovedIds.isEmpty) return emails;
-
-    final tombstoned = <String>{
-      for (final op in pendingOps)
-        if (op.opType == PendingOperationType.delete ||
-            op.opType == PendingOperationType.move ||
-            op.opType == PendingOperationType.junk)
-          op.emailId,
-      ...recentlyRemovedIds,
-    };
-    final pendingReadIds = <String>{
-      for (final op in pendingOps)
-        if (op.opType == PendingOperationType.markRead) op.emailId,
-    };
+    final (:tombstoned, :pendingReadIds) = await _pendingMutations(accountId);
     if (tombstoned.isEmpty && pendingReadIds.isEmpty) return emails;
 
     final reconciled = <Email>[];

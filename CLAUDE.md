@@ -411,6 +411,12 @@ failures — nothing else in the app ever clears one, and the table is persisten
 `MailDeltaDatasource` is the provider-neutral interface (Graph delta link, Gmail
 `historyId`); both store their cursor under the `'inbox'` key.
 
+**Not every delta item is a message.** Graph answers a read-state or flag change
+with the id and the changed property alone; parsed as a message it becomes a
+blank, epoch-dated row that *replaces* the real one. Those arrive as
+`MailDeltaResult.fieldUpdates` and are applied to the cached row in place
+(`updateCachedEmailFields`), never through `cacheEmails`.
+
 Failures are reported on `lastPollAt`/`lastPollErrors`, including the
 offline skip. A silent `catch (_)` here is how a deterministic failure came to
 look like a quiet mailbox for the life of an install.

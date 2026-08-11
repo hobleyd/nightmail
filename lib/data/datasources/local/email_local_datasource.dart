@@ -104,6 +104,20 @@ abstract interface class EmailLocalDatasource {
     required bool isRead,
   });
 
+  /// Applies a change that names only the fields that moved to the cached row
+  /// for [emailId], leaving the rest of it as it was. A null argument means
+  /// "unchanged". No-ops silently when the email is not in the cache, and when
+  /// every argument is null.
+  ///
+  /// This is how a partial delta item is applied — writing one through
+  /// [cacheEmails] would replace a complete row with a near-empty one.
+  Future<void> updateCachedEmailFields({
+    required String accountId,
+    required String emailId,
+    bool? isRead,
+    bool? isFlagged,
+  });
+
   /// Renames the cached row for [oldEmailId] to [newEmailId] and re-files it
   /// under [newFolderId] — called by the outbox drain engine once the server
   /// confirms a move/junk assigned the message a new id. No-ops silently when

@@ -321,13 +321,41 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage>
   /// `NSApp.terminate` and on Windows `PostQuitMessage`, either of which would
   /// take the whole app down with the compose window. Drop the guard instead
   /// and let the ordinary close proceed.
+  ///
+  /// **A close request is not an answer.** `windowManager.close()` *posts* a
+  /// message to the window (`WM_SYSCOMMAND`/`SC_CLOSE` on Windows, an
+  /// `NSWindow` performClose on macOS) and reports success as soon as it has
+  /// been handed over — nothing tells us the window acted on it. A request that
+  /// goes nowhere used to leave the worst possible state behind: the window
+  /// still on screen, its close interception already switched off, and
+  /// [_closing] latched so [onWindowClose] ignored the title-bar X — which then
+  /// closed the window natively, discarding the draft with no prompt.
+  ///
+  /// So ask again, and if the window is still here after that, put the
+  /// interception back and say so. A close that *did* take tears this engine
+  /// down inside the wait, so reaching the line after it is itself the evidence
+  /// that the window ignored us.
   Future<void> _close() async {
     if (_closing) return;
     _closing = true;
-    try {
-      await windowManager.setPreventClose(false);
-    } catch (_) {}
-    await windowManager.close();
+    for (var attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await windowManager.setPreventClose(false);
+        await windowManager.close();
+      } catch (e) {
+        debugPrint('[Compose] close attempt $attempt failed: $e');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+    debugPrint('[Compose] window ignored 3 close requests; restoring the guard');
+    _closing = false;
+    await windowManager.setPreventClose(true).catchError((_) {});
+    if (!mounted) return;
+    showErrorSnackBar(
+      context,
+      'This window would not close. Anything you sent has been sent — close it '
+      'from the title bar.',
+    );
   }
 
   Email? _originalEmail() {

@@ -229,6 +229,10 @@ class ComposeFormState extends State<ComposeForm> {
   Timer? _draftTimer;
   DateTime? _lastDraftSavedAt;
   bool _sent = false;
+  // The message is gone: the send came back [ComposeSent]. Unlike [_sent] —
+  // which only means Send was pressed — there is nothing left worth keeping, so
+  // closing must not offer to save what has already been sent as a draft.
+  bool _sendSucceeded = false;
   // Tracks an in-flight _saveDraft() call so _submit() can await it and
   // collect the ID of any draft created after _sent was set to true.
   Completer<String?>? _saveCompleter;
@@ -651,7 +655,9 @@ class ComposeFormState extends State<ComposeForm> {
 
   Future<void> _requestClose(BuildContext context) async {
     if (_closePromptOpen) return;
-    if (!_hasContent) {
+    // The fields still hold the message that just went out, so [_hasContent] is
+    // true and the prompt would offer to save a sent message to Drafts.
+    if (_sendSucceeded || !_hasContent) {
       widget.onClose();
       return;
     }
@@ -1443,8 +1449,19 @@ class ComposeFormState extends State<ComposeForm> {
     final c = context.colors;
 
     return BlocListener<ComposeBloc, ComposeState>(
-      listenWhen: (_, curr) => curr is ComposeSent,
-      listener: (_, _) { _deleteDraft(); },
+      listenWhen: (_, curr) => curr is ComposeSent || curr is ComposeError,
+      listener: (_, state) {
+        if (state is ComposeSent) {
+          _sendSucceeded = true;
+          _deleteDraft();
+          return;
+        }
+        // A failed send has to hand the form back. [_sent] is what the footer
+        // draws its "Sending…" shimmer from, so leaving it set strands the
+        // window looking mid-send for good — the red snack bar is the only sign
+        // anything went wrong, and there is no way back to a live Send button.
+        setState(() => _sent = false);
+      },
       child: BlocListener<AiComposeCubit, AiComposeState>(
         bloc: _aiCubit,
         listener: _onAiComposeStateChanged,
@@ -2085,13 +2102,22 @@ class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
   }
 
   void _syncShimmer(ComposeState state) {
-    if (state is ComposeSending || widget.isSubmitting) {
+    if (_isSending(state)) {
       _shimmer.repeat();
     } else {
       _shimmer.stop();
       _shimmer.reset();
     }
   }
+
+  // [isSubmitting] stays true for the rest of the form's life once Send is
+  // pressed — nothing resets it on the way out, because the window is expected
+  // to close. [ComposeSent] therefore has to win over it: a window that
+  // outlives its own close request must say the message went, not go on
+  // animating a send that finished.
+  bool _isSending(ComposeState state) =>
+      state is! ComposeSent &&
+      (state is ComposeSending || widget.isSubmitting);
 
   @override
   void dispose() {
@@ -2105,7 +2131,13 @@ class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
     final c = context.colors;
     return BlocBuilder<ComposeBloc, ComposeState>(
       builder: (context, state) {
-        final isSending = state is ComposeSending || widget.isSubmitting;
+        final isSending = _isSending(state);
+        final isSent = state is ComposeSent;
+        // Editing controls are dead either side of the send; Cancel is not —
+        // once the message has gone, closing the window is the one thing left
+        // to do, and it is the only way out if the window failed to close
+        // itself.
+        final isLocked = isSending || isSent;
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: Row(
@@ -2134,7 +2166,7 @@ class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
                         child: Text('Plain Text'),
                       ),
                     ],
-                    onChanged: isSending
+                    onChanged: isLocked
                         ? null
                         : (val) {
                             if (val != null) widget.onBodyTypeChanged(val);
@@ -2151,7 +2183,7 @@ class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
               ],
               const Spacer(),
               TextButton.icon(
-                onPressed: isSending ? null : widget.onAiCompose,
+                onPressed: isLocked ? null : widget.onAiCompose,
                 icon: const Icon(Icons.auto_awesome_rounded, size: 16),
                 label: const Text('AI', style: TextStyle(fontSize: 13)),
                 style: TextButton.styleFrom(
@@ -2202,6 +2234,31 @@ class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
                       Text(
                         'Sending…',
                         style: TextStyle(fontSize: 13, color: Colors.white),
+                      ),
+                    ],
+                  ),
+                )
+              // Normally never seen: the window closes, or the dialog pops,
+              // within a frame of the send landing. It is what is left on
+              // screen when that close doesn't happen, and it has to read as
+              // "gone", never as a send still in progress.
+              else if (isSent)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppColors.accent.withValues(alpha: 0.20),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.check_rounded,
+                          size: 14, color: AppColors.accent),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Sent',
+                        style: TextStyle(fontSize: 13, color: c.textSecondary),
                       ),
                     ],
                   ),

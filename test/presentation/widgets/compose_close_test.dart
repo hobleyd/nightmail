@@ -67,6 +67,26 @@ class _RecordingEmailRepository extends Fake implements EmailRepository {
     deleted.add(draftId);
     return const Right(unit);
   }
+
+  /// Set to make the next send report a failure instead of succeeding.
+  Failure? sendFailure;
+  final sent = <String>[];
+
+  @override
+  Future<Either<Failure, Unit>> sendEmail({
+    required List<String> toAddresses,
+    List<String> ccAddresses = const [],
+    required String subject,
+    required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
+    List<LocalAttachment> newAttachments = const [],
+    String? accountId,
+  }) async {
+    final failure = sendFailure;
+    if (failure != null) return Left(failure);
+    sent.add(subject);
+    return const Right(unit);
+  }
 }
 
 class _FakeSystemContacts extends Fake implements SystemContactsRepository {
@@ -220,5 +240,64 @@ void main() {
 
     expect(find.text('Save draft?'), findsNothing);
     expect(closeCount, 1);
+  });
+
+  /// Fills in enough to send and presses Send. Deliberately avoids
+  /// `pumpAndSettle`: the "Sending…" shimmer repeats forever, so settling
+  /// during the send would time out rather than finish.
+  Future<void> send(WidgetTester tester) async {
+    await tester.enterText(find.byType(TextField).at(0), 'you@example.com');
+    await tester.enterText(find.byType(TextField).at(2), 'Subject');
+    await tester.pump();
+    await tester.tap(find.text('Send'));
+    for (var i = 0; i < 4; i++) {
+      await tester.pump();
+    }
+  }
+
+  group('after the send lands', () {
+    testWidgets('the footer says Sent rather than going on saying Sending',
+        (tester) async {
+      await pumpForm(tester);
+      await send(tester);
+
+      expect(repository.sent, ['Subject']);
+      // The window is expected to close on ComposeSent. When that close is
+      // dropped — a posted WM_CLOSE that the window never acts on — this is
+      // what the user is left looking at, and it must not read as a send still
+      // in flight.
+      expect(find.text('Sent'), findsOneWidget);
+      expect(find.text('Sending…'), findsNothing);
+    });
+
+    testWidgets('closing does not offer to save the sent message as a draft',
+        (tester) async {
+      final state = await pumpForm(tester);
+      await send(tester);
+
+      state.requestClose();
+      await tester.pumpAndSettle();
+
+      // The fields still hold the message, so the old _hasContent test would
+      // have prompted here.
+      expect(find.text('Save draft?'), findsNothing);
+      expect(closeCount, 1);
+      expect(repository.created, isEmpty);
+    });
+  });
+
+  testWidgets('a failed send hands the Send button back', (tester) async {
+    repository.sendFailure = const ServerFailure(message: 'Mailbox unavailable');
+    await pumpForm(tester);
+    await send(tester);
+    await tester.pumpAndSettle();
+
+    // The message itself is surfaced by the window's (or dialog's) own
+    // listener, which this harness doesn't mount. What the form owes is a way
+    // back: not 'Sending…' forever, whose only exit used to be closing the
+    // window and losing the message.
+    expect(find.text('Sending…'), findsNothing);
+    expect(find.text('Sent'), findsNothing);
+    expect(find.text('Send'), findsOneWidget);
   });
 }

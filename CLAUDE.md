@@ -100,6 +100,14 @@ which engine it is in. It is set from `main()` **before**
 `configureDependencies()`, because lazy singletons decide at construction time
 whether they may touch process-wide native resources.
 
+### Closing a sub-window is a request, not an act
+
+`windowManager.close()` *posts* the close (Windows `SC_CLOSE`) and reports
+success either way, so a dropped one leaves a window on screen that has already
+turned its `setPreventClose` guard off — see `_close` in `compose_window.dart`,
+which retries and puts the guard back. `destroy()` is never an option in a
+sub-window: it is `PostQuitMessage`/`NSApp.terminate` and takes the app with it.
+
 ### How the notification plugin applies the rule
 
 `NotificationService._plugin` returns null outside the main window, so every

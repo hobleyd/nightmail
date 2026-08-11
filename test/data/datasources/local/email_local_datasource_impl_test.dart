@@ -145,6 +145,7 @@ void main() {
       expect(cached!.body, '<p>opened now</p>');
     });
   });
+
   // Regression: BodyPrefetchService wrote its fetched body through cacheEmails,
   // which inserts. A message deleted while its body was in flight — the likeliest
   // case, since the prefetch targets exactly the mail the user is reading — was
@@ -276,18 +277,6 @@ void main() {
     });
   });
 
-
-  // ---------------------------------------------------------------------------
-  // replaceFolder — the fresh page *becomes* the folder's contents.
-  //
-  // Regression: callers used to do this as clearCacheForFolder followed by a
-  // plain cacheEmails. That defeated the body preservation above — the lookup
-  // ran against a folder that had just been emptied, so it never found the old
-  // row — and every poll that detected a change discarded every cached body in
-  // the folder, which BodyPrefetchService then re-downloaded. Doing the delete
-  // inside cacheEmails puts it after the preservation lookups and inside the
-  // same transaction.
-  // ---------------------------------------------------------------------------
   // A partial delta item carries the changed property and nothing else, so it
   // is applied to the row rather than written as one — see MailDeltaFieldUpdate.
   group('updateCachedEmailFields', () {
@@ -365,6 +354,17 @@ void main() {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // replaceFolder — the fresh page *becomes* the folder's contents.
+  //
+  // Regression: callers used to do this as clearCacheForFolder followed by a
+  // plain cacheEmails. That defeated the body preservation above — the lookup
+  // ran against a folder that had just been emptied, so it never found the old
+  // row — and every poll that detected a change discarded every cached body in
+  // the folder, which BodyPrefetchService then re-downloaded. Doing the delete
+  // inside cacheEmails puts it after the preservation lookups and inside the
+  // same transaction.
+  // ---------------------------------------------------------------------------
 
   group('cacheEmails(replaceFolder: true)', () {
     test('drops rows the fresh page no longer lists', () async {

@@ -53,14 +53,60 @@ Future<void> _prePositionOnDisplay(Rect? displayBounds) async {
   } catch (_) {}
 }
 
-/// Puts the calling engine's window back where [restored] says it last was.
+/// One `setBounds` does not necessarily put a window where it was asked to go.
 ///
-/// Shared by the main window and the compose sub-window, because every part of
-/// it is a platform quirk rather than a preference: the pre-position before
-/// maximize/full-screen picks the monitor, and the re-apply after the first
-/// frame fights Windows' `WM_DPICHANGED` rescale and the Linux compositor's
-/// override of position at map time.
-Future<void> _applyRestoreState(WindowRestoreState restored) async {
+/// **window_manager's bounds are logical pixels at the ratio the window is on
+/// *now*.** `setBounds` multiplies the rect by whatever `devicePixelRatio` Dart
+/// currently reports, so a rect saved on a 100%-scaled monitor is scaled by 1.25
+/// while the window still sits on a 125% one — which is where a window starts,
+/// since it is created on the primary display. Windows then sends
+/// `WM_DPICHANGED` as the window crosses over, Dart's ratio catches up an
+/// event-loop turn later, and only a second `setBounds` lands correctly. Linux
+/// has its own version of this: the compositor overrides the position when the
+/// window is first mapped.
+///
+/// So re-apply until the ratio stops moving. **The ratio is what has to be
+/// checked, not the resulting rect**: `getBounds` divides by the same stale
+/// ratio `setBounds` multiplied by, so it happily reports the rect that was
+/// asked for while the window sits somewhere else entirely. A ratio that did
+/// not change across the call is the real evidence that the multiplication was
+/// the right one. Bounded, because nothing here may spin.
+Future<void> _settleBounds(Rect target) async {
+  var ratio = _viewDevicePixelRatio();
+  await windowManager.setBounds(target);
+  // macOS lays windows out in AppKit points, which don't change per display.
+  if (!Platform.isWindows && !Platform.isLinux) return;
+  for (var attempt = 0; attempt < 2; attempt++) {
+    // The DPI change is dispatched on the platform thread and reaches this
+    // isolate a turn later, so there is nothing to read without waiting.
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    final settled = _viewDevicePixelRatio();
+    if (settled == ratio) return;
+    ratio = settled;
+    await windowManager.setBounds(target);
+  }
+}
+
+/// The ratio `window_manager` will scale by — it reads the same implicit view.
+double _viewDevicePixelRatio() =>
+    WidgetsBinding.instance.platformDispatcher.implicitView?.devicePixelRatio ??
+    1.0;
+
+/// Puts the calling engine's window back where [restored] says it last was.
+/// The pre-position before maximize/full-screen is what picks the monitor those
+/// apply to — otherwise the OS uses whichever one it placed the window on.
+///
+/// [settleWhileHidden] is for a window *we* show: it settles the geometry
+/// through [_settleBounds] before anything is on screen. The main window cannot
+/// do that — the engine shows it on its first frame — so it corrects itself
+/// after that frame instead, which is invisible there because the window appears
+/// at the same moment. A sub-window doing it that way is the visible bug: it is
+/// already on screen a beat before its first frame, so it opens at the wrong
+/// place and then jumps.
+Future<void> _applyRestoreState(
+  WindowRestoreState restored, {
+  bool settleWhileHidden = false,
+}) async {
   if (restored.fullScreen) {
     await _prePositionOnDisplay(restored.displayBounds);
     await windowManager.setFullScreen(true);
@@ -69,6 +115,10 @@ Future<void> _applyRestoreState(WindowRestoreState restored) async {
     await windowManager.maximize();
   } else if (restored.bounds != null) {
     final bounds = restored.bounds!;
+    if (settleWhileHidden) {
+      await _settleBounds(bounds);
+      return;
+    }
     await windowManager.setBounds(bounds);
     if (Platform.isWindows || Platform.isLinux) {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -117,7 +167,7 @@ void main(List<String> args) async {
           await windowManager.waitUntilReadyToShow(
             WindowOptions(size: options.size, title: options.title),
           );
-          await _applyRestoreState(restore);
+          await _applyRestoreState(restore, settleWhileHidden: true);
         } else if (screenInfoRaw != null) {
           final vx = (screenInfoRaw['x'] as num).toDouble();
           final vy = (screenInfoRaw['y'] as num).toDouble();

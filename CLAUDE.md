@@ -116,6 +116,11 @@ Compose is the only sub-window that records one — `main()` restores it instead
 centring on the parent's screen, and `_close` saves before closing because the
 close tears the engine down and a debounced save would never fire.
 
+Bounds are logical pixels at the window's *current* scale factor, so restoring
+onto a monitor at another scale takes a second `setBounds` once Dart's ratio
+catches up (`_settleBounds`), while the window is still hidden — or it opens in
+the wrong place and visibly jumps.
+
 ### How the notification plugin applies the rule
 
 `NotificationService._plugin` returns null outside the main window, so every

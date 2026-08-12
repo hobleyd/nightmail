@@ -112,9 +112,11 @@ sub-window: it is `PostQuitMessage`/`NSApp.terminate` and takes the app with it.
 
 `WindowBoundsService` persists geometry per display; the main window and each
 *kind* of sub-window get their own file (`WindowBoundsService.forWindowKind`).
-Compose is the only sub-window that records one — `main()` restores it instead of
-centring on the parent's screen, and `_close` saves before closing because the
-close tears the engine down and a debounced save would never fire.
+Compose and event-edit are the sub-windows that record one — `main()` restores it
+instead of centring on the parent's screen, and `_close` saves before closing
+because the close tears the engine down and a debounced save would never fire.
+Event-edit saves the width *without* its schedule pane (`_withoutSchedulePane`),
+since the pane opens closed and the form column doesn't grow to fill the window.
 
 Bounds are logical pixels at the window's *current* scale factor, so restoring
 onto a monitor at another scale takes a second `setBounds` once Dart's ratio

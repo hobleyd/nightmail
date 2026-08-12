@@ -1,8 +1,13 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../../core/settings/window_bounds_service.dart';
 import '../../domain/entities/calendar_event.dart';
 import '../../domain/entities/calendar_event_attendee.dart';
 import '../../domain/entities/calendar_recurrence.dart';
@@ -148,7 +153,7 @@ class EventEditWindowApp extends StatelessWidget {
   }
 }
 
-class _EventEditWindowPage extends StatelessWidget {
+class _EventEditWindowPage extends StatefulWidget {
   const _EventEditWindowPage({
     this.event,
     this.initialStart,
@@ -163,7 +168,156 @@ class _EventEditWindowPage extends StatelessWidget {
   final bool isO365Account;
   final bool isGmailAccount;
 
-  void _close() => windowManager.close();
+  @override
+  State<_EventEditWindowPage> createState() => _EventEditWindowPageState();
+}
+
+class _EventEditWindowPageState extends State<_EventEditWindowPage>
+    with WindowListener {
+  // Where the next event window opens. `main()` restores this before the window
+  // is shown; from here on the window records every move and resize.
+  Timer? _boundsDebounce;
+  Timer? _suppressBoundsSaveTimer;
+
+  // Suppress saves triggered by the compositor repositioning the window during
+  // startup (Linux/Wayland places a window after it is mapped, firing
+  // onWindowMove before the user has touched anything).
+  bool _suppressBoundsSave = Platform.isLinux;
+
+  // Whether the schedule pane is currently taking its share of the window
+  // width — see [_withoutSchedulePane].
+  bool _schedulePaneExpanded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    windowManager.addListener(this);
+    if (_suppressBoundsSave) {
+      _suppressBoundsSaveTimer =
+          Timer(const Duration(milliseconds: 1500), () {
+        if (!mounted) return;
+        _suppressBoundsSave = false;
+        // Record the position the compositor settled on, which may not be the
+        // one that was asked for — otherwise the next window opens at bounds
+        // Wayland has already refused once.
+        _scheduleBoundsSave();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _boundsDebounce?.cancel();
+    _suppressBoundsSaveTimer?.cancel();
+    windowManager.removeListener(this);
+    super.dispose();
+  }
+
+  // ── Window geometry ──────────────────────────────────────────────────────
+  //
+  // The same debounce-and-save the main and compose windows use, against its
+  // own file (`eventEditWindowBounds`), so an event window opens where the last
+  // one was left rather than centred on the parent every time. Linux fires
+  // resize/move continuously, which is what the debounce is for.
+
+  /// The width worth remembering is the one *without* the schedule pane: the
+  /// pane is added to the window when it opens and taken back when it closes,
+  /// and it starts closed on the next window — where the form column is a fixed
+  /// width and would leave the extra as empty space.
+  Rect _withoutSchedulePane(Rect bounds) {
+    if (!_schedulePaneExpanded) return bounds;
+    return Rect.fromLTWH(
+      bounds.left,
+      bounds.top,
+      math.max(kEventFormWidth, bounds.width - (kSchedulePaneWidth + 1)),
+      bounds.height,
+    );
+  }
+
+  void _scheduleBoundsSave() {
+    if (_suppressBoundsSave) return;
+    _boundsDebounce?.cancel();
+    _boundsDebounce = Timer(const Duration(milliseconds: 500), () async {
+      try {
+        // Maximize / full-screen have their own overrides below; saving plain
+        // bounds here would record the maximized rect as a normal one.
+        if (await windowManager.isMaximized()) return;
+        if (await windowManager.isFullScreen()) return;
+        await eventEditWindowBounds
+            .saveBounds(_withoutSchedulePane(await windowManager.getBounds()));
+      } catch (_) {}
+    });
+  }
+
+  Future<void> _saveCurrentState() async {
+    try {
+      final fullScreen = await windowManager.isFullScreen();
+      final maximized = await windowManager.isMaximized();
+      await eventEditWindowBounds.saveBounds(
+        _withoutSchedulePane(await windowManager.getBounds()),
+        fullScreen: fullScreen,
+        maximized: maximized,
+      );
+    } catch (_) {}
+  }
+
+  // macOS/Windows: fires once when the resize/move finishes.
+  @override
+  void onWindowResized() => _scheduleBoundsSave();
+
+  @override
+  void onWindowMoved() => _scheduleBoundsSave();
+
+  // Linux: fires continuously during a resize/move — the debounce handles it.
+  @override
+  void onWindowResize() => _scheduleBoundsSave();
+
+  @override
+  void onWindowMove() => _scheduleBoundsSave();
+
+  // Save at once on entering a special state, so a close straight afterwards
+  // doesn't have to re-query a window that is already going away.
+  @override
+  void onWindowMaximize() => _saveCurrentState();
+
+  @override
+  void onWindowEnterFullScreen() => _saveCurrentState();
+
+  /// The title-bar close button. This window sets no `setPreventClose` guard —
+  /// it has no save-or-discard prompt to run and an un-closable window would be
+  /// the worse trade — so the OS is already tearing it down and this is best
+  /// effort. The debounced save is what actually covers this path: the geometry
+  /// is already on disk 500 ms after the last move or resize.
+  @override
+  void onWindowClose() {
+    _boundsDebounce?.cancel();
+    _saveCurrentState();
+  }
+
+  /// Closing tears this engine down, so a pending debounced save would never
+  /// fire — record the final geometry first. Timed out rather than merely
+  /// try/caught: nothing about remembering where the window was is worth
+  /// holding up a close the user asked for.
+  Future<void> _close() async {
+    _boundsDebounce?.cancel();
+    try {
+      await _saveCurrentState().timeout(const Duration(seconds: 1));
+    } catch (_) {}
+    await windowManager.close();
+  }
+
+  Future<void> _onSchedulePaneToggled(bool expanded) async {
+    _schedulePaneExpanded = expanded;
+    // Make room for the pane at its natural width. Anything the organizer
+    // resizes the window to after that is the pane's to use — the form column
+    // beside it stays fixed.
+    const delta = kSchedulePaneWidth + 1; // + the divider
+    final size = await windowManager.getSize();
+    await windowManager.setSize(Size(
+      expanded ? size.width + delta : size.width - delta,
+      size.height,
+    ));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -172,14 +326,16 @@ class _EventEditWindowPage extends StatelessWidget {
         createCalendarEvent: sl<CreateCalendarEvent>(),
         updateCalendarEvent: sl<UpdateCalendarEvent>(),
         notificationService: sl<NotificationService>(),
-        accountId: accountId,
+        accountId: widget.accountId,
       ),
       child: Scaffold(
         body: BlocListener<EventEditBloc, EventEditState>(
           listener: (context, state) async {
             if (state is EventEditSaved) {
               await _kCalendarRefreshChannel.invokeMethod('notifyEventSaved');
-              _close();
+              // Awaited so the window's final geometry is on disk before the
+              // close takes this engine down with it.
+              await _close();
             } else if (state is EventEditError) {
               ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                 content: Text(state.message),
@@ -188,26 +344,16 @@ class _EventEditWindowPage extends StatelessWidget {
             }
           },
           child: EventEditForm(
-            event: event,
-            initialStart: initialStart,
-            accountId: accountId,
-            isO365Account: isO365Account,
-            isGmailAccount: isGmailAccount,
+            event: widget.event,
+            initialStart: widget.initialStart,
+            accountId: widget.accountId,
+            isO365Account: widget.isO365Account,
+            isGmailAccount: widget.isGmailAccount,
             onClose: _close,
             onTitleChanged: (title) => windowManager.setTitle(title),
             checkAttendeesAvailability: sl<CheckAttendeesAvailability>(),
             getMeetingRooms: sl<GetMeetingRooms>(),
-            onSchedulePaneToggled: (expanded) async {
-              // Make room for the pane at its natural width. Anything the
-              // organizer resizes the window to after that is the pane's to
-              // use — the form column beside it stays fixed.
-              const delta = kSchedulePaneWidth + 1; // + the divider
-              final size = await windowManager.getSize();
-              await windowManager.setSize(Size(
-                expanded ? size.width + delta : size.width - delta,
-                size.height,
-              ));
-            },
+            onSchedulePaneToggled: _onSchedulePaneToggled,
           ),
         ),
       ),

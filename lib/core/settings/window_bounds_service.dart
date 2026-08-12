@@ -36,6 +36,10 @@ class WindowRestoreState {
 /// it — so the reader and the writer cannot drift onto different files.
 const composeWindowBounds = WindowBoundsService.forWindowKind('compose');
 
+/// The meeting/event edit window's saved geometry, shared between `main()` and
+/// the window the same way [composeWindowBounds] is.
+const eventEditWindowBounds = WindowBoundsService.forWindowKind('event_edit');
+
 class WindowBoundsService {
   /// The main window's geometry.
   const WindowBoundsService() : _boundsFile = 'window_bounds.json';

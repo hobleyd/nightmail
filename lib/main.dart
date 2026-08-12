@@ -220,6 +220,7 @@ void main(List<String> args) async {
           : 'New Event';
       await showSubWindow(
         WindowOptions(size: const Size(600, 580), center: true, title: title),
+        restore: await eventEditWindowBounds.loadValidatedBounds(),
       );
       runApp(EventEditWindowApp(windowId: windowId, arguments: arguments));
       return;

@@ -157,13 +157,11 @@ class GraphApiDatasourceImpl
 
       if (conversationIds.isEmpty) return folderEmails;
 
-      // Fetch every conversation concurrently (network only), then decode the
-      // whole set in one background isolate rather than one per conversation —
-      // compute() spawns an isolate per call, and a page can easily hold 25
-      // distinct threads.
-      final rawBatches = await Future.wait(
-        conversationIds.map(_fetchConversationRaw),
-      );
+      // Ask for the whole page's threads in as few requests as possible, then
+      // decode the lot in one background isolate rather than one per
+      // conversation — compute() spawns an isolate per call, and a page can
+      // easily hold 25 distinct threads.
+      final rawBatches = await _fetchConversationsForPage(conversationIds);
       final crossFolderEmails =
           await compute(parseGraphMessageCollections, rawBatches);
 
@@ -288,6 +286,64 @@ class GraphApiDatasourceImpl
       return response.data;
     } catch (_) {
       return null;
+    }
+  }
+
+  /// Conversation ids asked for in one `in (…)` filter.
+  ///
+  /// A page of 25 threads therefore costs two requests instead of 25. The bound
+  /// is the URL, not Graph's filter complexity: a conversation id is ~150 chars
+  /// once quoted, so 15 of them is ~2.5 KB — comfortably inside Graph's limit
+  /// with the rest of the query, and small enough that one rejected chunk falls
+  /// back over half a page rather than all of it.
+  static const _conversationsPerRequest = 15;
+
+  /// Every message of every thread on a folder page, as undecoded response
+  /// bodies for [parseGraphMessageCollections].
+  ///
+  /// One request per [_conversationsPerRequest] ids rather than one per id. That
+  /// is the whole point: 25 concurrent requests against one mailbox is enough for
+  /// Graph to start throttling, and a 429 costs `RetryInterceptor` a second or
+  /// more of backoff each — so the fan-out was making the page slower than the
+  /// data in it warrants. The chunks themselves run concurrently, but there are
+  /// only ever two of them for a full page.
+  Future<List<String?>> _fetchConversationsForPage(
+    Set<String> conversationIds,
+  ) async {
+    final ids = conversationIds.toList();
+    final chunks = <List<String>>[];
+    for (var i = 0; i < ids.length; i += _conversationsPerRequest) {
+      chunks.add(ids.sublist(
+        i,
+        (i + _conversationsPerRequest).clamp(0, ids.length),
+      ));
+    }
+    final batches = await Future.wait(chunks.map(_fetchConversationChunkRaw));
+    return batches.expand((pages) => pages).toList();
+  }
+
+  /// One chunk's worth of threads, falling back to a request per conversation if
+  /// the combined filter is refused.
+  ///
+  /// The fallback is not defensive padding: `in (…)` on `conversationId` is the
+  /// fast path and it is the whole expansion for this chunk, so a tenant that
+  /// rejects the filter must still get its cross-folder rows — losing them
+  /// silently would strand replies out of the thread and, in Sent, take the
+  /// anchor's own message with them (see `EmailConversation.anchor`).
+  Future<List<String?>> _fetchConversationChunkRaw(List<String> ids) async {
+    // OData escapes a quote inside a string literal by doubling it. Ids are
+    // base64-ish in practice, so this is belt and braces against one arriving
+    // with a quote in it and silently truncating the filter.
+    final quoted = ids.map((id) => "'${id.replaceAll("'", "''")}'").join(',');
+    try {
+      final result = await _fetchAllGraphPages('/me/messages', {
+        '\$filter': 'conversationId in ($quoted)',
+        '\$select': _emailListSelect,
+        '\$top': 200,
+      });
+      return result.pages;
+    } catch (_) {
+      return Future.wait(ids.map(_fetchConversationRaw));
     }
   }
 

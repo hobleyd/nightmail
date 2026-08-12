@@ -6,6 +6,7 @@ import FlutterMacOS
 import Foundation
 
 import app_links
+import cryptography_flutter
 import desktop_drop
 import desktop_multi_window
 import desktop_webview_window
@@ -27,6 +28,7 @@ import workmanager_apple
 
 func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
   AppLinksMacosPlugin.register(with: registry.registrar(forPlugin: "AppLinksMacosPlugin"))
+  CryptographyFlutterPlugin.register(with: registry.registrar(forPlugin: "CryptographyFlutterPlugin"))
   DesktopDropPlugin.register(with: registry.registrar(forPlugin: "DesktopDropPlugin"))
   FlutterMultiWindowPlugin.register(with: registry.registrar(forPlugin: "FlutterMultiWindowPlugin"))
   DesktopWebviewWindowPlugin.register(with: registry.registrar(forPlugin: "DesktopWebviewWindowPlugin"))

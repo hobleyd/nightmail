@@ -11,6 +11,17 @@ import 'package:path_provider/path_provider.dart';
 /// Each [encrypt] call generates a fresh 96-bit nonce prepended to the
 /// ciphertext + auth tag as a single base64 blob. Running `strings` on the
 /// SQLite file reveals only UUIDs and timestamps — no user-readable content.
+///
+/// **Which AES-GCM this actually is depends on `cryptography_flutter`**, which
+/// registers itself automatically just by being a dependency (its `enable()` is
+/// deprecated — do not add a call back). It supplies the OS implementation on
+/// Android, iOS and macOS, and `BackgroundAesGcm` — the same Dart cipher moved
+/// to a background isolate for large inputs — on Windows and Linux. Without it
+/// this is pure Dart on the calling isolate, which for the UI isolate meant a
+/// folder of a few hundred cached messages cost seconds before painting. The
+/// bigger half of that fix is not spending the work at all: see
+/// [CachedEmailDetails], which keeps bodies and inline images off the
+/// folder-listing path.
 class CacheEncryptionService {
   CacheEncryptionService(this._secureStorage);
 

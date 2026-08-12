@@ -113,7 +113,90 @@ void main() {
       await datasource.getEmails(folderId: 'inbox', top: 1);
 
       expect(capturedParams!['\$filter'],
-          equals("conversationId eq 'my-conv-id'"));
+          equals("conversationId in ('my-conv-id')"));
+    });
+
+    // A page of 25 threads used to cost 25 requests, which is enough concurrency
+    // against one mailbox for Graph to throttle — and each 429 buys a second or
+    // more of RetryInterceptor backoff, so the fan-out made the page slower.
+    test('one page of threads costs one request per chunk, not one per thread',
+        () async {
+      when(mockDio.get<String>(
+        '/me/mailFolders/inbox/messages',
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((_) async => _resp({
+            'value': [
+              for (var i = 0; i < 20; i++) _messageJson('msg$i', 'conv-$i'),
+            ],
+          }));
+
+      final filters = <String>[];
+      when(mockDio.get<String>(
+        '/me/messages',
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((invocation) async {
+        final params = invocation.namedArguments[#queryParameters]
+            as Map<String, dynamic>?;
+        filters.add(params!['\$filter'] as String);
+        return _resp({'value': <dynamic>[]});
+      });
+
+      await datasource.getEmails(folderId: 'inbox', top: 20);
+
+      // 20 threads at 15 per request.
+      expect(filters, hasLength(2));
+      // Every thread is still asked for — the point is fewer requests, not less
+      // data. Losing one would strand a reply out of its thread.
+      for (var i = 0; i < 20; i++) {
+        expect(filters.any((f) => f.contains("'conv-$i'")), isTrue,
+            reason: 'conv-$i was not asked for');
+      }
+    });
+
+    // `in (…)` is the fast path and it carries the whole expansion for its
+    // chunk, so a tenant that refuses the filter must still get its rows.
+    test('a refused combined filter falls back to a request per conversation',
+        () async {
+      when(mockDio.get<String>(
+        '/me/mailFolders/inbox/messages',
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((_) async => _resp({
+            'value': [
+              _messageJson('msg1', 'conv-1'),
+              _messageJson('msg2', 'conv-2'),
+            ],
+          }));
+
+      final filters = <String>[];
+      when(mockDio.get<String>(
+        '/me/messages',
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((invocation) async {
+        final params = invocation.namedArguments[#queryParameters]
+            as Map<String, dynamic>?;
+        final filter = params!['\$filter'] as String;
+        filters.add(filter);
+        if (filter.contains(' in (')) {
+          throw DioException(
+            requestOptions: RequestOptions(path: '/me/messages'),
+            response: Response<String>(
+              requestOptions: RequestOptions(path: '/me/messages'),
+              statusCode: 400,
+            ),
+          );
+        }
+        return _resp({'value': <dynamic>[]});
+      });
+
+      await datasource.getEmails(folderId: 'inbox', top: 2);
+
+      expect(filters.where((f) => f.contains(' in (')), hasLength(1));
+      expect(filters, contains("conversationId eq 'conv-1'"));
+      expect(filters, contains("conversationId eq 'conv-2'"));
     });
   });
 

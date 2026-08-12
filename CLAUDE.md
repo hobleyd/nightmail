@@ -316,6 +316,19 @@ inside one transaction can refuse to resurrect a delete that landed meanwhile.
 It upgrades every folder's copy and files no new one — a body belongs to the
 message, and taking a folder there was a second way to re-file a row.
 
+**A folder listing must never read a body.** Bodies and inline image bytes live
+in `cached_email_details`, keyed by message rather than folder, because
+`getCachedEmails` decrypts every row it returns and those fields are all of the
+bytes — one real Sent folder cost 2.4 s of AES on the UI isolate before painting.
+Attachment *metadata* stays on the list row: it is in `Email.props`, so serving it
+empty makes every IMAP folder compare unequal to its own cache on every poll.
+
+**The expansion asks per chunk, not per thread.** Graph takes one
+`conversationId in (…)` request per 15 ids, so a page costs 2 requests rather
+than 25; Gmail has no multi-thread get, so it is bounded to 8 in flight instead.
+25 at once is enough for either provider to throttle, and a 429 buys a second or
+more of `RetryInterceptor` backoff.
+
 ## Graph Never Says Whether a Body Was Plain Text
 
 `body.contentType` reports the format Graph *rendered*, not the one the sender

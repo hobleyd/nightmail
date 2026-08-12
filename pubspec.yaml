@@ -55,6 +55,9 @@ dependencies:
   drift: ^2.34.1
   drift_flutter: ^0.3.1
   cryptography: ^2.7.0
+  # Native AES-GCM on Android/iOS/macOS, and BackgroundAesGcm — the same cipher
+  # in a background isolate — on Windows and Linux. See CacheEncryptionService.
+  cryptography_flutter: ^2.3.2
   desktop_multi_window: ^0.3.0
   window_manager: ^0.5.2
   screen_retriever: ^0.2.2

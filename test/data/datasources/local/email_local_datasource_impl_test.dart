@@ -200,13 +200,43 @@ void main() {
         emails: [_email('email-1', body: '')],
       );
 
+      // Read by id, not off the listing: the body lives once per message in
+      // cached_email_details and a folder listing deliberately never reads it.
+      expect(
+        (await datasource.getCachedEmailById(
+                accountId: 'acct-1', emailId: 'email-1'))
+            ?.body,
+        '<p>full content</p>',
+      );
       expect(
         (await datasource.getCachedEmails(
                 accountId: 'acct-1', folderId: 'archive'))
             .single
-            .body,
-        '<p>full content</p>',
+            .id,
+        'email-1',
+        reason: 'the thin listing still holds the message',
       );
+    });
+
+    // The whole point of the split: a folder listing decrypts every row it
+    // returns, so reading bodies there is what made a Sent folder of a few
+    // hundred messages cost seconds of AES on the UI isolate before painting.
+    test('a folder listing carries no body, however it was cached', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'inbox',
+        emails: [_email('email-1', body: '<p>full content</p>')],
+      );
+
+      final listed = (await datasource.getCachedEmails(
+              accountId: 'acct-1', folderId: 'inbox'))
+          .single;
+
+      expect(listed.body, isEmpty);
+      // Everything a row actually draws is still there.
+      expect(listed.id, 'email-1');
+      expect(listed.subject, isNotEmpty);
+      expect(listed.from.address, isNotEmpty);
     });
 
     // A delete is addressed to the message, so it takes every listing of it —
@@ -352,14 +382,22 @@ void main() {
         email: _email('email-1', body: '<p>fetched</p>', folderId: 'folder-3'),
       );
 
+      // The body is stored once for the message rather than once per folder, so
+      // "every folder gets it" is now structural: there is only one copy to get.
+      expect(
+        (await datasource.getCachedEmailById(
+                accountId: 'acct-1', emailId: 'email-1'))
+            ?.body,
+        '<p>fetched</p>',
+      );
       for (final folder in ['folder-1', 'folder-2']) {
         expect(
           (await datasource.getCachedEmails(
                   accountId: 'acct-1', folderId: folder))
               .single
-              .body,
-          '<p>fetched</p>',
-          reason: '$folder still lists the message, so it gets the body',
+              .id,
+          'email-1',
+          reason: '$folder still lists the message',
         );
       }
       expect(
@@ -1013,11 +1051,19 @@ void main() {
 
       await datasource.restoreFolderMemberships(accountId: 'acct-1');
 
+      // The restored copy is a new *folder* row; the body is keyed by message,
+      // so it is the same one both rows resolve to and there is nothing to copy.
       expect(
         (await datasource.getCachedEmails(
                 accountId: 'acct-1', folderId: 'inbox'))
             .single
-            .body,
+            .id,
+        'email-1',
+      );
+      expect(
+        (await datasource.getCachedEmailById(
+                accountId: 'acct-1', emailId: 'email-1'))
+            ?.body,
         '<p>read earlier</p>',
       );
     });
@@ -1073,6 +1119,106 @@ void main() {
             accountId: 'acct-2', folderId: 'inbox'),
         isEmpty,
       );
+    });
+  });
+
+  // A body belongs to the message, so it is stored once however many folders
+  // list it — the same 7.6 MB message used to be held once per folder.
+  group('cached_email_details', () {
+    test('a message in two folders stores one body, not one per folder',
+        () async {
+      for (final folder in ['inbox', 'archive']) {
+        await datasource.cacheEmails(
+          accountId: 'acct-1',
+          folderId: folder,
+          emails: [_email('email-1', body: '<p>big</p>', folderId: folder)],
+        );
+      }
+
+      expect((await db.select(db.cachedEmails).get()).length, 2,
+          reason: 'one list row per folder');
+      expect((await db.select(db.cachedEmailDetails).get()).length, 1,
+          reason: 'one body for the message');
+    });
+
+    test('a body outlives one folder losing the message', () async {
+      for (final folder in ['inbox', 'archive']) {
+        await datasource.cacheEmails(
+          accountId: 'acct-1',
+          folderId: folder,
+          emails: [_email('email-1', body: '<p>big</p>', folderId: folder)],
+        );
+      }
+
+      await datasource.clearCacheForFolder(
+          accountId: 'acct-1', folderId: 'inbox');
+
+      expect(
+        (await datasource.getCachedEmailById(
+                accountId: 'acct-1', emailId: 'email-1'))
+            ?.body,
+        '<p>big</p>',
+        reason: 'archive still lists it',
+      );
+    });
+
+    // The rows that would leak are the biggest in the cache, so an unreferenced
+    // body must not simply sit there.
+    test('a body is collected once no folder lists the message', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'inbox',
+        emails: [_email('email-1', body: '<p>big</p>')],
+      );
+      expect((await db.select(db.cachedEmailDetails).get()), hasLength(1));
+
+      await datasource.clearCacheForFolder(
+          accountId: 'acct-1', folderId: 'inbox');
+
+      expect(await db.select(db.cachedEmailDetails).get(), isEmpty);
+    });
+
+    test('a folder refresh that drops a message collects its body', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'inbox',
+        emails: [_email('email-1', body: '<p>big</p>')],
+      );
+
+      // The message is gone from the folder as of this refresh.
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'inbox',
+        emails: [_email('email-2', body: '')],
+        replaceFolder: true,
+      );
+
+      expect(await db.select(db.cachedEmailDetails).get(), isEmpty);
+    });
+
+    // A move mints a new id on Graph and IMAP, so without this every move would
+    // drop the body of whatever the user had just been reading.
+    test('a rename carries the body to the new id', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'inbox',
+        emails: [_email('email-1', body: '<p>big</p>')],
+      );
+
+      await datasource.renameCachedEmailId(
+        accountId: 'acct-1',
+        oldEmailId: 'email-1',
+        newEmailId: 'email-9',
+        newFolderId: 'archive',
+      );
+
+      expect(
+        (await datasource.getCachedEmailById(
+                accountId: 'acct-1', emailId: 'email-9'))
+            ?.body,
+        '<p>big</p>',
+      );
+      expect(await db.select(db.cachedEmailDetails).get(), hasLength(1));
     });
   });
 }

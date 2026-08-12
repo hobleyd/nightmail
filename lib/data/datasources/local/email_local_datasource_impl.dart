@@ -48,6 +48,13 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
   /// which read back as version 1.
   static const _parseVersionKey = 'attachmentParseVersion';
 
+  /// The list projection only — no bodies, no inline image bytes.
+  ///
+  /// This is the hot path: it runs on every folder open, on the UI isolate, and
+  /// it decrypts every row it returns. Reading the detail half here is what made
+  /// a Sent folder take seconds to paint — see [CachedEmailDetails]. Nothing a
+  /// list row draws lives in the detail blob, so nothing is missing; a caller
+  /// that needs the body asks for one message ([getCachedEmailById]).
   @override
   Future<List<Email>> getCachedEmails({
     required String accountId,
@@ -86,58 +93,65 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
 
     final now = DateTime.now().millisecondsSinceEpoch;
 
-    // Encrypt all emails concurrently before opening the batch transaction
+    // Encrypt all emails concurrently before opening the batch transaction.
+    //
+    // A list/poll fetch carries only a preview — empty body, no attachments, no
+    // ICS — and must never clobber a message already cached in full from a prior
+    // open. The body, its inline images and the invite look after themselves now:
+    // they live in their own table keyed by message ([CachedEmailDetails]), so a
+    // thin fetch writes no detail row and the existing one stands.
+    //
+    // Attachment metadata is the exception, because it is on the list row (see
+    // [_listJson] for why) and a thin fetch would write it back empty. It is
+    // carried over, with the parse stamp that describes it — stamping a thin
+    // re-touch as current would mark stale metadata fresh and silently cancel
+    // the one-time repair in [hasStaleAttachmentParse].
     final companions = await Future.wait(emails.map((email) async {
-      var json = _emailToJson(email);
-
-      // List/poll fetches only carry a preview (empty body, no attachments)
-      // to stay cheap. A message already cached with a full body — from a
-      // prior single-message open — must not have that body clobbered back
-      // to empty just because it showed up again in a later folder/delta
-      // sync; blind insertOrReplace would do exactly that.
-      if (email.body.isEmpty) {
-        // Any folder's copy will do — the body is a property of the message,
-        // not of the listing it was seen in, so a body fetched while reading
-        // this message in the Inbox is preserved onto the copy the Archive
-        // page is about to write.
+      var json = _listJson(email);
+      // A thin fetch, and one this message has already been cached in full from:
+      // a detail row is the record of that, standing in for the "did the old row
+      // carry a body" test this used to make by decrypting it.
+      if (email.body.isEmpty && await _hasDetailRow(accountId, email.id)) {
+        // Any folder's copy will do: they all hold the same message, and this
+        // reads only the small list projection.
         final existing = await _anyCachedRow(accountId, email.id);
         if (existing != null) {
-          final oldJson =
+          final old =
               jsonDecode(await _encryption.decrypt(existing.encryptedData))
                   as Map<String, dynamic>;
-          final oldBody = oldJson['body'] as String? ?? '';
-          if (oldBody.isNotEmpty) {
-            json = {
-              ...json,
-              'body': oldJson['body'],
-              'bodyType': oldJson['bodyType'],
-              'attachments': oldJson['attachments'],
-              'inlineAttachments': oldJson['inlineAttachments'],
-              // Preserve the invite: list/poll fetches carry no ICS, so a
-              // thin re-touch would otherwise drop the Accept/Decline banner.
-              'meetingInvite': oldJson['meetingInvite'],
-              // The attachment metadata just preserved came from the old row,
-              // so its parse stamp has to come with it. Stamping a thin
-              // re-touch as current would mark stale metadata fresh and
-              // silently cancel the one-time repair in
-              // [hasStaleAttachmentParse].
-              _parseVersionKey: oldJson[_parseVersionKey],
-            };
-          }
+          final oldAttachments =
+              old['attachments'] as List<dynamic>? ?? const [];
+          json = {
+            ...json,
+            if (oldAttachments.isNotEmpty) 'attachments': oldAttachments,
+            _parseVersionKey: old[_parseVersionKey],
+          };
         }
       }
 
       final encryptedData = await _encryption.encrypt(jsonEncode(json));
-      return CachedEmailsCompanion.insert(
-        emailId: email.id,
-        accountId: accountId,
-        folderId: folderId,
-        isRead: email.isRead,
-        hasAttachments: email.hasAttachments,
-        receivedDateTimeMs: email.receivedDateTime.millisecondsSinceEpoch,
-        conversationId: Value(email.conversationId),
-        cachedAtMs: now,
-        encryptedData: encryptedData,
+      final detail = _hasDetail(email)
+          ? await _encryption.encrypt(jsonEncode(_detailJson(email)))
+          : null;
+      return (
+        row: CachedEmailsCompanion.insert(
+          emailId: email.id,
+          accountId: accountId,
+          folderId: folderId,
+          isRead: email.isRead,
+          hasAttachments: email.hasAttachments,
+          receivedDateTimeMs: email.receivedDateTime.millisecondsSinceEpoch,
+          conversationId: Value(email.conversationId),
+          cachedAtMs: now,
+          encryptedData: encryptedData,
+        ),
+        detail: detail == null
+            ? null
+            : CachedEmailDetailsCompanion.insert(
+                emailId: email.id,
+                accountId: accountId,
+                encryptedDetail: detail,
+              ),
       );
     }));
 
@@ -145,9 +159,17 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
           for (final companion in companions) {
             batch.insert(
               _database.cachedEmails,
-              companion,
+              companion.row,
               mode: InsertMode.insertOrReplace,
             );
+            final detail = companion.detail;
+            if (detail != null) {
+              batch.insert(
+                _database.cachedEmailDetails,
+                detail,
+                mode: InsertMode.insertOrReplace,
+              );
+            }
           }
         });
 
@@ -168,6 +190,10 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
                 t.accountId.equals(accountId) & t.folderId.equals(folderId)))
           .go();
       await insertAll();
+      // A message that has dropped out of this folder and is in no other one
+      // takes its body with it. Without this the rows that leak are precisely
+      // the largest in the cache — see [_pruneOrphanDetails].
+      await _pruneOrphanDetails();
     });
   }
 
@@ -181,7 +207,42 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
 
     final plaintext = await _encryption.decrypt(row.encryptedData);
     final json = jsonDecode(plaintext) as Map<String, dynamic>;
-    return _emailFromJson(json);
+    return _emailFromJson(
+      json,
+      detail: await _detailFor(accountId, emailId),
+    );
+  }
+
+  /// Whether [emailId] has a detail row — i.e. has ever been fetched in full.
+  ///
+  /// Deliberately does not decrypt it: the answer is the row's existence, and
+  /// this runs once per message on the write path, where the blob is the very
+  /// thing not worth touching.
+  Future<bool> _hasDetailRow(String accountId, String emailId) async {
+    final row = await (_database.selectOnly(_database.cachedEmailDetails)
+          ..addColumns([_database.cachedEmailDetails.emailId])
+          ..where(_database.cachedEmailDetails.accountId.equals(accountId) &
+              _database.cachedEmailDetails.emailId.equals(emailId))
+          ..limit(1))
+        .getSingleOrNull();
+    return row != null;
+  }
+
+  /// The decrypted detail half of [emailId], or null if none is cached.
+  ///
+  /// One row per message rather than per folder, so this is the same answer
+  /// whichever folder listing the caller came from.
+  Future<Map<String, dynamic>?> _detailFor(
+    String accountId,
+    String emailId,
+  ) async {
+    final row = await (_database.select(_database.cachedEmailDetails)
+          ..where((t) =>
+              t.accountId.equals(accountId) & t.emailId.equals(emailId)))
+        .getSingleOrNull();
+    if (row == null) return null;
+    return jsonDecode(await _encryption.decrypt(row.encryptedDetail))
+        as Map<String, dynamic>;
   }
 
   /// Rows [restoreFolderMemberships] must not read a home folder off.
@@ -243,27 +304,20 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     return additions.length;
   }
 
-  /// One cached copy of [emailId], whichever folder listing it was filed under,
-  /// preferring a copy that carries a full body.
+  /// One cached copy of [emailId], whichever folder listing it was filed under.
   ///
-  /// A message appears once per folder it was listed in (see [CachedEmails]),
-  /// and every copy holds the same message — so any of them answers "what is
-  /// this message". The body is the one thing that can differ, because
-  /// [upgradeCachedEmailBody] may not have reached every copy yet.
-  Future<CachedEmail?> _anyCachedRow(String accountId, String emailId) async {
-    final rows = await (_database.select(_database.cachedEmails)
-          ..where(
-              (t) => t.accountId.equals(accountId) & t.emailId.equals(emailId)))
-        .get();
-    if (rows.isEmpty) return null;
-    if (rows.length == 1) return rows.first;
-    for (final row in rows) {
-      final json = jsonDecode(await _encryption.decrypt(row.encryptedData))
-          as Map<String, dynamic>;
-      if ((json['body'] as String? ?? '').isNotEmpty) return row;
-    }
-    return rows.first;
-  }
+  /// A message appears once per folder it was listed in (see [CachedEmails]) and
+  /// every copy holds the same message, so any of them answers "what is this
+  /// message". This used to decrypt each copy in turn looking for the one
+  /// carrying a body, because [upgradeCachedEmailBody] might not have reached
+  /// them all; the body now lives once per message in [CachedEmailDetails], so
+  /// there is nothing left for the copies to disagree about but read state.
+  Future<CachedEmail?> _anyCachedRow(String accountId, String emailId) =>
+      (_database.select(_database.cachedEmails)
+            ..where((t) =>
+                t.accountId.equals(accountId) & t.emailId.equals(emailId))
+            ..limit(1))
+          .getSingleOrNull();
 
   @override
   Future<void> upgradeCachedEmailBody({
@@ -283,6 +337,20 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
       if (rows.isEmpty) return;
 
       final now = DateTime.now().millisecondsSinceEpoch;
+
+      // The body, its inline images and the attachment metadata belong to the
+      // message, so they are written once here no matter how many folders hold a
+      // copy — this is the write that used to be repeated per folder, carrying
+      // the same megabytes each time.
+      await _database
+          .into(_database.cachedEmailDetails)
+          .insertOnConflictUpdate(CachedEmailDetailsCompanion.insert(
+            emailId: email.id,
+            accountId: accountId,
+            encryptedDetail:
+                await _encryption.encrypt(jsonEncode(_detailJson(email))),
+          ));
+
       for (final row in rows) {
         // Applied to the entity, not just the column: the row is read back out
         // of the encrypted JSON (see [getCachedEmailById]), so setting the
@@ -290,7 +358,7 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
         // sees. Per copy, because each folder's row carries its own read state.
         final merged = email.copyWith(isRead: row.isRead);
         final encryptedData =
-            await _encryption.encrypt(jsonEncode(_emailToJson(merged)));
+            await _encryption.encrypt(jsonEncode(_listJson(merged)));
         await (_database.update(_database.cachedEmails)
               ..where((t) =>
                   t.accountId.equals(accountId) &
@@ -316,6 +384,8 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     final row = await _anyCachedRow(accountId, emailId);
     if (row == null) return false;
 
+    // The stamp travels with the attachment metadata it describes, which is on
+    // the list row.
     final json = jsonDecode(await _encryption.decrypt(row.encryptedData))
         as Map<String, dynamic>;
     final version = json[_parseVersionKey] as int? ?? 1;
@@ -345,6 +415,15 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
       json['folderIds'] = [newFolderId];
       final encryptedData = await _encryption.encrypt(jsonEncode(json));
 
+      // The body and its inline images move with the message: the rename is the
+      // same mail under a new id, so re-fetching them would be pure waste — and
+      // on Graph/IMAP, where a move mints a new id, every move would otherwise
+      // drop the body of whatever the user had just been reading.
+      final detail = await (_database.select(_database.cachedEmailDetails)
+            ..where((t) =>
+                t.accountId.equals(accountId) & t.emailId.equals(oldEmailId)))
+          .getSingleOrNull();
+
       // A row may already exist at newEmailId (e.g. a delta sync landed it
       // first) — clear it so the rename doesn't collide on the primary key.
       await (_database.delete(_database.cachedEmails)
@@ -355,6 +434,20 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
             ..where((t) =>
                 t.accountId.equals(accountId) & t.emailId.equals(oldEmailId)))
           .go();
+      await (_database.delete(_database.cachedEmailDetails)
+            ..where((t) =>
+                t.accountId.equals(accountId) &
+                t.emailId.isIn([oldEmailId, newEmailId])))
+          .go();
+      if (detail != null) {
+        await _database.into(_database.cachedEmailDetails).insert(
+              CachedEmailDetailsCompanion.insert(
+                emailId: newEmailId,
+                accountId: accountId,
+                encryptedDetail: detail.encryptedDetail,
+              ),
+            );
+      }
       await _database.into(_database.cachedEmails).insert(
             CachedEmailsCompanion.insert(
               emailId: newEmailId,
@@ -371,9 +464,26 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     });
   }
 
+  /// Drops detail blobs no [CachedEmails] row refers to any more.
+  ///
+  /// A detail row is keyed by message and a list row by message *and folder*, so
+  /// removing a folder's rows — or one copy of a message — cannot decide on its
+  /// own whether the body is still wanted. One statement afterwards can: the
+  /// body outlives every copy or none of them. Without this the biggest rows in
+  /// the cache would be exactly the ones that never get collected.
+  Future<void> _pruneOrphanDetails() => _database.customStatement(
+        'DELETE FROM cached_email_details WHERE NOT EXISTS ('
+        'SELECT 1 FROM cached_emails e '
+        'WHERE e.email_id = cached_email_details.email_id '
+        'AND e.account_id = cached_email_details.account_id)',
+      );
+
   @override
   Future<void> clearCacheForAccount(String accountId) async {
     await (_database.delete(_database.cachedEmails)
+          ..where((t) => t.accountId.equals(accountId)))
+        .go();
+    await (_database.delete(_database.cachedEmailDetails)
           ..where((t) => t.accountId.equals(accountId)))
         .go();
     // The inline cache is keyed by email id alone, so there is no per-account
@@ -395,6 +505,9 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     await (_database.delete(_database.cachedEmails)
           ..where((t) => t.accountId.equals(accountId) & t.folderId.equals(folderId)))
         .go();
+    // A message the folder shared with another one keeps its body; one that was
+    // only here loses it. See [_pruneOrphanDetails].
+    await _pruneOrphanDetails();
   }
 
   @override
@@ -405,6 +518,13 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
   }) async {
     await (_database.delete(_database.cachedEmails)
           ..where((t) => t.accountId.equals(accountId) & t.emailId.equals(emailId)))
+        .go();
+    // Every copy of the message has gone, so its body is unreachable — deleted
+    // by id rather than through the orphan sweep, which is for the folder-scoped
+    // deletes that may leave other copies standing.
+    await (_database.delete(_database.cachedEmailDetails)
+          ..where(
+              (t) => t.accountId.equals(accountId) & t.emailId.equals(emailId)))
         .go();
     if (evictInlineAttachments) {
       await _inlineAttachments.evictEmail(emailId);
@@ -469,7 +589,12 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
   // Serialisation helpers
   // ---------------------------------------------------------------------------
 
-  static Map<String, dynamic> _emailToJson(Email email) {
+  /// The half of a message a list row draws, written to every folder's copy.
+  ///
+  /// Deliberately small and of bounded size: `bodyPreview` is a sentence, and
+  /// nothing here scales with what the sender attached. Adding a field that does
+  /// puts it back on the folder-open path for every row — see [CachedEmails].
+  static Map<String, dynamic> _listJson(Email email) {
     return {
       'id': email.id,
       'subject': email.subject,
@@ -477,8 +602,6 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
       'toRecipients': email.toRecipients.map(_addressToJson).toList(),
       'ccRecipients': email.ccRecipients.map(_addressToJson).toList(),
       'bodyPreview': email.bodyPreview,
-      'body': email.body,
-      'bodyType': email.bodyType == EmailBodyType.html ? 'html' : 'text',
       'isRead': email.isRead,
       'isFlagged': email.isFlagged,
       'receivedDateTime': email.receivedDateTime.toIso8601String(),
@@ -490,15 +613,48 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
       },
       'conversationId': email.conversationId,
       'hasAttachments': email.hasAttachments,
+      // Attachment *metadata* — name, type, size, no bytes — so it is bounded by
+      // how many files were attached and costs nothing to carry. It stays on the
+      // list side because it is part of [Email.props]: served empty here, every
+      // IMAP folder would compare unequal to its own cache on every poll (IMAP
+      // fills attachments in from BODYSTRUCTURE on list rows, unlike Graph and
+      // Gmail) and `MailPollerCubit._samePage` would report a quiet mailbox as
+      // changed every cycle.
       'attachments': email.attachments.map(_attachmentToJson).toList(),
-      'inlineAttachments':
-          email.inlineAttachments.map(_inlineAttachmentToJson).toList(),
+      _parseVersionKey: attachmentParseVersion,
       'parentFolderId': email.parentFolderId,
       'folderIds': email.folderIds,
-      'meetingInvite': _meetingInviteToJson(email.meetingInvite),
-      _parseVersionKey: attachmentParseVersion,
     };
   }
+
+  /// The half only the reading pane needs — and effectively all of the bytes.
+  ///
+  /// `inlineAttachments` is the reason this table exists as much as `body` is:
+  /// the images are base64-encoded straight into the JSON, so a message with
+  /// pictures in it is megabytes.
+  static Map<String, dynamic> _detailJson(Email email) {
+    return {
+      'body': email.body,
+      'bodyType': email.bodyType == EmailBodyType.html ? 'html' : 'text',
+      'inlineAttachments':
+          email.inlineAttachments.map(_inlineAttachmentToJson).toList(),
+      // Carried here rather than on the list row so a thin re-touch cannot drop
+      // it: a list/poll fetch has no ICS, and losing it takes the
+      // Accept/Decline banner with it.
+      'meetingInvite': _meetingInviteToJson(email.meetingInvite),
+    };
+  }
+
+  /// Whether [email] carries anything worth a detail row.
+  ///
+  /// False for a list/poll fetch, which is what stops such a fetch writing an
+  /// empty detail over a real one — most of the old preservation dance in
+  /// [cacheEmails]. A message that genuinely has no body, no inline images and
+  /// no invite has nothing to lose either way.
+  static bool _hasDetail(Email email) =>
+      email.body.isNotEmpty ||
+      email.inlineAttachments.isNotEmpty ||
+      email.meetingInvite != null;
 
   static Map<String, dynamic>? _meetingInviteToJson(MeetingInvite? invite) {
     if (invite == null) return null;
@@ -541,7 +697,18 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     );
   }
 
-  static Email _emailFromJson(Map<String, dynamic> j) {
+  /// Rebuilds a message from its list projection and, when the caller asked for
+  /// one, its detail blob.
+  ///
+  /// [detail] is null on the folder-listing path, which is the point: the body
+  /// and inline images are never read to draw a row. The resulting [Email] has an
+  /// empty body — every list-row field is present and correct, and anything that
+  /// renders a body goes through [getCachedEmailById].
+  static Email _emailFromJson(
+    Map<String, dynamic> j, {
+    Map<String, dynamic>? detail,
+  }) {
+    final d = detail ?? const <String, dynamic>{};
     return Email(
       id: j['id'] as String,
       subject: j['subject'] as String,
@@ -555,9 +722,8 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
           .map(_addressFromJson)
           .toList(),
       bodyPreview: j['bodyPreview'] as String,
-      body: j['body'] as String,
-      bodyType:
-          j['bodyType'] == 'html' ? EmailBodyType.html : EmailBodyType.text,
+      body: d['body'] as String? ?? '',
+      bodyType: d['bodyType'] == 'html' ? EmailBodyType.html : EmailBodyType.text,
       isRead: j['isRead'] as bool,
       // Absent on rows cached before the flag was recorded — not flagged is the
       // honest answer, and the next sync of that message fills it in.
@@ -573,16 +739,15 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
       },
       conversationId: j['conversationId'] as String?,
       hasAttachments: j['hasAttachments'] as bool? ?? false,
-      // Null-safe like inlineAttachments below: a legacy row cached before the
-      // attachments field existed, or a preservation merge that copied through
-      // a null, has no 'attachments' key. A bare `as List` would throw here —
-      // and this runs inside getCachedEmailById, outside getEmail's try, so
-      // the whole message would fail to load instead of just missing chips.
+      // Null-safe: absent whenever there is no detail blob, which is every row
+      // on the folder-listing path. A bare `as List` would throw here — and this
+      // runs inside getCachedEmailById, outside getEmail's try, so the whole
+      // message would fail to load instead of just missing chips.
       attachments: (j['attachments'] as List<dynamic>? ?? const [])
           .cast<Map<String, dynamic>>()
           .map(_attachmentFromJson)
           .toList(),
-      inlineAttachments: (j['inlineAttachments'] as List<dynamic>? ?? const [])
+      inlineAttachments: (d['inlineAttachments'] as List<dynamic>? ?? const [])
           .cast<Map<String, dynamic>>()
           .map(_inlineAttachmentFromJson)
           .whereType<InlineAttachment>()
@@ -593,7 +758,7 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
       // parentFolderId fallback rather than claiming the message is nowhere.
       folderIds: (j['folderIds'] as List<dynamic>? ?? const []).cast<String>(),
       meetingInvite:
-          _meetingInviteFromJson(j['meetingInvite'] as Map<String, dynamic>?),
+          _meetingInviteFromJson(d['meetingInvite'] as Map<String, dynamic>?),
     );
   }
 

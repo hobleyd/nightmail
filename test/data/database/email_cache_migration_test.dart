@@ -1,10 +1,10 @@
-// Schema test for the v15 rekey of `cached_emails`.
+// Schema test for the v15 rekey of `cached_emails` and the v16 body split.
 //
 // Unlike the other migration tests here, this one really does step a v14
-// database through `onUpgrade` — the migration rebuilds a table and copies its
-// rows, and "the rows survived" is the whole thing worth asserting. It builds
-// the v14 shape by hand on a temp file (this repo has no `drift_schemas/`
-// snapshots), stamps `user_version`, then opens `AppDatabase` on it.
+// database through `onUpgrade`: v15 rebuilds a table and copies its rows, and
+// v16 then deliberately empties it. It builds the v14 shape by hand on a temp
+// file (this repo has no `drift_schemas/` snapshots), stamps `user_version`,
+// then opens `AppDatabase` on it.
 
 import 'dart:io';
 
@@ -70,23 +70,11 @@ void main() {
     return rows.map((r) => r.read<String>('name')).toList();
   }
 
-  test('the upgrade rekeys the table on folder_id and keeps every row',
-      () async {
+  test('the upgrade rekeys the table on folder_id', () async {
     final db = AppDatabase.forTesting(NativeDatabase(file));
     addTearDown(db.close);
 
     expect(await pkColumns(db), ['email_id', 'account_id', 'folder_id']);
-
-    final rows = await db.select(db.cachedEmails).get();
-    expect(
-      rows.map((r) => (r.emailId, r.folderId, r.encryptedData)),
-      containsAll([
-        ('email-1', 'inbox', 'payload-1'),
-        ('email-2', 'archive', 'payload-2'),
-      ]),
-      reason: 'cached mail must survive the rebuild — nothing is re-fetchable '
-          'offline',
-    );
 
     // The index belongs to the old table and is dropped with it; every read of
     // a folder listing goes through it.
@@ -102,12 +90,38 @@ void main() {
     );
   });
 
+  // v16 splits bodies out into cached_email_details. A pre-v16 row carries its
+  // body *inside* encrypted_data, which is the cost the split exists to remove,
+  // and a migration cannot move it — it has no access to the async decryption
+  // key. So the cache is emptied and refills on next open.
+  test('the v16 upgrade adds the details table and empties the mail cache',
+      () async {
+    final db = AppDatabase.forTesting(NativeDatabase(file));
+    addTearDown(db.close);
+
+    expect(await db.select(db.cachedEmails).get(), isEmpty);
+    expect(await db.select(db.cachedEmailDetails).get(), isEmpty);
+
+    // Present and writable, not merely declared.
+    await db.customStatement(
+      'INSERT INTO cached_email_details VALUES '
+      "('email-1', 'acct-1', 'detail-1')",
+    );
+    expect(
+      (await db.select(db.cachedEmailDetails).get()).single.encryptedDetail,
+      'detail-1',
+    );
+  });
+
   test('a migrated database can list one message under two folders', () async {
     final db = AppDatabase.forTesting(NativeDatabase(file));
     addTearDown(db.close);
 
+    // Self-contained: v16 empties whatever the fixture put there, so both rows
+    // are written here. The point is that the widened key admits them at all.
     await db.customStatement(
       'INSERT INTO cached_emails VALUES '
+      "('email-1', 'acct-1', 'inbox', 0, 0, 1000, 'conv-1', 1, 'payload-1'), "
       "('email-1', 'acct-1', 'archive', 0, 0, 1000, 'conv-1', 1, 'payload-1')",
     );
 
@@ -119,10 +133,10 @@ void main() {
 
   // The tripwire: bumping the version without adding an `if (from < n)` branch
   // ships a schema the upgrade path never builds.
-  test('schema version is 15', () {
+  test('schema version is 16', () {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
-    expect(db.schemaVersion, 15);
+    expect(db.schemaVersion, 16);
   });
 }
 

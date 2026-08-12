@@ -41,6 +41,31 @@ class CachedEmails extends Table {
   Set<Column> get primaryKey => {emailId, accountId, folderId};
 }
 
+/// A message's heavy half: its body, its inline image bytes, its attachment
+/// metadata and any meeting invite — everything the *reading pane* needs and a
+/// list row never shows.
+///
+/// Split out of [CachedEmails] because a folder listing decrypts every row it
+/// returns, and these fields are effectively all of the bytes. One real mailbox
+/// measured 36 MB across a Sent folder's 223 rows, four of them ~7.6 MB apiece
+/// (a body with images inlined as data URIs), which cost ~2.4 s of pure-Dart
+/// AES-GCM on the UI isolate *before* any network — every time the folder was
+/// opened, to draw rows that only need sender, subject, date and preview.
+///
+/// Keyed by message, **not** by folder, unlike [CachedEmails]: a body belongs to
+/// the message, so the same 7.6 MB is no longer stored once per folder the
+/// message appears in. That also means a thin list/poll fetch — which carries no
+/// body — simply does not write here, so an already-cached body survives without
+/// the read-merge-rewrite dance it used to take.
+class CachedEmailDetails extends Table {
+  TextColumn get emailId => text()();
+  TextColumn get accountId => text()();
+  TextColumn get encryptedDetail => text()();
+
+  @override
+  Set<Column> get primaryKey => {emailId, accountId};
+}
+
 /// Plaintext sender cache — not encrypted so names can be queried for fuzzy matching.
 class KnownSenders extends Table {
   TextColumn get accountId => text()();
@@ -302,7 +327,7 @@ class PendingCalendarOperations extends Table {
   TextColumn get lastError => text().nullable()();
 }
 
-@DriftDatabase(tables: [CachedEmails, KnownSenders, SenderAliases, CachedContacts, ContactSyncStates, DeltaSyncTokens, CachedFolders, LocalDrafts, CatalogCache, AiConfig, CapabilityRouting, ScheduledReminders, ScheduledTaskReminders, PendingOperations, CachedCalendarEvents, PendingCalendarOperations])
+@DriftDatabase(tables: [CachedEmails, CachedEmailDetails, KnownSenders, SenderAliases, CachedContacts, ContactSyncStates, DeltaSyncTokens, CachedFolders, LocalDrafts, CatalogCache, AiConfig, CapabilityRouting, ScheduledReminders, ScheduledTaskReminders, PendingOperations, CachedCalendarEvents, PendingCalendarOperations])
 class AppDatabase extends _$AppDatabase
     implements
         DeltaTokenDatasource,
@@ -320,7 +345,7 @@ class AppDatabase extends _$AppDatabase
   AppDatabase.forTesting(QueryExecutor executor) : super(executor);
 
   @override
-  int get schemaVersion => 15;
+  int get schemaVersion => 16;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -424,6 +449,17 @@ class AppDatabase extends _$AppDatabase
               'CREATE INDEX idx_cached_emails_account_folder '
               'ON cached_emails(account_id, folder_id, received_date_time_ms DESC)',
             );
+          }
+          if (from < 16) {
+            await m.createTable(cachedEmailDetails);
+            // The cached mail itself has to go. Every existing row carries its
+            // body and inline images *inside* `encrypted_data`, which is the
+            // cost this split exists to remove — leaving them would keep every
+            // folder they are in as slow as before, and they cannot be moved
+            // here by a migration, which has no access to the async decryption
+            // key. This is a cache: the folders repopulate on next open, and
+            // the one cold load is the whole price.
+            await customStatement('DELETE FROM cached_emails');
           }
         },
       );

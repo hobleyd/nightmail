@@ -173,6 +173,15 @@ class GmailDatasourceImpl implements EmailRemoteDatasource, MailDeltaDatasource 
   /// and every folder-list load pays it again.
   static const _labelCountConcurrency = 8;
 
+  /// Thread fetches in flight at once while expanding a folder page.
+  ///
+  /// Gmail has no multi-thread get, so the expansion costs one request per
+  /// thread and the only lever is how many go out together. Same ceiling as
+  /// [_labelCountConcurrency]: past it Gmail starts closing connections
+  /// mid-header and throttling, and each 429 buys a second or more of
+  /// `RetryInterceptor` backoff — which is slower than the queue it replaced.
+  static const _threadFetchConcurrency = 8;
+
   /// Reads one label's message counts into [_labelCounts]. Never throws: a label
   /// that could not be counted keeps its last known figures rather than failing
   /// the whole folder listing.
@@ -258,15 +267,27 @@ class GmailDatasourceImpl implements EmailRemoteDatasource, MailDeltaDatasource 
           ? const <String>{}
           : const {'TRASH', 'SPAM'};
 
-      // Fetch every thread's body concurrently (network only — no decoding),
-      // then parse the whole page in a single background isolate. One compute()
-      // for the page rather than one per thread: each call spawns its own
-      // isolate, and paying that 25 times over would cost more than the parse.
-      final threadFutures = threads.map((t) {
-        final id = (t as Map<String, dynamic>)['id'] as String;
-        return _fetchThreadRaw(id);
-      });
-      final rawBodies = await Future.wait(threadFutures);
+      // Fetch every thread's messages concurrently (network only — no
+      // decoding), then parse the whole page in a single background isolate. One
+      // compute() for the page rather than one per thread: each call spawns its
+      // own isolate, and paying that 25 times over would cost more than the
+      // parse.
+      //
+      // A chunk at a time, for the same reason the label counts are chunked
+      // (see [_labelCountConcurrency]) — and it is worse here, because a 429
+      // costs `RetryInterceptor` a second or more of backoff, so firing a whole
+      // page at once made the page slower rather than faster.
+      final threadIds = [
+        for (final t in threads) (t as Map<String, dynamic>)['id'] as String,
+      ];
+      final rawBodies = <String?>[];
+      for (var i = 0; i < threadIds.length; i += _threadFetchConcurrency) {
+        final chunk = threadIds.sublist(
+          i,
+          (i + _threadFetchConcurrency).clamp(0, threadIds.length),
+        );
+        rawBodies.addAll(await Future.wait(chunk.map(_fetchThreadRaw)));
+      }
 
       return compute(
         parseGmailThreads,

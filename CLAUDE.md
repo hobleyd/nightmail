@@ -383,6 +383,11 @@ the active one answers for every row. An **empty** from address counts as the
 user's own: that is an unsent draft. Omitting `selfAddress` restores
 newest-heads-everything, which is what the pure grouping tests exercise.
 
+**Sent inverts the rule.** `isOutgoingMailFolder` (`core/utils/outgoing_folder.dart`)
+turns on `groupIntoConversations`'s `anchorOnSelf` for Sent/Drafts/Outbox, or the
+expansion's Inbox copies head every row — and date every thread — with the
+correspondent's message, filing a reply sent today under the date it answered.
+
 Three consequences, none incidental:
 
 - **Threads sort by `anchorDate`, not `latestDate`.** The row shows the anchor,

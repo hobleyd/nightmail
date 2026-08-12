@@ -357,4 +357,88 @@ void main() {
       expect(targets.emailIds, ['my-reply']);
     });
   });
+
+  // A folder listing drags in a thread's copies from other folders, so a thread
+  // in Sent also holds the correspondent's Inbox messages. The ordinary anchor
+  // rule then heads every Sent row with the other person's message and sorts the
+  // thread by *their* date — so a reply sent today to a three-week-old email
+  // sorted three weeks down the list, and read as never having been sent.
+  group('conversation anchor in an outgoing folder', () {
+    test('the row is headed by the message the user sent', () {
+      final conv = groupIntoConversations(
+        [
+          _mine('my-reply', conversationId: 'c', minute: 3),
+          _email('theirs', conversationId: 'c', minute: 2),
+        ],
+        selfAddress: _me,
+        anchorOnSelf: true,
+      ).single;
+
+      expect(conv.anchor.id, 'my-reply');
+    });
+
+    test('a reply sent today sorts above an older thread, not under it', () {
+      final conversations = groupIntoConversations(
+        [
+          // Their message is old; the reply to it was sent just now.
+          _email('their-old', conversationId: 'answered', minute: 1),
+          _mine('my-reply-now', conversationId: 'answered', minute: 9),
+          // Something sent in between, never replied to.
+          _mine('my-earlier', conversationId: 'solo', minute: 5),
+        ],
+        selfAddress: _me,
+        anchorOnSelf: true,
+      );
+
+      expect(conversations.map((c) => c.id), ['answered', 'solo']);
+      expect(conversations.first.anchor.id, 'my-reply-now');
+    });
+
+    test('their later reply does not take over the row', () {
+      final conv = groupIntoConversations(
+        [
+          _email('they-answered-back', conversationId: 'c', minute: 5),
+          _mine('what-i-sent', conversationId: 'c', minute: 3),
+          _email('their-original', conversationId: 'c', minute: 1),
+        ],
+        selfAddress: _me,
+        anchorOnSelf: true,
+      ).single;
+
+      expect(conv.anchor.id, 'what-i-sent');
+    });
+
+    // The fallback has to hold in both directions: a thread whose only copy in
+    // this folder is the correspondent's still has to be headed by something.
+    test('a thread with nothing of the user own falls back to its newest', () {
+      final conv = groupIntoConversations(
+        [
+          _email('theirs-new', conversationId: 'c', minute: 3),
+          _email('theirs-old', conversationId: 'c', minute: 1),
+        ],
+        selfAddress: _me,
+        anchorOnSelf: true,
+      ).single;
+
+      expect(conv.anchor.id, 'theirs-new');
+    });
+
+    // The head id is what a thread delete is recognised by, so the two have to
+    // agree about which message heads the row.
+    test('the delete target follows the same anchor', () {
+      final targets = resolveDeleteTargets(
+        emails: [
+          _mine('my-reply', conversationId: 'c', minute: 3),
+          _email('theirs', conversationId: 'c', minute: 2),
+        ],
+        selectedIds: ['my-reply'],
+        currentFolderId: null,
+        selfAddress: _me,
+        anchorOnSelf: true,
+      );
+
+      expect(targets.conversationIds, ['c']);
+      expect(targets.emailIds, isEmpty);
+    });
+  });
 }

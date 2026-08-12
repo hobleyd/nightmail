@@ -8,6 +8,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../core/platform/touch_metrics.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/business_days.dart';
+import '../../core/utils/outgoing_folder.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_address.dart';
 import '../../domain/entities/task_email_link.dart';
@@ -247,6 +248,11 @@ class _EmailListPanelState extends State<EmailListPanel> {
   /// the active one is the right answer for every row on screen.
   String? get _selfAddress => sl<AccountManager>().activeAccount?.emailAddress;
 
+  /// Whether this folder's rows should be headed by the user's own message
+  /// rather than the correspondent's — true in Sent, Drafts and Outbox. See
+  /// [groupIntoConversations].
+  bool get _anchorOnSelf => isOutgoingMailFolder(widget.folder);
+
   List<_ListItem> _currentFlatItems() {
     final state = context.read<EmailListBloc>().state;
     if (state is EmailListLoaded) {
@@ -254,6 +260,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
         state.emails,
         state.expandedConversationIds,
         selfAddress: _selfAddress,
+        anchorOnSelf: _anchorOnSelf,
       );
     }
     return [];
@@ -371,6 +378,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
       selectedIds: ids,
       currentFolderId: state is EmailListLoaded ? state.currentFolderId : null,
       selfAddress: _selfAddress,
+      anchorOnSelf: _anchorOnSelf,
     );
   }
 
@@ -541,6 +549,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
                             : _EmailListView(
                                 emails: emails,
                                 selfAddress: _selfAddress,
+                                anchorOnSelf: _anchorOnSelf,
                                 isLoadingMore: isLoadingMore,
                                 selectedEmailId: widget.selectedEmailId,
                                 selectedEmailIds: _selectedEmailIds,
@@ -682,9 +691,13 @@ List<_ListItem> _buildListItems(
   List<Email> emails,
   Set<String> expandedIds, {
   String? selfAddress,
+  bool anchorOnSelf = false,
 }) {
-  final conversations =
-      groupIntoConversations(emails, selfAddress: selfAddress);
+  final conversations = groupIntoConversations(
+    emails,
+    selfAddress: selfAddress,
+    anchorOnSelf: anchorOnSelf,
+  );
   final items = <_ListItem>[];
 
   for (final conv in conversations) {
@@ -1006,6 +1019,7 @@ class _EmailListView extends StatelessWidget {
   const _EmailListView({
     required this.emails,
     required this.selfAddress,
+    required this.anchorOnSelf,
     required this.isLoadingMore,
     required this.selectedEmailId,
     required this.selectedEmailIds,
@@ -1027,6 +1041,9 @@ class _EmailListView extends StatelessWidget {
 
   /// The account's own address — see [_EmailListPanelState._selfAddress].
   final String? selfAddress;
+
+  /// See [_EmailListPanelState._anchorOnSelf].
+  final bool anchorOnSelf;
   final bool isLoadingMore;
   final String? selectedEmailId;
   final Set<String> selectedEmailIds;
@@ -1049,6 +1066,7 @@ class _EmailListView extends StatelessWidget {
       emails,
       expandedConversationIds,
       selfAddress: selfAddress,
+      anchorOnSelf: anchorOnSelf,
     );
     return ListView.builder(
       controller: scrollController,

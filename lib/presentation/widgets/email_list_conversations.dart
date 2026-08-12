@@ -19,6 +19,9 @@ class EmailConversation {
   /// The message the collapsed thread row stands for: the newest one the user
   /// did not send. A row headed by the user's own reply says nothing they don't
   /// already know — what they need to see is who is waiting on them.
+  ///
+  /// Inverted in an outgoing folder ([groupIntoConversations]'s `anchorOnSelf`),
+  /// where the user's own message is the whole reason the folder is open.
   final Email anchor;
 
   Email get latest => emails.first;
@@ -50,9 +53,19 @@ class EmailConversation {
 /// [selfAddress] is the account's own address — the only way to tell the user's
 /// messages from everyone else's, and so to pick each thread's anchor. Omit it
 /// and every thread is headed by its newest message.
+///
+/// [anchorOnSelf] inverts the anchor rule for a folder that holds the user's own
+/// outgoing mail (see `isOutgoingMailFolder`). A folder listing drags in a
+/// thread's copies from *other* folders, so a thread in Sent also holds the
+/// correspondent's messages from the Inbox — and the ordinary rule then heads
+/// each Sent row with the other person's message and, because threads sort by
+/// [EmailConversation.anchorDate], files a reply sent today under the date of the
+/// message it answered. A reply to a three-week-old email therefore sorted three
+/// weeks down the list, which read as the sent message having gone missing.
 List<EmailConversation> groupIntoConversations(
   List<Email> emails, {
   String? selfAddress,
+  bool anchorOnSelf = false,
 }) {
   final sorted = [...emails]
     ..sort((a, b) => b.receivedDateTime.compareTo(a.receivedDateTime));
@@ -68,21 +81,23 @@ List<EmailConversation> groupIntoConversations(
       .map((e) => EmailConversation(
             id: e.key,
             emails: e.value,
-            anchor: _anchorOf(e.value, self),
+            anchor: _anchorOf(e.value, self, anchorOnSelf),
           ))
       .toList()
     ..sort((a, b) => b.anchorDate.compareTo(a.anchorDate));
 }
 
-/// The newest message of [emails] (newest first) that [self] did not send.
+/// The newest message of [emails] (newest first) that [self] did not send — or
+/// that they did, when [onSelf] is set for an outgoing folder.
 ///
-/// Falls back to the newest of all when they are all the user's own — a thread
-/// they started and nobody has answered, or any thread seen from Sent, still
-/// has to be headed by something.
-Email _anchorOf(List<Email> emails, String? self) {
+/// Falls back to the newest of all when no message matches: a thread the user
+/// started that nobody has answered has nothing but their own messages, and a
+/// thread in Sent whose only copy here is the correspondent's still has to be
+/// headed by something.
+Email _anchorOf(List<Email> emails, String? self, bool onSelf) {
   if (self == null || self.isEmpty) return emails.first;
   for (final email in emails) {
-    if (!_isFromSelf(email, self)) return email;
+    if (_isFromSelf(email, self) == onSelf) return email;
   }
   return emails.first;
 }
@@ -130,15 +145,21 @@ class DeleteTargets {
 /// already-filed replies and its copies in Sent are on screen for context and
 /// are not going anywhere, so counting them out of the folder would walk the
 /// badges down past what the folder holds.
+/// [anchorOnSelf] must match what the list itself was grouped with, or the head
+/// ids resolved here name a different row than the one the user selected.
 DeleteTargets resolveDeleteTargets({
   required List<Email> emails,
   required List<String> selectedIds,
   required String? currentFolderId,
   String? selfAddress,
+  bool anchorOnSelf = false,
 }) {
   final threadHeadIds = <String, String>{};
-  for (final conversation
-      in groupIntoConversations(emails, selfAddress: selfAddress)) {
+  for (final conversation in groupIntoConversations(
+    emails,
+    selfAddress: selfAddress,
+    anchorOnSelf: anchorOnSelf,
+  )) {
     if (conversation.emails.length < 2) continue;
     threadHeadIds[conversation.anchor.id] = conversation.id;
   }

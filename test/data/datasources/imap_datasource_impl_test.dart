@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -300,6 +302,77 @@ void main() {
       expect(attachments, hasLength(1));
       expect(attachments.single.name, 'bundle.zip');
       expect(attachments.single.id, '2');
+    });
+
+    // The live regression, captured from INBOX:5147: a *forwarded* message —
+    // multipart/mixed whose second part is a message/rfc822 carrying the
+    // original, whose own attachments are the ones the user wants. Every chip
+    // came out numbered '2', so all four downloaded the enclosing forward
+    // (1.3 MB of raw MIME) instead of their own file.
+    //
+    // The ids must round-trip through `getPart`, which is the half that makes
+    // this a real download rather than a plausible-looking string — so the
+    // test resolves each one rather than just asserting its shape.
+    test('BODY[]-only: numbers attachments inside a forwarded message', () {
+      const inner = 'Subject: original\r\n'
+          'Content-Type: multipart/mixed; boundary="in"\r\n'
+          '\r\n'
+          '--in\r\n'
+          'Content-Type: text/plain\r\n'
+          '\r\n'
+          'the original note\r\n'
+          '--in\r\n'
+          'Content-Type: application/pdf; name="first.pdf"\r\n'
+          'Content-Disposition: attachment; filename="first.pdf"\r\n'
+          'Content-Transfer-Encoding: base64\r\n'
+          '\r\n'
+          'JVBERg==\r\n'
+          '--in\r\n'
+          'Content-Type: application/pdf; name="second.pdf"\r\n'
+          'Content-Disposition: attachment; filename="second.pdf"\r\n'
+          'Content-Transfer-Encoding: base64\r\n'
+          '\r\n'
+          'JVBERjI=\r\n'
+          '--in--\r\n';
+      final raw = 'Subject: FW: original\r\n'
+          'Content-Type: multipart/mixed; boundary="out"\r\n'
+          '\r\n'
+          '--out\r\n'
+          'Content-Type: text/plain\r\n'
+          '\r\n'
+          'see attached\r\n'
+          '--out\r\n'
+          'Content-Type: message/rfc822\r\n'
+          'Content-Disposition: attachment\r\n'
+          'Content-Transfer-Encoding: 7bit\r\n'
+          '\r\n'
+          '$inner'
+          '--out--\r\n';
+      final msg = MimeMessage()
+        ..mimeData = TextMimeData(raw, containsHeader: true);
+
+      final attachments = ImapDatasourceImpl.collectAttachments(msg);
+
+      // The forward itself is an attachment (a .eml), then the two files
+      // inside it — each addressed within the rfc822 part, not as it.
+      expect(
+        attachments.map((a) => '${a.id}=${a.name}'),
+        <String>['2=Attachment', '2.2=first.pdf', '2.3=second.pdf'],
+      );
+
+      // Each id resolves to its own part, which is what downloadAttachment
+      // does with it.
+      final resolved = MimeMessage()
+        ..mimeData = TextMimeData(raw, containsHeader: true);
+      resolved.parse();
+      expect(
+        resolved.getPart('2.2')!.decodeContentBinary(),
+        equals(utf8.encode('%PDF')),
+      );
+      expect(
+        resolved.getPart('2.3')!.decodeContentBinary(),
+        equals(utf8.encode('%PDF2')),
+      );
     });
 
     test('BODY[]-only: works on an unparsed message, as the fetch delivers it',

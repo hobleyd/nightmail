@@ -971,9 +971,20 @@ class ImapDatasourceImpl
   /// Header-path twin of [_walkAttachments]: applies the same attachment rules
   /// to the real MIME headers of a message parsed from a `BODY[]` fetch.
   ///
-  /// [fetchId] is built positionally exactly as enough_mail's own
-  /// `MimePart.collectContentInfo` builds it, so the ids stay compatible with
-  /// the `getPart` lookup in [downloadAttachment].
+  /// [fetchId] is built positionally, appending a level per generation, so the
+  /// ids resolve through the `getPart` lookup in [downloadAttachment].
+  ///
+  /// It deliberately does **not** copy enough_mail's own
+  /// `MimePart.collectContentInfo`, which reuses the parent's id unchanged when
+  /// descending through a `message/rfc822` part. That rule contradicts
+  /// `getPart`, which walks one `parts` level per numeric component and knows
+  /// nothing about rfc822 — and enough_mail's parse tree hangs the encapsulated
+  /// message's parts directly off the rfc822 part, with no node in between for
+  /// the skipped level to account for. So on a **forwarded** message every
+  /// attachment inside the forward was handed the *enclosing* part's id: five
+  /// chips all numbered `2`, each one downloading the whole 1.3 MB forwarded
+  /// message instead of its own file, named `.pdf`/`.docx` and opening as
+  /// nothing.
   ///
   /// Size stays 0 on this path: only BODYSTRUCTURE reports part sizes, and
   /// decoding each part just to measure it would pull every attachment's bytes
@@ -1009,11 +1020,7 @@ class ImapDatasourceImpl
     final parts = part.parts;
     if (parts == null || parts.isEmpty) return;
     for (var i = 0; i < parts.length; i++) {
-      final childFetchId = part.mediaType.sub == MediaSubtype.messageRfc822
-          ? fetchId
-          : fetchId == null
-              ? '${i + 1}'
-              : '$fetchId.${i + 1}';
+      final childFetchId = fetchId == null ? '${i + 1}' : '$fetchId.${i + 1}';
       _collectAttachmentsFromHeaders(parts[i], childFetchId, out);
     }
   }

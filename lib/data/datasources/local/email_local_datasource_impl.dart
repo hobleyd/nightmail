@@ -37,7 +37,12 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
   ///   cached with `hasAttachments: false` and an empty attachment list. The
   ///   reading-pane path additionally missed attachments declared only via
   ///   `Content-Type; name="x"`.
-  static const attachmentParseVersion = 2;
+  /// * 2 — the IMAP header walk numbered parts inside a `message/rfc822` with
+  ///   the id of the rfc822 part itself, so every attachment in a *forwarded*
+  ///   message shared one id and downloaded the whole forward. The ids are
+  ///   what a row stores, so a message read before the fix keeps them: the
+  ///   chips look right and every one of them fetches the wrong bytes.
+  static const attachmentParseVersion = 3;
 
   /// JSON key for [attachmentParseVersion]. Absent on pre-versioning rows,
   /// which read back as version 1.

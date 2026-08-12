@@ -399,7 +399,6 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
           ({
             String accountId,
             EmailRemoteDatasource datasource,
-            String folderId,
             List<Email> emails,
           })>[];
 
@@ -492,8 +491,6 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                   prefetchJobs.add((
                     accountId: account.id,
                     datasource: ds,
-                    folderId: inboxIdByAccount[account.id] ??
-                        _inboxWellKnownName,
                     emails: result.upserted,
                   ));
                 }
@@ -692,7 +689,6 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                   prefetchJobs.add((
                     accountId: account.id,
                     datasource: ds,
-                    folderId: inboxes.first.id,
                     emails: reconciled,
                   ));
                 }
@@ -827,7 +823,6 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
             await _bodyPrefetch.prefetchBodies(
               accountId: job.accountId,
               datasource: job.datasource,
-              folderId: job.folderId,
               emails: job.emails,
             );
           } catch (_) {
@@ -1047,7 +1042,6 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
             ({
               String accountId,
               EmailRemoteDatasource datasource,
-              String folderId,
               List<Email> emails,
             })>
         prefetchJobs,
@@ -1077,7 +1071,6 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
       prefetchJobs.add((
         accountId: account.id,
         datasource: ds,
-        folderId: folderId,
         emails: reconciled,
       ));
     }

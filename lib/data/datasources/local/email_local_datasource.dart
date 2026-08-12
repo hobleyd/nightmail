@@ -12,6 +12,10 @@ abstract interface class EmailLocalDatasource {
   /// Call this after a successful network fetch so that future offline
   /// launches can display the emails without a network connection.
   ///
+  /// A message may be cached under several folders at once — a folder page
+  /// arrives with the same thread's copies from elsewhere, and those belong to
+  /// this listing *and* to their own. Writing one never disturbs the others.
+  ///
   /// A thin row (empty body) never clobbers a full body already cached for the
   /// same message — see the impl's preservation lookup.
   ///
@@ -32,15 +36,34 @@ abstract interface class EmailLocalDatasource {
   });
 
   /// Returns the cached email with [emailId] for [accountId], regardless of
-  /// which folder it's filed under, or null if it isn't cached.
+  /// which folder it's filed under, or null if it isn't cached. A message
+  /// cached under several folders is answered for once, preferring a copy that
+  /// carries a body.
   Future<Email?> getCachedEmailById({
     required String accountId,
     required String emailId,
   });
 
-  /// Upgrades an already-cached row to the full copy in [email] — body, inline
-  /// images and attachment metadata — and does **nothing at all** when that row
-  /// is no longer cached. Never inserts.
+  /// Files every cached message under its own folder as well as the listings it
+  /// was seen in, and returns how many rows that added.
+  ///
+  /// Repairs caches written before a message could be filed under more than one
+  /// folder, when caching a folder page *moved* the thread's copies from
+  /// elsewhere into it — so a folder could be missing mail that is sitting in
+  /// the cache under whichever folder was listed last. The message's own folder
+  /// travels inside the encrypted payload, which is where the answer survived.
+  ///
+  /// Adds only what is missing and never removes anything, so running it twice
+  /// is a no-op. A row for a message that has since moved is put back where it
+  /// used to be, exactly as stale as the copy already cached — the next network
+  /// listing of either folder replaces both.
+  Future<int> restoreFolderMemberships({required String accountId});
+
+  /// Upgrades the already-cached rows for [email] to its full copy — body,
+  /// inline images and attachment metadata — and does **nothing at all** when
+  /// the message is no longer cached. Never inserts, and never moves a row
+  /// between folders: a body is a property of the message, so every folder
+  /// that lists it gets the upgrade and no folder gains a listing from it.
   ///
   /// This is [cacheEmails] with the insert taken away, and the difference is the
   /// whole point: `BodyPrefetchService` is upgrading a message the user is quite
@@ -54,7 +77,6 @@ abstract interface class EmailLocalDatasource {
   /// and a freshly-fetched copy reports the server's stale value.
   Future<void> upgradeCachedEmailBody({
     required String accountId,
-    required String folderId,
     required Email email,
   });
 

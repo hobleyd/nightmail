@@ -14,6 +14,18 @@ part 'app_database.g.dart';
 
 /// Only index/query fields are stored in plaintext.
 /// All user-visible content (subject, body, addresses) lives in [encryptedData].
+///
+/// A row is *one message as seen in one folder's listing*, not one message.
+/// [folderId] is in the primary key because both providers expand a folder page
+/// with the same thread's copies from other folders, and those copies are cached
+/// under the folder being listed — so with a key of {emailId, accountId} an
+/// `insertOrReplace` moved the row, and listing any folder quietly emptied the
+/// cache of every other folder that shared a conversation with it. An Inbox of
+/// twelve long-running threads drained to whatever the last delta had added.
+///
+/// The cost is that a message the user has opened stores its body once per
+/// folder it appears in; inline images are keyed by message id in a separate
+/// store and are not duplicated.
 class CachedEmails extends Table {
   TextColumn get emailId => text()();
   TextColumn get accountId => text()();
@@ -26,7 +38,7 @@ class CachedEmails extends Table {
   TextColumn get encryptedData => text()();
 
   @override
-  Set<Column> get primaryKey => {emailId, accountId};
+  Set<Column> get primaryKey => {emailId, accountId, folderId};
 }
 
 /// Plaintext sender cache — not encrypted so names can be queried for fuzzy matching.
@@ -308,7 +320,7 @@ class AppDatabase extends _$AppDatabase
   AppDatabase.forTesting(QueryExecutor executor) : super(executor);
 
   @override
-  int get schemaVersion => 14;
+  int get schemaVersion => 15;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -397,6 +409,21 @@ class AppDatabase extends _$AppDatabase
             await m.createTable(cachedCalendarEvents);
             await m.createTable(pendingCalendarOperations);
             await _createCalendarCacheIndexes();
+          }
+          if (from < 15) {
+            // folder_id joins the primary key — see [CachedEmails]. SQLite
+            // cannot alter one, so drift rebuilds the table and copies the rows
+            // across; every existing row is already unique under the wider key,
+            // so nothing is lost and no cached mail has to be re-fetched. The
+            // index goes with the old table and has to be put back.
+            await m.alterTable(TableMigration(cachedEmails));
+            await customStatement(
+              'DROP INDEX IF EXISTS idx_cached_emails_account_folder',
+            );
+            await customStatement(
+              'CREATE INDEX idx_cached_emails_account_folder '
+              'ON cached_emails(account_id, folder_id, received_date_time_ms DESC)',
+            );
           }
         },
       );

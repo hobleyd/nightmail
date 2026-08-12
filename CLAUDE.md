@@ -300,10 +300,19 @@ reach. Deleted Items/Junk (Graph `_expansionExcludedFolderIds`) and TRASH/SPAM
 refresh: a delete *moves* it, so it keeps its `conversationId` and gets a **new
 id** the outbox's pending-op and tombstone reconciliation cannot recognise.
 
+The whole page is cached under the folder being listed, expansion rows
+included — so a `cached_emails` row is *one message as seen in one folder*, and
+`folderId` is in its primary key. Without it an `insertOrReplace` moved the row,
+and listing any folder emptied every other folder's cache of the mail they
+shared a thread with. `CacheMembershipRepairService` files misplaced rows back
+once per account, reading each one's own folder out of its payload.
+
 `BodyPrefetchService` writes through `upgradeCachedEmailBody`, never
 `cacheEmails`: its write lands a round-trip after its "still cached?" check, on
 the message the user is most likely reading, so only a present-row-only write
 inside one transaction can refuse to resurrect a delete that landed meanwhile.
+It upgrades every folder's copy and files no new one — a body belongs to the
+message, and taking a folder there was a second way to re-file a row.
 
 ## Graph Never Says Whether a Body Was Plain Text
 

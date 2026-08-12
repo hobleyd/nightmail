@@ -144,6 +144,95 @@ void main() {
       );
       expect(cached!.body, '<p>opened now</p>');
     });
+
+    // Regression, and the reason folder_id is in the primary key: both
+    // providers expand a folder page with the same thread's copies from other
+    // folders, and the whole page is cached under the folder being listed. With
+    // one row per message that write *moved* the copies, so opening any folder
+    // quietly emptied every other folder's cache of the mail they shared a
+    // thread with. An Inbox of a dozen long-running threads drained to whatever
+    // the last delta had added, and switching to that account showed those few
+    // messages alone until the network page landed.
+    test('caching a folder page leaves another folder listing the same message',
+        () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'inbox',
+        emails: [_email('email-1', body: ''), _email('email-2', body: '')],
+      );
+
+      // Listing 'archive' returns its own mail plus the Inbox copy of the
+      // thread they share.
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'archive',
+        emails: [_email('email-3', body: ''), _email('email-1', body: '')],
+        replaceFolder: true,
+      );
+
+      expect(
+        (await datasource.getCachedEmails(
+                accountId: 'acct-1', folderId: 'inbox'))
+            .map((e) => e.id),
+        containsAll(['email-1', 'email-2']),
+      );
+      expect(
+        (await datasource.getCachedEmails(
+                accountId: 'acct-1', folderId: 'archive'))
+            .map((e) => e.id),
+        containsAll(['email-1', 'email-3']),
+      );
+    });
+
+    // The body belongs to the message, not to the listing that fetched it, so
+    // the copy written into a second folder picks up a body already cached
+    // under the first rather than re-downloading it.
+    test('a thin row inherits a body cached under another folder', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'inbox',
+        emails: [_email('email-1', body: '<p>full content</p>')],
+      );
+
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'archive',
+        emails: [_email('email-1', body: '')],
+      );
+
+      expect(
+        (await datasource.getCachedEmails(
+                accountId: 'acct-1', folderId: 'archive'))
+            .single
+            .body,
+        '<p>full content</p>',
+      );
+    });
+
+    // A delete is addressed to the message, so it takes every listing of it —
+    // the copy in another folder must not survive to be repainted back.
+    test('deleting a message drops every folder copy of it', () async {
+      for (final folder in ['inbox', 'archive']) {
+        await datasource.cacheEmails(
+          accountId: 'acct-1',
+          folderId: folder,
+          emails: [_email('email-1', body: '')],
+        );
+      }
+
+      await datasource.deleteEmailFromCache(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+      );
+
+      for (final folder in ['inbox', 'archive']) {
+        expect(
+          await datasource.getCachedEmails(
+              accountId: 'acct-1', folderId: folder),
+          isEmpty,
+        );
+      }
+    });
   });
 
   // Regression: BodyPrefetchService wrote its fetched body through cacheEmails,
@@ -160,7 +249,6 @@ void main() {
 
       await datasource.upgradeCachedEmailBody(
         accountId: 'acct-1',
-        folderId: 'folder-1',
         email: _email('email-1', body: '<p>fetched</p>'),
       );
 
@@ -174,7 +262,6 @@ void main() {
     test('writes nothing at all when the row has gone', () async {
       await datasource.upgradeCachedEmailBody(
         accountId: 'acct-1',
-        folderId: 'folder-1',
         email: _email('email-1', body: '<p>fetched</p>'),
       );
 
@@ -197,7 +284,6 @@ void main() {
 
       await datasource.upgradeCachedEmailBody(
         accountId: 'acct-1',
-        folderId: 'folder-1',
         email: _email('email-1', body: '<p>fetched</p>'),
       );
 
@@ -231,7 +317,6 @@ void main() {
       // _email builds isRead: false — the server has not caught up.
       await datasource.upgradeCachedEmailBody(
         accountId: 'acct-1',
-        folderId: 'folder-1',
         email: _email('email-1', body: '<p>fetched</p>'),
       );
 
@@ -249,30 +334,39 @@ void main() {
       expect(row.isRead, isTrue);
     });
 
-    test('re-files the row under the folder it is given', () async {
-      await datasource.cacheEmails(
-        accountId: 'acct-1',
-        folderId: 'folder-1',
-        emails: [_email('email-1', body: '')],
-      );
+    // It used to re-file the row under the folder it was given, which is how a
+    // prefetch made while reading in one folder emptied another folder's cache
+    // of the same message.
+    test('upgrades every folder that lists the message, and files no new one',
+        () async {
+      for (final folder in ['folder-1', 'folder-2']) {
+        await datasource.cacheEmails(
+          accountId: 'acct-1',
+          folderId: folder,
+          emails: [_email('email-1', body: '')],
+        );
+      }
 
       await datasource.upgradeCachedEmailBody(
         accountId: 'acct-1',
-        folderId: 'folder-2',
-        email: _email('email-1', body: '<p>fetched</p>', folderId: 'folder-2'),
+        email: _email('email-1', body: '<p>fetched</p>', folderId: 'folder-3'),
       );
 
+      for (final folder in ['folder-1', 'folder-2']) {
+        expect(
+          (await datasource.getCachedEmails(
+                  accountId: 'acct-1', folderId: folder))
+              .single
+              .body,
+          '<p>fetched</p>',
+          reason: '$folder still lists the message, so it gets the body',
+        );
+      }
       expect(
         await datasource.getCachedEmails(
-            accountId: 'acct-1', folderId: 'folder-1'),
+            accountId: 'acct-1', folderId: 'folder-3'),
         isEmpty,
-      );
-      expect(
-        (await datasource.getCachedEmails(
-                accountId: 'acct-1', folderId: 'folder-2'))
-            .single
-            .body,
-        '<p>fetched</p>',
+        reason: 'a body fetch is not a folder listing',
       );
     });
   });
@@ -838,4 +932,166 @@ void main() {
       expect(cached.isInFolder('INBOX'), isFalse);
     });
   });
+
+  // Repairs caches written while a message could only be filed under one
+  // folder, when caching a folder page moved the thread's copies from elsewhere
+  // into it. The rows are all still there — just under the wrong folder — and
+  // each one names its own in its payload.
+  group('restoreFolderMemberships', () {
+    test('files a message back under its own folder', () async {
+      // The theft: an Inbox message cached under the Archive listing that
+      // expanded its thread.
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'archive',
+        emails: [_email('email-1', body: '', folderId: 'inbox')],
+      );
+
+      expect(
+        await datasource.restoreFolderMemberships(accountId: 'acct-1'),
+        1,
+      );
+
+      expect(
+        (await datasource.getCachedEmails(
+                accountId: 'acct-1', folderId: 'inbox'))
+            .single
+            .id,
+        'email-1',
+      );
+      expect(
+        (await datasource.getCachedEmails(
+                accountId: 'acct-1', folderId: 'archive'))
+            .single
+            .id,
+        'email-1',
+        reason: 'the Archive listing really did show it — nothing is removed',
+      );
+    });
+
+    test('adds nothing for a message already filed under its own folder',
+        () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'inbox',
+        emails: [_email('email-1', body: '', folderId: 'inbox')],
+      );
+
+      expect(
+        await datasource.restoreFolderMemberships(accountId: 'acct-1'),
+        0,
+      );
+    });
+
+    test('is a no-op the second time', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'archive',
+        emails: [_email('email-1', body: '', folderId: 'inbox')],
+      );
+
+      await datasource.restoreFolderMemberships(accountId: 'acct-1');
+      expect(
+        await datasource.restoreFolderMemberships(accountId: 'acct-1'),
+        0,
+      );
+      expect(
+        await datasource.getCachedEmails(
+            accountId: 'acct-1', folderId: 'inbox'),
+        hasLength(1),
+      );
+    });
+
+    test('carries the body across to the restored copy', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'archive',
+        emails: [
+          _email('email-1', body: '<p>read earlier</p>', folderId: 'inbox'),
+        ],
+      );
+
+      await datasource.restoreFolderMemberships(accountId: 'acct-1');
+
+      expect(
+        (await datasource.getCachedEmails(
+                accountId: 'acct-1', folderId: 'inbox'))
+            .single
+            .body,
+        '<p>read earlier</p>',
+      );
+    });
+
+    // IMAP list rows come straight from the folder query and name no parent.
+    test('leaves a message that names no folder of its own alone', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'archive',
+        emails: [_email('email-1', body: '').copyWithParent(null)],
+      );
+
+      expect(
+        await datasource.restoreFolderMemberships(accountId: 'acct-1'),
+        0,
+      );
+    });
+
+    // Gmail names a trashed message's label as its parent — TRASH and SPAM are
+    // system labels its parser skips — so restoring one would put deleted mail
+    // into a label's cached listing.
+    test('leaves a trashed Gmail row where it is', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'TRASH',
+        emails: [_email('email-1', body: '', folderId: 'Label_7')],
+      );
+
+      expect(
+        await datasource.restoreFolderMemberships(accountId: 'acct-1'),
+        0,
+      );
+      expect(
+        await datasource.getCachedEmails(
+            accountId: 'acct-1', folderId: 'Label_7'),
+        isEmpty,
+      );
+    });
+
+    test('does not reach into another account', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-2',
+        folderId: 'archive',
+        emails: [_email('email-1', body: '', folderId: 'inbox')],
+      );
+
+      expect(
+        await datasource.restoreFolderMemberships(accountId: 'acct-1'),
+        0,
+      );
+      expect(
+        await datasource.getCachedEmails(
+            accountId: 'acct-2', folderId: 'inbox'),
+        isEmpty,
+      );
+    });
+  });
+}
+
+extension on EmailModel {
+  /// Rebuilds the model with no parent folder — the entity's own `copyWith`
+  /// only takes isRead.
+  EmailModel copyWithParent(String? parentFolderId) => EmailModel(
+        id: id,
+        subject: subject,
+        from: EmailAddressModel(address: from.address, name: from.name),
+        toRecipients: const [],
+        ccRecipients: const [],
+        bodyPreview: bodyPreview,
+        body: body,
+        bodyType: bodyType,
+        isRead: isRead,
+        receivedDateTime: receivedDateTime,
+        importance: importance,
+        parentFolderId: parentFolderId,
+      );
 }

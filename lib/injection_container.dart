@@ -128,6 +128,7 @@ import 'infrastructure/notifications/calendar_reminder_service.dart';
 import 'infrastructure/notifications/task_reminder_service.dart';
 import 'infrastructure/notifications/notification_service.dart';
 import 'infrastructure/sync/body_prefetch_service.dart';
+import 'infrastructure/sync/cache_membership_repair_service.dart';
 import 'infrastructure/sync/calendar_outbox_drain_service.dart';
 import 'infrastructure/sync/calendar_pending_op_reconciler.dart';
 import 'infrastructure/sync/outbox_drain_service.dart';
@@ -254,6 +255,13 @@ Future<void> configureDependencies() async {
   );
   sl.registerLazySingleton(
     () => BodyPrefetchService(localDatasource: sl<EmailLocalDatasource>()),
+  );
+  sl.registerLazySingleton(
+    () => CacheMembershipRepairService(
+      accountManager: sl<AccountManager>(),
+      emailLocalDatasource: sl<EmailLocalDatasource>(),
+      deltaTokens: sl<DeltaTokenDatasource>(),
+    ),
   );
 
   // Data — repositories delegate to AccountManager for the live active datasource.

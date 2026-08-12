@@ -36,8 +36,11 @@ void main() {
     return rows.map((r) => r.read<String>('name')).toSet();
   }
 
-  test('schema version is 14', () {
-    expect(db.schemaVersion, 14);
+  // These tables arrived in v14, so anything from that version on must have
+  // them. The exact-version tripwire lives with the newest migration —
+  // `email_cache_migration_test.dart`.
+  test('schema is at or past the version these tables arrived in', () {
+    expect(db.schemaVersion, greaterThanOrEqualTo(14));
   });
 
   test('the calendar cache is indexed for both of its lookups', () async {

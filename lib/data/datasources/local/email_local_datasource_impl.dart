@@ -96,10 +96,11 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
       // to empty just because it showed up again in a later folder/delta
       // sync; blind insertOrReplace would do exactly that.
       if (email.body.isEmpty) {
-        final existing = await (_database.select(_database.cachedEmails)
-              ..where((t) =>
-                  t.accountId.equals(accountId) & t.emailId.equals(email.id)))
-            .getSingleOrNull();
+        // Any folder's copy will do — the body is a property of the message,
+        // not of the listing it was seen in, so a body fetched while reading
+        // this message in the Inbox is preserved onto the copy the Archive
+        // page is about to write.
+        final existing = await _anyCachedRow(accountId, email.id);
         if (existing != null) {
           final oldJson =
               jsonDecode(await _encryption.decrypt(existing.encryptedData))
@@ -175,9 +176,7 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     required String accountId,
     required String emailId,
   }) async {
-    final row = await (_database.select(_database.cachedEmails)
-          ..where((t) => t.accountId.equals(accountId) & t.emailId.equals(emailId)))
-        .getSingleOrNull();
+    final row = await _anyCachedRow(accountId, emailId);
     if (row == null) return null;
 
     final plaintext = await _encryption.decrypt(row.encryptedData);
@@ -185,45 +184,127 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     return _emailFromJson(json);
   }
 
+  /// Rows [restoreFolderMemberships] must not read a home folder off.
+  ///
+  /// Gmail's parser names a trashed message's *label* as its parent, because
+  /// TRASH and SPAM are system labels it skips — so restoring one would put
+  /// deleted mail into a label's cached listing, which is exactly what the
+  /// listings exclude. Every other provider files a deleted message under the
+  /// same folder its payload names, so it is skipped by the "already there"
+  /// test instead and needs no id here. No Graph folder id or IMAP path this
+  /// app has seen can collide with these two.
+  static const _excludedFromRestore = {'TRASH', 'SPAM'};
+
+  @override
+  Future<int> restoreFolderMemberships({required String accountId}) async {
+    final rows = await (_database.select(_database.cachedEmails)
+          ..where((t) => t.accountId.equals(accountId)))
+        .get();
+    if (rows.isEmpty) return 0;
+
+    // Which folders each message is already filed under. Doubles as the record
+    // of what this pass has queued, so a message with several rows — or two
+    // rows naming the same home folder — is only added once.
+    final filedUnder = <String, Set<String>>{};
+    for (final row in rows) {
+      (filedUnder[row.emailId] ??= <String>{}).add(row.folderId);
+    }
+
+    final additions = <CachedEmailsCompanion>[];
+    for (final row in rows) {
+      if (_excludedFromRestore.contains(row.folderId)) continue;
+      final json = jsonDecode(await _encryption.decrypt(row.encryptedData))
+          as Map<String, dynamic>;
+      final home = json['parentFolderId'] as String?;
+      if (home == null || home.isEmpty) continue;
+      if (!filedUnder[row.emailId]!.add(home)) continue;
+
+      // The payload is copied across verbatim: it is the same message, so
+      // re-encrypting it would only spend time producing the same row.
+      additions.add(CachedEmailsCompanion.insert(
+        emailId: row.emailId,
+        accountId: accountId,
+        folderId: home,
+        isRead: row.isRead,
+        hasAttachments: row.hasAttachments,
+        receivedDateTimeMs: row.receivedDateTimeMs,
+        conversationId: Value(row.conversationId),
+        cachedAtMs: row.cachedAtMs,
+        encryptedData: row.encryptedData,
+      ));
+    }
+    if (additions.isEmpty) return 0;
+
+    await _database.batch((batch) => batch.insertAll(
+          _database.cachedEmails,
+          additions,
+          mode: InsertMode.insertOrIgnore,
+        ));
+    return additions.length;
+  }
+
+  /// One cached copy of [emailId], whichever folder listing it was filed under,
+  /// preferring a copy that carries a full body.
+  ///
+  /// A message appears once per folder it was listed in (see [CachedEmails]),
+  /// and every copy holds the same message — so any of them answers "what is
+  /// this message". The body is the one thing that can differ, because
+  /// [upgradeCachedEmailBody] may not have reached every copy yet.
+  Future<CachedEmail?> _anyCachedRow(String accountId, String emailId) async {
+    final rows = await (_database.select(_database.cachedEmails)
+          ..where(
+              (t) => t.accountId.equals(accountId) & t.emailId.equals(emailId)))
+        .get();
+    if (rows.isEmpty) return null;
+    if (rows.length == 1) return rows.first;
+    for (final row in rows) {
+      final json = jsonDecode(await _encryption.decrypt(row.encryptedData))
+          as Map<String, dynamic>;
+      if ((json['body'] as String? ?? '').isNotEmpty) return row;
+    }
+    return rows.first;
+  }
+
   @override
   Future<void> upgradeCachedEmailBody({
     required String accountId,
-    required String folderId,
     required Email email,
   }) async {
     // The encrypt is inside the transaction, unlike cacheEmails' batch — this
-    // writes one row, and doing it beforehand would reopen the very gap the
-    // transaction exists to close.
+    // updates rows that are already there, and doing it beforehand would reopen
+    // the very gap the transaction exists to close.
     await _database.transaction(() async {
-      final row = await (_database.select(_database.cachedEmails)
+      final rows = await (_database.select(_database.cachedEmails)
             ..where((t) =>
                 t.accountId.equals(accountId) & t.emailId.equals(email.id)))
-          .getSingleOrNull();
+          .get();
       // Deleted, junked or moved while the body was being fetched. Writing it
       // would put the message the user just got rid of back in the folder.
-      if (row == null) return;
+      if (rows.isEmpty) return;
 
-      // Applied to the entity, not just the column: the row is read back out of
-      // the encrypted JSON (see [getCachedEmailById]), so setting the column
-      // alone would leave the stale flag as the one the reading pane sees.
-      final merged = email.copyWith(isRead: row.isRead);
-      final encryptedData =
-          await _encryption.encrypt(jsonEncode(_emailToJson(merged)));
-      await _database.into(_database.cachedEmails).insert(
-            CachedEmailsCompanion.insert(
-              emailId: merged.id,
-              accountId: accountId,
-              folderId: folderId,
-              isRead: merged.isRead,
-              hasAttachments: merged.hasAttachments,
+      final now = DateTime.now().millisecondsSinceEpoch;
+      for (final row in rows) {
+        // Applied to the entity, not just the column: the row is read back out
+        // of the encrypted JSON (see [getCachedEmailById]), so setting the
+        // column alone would leave the stale flag as the one the reading pane
+        // sees. Per copy, because each folder's row carries its own read state.
+        final merged = email.copyWith(isRead: row.isRead);
+        final encryptedData =
+            await _encryption.encrypt(jsonEncode(_emailToJson(merged)));
+        await (_database.update(_database.cachedEmails)
+              ..where((t) =>
+                  t.accountId.equals(accountId) &
+                  t.emailId.equals(email.id) &
+                  t.folderId.equals(row.folderId)))
+            .write(CachedEmailsCompanion(
+              hasAttachments: Value(merged.hasAttachments),
               receivedDateTimeMs:
-                  merged.receivedDateTime.millisecondsSinceEpoch,
+                  Value(merged.receivedDateTime.millisecondsSinceEpoch),
               conversationId: Value(merged.conversationId),
-              cachedAtMs: DateTime.now().millisecondsSinceEpoch,
-              encryptedData: encryptedData,
-            ),
-            mode: InsertMode.insertOrReplace,
-          );
+              cachedAtMs: Value(now),
+              encryptedData: Value(encryptedData),
+            ));
+      }
     });
   }
 
@@ -232,10 +313,7 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     required String accountId,
     required String emailId,
   }) async {
-    final row = await (_database.select(_database.cachedEmails)
-          ..where(
-              (t) => t.accountId.equals(accountId) & t.emailId.equals(emailId)))
-        .getSingleOrNull();
+    final row = await _anyCachedRow(accountId, emailId);
     if (row == null) return false;
 
     final json = jsonDecode(await _encryption.decrypt(row.encryptedData))
@@ -252,10 +330,9 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     required String newFolderId,
   }) async {
     await _database.transaction(() async {
-      final row = await (_database.select(_database.cachedEmails)
-            ..where((t) =>
-                t.accountId.equals(accountId) & t.emailId.equals(oldEmailId)))
-          .getSingleOrNull();
+      // The message may be cached under more than one folder; the move collapses
+      // every copy into the destination, which is the whole of where it now is.
+      final row = await _anyCachedRow(accountId, oldEmailId);
       if (row == null) return;
 
       final plaintext = await _encryption.decrypt(row.encryptedData);
@@ -367,10 +444,8 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
   }) async {
     if (isRead == null && isFlagged == null) return;
 
-    final row = await (_database.select(_database.cachedEmails)
-          ..where(
-              (t) => t.accountId.equals(accountId) & t.emailId.equals(emailId)))
-        .getSingleOrNull();
+    // Any copy answers for the message, and the write below covers all of them.
+    final row = await _anyCachedRow(accountId, emailId);
     if (row == null) return;
 
     final json = jsonDecode(await _encryption.decrypt(row.encryptedData))

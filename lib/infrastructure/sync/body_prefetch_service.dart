@@ -57,13 +57,13 @@ class BodyPrefetchService {
   /// swallowed — a message that fails to prefetch simply stays lazy and loads
   /// on tap exactly as before.
   ///
-  /// [folderId] is the folder the thin rows were cached under; it is only a
-  /// fallback for the rare message whose full copy reports no parent folder,
-  /// so the upgraded row stays filed where the list already shows it.
+  /// Deliberately takes no folder. A prefetch runs for the folder on screen but
+  /// the message may be listed in several, and the upgrade is addressed to the
+  /// message alone — handing a folder down here is what used to re-file the row
+  /// and empty another folder's cache of it.
   Future<void> prefetchBodies({
     required String accountId,
     required EmailRemoteDatasource datasource,
-    required String folderId,
     required List<Email> emails,
   }) async {
     if (_inFlight.contains(accountId)) return;
@@ -99,7 +99,6 @@ class BodyPrefetchService {
           // It also keeps the cached read state over the fetched one — see there.
           await _local.upgradeCachedEmailBody(
             accountId: accountId,
-            folderId: full.parentFolderId ?? folderId,
             email: full,
           );
         } catch (_) {

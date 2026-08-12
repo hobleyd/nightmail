@@ -20,6 +20,7 @@ import 'infrastructure/accounts/account_manager.dart';
 import 'infrastructure/background/background_mail_service.dart';
 import 'infrastructure/contacts/contact_cache_sync_service.dart';
 import 'infrastructure/notifications/notification_service.dart';
+import 'infrastructure/sync/cache_membership_repair_service.dart';
 import 'injection_container.dart';
 import 'presentation/blocs/account/account_cubit.dart';
 import 'presentation/blocs/theme/theme_cubit.dart';
@@ -303,6 +304,11 @@ void main(List<String> args) async {
   // whole directories over the network, and the dropdown reads whatever is
   // already cached in the meantime.
   unawaited(_startContactCacheSync());
+  // Files cached mail back under its own folder where an older build's cache
+  // moved it into whichever folder was listed last. Once per account, and not
+  // awaited: the folder on screen is served from the cache as it stands and
+  // repainted from the network anyway.
+  unawaited(_repairCacheMembership());
   // Initialize the notification plugin and check whether the app was launched
   // by a notification tap (handles iOS/Android terminated-state cold starts).
   // Must complete before runApp so that _pendingAction is set before
@@ -338,6 +344,18 @@ Future<void> _startContactCacheSync() async {
     await sync.syncAll();
   } catch (e) {
     debugPrint('[Contacts] initial cache sync skipped: $e');
+  }
+}
+
+/// Main window only, and for the same reason as the address book above: each
+/// secondary window has its own service locator, and this writes the shared
+/// SQLite file. Waits on the account manager because it repairs per account.
+Future<void> _repairCacheMembership() async {
+  try {
+    await sl<AccountManager>().ready.timeout(const Duration(seconds: 30));
+    await sl<CacheMembershipRepairService>().repairAll();
+  } catch (e) {
+    debugPrint('[CacheRepair] skipped: $e');
   }
 }
 

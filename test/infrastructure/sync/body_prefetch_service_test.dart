@@ -35,7 +35,7 @@ EmailModel _email(
 /// preset map so tests control what is "already cached" per message.
 class _FakeLocal extends Fake implements EmailLocalDatasource {
   final Map<String, Email> cached = {};
-  final List<({String folderId, Email email})> writes = [];
+  final List<Email> writes = [];
 
   @override
   Future<Email?> getCachedEmailById({
@@ -48,17 +48,21 @@ class _FakeLocal extends Fake implements EmailLocalDatasource {
   /// lookup and the write are one atomic step, and a row that has gone is not
   /// re-inserted. [cacheEmails] is deliberately left unimplemented — `Fake`
   /// throws on it, so going back to an inserting write fails these tests.
+  ///
+  /// It takes no folder: an upgrade lands on the message wherever it is already
+  /// cached and never files it anywhere new. Which folders those are is the
+  /// cache's business, exercised against a real database in
+  /// `email_local_datasource_impl_test.dart`.
   @override
   Future<void> upgradeCachedEmailBody({
     required String accountId,
-    required String folderId,
     required Email email,
   }) async {
     final row = cached[email.id];
     if (row == null) return;
     final merged = email.copyWith(isRead: row.isRead);
     cached[email.id] = merged;
-    writes.add((folderId: folderId, email: merged));
+    writes.add(merged);
   }
 }
 
@@ -93,11 +97,9 @@ void main() {
     service = BodyPrefetchService(localDatasource: local);
   });
 
-  Future<void> run(List<Email> emails, {String folderId = 'INBOX'}) =>
-      service.prefetchBodies(
+  Future<void> run(List<Email> emails) => service.prefetchBodies(
         accountId: _accountId,
         datasource: remote,
-        folderId: folderId,
         emails: emails,
       );
 
@@ -110,7 +112,7 @@ void main() {
 
     expect(remote.getEmailCalls, ['m1']);
     expect(local.cached['m1']!.body, 'HELLO');
-    expect(local.writes.single.folderId, 'INBOX');
+    expect(local.writes.single.id, 'm1');
   });
 
   test('preserves the cached read state over the freshly-fetched one',
@@ -146,14 +148,17 @@ void main() {
     expect(local.writes, isEmpty); // never resurrected
   });
 
-  test('falls back to the passed folderId when the full copy has no parent',
-      () async {
+  // The prefetch runs for one folder but the message it upgrades may be listed
+  // in several, so the write is addressed to the message alone — the folder
+  // this used to carry is exactly what re-filed the row and emptied another
+  // folder's cache of it.
+  test('upgrades a message whose full copy names no parent folder', () async {
     local.cached['m1'] = _email('m1');
     remote.full['m1'] = _email('m1', body: 'X').copyWithParent(null);
 
-    await run([_email('m1')], folderId: 'Archive');
+    await run([_email('m1')]);
 
-    expect(local.writes.single.folderId, 'Archive');
+    expect(local.writes.single.body, 'X');
   });
 
   test('caps the batch at 20 messages', () async {

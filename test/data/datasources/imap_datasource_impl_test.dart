@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -353,11 +354,12 @@ void main() {
 
       final attachments = ImapDatasourceImpl.collectAttachments(msg);
 
-      // The forward itself is an attachment (a .eml), then the two files
-      // inside it — each addressed within the rfc822 part, not as it.
+      // The forward itself is an attachment (a .eml, named for the message it
+      // carries), then the two files inside it — each addressed within the
+      // rfc822 part, not as it.
       expect(
         attachments.map((a) => '${a.id}=${a.name}'),
-        <String>['2=Attachment', '2.2=first.pdf', '2.3=second.pdf'],
+        <String>['2=original.eml', '2.2=first.pdf', '2.3=second.pdf'],
       );
 
       // Each id resolves to its own part, which is what downloadAttachment
@@ -373,6 +375,159 @@ void main() {
         resolved.getPart('2.3')!.decodeContentBinary(),
         equals(utf8.encode('%PDF2')),
       );
+    });
+
+    // The tests around this one stand a message up as TextMimeData, which is
+    // the shorter way to write one. The fetch parser builds BinaryMimeData —
+    // it keeps the literal's bytes so a part's own `charset=` still means
+    // something — so the walk and the `getPart` round trip are pinned against
+    // that shape too, or the suite would be describing a message the app never
+    // actually sees.
+    test('BinaryMimeData: the shape the fetch parser really delivers', () {
+      const inner = 'Subject: original\r\n'
+          'Content-Type: multipart/mixed; boundary="in"\r\n'
+          '\r\n'
+          '--in\r\n'
+          'Content-Type: text/plain\r\n'
+          '\r\n'
+          'note\r\n'
+          '--in\r\n'
+          'Content-Type: application/pdf; name="first.pdf"\r\n'
+          'Content-Disposition: attachment; filename="first.pdf"\r\n'
+          'Content-Transfer-Encoding: base64\r\n'
+          '\r\n'
+          'JVBERg==\r\n'
+          '--in--\r\n';
+      final raw = 'Subject: FW: original\r\n'
+          'Content-Type: multipart/mixed; boundary="out"\r\n'
+          '\r\n'
+          '--out\r\n'
+          'Content-Type: text/plain\r\n'
+          '\r\n'
+          'see attached\r\n'
+          '--out\r\n'
+          'Content-Type: message/rfc822\r\n'
+          'Content-Disposition: attachment\r\n'
+          '\r\n'
+          '$inner'
+          '--out--\r\n';
+      final msg = MimeMessage()
+        ..mimeData = BinaryMimeData(
+          Uint8List.fromList(latin1.encode(raw)),
+          containsHeader: true,
+        );
+
+      expect(
+        ImapDatasourceImpl.collectAttachments(msg).map((a) => '${a.id}=${a.name}'),
+        <String>['2=original.eml', '2.2=first.pdf'],
+      );
+
+      final resolved = MimeMessage()
+        ..mimeData = BinaryMimeData(
+          Uint8List.fromList(latin1.encode(raw)),
+          containsHeader: true,
+        );
+      resolved.parse();
+      expect(
+        resolved.getPart('2.2')!.decodeContentBinary(),
+        equals(utf8.encode('%PDF')),
+      );
+    });
+
+    test('names a forwarded message for its subject, decoded and unfolded', () {
+      const inner = 'From: someone@example.com\r\n'
+          'Subject: =?utf-8?Q?TeS=C3=AD_ma?=,\r\n'
+          '\tthat is a very long one\r\n'
+          'Content-Type: text/plain\r\n'
+          '\r\n'
+          'the body, which holds no subject and is not scanned\r\n';
+      final raw = 'Subject: FW\r\n'
+          'Content-Type: multipart/mixed; boundary="out"\r\n'
+          '\r\n'
+          '--out\r\n'
+          'Content-Type: text/plain\r\n'
+          '\r\n'
+          'see attached\r\n'
+          '--out\r\n'
+          'Content-Type: message/rfc822\r\n'
+          'Content-Disposition: attachment\r\n'
+          '\r\n'
+          '$inner'
+          '--out--\r\n';
+      final msg = MimeMessage()
+        ..mimeData = TextMimeData(raw, containsHeader: true);
+
+      expect(
+        ImapDatasourceImpl.collectAttachments(msg).single.name,
+        'TeSí ma, that is a very long one.eml',
+      );
+    });
+
+    test('a forwarded message with no subject keeps the generic name', () {
+      const inner = 'From: someone@example.com\r\n'
+          'Content-Type: text/plain\r\n'
+          '\r\n'
+          'no subject header at all\r\n';
+      final raw = 'Subject: FW\r\n'
+          'Content-Type: multipart/mixed; boundary="out"\r\n'
+          '\r\n'
+          '--out\r\n'
+          'Content-Type: text/plain\r\n'
+          '\r\n'
+          'see attached\r\n'
+          '--out\r\n'
+          'Content-Type: message/rfc822\r\n'
+          'Content-Disposition: attachment\r\n'
+          '\r\n'
+          '$inner'
+          '--out--\r\n';
+      final msg = MimeMessage()
+        ..mimeData = TextMimeData(raw, containsHeader: true);
+
+      expect(
+        ImapDatasourceImpl.collectAttachments(msg).single.name,
+        'Attachment',
+      );
+    });
+
+    test('a forward that declares its own filename keeps it', () {
+      const inner = 'Subject: the inner subject\r\n'
+          'Content-Type: text/plain\r\n'
+          '\r\n'
+          'body\r\n';
+      final raw = 'Subject: FW\r\n'
+          'Content-Type: multipart/mixed; boundary="out"\r\n'
+          '\r\n'
+          '--out\r\n'
+          'Content-Type: text/plain\r\n'
+          '\r\n'
+          'see attached\r\n'
+          '--out\r\n'
+          'Content-Type: message/rfc822\r\n'
+          'Content-Disposition: attachment; filename="chosen name.eml"\r\n'
+          '\r\n'
+          '$inner'
+          '--out--\r\n';
+      final msg = MimeMessage()
+        ..mimeData = TextMimeData(raw, containsHeader: true);
+
+      expect(
+        ImapDatasourceImpl.collectAttachments(msg).single.name,
+        'chosen name.eml',
+      );
+    });
+
+    test('BODYSTRUCTURE: names a forwarded message from its ENVELOPE', () {
+      final msg = _multipart('mixed', [
+        _leaf('text/plain'),
+        _leaf('message/rfc822', disposition: 'attachment')
+          ..envelope = Envelope(subject: 'the enclosed subject'),
+      ]);
+
+      final attachments = ImapDatasourceImpl.collectAttachments(msg);
+
+      expect(attachments.single.name, 'the enclosed subject.eml');
+      expect(attachments.single.id, '2');
     });
 
     test('BODY[]-only: works on an unparsed message, as the fetch delivers it',

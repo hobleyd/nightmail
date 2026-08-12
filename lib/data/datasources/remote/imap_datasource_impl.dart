@@ -1009,7 +1009,9 @@ class ImapDatasourceImpl
       if (isAttachment && fetchId != null && fetchId.isNotEmpty) {
         out.add(EmailAttachment(
           id: fetchId,
-          name: (fileName?.isNotEmpty ?? false) ? fileName! : 'Attachment',
+          name: (fileName?.isNotEmpty ?? false)
+              ? fileName!
+              : _forwardedMessageName(part, contentType) ?? 'Attachment',
           contentType:
               contentType?.mediaType.text ?? 'application/octet-stream',
           size: 0,
@@ -1023,6 +1025,69 @@ class ImapDatasourceImpl
       final childFetchId = fetchId == null ? '${i + 1}' : '$fetchId.${i + 1}';
       _collectAttachmentsFromHeaders(parts[i], childFetchId, out);
     }
+  }
+
+  /// `<subject>.eml` for a forwarded message attached as `message/rfc822`.
+  ///
+  /// A forward carries no filename of its own, so the chip read "Attachment"
+  /// — true of every forwarded message in the mailbox and no help telling one
+  /// from another. The subject is what the sender would call it, and the
+  /// extension is what makes the saved file open as mail rather than as
+  /// nothing.
+  ///
+  /// Returns null for anything that is not an rfc822 part, and for one whose
+  /// subject cannot be read, leaving the caller's own fallback to answer.
+  static String? _forwardedMessageName(
+    MimePart part,
+    ContentTypeHeader? contentType,
+  ) {
+    if (contentType?.mediaType.sub != MediaSubtype.messageRfc822) return null;
+    final subject = _encapsulatedSubject(part);
+    if (subject == null) return null;
+
+    // A subject runs to any length and is the one part of this that a sender
+    // chooses; a file name is not the place to find that out.
+    final trimmed = subject.length > 120 ? subject.substring(0, 120) : subject;
+
+    return '$trimmed.eml';
+  }
+
+  /// The `Subject` of the message an rfc822 [part] encapsulates.
+  ///
+  /// The part's own headers describe the *attachment* (`Content-Type:
+  /// message/rfc822` and friends) — the encapsulated message's headers are the
+  /// start of its content, so they have to be read from there. Only the header
+  /// block is scanned: the body behind it is the whole forwarded message,
+  /// routinely megabytes, and holds no subject.
+  static String? _encapsulatedSubject(MimePart part) {
+    final String? text;
+    try {
+      text = part.decodeContentText();
+    } catch (_) {
+      return null;
+    }
+    if (text == null || text.isEmpty) return null;
+
+    final separator = text.indexOf('\r\n\r\n');
+    final head = separator == -1 ? text : text.substring(0, separator);
+    final lines = head.split('\r\n');
+    for (var i = 0; i < lines.length; i++) {
+      if (!lines[i].toLowerCase().startsWith('subject:')) continue;
+      final value = StringBuffer(lines[i].substring('subject:'.length).trim());
+      // Unfold: a header value continues onto any following line that starts
+      // with whitespace, which is how long subjects arrive.
+      for (var j = i + 1; j < lines.length; j++) {
+        if (!lines[j].startsWith(' ') && !lines[j].startsWith('\t')) break;
+        value
+          ..write(' ')
+          ..write(lines[j].trim());
+      }
+      final decoded = MailCodec.decodeHeader(value.toString())?.trim();
+
+      return (decoded != null && decoded.isNotEmpty) ? decoded : null;
+    }
+
+    return null;
   }
 
   static void _walkAttachments(BodyPart part, List<EmailAttachment> out) {
@@ -1045,9 +1110,19 @@ class ImapDatasourceImpl
     final fetchId = part.fetchId;
     if (fetchId == null || fetchId.isEmpty) return;
 
+    // The rfc822 name comes free here: BODYSTRUCTURE reports an encapsulated
+    // message's ENVELOPE, so unlike the header walk this needs no decode to
+    // reach the subject.
+    final subject = fileName == null &&
+            part.contentType?.mediaType.sub == MediaSubtype.messageRfc822
+        ? part.envelope?.subject?.trim()
+        : null;
+
     out.add(EmailAttachment(
       id: fetchId,
-      name: fileName ?? 'Attachment',
+      name: fileName ??
+          ((subject != null && subject.isNotEmpty) ? '$subject.eml' : null) ??
+          'Attachment',
       contentType: part.contentType?.mediaType.text ?? 'application/octet-stream',
       size: part.size ?? 0,
     ));

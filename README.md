@@ -26,12 +26,16 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - URLs typed as plain text in a message become clickable links, with a hover preview and a copy-link button
 - The sender's address is clickable to compose a reply, with a copy button on hover
 - A thread's collapsed row shows the newest message from someone else, not just the newest overall
+- The provider's own flag (Graph flag, Gmail star, IMAP `\Flagged`) shown as a read-only icon on the message list
+- `mailto:` links open the compose window instead of the OS's default mail client
+- The compose window reopens at the size and position it was last closed at
 
 ### Folders
 - Full folder hierarchy with unread counts
 - Create folders via right-click context menu
 - Empty folder (with permanent delete option)
 - Incremental sync with delta tokens (Microsoft 365)
+- Incremental sync for Gmail (history API) and IMAP (UID-based) accounts too
 - Drag folders in the list to reparent them
 
 ### Calendar
@@ -52,6 +56,8 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - Calendar opens to the working week by default, with hour gutters on both edges
 - Meetings load instantly from a local cache while the calendar syncs in the background
 - Supported backends: Microsoft Graph, Google Calendar, Nextcloud CalDAV, macOS/iOS EventKit
+- Forwarded event invitations (calendar publishes, booking confirmations, tickets) are recognised, with an Add to calendar action
+- The meeting invite/event-edit window reopens at the size and position it was last closed at
 
 **Meeting colours** are driven by your relationship to each meeting (your
 participation), mapped to a single shared scheme so Gmail and Microsoft 365
@@ -103,6 +109,7 @@ Settings → Accounts.
 - Flag context menu offers business-day-aware due dates: Tomorrow, 3 Days, This Week and Next Week (resolving to the coming or following Friday)
 - Attach emails to tasks (or link the source email in notes for providers without an attachment API)
 - Expandable task notes with a link back to the source email — opens the email's conversation thread in the list pane
+- Red dot on the Tasks icon when the active account has an overdue task
 
 ### Contacts
 - Typeahead in the compose window drawing from three sources:

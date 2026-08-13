@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import '../../../core/error/exceptions.dart';
 import '../../../core/utils/ics_parser.dart';
 import '../../../core/utils/online_meeting_url.dart';
+import '../../../core/utils/rrule.dart';
 import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/calendar_event.dart';
 import '../../../domain/entities/calendar_event_attendee.dart';
@@ -415,6 +416,158 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
   }) async {
     throw const ServerException(
         message: 'Cancel from decline notification is not supported for Google Calendar');
+  }
+
+  /// Google has no forward endpoint, so forwarding is done as what it actually
+  /// is: adding a guest to the organizer's event. Google lets a guest do that
+  /// when the organizer left `guestsCanInviteOthers` on (its default) and then
+  /// sends the invitation itself, from the event — which is exactly the
+  /// on-behalf-of-the-organizer outcome Graph's `/forward` produces.
+  ///
+  /// Everything else here follows from the attendee array being a **whole-list
+  /// replace**: the existing roster has to be read and re-sent, or adding one
+  /// guest would silently uninvite everybody else and drop every RSVP already
+  /// given.
+  @override
+  Future<void> forwardCalendarEvent({
+    required String eventId,
+    required List<String> toAddresses,
+    String? comment,
+  }) async {
+    final Map<String, dynamic> event;
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '/calendars/primary/events/$eventId',
+      );
+      final data = resp.data;
+      if (data == null) {
+        throw const ServerException(message: 'Empty response from server');
+      }
+      event = data;
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+
+    // The organizer may always add guests to their own event; everyone else
+    // needs the permission. Google reports it as `false` only when it has been
+    // turned off, so an absent field means allowed.
+    final isOrganizer = (event['organizer'] as Map<String, dynamic>?)?['self'] ==
+        true;
+    if (!isOrganizer && event['guestsCanInviteOthers'] == false) {
+      throw const MeetingForwardUnsupportedException(
+        message: 'The organizer has not allowed guests to invite others',
+      );
+    }
+
+    final existing =
+        (event['attendees'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+    final known = <String>{
+      for (final a in existing)
+        if (a['email'] is String) (a['email'] as String).toLowerCase(),
+    };
+    final additions = <String>[];
+    for (final address in toAddresses) {
+      final trimmed = address.trim();
+      if (trimmed.isEmpty || !known.add(trimmed.toLowerCase())) continue;
+      additions.add(trimmed);
+    }
+    // Everyone asked for is already on it — nothing to send, and re-patching an
+    // unchanged roster would email the whole guest list an update for no reason.
+    if (additions.isEmpty) return;
+
+    final attendees = <Map<String, dynamic>>[
+      // Rebuilt field by field rather than echoed: Google rejects a PATCH that
+      // carries back its own output-only flags (`self`, `organizer`,
+      // `responseStatus` on a resource).
+      for (final a in existing)
+        {
+          'email': a['email'],
+          if (a['displayName'] != null) 'displayName': a['displayName'],
+          if (a['responseStatus'] != null)
+            'responseStatus': a['responseStatus'],
+          if (a['optional'] == true) 'optional': true,
+          if (a['resource'] == true) 'resource': true,
+        },
+      for (final email in additions) {'email': email},
+    ];
+
+    try {
+      await _dio.patch<void>(
+        '/calendars/primary/events/$eventId',
+        data: {'attendees': attendees},
+        queryParameters: {
+          // 'all', not 'externalOnly': the point of the call is that the new
+          // guest is told about the meeting, and Google scopes this by *guest
+          // type* (external vs Google Calendar) rather than by who changed, so
+          // anything narrower would silently skip a Google-using recipient.
+          'sendUpdates': 'all',
+          // Sent on every update, not just when attaching a Meet: version 0
+          // declares no conference support and makes Google omit conferenceData
+          // from the response, which is what the cache is rewritten from.
+          'conferenceDataVersion': 1,
+        },
+      );
+    } on DioException catch (e) {
+      // 403 here is the permission answer arriving late — the event allowed
+      // guest invitations when read, but the domain or the calendar's own ACL
+      // refused the write. Same settled "no" as the flag itself.
+      if (e.response?.statusCode == 403) {
+        throw MeetingForwardUnsupportedException(
+          message:
+              _extractGoogleErrorMessage(e) ?? 'Adding a guest was refused',
+        );
+      }
+      throw _mapException(e);
+    }
+  }
+
+  @override
+  Future<void> forwardMeetingFromEmail({
+    required String emailId,
+    required List<String> toAddresses,
+    String? icsData,
+    DateTime? meetingStart,
+    String? comment,
+  }) async {
+    // No UID means no way to find the calendar copy, and Gmail messages carry
+    // no navigation to one the way Graph's eventMessages do. Rather than fail,
+    // report it as unsupported so the invitation is emailed on instead.
+    if (icsData == null) {
+      throw const MeetingForwardUnsupportedException(
+        message: 'The invitation carries no calendar data to match against '
+            'your calendar',
+      );
+    }
+    final uid = IcsParser.parse(icsData).uid;
+    if (uid == null) {
+      throw const MeetingForwardUnsupportedException(
+        message: 'The invitation carries no iCalendar UID',
+      );
+    }
+
+    final String eventId;
+    try {
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '/calendars/primary/events',
+        queryParameters: {'iCalUID': uid, 'maxResults': 1},
+      );
+      final items = (resp.data?['items'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      if (items.isEmpty) {
+        throw const MeetingForwardUnsupportedException(
+          message: 'This meeting is not on your calendar',
+        );
+      }
+      eventId = items.first['id'] as String;
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+
+    await forwardCalendarEvent(
+      eventId: eventId,
+      toAddresses: toAddresses,
+      comment: comment,
+    );
   }
 
   @override
@@ -964,7 +1117,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     ];
 
     if (recurrence != null) {
-      body['recurrence'] = [_buildRRule(recurrence)];
+      body['recurrence'] = [buildRRule(recurrence)];
     }
 
     // On create, omitting `reminders` when unset just means "use the
@@ -984,36 +1137,6 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     }
 
     return body;
-  }
-
-  String _buildRRule(CalendarRecurrence rawR) {
-    final r = rawR.normalizedForSync();
-    final parts = <String>['RRULE'];
-    final freq = switch (r.frequency) {
-      RecurrenceFrequency.daily => 'DAILY',
-      RecurrenceFrequency.weekly => 'WEEKLY',
-      RecurrenceFrequency.monthly => 'MONTHLY',
-      RecurrenceFrequency.yearly => 'YEARLY',
-    };
-    var rule = 'FREQ=$freq';
-    if (r.interval > 1) rule += ';INTERVAL=${r.interval}';
-
-    if (r.frequency == RecurrenceFrequency.weekly &&
-        r.daysOfWeek != null &&
-        r.daysOfWeek!.isNotEmpty) {
-      const dayNames = ['', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'];
-      final days = r.daysOfWeek!.map((d) => dayNames[d]).join(',');
-      rule += ';BYDAY=$days';
-    }
-
-    if (r.endDate != null) {
-      rule += ';UNTIL=${_formatRRuleDate(r.endDate!)}';
-    } else if (r.count != null) {
-      rule += ';COUNT=${r.count}';
-    }
-
-    parts.add(rule);
-    return parts.join(':');
   }
 
   void _invalidateRecurrenceCache() {
@@ -1105,7 +1228,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     return null;
   }
 
-  /// Inverse of [_buildRRule]: parses an iCalendar RRULE line into a
+  /// Inverse of [buildRRule]: parses an iCalendar RRULE line into a
   /// [CalendarRecurrence]. Returns null if FREQ is missing or unrecognized.
   CalendarRecurrence? _parseRRule(String line) {
     // Drop an optional "RRULE:" prefix, then split the ";"-separated params.
@@ -1202,13 +1325,6 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     return '$y-$mo-${d}T$h:$mi:$s';
   }
 
-  String _formatRRuleDate(DateTime dt) {
-    final utc = dt.toUtc();
-    final y = utc.year.toString().padLeft(4, '0');
-    final m = utc.month.toString().padLeft(2, '0');
-    final d = utc.day.toString().padLeft(2, '0');
-    return '$y$m${d}T000000Z';
-  }
 
   CalendarEventModel _parseEvent(
     Map<String, dynamic> json,
@@ -1305,6 +1421,8 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       status: status,
       participation: participation,
       isOrganizer: isOrganizer,
+      organizerEmail: organizerEmail,
+      organizerName: organizerMap?['displayName'] as String?,
       timezone: startMap['timeZone'] as String?,
       attendees: attendees,
       recurrence: recurrence,

@@ -17,6 +17,8 @@ class CalendarEventModel extends CalendarEvent {
     super.status,
     super.participation,
     super.isOrganizer,
+    super.organizerEmail,
+    super.organizerName,
     super.timezone,
     super.attendees,
     super.recurrence,
@@ -51,6 +53,8 @@ class CalendarEventModel extends CalendarEvent {
                 as String?,
       ),
       isOrganizer: json['isOrganizer'] as bool? ?? false,
+      organizerEmail: _organizerField(json, 'address'),
+      organizerName: _organizerField(json, 'name'),
       timezone: (json['start'] as Map<String, dynamic>?)?['timeZone'] as String?,
       attendees: _parseAttendees(json['attendees'] as List<dynamic>?),
       recurrence: _parseRecurrence(json['recurrence'] as Map<String, dynamic>?),
@@ -59,6 +63,15 @@ class CalendarEventModel extends CalendarEvent {
           : null,
       seriesMasterId: json['seriesMasterId'] as String?,
     );
+  }
+
+  /// Reads `organizer.emailAddress.{address,name}`, which Graph omits entirely
+  /// on an event with no organizer rather than sending an empty object.
+  static String? _organizerField(Map<String, dynamic> json, String field) {
+    final emailAddress = (json['organizer'] as Map<String, dynamic>?)?[
+        'emailAddress'] as Map<String, dynamic>?;
+    final value = (emailAddress?[field] as String?)?.trim();
+    return (value == null || value.isEmpty) ? null : value;
   }
 
   static DateTime _parseDateTime(Map<String, dynamic>? map) {

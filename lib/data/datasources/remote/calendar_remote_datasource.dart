@@ -79,6 +79,40 @@ abstract interface class CalendarRemoteDatasource {
     DateTime? meetingStart,
   });
 
+  /// Forwards a meeting to [toAddresses] so they become real attendees on the
+  /// **organizer's own copy** — their RSVP goes back to the organizer, and the
+  /// organizer's guest list shows them.
+  ///
+  /// Only the provider can do that; nothing the app could send from this
+  /// account has the same standing. Graph forwards natively
+  /// (`/events/{id}/forward`), and Google is asked to add the guest to the
+  /// event, which it allows when the organizer left `guestsCanInviteOthers` on.
+  ///
+  /// Throws [MeetingForwardUnsupportedException] when the answer is a settled
+  /// no — this account type has no such API, or the organizer's policy forbids
+  /// it. That is not a failure: [CalendarRepositoryImpl] answers it by emailing
+  /// the invitation from this account instead.
+  Future<void> forwardCalendarEvent({
+    required String eventId,
+    required List<String> toAddresses,
+    String? comment,
+  });
+
+  /// [forwardCalendarEvent] addressed by the invitation email rather than an
+  /// event id, for the banner in the reading pane.
+  ///
+  /// [icsData] and [meetingStart] are the same locators the RSVP methods take:
+  /// the implementation has to find the user's *own* copy of the meeting first,
+  /// which — unlike every other invitation path here — is explicitly the copy
+  /// they did **not** organize.
+  Future<void> forwardMeetingFromEmail({
+    required String emailId,
+    required List<String> toAddresses,
+    String? icsData,
+    DateTime? meetingStart,
+    String? comment,
+  });
+
   Future<void> cancelCalendarEvent({required String eventId});
 
   Future<void> cancelCalendarEventSeries({

@@ -3,6 +3,7 @@ import 'package:fpdart/fpdart.dart';
 import '../../core/error/failures.dart';
 import '../entities/attendee_availability.dart';
 import '../entities/calendar_event.dart';
+import '../entities/meeting_forward.dart';
 import '../entities/meeting_invite.dart';
 import '../entities/meeting_room.dart';
 import '../usecases/create_calendar_event.dart';
@@ -78,6 +79,33 @@ abstract interface class CalendarRepository {
     required DateTime newEnd,
     String? icsData,
     DateTime? meetingStart,
+  });
+
+  /// Forwards a meeting the user was invited to on to [toAddresses].
+  ///
+  /// Tries to have the provider do it, so the recipient becomes a real attendee
+  /// on the organizer's copy, and falls back to emailing the invitation from
+  /// this account when it will not — the returned [MeetingForwardMode] says
+  /// which happened, because the two leave the recipient in materially
+  /// different positions.
+  ///
+  /// Network-first and never queued: it emails people, and a blind replay would
+  /// invite them twice. Offline it fails rather than waiting, like every other
+  /// mutation here that sends mail.
+  Future<Either<Failure, MeetingForwardMode>> forwardMeetingFromEmail({
+    required String emailId,
+    required List<String> toAddresses,
+    String? icsData,
+    DateTime? meetingStart,
+    String? comment,
+  });
+
+  /// [forwardMeetingFromEmail] for a meeting opened from the calendar rather
+  /// than from its invitation email.
+  Future<Either<Failure, MeetingForwardMode>> forwardCalendarEvent({
+    required String eventId,
+    required List<String> toAddresses,
+    String? comment,
   });
 
   Future<Either<Failure, void>> cancelCalendarEvent({

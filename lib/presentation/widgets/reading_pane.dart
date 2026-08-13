@@ -19,6 +19,7 @@ import 'html_body_view.dart';
 import 'plain_text_body_view.dart';
 import 'add_to_calendar_banner.dart';
 import 'contact_hover_card.dart';
+import 'forward_meeting_dialog.dart';
 import 'invite_banner_parts.dart';
 import 'date_time_fields.dart';
 
@@ -40,6 +41,7 @@ import '../../domain/usecases/accept_proposed_time_from_email.dart';
 import '../../domain/usecases/remove_cancelled_meeting.dart';
 import '../../domain/entities/calendar_event.dart';
 import '../../domain/usecases/get_calendar_events.dart';
+import '../../domain/usecases/forward_meeting_from_email.dart';
 import '../../domain/usecases/propose_new_time_from_email.dart';
 import '../../domain/usecases/respond_to_meeting_invite.dart';
 import '../../domain/usecases/send_email.dart';
@@ -796,6 +798,31 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
     }
   }
 
+  /// Forwards the meeting to somebody else.
+  ///
+  /// Unlike every other action on this banner, it deliberately leaves the
+  /// invitation in the mailbox and the banner untouched: forwarding is not an
+  /// answer to the invitation, and the user still has to accept or decline it
+  /// themselves.
+  Future<void> _forward() async {
+    final invite = widget.email.meetingInvite;
+    await ForwardMeetingDialog.show(
+      context,
+      meetingSubject: invite?.summary ?? widget.email.subject,
+      meetingWhen: invite == null ? null : formatMeetingTime(invite),
+      send: ({required List<String> toAddresses, String? comment}) =>
+          sl<ForwardMeetingFromEmail>()(
+        ForwardMeetingFromEmailParams(
+          emailId: widget.email.id,
+          toAddresses: toAddresses,
+          icsData: invite?.icsData,
+          meetingStart: invite?.meetingStart,
+          comment: comment,
+        ),
+      ),
+    );
+  }
+
   Future<void> _sendProposal() async {
     final start = _proposedStart;
     final end = _proposedEnd;
@@ -940,6 +967,11 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
           label: 'Propose New Time',
           icon: Icons.schedule_rounded,
           onPressed: () => setState(() => _state = _InviteState.proposing),
+        ),
+        InviteResponseButton(
+          label: 'Forward',
+          icon: Icons.forward_to_inbox_rounded,
+          onPressed: _forward,
         ),
       ],
     );

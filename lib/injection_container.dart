@@ -104,6 +104,8 @@ import 'domain/usecases/save_server_draft.dart';
 import 'domain/usecases/search_emails.dart';
 import 'domain/usecases/send_email.dart';
 import 'domain/usecases/propose_new_time.dart';
+import 'domain/usecases/forward_calendar_event.dart';
+import 'domain/usecases/forward_meeting_from_email.dart';
 import 'domain/usecases/propose_new_time_from_email.dart';
 import 'domain/usecases/cancel_meeting_from_email.dart';
 import 'domain/usecases/accept_proposed_time_from_email.dart';
@@ -383,6 +385,9 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => DeclineCalendarEvent(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => ProposeNewTime(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => ProposeNewTimeFromEmail(sl<CalendarRepository>()));
+  sl.registerLazySingleton(
+      () => ForwardMeetingFromEmail(sl<CalendarRepository>()));
+  sl.registerLazySingleton(() => ForwardCalendarEvent(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => EmlParser());
   sl.registerLazySingleton(() => OfficePreviewService());
   sl.registerLazySingleton(() => GetTaskLists(sl<TasksRepository>()));

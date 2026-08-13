@@ -249,6 +249,8 @@ class CalendarLocalDatasourceImpl implements CalendarLocalDatasource {
         'status': e.status.name,
         'participation': e.participation.name,
         'isOrganizer': e.isOrganizer,
+        'organizerEmail': e.organizerEmail,
+        'organizerName': e.organizerName,
         'timezone': e.timezone,
         'attendees': e.attendees.map(_attendeeToJson).toList(),
         'recurrence': _recurrenceToJson(e.recurrence),
@@ -286,6 +288,10 @@ class CalendarLocalDatasourceImpl implements CalendarLocalDatasource {
           MeetingParticipation.none,
         ),
         isOrganizer: j['isOrganizer'] as bool? ?? false,
+        // Absent from blobs written before the field existed; the next sync
+        // pass rewrites the row with it, so no migration is needed.
+        organizerEmail: j['organizerEmail'] as String?,
+        organizerName: j['organizerName'] as String?,
         timezone: j['timezone'] as String?,
         attendees: (j['attendees'] as List<dynamic>? ?? const [])
             .cast<Map<String, dynamic>>()

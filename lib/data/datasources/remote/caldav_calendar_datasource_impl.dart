@@ -270,6 +270,32 @@ class CalDavCalendarDatasourceImpl implements CalendarRemoteDatasource {
         message: 'Accepting a proposed time is not supported for CalDAV');
   }
 
+  // Adding a guest to the server's copy would never invite them, for the same
+  // reason accepting a proposed time cannot be delivered. Reported as
+  // unsupported rather than as an error so the caller emails the invitation on
+  // from this account, which does reach them.
+  @override
+  Future<void> forwardCalendarEvent({
+    required String eventId,
+    required List<String> toAddresses,
+    String? comment,
+  }) async {
+    throw const MeetingForwardUnsupportedException(
+        message: 'CalDAV cannot forward a meeting on the organizer\'s behalf');
+  }
+
+  @override
+  Future<void> forwardMeetingFromEmail({
+    required String emailId,
+    required List<String> toAddresses,
+    String? icsData,
+    DateTime? meetingStart,
+    String? comment,
+  }) async {
+    throw const MeetingForwardUnsupportedException(
+        message: 'CalDAV cannot forward a meeting on the organizer\'s behalf');
+  }
+
   @override
   Future<void> cancelCalendarEvent({required String eventId}) async {
     try {

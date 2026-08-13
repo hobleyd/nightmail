@@ -163,6 +163,33 @@ class EventKitCalendarDatasourceImpl implements CalendarRemoteDatasource {
         message: 'Accepting a proposed time is not supported for local calendar');
   }
 
+  // A local calendar has no way to invite anyone, so the guest would be added
+  // on this device and nowhere else. Reported as unsupported so the caller
+  // emails the invitation on instead, which does reach them.
+  @override
+  Future<void> forwardCalendarEvent({
+    required String eventId,
+    required List<String> toAddresses,
+    String? comment,
+  }) async {
+    throw const MeetingForwardUnsupportedException(
+        message: 'A local calendar cannot forward a meeting on the '
+            'organizer\'s behalf');
+  }
+
+  @override
+  Future<void> forwardMeetingFromEmail({
+    required String emailId,
+    required List<String> toAddresses,
+    String? icsData,
+    DateTime? meetingStart,
+    String? comment,
+  }) async {
+    throw const MeetingForwardUnsupportedException(
+        message: 'A local calendar cannot forward a meeting on the '
+            'organizer\'s behalf');
+  }
+
   @override
   Future<void> cancelCalendarEvent({required String eventId}) async {
     try {

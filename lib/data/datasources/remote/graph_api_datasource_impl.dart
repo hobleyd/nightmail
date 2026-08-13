@@ -655,7 +655,7 @@ class GraphApiDatasourceImpl
           'startDateTime': startDateTime.toUtc().toIso8601String(),
           'endDateTime': endDateTime.toUtc().toIso8601String(),
           '\$select':
-              'id,iCalUId,subject,start,end,isAllDay,location,onlineMeeting,bodyPreview,showAs,isOrganizer,responseStatus,attendees,recurrence,isReminderOn,reminderMinutesBeforeStart,seriesMasterId',
+              'id,iCalUId,subject,start,end,isAllDay,location,onlineMeeting,bodyPreview,showAs,isOrganizer,organizer,responseStatus,attendees,recurrence,isReminderOn,reminderMinutesBeforeStart,seriesMasterId',
           '\$top': 100,
         },
         options: Options(
@@ -699,7 +699,7 @@ class GraphApiDatasourceImpl
         '/me/events/$id',
         queryParameters: {
           '\$select':
-              'id,iCalUId,subject,start,end,isAllDay,location,onlineMeeting,bodyPreview,showAs,isOrganizer,responseStatus,attendees,recurrence,isReminderOn,reminderMinutesBeforeStart,seriesMasterId',
+              'id,iCalUId,subject,start,end,isAllDay,location,onlineMeeting,bodyPreview,showAs,isOrganizer,organizer,responseStatus,attendees,recurrence,isReminderOn,reminderMinutesBeforeStart,seriesMasterId',
         },
         options: Options(headers: {'Prefer': 'outlook.timezone="UTC"'}),
       );
@@ -1148,6 +1148,189 @@ class GraphApiDatasourceImpl
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
+  }
+
+  @override
+  Future<void> forwardCalendarEvent({
+    required String eventId,
+    required List<String> toAddresses,
+    String? comment,
+  }) async {
+    try {
+      await _dio.post<void>(
+        '/me/events/$eventId/forward',
+        data: {
+          'ToRecipients': [
+            for (final address in toAddresses)
+              {
+                'emailAddress': {'address': _bareEmail(address)},
+              },
+          ],
+          'Comment': comment ?? '',
+        },
+      );
+    } on DioException catch (e) {
+      throw _mapForwardException(e);
+    }
+  }
+
+  @override
+  Future<void> forwardMeetingFromEmail({
+    required String emailId,
+    required List<String> toAddresses,
+    String? icsData,
+    DateTime? meetingStart,
+    String? comment,
+  }) async {
+    final eventId = await _attendeeEventIdForMessage(
+      emailId: emailId,
+      icsData: icsData,
+      meetingStart: meetingStart,
+    );
+    await forwardCalendarEvent(
+      eventId: eventId,
+      toAddresses: toAddresses,
+      comment: comment,
+    );
+  }
+
+  /// Reads a failed `/forward` as either "not allowed" or a real error.
+  ///
+  /// Exchange answers a meeting whose organizer turned forwarding off with
+  /// HTTP 403, and one that cannot be forwarded at all — a plain appointment
+  /// with no attendees, which is not a meeting to be added to — with a 400
+  /// `ErrorInvalidRequest`. Both are settled answers about this meeting rather
+  /// than transient failures, so both become the signal to email the invitation
+  /// from this account instead. 401 stays an [AuthException]: an expired token
+  /// must still raise the re-auth prompt rather than quietly change how the
+  /// meeting is sent.
+  Exception _mapForwardException(DioException e) {
+    final status = e.response?.statusCode;
+    if (status == 400 || status == 403) {
+      return MeetingForwardUnsupportedException(
+        message: _describeGraphError(e),
+      );
+    }
+    return _mapDioException(e);
+  }
+
+  /// The id of the user's **own** copy of the meeting an invitation is about.
+  ///
+  /// Deliberately not [_organizerEventIdForMessage]: every other invitation
+  /// path here acts on a meeting the user organizes and treats "you are not the
+  /// organizer" as a settled refusal, whereas forwarding is the one action an
+  /// attendee takes on somebody else's meeting. So the organizer check is not
+  /// merely skipped, it is inverted — the copy being looked for is the attendee
+  /// copy.
+  ///
+  /// Same three locators as the organizer version, minus the conversation
+  /// sibling probing: a forward is driven from the invitation itself, which is
+  /// the message that carries both the navigation and the `.ics`.
+  Future<String> _attendeeEventIdForMessage({
+    required String emailId,
+    String? icsData,
+    DateTime? meetingStart,
+  }) async {
+    final tried = <String>[];
+
+    // 1. The message's linked event. Graph needs a cast segment to reach it and
+    //    which cast it accepts varies by Exchange build — see
+    //    [_eventIdForMessage], whose spellings these are.
+    for (final path in [
+      '/me/messages/$emailId/microsoft.graph.eventMessageRequest/event',
+      linkedEventPath(emailId),
+      '/me/messages/$emailId/event',
+    ]) {
+      try {
+        final resp = await _dio.get<Map<String, dynamic>>(
+          path,
+          queryParameters: {'\$select': 'id'},
+        );
+        final id = resp.data?['id'] as String?;
+        if (id != null) return id;
+      } on DioException catch (e) {
+        if (_isGraphAuthFailure(e)) throw _mapDioException(e);
+        tried.add('$path failed (${_describeGraphError(e)})');
+      }
+    }
+
+    // 2. The iCalendar UID, which every attendee's copy shares.
+    final ics = icsData ?? await _calendarPartOfMessage(emailId, tried);
+    String? uid;
+    if (ics != null) {
+      try {
+        uid = IcsParser.parse(ics).uid;
+      } catch (_) {
+        tried.add('the calendar part could not be read');
+      }
+    }
+    if (uid != null) {
+      try {
+        final resp = await _dio.get<Map<String, dynamic>>(
+          '/me/events',
+          queryParameters: {
+            // Single quotes delimit the literal, so an embedded one must double.
+            '\$filter': "iCalUId eq '${uid.replaceAll("'", "''")}'",
+            '\$select': 'id',
+            '\$top': 1,
+          },
+        );
+        final events = (resp.data?['value'] as List<dynamic>? ?? [])
+            .cast<Map<String, dynamic>>();
+        if (events.isNotEmpty) {
+          final id = events.first['id'] as String?;
+          if (id != null) return id;
+        }
+        tried.add('no meeting in your calendar has UID $uid');
+      } on DioException catch (e) {
+        if (_isGraphAuthFailure(e)) throw _mapDioException(e);
+        tried.add('looking up UID $uid failed (${_describeGraphError(e)})');
+      }
+    }
+
+    // 3. The calendar at the stated time. Unlike the organizer search this
+    //    accepts any single meeting in the window, so a slot holding more than
+    //    one is left alone rather than forwarding the wrong meeting.
+    if (meetingStart == null) {
+      tried.add('the invitation states no meeting time to search by');
+    } else {
+      final id = await _attendeeEventIdAt(meetingStart, tried);
+      if (id != null) return id;
+    }
+
+    throw ServerException(
+        message: 'Could not find this meeting on your calendar to forward. '
+            '${tried.join('. ')}.');
+  }
+
+  /// The single meeting on the user's calendar starting at [start], or null
+  /// when there is none — or more than one, since forwarding the wrong meeting
+  /// invites a stranger to it.
+  Future<String?> _attendeeEventIdAt(DateTime start, List<String> tried) async {
+    try {
+      String fmt(DateTime d) => d.toUtc().toIso8601String();
+      final resp = await _dio.get<Map<String, dynamic>>(
+        '/me/calendarView',
+        queryParameters: {
+          'startDateTime': fmt(start.subtract(const Duration(minutes: 1))),
+          'endDateTime': fmt(start.add(const Duration(minutes: 1))),
+          '\$select': 'id,start',
+          '\$top': 5,
+        },
+        options: Options(headers: {'Prefer': 'outlook.timezone="UTC"'}),
+      );
+      final events = (resp.data?['value'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      if (events.length == 1) return events.first['id'] as String?;
+      tried.add(events.isEmpty
+          ? 'no meeting sits at ${fmt(start)}'
+          : '${events.length} meetings sit at ${fmt(start)}, so which one to '
+              'forward is ambiguous');
+    } on DioException catch (e) {
+      if (_isGraphAuthFailure(e)) throw _mapDioException(e);
+      tried.add('searching the calendar failed (${_describeGraphError(e)})');
+    }
+    return null;
   }
 
   /// A Graph `DateTimeTimeZone` in UTC.

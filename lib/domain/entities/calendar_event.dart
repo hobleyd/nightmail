@@ -46,6 +46,8 @@ class CalendarEvent extends Equatable {
     this.status = CalendarEventStatus.busy,
     this.participation = MeetingParticipation.none,
     this.isOrganizer = false,
+    this.organizerEmail,
+    this.organizerName,
     this.timezone,
     this.attendees = const [],
     this.recurrence,
@@ -94,6 +96,19 @@ class CalendarEvent extends Equatable {
 
   final bool isOrganizer;
 
+  /// Who owns the meeting — the address an RSVP is answered to, and the
+  /// `ORGANIZER` of a forwarded invitation. Not the same as the address the
+  /// invite arrived *from*, which can be a delegate or a room system.
+  ///
+  /// Null for an event with no organizer at all (one the user created for
+  /// themselves, an entry on a subscribed calendar) and for the providers that
+  /// do not report one.
+  final String? organizerEmail;
+
+  /// The organizer's display name, for the `CN` parameter of a forwarded
+  /// invitation's `ORGANIZER` line.
+  final String? organizerName;
+
   /// IANA timezone string (e.g. "America/New_York"). Null means UTC.
   final String? timezone;
 
@@ -130,6 +145,8 @@ class CalendarEvent extends Equatable {
     CalendarEventStatus? status,
     MeetingParticipation? participation,
     bool? isOrganizer,
+    String? organizerEmail,
+    String? organizerName,
     String? timezone,
     List<CalendarEventAttendee>? attendees,
     CalendarRecurrence? recurrence,
@@ -149,6 +166,8 @@ class CalendarEvent extends Equatable {
         status: status ?? this.status,
         participation: participation ?? this.participation,
         isOrganizer: isOrganizer ?? this.isOrganizer,
+        organizerEmail: organizerEmail ?? this.organizerEmail,
+        organizerName: organizerName ?? this.organizerName,
         timezone: timezone ?? this.timezone,
         attendees: attendees ?? this.attendees,
         recurrence: recurrence ?? this.recurrence,

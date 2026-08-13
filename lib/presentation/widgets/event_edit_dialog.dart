@@ -22,6 +22,7 @@ import '../../domain/entities/calendar_recurrence.dart';
 import '../../domain/entities/meeting_notify_scope.dart';
 import '../../domain/entities/meeting_room.dart';
 import '../../domain/usecases/check_attendees_availability.dart';
+import '../../domain/usecases/forward_calendar_event.dart';
 import '../../domain/usecases/get_meeting_rooms.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../../injection_container.dart';
@@ -30,6 +31,7 @@ import '../blocs/event_edit/event_edit_event.dart';
 import '../blocs/event_edit/event_edit_state.dart';
 import 'availability_status_style.dart';
 import 'date_time_fields.dart';
+import 'forward_meeting_dialog.dart';
 import 'recipient_input_field.dart';
 import 'room_location_field.dart';
 
@@ -686,6 +688,39 @@ class _EventEditFormState extends State<EventEditForm> {
     return m != null ? m.group(1)! : address;
   }
 
+  /// Forwards this meeting to somebody who was not invited.
+  ///
+  /// Reachable only from the read-only form, so [widget.event] is non-null and
+  /// belongs to somebody else. Nothing on the form is saved or changed by it —
+  /// it is an action about the meeting, not an edit to it, which is why it does
+  /// not go through [EventEditBloc].
+  Future<void> _forward() async {
+    final event = widget.event;
+    if (event == null) return;
+    await ForwardMeetingDialog.show(
+      context,
+      meetingSubject: event.subject,
+      meetingWhen: _formatEventWhen(event),
+      send: ({required List<String> toAddresses, String? comment}) =>
+          sl<ForwardCalendarEvent>()(
+        ForwardCalendarEventParams(
+          eventId: event.id,
+          toAddresses: toAddresses,
+          comment: comment,
+        ),
+      ),
+    );
+  }
+
+  String _formatEventWhen(CalendarEvent event) {
+    final start = event.start.toLocal();
+    final date = DateFormat('EEE d MMM yyyy').format(start);
+    if (event.isAllDay) return date;
+    final from = DateFormat('h:mm a').format(start);
+    final to = DateFormat('h:mm a').format(event.end.toLocal());
+    return '$date  $from – $to';
+  }
+
   void _submit() {
     final title = _titleController.text.trim();
     if (title.isEmpty) {
@@ -1057,6 +1092,7 @@ class _EventEditFormState extends State<EventEditForm> {
           isEditing: widget.event != null,
           readOnly: _readOnly,
           onSave: _submit,
+          onForward: _forward,
           onClose: widget.onClose,
           hoveredUrl: _hoveredLocationUrl,
         ),
@@ -2740,12 +2776,19 @@ class _Footer extends StatelessWidget {
     required this.isEditing,
     required this.onSave,
     required this.onClose,
+    this.onForward,
     this.readOnly = false,
     this.hoveredUrl,
   });
   final bool isEditing;
   final VoidCallback onSave;
   final VoidCallback onClose;
+
+  /// Offered only in [readOnly] — forwarding is what an attendee does with
+  /// somebody else's meeting. The organizer adds a guest by typing them into
+  /// the Guests field and saving, which is a different thing: their own event
+  /// changes, rather than a copy of it going out from them.
+  final VoidCallback? onForward;
   final bool readOnly;
   /// The real URL under the pointer while hovering a link in the dialog,
   /// shown at the bottom of the window alongside Close/Save/Cancel.
@@ -2772,6 +2815,16 @@ class _Footer extends StatelessWidget {
         child: Row(
           children: [
             _hoveredUrlLabel(context),
+            if (onForward != null) ...[
+              TextButton.icon(
+                onPressed: onForward,
+                icon: Icon(Icons.forward_to_inbox_rounded,
+                    size: 14, color: c.textMuted),
+                label: Text('Forward',
+                    style: TextStyle(color: c.textMuted, fontSize: 13)),
+              ),
+              const SizedBox(width: 8),
+            ],
             TextButton(
               onPressed: onClose,
               child: Text('Close', style: TextStyle(color: c.textMuted, fontSize: 13)),

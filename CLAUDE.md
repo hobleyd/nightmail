@@ -499,6 +499,16 @@ banner and a PUBLISH offers only "Add to calendar". Graph classifies from its ow
 other banner's action is addressed to the message id, which needs a real
 `eventMessage`.
 
+## Forwarding Somebody Else's Meeting
+
+Offered on the invite banner and in the read-only event form. The provider is
+asked first (Graph `/events/{id}/forward`; Google adds the guest, which it
+allows when `guestsCanInviteOthers` is on) so the recipient joins the
+*organizer's* meeting; only `MeetingForwardUnsupportedException` — a settled
+"no" — falls back to emailing a `METHOD:REQUEST` from this account, since a 500
+may have forwarded it already and would invite them twice. The two outcomes are
+not equivalent, so `MeetingForwardMode` is returned and the dialog says which.
+
 ## Calendar Cache
 
 The calendar is offline-first: it paints from `cached_calendar_events` and then

@@ -15,7 +15,9 @@ import 'package:nightmail/data/models/calendar_event_model.dart';
 import 'package:nightmail/data/repositories/calendar_repository_impl.dart';
 import 'package:nightmail/domain/entities/attendee_availability.dart';
 import 'package:nightmail/domain/entities/calendar_event.dart';
+import 'package:nightmail/domain/entities/calendar_event_attendee.dart';
 import 'package:nightmail/domain/entities/local_attachment.dart';
+import 'package:nightmail/domain/entities/meeting_forward.dart';
 import 'package:nightmail/domain/entities/meeting_invite.dart';
 import 'package:nightmail/domain/entities/meeting_room.dart';
 import 'package:nightmail/domain/usecases/update_calendar_event.dart';
@@ -25,6 +27,10 @@ import 'package:nightmail/infrastructure/sync/calendar_outbox_drain_service.dart
 import 'package:nightmail/infrastructure/sync/calendar_pending_op_reconciler.dart';
 
 import 'calendar_repository_impl_test.mocks.dart';
+
+/// Undoes RFC 5545 line folding, so an assertion about a property does not
+/// depend on where the writer happened to break the line.
+String _unfoldIcs(String ics) => ics.replaceAll(RegExp(r'\r?\n[ \t]'), '');
 
 final _tStart = DateTime.utc(2026, 6, 9);
 final _tEnd = DateTime.utc(2026, 6, 16);
@@ -1467,6 +1473,402 @@ END:VCALENDAR''';
       final result = await repository.getMeetingRooms();
 
       expect(result.getRight().toNullable(), isEmpty);
+    });
+  });
+
+  group('CalendarRepositoryImpl.forwardMeetingFromEmail', () {
+    late MockEmailRemoteDatasource mockEmailDatasource;
+
+    const invite = '''
+BEGIN:VCALENDAR
+VERSION:2.0
+METHOD:REQUEST
+BEGIN:VEVENT
+UID:evt-1@example.com
+SEQUENCE:2
+SUMMARY:Quarterly review
+ORGANIZER;CN="Dana Chen":mailto:dana@example.com
+ATTENDEE:mailto:sam@example.com
+RRULE:FREQ=WEEKLY;BYDAY=MO
+DTSTART:20260803T230000Z
+DTEND:20260803T234500Z
+END:VEVENT
+END:VCALENDAR''';
+
+    setUp(() {
+      mockEmailDatasource = MockEmailRemoteDatasource();
+      when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+      when(mockAccountManager.emailDatasource).thenReturn(mockEmailDatasource);
+      when(mockAccountManager.activeAccount).thenReturn(const GmailAccount(
+        id: 'acct-1',
+        displayName: 'Sam Patel',
+        emailAddress: 'sam@example.com',
+      ));
+      when(mockEmailDatasource.sendEmail(
+        toAddresses: anyNamed('toAddresses'),
+        ccAddresses: anyNamed('ccAddresses'),
+        subject: anyNamed('subject'),
+        body: anyNamed('body'),
+        bodyType: anyNamed('bodyType'),
+        newAttachments: anyNamed('newAttachments'),
+      )).thenAnswer((_) async {});
+    });
+
+    void givenProviderForwards() {
+      when(mockDatasource.forwardMeetingFromEmail(
+        emailId: anyNamed('emailId'),
+        toAddresses: anyNamed('toAddresses'),
+        icsData: anyNamed('icsData'),
+        meetingStart: anyNamed('meetingStart'),
+        comment: anyNamed('comment'),
+      )).thenAnswer((_) async {});
+    }
+
+    void givenProviderRefuses() {
+      when(mockDatasource.forwardMeetingFromEmail(
+        emailId: anyNamed('emailId'),
+        toAddresses: anyNamed('toAddresses'),
+        icsData: anyNamed('icsData'),
+        meetingStart: anyNamed('meetingStart'),
+        comment: anyNamed('comment'),
+      )).thenThrow(const MeetingForwardUnsupportedException(
+          message: 'guests may not invite others'));
+    }
+
+    Future<Either<Failure, MeetingForwardMode>> forward({
+      List<String> to = const ['ravi@example.com'],
+      String? icsData = invite,
+      String? comment,
+    }) =>
+        repository.forwardMeetingFromEmail(
+          emailId: 'msg-1',
+          toAddresses: to,
+          icsData: icsData,
+          meetingStart: DateTime.utc(2026, 8, 3, 23),
+          comment: comment,
+        );
+
+    /// The single message the repository sent, as its captured named arguments.
+    Map<Symbol, dynamic> capturedSend() {
+      final call = verify(mockEmailDatasource.sendEmail(
+        toAddresses: captureAnyNamed('toAddresses'),
+        subject: captureAnyNamed('subject'),
+        body: captureAnyNamed('body'),
+        newAttachments: captureAnyNamed('newAttachments'),
+        ccAddresses: anyNamed('ccAddresses'),
+        bodyType: anyNamed('bodyType'),
+      ));
+      call.called(1);
+      final captured = call.captured;
+      return {
+        #toAddresses: captured[0],
+        #subject: captured[1],
+        #body: captured[2],
+        #newAttachments: captured[3],
+      };
+    }
+
+    test('lets the provider forward it, and sends nothing itself', () async {
+      givenProviderForwards();
+
+      final result = await forward(comment: 'You should be across this');
+
+      expect(result.getRight().toNullable(),
+          MeetingForwardMode.onBehalfOfOrganizer);
+      verify(mockDatasource.forwardMeetingFromEmail(
+        emailId: 'msg-1',
+        toAddresses: ['ravi@example.com'],
+        icsData: invite,
+        meetingStart: anyNamed('meetingStart'),
+        comment: 'You should be across this',
+      )).called(1);
+      verifyNever(mockEmailDatasource.sendEmail(
+        toAddresses: anyNamed('toAddresses'),
+        subject: anyNamed('subject'),
+        body: anyNamed('body'),
+        ccAddresses: anyNamed('ccAddresses'),
+        bodyType: anyNamed('bodyType'),
+        newAttachments: anyNamed('newAttachments'),
+      ));
+    });
+
+    test('emails the invitation when the provider will not forward it',
+        () async {
+      givenProviderRefuses();
+
+      final result = await forward();
+
+      expect(result.getRight().toNullable(), MeetingForwardMode.fromMe);
+      final sent = capturedSend();
+      expect(sent[#toAddresses], ['ravi@example.com']);
+      expect(sent[#subject], 'FW: Quarterly review');
+    });
+
+    test('attaches a METHOD=REQUEST part built from the invitation', () async {
+      givenProviderRefuses();
+
+      await forward();
+
+      final attachments = capturedSend()[#newAttachments] as List<dynamic>;
+      final ics = attachments.single as LocalAttachment;
+      expect(ics.name, 'invite.ics');
+      // The `method` parameter is what makes a client offer Accept/Decline
+      // rather than show a file to save.
+      expect(ics.mimeType, 'text/calendar; method=REQUEST');
+
+      final text = _unfoldIcs(utf8.decode(ics.bytes));
+      expect(text, contains('METHOD:REQUEST'));
+      // Identifies the organizer's meeting, so the RSVP lands on it.
+      expect(text, contains('UID:evt-1@example.com'));
+      expect(text, contains('SEQUENCE:2'));
+      expect(text, contains('ORGANIZER;CN="Dana Chen":mailto:dana@example.com'));
+      expect(text, contains('mailto:ravi@example.com'));
+      // The series is forwarded as a series, not as one occurrence.
+      expect(text, contains('RRULE:FREQ=WEEKLY;BYDAY=MO'));
+    });
+
+    test('tells the recipient the organiser has not been told', () async {
+      // Without this the recipient believes they are on the guest list, and
+      // silently misses every later change to the meeting.
+      givenProviderRefuses();
+
+      await forward();
+
+      expect(capturedSend()[#body], contains('have not been told'));
+    });
+
+    test('falls back to the cached meeting when there is no iCalendar part',
+        () async {
+      // Microsoft invitations arrive as eventMessages with no calendar part at
+      // all, so the cached copy is the only description of the meeting.
+      givenProviderRefuses();
+      givenCached(CalendarEventModel(
+        id: 'event-9',
+        subject: 'Board meeting',
+        start: DateTime.utc(2026, 8, 3, 23),
+        end: DateTime.utc(2026, 8, 4),
+        isAllDay: false,
+        iCalUid: 'evt-9@example.com',
+        organizerEmail: 'dana@example.com',
+        organizerName: 'Dana Chen',
+      ));
+
+      final result = await forward(icsData: null);
+
+      expect(result.getRight().toNullable(), MeetingForwardMode.fromMe);
+      final attachments = capturedSend()[#newAttachments] as List<dynamic>;
+      final text =
+          _unfoldIcs(utf8.decode((attachments.single as LocalAttachment).bytes));
+      expect(text, contains('UID:evt-9@example.com'));
+      expect(text, contains('mailto:dana@example.com'));
+    });
+
+    test('reports a failure when the meeting cannot be described at all',
+        () async {
+      givenProviderRefuses();
+
+      final result = await forward(icsData: null);
+
+      expect(result.isLeft(), isTrue);
+      verifyNever(mockEmailDatasource.sendEmail(
+        toAddresses: anyNamed('toAddresses'),
+        subject: anyNamed('subject'),
+        body: anyNamed('body'),
+        ccAddresses: anyNamed('ccAddresses'),
+        bodyType: anyNamed('bodyType'),
+        newAttachments: anyNamed('newAttachments'),
+      ));
+    });
+
+    test('does not email a copy when the provider forward failed outright',
+        () async {
+      // The provider may have forwarded it before failing, so following up with
+      // an emailed copy would invite the recipient twice. Only a settled
+      // "cannot forward this" reaches the fallback.
+      when(mockDatasource.forwardMeetingFromEmail(
+        emailId: anyNamed('emailId'),
+        toAddresses: anyNamed('toAddresses'),
+        icsData: anyNamed('icsData'),
+        meetingStart: anyNamed('meetingStart'),
+        comment: anyNamed('comment'),
+      )).thenThrow(const ServerException(message: 'boom', statusCode: 500));
+
+      final result = await forward();
+
+      expect(result.isLeft(), isTrue);
+      verifyNever(mockEmailDatasource.sendEmail(
+        toAddresses: anyNamed('toAddresses'),
+        subject: anyNamed('subject'),
+        body: anyNamed('body'),
+        ccAddresses: anyNamed('ccAddresses'),
+        bodyType: anyNamed('bodyType'),
+        newAttachments: anyNamed('newAttachments'),
+      ));
+    });
+
+    test('an expired token stays an AuthFailure', () async {
+      // Falling back here would quietly change how the meeting is sent instead
+      // of raising the re-auth prompt.
+      when(mockDatasource.forwardMeetingFromEmail(
+        emailId: anyNamed('emailId'),
+        toAddresses: anyNamed('toAddresses'),
+        icsData: anyNamed('icsData'),
+        meetingStart: anyNamed('meetingStart'),
+        comment: anyNamed('comment'),
+      )).thenThrow(const AuthException(message: 'expired'));
+
+      final result = await forward();
+
+      expect(result.getLeft().toNullable(), isA<AuthFailure>());
+    });
+
+    test('emails the invitation when the account has no calendar at all',
+        () async {
+      // An IMAP account: nothing to ask, so it goes straight to the fallback.
+      when(mockAccountManager.calendarDatasource).thenReturn(null);
+
+      final result = await forward();
+
+      expect(result.getRight().toNullable(), MeetingForwardMode.fromMe);
+      expect(capturedSend()[#subject], 'FW: Quarterly review');
+    });
+
+    test('refuses an empty recipient list without calling anything', () async {
+      givenProviderForwards();
+
+      final result = await forward(to: const ['', '   ']);
+
+      expect(result.isLeft(), isTrue);
+      verifyNever(mockDatasource.forwardMeetingFromEmail(
+        emailId: anyNamed('emailId'),
+        toAddresses: anyNamed('toAddresses'),
+        icsData: anyNamed('icsData'),
+        meetingStart: anyNamed('meetingStart'),
+        comment: anyNamed('comment'),
+      ));
+    });
+
+    test('de-duplicates recipients before sending', () async {
+      givenProviderForwards();
+
+      await forward(to: const ['ravi@example.com', 'Ravi@Example.com ']);
+
+      verify(mockDatasource.forwardMeetingFromEmail(
+        emailId: anyNamed('emailId'),
+        toAddresses: ['ravi@example.com'],
+        icsData: anyNamed('icsData'),
+        meetingStart: anyNamed('meetingStart'),
+        comment: anyNamed('comment'),
+      )).called(1);
+    });
+  });
+
+  group('CalendarRepositoryImpl.forwardCalendarEvent', () {
+    late MockEmailRemoteDatasource mockEmailDatasource;
+
+    final event = CalendarEventModel(
+      id: 'event-1',
+      subject: 'Quarterly review',
+      start: DateTime.utc(2026, 8, 3, 23),
+      end: DateTime.utc(2026, 8, 3, 23, 45),
+      isAllDay: false,
+      iCalUid: 'evt-1@example.com',
+      organizerEmail: 'dana@example.com',
+      organizerName: 'Dana Chen',
+      attendees: const [
+        CalendarEventAttendee(email: 'sam@example.com'),
+        CalendarEventAttendee(email: 'room-3@example.com', isResource: true),
+      ],
+    );
+
+    setUp(() {
+      mockEmailDatasource = MockEmailRemoteDatasource();
+      when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+      when(mockAccountManager.emailDatasource).thenReturn(mockEmailDatasource);
+      when(mockEmailDatasource.sendEmail(
+        toAddresses: anyNamed('toAddresses'),
+        ccAddresses: anyNamed('ccAddresses'),
+        subject: anyNamed('subject'),
+        body: anyNamed('body'),
+        bodyType: anyNamed('bodyType'),
+        newAttachments: anyNamed('newAttachments'),
+      )).thenAnswer((_) async {});
+    });
+
+    test('lets the provider forward it', () async {
+      when(mockDatasource.forwardCalendarEvent(
+        eventId: anyNamed('eventId'),
+        toAddresses: anyNamed('toAddresses'),
+        comment: anyNamed('comment'),
+      )).thenAnswer((_) async {});
+
+      final result = await repository.forwardCalendarEvent(
+        eventId: 'event-1',
+        toAddresses: const ['ravi@example.com'],
+      );
+
+      expect(result.getRight().toNullable(),
+          MeetingForwardMode.onBehalfOfOrganizer);
+    });
+
+    test('emails the cached meeting when the provider will not', () async {
+      when(mockDatasource.forwardCalendarEvent(
+        eventId: anyNamed('eventId'),
+        toAddresses: anyNamed('toAddresses'),
+        comment: anyNamed('comment'),
+      )).thenThrow(const MeetingForwardUnsupportedException(
+          message: 'no forward API'));
+      givenCached(event);
+
+      final result = await repository.forwardCalendarEvent(
+        eventId: 'event-1',
+        toAddresses: const ['ravi@example.com'],
+      );
+
+      expect(result.getRight().toNullable(), MeetingForwardMode.fromMe);
+      final call = verify(mockEmailDatasource.sendEmail(
+        toAddresses: anyNamed('toAddresses'),
+        subject: anyNamed('subject'),
+        body: anyNamed('body'),
+        newAttachments: captureAnyNamed('newAttachments'),
+        ccAddresses: anyNamed('ccAddresses'),
+        bodyType: anyNamed('bodyType'),
+      ));
+      call.called(1);
+      final attachments = call.captured.single as List<dynamic>;
+      final text =
+          _unfoldIcs(utf8.decode((attachments.single as LocalAttachment).bytes));
+      expect(text, contains('UID:evt-1@example.com'));
+      expect(text, contains('mailto:ravi@example.com'));
+      expect(text, contains('mailto:sam@example.com'));
+      // A booked room is the organizer's reservation, not a guest to list.
+      expect(text, isNot(contains('room-3@example.com')));
+    });
+
+    test('fetches the meeting when it is not in the cache', () async {
+      // The cache keeps only a few weeks warm, and a meeting further out is
+      // exactly the kind somebody forwards.
+      when(mockDatasource.forwardCalendarEvent(
+        eventId: anyNamed('eventId'),
+        toAddresses: anyNamed('toAddresses'),
+        comment: anyNamed('comment'),
+      )).thenThrow(const MeetingForwardUnsupportedException(
+          message: 'no forward API'));
+      when(mockAccountManager.activeAccount).thenReturn(const GmailAccount(
+        id: 'acct-1',
+        displayName: 'Test',
+        emailAddress: 'me@example.com',
+      ));
+      when(mockDatasource.getCalendarEvent(id: 'event-1'))
+          .thenAnswer((_) async => event);
+
+      final result = await repository.forwardCalendarEvent(
+        eventId: 'event-1',
+        toAddresses: const ['ravi@example.com'],
+      );
+
+      expect(result.getRight().toNullable(), MeetingForwardMode.fromMe);
+      verify(mockDatasource.getCalendarEvent(id: 'event-1')).called(1);
     });
   });
 }

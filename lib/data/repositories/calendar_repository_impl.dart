@@ -11,9 +11,13 @@ import '../../core/error/failures.dart';
 import '../../core/utils/calendar_event_patch.dart';
 import '../../core/utils/ics_counter_builder.dart';
 import '../../core/utils/ics_parser.dart';
+import '../../core/utils/ics_request_builder.dart';
+import '../../core/utils/ics_writer.dart';
+import '../../core/utils/rrule.dart';
 import '../../domain/entities/attendee_availability.dart';
 import '../../domain/entities/calendar_event.dart';
 import '../../domain/entities/local_attachment.dart';
+import '../../domain/entities/meeting_forward.dart';
 import '../../domain/entities/meeting_invite.dart';
 import '../../domain/entities/meeting_room.dart';
 import '../../domain/repositories/calendar_repository.dart';
@@ -777,6 +781,301 @@ class CalendarRepositoryImpl implements CalendarRepository {
   }
 
   @override
+  Future<Either<Failure, MeetingForwardMode>> forwardMeetingFromEmail({
+    required String emailId,
+    required List<String> toAddresses,
+    String? icsData,
+    DateTime? meetingStart,
+    String? comment,
+  }) async {
+    final recipients = _cleanAddresses(toAddresses);
+    if (recipients.isEmpty) {
+      return const Left(
+          ServerFailure(message: 'No one to forward this meeting to'));
+    }
+    return _forward(
+      recipients: recipients,
+      comment: comment,
+      viaProvider: (ds) => ds.forwardMeetingFromEmail(
+        emailId: emailId,
+        toAddresses: recipients,
+        icsData: icsData,
+        meetingStart: meetingStart,
+        comment: comment,
+      ),
+      describeMeeting: () =>
+          _forwardableFromInvitation(icsData: icsData, meetingStart: meetingStart),
+    );
+  }
+
+  @override
+  Future<Either<Failure, MeetingForwardMode>> forwardCalendarEvent({
+    required String eventId,
+    required List<String> toAddresses,
+    String? comment,
+  }) async {
+    final recipients = _cleanAddresses(toAddresses);
+    if (recipients.isEmpty) {
+      return const Left(
+          ServerFailure(message: 'No one to forward this meeting to'));
+    }
+    return _forward(
+      recipients: recipients,
+      comment: comment,
+      viaProvider: (ds) => ds.forwardCalendarEvent(
+        eventId: eventId,
+        toAddresses: recipients,
+        comment: comment,
+      ),
+      describeMeeting: () => _forwardableFromEvent(eventId),
+    );
+  }
+
+  /// Asks the provider to forward the meeting and, only if it answers that it
+  /// will not, emails the invitation from this account instead.
+  ///
+  /// The fallback is reached by exactly one exception type. A 500, a timeout or
+  /// an expired token are all reported as failures rather than quietly changing
+  /// how the meeting is sent: the provider might have forwarded it before
+  /// failing, and following that with an emailed copy invites the recipient
+  /// twice. Only [MeetingForwardUnsupportedException] — a settled "this cannot
+  /// be forwarded" — means nothing was sent and the fallback is safe.
+  Future<Either<Failure, MeetingForwardMode>> _forward({
+    required List<String> recipients,
+    required String? comment,
+    required Future<void> Function(CalendarRemoteDatasource ds) viaProvider,
+    required Future<_ForwardableMeeting?> Function() describeMeeting,
+  }) async {
+    final ds = _accountManager.calendarDatasource;
+    if (ds != null) {
+      try {
+        await viaProvider(ds);
+        return const Right(MeetingForwardMode.onBehalfOfOrganizer);
+      } on MeetingForwardUnsupportedException catch (e) {
+        debugPrint('CalendarRepository: the provider will not forward this '
+            'meeting (${e.message}); emailing the invitation instead');
+      } on AuthException catch (e) {
+        return Left(AuthFailure(message: e.message));
+      } on NetworkException catch (e) {
+        return Left(NetworkFailure(message: e.message));
+      } on ServerException catch (e) {
+        return Left(
+            ServerFailure(message: e.message, statusCode: e.statusCode));
+      } catch (e) {
+        return Left(ServerFailure(message: e.toString()));
+      }
+    }
+
+    try {
+      final meeting = await describeMeeting();
+      if (meeting == null) {
+        return const Left(ServerFailure(
+          message: 'This meeting could not be forwarded: its details could not '
+              'be read from the invitation or from your calendar.',
+        ));
+      }
+      await _emailMeetingForward(
+        meeting: meeting,
+        recipients: recipients,
+        comment: comment,
+      );
+      return const Right(MeetingForwardMode.fromMe);
+    } on AuthException catch (e) {
+      return Left(AuthFailure(message: e.message));
+    } on NetworkException catch (e) {
+      return Left(NetworkFailure(message: e.message));
+    } on ServerException catch (e) {
+      return Left(ServerFailure(message: e.message, statusCode: e.statusCode));
+    } catch (e) {
+      return Left(ServerFailure(message: e.toString()));
+    }
+  }
+
+  /// Trimmed, de-duplicated, case-insensitively unique recipient addresses.
+  static List<String> _cleanAddresses(List<String> addresses) {
+    final seen = <String>{};
+    final out = <String>[];
+    for (final address in addresses) {
+      final trimmed = address.trim();
+      if (trimmed.isEmpty || !seen.add(trimmed.toLowerCase())) continue;
+      out.add(trimmed);
+    }
+    return out;
+  }
+
+  /// The meeting an invitation email is about, described well enough to rebuild
+  /// its iCalendar.
+  ///
+  /// The invitation's own calendar part is preferred over the cached event: it
+  /// is the organizer's own text, so its `UID`, `SEQUENCE` and `ORGANIZER` are
+  /// exactly what the recipient's client needs to file the forward against the
+  /// real meeting — and its `RRULE`/`RECURRENCE-ID` can be copied through
+  /// verbatim rather than re-derived.
+  Future<_ForwardableMeeting?> _forwardableFromInvitation({
+    String? icsData,
+    DateTime? meetingStart,
+  }) async {
+    if (icsData != null) {
+      try {
+        final ics = IcsParser.parse(icsData);
+        if (ics.uid != null) {
+          return _ForwardableMeeting(
+            uid: ics.uid!,
+            summary: ics.summary,
+            start: ics.start,
+            end: ics.end,
+            isAllDay: ics.isAllDay,
+            organizerEmail: ics.organizer,
+            organizerName: ics.organizerName,
+            location: ics.location,
+            description: ics.description,
+            sequence: ics.sequence,
+            attendees: ics.attendees,
+            passthroughLines: icsPassthroughLines(
+              icsData,
+              const {'RRULE', 'RECURRENCE-ID', 'EXDATE', 'RDATE'},
+            ),
+          );
+        }
+      } catch (_) {
+        // An unreadable calendar part is no worse than none — fall through to
+        // the cached copy, which the provider built from the same invitation.
+      }
+    }
+
+    final accountId = _accountId;
+    if (accountId == null) return null;
+    final cached = await _findCachedMeeting(
+      accountId: accountId,
+      icsData: icsData,
+      meetingStart: meetingStart,
+    );
+    return cached == null ? null : _forwardableFromCalendarEvent(cached);
+  }
+
+  /// The meeting behind an event id — from the cache when it is there, else
+  /// from the provider, since the calendar only keeps a few weeks warm and a
+  /// meeting further out is exactly the kind somebody forwards.
+  Future<_ForwardableMeeting?> _forwardableFromEvent(String eventId) async {
+    final accountId = _accountId;
+    if (accountId != null) {
+      final cached = await _localDatasource.getCachedEventById(
+        accountId: accountId,
+        eventId: eventId,
+      );
+      if (cached != null) return _forwardableFromCalendarEvent(cached);
+    }
+
+    final ds = _accountManager.calendarDatasource;
+    if (ds == null) return null;
+    final fetched = await ds.getCalendarEvent(id: eventId);
+    return _forwardableFromCalendarEvent(fetched);
+  }
+
+  _ForwardableMeeting _forwardableFromCalendarEvent(CalendarEvent event) =>
+      _ForwardableMeeting(
+        // A meeting with no iCalendar UID is one the provider does not expose
+        // one for (CalDAV, EventKit). Deriving it from the event id keeps the
+        // forward self-consistent — a later resend carries the same UID, so the
+        // recipient's client updates their copy instead of adding a second —
+        // even though it cannot match the organizer's own.
+        uid: event.iCalUid ?? 'nightmail-${event.id}',
+        summary: event.subject,
+        start: event.start,
+        end: event.end,
+        isAllDay: event.isAllDay,
+        organizerEmail: event.organizerEmail,
+        organizerName: event.organizerName,
+        location: event.location,
+        description: event.bodyPreview,
+        attendees: [
+          // Rooms are left out: a resource attendee is a booking the organizer
+          // holds, not a person the recipient should see listed as a guest.
+          for (final a in event.attendees)
+            if (!a.isResource) a.email,
+        ],
+        recurrenceRule:
+            event.recurrence == null ? null : buildRRule(event.recurrence!),
+      );
+
+  /// Emails the invitation on from this account, for a meeting the provider
+  /// would not forward itself.
+  ///
+  /// The `METHOD:REQUEST` part is what makes this a forwarded *invitation*
+  /// rather than a note about one: the recipient's client offers Accept and
+  /// Decline, and addresses the reply to the real organizer. The body repeats
+  /// the details in plain text for clients that ignore the attachment, and says
+  /// plainly that the organizer has not been told — the recipient is otherwise
+  /// left believing they are on the guest list.
+  Future<void> _emailMeetingForward({
+    required _ForwardableMeeting meeting,
+    required List<String> recipients,
+    required String? comment,
+  }) async {
+    final forwarder = _accountManager.activeAccount;
+    final note = comment?.trim();
+
+    final body = StringBuffer()
+      ..writeln('${forwarder?.displayName ?? 'Someone'} has forwarded you a '
+          'meeting invitation.')
+      ..writeln()
+      ..writeln(meeting.summary)
+      ..writeln('When: ${_formatRange(meeting.start, meeting.end)}');
+    if (meeting.location != null && meeting.location!.trim().isNotEmpty) {
+      body.writeln('Where: ${meeting.location!.trim()}');
+    }
+    if (meeting.organizerEmail != null) {
+      final name = meeting.organizerName;
+      body.writeln('Organiser: ${name == null || name.isEmpty ? '' : '$name '}'
+          '<${meeting.organizerEmail}>');
+    }
+    if (note != null && note.isNotEmpty) {
+      body
+        ..writeln()
+        ..writeln(note);
+    }
+    body
+      ..writeln()
+      ..writeln(meeting.organizerEmail == null
+          ? 'Add the attached invitation to your calendar to accept it.'
+          : 'Responding to the attached invitation replies to the organiser '
+              'directly. They have not been told this was forwarded, so ask '
+              'them to add you if you need updates to the meeting.');
+
+    final ics = buildForwardRequestIcs(
+      uid: meeting.uid,
+      summary: meeting.summary,
+      start: meeting.start,
+      end: meeting.end,
+      isAllDay: meeting.isAllDay,
+      newAttendeeEmails: recipients,
+      existingAttendeeEmails: meeting.attendees,
+      organizerEmail: meeting.organizerEmail,
+      organizerName: meeting.organizerName,
+      location: meeting.location,
+      description: meeting.description,
+      sequence: meeting.sequence,
+      recurrenceRule: meeting.recurrenceRule,
+      passthroughLines: meeting.passthroughLines,
+    );
+
+    await _accountManager.emailDatasource.sendEmail(
+      toAddresses: recipients,
+      subject: 'FW: ${meeting.summary}',
+      body: body.toString(),
+      newAttachments: [
+        LocalAttachment(
+          name: 'invite.ics',
+          // The `method` parameter is what makes a client read the part as an
+          // invitation to answer rather than a file to save.
+          mimeType: 'text/calendar; method=REQUEST',
+          bytes: Uint8List.fromList(utf8.encode(ics)),
+        ),
+      ],
+    );
+  }
+
+  @override
   Future<Either<Failure, void>> cancelCalendarEvent({
     required String eventId,
   }) async {
@@ -1225,4 +1524,50 @@ class CalendarRepositoryImpl implements CalendarRepository {
     }
     return AttendeeAvailabilityStatus.free;
   }
+}
+
+/// Everything the emailed-invitation fallback needs about a meeting, gathered
+/// from whichever source could answer for it — the invitation's own iCalendar
+/// part, the calendar cache, or the provider.
+///
+/// A private holder rather than a reuse of [CalendarEvent] because the two
+/// carry different things: this needs the `SEQUENCE` and the verbatim
+/// recurrence lines an iCalendar has and the entity does not, and none of the
+/// display state the entity has and an iCalendar does not.
+class _ForwardableMeeting {
+  const _ForwardableMeeting({
+    required this.uid,
+    required this.summary,
+    required this.start,
+    required this.end,
+    required this.isAllDay,
+    this.organizerEmail,
+    this.organizerName,
+    this.location,
+    this.description,
+    this.sequence,
+    this.attendees = const [],
+    this.recurrenceRule,
+    this.passthroughLines = const [],
+  });
+
+  final String uid;
+  final String summary;
+  final DateTime start;
+  final DateTime end;
+  final bool isAllDay;
+  final String? organizerEmail;
+  final String? organizerName;
+  final String? location;
+  final String? description;
+  final int? sequence;
+  final List<String> attendees;
+
+  /// An `RRULE:` line built from the entity's recurrence, when the meeting came
+  /// from the calendar rather than from an iCalendar that already had one.
+  final String? recurrenceRule;
+
+  /// Recurrence lines copied through from the original iCalendar untouched —
+  /// see [icsPassthroughLines].
+  final List<String> passthroughLines;
 }

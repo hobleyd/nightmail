@@ -544,8 +544,8 @@ class CalendarRepositoryImpl implements CalendarRepository {
     final note = message?.trim();
 
     final body = StringBuffer()
-      ..writeln(event != null
-          ? 'I\'ve proposed a new time for "${event.summary}".'
+      ..writeln(event?.summary != null
+          ? 'I\'ve proposed a new time for "${event!.summary}".'
           : "I've proposed a new time for this meeting.")
       ..writeln()
       ..writeln('Proposed: ${_formatRange(newStart, newEnd)}');
@@ -921,7 +921,9 @@ class CalendarRepositoryImpl implements CalendarRepository {
         if (ics.uid != null) {
           return _ForwardableMeeting(
             uid: ics.uid!,
-            summary: ics.summary,
+            // Unlike the reading pane, nothing here reaches the covering
+            // email's subject, so a titleless invitation keeps the placeholder.
+            summary: ics.summary ?? '(No title)',
             start: ics.start,
             end: ics.end,
             isAllDay: ics.isAllDay,

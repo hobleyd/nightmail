@@ -17,6 +17,7 @@ import 'package:nightmail/data/repositories/email_repository_impl.dart';
 import 'package:nightmail/domain/entities/email.dart';
 import 'package:nightmail/domain/entities/email_attachment.dart';
 import 'package:nightmail/domain/entities/inline_attachment.dart';
+import 'package:nightmail/domain/entities/meeting_invite.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 import 'package:nightmail/infrastructure/network/connectivity_service.dart';
@@ -541,6 +542,59 @@ void main() {
 
       expect(result.isRight(), isTrue);
       expect((result as Right).value.attachments.single.name, 'quote.pdf');
+      verify(mockRemoteDatasource.getEmail('email-1')).called(1);
+    });
+
+    // The stamp has to date a stale *invite* as well as stale attachment
+    // metadata: the invite is parsed from an attached `.ics` but cached in the
+    // detail row, and a message that has been opened once has a full body — so
+    // nothing else here would ever go back to the network for it. That is how a
+    // fixed parser went on serving an event titled '(No title)' from a row
+    // written minutes earlier.
+    test('refetches a full-body row to replace an invite its parser got wrong',
+        () async {
+      EmailModel withInviteTitled(String? summary) => EmailModel(
+            id: 'email-1',
+            subject: 'Your NIB health check',
+            from: const EmailAddressModel(address: 'noreply@nib.com.au'),
+            toRecipients: const [],
+            ccRecipients: const [],
+            bodyPreview: 'preview',
+            body: '<p>invite attached</p>',
+            bodyType: EmailBodyType.html,
+            isRead: false,
+            receivedDateTime: DateTime(2026, 6, 1),
+            importance: EmailImportance.normal,
+            meetingInvite: MeetingInvite(
+              icsData: 'BEGIN:VCALENDAR...',
+              type: MeetingEmailType.publishedEvent,
+              summary: summary,
+              meetingStart: DateTime.utc(2026, 9, 1, 9),
+            ),
+          );
+
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      when(mockLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => withInviteTitled('(No title)'));
+      when(mockLocalDatasource.hasStaleAttachmentParse(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => true);
+      when(mockRemoteDatasource.getEmail(any))
+          .thenAnswer((_) async => withInviteTitled(null));
+      when(mockLocalDatasource.cacheEmails(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+        emails: anyNamed('emails'),
+      )).thenAnswer((_) async {});
+
+      final result = await repository.getEmail('email-1');
+
+      // Null, not '(No title)' — which is what lets the banner reach for the
+      // email's own subject.
+      expect((result as Right).value.meetingInvite!.summary, isNull);
       verify(mockRemoteDatasource.getEmail('email-1')).called(1);
     });
 

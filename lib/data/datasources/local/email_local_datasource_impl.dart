@@ -42,7 +42,18 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
   ///   message shared one id and downloaded the whole forward. The ids are
   ///   what a row stores, so a message read before the fix keeps them: the
   ///   chips look right and every one of them fetches the wrong bytes.
-  static const attachmentParseVersion = 3;
+  /// * 3 — a Graph message carrying an `invite.ics` that Exchange never turned
+  ///   into a meeting had the parsed invite discarded unless its `METHOD` was
+  ///   `PUBLISH`, so it drew no meeting banner at all. The invite is part of the
+  ///   row, so a message read before the fix keeps offering no way onto the
+  ///   calendar.
+  /// * 4 — the invite those rows now carry holds a *title* the ICS parser made
+  ///   up ('(No title)') and could not read at all when the sender qualified it
+  ///   (`SUMMARY;LANGUAGE=en-AU:`). The title is cached inside the invite, so
+  ///   the banner went on adding an event named '(No title)' from a row written
+  ///   only moments earlier — the stamp is what a fetched invite is compared
+  ///   against, so a fix to the *parse* needs one as much as a fix to the fetch.
+  static const attachmentParseVersion = 5;
 
   /// JSON key for [attachmentParseVersion]. Absent on pre-versioning rows,
   /// which read back as version 1.
@@ -384,8 +395,17 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     final row = await _anyCachedRow(accountId, emailId);
     if (row == null) return false;
 
-    // The stamp travels with the attachment metadata it describes, which is on
-    // the list row.
+    // The stamp is read off the list row, and answers for the **detail** row
+    // too — the meeting invite parsed out of an attached `.ics` lives there, and
+    // is as much a product of the attachment parse as the metadata here is.
+    //
+    // That holds because nothing writes one half at a newer stamp than the
+    // other. `cacheEmails` and `upgradeCachedEmailBody` write both together;
+    // `updateCachedEmailFields` patches read/flag into the decrypted JSON and
+    // leaves the stamp alone; and a thin preview re-touch deliberately carries
+    // the *old* stamp forward (see [cacheEmails]) rather than declaring itself
+    // current. Reading the detail row here instead would mean decrypting the
+    // body and every inline image on every cached open just to fetch an int.
     final json = jsonDecode(await _encryption.decrypt(row.encryptedData))
         as Map<String, dynamic>;
     final version = json[_parseVersionKey] as int? ?? 1;

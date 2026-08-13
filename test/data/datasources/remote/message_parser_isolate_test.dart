@@ -310,6 +310,107 @@ void main() {
       expect(invite.meetingStart, DateTime.utc(2026, 9, 1, 9));
     });
 
+    // A bulk sender's invite.ics on a message Exchange never processed into a
+    // meeting: there is no eventMessage and no calendar event, so the only
+    // honest offer is "Add to calendar" — which is what publishedEvent draws.
+    test('treats a fetched METHOD:REQUEST as an event to keep', () {
+      const ics = 'BEGIN:VCALENDAR\r\n'
+          'METHOD:REQUEST\r\n'
+          'BEGIN:VEVENT\r\n'
+          'UID:req-1\r\n'
+          'SUMMARY:Your NIB health check\r\n'
+          'DESCRIPTION:Bring your member number\r\n'
+          'LOCATION:Level 3\r\n'
+          'DTSTART:20260901T090000Z\r\n'
+          'DTEND:20260901T093000Z\r\n'
+          'END:VEVENT\r\n'
+          'END:VCALENDAR';
+      final invite = parseGraphIcsAttachment(jsonEncode({
+        'contentBytes': base64.encode(utf8.encode(ics)),
+      }))!;
+
+      expect(invite.type, MeetingEmailType.publishedEvent);
+      // The banner builds the event from these alone, so they have to be here:
+      // a plain invitation leaves them null and takes them from the provider.
+      expect(invite.summary, 'Your NIB health check');
+      expect(invite.description, 'Bring your member number');
+      expect(invite.location, 'Level 3');
+      expect(invite.uid, 'req-1');
+      expect(invite.meetingStart, DateTime.utc(2026, 9, 1, 9));
+    });
+
+    // The banner falls back to the email's subject on a null summary, so a
+    // placeholder title here is indistinguishable from a real one and the event
+    // lands on the calendar literally named "(No title)".
+    test('reports no title rather than a placeholder when the ICS has none', () {
+      const ics = 'BEGIN:VCALENDAR\r\n'
+          'METHOD:REQUEST\r\n'
+          'BEGIN:VEVENT\r\n'
+          'UID:req-2\r\n'
+          'DTSTART:20260901T090000Z\r\n'
+          'END:VEVENT\r\n'
+          'END:VCALENDAR';
+      final invite = parseGraphIcsAttachment(jsonEncode({
+        'contentBytes': base64.encode(utf8.encode(ics)),
+      }))!;
+
+      expect(invite.summary, isNull);
+    });
+
+    test('reads a title Exchange qualified with a LANGUAGE parameter', () {
+      const ics = 'BEGIN:VCALENDAR\r\n'
+          'METHOD:REQUEST\r\n'
+          'BEGIN:VEVENT\r\n'
+          'UID:req-3\r\n'
+          'SUMMARY;LANGUAGE=en-AU:Your NIB health check\r\n'
+          'DTSTART:20260901T090000Z\r\n'
+          'END:VEVENT\r\n'
+          'END:VCALENDAR';
+      final invite = parseGraphIcsAttachment(jsonEncode({
+        'contentBytes': base64.encode(utf8.encode(ics)),
+      }))!;
+
+      expect(invite.summary, 'Your NIB health check');
+    });
+
+    // No METHOD at all is the same case: a calendar file, nothing to answer.
+    test('treats a fetched part with no METHOD as an event to keep', () {
+      const ics = 'BEGIN:VCALENDAR\r\n'
+          'BEGIN:VEVENT\r\n'
+          'UID:none-1\r\n'
+          'SUMMARY:Booking confirmed\r\n'
+          'DTSTART:20260901T090000Z\r\n'
+          'END:VEVENT\r\n'
+          'END:VCALENDAR';
+      final invite = parseGraphIcsAttachment(jsonEncode({
+        'contentBytes': base64.encode(utf8.encode(ics)),
+      }))!;
+
+      expect(invite.type, MeetingEmailType.publishedEvent);
+      expect(invite.summary, 'Booking confirmed');
+    });
+
+    // The reclassification must not reach the methods whose banners act through
+    // the message id — getEmail drops anything but publishedEvent.
+    test('leaves CANCEL, REPLY and COUNTER classified as themselves', () {
+      MeetingEmailType typeOf(String method) {
+        final ics = 'BEGIN:VCALENDAR\r\n'
+            'METHOD:$method\r\n'
+            'BEGIN:VEVENT\r\n'
+            'UID:x-1\r\n'
+            'DTSTART:20260901T090000Z\r\n'
+            'END:VEVENT\r\n'
+            'END:VCALENDAR';
+        return parseGraphIcsAttachment(jsonEncode({
+          'contentBytes': base64.encode(utf8.encode(ics)),
+        }))!.type;
+      }
+
+      expect(typeOf('CANCEL'), MeetingEmailType.cancellation);
+      expect(typeOf('REPLY'), MeetingEmailType.responseNotification);
+      expect(typeOf('COUNTER'), MeetingEmailType.proposedNewTime);
+    });
+
     test('returns null for a response carrying no bytes', () {
       expect(parseGraphIcsAttachment(jsonEncode({'name': 'x.ics'})), isNull);
       expect(parseGraphIcsAttachment('not json'), isNull);

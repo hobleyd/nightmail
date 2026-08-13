@@ -145,12 +145,19 @@ bool _isCalendarAttachment(Map<String, dynamic> attachment) {
 
 /// Decodes a separately-fetched `/attachments/{id}` response holding an ICS
 /// part and turns it into a [MeetingInvite]. `compute()` entry point.
+///
+/// Only ever reached for a message Graph did *not* classify itself, so a
+/// `REQUEST` here is `unprocessedRequest` by construction — see
+/// [buildMeetingInviteFromIcs].
 MeetingInvite? parseGraphIcsAttachment(String rawJson) {
   try {
     final json = jsonDecode(rawJson) as Map<String, dynamic>;
     final contentBytes = json['contentBytes'] as String?;
     if (contentBytes == null || contentBytes.isEmpty) return null;
-    return buildMeetingInviteFromIcs(utf8.decode(base64Decode(contentBytes)));
+    return buildMeetingInviteFromIcs(
+      utf8.decode(base64Decode(contentBytes)),
+      unprocessedRequest: true,
+    );
   } catch (_) {
     return null;
   }

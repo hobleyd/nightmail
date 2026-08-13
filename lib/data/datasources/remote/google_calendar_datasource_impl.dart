@@ -357,7 +357,10 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
 
     // Fallback: create the event (invite not yet auto-added to calendar).
     final body = <String, dynamic>{
-      'summary': event.summary,
+      // Omitted when the invitation has no title; Google shows an untitled
+      // event as "(No title)" itself, and nothing here knows the covering
+      // email's subject to offer a better one.
+      if (event.summary != null) 'summary': event.summary,
       'start': event.isAllDay
           ? {'date': _formatDate(event.start)}
           : {'dateTime': event.start.toUtc().toIso8601String(), 'timeZone': 'UTC'},

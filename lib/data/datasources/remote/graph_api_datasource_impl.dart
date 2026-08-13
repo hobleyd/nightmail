@@ -473,10 +473,17 @@ class GraphApiDatasourceImpl
   /// Graph classifies meeting mail itself, through `meetingMessageType`, and
   /// every action those banners offer is addressed to the message id — which
   /// only works for a real `eventMessage`. An ordinary message that merely
-  /// carries an invitation as a file is not one, so anything but a published
-  /// event is dropped rather than given buttons with nothing behind them.
-  /// `PUBLISH` is safe because its action creates a fresh event and never
-  /// refers back to the message.
+  /// carries an invitation as a file is not one, so anything needing an RSVP,
+  /// a cancellation or a proposal is dropped rather than given buttons with
+  /// nothing behind them.
+  ///
+  /// A published event is safe because its action creates a fresh event and
+  /// never refers back to the message — and so is a bare `REQUEST` on such a
+  /// message, which [buildMeetingInviteFromIcs] reclassifies as one for exactly
+  /// that reason (`unprocessedRequest`). Bulk senders routinely attach
+  /// `invite.ics` to a message Exchange never processes into a meeting; before
+  /// that, those drew no banner at all and the only way onto the calendar was to
+  /// retype the event.
   Future<MeetingInvite?> _fetchPublishedEventInvite(
       String messageId, String attachmentId) async {
     try {

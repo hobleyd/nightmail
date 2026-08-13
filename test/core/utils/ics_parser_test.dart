@@ -201,5 +201,54 @@ END:VCALENDAR''');
       final event = parseWith([r'SUMMARY:50\% off']);
       expect(event.summary, r'50\% off');
     });
+
+    test('SUMMARY is null when absent or empty, never a placeholder', () {
+      // A placeholder here reaches the calendar as the event's real name, and
+      // hides from the caller that the covering email's subject is the better
+      // title. Same convention as DESCRIPTION and LOCATION.
+      expect(parseWith(const []).summary, isNull);
+      expect(parseWith(['SUMMARY:']).summary, isNull);
+    });
+  });
+
+  group('IcsParser.parse property parameters', () {
+    IcsEvent parseWith(List<String> lines) => IcsParser.parse('''
+BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:evt-1
+DTSTART:20260615T100000Z
+${lines.join('\n')}
+END:VEVENT
+END:VCALENDAR''');
+
+    // Exchange and Outlook qualify text properties routinely. Matching the
+    // whole name read these as unknown properties, so a titled meeting was
+    // added to the calendar as "(No title)".
+    test('a LANGUAGE-qualified SUMMARY is still a SUMMARY', () {
+      expect(
+        parseWith(['SUMMARY;LANGUAGE=en-AU:Quarterly review']).summary,
+        'Quarterly review',
+      );
+    });
+
+    test('qualified DESCRIPTION and LOCATION are read too', () {
+      final event = parseWith([
+        r'DESCRIPTION;LANGUAGE=en-US:Agenda attached',
+        r'LOCATION;LANGUAGE=en-US:Level 3',
+      ]);
+      expect(event.description, 'Agenda attached');
+      expect(event.location, 'Level 3');
+    });
+
+    test('a quoted parameter value containing a colon does not split the name',
+        () {
+      // `_valueColonIndex` already skips the colon inside the quotes; the name
+      // still has to survive being cut at the first semicolon.
+      expect(
+        parseWith([r'SUMMARY;ALTREP="cid:part1.x@example.com":Standup'])
+            .summary,
+        'Standup',
+      );
+    });
   });
 }

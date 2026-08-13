@@ -495,9 +495,13 @@ later, which is what made the old restore in `folder_panel.dart` a no-op.
 `icsInviteType` (`data/datasources/remote/ics_meeting_invite.dart`) maps
 REQUEST/CANCEL/COUNTER/REPLY/PUBLISH onto `MeetingEmailType`: a REPLY draws no
 banner and a PUBLISH offers only "Add to calendar". Graph classifies from its own
-`meetingMessageType` and consults an attached ICS **only** for PUBLISH — every
+`meetingMessageType` and only consults an attached ICS when it did not — every
 other banner's action is addressed to the message id, which needs a real
 `eventMessage`.
+
+An `invite.ics` on a message Exchange never processed into a meeting is a file,
+not an invitation: a REQUEST there is reclassified as a published event
+(`unprocessedRequest`) so it gets the one banner that needs no `eventMessage`.
 
 ## Forwarding Somebody Else's Meeting
 

@@ -18,7 +18,17 @@ class IcsEvent {
     this.sequence,
   });
 
-  final String summary;
+  /// The `SUMMARY` property, or null when the part declares none — the same
+  /// convention as [location] and [description].
+  ///
+  /// Deliberately *not* substituted with a placeholder here. A parse result is
+  /// not a display string, and the callers have better answers than this one
+  /// could: an invitation's covering email carries a subject line, and a
+  /// counter-proposal has no business inventing a title for somebody else's
+  /// meeting. Stamping '(No title)' in at parse time is what made an added
+  /// event come out literally named that, with the email's own subject sitting
+  /// unused one field away.
+  final String? summary;
   final DateTime start;
   final DateTime end;
   final bool isAllDay;
@@ -85,11 +95,22 @@ class IcsParser {
       // case-sensitive, e.g. America/New_York); match property names
       // case-insensitively below.
       final rawName = line.substring(0, colonIdx);
-      final namePart = rawName.toUpperCase();
+      // Parameters are stripped before the name is matched: a property name
+      // cannot contain ';', so everything from the first one is parameters.
+      // Exchange and Outlook routinely qualify a title as
+      // `SUMMARY;LANGUAGE=en-AU:…`, and matching the whole name read that as an
+      // unknown property — so a meeting with a perfectly good title parsed as
+      // having none. `rawName` is kept whole for the TZID and CN parameters read
+      // out of it below.
+      final paramIdx = rawName.indexOf(';');
+      final namePart =
+          (paramIdx == -1 ? rawName : rawName.substring(0, paramIdx))
+              .toUpperCase();
       final value = line.substring(colonIdx + 1);
 
       if (namePart == 'SUMMARY') {
-        summary = _unescapeText(value);
+        final text = _unescapeText(value);
+        summary = text.isEmpty ? null : text;
       } else if (namePart == 'DESCRIPTION') {
         final text = _unescapeText(value);
         description = text.isEmpty ? null : text;
@@ -126,7 +147,7 @@ class IcsParser {
     }
 
     return IcsEvent(
-      summary: summary ?? '(No title)',
+      summary: summary,
       uid: uid,
       start: start ?? DateTime.now().toUtc(),
       end: end ??

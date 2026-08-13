@@ -43,7 +43,9 @@ String buildCounterIcs({
         'PARTSTAT=DECLINED;RSVP=FALSE:mailto:$attendeeEmail',
     'DTSTART:${icsFormatUtc(newStart)}',
     'DTEND:${icsFormatUtc(newEnd)}',
-    'SUMMARY:${icsEscape(event.summary)}',
+    // Omitted rather than defaulted: this goes back to the organizer, and
+    // '(No title)' would offer to rename their meeting to that.
+    if (event.summary != null) 'SUMMARY:${icsEscape(event.summary!)}',
     if (event.location != null) 'LOCATION:${icsEscape(event.location!)}',
     // Echoed verbatim: a counter to one occurrence of a series must carry the
     // same RECURRENCE-ID, including its TZID/RANGE parameters, or the

@@ -187,7 +187,16 @@ void main() {
     WidgetTester tester, {
     CalendarEvent? event,
     String? accountId = 'acct-1',
+    bool fillsWindow = false,
+    bool loose = false,
   }) async {
+    // Most tests hand the form a *tight* box, which stretches it to fill
+    // whatever it is given. `loose` reproduces the constraint a Scaffold body
+    // hands its child instead — the only shape in which the form's own choice
+    // of size (see [EventEditForm.fillsWindow]) is visible at all.
+    Widget box(Widget child) => loose
+        ? Align(alignment: Alignment.topLeft, child: child)
+        : child;
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
         body: BlocProvider<EventEditBloc>(
@@ -196,13 +205,14 @@ void main() {
             child: SizedBox(
               width: 1000,
               height: 800,
-              child: EventEditForm(
+              child: box(EventEditForm(
                 event: event,
                 accountId: accountId,
                 onClose: () {},
+                fillsWindow: fillsWindow,
                 checkAttendeesAvailability:
                     CheckAttendeesAvailability(repository),
-              ),
+              )),
             ),
           ),
         ),
@@ -406,6 +416,50 @@ void main() {
       final grid = tester.getSize(find.byWidgetPredicate(
           (w) => w.runtimeType.toString() == '_ScheduleGrid'));
       expect(grid.width, 1000 - 560 - 1);
+      expect(grid.height, 800);
+    });
+  });
+
+  group('EventEditForm — filling its window', () {
+    testWidgets('takes the whole window rather than its natural width',
+        (tester) async {
+      // Opening a meeting in its own window and resizing that window used to
+      // leave the form pinned at 560 with dead space beside and below it.
+      await useLargeSurface(tester);
+
+      await pumpForm(tester, event: _event(), fillsWindow: true, loose: true);
+      await settleDebounce(tester);
+
+      expect(tester.getSize(find.byType(EventEditForm)), const Size(1000, 800));
+    });
+
+    testWidgets('the in-app dialog still states its own width',
+        (tester) async {
+      // The dialog sizes itself to the form, so a form that took everything on
+      // offer would open full-screen.
+      await useLargeSurface(tester);
+
+      await pumpForm(tester, event: _event(), loose: true);
+      await settleDebounce(tester);
+
+      expect(tester.getSize(find.byType(EventEditForm)).width, kEventFormWidth);
+    });
+
+    testWidgets('opening the schedule pane leaves the form the width it had',
+        (tester) async {
+      // The host window grows by the pane's width when it opens, so the pane
+      // takes that and the form keeps what it was already using — snapping the
+      // form back to 560 would reflow every field under the user.
+      await useLargeSurface(tester);
+
+      await pumpForm(tester, event: _event(), fillsWindow: true, loose: true);
+      await settleDebounce(tester);
+      await tester.tap(find.text('Find a time'));
+      await tester.pumpAndSettle();
+
+      final grid = tester.getSize(find.byWidgetPredicate(
+          (w) => w.runtimeType.toString() == '_ScheduleGrid'));
+      expect(grid.width, kSchedulePaneWidth);
       expect(grid.height, 800);
     });
   });

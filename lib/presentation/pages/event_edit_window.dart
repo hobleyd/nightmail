@@ -354,6 +354,7 @@ class _EventEditWindowPageState extends State<_EventEditWindowPage>
             checkAttendeesAvailability: sl<CheckAttendeesAvailability>(),
             getMeetingRooms: sl<GetMeetingRooms>(),
             onSchedulePaneToggled: _onSchedulePaneToggled,
+            fillsWindow: true,
           ),
         ),
       ),

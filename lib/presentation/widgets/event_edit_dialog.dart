@@ -161,8 +161,9 @@ class EventEditDialog extends StatelessWidget {
 /// [_ReminderDropdown._options], or the dropdown asserts on a missing value.
 const int _kDefaultReminderMinutes = 15;
 
-/// Natural width of the form column. The form does not grow with the window —
-/// extra width goes to the schedule pane beside it.
+/// Natural width of the form column, and the width it opens a window at. A
+/// window's form then grows with it ([EventEditForm.fillsWindow]); the in-app
+/// dialog stays at this width.
 const double kEventFormWidth = 560;
 
 /// Width the schedule pane opens at, and the amount the host window grows by
@@ -187,6 +188,7 @@ class EventEditForm extends StatefulWidget {
     this.checkAttendeesAvailability,
     this.getMeetingRooms,
     this.onSchedulePaneToggled,
+    this.fillsWindow = false,
   });
   final CalendarEvent? event;
   final DateTime? initialStart;
@@ -203,6 +205,12 @@ class EventEditForm extends StatefulWidget {
   final GetMeetingRooms? getMeetingRooms;
 
   final void Function(bool expanded)? onSchedulePaneToggled;
+
+  /// Whether the form owns a whole window and should grow with it — the
+  /// standalone event window. The in-app dialog leaves this false and keeps the
+  /// old behaviour: it sizes *itself* to the form, so a form that filled the
+  /// space it was offered would make the dialog full-screen.
+  final bool fillsWindow;
 
   @override
   State<EventEditForm> createState() => _EventEditFormState();
@@ -830,13 +838,18 @@ class _EventEditFormState extends State<EventEditForm> {
   Widget build(BuildContext context) {
     final c = context.colors;
 
+    // Fill the height on offer rather than shrink-wrapping, so the footer sits
+    // on the bottom edge of the window instead of floating over dead space.
+    final fillHeight = _showSchedulePane || widget.fillsWindow;
+
     final formColumn = Column(
-      mainAxisSize: _showSchedulePane ? MainAxisSize.max : MainAxisSize.min,
+      mainAxisSize: fillHeight ? MainAxisSize.max : MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _TitleBar(title: _windowTitle, onClose: widget.onClose),
         Divider(height: 1, color: c.border),
         Flexible(
+          fit: fillHeight ? FlexFit.tight : FlexFit.loose,
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -1115,19 +1128,29 @@ class _EventEditFormState extends State<EventEditForm> {
         onTimeSelected: _onTimeSelected,
       );
 
-      // The form is a fixed-width column; every pixel the window gains goes to
-      // the schedule grid, which lays its columns out from its own constraints.
-      // Falls back to intrinsic sizes when the parent gives none — the in-app
-      // dialog variant, where an Expanded/unbounded height would assert.
+      // The schedule grid lays its columns out from its own constraints, so it
+      // takes whatever the form leaves. Falls back to intrinsic sizes when the
+      // parent gives none — the in-app dialog variant, where an
+      // Expanded/unbounded height would assert.
       return LayoutBuilder(
         builder: (context, constraints) {
           final bounded = constraints.hasBoundedWidth;
           // A window dragged narrower than form + grid squeezes the form
           // rather than pushing the grid off the edge.
-          final formWidth = bounded
-              ? math.max(_kMinFormWidth,
-                  math.min(kEventFormWidth, constraints.maxWidth - _kMinGridWidth))
-              : kEventFormWidth;
+          //
+          // In a window the form keeps the width it already had: opening the
+          // pane grows the window by exactly the pane's width, so handing the
+          // pane that much and the rest to the form leaves the form where it
+          // was instead of snapping it back to its natural 560.
+          final formWidth = !bounded
+              ? kEventFormWidth
+              : widget.fillsWindow
+                  ? math.max(_kMinFormWidth,
+                      constraints.maxWidth - (kSchedulePaneWidth + 1))
+                  : math.max(
+                      _kMinFormWidth,
+                      math.min(kEventFormWidth,
+                          constraints.maxWidth - _kMinGridWidth));
           final row = Row(
             mainAxisSize: bounded ? MainAxisSize.max : MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1147,6 +1170,9 @@ class _EventEditFormState extends State<EventEditForm> {
       );
     }
 
+    // In a window the form is the whole of it, so it takes the width it is
+    // given. Everywhere else it is one child among others and states its own.
+    if (widget.fillsWindow) return formColumn;
     return SizedBox(width: kEventFormWidth, child: formColumn);
   }
 }

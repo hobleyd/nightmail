@@ -477,6 +477,52 @@ void main() {
       expect(ignoring, findsWidgets);
     });
 
+    testWidgets('a control on the tile keeps the card away', (tester) async {
+      // The Join pill: the pointer is still inside the tile's own MouseRegion,
+      // so only an explicit suppressor can take the card down.
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: EventHoverTarget(
+              event: _event(subject: 'Sprint review'),
+              child: const SizedBox(
+                width: 120,
+                height: 40,
+                child: Row(
+                  children: [
+                    SizedBox(width: 40, height: 14, child: Text('Sprint')),
+                    EventHoverSuppressor(
+                      child: SizedBox(
+                        width: 40,
+                        height: 14,
+                        child: Text('Join'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ));
+
+      final gesture = await mouse(tester);
+      await gesture.moveTo(tester.getCenter(find.text('Join')));
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(card(), findsNothing);
+
+      // Back onto the tile proper: nothing else would reopen it, since the
+      // pointer never left the tile.
+      await hoverTile(tester, gesture);
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(card(), findsOneWidget);
+
+      // And an open card is taken down on the way in.
+      await gesture.moveTo(tester.getCenter(find.text('Join')));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(card(), findsNothing);
+    });
+
     testWidgets('keeps the card inside the window for a tile at the edge',
         (tester) async {
       tester.view.physicalSize = const Size(400, 300);

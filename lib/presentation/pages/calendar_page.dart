@@ -1706,7 +1706,9 @@ bool _isJoinable(CalendarEvent event, DateTime now) {
 
 /// Small inline "Join" pill shown on an imminent meeting's tile, so joining
 /// doesn't require the right-click context menu. Its own tap handler swallows
-/// the gesture, keeping the tile's select/edit/drag handlers from firing.
+/// the gesture, keeping the tile's select/edit/drag handlers from firing, and
+/// an [EventHoverSuppressor] keeps the meeting's hover card from covering the
+/// pill the pointer is aiming at.
 class _JoinButton extends StatelessWidget {
   const _JoinButton({required this.url, required this.color});
 
@@ -1718,24 +1720,26 @@ class _JoinButton extends StatelessWidget {
     // Pick a black/white foreground that stays legible on any tile colour
     // (e.g. white-on-yellow is too weak) using the pill background's luminance.
     final fg = color.computeLuminance() > 0.5 ? Colors.black : Colors.white;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => unawaited(
-        launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
-      ),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(3),
+    return EventHoverSuppressor(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => unawaited(
+          launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
         ),
-        child: Text(
-          'Join',
-          style: TextStyle(
-            color: fg,
-            fontSize: 9,
-            fontWeight: FontWeight.w700,
-            height: 1.2,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: Text(
+            'Join',
+            style: TextStyle(
+              color: fg,
+              fontSize: 9,
+              fontWeight: FontWeight.w700,
+              height: 1.2,
+            ),
           ),
         ),
       ),

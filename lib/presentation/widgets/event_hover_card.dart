@@ -57,6 +57,15 @@ class _EventHoverTargetState extends State<EventHoverTarget> {
   Timer? _hideTimer;
   bool _guardAcquired = false;
 
+  /// Whether the pointer is anywhere over the tile. Tracked because a control
+  /// on the tile ([EventHoverSuppressor]) can take the card down without the
+  /// pointer ever leaving, and letting go has to be able to bring it back.
+  bool _pointerInside = false;
+
+  /// Depth of the suppressors currently under the pointer — a count rather than
+  /// a flag because entering the next one arrives before leaving the last.
+  int _suppressors = 0;
+
   /// The tile's rect in global coordinates, captured when the card opens. The
   /// card is positioned against this rather than following the tile, so it is
   /// dismissed on scroll instead of being left pointing at empty grid.
@@ -94,8 +103,20 @@ class _EventHoverTargetState extends State<EventHoverTarget> {
   void _scheduleShow() {
     _hideTimer?.cancel();
     _showTimer?.cancel();
-    if (!widget.enabled) return;
+    if (!widget.enabled || _suppressors > 0) return;
     _showTimer = Timer(_showDelay, _showNow);
+  }
+
+  void _addSuppressor() {
+    _suppressors++;
+    _showTimer?.cancel();
+    _hideNow();
+  }
+
+  void _removeSuppressor() {
+    if (_suppressors > 0) _suppressors--;
+    // The pointer never left the tile, so nothing else would reopen the card.
+    if (_suppressors == 0 && _pointerInside) _scheduleShow();
   }
 
   void _showNow() {
@@ -140,9 +161,15 @@ class _EventHoverTargetState extends State<EventHoverTarget> {
           if (event is PointerScrollEvent) _hideNow();
         },
         child: MouseRegion(
-          onEnter: (_) => _scheduleShow(),
-          onExit: (_) => _scheduleHide(),
-          child: widget.child,
+          onEnter: (_) {
+            _pointerInside = true;
+            _scheduleShow();
+          },
+          onExit: (_) {
+            _pointerInside = false;
+            _scheduleHide();
+          },
+          child: _EventHoverScope(state: this, child: widget.child),
         ),
       ),
     );
@@ -161,6 +188,85 @@ class _EventHoverTargetState extends State<EventHoverTarget> {
           child: EventDetailsCard(event: widget.event),
         ),
       ),
+    );
+  }
+}
+
+/// Carries the enclosing [EventHoverTarget]'s state down to the tile, so a
+/// control drawn on the tile can find it without being handed a callback
+/// through every widget in between.
+class _EventHoverScope extends InheritedWidget {
+  const _EventHoverScope({required this.state, required super.child});
+
+  final _EventHoverTargetState state;
+
+  static _EventHoverTargetState? maybeOf(BuildContext context) => context
+      .dependOnInheritedWidgetOfExactType<_EventHoverScope>()
+      ?.state;
+
+  @override
+  bool updateShouldNotify(_EventHoverScope oldWidget) =>
+      state != oldWidget.state;
+}
+
+/// Wraps a control sitting *on* a calendar tile — the Join pill — so hovering
+/// it does not raise the meeting's hover card, and takes down one already open.
+///
+/// A nested [MouseRegion] cannot do this by itself: the pointer is still inside
+/// the tile's region, so the tile never sees an exit and `opaque` only hides a
+/// region from ones drawn behind it, not from its own ancestors.
+class EventHoverSuppressor extends StatefulWidget {
+  const EventHoverSuppressor({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  State<EventHoverSuppressor> createState() => _EventHoverSuppressorState();
+}
+
+class _EventHoverSuppressorState extends State<EventHoverSuppressor> {
+  _EventHoverTargetState? _target;
+  bool _held = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final target = _EventHoverScope.maybeOf(context);
+    if (target == _target) return;
+    if (_held) {
+      _target?._removeSuppressor();
+      target?._addSuppressor();
+    }
+    _target = target;
+  }
+
+  @override
+  void dispose() {
+    // The control can be taken off the tile while the pointer is still on it —
+    // a meeting ends and loses its Join pill — and the target would otherwise
+    // stay suppressed for good.
+    _release();
+    super.dispose();
+  }
+
+  void _hold() {
+    if (_held || _target == null) return;
+    _held = true;
+    _target!._addSuppressor();
+  }
+
+  void _release() {
+    if (!_held) return;
+    _held = false;
+    _target?._removeSuppressor();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => _hold(),
+      onExit: (_) => _release(),
+      child: widget.child,
     );
   }
 }

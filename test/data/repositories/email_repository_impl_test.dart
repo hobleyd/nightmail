@@ -154,7 +154,15 @@ void main() {
       ));
     });
 
-    test('caches without clearing on first page (skip=0)', () async {
+    // Regression: a folder that is never refreshed or polled (anything but
+    // the Inbox/watched folder) had no path that ever pruned a row that no
+    // longer belonged — a message cross-folder-expansion-cached under it
+    // once, or left behind by a past bug, resurfaced on every visit forever.
+    // The first page of an unfiltered fetch stands for the folder's whole
+    // contents, so it now replaces rather than upserts — same as
+    // EmailListBloc's manual refresh and MailPollerCubit's syncs.
+    test('replaces the folder cache on first page (skip=0, no filter)',
+        () async {
       when(mockRemoteDatasource.getEmails(
         folderId: anyNamed('folderId'),
         top: anyNamed('top'),
@@ -166,27 +174,23 @@ void main() {
         accountId: anyNamed('accountId'),
         folderId: anyNamed('folderId'),
         emails: anyNamed('emails'),
+        replaceFolder: anyNamed('replaceFolder'),
       )).thenAnswer((_) async {});
       when(mockAccountManager.activeAccount).thenReturn(tAccount);
 
       await repository.getEmails(folderId: 'folder-1', skip: 0);
       await Future.delayed(Duration.zero);
 
-      // Cache is cleared only via the explicit ClearEmailCacheForFolder use
-      // case on refresh, not implicitly by getEmails — otherwise load-more
-      // pagination would wipe out the pages fetched just before it.
-      verifyNever(mockLocalDatasource.clearCacheForFolder(
-        accountId: anyNamed('accountId'),
-        folderId: anyNamed('folderId'),
-      ));
       verify(mockLocalDatasource.cacheEmails(
         accountId: 'account-1',
         folderId: 'folder-1',
         emails: anyNamed('emails'),
+        replaceFolder: true,
       )).called(1);
     });
 
-    test('does not clear folder cache on subsequent pages (skip>0)', () async {
+    test('does not replace the folder cache on subsequent pages (skip>0)',
+        () async {
       when(mockRemoteDatasource.getEmails(
         folderId: anyNamed('folderId'),
         top: anyNamed('top'),
@@ -198,16 +202,56 @@ void main() {
         accountId: anyNamed('accountId'),
         folderId: anyNamed('folderId'),
         emails: anyNamed('emails'),
+        replaceFolder: anyNamed('replaceFolder'),
       )).thenAnswer((_) async {});
       when(mockAccountManager.activeAccount).thenReturn(tAccount);
 
+      // A load-more page must only ever add — replacing would wipe out the
+      // pages fetched just before it.
       await repository.getEmails(folderId: 'folder-1', skip: 25);
       await Future.delayed(Duration.zero);
 
-      verifyNever(mockLocalDatasource.clearCacheForFolder(
+      verify(mockLocalDatasource.cacheEmails(
+        accountId: 'account-1',
+        folderId: 'folder-1',
+        emails: anyNamed('emails'),
+        replaceFolder: false,
+      )).called(1);
+    });
+
+    // Regression: an AI-tool query filters to a subset (e.g. unread-only) of
+    // the folder — replacing the folder cache with just that subset would
+    // delete every cached read message on the next visit to the folder.
+    test('does not replace the folder cache on a filtered fetch even at '
+        'skip=0', () async {
+      when(mockRemoteDatasource.getEmails(
+        folderId: anyNamed('folderId'),
+        top: anyNamed('top'),
+        skip: anyNamed('skip'),
+        filter: anyNamed('filter'),
+        orderBy: anyNamed('orderBy'),
+      )).thenAnswer((_) async => [tEmailModel]);
+      when(mockLocalDatasource.cacheEmails(
         accountId: anyNamed('accountId'),
         folderId: anyNamed('folderId'),
-      ));
+        emails: anyNamed('emails'),
+        replaceFolder: anyNamed('replaceFolder'),
+      )).thenAnswer((_) async {});
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+
+      await repository.getEmails(
+        folderId: 'folder-1',
+        skip: 0,
+        filter: 'isRead eq false',
+      );
+      await Future.delayed(Duration.zero);
+
+      verify(mockLocalDatasource.cacheEmails(
+        accountId: 'account-1',
+        folderId: 'folder-1',
+        emails: anyNamed('emails'),
+        replaceFolder: false,
+      )).called(1);
     });
 
     // Regression: a message optimistically removed then drained/dequeued must

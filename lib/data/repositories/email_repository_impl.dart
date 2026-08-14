@@ -100,10 +100,19 @@ class EmailRepositoryImpl implements EmailRepository {
         final reconciled = await _reconcileAgainstPendingOps(accountId, emails);
         if (reconciled.isNotEmpty) {
           final effectiveFolderId = folderId ?? _defaultFolderKey;
+          // A plain cacheEmails is an upsert — it can only ever add. skip == 0
+          // and no filter means this is the folder's own first page (not a
+          // load-more page, not a filtered AI-tool query), so it stands for
+          // the folder's whole contents: replace, or a message that has since
+          // left the folder — including a row a past bug or a stale cache
+          // once left behind — sits there forever, resurfacing on every visit
+          // to a folder nothing else ever prunes. Mirrors
+          // EmailListBloc._onRefreshRequested and MailPollerCubit's syncs.
           unawaited(_localDatasource.cacheEmails(
             accountId: accountId,
             folderId: effectiveFolderId,
             emails: reconciled,
+            replaceFolder: skip == 0 && filter == null,
           ));
         }
         return Right<Failure, List<Email>>(reconciled);

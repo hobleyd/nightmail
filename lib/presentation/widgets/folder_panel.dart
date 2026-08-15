@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 
 import '../../core/platform/touch_metrics.dart';
 import '../../core/platform/window_utils.dart';
@@ -61,11 +62,56 @@ class _FolderPanelState extends State<FolderPanel> {
   late Set<String> _expandedIds;
   String? _creatingChildOfId;
   String? _renamingFolderId;
+  final GlobalKey _creatingRowKey = GlobalKey();
+  final GlobalKey _folderListAreaKey = GlobalKey();
+  final ScrollController _folderScrollController = ScrollController();
+  Timer? _autoScrollTimer;
+  // DragTargetDetails.offset is the drag feedback widget's anchored
+  // position, not the cursor — with the default childDragAnchorStrategy an
+  // email row's Draggable anchors wherever within that (wide, tall) row the
+  // user grabbed it, so the reported offset can be tens of pixels off the
+  // real pointer position. Track the pointer directly instead.
+  Offset? _lastPointerGlobalPosition;
 
   @override
   void initState() {
     super.initState();
     _expandedIds = Set.of(widget.initialExpandedIds);
+    GestureBinding.instance.pointerRouter.addGlobalRoute(_trackPointer);
+  }
+
+  void _trackPointer(PointerEvent event) {
+    if (event is PointerMoveEvent || event is PointerDownEvent) {
+      _lastPointerGlobalPosition = event.position;
+    }
+  }
+
+  @override
+  void dispose() {
+    GestureBinding.instance.pointerRouter.removeGlobalRoute(_trackPointer);
+    _autoScrollTimer?.cancel();
+    _folderScrollController.dispose();
+    super.dispose();
+  }
+
+  void _startAutoScroll(bool scrollUp) {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = Timer.periodic(const Duration(milliseconds: 16), (_) {
+      if (!_folderScrollController.hasClients) return;
+      final position = _folderScrollController.position;
+      final target = (position.pixels + (scrollUp ? -8.0 : 8.0))
+          .clamp(position.minScrollExtent, position.maxScrollExtent);
+      if (target == position.pixels) {
+        _stopAutoScroll();
+        return;
+      }
+      _folderScrollController.jumpTo(target);
+    });
+  }
+
+  void _stopAutoScroll() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
   }
 
   @override
@@ -174,13 +220,16 @@ class _FolderPanelState extends State<FolderPanel> {
       return true;
     }
 
-    return ListView.builder(
+    final listView = ListView.builder(
+      key: _folderListAreaKey,
+      controller: _folderScrollController,
       padding: const EdgeInsets.symmetric(vertical: 8),
       itemCount: items.length,
       itemBuilder: (context, i) {
         final item = items[i];
         if (item.isCreating) {
           return _FolderCreatingRow(
+            key: _creatingRowKey,
             depth: item.depth,
             onSubmit: (name) {
               // Fire the event before setState so the context is still mounted.
@@ -219,6 +268,8 @@ class _FolderPanelState extends State<FolderPanel> {
           hasChildren: item.folder.childFolderCount > 0,
           showUnreadCount: showUnreadCounts,
           isDraggable: !_isSystemFolder(item.folder),
+          onEmailDragMove: _handleFolderListDragMove,
+          onEmailDragLeave: _stopAutoScroll,
           canAcceptFolderDrop: (draggedId) =>
               canDrop(draggedId, item.folder.id),
           onFolderDropped: (draggedId) {
@@ -244,11 +295,41 @@ class _FolderPanelState extends State<FolderPanel> {
               _creatingChildOfId = item.folder.id;
             });
             widget.onExpandedIdsChanged?.call(_expandedIds);
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              final rowContext = _creatingRowKey.currentContext;
+              if (rowContext != null) {
+                Scrollable.ensureVisible(
+                  rowContext,
+                  duration: const Duration(milliseconds: 200),
+                  alignment: 0.5,
+                );
+              }
+            });
           },
           onRename: () => setState(() => _renamingFolderId = item.folder.id),
         );
       },
     );
+
+    return listView;
+  }
+
+  static const double _autoScrollHotZone = 32.0;
+
+  void _handleFolderListDragMove() {
+    final globalPosition = _lastPointerGlobalPosition;
+    if (globalPosition == null) return;
+    final renderObject = _folderListAreaKey.currentContext?.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.attached) return;
+    final local = renderObject.globalToLocal(globalPosition);
+    final height = renderObject.size.height;
+    if (local.dy < _autoScrollHotZone) {
+      _startAutoScroll(true);
+    } else if (local.dy > height - _autoScrollHotZone) {
+      _startAutoScroll(false);
+    } else {
+      _stopAutoScroll();
+    }
   }
 
   List<_DisplayItem> _buildDisplayList(List<EmailFolder> all) {
@@ -394,6 +475,8 @@ class _FolderItem extends StatefulWidget {
     required this.canAcceptFolderDrop,
     required this.onFolderDropped,
     this.showUnreadCount = true,
+    this.onEmailDragMove,
+    this.onEmailDragLeave,
   });
 
   final EmailFolder folder;
@@ -409,6 +492,11 @@ class _FolderItem extends StatefulWidget {
   final VoidCallback onExpandTap;
   final VoidCallback onAddFolder;
   final VoidCallback onRename;
+  // Notifies the panel while an email drag hovers this row, so it can
+  // re-check the (independently tracked) pointer position against the
+  // list's top/bottom edge and auto-scroll if needed.
+  final VoidCallback? onEmailDragMove;
+  final VoidCallback? onEmailDragLeave;
 
   @override
   State<_FolderItem> createState() => _FolderItemState();
@@ -419,6 +507,7 @@ class _FolderItemState extends State<_FolderItem>
   late final AnimationController _shimmer;
   StreamSubscription<EmailListState>? _sub;
   bool _isEmptying = false;
+  Timer? _hoverExpandTimer;
 
   bool get _isTrashFolder => ['deleted items', 'trash']
       .contains(widget.folder.displayName.toLowerCase());
@@ -456,9 +545,29 @@ class _FolderItemState extends State<_FolderItem>
 
   @override
   void dispose() {
+    _hoverExpandTimer?.cancel();
     _sub?.cancel();
     _shimmer.dispose();
     super.dispose();
+  }
+
+  // File-manager-style hover-to-expand: dwelling an email drag over a
+  // collapsed folder with children reveals its subfolders as drop targets.
+  // Scheduled once per hover (not restarted on every onMove, which fires
+  // continuously) and cancelled the moment the drag leaves or drops.
+  void _scheduleHoverExpand() {
+    if (!widget.hasChildren || widget.isExpanded || _hoverExpandTimer != null) {
+      return;
+    }
+    _hoverExpandTimer = Timer(const Duration(milliseconds: 600), () {
+      _hoverExpandTimer = null;
+      widget.onExpandTap();
+    });
+  }
+
+  void _cancelHoverExpand() {
+    _hoverExpandTimer?.cancel();
+    _hoverExpandTimer = null;
   }
 
   @override
@@ -495,7 +604,17 @@ class _FolderItemState extends State<_FolderItem>
   Widget _buildEmailDropTarget(BuildContext context, bool folderHovering) {
     return DragTarget<EmailDragData>(
       onWillAcceptWithDetails: (_) => true,
+      onMove: (_) {
+        widget.onEmailDragMove?.call();
+        _scheduleHoverExpand();
+      },
+      onLeave: (_) {
+        widget.onEmailDragLeave?.call();
+        _cancelHoverExpand();
+      },
       onAcceptWithDetails: (details) {
+        widget.onEmailDragLeave?.call();
+        _cancelHoverExpand();
         final listState = context.read<EmailListBloc>().state;
         final sourceFolderId =
             listState is EmailListLoaded ? listState.currentFolderId : null;
@@ -1272,6 +1391,7 @@ class _SettingsFooter extends StatelessWidget {
 
 class _FolderCreatingRow extends StatefulWidget {
   const _FolderCreatingRow({
+    super.key,
     required this.depth,
     required this.onSubmit,
     required this.onCancel,

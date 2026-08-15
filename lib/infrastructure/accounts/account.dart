@@ -100,6 +100,7 @@ final class MicrosoftAccount extends Account {
     required super.displayName,
     required super.emailAddress,
     required this.tenantId,
+    this.parentAccountId,
     super.firstName,
     super.lastName,
     super.jobTitle,
@@ -110,6 +111,15 @@ final class MicrosoftAccount extends Account {
   });
 
   final String tenantId;
+
+  /// Non-null when this account is a shared mailbox rather than a directly
+  /// signed-in identity: it has no OAuth credentials of its own and every
+  /// Graph call against it authenticates with the account whose [Account.id]
+  /// this points at, hitting `/users/{emailAddress}/...` instead of `/me/...`.
+  /// See AccountManager's `_authConfigFor`.
+  final String? parentAccountId;
+
+  bool get isSharedMailbox => parentAccountId != null;
 
   @override
   MicrosoftAccount copyWith({
@@ -136,6 +146,7 @@ final class MicrosoftAccount extends Account {
       address: address ?? this.address,
       signatureHtml: signatureHtml ?? this.signatureHtml,
       tenantId: tenantId ?? this.tenantId,
+      parentAccountId: parentAccountId,
     );
   }
 
@@ -145,6 +156,7 @@ final class MicrosoftAccount extends Account {
       displayName: json['displayName'] as String,
       emailAddress: json['emailAddress'] as String,
       tenantId: json['tenantId'] as String? ?? 'common',
+      parentAccountId: json['parentAccountId'] as String?,
       firstName: json['firstName'] as String? ?? '',
       lastName: json['lastName'] as String? ?? '',
       jobTitle: json['jobTitle'] as String? ?? '',
@@ -162,6 +174,7 @@ final class MicrosoftAccount extends Account {
         'displayName': displayName,
         'emailAddress': emailAddress,
         'tenantId': tenantId,
+        if (parentAccountId != null) 'parentAccountId': parentAccountId,
         'firstName': firstName,
         'lastName': lastName,
         'jobTitle': jobTitle,
@@ -177,6 +190,7 @@ final class MicrosoftAccount extends Account {
         displayName,
         emailAddress,
         tenantId,
+        parentAccountId,
         firstName,
         lastName,
         jobTitle,

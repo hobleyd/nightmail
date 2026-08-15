@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/core/config/oauth_client_id_storage.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
@@ -305,6 +307,229 @@ void main() {
         () => accountManager.reauthenticateOAuthAccount('1'),
         throwsA(isA<StateError>()),
       );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Shared mailboxes (MicrosoftAccount.parentAccountId)
+  // ---------------------------------------------------------------------------
+
+  group('addSharedMailbox', () {
+    setUp(() {
+      when(mockAccountStorage.loadActiveIndex()).thenAnswer((_) async => 0);
+      stubStorageEmpty();
+      stubSave();
+    });
+
+    test('throws when the parent account is not Microsoft', () async {
+      when(mockAccountStorage.loadAccounts()).thenAnswer((_) async => [
+            const GmailAccount(
+                id: '1', displayName: 'Alice', emailAddress: 'a@gmail.com'),
+          ]);
+      await accountManager.initialize();
+
+      expect(
+        () => accountManager.addSharedMailbox(
+          parentAccountId: '1',
+          email: 'sales@corp.com',
+          displayName: 'Sales',
+        ),
+        throwsA(isA<StateError>()),
+      );
+    });
+
+    test('adds a MicrosoftAccount riding on the parent and makes it active',
+        () async {
+      when(mockAccountStorage.loadAccounts()).thenAnswer((_) async => [
+            const MicrosoftAccount(
+                id: '1',
+                displayName: 'Bob',
+                emailAddress: 'b@corp.com',
+                tenantId: 'tid-1'),
+          ]);
+      await accountManager.initialize();
+
+      final added = await accountManager.addSharedMailbox(
+        parentAccountId: '1',
+        email: 'sales@corp.com',
+        displayName: 'Sales Team',
+      );
+
+      final shared = added as MicrosoftAccount;
+      expect(shared.parentAccountId, '1');
+      expect(shared.isSharedMailbox, isTrue);
+      expect(shared.emailAddress, 'sales@corp.com');
+      // Tenant is inherited from the parent — a shared mailbox has no OAuth
+      // flow of its own to have discovered one independently.
+      expect(shared.tenantId, 'tid-1');
+      expect(accountManager.activeAccount?.id, shared.id);
+      expect(accountManager.accounts.map((a) => a.id), containsAll(['1', shared.id]));
+    });
+  });
+
+  group('resolveSharedMailboxCandidate', () {
+    setUp(() {
+      when(mockAccountStorage.loadActiveIndex()).thenAnswer((_) async => 0);
+      stubStorageEmpty();
+    });
+
+    test('returns null when the parent id is not a Microsoft account',
+        () async {
+      when(mockAccountStorage.loadAccounts()).thenAnswer((_) async => [
+            const GmailAccount(
+                id: '1', displayName: 'Alice', emailAddress: 'a@gmail.com'),
+          ]);
+      await accountManager.initialize();
+
+      final result = await accountManager
+          .resolveSharedMailboxCandidate('1', 'sales@corp.com');
+
+      expect(result, isNull);
+    });
+
+    test(
+        'reports needsReauth without reaching the directory when the stored '
+        'token predates the .Shared scopes', () async {
+      when(mockAccountStorage.loadAccounts()).thenAnswer((_) async => [
+            const MicrosoftAccount(
+                id: '1',
+                displayName: 'Bob',
+                emailAddress: 'b@corp.com',
+                tenantId: 'tid'),
+          ]);
+      await accountManager.initialize();
+
+      // A token saved before Mail.Read.Shared was added to the requested
+      // scopes — the parent can read its own mail but not a shared mailbox.
+      when(mockSecureStorage.read(key: 'token_1')).thenAnswer((_) async => jsonEncode({
+            'access_token': 'tok',
+            'expires_at':
+                DateTime.now().add(const Duration(hours: 1)).toIso8601String(),
+            'refresh_token': 'refresh',
+            'token_type': 'Bearer',
+            'scope': 'openid profile https://graph.microsoft.com/Mail.Read',
+          }));
+
+      // No Dio/network mocking exists anywhere in this file — if this reached
+      // the directory lookup or the probe, the underlying real Dio() would
+      // either hang or throw against this sandbox's lack of network access.
+      // Completing with the expected result proves the scope check runs
+      // first and short-circuits both network calls.
+      final result = await accountManager
+          .resolveSharedMailboxCandidate('1', 'sales@corp.com');
+
+      expect(result, isNotNull);
+      expect(result!.needsReauth, isTrue);
+      expect(result.hasAccess, isFalse);
+    });
+  });
+
+  group('shared mailbox accounts', () {
+    setUp(() {
+      when(mockAccountStorage.loadActiveIndex()).thenAnswer((_) async => 0);
+      stubStorageEmpty();
+      stubSave();
+      when(mockSecureStorage.delete(key: anyNamed('key')))
+          .thenAnswer((_) async {});
+    });
+
+    test('removing the parent cascades to its shared mailboxes', () async {
+      when(mockAccountStorage.loadAccounts()).thenAnswer((_) async => [
+            const MicrosoftAccount(
+                id: '1',
+                displayName: 'Bob',
+                emailAddress: 'b@corp.com',
+                tenantId: 'tid'),
+            const MicrosoftAccount(
+                id: '2',
+                displayName: 'Sales',
+                emailAddress: 'sales@corp.com',
+                tenantId: 'tid',
+                parentAccountId: '1'),
+          ]);
+      await accountManager.initialize();
+
+      await accountManager.removeAccount('1');
+
+      expect(accountManager.accounts, isEmpty);
+    });
+
+    test("removing a shared mailbox does not clear the parent's token",
+        () async {
+      when(mockAccountStorage.loadAccounts()).thenAnswer((_) async => [
+            const MicrosoftAccount(
+                id: '1',
+                displayName: 'Bob',
+                emailAddress: 'b@corp.com',
+                tenantId: 'tid'),
+            const MicrosoftAccount(
+                id: '2',
+                displayName: 'Sales',
+                emailAddress: 'sales@corp.com',
+                tenantId: 'tid',
+                parentAccountId: '1'),
+          ]);
+      await accountManager.initialize();
+
+      await accountManager.removeAccount('2');
+
+      verifyNever(mockSecureStorage.delete(key: 'token_1'));
+      expect(accountManager.accounts.map((a) => a.id), ['1']);
+    });
+
+    test(
+        "getUnauthenticatedAccountIds follows the parent's credential status",
+        () async {
+      when(mockAccountStorage.loadAccounts()).thenAnswer((_) async => [
+            const MicrosoftAccount(
+                id: '1',
+                displayName: 'Bob',
+                emailAddress: 'b@corp.com',
+                tenantId: 'tid'),
+            const MicrosoftAccount(
+                id: '2',
+                displayName: 'Sales',
+                emailAddress: 'sales@corp.com',
+                tenantId: 'tid',
+                parentAccountId: '1'),
+          ]);
+      await accountManager.initialize();
+      // Parent '1' has no stored token (stubStorageEmpty) — the shared
+      // mailbox '2' never has one of its own either way.
+
+      final unauth = await accountManager.getUnauthenticatedAccountIds();
+
+      expect(unauth, containsAll(['1', '2']));
+    });
+
+    test(
+        'getUnauthenticatedAccountIds treats the shared mailbox as '
+        "authenticated once the parent's token is valid", () async {
+      when(mockAccountStorage.loadAccounts()).thenAnswer((_) async => [
+            const MicrosoftAccount(
+                id: '1',
+                displayName: 'Bob',
+                emailAddress: 'b@corp.com',
+                tenantId: 'tid'),
+            const MicrosoftAccount(
+                id: '2',
+                displayName: 'Sales',
+                emailAddress: 'sales@corp.com',
+                tenantId: 'tid',
+                parentAccountId: '1'),
+          ]);
+      await accountManager.initialize();
+
+      when(mockSecureStorage.read(key: 'token_1')).thenAnswer((_) async => jsonEncode({
+            'access_token': 'tok',
+            'expires_at':
+                DateTime.now().add(const Duration(hours: 1)).toIso8601String(),
+            'refresh_token': 'refresh',
+          }));
+
+      final unauth = await accountManager.getUnauthenticatedAccountIds();
+
+      expect(unauth, isEmpty);
     });
   });
 }

@@ -16,6 +16,7 @@ import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_folder.dart';
 import '../../infrastructure/accounts/account.dart';
+import 'add_shared_mailbox_dialog.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
 import '../blocs/email_detail/email_detail_event.dart';
@@ -415,28 +416,7 @@ class _PanelHeader extends StatelessWidget {
           Icon(Icons.mail_outline_rounded,
               size: touchIcon(18), color: AppColors.accent),
           const SizedBox(width: 8),
-          Expanded(
-            child: BlocBuilder<AccountCubit, AccountState>(
-              builder: (context, state) {
-                String name = 'NightMail';
-                if (state is AccountsLoaded) {
-                  final acc = state.activeAccount;
-                  name = acc.displayName.isEmpty ? acc.emailAddress : acc.displayName;
-                }
-                return Text(
-                  name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: c.textPrimary,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -0.2,
-                  ),
-                );
-              },
-            ),
-          ),
+          const Expanded(child: AccountMenu()),
           IconButton(
             icon: Icon(Icons.search, size: touchIcon(18), color: c.textMuted),
             tooltip: 'Search',
@@ -453,6 +433,234 @@ class _PanelHeader extends StatelessWidget {
             },
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Account name + switcher, formerly a separate icon button at the bottom of
+/// the panel (`_SettingsFooter`'s `manage_accounts` menu) — moved here so
+/// switching accounts and adding one live behind the same control the
+/// account name already suggests is clickable.
+@visibleForTesting
+class AccountMenu extends StatelessWidget {
+  @visibleForTesting
+  const AccountMenu({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final accountState = context.watch<AccountCubit>().state;
+    final pollerState = context.watch<MailPollerCubit>().state;
+    final hasNewMail = pollerState.accountsWithNewMail.isNotEmpty;
+    final hasReauthIssue = pollerState.accountsNeedingReauth.isNotEmpty;
+
+    String name = 'NightMail';
+    Account? activeAccount;
+    if (accountState is AccountsLoaded) {
+      activeAccount = accountState.activeAccount;
+      name = activeAccount.displayName.isEmpty
+          ? activeAccount.emailAddress
+          : activeAccount.displayName;
+    }
+
+    return PopupMenuButton<Object>(
+      tooltip: hasReauthIssue
+          ? 'Accounts (re-authorization needed)'
+          : 'Accounts',
+      padding: EdgeInsets.zero,
+      position: PopupMenuPosition.under,
+      onSelected: (value) async {
+        if (value == 'add_account') {
+          _showAddAccountDialog(context);
+          return;
+        }
+        if (value == 'add_shared_mailbox') {
+          if (activeAccount is MicrosoftAccount) {
+            _showAddSharedMailboxDialog(context, activeAccount);
+          }
+          return;
+        }
+        if (value is! int) return;
+
+        final accountCubit = context.read<AccountCubit>();
+        final homeCubit = context.read<HomeCubit>();
+        final pollerCubit = context.read<MailPollerCubit>();
+
+        // Mark the selected account as viewed to clear its badge.
+        final currentState = accountCubit.state;
+        if (currentState is AccountsLoaded &&
+            value < currentState.accounts.length) {
+          pollerCubit.markAccountViewed(currentState.accounts[value].id);
+        }
+
+        await accountCubit.switchToAccount(value);
+
+        // Everything else a switch entails — remembering the folder this
+        // account is being left in, dropping the selection, clearing the
+        // panes, re-requesting the folder list — belongs to HomePage's
+        // AccountCubit listener, which also covers the switches a
+        // notification tap makes. The saved folder is restored later
+        // still, once the new list has landed and the id can be checked
+        // against it; restoring it here selected a folder the listener
+        // then cleared, and could name one the account no longer has.
+        if (context.mounted) {
+          final newState = accountCubit.state;
+          if (newState is AccountsLoaded) {
+            homeCubit.setAccountLabel(newState.activeAccount.displayName);
+          }
+        }
+      },
+      itemBuilder: (context) {
+        final pollerState = context.read<MailPollerCubit>().state;
+        final newMailAccounts = pollerState.accountsWithNewMail;
+        final reauthAccounts = pollerState.accountsNeedingReauth;
+        final items = <PopupMenuEntry<Object>>[];
+        if (accountState is AccountsLoaded) {
+          for (int i = 0; i < accountState.accounts.length; i++) {
+            final acc = accountState.accounts[i];
+            final isActive = i == accountState.activeIndex;
+            final hasNewMailForAccount = newMailAccounts.contains(acc.id);
+            final needsReauthForAccount = reauthAccounts.contains(acc.id);
+            items.add(
+              PopupMenuItem<Object>(
+                value: i,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        acc.displayName,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: isActive || hasNewMailForAccount
+                              ? FontWeight.w600
+                              : FontWeight.normal,
+                        ),
+                      ),
+                    ),
+                    if (needsReauthForAccount)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 8),
+                        child: Icon(Icons.error_rounded,
+                            size: touchIcon(14),
+                            color: const Color(0xFFE57373)),
+                      ),
+                    if (isActive)
+                      Icon(Icons.check,
+                          size: touchIcon(14), color: AppColors.accent)
+                    else if (hasNewMailForAccount)
+                      Container(
+                        width: 7,
+                        height: 7,
+                        decoration: const BoxDecoration(
+                          color: AppColors.accent,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          }
+          items.add(const PopupMenuDivider());
+        }
+        items.add(
+          const PopupMenuItem<Object>(
+            value: 'add_account',
+            child: Text('Add Account', style: TextStyle(fontSize: 13)),
+          ),
+        );
+        if (activeAccount is MicrosoftAccount) {
+          items.add(
+            const PopupMenuItem<Object>(
+              value: 'add_shared_mailbox',
+              child: Text('Add Shared Mailbox…', style: TextStyle(fontSize: 13)),
+            ),
+          );
+        }
+        return items;
+      },
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(
+            child: Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: c.textPrimary,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.2,
+              ),
+            ),
+          ),
+          if (hasReauthIssue)
+            Padding(
+              padding: const EdgeInsets.only(left: 4),
+              child: Icon(Icons.error_rounded,
+                  size: touchIcon(12), color: const Color(0xFFE57373)),
+            )
+          else if (hasNewMail)
+            Container(
+              width: 7,
+              height: 7,
+              margin: const EdgeInsets.only(left: 4),
+              decoration: const BoxDecoration(
+                color: AppColors.accent,
+                shape: BoxShape.circle,
+              ),
+            ),
+          const SizedBox(width: 2),
+          Icon(Icons.expand_more, size: touchIcon(16), color: c.textMuted),
+        ],
+      ),
+    );
+  }
+
+  void _showAddAccountDialog(BuildContext context) {
+    final themeCubit = context.read<ThemeCubit>();
+    final accountCubit = context.read<AccountCubit>();
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => MultiBlocProvider(
+        providers: [
+          BlocProvider.value(value: themeCubit),
+          BlocProvider.value(value: accountCubit),
+        ],
+        child: const AddAccountPage(),
+      ),
+    );
+  }
+
+  /// [account] is the active Microsoft account — itself a shared mailbox or a
+  /// directly signed-in one. Either way the new mailbox rides on whichever
+  /// account actually owns credentials, so a shared mailbox's own
+  /// [MicrosoftAccount.parentAccountId] is used in place of its id.
+  void _showAddSharedMailboxDialog(BuildContext context, MicrosoftAccount account) {
+    final trueParentId = account.parentAccountId ?? account.id;
+    final accountCubit = context.read<AccountCubit>();
+    final state = accountCubit.state;
+    var parentLabel = account.emailAddress;
+    if (state is AccountsLoaded) {
+      final parent = state.accounts.cast<Account?>().firstWhere(
+            (a) => a?.id == trueParentId,
+            orElse: () => null,
+          );
+      if (parent != null) {
+        parentLabel =
+            parent.emailAddress.isEmpty ? parent.displayName : parent.emailAddress;
+      }
+    }
+    showDialog<bool>(
+      context: context,
+      builder: (ctx) => BlocProvider.value(
+        value: accountCubit,
+        child: AddSharedMailboxDialog(
+          parentAccountId: trueParentId,
+          parentAccountLabel: parentLabel,
+        ),
       ),
     );
   }
@@ -1125,10 +1333,6 @@ class _SettingsFooter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final accountState = context.watch<AccountCubit>().state;
-    final pollerState = context.watch<MailPollerCubit>().state;
-    final hasNewMail = pollerState.accountsWithNewMail.isNotEmpty;
-    final hasReauthIssue = pollerState.accountsNeedingReauth.isNotEmpty;
     // Red dot on the Tasks icon: the active account has something already past
     // due, in any of its lists — not only the one the pane last showed.
     final overdueTasks = context.watch<OverdueTasksCubit>().state;
@@ -1139,140 +1343,6 @@ class _SettingsFooter extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 8),
         child: Row(
         children: [
-          PopupMenuButton<int>(
-            tooltip: hasReauthIssue
-                ? 'Accounts (re-authorization needed)'
-                : 'Accounts',
-            padding: EdgeInsets.zero,
-            constraints: BoxConstraints(
-              minWidth: touchTarget(28),
-              minHeight: touchTarget(28),
-            ),
-            icon: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Icon(Icons.manage_accounts_outlined,
-                    size: touchIcon(16), color: c.textMuted),
-                if (hasReauthIssue)
-                  Positioned(
-                    top: -3,
-                    right: -3,
-                    child: Icon(Icons.error_rounded,
-                        size: touchIcon(12), color: const Color(0xFFE57373)),
-                  )
-                else if (hasNewMail)
-                  Positioned(
-                    top: -2,
-                    right: -2,
-                    child: Container(
-                      width: 7,
-                      height: 7,
-                      decoration: const BoxDecoration(
-                        color: AppColors.accent,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            onSelected: (index) async {
-              if (index == -1) {
-                _showAddAccountDialog(context);
-                return;
-              }
-
-              final accountCubit = context.read<AccountCubit>();
-              final homeCubit = context.read<HomeCubit>();
-              final pollerCubit = context.read<MailPollerCubit>();
-
-              // Mark the selected account as viewed to clear its badge.
-              final currentState = accountCubit.state;
-              if (currentState is AccountsLoaded &&
-                  index < currentState.accounts.length) {
-                pollerCubit
-                    .markAccountViewed(currentState.accounts[index].id);
-              }
-
-              await accountCubit.switchToAccount(index);
-
-              // Everything else a switch entails — remembering the folder this
-              // account is being left in, dropping the selection, clearing the
-              // panes, re-requesting the folder list — belongs to HomePage's
-              // AccountCubit listener, which also covers the switches a
-              // notification tap makes. The saved folder is restored later
-              // still, once the new list has landed and the id can be checked
-              // against it; restoring it here selected a folder the listener
-              // then cleared, and could name one the account no longer has.
-              if (context.mounted) {
-                final newState = accountCubit.state;
-                if (newState is AccountsLoaded) {
-                  homeCubit.setAccountLabel(newState.activeAccount.displayName);
-                }
-              }
-            },
-            itemBuilder: (context) {
-              final pollerState = context.read<MailPollerCubit>().state;
-              final newMailAccounts = pollerState.accountsWithNewMail;
-              final reauthAccounts = pollerState.accountsNeedingReauth;
-              final items = <PopupMenuEntry<int>>[];
-              if (accountState is AccountsLoaded) {
-                for (int i = 0; i < accountState.accounts.length; i++) {
-                  final acc = accountState.accounts[i];
-                  final isActive = i == accountState.activeIndex;
-                  final hasNewMailForAccount =
-                      newMailAccounts.contains(acc.id);
-                  final needsReauthForAccount = reauthAccounts.contains(acc.id);
-                  items.add(
-                    PopupMenuItem(
-                      value: i,
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              acc.displayName,
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: isActive || hasNewMailForAccount
-                                    ? FontWeight.w600
-                                    : FontWeight.normal,
-                              ),
-                            ),
-                          ),
-                          if (needsReauthForAccount)
-                            Padding(
-                              padding: const EdgeInsets.only(left: 8),
-                              child: Icon(Icons.error_rounded,
-                                  size: touchIcon(14),
-                                  color: const Color(0xFFE57373)),
-                            ),
-                          if (isActive)
-                            Icon(Icons.check,
-                                size: touchIcon(14), color: AppColors.accent)
-                          else if (hasNewMailForAccount)
-                            Container(
-                              width: 7,
-                              height: 7,
-                              decoration: const BoxDecoration(
-                                color: AppColors.accent,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  );
-                }
-                items.add(const PopupMenuDivider());
-              }
-              items.add(
-                const PopupMenuItem(
-                  value: -1,
-                  child: Text('Add Account', style: TextStyle(fontSize: 13)),
-                ),
-              );
-              return items;
-            },
-          ),
           GestureDetector(
             onDoubleTap: !kIsWeb && (Platform.isAndroid || Platform.isIOS)
                 ? null
@@ -1371,21 +1441,6 @@ class _SettingsFooter extends StatelessWidget {
         ],
       ),
     ));
-  }
-
-  void _showAddAccountDialog(BuildContext context) {
-    final themeCubit = context.read<ThemeCubit>();
-    final accountCubit = context.read<AccountCubit>();
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => MultiBlocProvider(
-        providers: [
-          BlocProvider.value(value: themeCubit),
-          BlocProvider.value(value: accountCubit),
-        ],
-        child: const AddAccountPage(),
-      ),
-    );
   }
 }
 

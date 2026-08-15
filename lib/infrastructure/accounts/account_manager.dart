@@ -173,25 +173,49 @@ class AccountManager {
       orElse: () => null,
     );
     if (account is! MicrosoftAccount) return null;
-    final tokenStorage = TokenStorage(
-      _secureStorage,
-      storageKey: 'token_${account.id}',
-    );
+    final cfg = _microsoftAuthConfig(account);
     final authSvc = MicrosoftAuthService(
       clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
-      tenantId: account.tenantId,
+      tenantId: cfg.tenantId,
       redirectUri: AppConfig.microsoftRedirectUri,
-      tokenStorage: tokenStorage,
+      tokenStorage: cfg.tokenStorage,
     );
     final ds = GraphApiDatasourceImpl(
+      mailboxAddress: cfg.mailboxAddress,
       client: GraphHttpClient(
         authService: authSvc,
-        onAuthFailure: () => _authFailureController.add(accountId),
-        onAuthSuccess: () => _authSuccessController.add(accountId),
+        onAuthFailure: () => _authFailureController.add(cfg.credentialOwnerId),
+        onAuthSuccess: () => _authSuccessController.add(cfg.credentialOwnerId),
       ),
     );
     _directoryDatasourceCache[accountId] = ds;
     return ds;
+  }
+
+  /// Resolves how to authenticate a Graph call for [account]: which token to
+  /// use, which tenant, and which mailbox path to hit.
+  ///
+  /// A shared mailbox ([MicrosoftAccount.parentAccountId] set) has no OAuth
+  /// credentials of its own — every field here follows the parent account's
+  /// token, and [mailboxAddress] carries the shared mailbox's own address so
+  /// GraphApiDatasourceImpl targets `/users/{mailboxAddress}/...` instead of
+  /// `/me/...`. [credentialOwnerId] is who a 401 should actually flag for
+  /// re-auth — always the parent for a shared mailbox, which owns no
+  /// credentials of its own to invalidate.
+  ({
+    TokenStorage tokenStorage,
+    String tenantId,
+    String credentialOwnerId,
+    String? mailboxAddress,
+  }) _microsoftAuthConfig(MicrosoftAccount account) {
+    final ownerId = account.parentAccountId ?? account.id;
+    return (
+      tokenStorage: TokenStorage(_secureStorage, storageKey: 'token_$ownerId'),
+      tenantId: account.tenantId,
+      credentialOwnerId: ownerId,
+      mailboxAddress:
+          account.parentAccountId != null ? account.emailAddress : null,
+    );
   }
 
   AuthService get activeAuthService {
@@ -312,6 +336,83 @@ class AccountManager {
     _buildDatasourcesForActiveAccount();
   }
 
+  /// Looks up [email] in [parentAccountId]'s directory and, if found, probes
+  /// whether its mailbox is actually reachable with the current token.
+  ///
+  /// The two checks Graph offers in place of the "list shared mailboxes I can
+  /// add" API it doesn't have (see MicrosoftAuthService's `.Shared` scopes):
+  /// a directory lookup finds the display name for any address, and only the
+  /// probe says whether Exchange has actually granted Full Access. Returns
+  /// null if [email] isn't in [parentAccountId]'s directory, or if
+  /// [parentAccountId] isn't a Microsoft account with a usable token.
+  ///
+  /// A token refresh renews the existing grant, it does not widen it — an
+  /// account authorised before the `.Shared` scopes were added keeps a token
+  /// that will never carry them until the user re-authenticates from
+  /// Settings. Probing that token anyway would 403 and read exactly like "no
+  /// Full Access grant", which is the wrong diagnosis and sends the user to
+  /// ask an admin for something they already have; [needsReauth] lets the
+  /// caller tell the two apart. Checked before the directory lookup, not
+  /// just for testability: there is no point spending a round trip on a
+  /// request that cannot succeed. One consequence — a typo'd address on a
+  /// stale-scope account reads "needs re-authenticating" rather than "not
+  /// found in the directory", which is fine, since re-authenticating is
+  /// required either way before anything here can work.
+  Future<({String displayName, bool hasAccess, bool needsReauth})?>
+      resolveSharedMailboxCandidate(
+    String parentAccountId,
+    String email,
+  ) async {
+    final ds = directoryDatasourceForAccount(parentAccountId);
+    if (ds == null) return null;
+
+    final scope = await _storedScope(parentAccountId);
+    if (scope != null && !scope.contains('Mail.Read.Shared')) {
+      return (displayName: email, hasAccess: false, needsReauth: true);
+    }
+
+    final profile = await ds.fetchDirectoryProfile(email);
+    if (profile == null) return null;
+    final displayName = profile.name ?? email;
+
+    final hasAccess = await ds.probeSharedMailboxAccess(email);
+    return (displayName: displayName, hasAccess: hasAccess, needsReauth: false);
+  }
+
+  Future<String?> _storedScope(String accountId) async {
+    final ts = TokenStorage(_secureStorage, storageKey: 'token_$accountId');
+    final token = await ts.loadToken();
+    return token?.scope;
+  }
+
+  /// Adds [email] as a shared mailbox riding on [parentAccountId]'s
+  /// credentials and makes it the active account.
+  ///
+  /// Callers must have already confirmed access via
+  /// [resolveSharedMailboxCandidate] — this does not probe again, so pointing
+  /// it at a mailbox the parent cannot actually reach adds an account that
+  /// will 403 on every request.
+  Future<Account> addSharedMailbox({
+    required String parentAccountId,
+    required String email,
+    required String displayName,
+  }) async {
+    final parent = accountById(parentAccountId);
+    if (parent is! MicrosoftAccount) {
+      throw StateError('Unknown Microsoft account: $parentAccountId');
+    }
+    const uuid = Uuid();
+    final account = MicrosoftAccount(
+      id: uuid.v4(),
+      displayName: displayName,
+      emailAddress: email,
+      tenantId: parent.tenantId,
+      parentAccountId: parentAccountId,
+    );
+    await addAccount(account);
+    return account;
+  }
+
   /// Update an existing account.
   Future<void> updateAccount(Account updatedAccount) async {
     final idx = _accounts.indexWhere((a) => a.id == updatedAccount.id);
@@ -351,7 +452,20 @@ class AccountManager {
   }
 
   /// Remove account by ID. Adjusts active index if needed.
+  ///
+  /// Cascades to any shared mailboxes riding on this account's credentials
+  /// ([MicrosoftAccount.parentAccountId]) — orphaning one instead would leave
+  /// it pointing at a token that no longer exists.
   Future<void> removeAccount(String accountId) async {
+    final children = _accounts
+        .whereType<MicrosoftAccount>()
+        .where((a) => a.parentAccountId == accountId)
+        .map((a) => a.id)
+        .toList();
+    for (final childId in children) {
+      await removeAccount(childId);
+    }
+
     final idx = _accounts.indexWhere((a) => a.id == accountId);
     if (idx == -1) return;
 
@@ -425,6 +539,12 @@ class AccountManager {
     final account = accountById(accountId);
     if (account == null) throw StateError('Unknown account: $accountId');
 
+    // A shared mailbox has no credentials of its own to renew — the token
+    // that needs refreshing belongs to whichever account it rides on.
+    if (account is MicrosoftAccount && account.parentAccountId != null) {
+      return reauthenticateOAuthAccount(account.parentAccountId!);
+    }
+
     // Settings can edit the OAuth client IDs, so pick up any change made since
     // the last load before building the service (as addAccount does).
     await _loadAndMigrateClientIds();
@@ -482,21 +602,19 @@ class AccountManager {
   EmailRemoteDatasource buildEmailDatasourceForAccount(Account account) {
     switch (account) {
       case MicrosoftAccount():
-        final tokenStorage = TokenStorage(
-          _secureStorage,
-          storageKey: 'token_${account.id}',
-        );
+        final cfg = _microsoftAuthConfig(account);
         final authSvc = MicrosoftAuthService(
           clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
-          tenantId: account.tenantId,
+          tenantId: cfg.tenantId,
           redirectUri: AppConfig.microsoftRedirectUri,
-          tokenStorage: tokenStorage,
+          tokenStorage: cfg.tokenStorage,
         );
         return GraphApiDatasourceImpl(
+            mailboxAddress: cfg.mailboxAddress,
             client: GraphHttpClient(
           authService: authSvc,
-          onAuthFailure: () => _authFailureController.add(account.id),
-          onAuthSuccess: () => _authSuccessController.add(account.id),
+          onAuthFailure: () => _authFailureController.add(cfg.credentialOwnerId),
+          onAuthSuccess: () => _authSuccessController.add(cfg.credentialOwnerId),
         ));
 
       case GmailAccount():
@@ -578,22 +696,22 @@ class AccountManager {
 
     switch (account) {
       case MicrosoftAccount():
-        final tokenStorage = TokenStorage(
-          _secureStorage,
-          storageKey: 'token_${account.id}',
-        );
+        final cfg = _microsoftAuthConfig(account);
         final authSvc = MicrosoftAuthService(
           clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
-          tenantId: account.tenantId,
+          tenantId: cfg.tenantId,
           redirectUri: AppConfig.microsoftRedirectUri,
-          tokenStorage: tokenStorage,
+          tokenStorage: cfg.tokenStorage,
         );
         final httpClient = GraphHttpClient(
           authService: authSvc,
-          onAuthFailure: () => _authFailureController.add(account.id),
-          onAuthSuccess: () => _authSuccessController.add(account.id),
+          onAuthFailure: () => _authFailureController.add(cfg.credentialOwnerId),
+          onAuthSuccess: () => _authSuccessController.add(cfg.credentialOwnerId),
         );
-        final ds = GraphApiDatasourceImpl(client: httpClient);
+        final ds = GraphApiDatasourceImpl(
+          client: httpClient,
+          mailboxAddress: cfg.mailboxAddress,
+        );
         _authService = authSvc;
         _emailDatasource = ds;
         _calendarDatasource = ds;
@@ -663,21 +781,19 @@ class AccountManager {
   CalendarRemoteDatasource? buildCalendarDatasourceForAccount(Account account) {
     switch (account) {
       case MicrosoftAccount():
-        final tokenStorage = TokenStorage(
-          _secureStorage,
-          storageKey: 'token_${account.id}',
-        );
+        final cfg = _microsoftAuthConfig(account);
         final authSvc = MicrosoftAuthService(
           clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
-          tenantId: account.tenantId,
+          tenantId: cfg.tenantId,
           redirectUri: AppConfig.microsoftRedirectUri,
-          tokenStorage: tokenStorage,
+          tokenStorage: cfg.tokenStorage,
         );
         return GraphApiDatasourceImpl(
+          mailboxAddress: cfg.mailboxAddress,
           client: GraphHttpClient(
             authService: authSvc,
-            onAuthFailure: () => _authFailureController.add(account.id),
-            onAuthSuccess: () => _authSuccessController.add(account.id),
+            onAuthFailure: () => _authFailureController.add(cfg.credentialOwnerId),
+            onAuthSuccess: () => _authSuccessController.add(cfg.credentialOwnerId),
           ),
         );
       case GmailAccount():
@@ -714,21 +830,19 @@ class AccountManager {
   TasksRemoteDatasource? buildTasksDatasourceForAccount(Account account) {
     switch (account) {
       case MicrosoftAccount():
-        final tokenStorage = TokenStorage(
-          _secureStorage,
-          storageKey: 'token_${account.id}',
-        );
+        final cfg = _microsoftAuthConfig(account);
         final authSvc = MicrosoftAuthService(
           clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
-          tenantId: account.tenantId,
+          tenantId: cfg.tenantId,
           redirectUri: AppConfig.microsoftRedirectUri,
-          tokenStorage: tokenStorage,
+          tokenStorage: cfg.tokenStorage,
         );
         return GraphApiDatasourceImpl(
+          mailboxAddress: cfg.mailboxAddress,
           client: GraphHttpClient(
             authService: authSvc,
-            onAuthFailure: () => _authFailureController.add(account.id),
-            onAuthSuccess: () => _authSuccessController.add(account.id),
+            onAuthFailure: () => _authFailureController.add(cfg.credentialOwnerId),
+            onAuthSuccess: () => _authSuccessController.add(cfg.credentialOwnerId),
           ),
         );
       case GmailAccount():
@@ -786,6 +900,11 @@ class AccountManager {
 
   Future<bool> _hasCredentials(Account account) async {
     switch (account) {
+      // A shared mailbox owns no token of its own — it is only ever as
+      // authenticated as the parent account whose credentials it rides on.
+      case MicrosoftAccount(parentAccountId: final parentId?):
+        final parent = accountById(parentId);
+        return parent != null && await _hasCredentials(parent);
       case MicrosoftAccount() || GmailAccount():
         final ts = TokenStorage(_secureStorage,
             storageKey: 'token_${account.id}');
@@ -803,6 +922,11 @@ class AccountManager {
 
   Future<void> _clearCredentials(Account account) async {
     switch (account) {
+      // Never clear the parent's token as a side effect of removing/signing
+      // out of a shared mailbox — it isn't this account's to clear, and doing
+      // so would sign the parent out too.
+      case MicrosoftAccount(parentAccountId: != null):
+        return;
       case MicrosoftAccount() || GmailAccount():
         final tokenStorage = TokenStorage(
           _secureStorage,

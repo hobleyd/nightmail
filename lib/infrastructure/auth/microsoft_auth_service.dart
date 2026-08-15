@@ -96,6 +96,17 @@ class MicrosoftAuthService implements AuthService {
     // picker. Free/busy for a room needs nothing extra: Calendars.ReadWrite
     // already covers getSchedule, which answers for rooms as it does for people.
     'https://graph.microsoft.com/Place.Read.All',
+    // Shared mailboxes (Settings > Add Shared Mailbox): plain Mail.* only
+    // covers this user's own mailbox, so `/users/{sharedAddress}/...` 403s
+    // without the `.Shared` variants even when Exchange has granted Full
+    // Access. Calendars.ReadWrite.Shared mirrors that for the shared
+    // mailbox's calendar. Added after release, so accounts authorised
+    // earlier hold a token without these and must be re-authenticated from
+    // Settings before a shared mailbox can be added against them.
+    'https://graph.microsoft.com/Mail.Read.Shared',
+    'https://graph.microsoft.com/Mail.ReadWrite.Shared',
+    'https://graph.microsoft.com/Mail.Send.Shared',
+    'https://graph.microsoft.com/Calendars.ReadWrite.Shared',
   ];
 
   String get _baseUrl =>

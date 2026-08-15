@@ -238,6 +238,36 @@ class AccountCubit extends Cubit<AccountState> {
         'Calendar', () => _calendarCacheSync.syncAccount(account.id)));
   }
 
+  /// Looks up [email] in [parentAccountId]'s directory and probes whether its
+  /// mailbox is actually reachable. See
+  /// [AccountManager.resolveSharedMailboxCandidate].
+  Future<({String displayName, bool hasAccess, bool needsReauth})?>
+      resolveSharedMailboxCandidate(
+    String parentAccountId,
+    String email,
+  ) =>
+      _accountManager.resolveSharedMailboxCandidate(parentAccountId, email);
+
+  /// Adds [email] as a shared mailbox riding on [parentAccountId]'s
+  /// credentials. Caller must have already confirmed access via
+  /// [resolveSharedMailboxCandidate].
+  Future<void> addSharedMailbox({
+    required String parentAccountId,
+    required String email,
+    required String displayName,
+  }) async {
+    final account = await _accountManager.addSharedMailbox(
+      parentAccountId: parentAccountId,
+      email: email,
+      displayName: displayName,
+    );
+    await _emitLoaded();
+    unawaited(_syncContacts(() =>
+        _contactCacheSync.syncAccount(account.id, force: true)));
+    unawaited(_backgroundRefresh(
+        'Calendar', () => _calendarCacheSync.syncAccount(account.id)));
+  }
+
   Future<void> updateAccount(Account account) async {
     await _accountManager.updateAccount(account);
     await _emitLoaded();

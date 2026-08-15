@@ -43,8 +43,8 @@ import 'tasks_remote_datasource.dart';
 /// a malformed URL, so callers quietly fall back to searching the calendar.
 ///
 /// Visible for testing.
-String linkedEventPath(String messageId) =>
-    '/me/messages/$messageId/microsoft.graph.eventMessage/event';
+String linkedEventPath(String messageId, [String mailboxBase = '/me']) =>
+    '$mailboxBase/messages/$messageId/microsoft.graph.eventMessage/event';
 
 /// Whether a message's own MIME headers declare its body as plain text.
 ///
@@ -98,13 +98,24 @@ class GraphApiDatasourceImpl
         CalendarRemoteDatasource,
         TasksRemoteDatasource,
         MailDeltaDatasource {
-  GraphApiDatasourceImpl({required GraphHttpClient client})
-      : _dio = client.dio;
+  GraphApiDatasourceImpl({required GraphHttpClient client, String? mailboxAddress})
+      : _dio = client.dio,
+        _base = mailboxAddress == null ? '/me' : '/users/$mailboxAddress';
 
   @visibleForTesting
-  GraphApiDatasourceImpl.withDio(this._dio);
+  GraphApiDatasourceImpl.withDio(this._dio, {String? mailboxAddress})
+      : _base = mailboxAddress == null ? '/me' : '/users/$mailboxAddress';
 
   final Dio _dio;
+
+  // '/me' for the signed-in account, or '/users/{sharedMailboxAddress}' when
+  // this instance was built for a shared mailbox (see AccountManager's
+  // _authConfigFor and MicrosoftAccount.parentAccountId) — the auth token is
+  // always the signed-in owner's, only the mailbox this path names differs.
+  final String _base;
+
+  @visibleForTesting
+  String get mailboxBase => _base;
 
   // Recurrence JSON per series-master id. calendarView expands each series into
   // occurrences that don't carry the `recurrence` pattern — only the master
@@ -123,8 +134,8 @@ class GraphApiDatasourceImpl
     String orderBy = 'receivedDateTime desc',
   }) async {
     final path = folderId != null
-        ? '/me/mailFolders/$folderId/messages'
-        : '/me/messages';
+        ? '$_base/mailFolders/$folderId/messages'
+        : '$_base/messages';
 
     try {
       final response = await _dio.get<String>(
@@ -253,7 +264,7 @@ class GraphApiDatasourceImpl
     for (final wellKnownName in _expansionExcludedFolders) {
       try {
         final response = await _dio.get<Map<String, dynamic>>(
-          '/me/mailFolders/$wellKnownName',
+          '$_base/mailFolders/$wellKnownName',
           queryParameters: {'\$select': 'id'},
         );
         final id = response.data?['id'] as String?;
@@ -275,7 +286,7 @@ class GraphApiDatasourceImpl
   Future<String?> _fetchConversationRaw(String conversationId) async {
     try {
       final response = await _dio.get<String>(
-        '/me/messages',
+        '$_base/messages',
         queryParameters: {
           '\$filter': "conversationId eq '$conversationId'",
           '\$select': _emailListSelect,
@@ -336,7 +347,7 @@ class GraphApiDatasourceImpl
     // with a quote in it and silently truncating the filter.
     final quoted = ids.map((id) => "'${id.replaceAll("'", "''")}'").join(',');
     try {
-      final result = await _fetchAllGraphPages('/me/messages', {
+      final result = await _fetchAllGraphPages('$_base/messages', {
         '\$filter': 'conversationId in ($quoted)',
         '\$select': _emailListSelect,
         '\$top': 200,
@@ -366,7 +377,7 @@ class GraphApiDatasourceImpl
       // client-side parentFolderId filtering. Global search matches Outlook's
       // default behaviour.
       final response = await _dio.get<String>(
-        '/me/messages',
+        '$_base/messages',
         queryParameters: {
           '\$top': top,
           '\$select': _emailListSelect,
@@ -393,7 +404,7 @@ class GraphApiDatasourceImpl
       // document, so the jsonDecode is a large share of the cost and belongs in
       // the parser isolate along with the parse itself.
       final response = await _dio.get<String>(
-        '/me/messages/$id',
+        '$_base/messages/$id',
         queryParameters: {
           // No $select here: Graph omits @odata.type for derived types
           // (eventMessage) on single-resource GETs when $select is present.
@@ -428,7 +439,7 @@ class GraphApiDatasourceImpl
         for (final attachId in pendingIds) {
           try {
             final detail = await _dio.get<String>(
-              '/me/messages/$id/attachments/$attachId',
+              '$_base/messages/$id/attachments/$attachId',
               options: Options(responseType: ResponseType.plain),
             );
             final body = detail.data;
@@ -488,7 +499,7 @@ class GraphApiDatasourceImpl
       String messageId, String attachmentId) async {
     try {
       final response = await _dio.get<String>(
-        '/me/messages/$messageId/attachments/$attachmentId',
+        '$_base/messages/$messageId/attachments/$attachmentId',
         options: Options(responseType: ResponseType.plain),
       );
       final raw = response.data;
@@ -515,7 +526,7 @@ class GraphApiDatasourceImpl
   Future<String?> _fetchPlainTextBody(String id) async {
     try {
       final response = await _dio.get<String>(
-        '/me/messages/$id',
+        '$_base/messages/$id',
         queryParameters: {'\$select': 'internetMessageHeaders,body'},
         options: Options(
           headers: {'Prefer': 'outlook.body-content-type="text"'},
@@ -584,7 +595,7 @@ class GraphApiDatasourceImpl
   }) async {
     try {
       final response = await _dio.patch<String>(
-        '/me/messages/$id',
+        '$_base/messages/$id',
         data: {'isRead': isRead},
         queryParameters: {'\$select': _emailListSelect},
         options: Options(responseType: ResponseType.plain),
@@ -606,7 +617,7 @@ class GraphApiDatasourceImpl
   Future<List<EmailFolderModel>> getMailFolders() async {
     try {
       final response = await _dio.get<Map<String, dynamic>>(
-        '/me/mailFolders',
+        '$_base/mailFolders',
         queryParameters: {
           '\$select':
               'id,displayName,totalItemCount,unreadItemCount,parentFolderId,isHidden,childFolderCount',
@@ -630,7 +641,7 @@ class GraphApiDatasourceImpl
   Future<List<EmailFolderModel>> getChildFolders(String parentFolderId) async {
     try {
       final response = await _dio.get<Map<String, dynamic>>(
-        '/me/mailFolders/$parentFolderId/childFolders',
+        '$_base/mailFolders/$parentFolderId/childFolders',
         queryParameters: {
           '\$select':
               'id,displayName,totalItemCount,unreadItemCount,parentFolderId,isHidden,childFolderCount',
@@ -657,7 +668,7 @@ class GraphApiDatasourceImpl
   }) async {
     try {
       final response = await _dio.get<Map<String, dynamic>>(
-        '/me/calendarView',
+        '$_base/calendarView',
         queryParameters: {
           'startDateTime': startDateTime.toUtc().toIso8601String(),
           'endDateTime': endDateTime.toUtc().toIso8601String(),
@@ -703,7 +714,7 @@ class GraphApiDatasourceImpl
   Future<CalendarEventModel> getCalendarEvent({required String id}) async {
     try {
       final response = await _dio.get<Map<String, dynamic>>(
-        '/me/events/$id',
+        '$_base/events/$id',
         queryParameters: {
           '\$select':
               'id,iCalUId,subject,start,end,isAllDay,location,onlineMeeting,bodyPreview,showAs,isOrganizer,organizer,responseStatus,attendees,recurrence,isReminderOn,reminderMinutesBeforeStart,seriesMasterId',
@@ -738,7 +749,7 @@ class GraphApiDatasourceImpl
     await Future.wait(missing.map((id) async {
       try {
         final resp = await _dio.get<Map<String, dynamic>>(
-          '/me/events/$id',
+          '$_base/events/$id',
           queryParameters: {'\$select': 'recurrence'},
         );
         _recurrenceByMaster[id] =
@@ -778,7 +789,7 @@ class GraphApiDatasourceImpl
       );
 
       final response = await _dio.post<Map<String, dynamic>>(
-        '/me/events',
+        '$_base/events',
         data: body,
       );
 
@@ -814,7 +825,7 @@ class GraphApiDatasourceImpl
       );
 
       final response = await _dio.patch<Map<String, dynamic>>(
-        '/me/events/${params.id}',
+        '$_base/events/${params.id}',
         data: body,
       );
 
@@ -845,7 +856,7 @@ class GraphApiDatasourceImpl
 
     // 1. Try the message-level action (works for unprocessed eventMessages).
     try {
-      await _dio.post<void>('/me/messages/$emailId/$endpoint', data: body);
+      await _dio.post<void>('$_base/messages/$emailId/$endpoint', data: body);
       return;
     } on DioException catch (e) {
       final status = e.response?.statusCode;
@@ -857,7 +868,7 @@ class GraphApiDatasourceImpl
     String? eventId;
     try {
       final eventResp = await _dio.get<Map<String, dynamic>>(
-        linkedEventPath(emailId),
+        linkedEventPath(emailId, _base),
         queryParameters: {'\$select': 'id,isOrganizer'},
       );
       final isOrganizer = eventResp.data?['isOrganizer'] as bool? ?? false;
@@ -870,7 +881,7 @@ class GraphApiDatasourceImpl
 
     if (eventId != null) {
       try {
-        await _dio.post<void>('/me/events/$eventId/$endpoint', data: body);
+        await _dio.post<void>('$_base/events/$eventId/$endpoint', data: body);
         return;
       } on DioException catch (e) {
         final status = e.response?.statusCode;
@@ -892,7 +903,7 @@ class GraphApiDatasourceImpl
       final windowEnd = meetingStart.add(const Duration(hours: 2));
       String fmt(DateTime d) => d.toUtc().toIso8601String();
       final calResp = await _dio.get<Map<String, dynamic>>(
-        '/me/calendarView',
+        '$_base/calendarView',
         queryParameters: {
           'startDateTime': fmt(windowStart),
           'endDateTime': fmt(windowEnd),
@@ -915,7 +926,7 @@ class GraphApiDatasourceImpl
             message: 'No meeting found in your calendar at that time');
       }
       final targetId = attendeeEvents.first['id'] as String;
-      await _dio.post<void>('/me/events/$targetId/$endpoint', data: body);
+      await _dio.post<void>('$_base/events/$targetId/$endpoint', data: body);
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
@@ -950,7 +961,7 @@ class GraphApiDatasourceImpl
     String? eventId;
     try {
       final eventResp = await _dio.get<Map<String, dynamic>>(
-        linkedEventPath(emailId),
+        linkedEventPath(emailId, _base),
         queryParameters: {'\$select': 'id,isOrganizer'},
       );
       final isOrganizer = eventResp.data?['isOrganizer'] as bool? ?? false;
@@ -962,7 +973,7 @@ class GraphApiDatasourceImpl
 
     if (eventId != null) {
       try {
-        await _dio.post<void>('/me/events/$eventId/decline', data: body);
+        await _dio.post<void>('$_base/events/$eventId/decline', data: body);
         return;
       } on DioException catch (e) {
         final status = e.response?.statusCode;
@@ -980,7 +991,7 @@ class GraphApiDatasourceImpl
       final windowEnd = meetingStart.add(const Duration(hours: 2));
       String fmt(DateTime d) => d.toUtc().toIso8601String();
       final calResp = await _dio.get<Map<String, dynamic>>(
-        '/me/calendarView',
+        '$_base/calendarView',
         queryParameters: {
           'startDateTime': fmt(windowStart),
           'endDateTime': fmt(windowEnd),
@@ -998,7 +1009,7 @@ class GraphApiDatasourceImpl
             message: 'No meeting found in your calendar at that time');
       }
       final targetId = attendeeEvents.first['id'] as String;
-      await _dio.post<void>('/me/events/$targetId/decline', data: body);
+      await _dio.post<void>('$_base/events/$targetId/decline', data: body);
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
@@ -1014,7 +1025,7 @@ class GraphApiDatasourceImpl
     String? eventId;
     try {
       final eventResp = await _dio.get<Map<String, dynamic>>(
-        linkedEventPath(emailId),
+        linkedEventPath(emailId, _base),
         queryParameters: {'\$select': 'id'},
       );
       eventId = eventResp.data?['id'] as String?;
@@ -1024,7 +1035,7 @@ class GraphApiDatasourceImpl
 
     if (eventId != null) {
       try {
-        await _dio.delete<void>('/me/events/$eventId');
+        await _dio.delete<void>('$_base/events/$eventId');
         return;
       } on DioException catch (e) {
         final status = e.response?.statusCode;
@@ -1043,7 +1054,7 @@ class GraphApiDatasourceImpl
       final windowEnd = meetingStart.add(const Duration(hours: 2));
       String fmt(DateTime d) => d.toUtc().toIso8601String();
       final calResp = await _dio.get<Map<String, dynamic>>(
-        '/me/calendarView',
+        '$_base/calendarView',
         queryParameters: {
           'startDateTime': fmt(windowStart),
           'endDateTime': fmt(windowEnd),
@@ -1058,7 +1069,7 @@ class GraphApiDatasourceImpl
           events.where((e) => e['isOrganizer'] != true).toList();
       if (attendeeEvents.isEmpty) return; // Not in calendar — nothing to remove.
       final targetId = attendeeEvents.first['id'] as String;
-      await _dio.delete<void>('/me/events/$targetId');
+      await _dio.delete<void>('$_base/events/$targetId');
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
@@ -1073,7 +1084,7 @@ class GraphApiDatasourceImpl
     String? eventId;
     try {
       final eventResp = await _dio.get<Map<String, dynamic>>(
-        linkedEventPath(emailId),
+        linkedEventPath(emailId, _base),
         queryParameters: {'\$select': 'id,isOrganizer'},
       );
       final isOrganizer = eventResp.data?['isOrganizer'] as bool? ?? false;
@@ -1088,7 +1099,7 @@ class GraphApiDatasourceImpl
 
     if (eventId != null) {
       try {
-        await _dio.post<void>('/me/events/$eventId/cancel', data: {'comment': ''});
+        await _dio.post<void>('$_base/events/$eventId/cancel', data: {'comment': ''});
         return;
       } on DioException catch (e) {
         final status = e.response?.statusCode;
@@ -1106,7 +1117,7 @@ class GraphApiDatasourceImpl
       final windowEnd = meetingStart.add(const Duration(hours: 2));
       String fmt(DateTime d) => d.toUtc().toIso8601String();
       final calResp = await _dio.get<Map<String, dynamic>>(
-        '/me/calendarView',
+        '$_base/calendarView',
         queryParameters: {
           'startDateTime': fmt(windowStart),
           'endDateTime': fmt(windowEnd),
@@ -1123,7 +1134,7 @@ class GraphApiDatasourceImpl
             message: 'No organizer event found in your calendar at that time');
       }
       final targetId = organized.first['id'] as String;
-      await _dio.post<void>('/me/events/$targetId/cancel', data: {'comment': ''});
+      await _dio.post<void>('$_base/events/$targetId/cancel', data: {'comment': ''});
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
@@ -1146,7 +1157,7 @@ class GraphApiDatasourceImpl
       // PATCHing start/end makes Graph send the updated invitation to every
       // attendee by itself — there is no separate "send update" call.
       await _dio.patch<void>(
-        '/me/events/$eventId',
+        '$_base/events/$eventId',
         data: {
           'start': _graphDateTime(newStart),
           'end': _graphDateTime(newEnd),
@@ -1165,7 +1176,7 @@ class GraphApiDatasourceImpl
   }) async {
     try {
       await _dio.post<void>(
-        '/me/events/$eventId/forward',
+        '$_base/events/$eventId/forward',
         data: {
           'ToRecipients': [
             for (final address in toAddresses)
@@ -1244,9 +1255,9 @@ class GraphApiDatasourceImpl
     //    which cast it accepts varies by Exchange build — see
     //    [_eventIdForMessage], whose spellings these are.
     for (final path in [
-      '/me/messages/$emailId/microsoft.graph.eventMessageRequest/event',
-      linkedEventPath(emailId),
-      '/me/messages/$emailId/event',
+      '$_base/messages/$emailId/microsoft.graph.eventMessageRequest/event',
+      linkedEventPath(emailId, _base),
+      '$_base/messages/$emailId/event',
     ]) {
       try {
         final resp = await _dio.get<Map<String, dynamic>>(
@@ -1274,7 +1285,7 @@ class GraphApiDatasourceImpl
     if (uid != null) {
       try {
         final resp = await _dio.get<Map<String, dynamic>>(
-          '/me/events',
+          '$_base/events',
           queryParameters: {
             // Single quotes delimit the literal, so an embedded one must double.
             '\$filter': "iCalUId eq '${uid.replaceAll("'", "''")}'",
@@ -1317,7 +1328,7 @@ class GraphApiDatasourceImpl
     try {
       String fmt(DateTime d) => d.toUtc().toIso8601String();
       final resp = await _dio.get<Map<String, dynamic>>(
-        '/me/calendarView',
+        '$_base/calendarView',
         queryParameters: {
           'startDateTime': fmt(start.subtract(const Duration(minutes: 1))),
           'endDateTime': fmt(start.add(const Duration(minutes: 1))),
@@ -1385,7 +1396,7 @@ class GraphApiDatasourceImpl
     Map<String, dynamic>? message;
     try {
       final resp =
-          await _dio.get<Map<String, dynamic>>('/me/messages/$emailId');
+          await _dio.get<Map<String, dynamic>>('$_base/messages/$emailId');
       message = resp.data;
     } on DioException catch (e) {
       if (_isGraphAuthFailure(e)) throw _mapDioException(e);
@@ -1464,7 +1475,7 @@ class GraphApiDatasourceImpl
 
     try {
       final resp = await _dio.get<Map<String, dynamic>>(
-        '/me/events',
+        '$_base/events',
         queryParameters: {
           // Single quotes delimit the literal, so an embedded one must double.
           '\$filter': "iCalUId eq '${uid.replaceAll("'", "''")}'",
@@ -1494,7 +1505,7 @@ class GraphApiDatasourceImpl
       String messageId, List<String> tried) async {
     try {
       final list = await _dio.get<Map<String, dynamic>>(
-        '/me/messages/$messageId/attachments',
+        '$_base/messages/$messageId/attachments',
         queryParameters: {'\$select': 'id,name,contentType'},
       );
       final items = (list.data?['value'] as List<dynamic>? ?? [])
@@ -1516,7 +1527,7 @@ class GraphApiDatasourceImpl
       // contentBytes lives on the fileAttachment subtype and cannot be
       // $selected from the collection, so fetch the attachment on its own.
       final detail = await _dio.get<Map<String, dynamic>>(
-          '/me/messages/$messageId/attachments/$calendarId');
+          '$_base/messages/$messageId/attachments/$calendarId');
       final encoded = detail.data?['contentBytes'] as String?;
       if (encoded == null || encoded.isEmpty) {
         tried.add('the calendar attachment returned no content');
@@ -1548,9 +1559,9 @@ class GraphApiDatasourceImpl
   Future<String?> _eventIdForMessage(String messageId, List<String> tried) async {
     final attempts = <String>[];
     for (final path in [
-      '/me/messages/$messageId/microsoft.graph.eventMessageResponse/event',
-      linkedEventPath(messageId),
-      '/me/messages/$messageId/event',
+      '$_base/messages/$messageId/microsoft.graph.eventMessageResponse/event',
+      linkedEventPath(messageId, _base),
+      '$_base/messages/$messageId/event',
     ]) {
       final id = await _eventIdByNavigation(path, attempts);
       if (id != null) return id;
@@ -1589,7 +1600,7 @@ class GraphApiDatasourceImpl
     try {
       String fmt(DateTime d) => d.toUtc().toIso8601String();
       final resp = await _dio.get<Map<String, dynamic>>(
-        '/me/calendarView',
+        '$_base/calendarView',
         queryParameters: {
           'startDateTime': fmt(start.subtract(const Duration(minutes: 30))),
           'endDateTime': fmt(start.add(const Duration(hours: 2))),
@@ -1622,7 +1633,7 @@ class GraphApiDatasourceImpl
       String conversationId, String excludeMessageId, List<String> tried) async {
     try {
       final resp = await _dio.get<Map<String, dynamic>>(
-        '/me/messages',
+        '$_base/messages',
         queryParameters: {
           '\$filter': "conversationId eq '$conversationId'",
           '\$select': 'id',
@@ -1675,7 +1686,7 @@ class GraphApiDatasourceImpl
   Future<void> cancelCalendarEvent({required String eventId}) async {
     try {
       await _dio.post<void>(
-        '/me/events/$eventId/cancel',
+        '$_base/events/$eventId/cancel',
         data: {'comment': ''},
       );
     } on DioException catch (e) {
@@ -1698,7 +1709,7 @@ class GraphApiDatasourceImpl
     _invalidateRecurrenceCache();
     try {
       await _dio.post<void>(
-        '/me/events/$masterId/cancel',
+        '$_base/events/$masterId/cancel',
         data: {'comment': ''},
       );
     } on DioException catch (e) {
@@ -1713,7 +1724,7 @@ class GraphApiDatasourceImpl
   }) async {
     try {
       await _dio.post<void>(
-        '/me/events/$eventId/decline',
+        '$_base/events/$eventId/decline',
         data: {'sendResponse': true, 'comment': ''},
       );
     } on DioException catch (e) {
@@ -1737,7 +1748,7 @@ class GraphApiDatasourceImpl
     final tz = timezone ?? 'UTC';
     try {
       await _dio.post<void>(
-        '/me/events/$eventId/decline',
+        '$_base/events/$eventId/decline',
         data: {
           'sendResponse': true,
           'comment': message ?? '',
@@ -1931,7 +1942,7 @@ class GraphApiDatasourceImpl
   Future<({String displayName, String email})> fetchUserProfile() async {
     try {
       final response = await _dio.get<Map<String, dynamic>>(
-        '/me',
+        _base,
         queryParameters: {'\$select': 'displayName,mail,userPrincipalName'},
       );
       final data = response.data;
@@ -1988,6 +1999,27 @@ class GraphApiDatasourceImpl
     }
   }
 
+  /// Whether this token can read [email]'s inbox — the only way to find out
+  /// whether Exchange has actually granted Full Access, since Graph has no
+  /// API that lists the shared mailboxes a token can reach (see
+  /// MicrosoftAuthService's `.Shared` scopes and AccountManager's
+  /// addSharedMailbox). A 403 means the scope or the grant is missing; 404
+  /// means [email] isn't a mailbox at all. Anything else is rethrown so a
+  /// network error isn't mistaken for "not permitted".
+  Future<bool> probeSharedMailboxAccess(String email) async {
+    try {
+      await _dio.get<Map<String, dynamic>>(
+        '/users/${Uri.encodeComponent(email)}/mailFolders/inbox',
+        queryParameters: {'\$select': 'id'},
+      );
+      return true;
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      if (status == 403 || status == 404) return false;
+      throw _mapDioException(e);
+    }
+  }
+
   /// Fetches profile fields useful for prefilling the Settings "Profile"
   /// section (and email signature merge tags): given/family name, job title,
   /// and phone numbers, via Graph's `/me`. Returns null on 403 (the
@@ -2003,7 +2035,7 @@ class GraphApiDatasourceImpl
       })?> fetchOwnSignatureProfile() async {
     try {
       final response = await _dio.get<Map<String, dynamic>>(
-        '/me',
+        _base,
         queryParameters: {
           '\$select': 'givenName,surname,jobTitle,mobilePhone,businessPhones',
         },
@@ -2068,7 +2100,7 @@ class GraphApiDatasourceImpl
     }
 
     final results = await Future.wait([
-      collect('contacts', '/me/contacts', {
+      collect('contacts', '$_base/contacts', {
         '\$select': 'displayName,emailAddresses',
         '\$top': _bulkPageSize,
       }),
@@ -2076,7 +2108,7 @@ class GraphApiDatasourceImpl
         '\$select': 'displayName,mail,userPrincipalName',
         '\$top': _bulkPageSize,
       }),
-      collect('people', '/me/people', {
+      collect('people', '$_base/people', {
         '\$select': 'displayName,scoredEmailAddresses',
         '\$top': _bulkPageSize,
       }),
@@ -2155,7 +2187,7 @@ class GraphApiDatasourceImpl
     try {
       final attachmentsList = await _buildGraphAttachments(newAttachments);
       await _dio.post<void>(
-        '/me/sendMail',
+        '$_base/sendMail',
         data: {
           'message': {
             'subject': subject,
@@ -2212,14 +2244,14 @@ class GraphApiDatasourceImpl
 
       if (newAttachments.isEmpty) {
         final path = replyAll
-            ? '/me/messages/$messageId/replyAll'
-            : '/me/messages/$messageId/reply';
+            ? '$_base/messages/$messageId/replyAll'
+            : '$_base/messages/$messageId/reply';
         await _dio.post<void>(path, data: {'message': messageBody});
       } else {
         // Create a draft reply, attach files, then send.
         final createPath = replyAll
-            ? '/me/messages/$messageId/createReplyAll'
-            : '/me/messages/$messageId/createReply';
+            ? '$_base/messages/$messageId/createReplyAll'
+            : '$_base/messages/$messageId/createReply';
         final draftResp = await _dio.post<Map<String, dynamic>>(
           createPath,
           data: {'message': messageBody},
@@ -2229,7 +2261,7 @@ class GraphApiDatasourceImpl
           throw const ServerException(message: 'No draft ID in reply response');
         }
         await _addAttachmentsToDraft(draftId, newAttachments);
-        await _dio.post<void>('/me/messages/$draftId/send');
+        await _dio.post<void>('$_base/messages/$draftId/send');
       }
     } on DioException catch (e) {
       throw _mapDioException(e);
@@ -2265,7 +2297,7 @@ class GraphApiDatasourceImpl
 
       if (newAttachments.isEmpty) {
         await _dio.post<void>(
-          '/me/messages/$messageId/forward',
+          '$_base/messages/$messageId/forward',
           data: {
             'message': messageBody,
             'toRecipients': toRecipients,
@@ -2274,7 +2306,7 @@ class GraphApiDatasourceImpl
       } else {
         // Create a forward draft, attach files, then send.
         final draftResp = await _dio.post<Map<String, dynamic>>(
-          '/me/messages/$messageId/createForward',
+          '$_base/messages/$messageId/createForward',
           data: {
             'message': messageBody,
             'toRecipients': toRecipients,
@@ -2285,7 +2317,7 @@ class GraphApiDatasourceImpl
           throw const ServerException(message: 'No draft ID in forward response');
         }
         await _addAttachmentsToDraft(draftId, newAttachments);
-        await _dio.post<void>('/me/messages/$draftId/send');
+        await _dio.post<void>('$_base/messages/$draftId/send');
       }
     } on DioException catch (e) {
       throw _mapDioException(e);
@@ -2310,7 +2342,7 @@ class GraphApiDatasourceImpl
   Future<void> _addAttachmentsToDraft(
       String draftId, List<LocalAttachment> attachments) async {
     for (final att in attachments) {
-      await _dio.post<void>('/me/messages/$draftId/attachments', data: {
+      await _dio.post<void>('$_base/messages/$draftId/attachments', data: {
         '@odata.type': '#microsoft.graph.fileAttachment',
         'name': att.name,
         'contentType': att.mimeType,
@@ -2333,7 +2365,7 @@ class GraphApiDatasourceImpl
     // derived-type fields like isInline/contentId are not valid on the base
     // attachment type and cause a 400 from Graph.
     final resp = await _dio.get<Map<String, dynamic>>(
-      '/me/messages/$draftId/attachments',
+      '$_base/messages/$draftId/attachments',
       queryParameters: {'\$select': 'id,name,size'},
     );
     final existing = (resp.data?['value'] as List<dynamic>?)
@@ -2348,7 +2380,7 @@ class GraphApiDatasourceImpl
       if (!stillWanted) {
         final id = e['id'] as String?;
         if (id != null) {
-          await _dio.delete<void>('/me/messages/$draftId/attachments/$id');
+          await _dio.delete<void>('$_base/messages/$draftId/attachments/$id');
         }
       }
     }
@@ -2358,7 +2390,7 @@ class GraphApiDatasourceImpl
           (e['name'] as String? ?? '') == att.name &&
           ((e['size'] as int?) ?? 0) == att.bytes.length);
       if (!alreadyThere) {
-        await _dio.post<void>('/me/messages/$draftId/attachments', data: {
+        await _dio.post<void>('$_base/messages/$draftId/attachments', data: {
           '@odata.type': '#microsoft.graph.fileAttachment',
           'name': att.name,
           'contentType': att.mimeType,
@@ -2377,7 +2409,7 @@ class GraphApiDatasourceImpl
       // creates a new copy in the destination folder and removes the
       // original, so the response's id differs from [id].
       final response = await _dio.post<Map<String, dynamic>>(
-        '/me/messages/$id/move',
+        '$_base/messages/$id/move',
         data: {'destinationId': destinationFolderId},
       );
       return response.data?['id'] as String?;
@@ -2390,7 +2422,7 @@ class GraphApiDatasourceImpl
   Future<String?> reportJunk(String id) async {
     try {
       final response = await _dio.post<Map<String, dynamic>>(
-        '/me/messages/$id/move',
+        '$_base/messages/$id/move',
         data: {'destinationId': 'junkemail'},
       );
       return response.data?['id'] as String?;
@@ -2403,7 +2435,7 @@ class GraphApiDatasourceImpl
   Future<void> deleteEmail(String id) async {
     try {
       await _dio.post<void>(
-        '/me/messages/$id/move',
+        '$_base/messages/$id/move',
         data: {'destinationId': 'deleteditems'},
       );
     } on DioException catch (e) {
@@ -2420,7 +2452,7 @@ class GraphApiDatasourceImpl
         // /mailFolders/{id}/messages returns only messages directly in this
         // folder — child folders and their contents are never included.
         final response = await _dio.get<Map<String, dynamic>>(
-          '/me/mailFolders/$folderId/messages',
+          '$_base/mailFolders/$folderId/messages',
           queryParameters: {'\$top': pageSize, '\$select': 'id'},
         );
         final messages = ((response.data?['value'] as List<dynamic>?) ?? [])
@@ -2430,10 +2462,10 @@ class GraphApiDatasourceImpl
         for (final msg in messages) {
           final id = msg['id'] as String;
           if (permanentDelete) {
-            await _dio.post<void>('/me/messages/$id/permanentDelete');
+            await _dio.post<void>('$_base/messages/$id/permanentDelete');
           } else {
             await _dio.post<void>(
-              '/me/messages/$id/move',
+              '$_base/messages/$id/move',
               data: {'destinationId': 'deleteditems'},
             );
           }
@@ -2451,7 +2483,7 @@ class GraphApiDatasourceImpl
       String messageId, String attachmentId) async {
     try {
       final response = await _dio.get<Map<String, dynamic>>(
-        '/me/messages/$messageId/attachments/$attachmentId',
+        '$_base/messages/$messageId/attachments/$attachmentId',
       );
       final data = response.data;
       final contentBytes = data?['contentBytes'] as String?;
@@ -2469,7 +2501,7 @@ class GraphApiDatasourceImpl
   Future<List<TodoTaskListModel>> getTaskLists() async {
     try {
       final response = await _dio.get<Map<String, dynamic>>(
-        '/me/todo/lists',
+        '$_base/todo/lists',
         queryParameters: {'\$top': 100},
       );
       final value = (response.data?['value'] as List<dynamic>?) ?? [];
@@ -2495,7 +2527,7 @@ class GraphApiDatasourceImpl
         params['\$filter'] = "status ne 'completed'";
       }
       final response = await _dio.get<Map<String, dynamic>>(
-        '/me/todo/lists/$listId/tasks',
+        '$_base/todo/lists/$listId/tasks',
         queryParameters: params,
       );
       final value = (response.data?['value'] as List<dynamic>?) ?? [];
@@ -2537,7 +2569,7 @@ class GraphApiDatasourceImpl
         data['dueDateTime'] = {'dateTime': dateStr, 'timeZone': 'UTC'};
       }
       final response = await _dio.post<Map<String, dynamic>>(
-        '/me/todo/lists/$listId/tasks',
+        '$_base/todo/lists/$listId/tasks',
         data: data,
       );
       if (response.data == null) {
@@ -2564,7 +2596,7 @@ class GraphApiDatasourceImpl
         TodoTaskStatus.notStarted => 'notStarted',
       };
       final response = await _dio.patch<Map<String, dynamic>>(
-        '/me/todo/lists/$listId/tasks/$taskId',
+        '$_base/todo/lists/$listId/tasks/$taskId',
         data: {'status': statusStr},
       );
       if (response.data == null) {
@@ -2593,7 +2625,7 @@ class GraphApiDatasourceImpl
         data['dueDateTime'] = {'dateTime': dateStr, 'timeZone': 'UTC'};
       }
       final response = await _dio.patch<Map<String, dynamic>>(
-        '/me/todo/lists/$listId/tasks/$taskId',
+        '$_base/todo/lists/$listId/tasks/$taskId',
         data: data,
       );
       if (response.data == null) {
@@ -2613,7 +2645,7 @@ class GraphApiDatasourceImpl
   Future<Uint8List> getRawEmailBytes(String id) async {
     try {
       final response = await _dio.get<List<int>>(
-        '/me/messages/$id/\$value',
+        '$_base/messages/$id/\$value',
         options: Options(responseType: ResponseType.bytes),
       );
       return Uint8List.fromList(response.data ?? []);
@@ -2663,7 +2695,7 @@ class GraphApiDatasourceImpl
     required Uint8List emlBytes,
   }) async {
     final response = await _dio.post<Map<String, dynamic>>(
-      '/me/todo/lists/$listId/tasks/$taskId/attachments',
+      '$_base/todo/lists/$listId/tasks/$taskId/attachments',
       data: {
         '@odata.type': '#microsoft.graph.taskFileAttachment',
         'name': fileName,
@@ -2685,7 +2717,7 @@ class GraphApiDatasourceImpl
     required Uint8List emlBytes,
   }) async {
     final sessionResponse = await _dio.post<Map<String, dynamic>>(
-      '/me/todo/lists/$listId/tasks/$taskId/attachments/createUploadSession',
+      '$_base/todo/lists/$listId/tasks/$taskId/attachments/createUploadSession',
       data: {
         'attachmentItem': {
           '@odata.type': '#microsoft.graph.fileAttachmentUploadProperties',
@@ -2733,7 +2765,7 @@ class GraphApiDatasourceImpl
   }) async {
     try {
       final response = await _dio.get<Map<String, dynamic>>(
-        '/me/todo/lists/$listId/tasks/$taskId/attachments',
+        '$_base/todo/lists/$listId/tasks/$taskId/attachments',
       );
       final value = (response.data?['value'] as List<dynamic>?) ?? [];
       return value
@@ -2753,7 +2785,7 @@ class GraphApiDatasourceImpl
   }) async {
     try {
       final response = await _dio.get<List<int>>(
-        '/me/todo/lists/$listId/tasks/$taskId/attachments/$attachmentId/\$value',
+        '$_base/todo/lists/$listId/tasks/$taskId/attachments/$attachmentId/\$value',
         options: Options(responseType: ResponseType.bytes),
       );
       return Uint8List.fromList(response.data ?? []);
@@ -2802,7 +2834,7 @@ class GraphApiDatasourceImpl
         if (isInitial) {
           isInitial = false;
           response = await _dio.get<String>(
-            '/me/mailFolders/$folderId/messages/delta',
+            '$_base/mailFolders/$folderId/messages/delta',
             queryParameters: {
               '\$select': _emailListSelect,
               '\$top': _deltaPageSize,
@@ -2881,7 +2913,7 @@ class GraphApiDatasourceImpl
   }) async {
     try {
       final response = await _dio.post<Map<String, dynamic>>(
-        '/me/calendar/getSchedule',
+        '$_base/calendar/getSchedule',
         data: {
           'schedules': emails,
           'startTime': {
@@ -3098,7 +3130,7 @@ class GraphApiDatasourceImpl
   }) async {
     try {
       await _dio.post<void>(
-        '/me/mailFolders/$parentFolderId/childFolders',
+        '$_base/mailFolders/$parentFolderId/childFolders',
         data: {'displayName': displayName},
       );
     } on DioException catch (e) {
@@ -3113,7 +3145,7 @@ class GraphApiDatasourceImpl
   }) async {
     try {
       await _dio.patch<void>(
-        '/me/mailFolders/$folderId',
+        '$_base/mailFolders/$folderId',
         data: {'displayName': newDisplayName},
       );
     } on DioException catch (e) {
@@ -3129,7 +3161,7 @@ class GraphApiDatasourceImpl
     try {
       // Graph's native move preserves the folder id and moves all sub-folders.
       await _dio.post<void>(
-        '/me/mailFolders/$folderId/move',
+        '$_base/mailFolders/$folderId/move',
         data: {'destinationId': newParentFolderId},
       );
     } on DioException catch (e) {
@@ -3158,7 +3190,7 @@ class GraphApiDatasourceImpl
     try {
       final contentType = bodyType == EmailBodyType.html ? 'Html' : 'Text';
       final resp = await _dio.post<Map<String, dynamic>>(
-        '/me/messages',
+        '$_base/messages',
         data: {
           'subject': subject,
           'body': {'contentType': contentType, 'content': body},
@@ -3192,7 +3224,7 @@ class GraphApiDatasourceImpl
     try {
       final contentType = bodyType == EmailBodyType.html ? 'Html' : 'Text';
       await _dio.patch<void>(
-        '/me/messages/$draftId',
+        '$_base/messages/$draftId',
         data: {
           'subject': subject,
           'body': {'contentType': contentType, 'content': body},
@@ -3214,7 +3246,7 @@ class GraphApiDatasourceImpl
   @override
   Future<void> deleteServerDraft({required String draftId}) async {
     try {
-      await _dio.delete<void>('/me/messages/$draftId');
+      await _dio.delete<void>('$_base/messages/$draftId');
     } on DioException catch (e) {
       throw _mapDioException(e);
     }

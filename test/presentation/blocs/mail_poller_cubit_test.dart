@@ -1524,13 +1524,15 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
-  // markAccountViewed
+  // The envelope's "new mail" flag clears on a real read, not on switching
+  // to the account — the account-switch call that used to clear it eagerly
+  // (markAccountViewed) is gone; only an actual unread-count change does.
   // ---------------------------------------------------------------------------
 
-  group('MailPollerCubit — markAccountViewed', () {
+  group('MailPollerCubit — new-mail flag tracks real reads', () {
     setUp(() {
       when(mockAccountManager.accounts).thenReturn([_msAccount]);
-      when(mockAccountManager.activeAccount).thenReturn(null);
+      when(mockAccountManager.activeAccount).thenReturn(_msAccount);
       when(mockAccountManager.buildEmailDatasourceForAccount(any))
           .thenReturn(mockGraphDs);
       when(mockDatabase.loadDeltaToken(any, any))
@@ -1546,16 +1548,27 @@ void main() {
           .thenAnswer((_) async => [_inbox(unread: 1)]);
     });
 
-    test('removes account from accountsWithNewMail', () async {
+    test('flags the active account too while it has real unread mail',
+        () async {
       final cubit = _makeCubit();
       addTearDown(cubit.close);
 
-      // Poll first to establish new-mail state.
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      expect(cubit.state.accountsWithNewMail, contains(_msId));
+    });
+
+    test('decrementUnreadCount clears it the instant unread hits zero',
+        () async {
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+
       await cubit.initialize();
       await pumpEventQueue();
       expect(cubit.state.accountsWithNewMail, contains(_msId));
 
-      cubit.markAccountViewed(_msId);
+      cubit.decrementUnreadCount();
 
       expect(cubit.state.accountsWithNewMail, isNot(contains(_msId)));
     });

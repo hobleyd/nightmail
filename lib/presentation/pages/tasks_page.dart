@@ -390,7 +390,7 @@ class _TaskTileState extends State<_TaskTile> {
                           style: TextStyle(
                             fontSize: 11,
                             color: _isDueOverdue(task.dueDateTime!)
-                                ? Colors.redAccent
+                                ? AppColors.notification
                                 : c.textMuted,
                           ),
                         ),

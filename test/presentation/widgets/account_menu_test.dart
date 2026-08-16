@@ -116,6 +116,31 @@ void main() {
       expect(find.text('Add Shared Mailbox…'), findsNothing);
     });
 
+    // The trigger used to draw its own small circular dot next to the
+    // account name for new mail — removed once the mail icon beside it
+    // (in _PanelHeader, not covered by this test file) started carrying
+    // that signal itself via AppColors.notification instead.
+    testWidgets(
+        'draws no new-mail dot next to the account name even when the '
+        'active account has new mail', (tester) async {
+      when(mockAccountCubit.state).thenReturn(const AccountsLoaded(
+        accounts: [_msAccount],
+        activeIndex: 0,
+      ));
+      when(mockMailPollerCubit.state).thenReturn(const MailPollerState(
+        accountsWithNewMail: {'ms-1'},
+        pollIntervalSeconds: 300,
+      ));
+
+      await tester.pumpWidget(wrap());
+
+      final dots = find.byWidgetPredicate((w) =>
+          w is Container &&
+          w.decoration is BoxDecoration &&
+          (w.decoration! as BoxDecoration).shape == BoxShape.circle);
+      expect(dots, findsNothing);
+    });
+
     testWidgets('lists every configured account, active one checked',
         (tester) async {
       when(mockAccountCubit.state).thenReturn(const AccountsLoaded(

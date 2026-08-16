@@ -440,7 +440,11 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
               if (_shouldPrimeBaseline(account.id, activeId)) {
                 _baselineUnread[account.id] = unreadCount;
                 _baselineTotal[account.id] = totalCount;
-                if (account.id != activeId && unreadCount > 0) {
+                // The envelope badge mirrors the real unread count for every
+                // account, active included — same rule the dock/tray badge
+                // already uses, so it only ever clears once mail is actually
+                // read rather than the moment its account is switched to.
+                if (unreadCount > 0) {
                   if (_newMailAccounts.add(account.id)) changed = true;
                 }
               } else {
@@ -456,8 +460,8 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                   }
                   _baselineUnread[account.id] = unreadCount;
                   _baselineTotal[account.id] = totalCount;
-                  if (_newMailAccounts.remove(account.id)) changed = true;
-                } else if (unreadCount > 0) {
+                }
+                if (unreadCount > 0) {
                   if (_newMailAccounts.add(account.id)) changed = true;
                 } else {
                   if (_newMailAccounts.remove(account.id)) changed = true;
@@ -533,14 +537,12 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
 
                 if (account.id == activeId) {
                   _baselineUnread[account.id] = unreadCount;
-                  if (_newMailAccounts.remove(account.id)) changed = true;
                   activeInboxChanged = true;
                   // _cacheUpserted files each message under its own
                   // parentFolderId, which for an inbox delta is this id — so a
                   // repaint from the Inbox's cache is valid.
                   syncedForActive.add(inboxes.first.id);
                 } else if (hasNewUnread) {
-                  if (_newMailAccounts.add(account.id)) changed = true;
                   // Send one notification per new unread email (capped at 5).
                   final newEmails =
                       result.upserted.where((e) => !e.isRead).take(5);
@@ -553,7 +555,13 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                       accountLabel: account.displayName,
                     ));
                   }
-                } else if (unreadCount == 0) {
+                }
+                // Envelope badge tracks the real unread count for every
+                // account, active included — it clears once mail is
+                // actually read, not the moment the account is switched to.
+                if (unreadCount > 0) {
+                  if (_newMailAccounts.add(account.id)) changed = true;
+                } else {
                   if (_newMailAccounts.remove(account.id)) changed = true;
                 }
               } else if (!_latestPolledUnread.containsKey(account.id)) {
@@ -626,7 +634,11 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
             if (_shouldPrimeBaseline(account.id, activeId)) {
               _baselineUnread[account.id] = unreadCount;
               _baselineTotal[account.id] = totalCount;
-              if (account.id != activeId && unreadCount > 0) {
+              // The envelope badge mirrors the real unread count for every
+              // account, active included — same rule the dock/tray badge
+              // already uses, so it only ever clears once mail is actually
+              // read rather than the moment its account is switched to.
+              if (unreadCount > 0) {
                 if (_newMailAccounts.add(account.id)) changed = true;
               }
               continue;
@@ -718,9 +730,10 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
             _baselineUnread[account.id] = unreadCount;
             _baselineTotal[account.id] = totalCount;
 
-            if (account.id == activeId) {
-              if (_newMailAccounts.remove(account.id)) changed = true;
-            } else if (unreadCount > 0) {
+            // Envelope badge tracks the real unread count for every account,
+            // active included — it clears once mail is actually read, not
+            // the moment the account is switched to.
+            if (unreadCount > 0) {
               if (_newMailAccounts.add(account.id)) changed = true;
             } else {
               if (_newMailAccounts.remove(account.id)) changed = true;
@@ -859,8 +872,12 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     // that branch already called showEmailNotification with real message
     // detail, so this aggregate fallback would double-notify.
     if (wasInitialized && (Platform.isWindows || Platform.isLinux)) {
+      final activeId = _accountManager.activeAccount?.id;
       final newlyFlagged = _newMailAccounts.difference(previousNewMailAccounts);
       for (final accountId in newlyFlagged) {
+        // The active account's own mail arriving is visible in the list
+        // already — this toast is for accounts the user isn't looking at.
+        if (accountId == activeId) continue;
         if (deltaSyncedAccounts.contains(accountId)) continue;
         Account? account;
         for (final a in _accountManager.accounts) {
@@ -1345,6 +1362,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     if (current > 0) _latestPolledUnread[accountId] = current - 1;
     final total = _latestPolledUnread.values.fold(0, (sum, n) => sum + n);
     unawaited(_badgeService.setBadgeCount(total));
+    _syncNewMailFlag(accountId);
   }
 
   void incrementUnreadCount() {
@@ -1354,6 +1372,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     _latestPolledUnread[accountId] = current + 1;
     final total = _latestPolledUnread.values.fold(0, (sum, n) => sum + n);
     unawaited(_badgeService.setBadgeCount(total));
+    _syncNewMailFlag(accountId);
   }
 
   void updateBadgeFromFolders(int inboxUnreadCount) {
@@ -1362,12 +1381,19 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     _latestPolledUnread[accountId] = inboxUnreadCount;
     final total = _latestPolledUnread.values.fold(0, (sum, n) => sum + n);
     unawaited(_badgeService.setBadgeCount(total));
+    _syncNewMailFlag(accountId);
   }
 
-  void markAccountViewed(String accountId) {
-    _newMailAccounts.remove(accountId);
-    _baselineUnread[accountId] = _latestPolledUnread[accountId] ?? 0;
-    if (!isClosed) {
+  /// Recomputes [accountId]'s membership in the envelope's "new mail" set
+  /// from its current unread count, so a real read clears the icon the same
+  /// instant it drops the dock/tray badge — rather than waiting up to a full
+  /// poll interval (or, with polling set to "Never", not at all).
+  void _syncNewMailFlag(String accountId) {
+    final unreadCount = _latestPolledUnread[accountId] ?? 0;
+    final changed = unreadCount > 0
+        ? _newMailAccounts.add(accountId)
+        : _newMailAccounts.remove(accountId);
+    if (changed && !isClosed) {
       emit(state.copyWith(accountsWithNewMail: Set.of(_newMailAccounts)));
     }
   }

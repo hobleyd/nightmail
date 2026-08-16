@@ -414,12 +414,21 @@ class _PanelHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    // Same signal as the Tasks icon's overdue dot, carried by the icon's
+    // own colour instead of a separate dot — the account switcher this icon
+    // sits beside no longer draws one of its own (see AccountMenu).
+    final hasNewMail = context
+        .watch<MailPollerCubit>()
+        .state
+        .accountsWithNewMail
+        .isNotEmpty;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       child: Row(
         children: [
           Icon(Icons.mail_outline_rounded,
-              size: touchIcon(18), color: AppColors.accent),
+              size: touchIcon(18),
+              color: hasNewMail ? AppColors.notification : AppColors.accent),
           const SizedBox(width: 8),
           const Expanded(child: AccountMenu()),
           IconButton(
@@ -484,7 +493,6 @@ class _AccountMenuState extends State<AccountMenu> {
     final c = context.colors;
     final accountState = context.watch<AccountCubit>().state;
     final pollerState = context.watch<MailPollerCubit>().state;
-    final hasNewMail = pollerState.accountsWithNewMail.isNotEmpty;
     final hasReauthIssue = pollerState.accountsNeedingReauth.isNotEmpty;
 
     String name = 'NightMail';
@@ -556,14 +564,6 @@ class _AccountMenuState extends State<AccountMenu> {
 
         final accountCubit = context.read<AccountCubit>();
         final homeCubit = context.read<HomeCubit>();
-        final pollerCubit = context.read<MailPollerCubit>();
-
-        // Mark the selected account as viewed to clear its badge.
-        final currentState = accountCubit.state;
-        if (currentState is AccountsLoaded &&
-            value < currentState.accounts.length) {
-          pollerCubit.markAccountViewed(currentState.accounts[value].id);
-        }
 
         await accountCubit.switchToAccount(value);
 
@@ -624,7 +624,7 @@ class _AccountMenuState extends State<AccountMenu> {
                         width: 7,
                         height: 7,
                         decoration: const BoxDecoration(
-                          color: AppColors.accent,
+                          color: AppColors.notification,
                           shape: BoxShape.circle,
                         ),
                       ),
@@ -688,16 +688,6 @@ class _AccountMenuState extends State<AccountMenu> {
               padding: const EdgeInsets.only(left: 4),
               child: Icon(Icons.error_rounded,
                   size: touchIcon(12), color: const Color(0xFFE57373)),
-            )
-          else if (hasNewMail)
-            Container(
-              width: 7,
-              height: 7,
-              margin: const EdgeInsets.only(left: 4),
-              decoration: const BoxDecoration(
-                color: AppColors.accent,
-                shape: BoxShape.circle,
-              ),
             ),
           const SizedBox(width: 2),
           Icon(Icons.expand_more, size: touchIcon(16), color: c.textMuted),
@@ -1570,7 +1560,7 @@ class _SettingsFooter extends StatelessWidget {
                         width: 7,
                         height: 7,
                         decoration: const BoxDecoration(
-                          color: Colors.redAccent,
+                          color: AppColors.notification,
                           shape: BoxShape.circle,
                         ),
                       ),

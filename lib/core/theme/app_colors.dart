@@ -11,6 +11,12 @@ class AppColors {
 
   static const Color accent = Color(0xFF7C83FD);
 
+  /// The one "something needs your attention" colour — the mail icon when
+  /// there's unread mail, the Tasks icon's overdue dot. Shared deliberately:
+  /// both are the same kind of signal and should read as one language, not
+  /// two different colours that happen to mean the same thing.
+  static const Color notification = Colors.redAccent;
+
   // Surfaces
   Color get surfaceBase => _isDark ? const Color(0xFF0F1117) : const Color(0xFFF5F6FA);
   Color get surfacePanel => _isDark ? const Color(0xFF13161F) : Colors.white;

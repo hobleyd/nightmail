@@ -25,6 +25,7 @@ import 'package:nightmail/infrastructure/badge/badge_service.dart';
 import 'package:nightmail/infrastructure/network/connectivity_service.dart';
 import 'package:nightmail/infrastructure/notifications/notification_service.dart';
 import 'package:nightmail/infrastructure/sync/body_prefetch_service.dart';
+import 'package:nightmail/infrastructure/sync/imap_connection_gate.dart';
 import 'package:nightmail/infrastructure/sync/outbox_drain_service.dart';
 import 'package:nightmail/infrastructure/sync/removal_tombstone_store.dart';
 import 'package:nightmail/infrastructure/sync/spam_db_sync_service.dart';
@@ -146,6 +147,7 @@ void main() {
         emailLocalDatasource: mockEmailLocalDatasource,
         folderLocalDatasource: mockFolderLocalDatasource,
         getCachedFolders: mockGetCachedFolders,
+        imapConnectionGate: ImapConnectionGate(),
         notificationService: mockNotificationService,
         outboxDrainService: mockOutboxDrainService,
         pendingOperations: mockPendingOperations,

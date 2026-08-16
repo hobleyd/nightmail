@@ -14,6 +14,7 @@ import 'data/datasources/local/email_local_datasource.dart';
 import 'data/datasources/local/email_local_datasource_impl.dart';
 import 'data/datasources/local/folder_local_datasource.dart';
 import 'data/datasources/local/pending_calendar_operations_datasource.dart';
+import 'data/datasources/local/migration_local_datasource.dart';
 import 'data/datasources/local/pending_operations_datasource.dart';
 import 'data/datasources/local/reminder_schedule_local_datasource.dart';
 import 'data/datasources/local/task_reminder_schedule_local_datasource.dart';
@@ -133,6 +134,8 @@ import 'infrastructure/sync/body_prefetch_service.dart';
 import 'infrastructure/sync/cache_membership_repair_service.dart';
 import 'infrastructure/sync/calendar_outbox_drain_service.dart';
 import 'infrastructure/sync/calendar_pending_op_reconciler.dart';
+import 'infrastructure/migration/account_migration_service.dart';
+import 'infrastructure/sync/imap_connection_gate.dart';
 import 'infrastructure/sync/outbox_drain_service.dart';
 import 'infrastructure/sync/removal_tombstone_store.dart';
 import 'infrastructure/sync/spam_db_sync_service.dart';
@@ -144,6 +147,7 @@ import 'presentation/blocs/email_detail/email_detail_bloc.dart';
 import 'presentation/blocs/email_list/email_list_bloc.dart';
 import 'presentation/blocs/folder_list/folder_list_bloc.dart';
 import 'presentation/blocs/mail_poller/mail_poller_cubit.dart';
+import 'presentation/blocs/migration/migration_cubit.dart';
 import 'presentation/blocs/tasks/overdue_tasks_cubit.dart';
 import 'presentation/blocs/tasks/tasks_bloc.dart';
 import 'presentation/blocs/theme/theme_cubit.dart';
@@ -212,6 +216,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton<PendingOperationsDatasource>(() => sl<AppDatabase>());
   sl.registerLazySingleton<PendingCalendarOperationsDatasource>(
       () => sl<AppDatabase>());
+  sl.registerLazySingleton<MigrationLocalDatasource>(() => sl<AppDatabase>());
   sl.registerLazySingleton(() => InlineAttachmentCache());
   sl.registerLazySingleton<EmailLocalDatasource>(
     () => EmailLocalDatasourceImpl(
@@ -234,6 +239,10 @@ Future<void> configureDependencies() async {
   );
   sl.registerLazySingleton<ConnectivityService>(() => ConnectivityServiceImpl());
   sl.registerLazySingleton(() => RemovalTombstoneStore());
+  // Shared across OutboxDrainService, MailPollerCubit and account migration —
+  // see ImapConnectionGate's own doc comment for why a single instance must
+  // be injected into all three rather than each holding its own.
+  sl.registerLazySingleton(() => ImapConnectionGate());
   sl.registerLazySingleton(
     () => OutboxDrainService(
       pendingOperations: sl<PendingOperationsDatasource>(),
@@ -242,6 +251,7 @@ Future<void> configureDependencies() async {
       connectivityService: sl<ConnectivityService>(),
       spamDbSyncService: sl<SpamDbSyncService>(),
       calendarDrainService: sl<CalendarOutboxDrainService>(),
+      imapConnectionGate: sl<ImapConnectionGate>(),
     ),
   );
   sl.registerLazySingleton(
@@ -250,6 +260,17 @@ Future<void> configureDependencies() async {
       accountManager: sl<AccountManager>(),
       connectivityService: sl<ConnectivityService>(),
     ),
+  );
+  sl.registerLazySingleton(
+    () => AccountMigrationService(
+      accountManager: sl<AccountManager>(),
+      localDatasource: sl<MigrationLocalDatasource>(),
+      imapConnectionGate: sl<ImapConnectionGate>(),
+      connectivityService: sl<ConnectivityService>(),
+    ),
+  );
+  sl.registerLazySingleton(
+    () => MigrationCubit(migrationService: sl<AccountMigrationService>()),
   );
   sl.registerLazySingleton(
     () => CalendarPendingOpReconciler(
@@ -443,6 +464,7 @@ Future<void> configureDependencies() async {
       emailLocalDatasource: sl<EmailLocalDatasource>(),
       folderLocalDatasource: sl<FolderLocalDatasource>(),
       getCachedFolders: sl<GetCachedFolders>(),
+      imapConnectionGate: sl<ImapConnectionGate>(),
       notificationService: sl<NotificationService>(),
       outboxDrainService: sl<OutboxDrainService>(),
       pendingOperations: sl<PendingOperationsDatasource>(),

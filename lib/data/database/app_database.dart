@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../../domain/entities/email_folder.dart';
 import '../datasources/local/delta_token_datasource.dart';
 import '../datasources/local/folder_local_datasource.dart';
+import '../datasources/local/migration_local_datasource.dart';
 import '../datasources/local/pending_calendar_operations_datasource.dart';
 import '../datasources/local/pending_operations_datasource.dart';
 import '../datasources/local/reminder_schedule_local_datasource.dart';
@@ -327,7 +328,45 @@ class PendingCalendarOperations extends Table {
   TextColumn get lastError => text().nullable()();
 }
 
-@DriftDatabase(tables: [CachedEmails, CachedEmailDetails, KnownSenders, SenderAliases, CachedContacts, ContactSyncStates, DeltaSyncTokens, CachedFolders, LocalDrafts, CatalogCache, AiConfig, CapabilityRouting, ScheduledReminders, ScheduledTaskReminders, PendingOperations, CachedCalendarEvents, PendingCalendarOperations])
+/// One row per (source account, target account) account-migration job — see
+/// AccountMigrationService. [id] is `'<sourceAccountId>|<targetAccountId>'`,
+/// upserted rather than appended: re-running a completed job just catches up
+/// any new source mail and retries prior failures, so there is only ever one
+/// row per pair, not one per run.
+class MigrationJobs extends Table {
+  TextColumn get id => text()();
+  TextColumn get sourceAccountId => text()();
+  TextColumn get targetAccountId => text()();
+  TextColumn get status => text()();
+  IntColumn get createdAtMs => integer()();
+  IntColumn get updatedAtMs => integer()();
+  TextColumn get lastError => text().nullable()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}
+
+/// Per-message progress for one [MigrationJobs] row — both the resumability
+/// checkpoint and the dedupe guard against copying the same source message
+/// twice. `status` moves pending -> inProgress -> written -> done (or ->
+/// failed); `written` is a distinct step from `done` so a crash between the
+/// provider call succeeding and the ledger update committing is detectable
+/// on resume rather than silently re-copying.
+@DataClassName('MigrationMessageLedgerRow')
+class MigrationMessageLedger extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get jobId => text()();
+  TextColumn get sourceFolderId => text()();
+  TextColumn get sourceMessageId => text()();
+  TextColumn get status => text()();
+  TextColumn get destFolderId => text().nullable()();
+  TextColumn get destMessageId => text().nullable()();
+  IntColumn get retryCount => integer().withDefault(const Constant(0))();
+  TextColumn get lastError => text().nullable()();
+  IntColumn get updatedAtMs => integer()();
+}
+
+@DriftDatabase(tables: [CachedEmails, CachedEmailDetails, KnownSenders, SenderAliases, CachedContacts, ContactSyncStates, DeltaSyncTokens, CachedFolders, LocalDrafts, CatalogCache, AiConfig, CapabilityRouting, ScheduledReminders, ScheduledTaskReminders, PendingOperations, CachedCalendarEvents, PendingCalendarOperations, MigrationJobs, MigrationMessageLedger])
 class AppDatabase extends _$AppDatabase
     implements
         DeltaTokenDatasource,
@@ -335,7 +374,8 @@ class AppDatabase extends _$AppDatabase
         ReminderScheduleLocalDatasource,
         TaskReminderScheduleLocalDatasource,
         PendingOperationsDatasource,
-        PendingCalendarOperationsDatasource {
+        PendingCalendarOperationsDatasource,
+        MigrationLocalDatasource {
   AppDatabase() : super(_openConnection());
 
   /// Test-only constructor: lets a unit test open the schema on an in-memory
@@ -345,7 +385,7 @@ class AppDatabase extends _$AppDatabase
   AppDatabase.forTesting(QueryExecutor executor) : super(executor);
 
   @override
-  int get schemaVersion => 16;
+  int get schemaVersion => 17;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -368,6 +408,7 @@ class AppDatabase extends _$AppDatabase
             'ON cached_contacts(account_id, search_text)',
           );
           await _createCalendarCacheIndexes();
+          await _createMigrationIndexes();
         },
         onUpgrade: (m, from, to) async {
           if (from < 2) {
@@ -461,8 +502,27 @@ class AppDatabase extends _$AppDatabase
             // the one cold load is the whole price.
             await customStatement('DELETE FROM cached_emails');
           }
+          if (from < 17) {
+            await m.createTable(migrationJobs);
+            await m.createTable(migrationMessageLedger);
+            await _createMigrationIndexes();
+          }
         },
       );
+
+  Future<void> _createMigrationIndexes() async {
+    // UNIQUE, not a plain index: a second row for the same tuple would make
+    // the "already done?" dedupe lookup ambiguous, so the constraint itself
+    // is what a resumed job's upsert-on-conflict relies on.
+    await customStatement(
+      'CREATE UNIQUE INDEX idx_migration_ledger_job_folder_message '
+      'ON migration_message_ledger(job_id, source_folder_id, source_message_id)',
+    );
+    await customStatement(
+      'CREATE INDEX idx_migration_ledger_job_status '
+      'ON migration_message_ledger(job_id, status)',
+    );
+  }
 
   Future<void> _createCalendarCacheIndexes() async {
     // The calendar always asks "what overlaps this range", so start_ms leads
@@ -835,6 +895,177 @@ class AppDatabase extends _$AppDatabase
       (delete(pendingCalendarOperations)
             ..where((t) => t.accountId.equals(accountId)))
           .go();
+
+  // MigrationLocalDatasource implementation (account migration)
+
+  MigrationJobRecord _toJobRecord(MigrationJob row) => MigrationJobRecord(
+        id: row.id,
+        sourceAccountId: row.sourceAccountId,
+        targetAccountId: row.targetAccountId,
+        status: MigrationJobStatus.values.byName(row.status),
+        createdAtMs: row.createdAtMs,
+        updatedAtMs: row.updatedAtMs,
+        lastError: row.lastError,
+      );
+
+  MigrationLedgerRecord _toLedgerRecord(MigrationMessageLedgerRow row) =>
+      MigrationLedgerRecord(
+        id: row.id,
+        jobId: row.jobId,
+        sourceFolderId: row.sourceFolderId,
+        sourceMessageId: row.sourceMessageId,
+        status: MigrationMessageStatus.values.byName(row.status),
+        destFolderId: row.destFolderId,
+        destMessageId: row.destMessageId,
+        retryCount: row.retryCount,
+        lastError: row.lastError,
+        updatedAtMs: row.updatedAtMs,
+      );
+
+  @override
+  Future<MigrationJobRecord> upsertJob({
+    required String jobId,
+    required String sourceAccountId,
+    required String targetAccountId,
+    required MigrationJobStatus status,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final existing =
+        await (select(migrationJobs)..where((t) => t.id.equals(jobId)))
+            .getSingleOrNull();
+    final createdAtMs = existing?.createdAtMs ?? nowMs;
+    await into(migrationJobs).insertOnConflictUpdate(
+      MigrationJobsCompanion.insert(
+        id: jobId,
+        sourceAccountId: sourceAccountId,
+        targetAccountId: targetAccountId,
+        status: status.name,
+        createdAtMs: createdAtMs,
+        updatedAtMs: nowMs,
+      ),
+    );
+    return MigrationJobRecord(
+      id: jobId,
+      sourceAccountId: sourceAccountId,
+      targetAccountId: targetAccountId,
+      status: status,
+      createdAtMs: createdAtMs,
+      updatedAtMs: nowMs,
+      lastError: null,
+    );
+  }
+
+  @override
+  Future<MigrationJobRecord?> getJob(String jobId) async {
+    final row = await (select(migrationJobs)..where((t) => t.id.equals(jobId)))
+        .getSingleOrNull();
+    return row == null ? null : _toJobRecord(row);
+  }
+
+  @override
+  Future<List<MigrationJobRecord>> getResumableJobs() async {
+    final rows = await (select(migrationJobs)
+          ..where((t) => t.status.isIn(
+                [MigrationJobStatus.running.name, MigrationJobStatus.paused.name],
+              )))
+        .get();
+    return rows.map(_toJobRecord).toList();
+  }
+
+  @override
+  Future<void> setJobStatus({
+    required String jobId,
+    required MigrationJobStatus status,
+    String? lastError,
+  }) =>
+      (update(migrationJobs)..where((t) => t.id.equals(jobId))).write(
+        MigrationJobsCompanion(
+          status: Value(status.name),
+          updatedAtMs: Value(DateTime.now().millisecondsSinceEpoch),
+          lastError: Value(lastError),
+        ),
+      );
+
+  @override
+  Future<MigrationLedgerRecord?> findLedgerRow({
+    required String jobId,
+    required String sourceFolderId,
+    required String sourceMessageId,
+    required bool matchSourceFolderId,
+  }) async {
+    final query = select(migrationMessageLedger)
+      ..where((t) =>
+          t.jobId.equals(jobId) & t.sourceMessageId.equals(sourceMessageId));
+    if (matchSourceFolderId) {
+      query.where((t) => t.sourceFolderId.equals(sourceFolderId));
+    }
+    final row = await query.getSingleOrNull();
+    return row == null ? null : _toLedgerRecord(row);
+  }
+
+  @override
+  Future<void> upsertLedgerRow({
+    required String jobId,
+    required String sourceFolderId,
+    required String sourceMessageId,
+    required MigrationMessageStatus status,
+    String? destFolderId,
+    String? destMessageId,
+    String? lastError,
+    bool incrementRetry = false,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    // Read-then-write rather than insertOnConflictUpdate: the dedupe
+    // constraint is a raw-SQL UNIQUE index (see _createMigrationIndexes),
+    // not a drift-declared key drift's typed upsert could target, and a job
+    // processes one message at a time so there is no concurrent writer to
+    // race against the same row.
+    final existing = await (select(migrationMessageLedger)
+          ..where((t) =>
+              t.jobId.equals(jobId) &
+              t.sourceFolderId.equals(sourceFolderId) &
+              t.sourceMessageId.equals(sourceMessageId)))
+        .getSingleOrNull();
+    final retryCount = incrementRetry
+        ? (existing?.retryCount ?? 0) + 1
+        : (existing?.retryCount ?? 0);
+    if (existing != null) {
+      await (update(migrationMessageLedger)..where((t) => t.id.equals(existing.id)))
+          .write(MigrationMessageLedgerCompanion(
+        status: Value(status.name),
+        destFolderId: Value(destFolderId ?? existing.destFolderId),
+        destMessageId: Value(destMessageId ?? existing.destMessageId),
+        retryCount: Value(retryCount),
+        lastError: Value(lastError),
+        updatedAtMs: Value(nowMs),
+      ));
+    } else {
+      await into(migrationMessageLedger).insert(
+        MigrationMessageLedgerCompanion.insert(
+          jobId: jobId,
+          sourceFolderId: sourceFolderId,
+          sourceMessageId: sourceMessageId,
+          status: status.name,
+          destFolderId: Value(destFolderId),
+          destMessageId: Value(destMessageId),
+          retryCount: Value(retryCount),
+          lastError: Value(lastError),
+          updatedAtMs: nowMs,
+        ),
+      );
+    }
+  }
+
+
+  @override
+  Future<List<MigrationLedgerRecord>> getFailedRows(String jobId) async {
+    final rows = await (select(migrationMessageLedger)
+          ..where((t) =>
+              t.jobId.equals(jobId) &
+              t.status.equals(MigrationMessageStatus.failed.name)))
+        .get();
+    return rows.map(_toLedgerRecord).toList();
+  }
 
   static QueryExecutor _openConnection() {
     return driftDatabase(name: 'nightmail_cache');

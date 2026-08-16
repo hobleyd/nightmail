@@ -15,6 +15,7 @@ import '../../domain/entities/email_folder.dart';
 import '../../domain/usecases/get_email.dart';
 import '../../core/settings/app_settings.dart';
 import '../../infrastructure/calendar/calendar_cache_sync_service.dart';
+import '../../infrastructure/migration/account_migration_service.dart';
 import '../../infrastructure/notifications/calendar_reminder_service.dart';
 import '../../infrastructure/notifications/notification_action.dart';
 import '../../infrastructure/notifications/notification_service.dart';
@@ -70,6 +71,10 @@ class HomePage extends StatelessWidget {
     // purpose: it must run in the main window only, and the calendar has to find
     // the cache already warm the first time it is opened.
     sl<CalendarCacheSyncService>().startPeriodic();
+    // Resumes any account migration left running/paused from a prior
+    // session — main window only, same reasoning as the sync services above
+    // (it needs a working, main-isolate get_it graph for token refresh).
+    unawaited(sl<AccountMigrationService>().resumeAll());
     // Sub-windows cannot reach the OS scheduler themselves, so they nudge the
     // main window to reconcile as soon as they change a reminder instead of
     // leaving it to the next 15-minute cycle. Re-registering only swaps the

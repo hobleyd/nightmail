@@ -3,6 +3,7 @@
 
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'dart:typed_data';
 
 import 'package:enough_mail/enough_mail.dart';
 import 'package:enough_mail/src/private/util/client_base.dart';
@@ -1460,6 +1461,37 @@ void main() {
     expect(uidResponseCode, isNotNull);
     expect(uidResponseCode?.uidValidity, 1466002016);
     expect(uidResponseCode?.targetSequence.toList().first, 176);
+  });
+
+  // appendMessageText sends its literal through the socket's default UTF-8
+  // IOSink.write — fine for genuine text, but a byte outside 7-bit ASCII
+  // comes back out re-encoded as two bytes on the wire, corrupting an
+  // already-encoded MIME source and desyncing the `{n}` byte count declared
+  // in the command line from what's actually sent. appendMessageBytes exists
+  // for exactly that case (account-migration copying a fetched message's raw
+  // bytes) and must reach the wire unchanged.
+  test('ImapClient appendMessageBytes sends raw bytes unchanged, including '
+      'a byte outside 7-bit ASCII', () async {
+    await _selectInbox();
+    final rawBytes = Uint8List.fromList([
+      ...'Subject: raw\r\n\r\n'.codeUnits,
+      0xE9, // outside ASCII — would double-encode if routed through UTF-8.
+      0x41,
+    ]);
+
+    mockServer.response = '+ OK\r\n'
+        '<tag> OK [APPENDUID 1466002016 177] Append completed.';
+    final appendResponse = await client.appendMessageBytes(
+      rawBytes,
+      targetMailboxPath: 'INBOX',
+    );
+
+    expect(appendResponse.responseCodeAppendUid?.targetSequence.toList().first,
+        177);
+    // The literal is the second thing the client writes (after the command
+    // line's continuation request) — mockServer.lastRequest holds whichever
+    // chunk arrived most recently, so by now it's the literal itself.
+    expect(mockServer.lastRequest, String.fromCharCodes([...rawBytes, 13, 10]));
   });
 
   test('ImapClient idle', () async {

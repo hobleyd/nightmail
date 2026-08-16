@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import '../../../core/error/exceptions.dart';
 import '../../../core/utils/ics_parser.dart';
 import '../../../core/utils/online_meeting_url.dart';
+import '../../../core/utils/special_folder_kind.dart';
 import '../../../domain/entities/contact_details.dart';
 import '../../../domain/entities/local_attachment.dart';
 import '../../../domain/entities/attendee_availability.dart';
@@ -30,6 +31,7 @@ import '../../models/todo_task_model.dart';
 import 'calendar_remote_datasource.dart';
 import 'contact_bulk_parser.dart';
 import 'email_remote_datasource.dart';
+import 'graph_import_parser.dart';
 import 'mail_delta_datasource.dart';
 import 'graph_message_parser.dart';
 import 'tasks_remote_datasource.dart';
@@ -3124,15 +3126,164 @@ class GraphApiDatasourceImpl
   }
 
   @override
-  Future<void> createFolder({
+  Future<String> createFolder({
     required String parentFolderId,
     required String displayName,
   }) async {
+    // Empty parentFolderId is the root sentinel (account migration's
+    // folder-hierarchy build-out is the only caller that ever creates a
+    // genuine top-level folder) — Graph's well-known name for the mailbox
+    // root, so a top-level folder is still just a "child folder" call.
+    final resolvedParentId =
+        parentFolderId.isEmpty ? 'msgfolderroot' : parentFolderId;
     try {
-      await _dio.post<void>(
-        '$_base/mailFolders/$parentFolderId/childFolders',
+      final resp = await _dio.post<Map<String, dynamic>>(
+        '$_base/mailFolders/$resolvedParentId/childFolders',
         data: {'displayName': displayName},
       );
+      final id = resp.data?['id'] as String?;
+      if (id == null) {
+        throw const ServerException(message: 'No folder ID in response');
+      }
+      return id;
+    } on DioException catch (e) {
+      // Graph rejects a duplicate child folder name with 409 — that is
+      // success from this method's point of view (the folder already
+      // exists), not a failure; callers (notably account migration, on
+      // every resume) treat the two the same.
+      if (e.response?.statusCode == 409) {
+        final children = await getChildFolders(resolvedParentId);
+        for (final child in children) {
+          if (child.displayName == displayName) return child.id;
+        }
+      }
+      throw _mapDioException(e);
+    }
+  }
+
+  /// Well-known folder names resolved for [getSpecialFolderIds] — a superset
+  /// of [_expansionExcludedFolders], which only needs 2 of these 6 for a
+  /// different purpose (cross-folder thread expansion).
+  static const _specialFolderWellKnownNames = {
+    SpecialFolderKind.inbox: 'inbox',
+    SpecialFolderKind.sent: 'sentitems',
+    SpecialFolderKind.trash: 'deleteditems',
+    SpecialFolderKind.junk: 'junkemail',
+    SpecialFolderKind.archive: 'archive',
+  };
+
+  /// Memoised the same way as [_excludedFolderIds]: the *future*, not the
+  /// result, so a job resolving several kinds at once makes one round of
+  /// lookups rather than racing several; a mailbox does not re-home these
+  /// folders, so it is good for the datasource's lifetime.
+  Future<Map<SpecialFolderKind, String>>? _specialFolderIds;
+
+  @override
+  Future<Map<SpecialFolderKind, String>> getSpecialFolderIds() =>
+      _specialFolderIds ??= _fetchSpecialFolderIds();
+
+  Future<Map<SpecialFolderKind, String>> _fetchSpecialFolderIds() async {
+    final result = <SpecialFolderKind, String>{};
+    var complete = true;
+    for (final entry in _specialFolderWellKnownNames.entries) {
+      try {
+        final response = await _dio.get<Map<String, dynamic>>(
+          '$_base/mailFolders/${entry.value}',
+          queryParameters: {'\$select': 'id'},
+        );
+        final id = response.data?['id'] as String?;
+        if (id == null) {
+          complete = false;
+        } else {
+          result[entry.key] = id;
+        }
+      } catch (_) {
+        complete = false;
+      }
+    }
+    // A partial answer is not kept — same reasoning as
+    // _fetchExpansionExcludedIds: a throttled lookup must retry on the next
+    // call rather than permanently miss a kind for the rest of the session.
+    if (!complete) _specialFolderIds = null;
+    return result;
+  }
+
+  @override
+  Future<String> insertRawMessage({
+    required String folderId,
+    required Uint8List rawBytes,
+    required DateTime receivedAt,
+    required bool isRead,
+  }) async {
+    try {
+      // Graph's create-message endpoint is JSON-only — there is no raw-MIME
+      // option — so the message has to be parsed back into structured fields
+      // here rather than appended like IMAP/Gmail. Decoded off the calling
+      // isolate for the same reason every other body parse in this file is:
+      // a multi-MB message plus its attachments is real CPU cost.
+      final parsed = await compute(parseRawMimeForGraphImport, rawBytes);
+      final iso = receivedAt.toUtc().toIso8601String();
+      Map<String, dynamic> body({required bool includeFrom}) => {
+            'subject': parsed.subject,
+            'body': {
+              'contentType': parsed.contentType,
+              'content': parsed.body
+            },
+            if (includeFrom)
+              'from': {
+                'emailAddress': {
+                  'address': parsed.fromAddress,
+                  if (parsed.fromName.isNotEmpty) 'name': parsed.fromName,
+                },
+              },
+            'toRecipients': parsed.toAddresses
+                .map((a) => {'emailAddress': {'address': a}})
+                .toList(),
+            if (parsed.ccAddresses.isNotEmpty)
+              'ccRecipients': parsed.ccAddresses
+                  .map((a) => {'emailAddress': {'address': a}})
+                  .toList(),
+            'receivedDateTime': iso,
+            'sentDateTime': iso,
+            'isRead': isRead,
+          };
+
+      Map<String, dynamic> resp;
+      try {
+        resp = (await _dio.post<Map<String, dynamic>>(
+          '$_base/mailFolders/$folderId/messages',
+          data: body(includeFrom: true),
+        ))
+            .data!;
+      } on DioException catch (e) {
+        // Setting 'from' to an address the signed-in account has no SendAs
+        // right over is a documented way for Graph to reject the whole
+        // create call with 400 or 403, not just drop the field — that would
+        // otherwise fail every single message from a source with a
+        // different sender than the destination mailbox. Retry once without
+        // it. Deliberately narrow: 401 is an expired/invalid token (handled
+        // by _mapDioException as an AuthException the migration engine
+        // pauses on, not something a from-less retry would fix), and
+        // anything else (404/409/429/5xx) is a different failure entirely.
+        final status = e.response?.statusCode;
+        if (status != 400 && status != 403) {
+          throw _mapDioException(e);
+        }
+        resp = (await _dio.post<Map<String, dynamic>>(
+          '$_base/mailFolders/$folderId/messages',
+          data: body(includeFrom: false),
+        ))
+            .data!;
+      }
+
+      final id = resp['id'] as String?;
+      if (id == null) {
+        throw const ServerException(message: 'No message ID in response');
+      }
+      if (parsed.attachments.isNotEmpty) {
+        await _addAttachmentsToDraft(id, parsed.attachments);
+      }
+      return id;
     } on DioException catch (e) {
       throw _mapDioException(e);
     }

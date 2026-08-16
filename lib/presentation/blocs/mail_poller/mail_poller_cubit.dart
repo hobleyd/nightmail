@@ -27,6 +27,7 @@ import '../../../infrastructure/badge/badge_service.dart';
 import '../../../infrastructure/network/connectivity_service.dart';
 import '../../../infrastructure/notifications/notification_service.dart';
 import '../../../infrastructure/sync/body_prefetch_service.dart';
+import '../../../infrastructure/sync/imap_connection_gate.dart';
 import '../../../infrastructure/sync/outbox_drain_service.dart';
 import '../../../infrastructure/sync/removal_tombstone_store.dart';
 import '../../../infrastructure/sync/spam_db_sync_service.dart';
@@ -43,6 +44,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     required EmailLocalDatasource emailLocalDatasource,
     required FolderLocalDatasource folderLocalDatasource,
     required GetCachedFolders getCachedFolders,
+    required ImapConnectionGate imapConnectionGate,
     required NotificationService notificationService,
     required OutboxDrainService outboxDrainService,
     required PendingOperationsDatasource pendingOperations,
@@ -57,6 +59,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
         _emailLocalDatasource = emailLocalDatasource,
         _folderLocalDatasource = folderLocalDatasource,
         _getCachedFolders = getCachedFolders,
+        _imapConnectionGate = imapConnectionGate,
         _notificationService = notificationService,
         _outboxDrainService = outboxDrainService,
         _pendingOperations = pendingOperations,
@@ -76,6 +79,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   final EmailLocalDatasource _emailLocalDatasource;
   final FolderLocalDatasource _folderLocalDatasource;
   final GetCachedFolders _getCachedFolders;
+  final ImapConnectionGate _imapConnectionGate;
   final NotificationService _notificationService;
   final OutboxDrainService _outboxDrainService;
   final PendingOperationsDatasource _pendingOperations;
@@ -579,7 +583,16 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
             }
           } else {
             // Non-delta path: Gmail / IMAP — existing unread-count polling.
-            final folders = await ds.getMailFolders();
+            // Gated: an IMAP account's datasource holds one stateful
+            // connection shared with OutboxDrainService and account
+            // migration, which serialize themselves against the same gate —
+            // without it here, a migration fetch could land mid-SELECT from
+            // this poll and corrupt the session. A no-op for Gmail/Graph,
+            // which don't share connection state this way.
+            final folders = await _imapConnectionGate.runExclusive(
+              account.id,
+              () => ds.getMailFolders(),
+            );
 
             // IMAP-only: pull the shared spam filter DB from the SPAMDB
             // folder if another client has pushed a newer version. Awaited,
@@ -591,7 +604,10 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
             // inside the service itself, so this can't fail unread polling.
             if (account is ImapAccount && ds is SpamDbSyncDatasource) {
               final spamDbDs = ds as SpamDbSyncDatasource;
-              await _spamDbSyncService.pullForAccount(account.id, spamDbDs);
+              await _imapConnectionGate.runExclusive(
+                account.id,
+                () => _spamDbSyncService.pullForAccount(account.id, spamDbDs),
+              );
             }
 
             final inboxes =
@@ -868,12 +884,18 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     final newCount = _latestPolledUnread[account.id] ?? 0;
     try {
       final ds = _accountManager.buildEmailDatasourceForAccount(account);
-      final folders = await ds.getMailFolders();
+      final folders = await _imapConnectionGate.runExclusive(
+        account.id,
+        () => ds.getMailFolders(),
+      );
       final inbox = folders
           .where((f) => f.displayName.toLowerCase() == 'inbox')
           .firstOrNull;
       if (inbox == null) throw StateError('no inbox folder');
-      final emails = await ds.getEmails(folderId: inbox.id, top: 10);
+      final emails = await _imapConnectionGate.runExclusive(
+        account.id,
+        () => ds.getEmails(folderId: inbox.id, top: 10),
+      );
       unawaited(
         _reconcileAgainstPendingOps(account.id, emails).then((reconciled) =>
             _emailLocalDatasource.cacheEmails(

@@ -6,6 +6,7 @@ import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../../core/error/exceptions.dart';
+import '../../../core/utils/special_folder_kind.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/local_attachment.dart';
 import '../../../domain/entities/inline_attachment.dart';
@@ -865,27 +866,124 @@ class GmailDatasourceImpl implements EmailRemoteDatasource, MailDeltaDatasource 
   }
 
   @override
-  Future<Uint8List> getRawEmailBytes(String id) {
-    throw UnimplementedError('getRawEmailBytes not yet supported for Gmail');
+  Future<Uint8List> getRawEmailBytes(String id) async {
+    try {
+      // Plain, like every other message fetch in this file — jsonDecode of a
+      // full message (body + every inline image as base64) is the expensive
+      // half, and letting Dio decode it would put that back on the UI
+      // isolate. There's no parsing to do here beyond the outer envelope
+      // though, so it stays inline rather than going through compute().
+      final rawResp = await _dio.get<String>(
+        '/users/me/messages/$id',
+        queryParameters: {'format': 'raw'},
+        options: Options(responseType: ResponseType.plain),
+      );
+      final rawBody = rawResp.data;
+      if (rawBody == null || rawBody.isEmpty) {
+        throw const ServerException(message: 'Message not found');
+      }
+      final rawJson = jsonDecode(rawBody) as Map<String, dynamic>;
+      final rawBase64 = rawJson['raw'] as String?;
+      if (rawBase64 == null) {
+        throw const ServerException(message: 'No raw data in response');
+      }
+      return base64Url.decode(padGmailBase64(rawBase64));
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
   }
 
   @override
-  Future<void> createFolder({
+  Future<Map<SpecialFolderKind, String>> getSpecialFolderIds() async {
+    // Gmail's special labels are well-known constant ids, not per-account —
+    // no request needed. Gmail has no distinct Archive: "archiving" there
+    // just means removing the INBOX label, so that kind is omitted rather
+    // than guessed at.
+    return const {
+      SpecialFolderKind.inbox: 'INBOX',
+      SpecialFolderKind.sent: 'SENT',
+      SpecialFolderKind.trash: 'TRASH',
+      SpecialFolderKind.junk: 'SPAM',
+    };
+  }
+
+  @override
+  Future<String> insertRawMessage({
+    required String folderId,
+    required Uint8List rawBytes,
+    required DateTime receivedAt,
+    required bool isRead,
+  }) async {
+    try {
+      // `insert` (not `import`) deliberately: import re-runs Gmail's spam
+      // classifier and delivery scanning, which could reroute a message away
+      // from the label we're explicitly placing it under. insert bypasses
+      // that, matching IMAP APPEND's "land exactly where told" semantics.
+      final encoded = base64Url.encode(rawBytes).replaceAll('=', '');
+      final resp = await _dio.post<Map<String, dynamic>>(
+        '/users/me/messages',
+        queryParameters: {'internalDateSource': 'dateHeader'},
+        data: {
+          'raw': encoded,
+          'labelIds': [folderId, if (!isRead) 'UNREAD'],
+        },
+      );
+      final id = resp.data?['id'] as String?;
+      if (id == null) {
+        throw const ServerException(message: 'No message ID in response');
+      }
+      return id;
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  @override
+  Future<String> createFolder({
     required String parentFolderId,
     required String displayName,
   }) async {
     try {
-      // Fetch the parent label's full name so we can prefix the new label.
-      final parentResp = await _dio.get<Map<String, dynamic>>(
-        '/users/me/labels/$parentFolderId',
-      );
-      final parentName = parentResp.data?['name'] as String? ?? '';
-      final labelName =
-          parentName.isEmpty ? displayName : '$parentName/$displayName';
-      await _dio.post<void>(
-        '/users/me/labels',
-        data: {'name': labelName},
-      );
+      // Empty parentFolderId is the root sentinel (account migration's
+      // folder-hierarchy build-out is the only caller that ever creates a
+      // genuine top-level folder — every other caller creates a child of a
+      // folder the user is looking at). Skip the parent-name lookup below;
+      // there is no parent label to prefix with.
+      String labelName = displayName;
+      if (parentFolderId.isNotEmpty) {
+        final parentResp = await _dio.get<Map<String, dynamic>>(
+          '/users/me/labels/$parentFolderId',
+        );
+        final parentName = parentResp.data?['name'] as String? ?? '';
+        labelName =
+            parentName.isEmpty ? displayName : '$parentName/$displayName';
+      }
+      try {
+        final resp = await _dio.post<Map<String, dynamic>>(
+          '/users/me/labels',
+          data: {'name': labelName},
+        );
+        final id = resp.data?['id'] as String?;
+        if (id == null) {
+          throw const ServerException(message: 'No label ID in response');
+        }
+        return id;
+      } on DioException catch (e) {
+        // A duplicate label name is success from this method's point of
+        // view — callers (notably account migration, on every resume) treat
+        // "the folder already exists" the same as having just created it.
+        if (e.response?.statusCode != 409) rethrow;
+        final listResp =
+            await _dio.get<Map<String, dynamic>>('/users/me/labels');
+        final labels = (listResp.data?['labels'] as List<dynamic>? ?? [])
+            .cast<Map<String, dynamic>>();
+        for (final label in labels) {
+          if ((label['name'] as String?) == labelName) {
+            return label['id'] as String;
+          }
+        }
+        rethrow;
+      }
     } on DioException catch (e) {
       throw _mapException(e);
     }

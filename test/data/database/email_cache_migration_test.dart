@@ -13,6 +13,7 @@ import 'package:drift/drift.dart' show OpeningDetails, Variable;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/data/database/app_database.dart';
+import 'package:nightmail/data/datasources/local/migration_local_datasource.dart';
 
 /// The v14 `cached_emails`: same columns, primary key without `folder_id`.
 const _v14CachedEmails = '''
@@ -131,12 +132,61 @@ void main() {
     expect(rows.map((r) => r.folderId), containsAll(['inbox', 'archive']));
   });
 
+  // v17 adds the account-migration job/ledger tables. Additive only (no data
+  // to carry forward), but still exercised end to end from a real v14 file
+  // to confirm the onUpgrade branch actually builds them and the unique
+  // dedupe index that migration's resumability depends on.
+  test('the v17 upgrade adds the migration job/ledger tables', () async {
+    final db = AppDatabase.forTesting(NativeDatabase(file));
+    addTearDown(db.close);
+
+    await db.upsertJob(
+      jobId: 'src|tgt',
+      sourceAccountId: 'src',
+      targetAccountId: 'tgt',
+      status: MigrationJobStatus.running,
+    );
+    await db.upsertLedgerRow(
+      jobId: 'src|tgt',
+      sourceFolderId: 'INBOX',
+      sourceMessageId: 'msg-1',
+      status: MigrationMessageStatus.done,
+    );
+
+    expect((await db.getJob('src|tgt'))?.status, MigrationJobStatus.running);
+    expect(
+      (await db.findLedgerRow(
+        jobId: 'src|tgt',
+        sourceFolderId: 'INBOX',
+        sourceMessageId: 'msg-1',
+        matchSourceFolderId: true,
+      ))
+          ?.status,
+      MigrationMessageStatus.done,
+    );
+
+    // The dedupe index is UNIQUE — a second row for the same
+    // (job, folder, message) must be rejected, not silently duplicated.
+    await expectLater(
+      db.into(db.migrationMessageLedger).insert(
+            MigrationMessageLedgerCompanion.insert(
+              jobId: 'src|tgt',
+              sourceFolderId: 'INBOX',
+              sourceMessageId: 'msg-1',
+              status: MigrationMessageStatus.done.name,
+              updatedAtMs: 0,
+            ),
+          ),
+      throwsA(anything),
+    );
+  });
+
   // The tripwire: bumping the version without adding an `if (from < n)` branch
   // ships a schema the upgrade path never builds.
-  test('schema version is 16', () {
+  test('schema version is 17', () {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
-    expect(db.schemaVersion, 16);
+    expect(db.schemaVersion, 17);
   });
 }
 

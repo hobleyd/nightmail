@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../../../core/utils/special_folder_kind.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/local_attachment.dart';
 import '../../models/email_folder_model.dart';
@@ -78,10 +79,42 @@ abstract interface class EmailRemoteDatasource {
   /// Returns the raw RFC 822 MIME bytes for [id].
   Future<Uint8List> getRawEmailBytes(String id);
 
-  /// Creates a new child folder under [parentFolderId] with [displayName].
-  Future<void> createFolder({
+  /// Creates a new child folder under [parentFolderId] with [displayName]
+  /// and returns its id. If a folder with that name already exists under
+  /// the parent, returns the existing folder's id rather than erroring —
+  /// callers (notably account migration, which calls this on every resume)
+  /// must be able to treat "already exists" as success.
+  Future<String> createFolder({
     required String parentFolderId,
     required String displayName,
+  });
+
+  /// Resolves this account's special-use folders (inbox/sent/trash/junk/
+  /// archive) to their folder ids. A kind this provider has no distinct
+  /// folder for (e.g. Gmail has no separate Archive) is omitted from the map
+  /// rather than guessed at.
+  Future<Map<SpecialFolderKind, String>> getSpecialFolderIds();
+
+  /// Inserts a complete RFC 822 message ([rawBytes]) into [folderId] without
+  /// sending it — used by account migration to copy mail history rather than
+  /// replaying it through drafts/send. [receivedAt] and [isRead] are applied
+  /// where the provider allows; a provider whose "create message" API takes
+  /// structured fields rather than raw MIME (Graph) parses [rawBytes] itself
+  /// to recover them, keeping that translation a data-layer concern rather
+  /// than something callers need to know about. Returns the new message's id.
+  ///
+  /// Byte-exactness is a per-provider property, not a guarantee of this
+  /// interface: IMAP and Gmail write [rawBytes] unchanged. Graph cannot —
+  /// there is no raw-MIME create endpoint — so it is rebuilt from the parsed
+  /// fields, and its structured `from` is dropped rather than the whole
+  /// insert failing when the signed-in account has no SendAs right over the
+  /// original sender (the copy still lands, just attributed to whoever is
+  /// signed in).
+  Future<String> insertRawMessage({
+    required String folderId,
+    required Uint8List rawBytes,
+    required DateTime receivedAt,
+    required bool isRead,
   });
 
   /// Renames [folderId] to [newDisplayName].

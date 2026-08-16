@@ -8,6 +8,7 @@ import '../accounts/account.dart';
 import '../accounts/account_manager.dart';
 import '../network/connectivity_service.dart';
 import 'calendar_outbox_drain_service.dart';
+import 'imap_connection_gate.dart';
 import 'spam_db_sync_service.dart';
 
 /// Replays queued mutations (see [PendingOperationsDatasource]) against the
@@ -31,18 +32,21 @@ class OutboxDrainService {
     required ConnectivityService connectivityService,
     required SpamDbSyncService spamDbSyncService,
     required CalendarOutboxDrainService calendarDrainService,
+    required ImapConnectionGate imapConnectionGate,
   })  : _pendingOperations = pendingOperations,
         _localDatasource = localDatasource,
         _accountManager = accountManager,
         _connectivityService = connectivityService,
         _spamDbSyncService = spamDbSyncService,
-        _calendarDrainService = calendarDrainService;
+        _calendarDrainService = calendarDrainService,
+        _imapConnectionGate = imapConnectionGate;
 
   final PendingOperationsDatasource _pendingOperations;
   final EmailLocalDatasource _localDatasource;
   final AccountManager _accountManager;
   final ConnectivityService _connectivityService;
   final SpamDbSyncService _spamDbSyncService;
+  final ImapConnectionGate _imapConnectionGate;
 
   /// Queued calendar mutations are replayed before this queue is, because some
   /// of them are addressed by *message* id — see [_drainInner].
@@ -135,49 +139,56 @@ class OutboxDrainService {
       if (quarantined.contains(op.emailId)) continue;
       final emailId = idRemap[op.emailId] ?? op.emailId;
       try {
-        switch (op.opType) {
-          case PendingOperationType.delete:
-            await ds.deleteEmail(emailId);
+        // Gated for every provider, not just IMAP — the gate is a cheap
+        // per-account lock and applying it uniformly avoids a provider
+        // conditional here; it only actually contends against another
+        // caller (MailPollerCubit, account migration) on an IMAP account,
+        // whose single stateful connection is the reason this exists.
+        await _imapConnectionGate.runExclusive(accountId, () async {
+          switch (op.opType) {
+            case PendingOperationType.delete:
+              await ds.deleteEmail(emailId);
 
-          case PendingOperationType.move:
-            final payload = jsonDecode(op.payload) as Map<String, dynamic>;
-            final destinationFolderId =
-                payload['destinationFolderId'] as String;
-            final newId = await ds.moveEmail(emailId, destinationFolderId);
-            await _remapIfNeeded(accountId, emailId, newId, destinationFolderId);
-            // Keyed by the *original* queued id (not the already-resolved
-            // emailId) so a message remapped twice in one pass still
-            // resolves to its final id via this single lookup.
-            if (newId != null && newId != emailId) idRemap[op.emailId] = newId;
+            case PendingOperationType.move:
+              final payload = jsonDecode(op.payload) as Map<String, dynamic>;
+              final destinationFolderId =
+                  payload['destinationFolderId'] as String;
+              final newId = await ds.moveEmail(emailId, destinationFolderId);
+              await _remapIfNeeded(accountId, emailId, newId, destinationFolderId);
+              // Keyed by the *original* queued id (not the already-resolved
+              // emailId) so a message remapped twice in one pass still
+              // resolves to its final id via this single lookup.
+              if (newId != null && newId != emailId) idRemap[op.emailId] = newId;
 
-          case PendingOperationType.junk:
-            final newId = await ds.reportJunk(emailId);
-            await _remapIfNeeded(accountId, emailId, newId, 'junkemail');
-            if (newId != null && newId != emailId) idRemap[op.emailId] = newId;
+            case PendingOperationType.junk:
+              final newId = await ds.reportJunk(emailId);
+              await _remapIfNeeded(accountId, emailId, newId, 'junkemail');
+              if (newId != null && newId != emailId) idRemap[op.emailId] = newId;
 
-          case PendingOperationType.markRead:
-            final payload = jsonDecode(op.payload) as Map<String, dynamic>;
-            await ds.updateEmailReadStatus(
-              id: emailId,
-              isRead: payload['isRead'] as bool,
-            );
+            case PendingOperationType.markRead:
+              final payload = jsonDecode(op.payload) as Map<String, dynamic>;
+              await ds.updateEmailReadStatus(
+                id: emailId,
+                isRead: payload['isRead'] as bool,
+              );
 
-          case PendingOperationType.emptyFolder:
-            final payload = jsonDecode(op.payload) as Map<String, dynamic>;
-            await ds.emptyFolder(
-              op.folderId!,
-              permanentDelete: payload['permanentDelete'] as bool? ?? false,
-            );
+            case PendingOperationType.emptyFolder:
+              final payload = jsonDecode(op.payload) as Map<String, dynamic>;
+              await ds.emptyFolder(
+                op.folderId!,
+                permanentDelete: payload['permanentDelete'] as bool? ?? false,
+              );
 
-          case PendingOperationType.spamDbPush:
-            // Only IMAP datasources implement this; other providers never
-            // have this op type queued (see SpamDbSyncService.enqueuePush,
-            // gated on ImapAccount at the call site) but guard defensively.
-            if (ds is SpamDbSyncDatasource) {
-              await _spamDbSyncService.pushForAccount(
-                  accountId, ds as SpamDbSyncDatasource);
-            }
-        }
+            case PendingOperationType.spamDbPush:
+              // Only IMAP datasources implement this; other providers never
+              // have this op type queued (see SpamDbSyncService.enqueuePush,
+              // gated on ImapAccount at the call site) but guard defensively.
+              if (ds is SpamDbSyncDatasource) {
+                await _spamDbSyncService.pushForAccount(
+                    accountId, ds as SpamDbSyncDatasource);
+              }
+          }
+        });
         await _pendingOperations.removeOperation(op.id);
       } catch (e) {
         // A delete/junk that 404s means the target message no longer exists

@@ -1959,6 +1959,9 @@ class ImapClient extends ClientBase {
   /// When no [targetMailbox] or [targetMailboxPath] is specified, then the
   /// message will be appended to the currently selected mailbox.
   /// You can specify flags such as `\Seen` or `\Draft` in the [flags] parameter.
+  /// [internalDate], when given, is sent as the APPEND command's optional
+  /// date-time so the server records that as the message's INTERNALDATE
+  /// instead of the time of the append — most servers sort/display by it.
   /// Specify a [responseTimeout] when a response is expected within the
   /// given time.
   /// Compare also the [appendMessageText] method.
@@ -1967,6 +1970,7 @@ class ImapClient extends ClientBase {
     List<String>? flags,
     Mailbox? targetMailbox,
     String? targetMailboxPath,
+    DateTime? internalDate,
     Duration? responseTimeout,
   }) =>
       appendMessageText(
@@ -1974,6 +1978,7 @@ class ImapClient extends ClientBase {
         flags: flags,
         targetMailbox: targetMailbox,
         targetMailboxPath: targetMailboxPath,
+        internalDate: internalDate,
         responseTimeout: responseTimeout,
       );
 
@@ -1982,6 +1987,9 @@ class ImapClient extends ClientBase {
   /// When no [targetMailbox] or [targetMailboxPath] is specified, then the
   /// message will be appended to the currently selected mailbox.
   /// You can specify flags such as `\Seen` or `\Draft` in the [flags] parameter.
+  /// [internalDate], when given, is sent as the APPEND command's optional
+  /// date-time (RFC 3501: `[SP date-time] SP literal`) so the server records
+  /// that as the message's INTERNALDATE instead of the time of the append.
   /// Specify a [responseTimeout] when a response is expected within the
   /// given time.
   /// Compare also the [appendMessage] method.
@@ -1990,6 +1998,7 @@ class ImapClient extends ClientBase {
     List<String>? flags,
     Mailbox? targetMailbox,
     String? targetMailboxPath,
+    DateTime? internalDate,
     Duration? responseTimeout,
   }) {
     final path = _encodeFirstMailboxPath(
@@ -2006,6 +2015,12 @@ class ImapClient extends ClientBase {
         ..write(flags.join(' '))
         ..write(')');
     }
+    if (internalDate != null) {
+      buffer
+        ..write(' "')
+        ..write(_encodeAppendDateTime(internalDate))
+        ..write('"');
+    }
     final numberOfBytes = utf8.encode(messageText).length;
     buffer
       ..write(' {')
@@ -2021,6 +2036,82 @@ class ImapClient extends ClientBase {
       cmd,
       GenericParser(this, _selectedMailbox),
     );
+  }
+
+  /// Appends the specified MIME message given as raw [messageBytes].
+  ///
+  /// Byte-exact counterpart to [appendMessageText]: existing callers pass
+  /// genuine text they want UTF-8 encoded on the wire, and
+  /// `appendMessageText`'s `{n}` byte count and its `IOSink.write` both
+  /// agree on that encoding, so it's left alone here. This method exists
+  /// for callers holding already-encoded MIME source as bytes (e.g. an
+  /// account-migration copy of a fetched message) — sending those through
+  /// `appendMessageText` would first have to become a `String`, and any
+  /// byte outside 7-bit ASCII would round-trip through that String and come
+  /// back out re-encoded as multi-byte UTF-8, corrupting the message and
+  /// desyncing the declared literal length from what's actually sent. This
+  /// method's `{n}` is computed over [messageBytes] directly and the same
+  /// bytes are what reach the socket, via [Command.withRawContinuation].
+  ///
+  /// See [appendMessageText] for the other parameters.
+  Future<GenericImapResult> appendMessageBytes(
+    Uint8List messageBytes, {
+    List<String>? flags,
+    Mailbox? targetMailbox,
+    String? targetMailboxPath,
+    DateTime? internalDate,
+    Duration? responseTimeout,
+  }) {
+    final path = _encodeFirstMailboxPath(
+      targetMailbox,
+      targetMailboxPath,
+      _selectedMailbox,
+    );
+    final buffer = StringBuffer()
+      ..write('APPEND ')
+      ..write(path);
+    if (flags != null && flags.isNotEmpty) {
+      buffer
+        ..write(' (')
+        ..write(flags.join(' '))
+        ..write(')');
+    }
+    if (internalDate != null) {
+      buffer
+        ..write(' "')
+        ..write(_encodeAppendDateTime(internalDate))
+        ..write('"');
+    }
+    buffer
+      ..write(' {')
+      ..write(messageBytes.length)
+      ..write('}');
+    final cmdText = buffer.toString();
+    final cmd = Command.withRawContinuation(
+      cmdText,
+      messageBytes,
+      responseTimeout: responseTimeout,
+    );
+
+    return sendCommand<GenericImapResult>(
+      cmd,
+      GenericParser(this, _selectedMailbox),
+    );
+  }
+
+  static const _appendMonths = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', //
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+
+  /// Formats [dateTime] as RFC 3501's `date-time` (e.g.
+  /// `"05-Jan-2026 10:00:00 +0000"`), for the optional date-time argument of
+  /// the APPEND command.
+  static String _encodeAppendDateTime(DateTime dateTime) {
+    final d = dateTime.toUtc();
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(d.day)}-${_appendMonths[d.month - 1]}-${d.year} '
+        '${two(d.hour)}:${two(d.minute)}:${two(d.second)} +0000';
   }
 
   /// Retrieves the specified meta data entry.
@@ -2756,6 +2847,15 @@ class ImapClient extends ClientBase {
   Future onContinuationResponse(ImapResponse imapResponse) async {
     final cmd = _currentCommandTask?.command;
     if (cmd != null) {
+      final rawData = cmd.getRawContinuationResponse();
+      if (rawData != null) {
+        // The command line the literal sits in is still terminated by CRLF,
+        // same as the text path below — just appended to the raw bytes
+        // instead of a String, so nothing here re-encodes them.
+        await writeData(Uint8List.fromList([...rawData, 13, 10]));
+
+        return;
+      }
       final response = cmd.getContinuationResponse(imapResponse);
       if (response != null) {
         await writeText(response);

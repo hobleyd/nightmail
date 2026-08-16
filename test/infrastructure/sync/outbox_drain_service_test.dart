@@ -21,6 +21,7 @@ import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 import 'package:nightmail/infrastructure/cache/cache_encryption_service.dart';
 import 'package:nightmail/infrastructure/network/connectivity_service.dart';
 import 'package:nightmail/infrastructure/sync/calendar_outbox_drain_service.dart';
+import 'package:nightmail/infrastructure/sync/imap_connection_gate.dart';
 import 'package:nightmail/infrastructure/sync/outbox_drain_service.dart';
 import 'package:nightmail/infrastructure/sync/spam_db_sync_service.dart';
 
@@ -112,6 +113,7 @@ void main() {
       connectivityService: mockConnectivityService,
       spamDbSyncService: mockSpamDbSyncService,
       calendarDrainService: mockCalendarDrainService,
+      imapConnectionGate: ImapConnectionGate(),
     );
   });
 

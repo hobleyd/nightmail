@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart' show compute, visibleForTesting;
 import '../../../core/error/exceptions.dart';
 import '../../../core/platform/window_utils.dart';
 import '../../../core/utils/html_entities.dart';
+import '../../../core/utils/special_folder_kind.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/local_attachment.dart';
 import '../../../domain/entities/email_attachment.dart';
@@ -334,6 +335,22 @@ class ImapDatasourceImpl
   Future<List<EmailFolderModel>> getMailFolders() =>
       withConnection(_getMailFoldersInner);
 
+  /// Name fallback for a server that doesn't advertise RFC 6154 SPECIAL-USE —
+  /// [_getMailFoldersInner] prefers `mb.isJunk`/`isTrash`/etc when available
+  /// and only falls back to these. `sent`/`drafts` mirror
+  /// core/utils/outgoing_folder.dart's set; trash/junk/archive have no
+  /// existing equivalent anywhere in the app.
+  static const _trashNames = {'trash', 'deleted items', 'deleted messages'};
+  static const _junkNames = {'junk', 'junk e-mail', 'junk email', 'spam'};
+  static const _archiveNames = {'archive', 'archives', 'all mail'};
+
+  /// Populated as a side effect of [_getMailFoldersInner] — see
+  /// [getSpecialFolderIds]. Root-level only: special-use folders nested under
+  /// INBOX on an abbreviated-namespace server won't be found here, same
+  /// narrowing [_getMailFoldersInner] itself already accepts (root listing
+  /// only; children come from [getChildFolders]).
+  Map<SpecialFolderKind, String>? _cachedSpecialFolderIds;
+
   Future<List<EmailFolderModel>> _getMailFoldersInner() async {
     try {
       final client = await _getConnectedClient();
@@ -362,7 +379,9 @@ class ImapDatasourceImpl
       _pathSeparator = convention.pathSeparator;
       _inboxFolderPrefix = convention.inboxFolderPrefix;
 
-      return rootMailboxes.map((mb) {
+      final specialIds = <SpecialFolderKind, String>{};
+
+      final result = rootMailboxes.map((mb) {
         // Normalise path for servers that use abbreviated naming (Courier IMAP).
         final fullPath =
             (_inboxFolderPrefix.isNotEmpty &&
@@ -378,6 +397,21 @@ class ImapDatasourceImpl
 
         _recordStatus(fullPath, mb);
 
+        final lowerName = mb.name.trim().toLowerCase();
+        if (mb.isInbox) {
+          specialIds[SpecialFolderKind.inbox] = fullPath;
+        }
+        if (mb.isSent) specialIds[SpecialFolderKind.sent] = fullPath;
+        if (mb.isTrash || _trashNames.contains(lowerName)) {
+          specialIds[SpecialFolderKind.trash] = fullPath;
+        }
+        if (mb.isJunk || _junkNames.contains(lowerName)) {
+          specialIds[SpecialFolderKind.junk] = fullPath;
+        }
+        if (mb.isArchive || _archiveNames.contains(lowerName)) {
+          specialIds[SpecialFolderKind.archive] = fullPath;
+        }
+
         return EmailFolderModel(
           id: fullPath,
           displayName: mb.name,
@@ -388,11 +422,20 @@ class ImapDatasourceImpl
           childFolderCount: mb.hasChildren ? 1 : 0,
         );
       }).toList();
+
+      _cachedSpecialFolderIds = specialIds;
+      return result;
     } on ImapException catch (e) {
       throw ServerException(message: e.message ?? 'IMAP error');
     } on AuthException {
       rethrow;
     }
+  }
+
+  @override
+  Future<Map<SpecialFolderKind, String>> getSpecialFolderIds() async {
+    if (_cachedSpecialFolderIds == null) await getMailFolders();
+    return _cachedSpecialFolderIds ?? const {};
   }
 
   @override
@@ -764,6 +807,61 @@ class ImapDatasourceImpl
     });
   }
 
+  static final _messageIdHeaderPattern = RegExp(
+    r'^Message-ID:\s*(\S+)\s*$',
+    multiLine: true,
+    caseSensitive: false,
+  );
+
+  @override
+  Future<String> insertRawMessage({
+    required String folderId,
+    required Uint8List rawBytes,
+    required DateTime receivedAt,
+    required bool isRead,
+  }) {
+    return withConnection(() async {
+      try {
+        final client = await _getConnectedClient();
+        // appendMessageBytes sends rawBytes unchanged — appendMessageText
+        // would first need a String, and any byte outside 7-bit ASCII would
+        // come back out re-encoded as multi-byte UTF-8 on the wire,
+        // corrupting an 8-bit body and desyncing the literal's declared
+        // length from what's actually sent (see Command.withRawContinuation).
+        final result = await client.appendMessageBytes(
+          rawBytes,
+          targetMailboxPath: folderId,
+          flags: [if (isRead) MessageFlags.seen],
+          internalDate: receivedAt,
+        );
+
+        final appendUid =
+            result.responseCodeAppendUid?.targetSequence.toList().firstOrNull;
+        if (appendUid != null) return '$folderId:$appendUid';
+
+        // No UIDPLUS (RFC 4315) — fall back to searching for the message we
+        // just appended by its own Message-ID header, same recovery
+        // _pushSpamDbInner already relies on. Headers are always 7-bit ASCII
+        // (RFC 5322), so a code-unit-per-byte mapping is exact here even
+        // though it isn't safe for the body above.
+        final headerText = String.fromCharCodes(rawBytes);
+        final msgId = _messageIdHeaderPattern.firstMatch(headerText)?.group(1);
+        if (msgId != null) {
+          await _selectMailboxPath(client, folderId);
+          final searchResult = await client.uidSearchMessages(
+            searchCriteria: 'HEADER Message-Id "$msgId"',
+          );
+          final uid = searchResult.matchingSequence?.toList().firstOrNull;
+          if (uid != null) return '$folderId:$uid';
+        }
+        throw const ServerException(
+            message: 'Could not resolve appended message id');
+      } on ImapException catch (e) {
+        throw ServerException(message: e.message ?? 'IMAP error');
+      }
+    });
+  }
+
   // ---------------------------------------------------------------------------
   // Parsing
   // ---------------------------------------------------------------------------
@@ -955,7 +1053,10 @@ class ImapDatasourceImpl
   /// `Content-Disposition: attachment`, so a message whose attachment is
   /// declared solely via `Content-Type; name="x"` lit the list paperclip (from
   /// BODYSTRUCTURE, which had the fallback) and then rendered no chips.
-  @visibleForTesting
+  /// Also used by [parseRawMimeForGraphImport] — Graph's own JSON-only
+  /// create-message endpoint has to walk a raw MIME import back into
+  /// attachment parts, and this detection logic (BODYSTRUCTURE plus the
+  /// filename-only fallback below) shouldn't be re-derived a second time.
   static List<EmailAttachment> collectAttachments(MimeMessage msg) {
     final structure = msg.body;
     if (structure == null) {
@@ -2295,21 +2396,35 @@ class ImapDatasourceImpl
   }
 
   @override
-  Future<void> createFolder({
+  Future<String> createFolder({
     required String parentFolderId,
     required String displayName,
   }) =>
       withConnection(() async {
+        // _pathSeparator is set by getMailFolders; folders are always listed
+        // before any create action is triggered from the UI so this will be
+        // populated. The path is deterministic, so it doubles as the new
+        // folder's id — no id lookup needed, unlike Gmail/Graph.
+        //
+        // Empty parentFolderId is the root sentinel (account migration's
+        // folder-hierarchy build-out is the only caller that ever creates a
+        // genuine top-level mailbox) — no separator prefix for a root path.
+        final newPath = parentFolderId.isEmpty
+            ? displayName
+            : '$parentFolderId$_pathSeparator$displayName';
         try {
           final client = await _getConnectedClient();
-          // _pathSeparator is set by getMailFolders; folders are always listed
-          // before any create action is triggered from the UI so this will be
-          // populated.
-          final newPath = '$parentFolderId$_pathSeparator$displayName';
           await client.createMailbox(newPath);
         } on ImapException catch (e) {
-          throw ServerException(message: e.message ?? 'IMAP error');
+          // "Already exists" is success from this method's point of view —
+          // callers (notably account migration, on every resume) treat the
+          // two the same.
+          final msg = (e.message ?? '').toLowerCase();
+          if (!msg.contains('already exist')) {
+            throw ServerException(message: e.message ?? 'IMAP error');
+          }
         }
+        return newPath;
       });
 
   @override

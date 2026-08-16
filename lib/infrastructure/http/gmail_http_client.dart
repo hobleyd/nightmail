@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 
 import '../auth/auth_service.dart';
 import 'auth_interceptor.dart';
+import 'retry_interceptor.dart';
 
 /// Dio instance pre-configured for the Gmail REST API.
 class GmailHttpClient {
@@ -25,6 +26,10 @@ class GmailHttpClient {
         dio: _dio,
         onAuthFailure: onAuthFailure,
         onAuthSuccess: onAuthSuccess));
+    // Gmail enforces its own per-user rate limits same as Graph — without
+    // this, a burst of requests (e.g. account migration) gets no 429/503
+    // backoff at the HTTP layer at all.
+    _dio.interceptors.add(RetryInterceptor(dio: _dio));
   }
 
   late final Dio _dio;

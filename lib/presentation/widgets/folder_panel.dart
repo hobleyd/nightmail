@@ -13,9 +13,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../data/datasources/local/migration_local_datasource.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_folder.dart';
 import '../../infrastructure/accounts/account.dart';
+import '../../infrastructure/migration/account_migration_service.dart';
+import '../../injection_container.dart';
 import 'add_shared_mailbox_dialog.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
@@ -30,10 +33,12 @@ import '../blocs/folder_list/folder_list_event.dart';
 import '../blocs/folder_list/folder_list_state.dart';
 import '../blocs/home/home_cubit.dart';
 import '../blocs/mail_poller/mail_poller_cubit.dart';
+import '../blocs/migration/migration_cubit.dart';
 import '../blocs/tasks/overdue_tasks_cubit.dart';
 import '../blocs/theme/theme_cubit.dart';
 import '../pages/settings_page.dart';
 import '../pages/add_account_page.dart';
+import 'migration_status_dialog.dart';
 
 class FolderPanel extends StatefulWidget {
   const FolderPanel({
@@ -443,9 +448,36 @@ class _PanelHeader extends StatelessWidget {
 /// switching accounts and adding one live behind the same control the
 /// account name already suggests is clickable.
 @visibleForTesting
-class AccountMenu extends StatelessWidget {
+class AccountMenu extends StatefulWidget {
   @visibleForTesting
   const AccountMenu({super.key});
+
+  @override
+  State<AccountMenu> createState() => _AccountMenuState();
+}
+
+class _AccountMenuState extends State<AccountMenu> {
+  // Checked, not pushed through a bloc: this is a plain DB read (no
+  // network) that only decides one menu item's label, and the job it
+  // reflects can belong to any account, not just whichever pair
+  // MigrationCubit's own dialog-scoped polling happens to be watching.
+  //
+  // No background timer: a rebuild happening to land mid-`pumpAndSettle`
+  // (in this widget's own tests or anywhere else `AccountMenu` appears)
+  // would keep scheduling frames and time it out. Instead this refreshes
+  // once per account switch and once more right after a migration action
+  // completes — the two moments the answer can actually have changed —
+  // rather than continuously while the menu just sits there unopened.
+  String? _checkedForAccountId;
+  MigrationJobRecord? _activeMigrationJob;
+
+  Future<void> _refreshActiveMigration(String accountId) async {
+    _checkedForAccountId = accountId;
+    final job =
+        await sl<AccountMigrationService>().getActiveJobForSource(accountId);
+    if (!mounted || _checkedForAccountId != accountId) return;
+    setState(() => _activeMigrationJob = job);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -464,6 +496,23 @@ class AccountMenu extends StatelessWidget {
           : activeAccount.displayName;
     }
 
+    if (activeAccount?.id != _checkedForAccountId) {
+      final id = activeAccount?.id;
+      // Set synchronously so a second build before the deferred check below
+      // actually runs doesn't see the same mismatch and queue another one.
+      _checkedForAccountId = id;
+      // Cleared for the new account immediately rather than left showing
+      // the previous account's job until the deferred check below resolves.
+      _activeMigrationJob = null;
+      if (id != null) {
+        // Deferred a frame: build() must stay synchronous, and the check
+        // calls setState.
+        WidgetsBinding.instance
+            .addPostFrameCallback((_) => _refreshActiveMigration(id));
+      }
+    }
+    final activeMigrationJob = _activeMigrationJob;
+
     return PopupMenuButton<Object>(
       tooltip: hasReauthIssue
           ? 'Accounts (re-authorization needed)'
@@ -478,6 +527,28 @@ class AccountMenu extends StatelessWidget {
         if (value == 'add_shared_mailbox') {
           if (activeAccount is MicrosoftAccount) {
             _showAddSharedMailboxDialog(context, activeAccount);
+          }
+          return;
+        }
+        if (value == 'migrate_account') {
+          if (activeAccount != null) {
+            final id = activeAccount.id;
+            await _showMigrateAccountSubmenu(context, activeAccount);
+            // Re-checked once the dialog closes (not right after it opens)
+            // so this account's next menu-open reflects wherever the job
+            // ended up — "Migration Status" if it's still going, back to
+            // "Migrate Account…" if it already finished — without waiting
+            // for an unrelated account switch to trigger the next check.
+            unawaited(_refreshActiveMigration(id));
+          }
+          return;
+        }
+        if (value == 'migration_status') {
+          if (activeAccount != null && activeMigrationJob != null) {
+            final id = activeAccount.id;
+            await _openMigrationStatus(
+                context, activeAccount, activeMigrationJob.targetAccountId);
+            unawaited(_refreshActiveMigration(id));
           }
           return;
         }
@@ -578,6 +649,22 @@ class AccountMenu extends StatelessWidget {
             ),
           );
         }
+        if (accountState is AccountsLoaded &&
+            accountState.accounts.length > 1) {
+          items.add(
+            activeMigrationJob != null
+                ? const PopupMenuItem<Object>(
+                    value: 'migration_status',
+                    child:
+                        Text('Migration Status', style: TextStyle(fontSize: 13)),
+                  )
+                : const PopupMenuItem<Object>(
+                    value: 'migrate_account',
+                    child: Text('Migrate Account…',
+                        style: TextStyle(fontSize: 13)),
+                  ),
+          );
+        }
         return items;
       },
       child: Row(
@@ -660,6 +747,104 @@ class AccountMenu extends StatelessWidget {
         child: AddSharedMailboxDialog(
           parentAccountId: trueParentId,
           parentAccountLabel: parentLabel,
+        ),
+      ),
+    );
+  }
+
+  /// `PopupMenuButton`/`PopupMenuItem` has no native nested-submenu support,
+  /// so selecting "Migrate Account…" closes this menu (PopupMenuButton does
+  /// that automatically on selection) and immediately opens a second
+  /// `showMenu()` anchored at the same button position — reading as a
+  /// submenu without introducing a new menu widget pattern into the app.
+  Future<void> _showMigrateAccountSubmenu(
+    BuildContext context,
+    Account activeAccount,
+  ) async {
+    final accountState = context.read<AccountCubit>().state;
+    if (accountState is! AccountsLoaded) return;
+    final targets = accountState.accounts
+        .where((a) => a.id != activeAccount.id)
+        .toList();
+    if (targets.isEmpty) return;
+
+    final button = context.findRenderObject() as RenderBox;
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+    final position = RelativeRect.fromRect(
+      Rect.fromPoints(
+        button.localToGlobal(Offset.zero, ancestor: overlay),
+        button.localToGlobal(button.size.bottomRight(Offset.zero), ancestor: overlay),
+      ),
+      Offset.zero & overlay.size,
+    );
+
+    final selectedId = await showMenu<String>(
+      context: context,
+      position: position,
+      items: [
+        for (final target in targets)
+          PopupMenuItem<String>(
+            value: target.id,
+            child: Text(
+              target.emailAddress.isEmpty
+                  ? target.displayName
+                  : target.emailAddress,
+              style: const TextStyle(fontSize: 13),
+            ),
+          ),
+      ],
+    );
+    if (selectedId == null || !context.mounted) return;
+
+    final target = targets.firstWhere((a) => a.id == selectedId);
+    await _openMigrationStatus(context, activeAccount, target.id);
+  }
+
+  /// Starts/resumes [sourceAccountId] → [targetAccountId] (a harmless no-op
+  /// against an already-running job — and the way a job left `paused` for
+  /// re-authentication picks back up, since there's no listener that resumes
+  /// one automatically) and shows its status dialog. Shared by the
+  /// "Migrate Account…" submenu's target pick and by "Migration Status",
+  /// which already knows the target and skips the picker entirely.
+  Future<void> _openMigrationStatus(
+    BuildContext context,
+    Account sourceAccount,
+    String targetAccountId,
+  ) async {
+    final accountState = context.read<AccountCubit>().state;
+    String targetLabel = targetAccountId;
+    if (accountState is AccountsLoaded) {
+      final target = accountState.accounts.cast<Account?>().firstWhere(
+            (a) => a?.id == targetAccountId,
+            orElse: () => null,
+          );
+      if (target != null) {
+        targetLabel =
+            target.emailAddress.isEmpty ? target.displayName : target.emailAddress;
+      }
+    }
+
+    final migrationCubit = sl<MigrationCubit>();
+    await migrationCubit.startOrResume(sourceAccount.id, targetAccountId);
+    if (!context.mounted) return;
+
+    final sourceLabel = sourceAccount.emailAddress.isEmpty
+        ? sourceAccount.displayName
+        : sourceAccount.emailAddress;
+    // Awaited (unlike the fire-and-forget dialogs elsewhere in this file) so
+    // the caller's post-action refresh lands once the dialog closes rather
+    // than the moment it opens — a job that finishes while the dialog is
+    // open only reads back as 'completed' after this returns, which is what
+    // flips the menu item back to "Migrate Account…" on its own instead of
+    // being stuck on "Migration Status" until an unrelated account switch.
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => BlocProvider.value(
+        value: migrationCubit,
+        child: MigrationStatusDialog(
+          sourceAccountLabel: sourceLabel,
+          targetAccountLabel: targetLabel,
         ),
       ),
     );

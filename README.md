@@ -37,6 +37,7 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - Incremental sync with delta tokens (Microsoft 365)
 - Incremental sync for Gmail (history API) and IMAP (UID-based) accounts too
 - Drag folders in the list to reparent them
+- Dragging an email near the top/bottom edge of the folder list auto-scrolls it, and dwelling over a collapsed folder auto-expands it as a drop target
 
 ### Calendar
 - View, create, update, and delete events
@@ -58,6 +59,7 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - Supported backends: Microsoft Graph, Google Calendar, Nextcloud CalDAV, macOS/iOS EventKit
 - Forwarded event invitations (calendar publishes, booking confirmations, tickets) are recognised, with an Add to calendar action
 - The meeting invite/event-edit window reopens at the size and position it was last closed at
+- Forward a meeting you were invited to on to someone else — joins the organiser's meeting where the provider supports it (Microsoft 365, and Google when the organiser allows guests to invite others), otherwise falls back to emailing the invitation
 
 **Meeting colours** are driven by your relationship to each meeting (your
 participation), mapped to a single shared scheme so Gmail and Microsoft 365
@@ -130,6 +132,11 @@ Settings → Accounts.
   new provider scope is added — providers won't grant one on a token refresh, so
   existing accounts have to re-consent. Cancelling is safe: the current token is
   left in place until a new one is issued.
+- **Add Shared Mailbox** (Microsoft 365) adds a shared mailbox using the signed-in
+  account's own permissions, with no separate sign-in
+- **Migrate Account** copies mail from one configured account into another,
+  mapping special folders by kind rather than name; resumable, with a status
+  dialog reporting live progress and any permanent per-message failures
 
 ---
 

@@ -651,19 +651,26 @@ class _AccountMenuState extends State<AccountMenu> {
         }
         if (accountState is AccountsLoaded &&
             accountState.accounts.length > 1) {
-          items.add(
-            activeMigrationJob != null
-                ? const PopupMenuItem<Object>(
-                    value: 'migration_status',
-                    child:
-                        Text('Migration Status', style: TextStyle(fontSize: 13)),
-                  )
-                : const PopupMenuItem<Object>(
-                    value: 'migrate_account',
-                    child: Text('Migrate Account…',
-                        style: TextStyle(fontSize: 13)),
-                  ),
-          );
+          if (activeMigrationJob != null) {
+            items.add(
+              const PopupMenuItem<Object>(
+                value: 'migration_status',
+                child:
+                    Text('Migration Status', style: TextStyle(fontSize: 13)),
+              ),
+            );
+          } else if (activeAccount is! GmailAccount) {
+            // Migrating *out of* a Gmail account is withheld for now. An
+            // already-running job still offers "Migration Status" above, so
+            // one started before this gate can still be watched and paused.
+            items.add(
+              const PopupMenuItem<Object>(
+                value: 'migrate_account',
+                child:
+                    Text('Migrate Account…', style: TextStyle(fontSize: 13)),
+              ),
+            );
+          }
         }
         return items;
       },

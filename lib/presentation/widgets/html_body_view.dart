@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:html_view/html_view.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -72,6 +73,76 @@ String forceUtf8Charset(String html) {
   // works the same. A body with no head at all is handled by the caller, which
   // builds the head it wraps the fragment in.
   return stripped.contains('</head>') ? '$_utf8Meta$stripped' : stripped;
+}
+
+/// An image this small in either declared dimension is an open-tracking pixel
+/// or a layout spacer rather than content, so it is held back without leaving
+/// a placeholder — a mailing-list message carries several and each one would
+/// otherwise become a stray box in the middle of the text.
+const _spacerImagePx = 3;
+
+final _imgTag = RegExp(r'<img\b([^>]*)>', caseSensitive: false);
+
+final _imgHttpSrc = RegExp(
+  r'''src=(["'])(https?://[^"']+)\1|src=(https?://[^\s>'"]+)''',
+  caseSensitive: false,
+);
+
+/// A numeric `width=`/`height=` attribute. The lookbehind keeps it off
+/// `data-width=`, and requiring `=` keeps it off the `max-width:` inside a
+/// `style` attribute.
+final _imgDimension = RegExp(
+  r'''(?<![\w-])(?:width|height)\s*=\s*(?:"(\d+)"|'(\d+)'|(\d+))''',
+  caseSensitive: false,
+);
+
+bool _isSpacerImage(String attrs) {
+  for (final m in _imgDimension.allMatches(attrs)) {
+    final px = int.tryParse(m[1] ?? m[2] ?? m[3]!);
+    if (px != null && px <= _spacerImagePx) return true;
+  }
+  return false;
+}
+
+/// A 1x1 transparent GIF, substituted for the `src` that was held back.
+///
+/// Leaving the element with no `src` at all is what it looks like it should do,
+/// and it is wrong: the engine then treats the image as broken and draws its
+/// own glyph plus the sender's `alt` text over our placeholder, spilling out of
+/// a small box. An image that *loads* draws neither, so the placeholder is
+/// whatever the stylesheet says it is.
+const _blockedImagePixel =
+    'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+/// Renames the `src` of every remote image to `data-blocked-src` so the webview
+/// never requests it, and reports whether anything was held back.
+///
+/// The attribute is renamed rather than removed because "Download once" has to
+/// be able to put it back, and because the injected stylesheet keys the
+/// placeholder off it. The marker for a spacer goes in *front* of the
+/// attributes: a self-closing `<img ... />` would otherwise get it after the
+/// slash, which is not an attribute at all.
+@visibleForTesting
+(String, bool) blockExternalImages(String html) {
+  var blockedAny = false;
+  final out = html.replaceAllMapped(_imgTag, (imgMatch) {
+    final attrs = imgMatch.group(1)!;
+    var blockedHere = false;
+    final rewritten = attrs.replaceFirstMapped(_imgHttpSrc, (sm) {
+      blockedHere = true;
+      final quote = sm.group(1);
+      final held = quote != null
+          ? 'data-blocked-src=$quote${sm.group(2)}$quote'
+          : 'data-blocked-src=${sm.group(3)}';
+      return 'src="$_blockedImagePixel" $held';
+    });
+    if (!blockedHere) return imgMatch.group(0)!;
+    blockedAny = true;
+    return _isSpacerImage(attrs)
+        ? '<img data-blocked-spacer$rewritten>'
+        : '<img$rewritten>';
+  });
+  return (out, blockedAny);
 }
 
 class HtmlBodyView extends StatefulWidget {
@@ -200,9 +271,13 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
   @override
   void didUpdateWidget(HtmlBodyView old) {
     super.didUpdateWidget(old);
+    // listEquals, not `!=`: a Dart List compares by identity, so a repaint
+    // holding a re-read copy of the same message counted as a new email —
+    // which re-blocks the images the reader has just chosen to download, and
+    // reloads the webview under them, losing their scroll position.
     final emailChanged = old.html != widget.html ||
         old.cacheKey != widget.cacheKey ||
-        old.inlineAttachments != widget.inlineAttachments;
+        !listEquals(old.inlineAttachments, widget.inlineAttachments);
     final senderChanged = old.senderDomain != widget.senderDomain;
     // A hovered link belongs to the message it was in. Reloading the *same*
     // message (an image download) keeps it.
@@ -382,27 +457,7 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
 
     bool hasBlockedImages = false;
     if (!allowExternal) {
-      resolved = resolved.replaceAllMapped(
-        RegExp(r'<img\b([^>]*)>', caseSensitive: false),
-        (imgMatch) {
-          final attrs = imgMatch.group(1)!;
-          final newAttrs = attrs.replaceFirstMapped(
-            RegExp(
-              r'''src=(["'])(https?://[^"']+)\1|src=(https?://[^\s>'"]+)''',
-              caseSensitive: false,
-            ),
-            (sm) {
-              hasBlockedImages = true;
-              if (sm.group(1) != null) {
-                return 'data-blocked-src=${sm.group(1)}${sm.group(2)}${sm.group(1)}';
-              } else {
-                return 'data-blocked-src=${sm.group(3)}';
-              }
-            },
-          );
-          return '<img$newAttrs>';
-        },
-      );
+      (resolved, hasBlockedImages) = blockExternalImages(resolved);
     }
 
     const injected = '''
@@ -417,7 +472,22 @@ body {
   word-wrap: break-word;
 }
 img { max-width: 100% !important; height: auto !important; }
-img[data-blocked-src] { display: none !important; }
+/* A held-back image leaves a placeholder rather than vanishing. Hiding it
+   outright loses the message: a body whose content *is* its images — a rating
+   widget, a receipt, a newsletter — renders as an empty box with nothing to
+   say anything is missing, and the only hint is a 29px strip below the body
+   that the reader has no reason to look at.
+   One fixed chip per image, not the sender's declared box: the substituted
+   pixel is square, so honouring a declared width would give a 600px banner a
+   600px-tall hole. */
+img[data-blocked-src] {
+  width: 24px !important;
+  height: 24px !important;
+  border: 1px dashed #c4c7cc !important;
+  border-radius: 3px !important;
+  background: #f3f4f6 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a0a4ab' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='16' rx='2'/%3E%3Ccircle cx='8.7' cy='9.6' r='1.4'/%3E%3Cpath d='m20.5 15.5-4.7-4.7L5 21.5'/%3E%3C/svg%3E") center / 15px 15px no-repeat !important;
+}
+img[data-blocked-spacer] { display: none !important; }
 pre {
   white-space: pre-wrap !important;
   word-wrap: break-word !important;

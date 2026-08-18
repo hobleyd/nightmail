@@ -337,6 +337,13 @@ message's own `Content-Type` header alongside the main fetch
 (`declaresPlainTextBody`); a plain-text message with an attachment is
 `multipart/mixed` and still renders as HTML.
 
+## A Blocked Remote Image Leaves a Chip, Not a Hole
+
+`blockExternalImages` renames `src` to `data-blocked-src` and substitutes a
+transparent pixel — no `src` at all makes the engine draw its own broken glyph
+and the sender's `alt` over the placeholder. Images declaring ≤3px in either
+dimension are trackers and stay hidden (`data-blocked-spacer`).
+
 ## Bare URLs in a Message Body
 
 A URL a sender typed as text is turned into a real link at render time

@@ -76,6 +76,13 @@ dependencies:
   # Printing support
   printing: ^5.14.3
   pdf: ^3.12.0
+
+  # In-app updates. desktop_updater drives macOS/Windows (a signed app-archive
+  # on GitHub Pages); Android installs an APK straight from the GitHub release.
+  # Linux ships as a snap, which updates itself — see AppUpdateService.
+  desktop_updater: ^3.1.6
+  android_package_installer: ^0.0.3
+  version: ^3.0.2
 dev_dependencies:
   flutter_test:
     sdk: flutter

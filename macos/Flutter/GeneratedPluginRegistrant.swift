@@ -9,6 +9,7 @@ import app_links
 import cryptography_flutter
 import desktop_drop
 import desktop_multi_window
+import desktop_updater
 import desktop_webview_window
 import file_selector_macos
 import flutter_local_notifications
@@ -31,6 +32,7 @@ func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
   CryptographyFlutterPlugin.register(with: registry.registrar(forPlugin: "CryptographyFlutterPlugin"))
   DesktopDropPlugin.register(with: registry.registrar(forPlugin: "DesktopDropPlugin"))
   FlutterMultiWindowPlugin.register(with: registry.registrar(forPlugin: "FlutterMultiWindowPlugin"))
+  DesktopUpdaterPlugin.register(with: registry.registrar(forPlugin: "DesktopUpdaterPlugin"))
   DesktopWebviewWindowPlugin.register(with: registry.registrar(forPlugin: "DesktopWebviewWindowPlugin"))
   FileSelectorPlugin.register(with: registry.registrar(forPlugin: "FileSelectorPlugin"))
   FlutterLocalNotificationsPlugin.register(with: registry.registrar(forPlugin: "FlutterLocalNotificationsPlugin"))

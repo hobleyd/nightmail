@@ -27,6 +27,7 @@ import '../blocs/calendar/calendar_bloc.dart';
 import '../blocs/calendar/calendar_event.dart';
 import '../blocs/calendar/calendar_state.dart';
 import '../blocs/tasks/overdue_tasks_cubit.dart';
+import '../blocs/update/update_cubit.dart';
 import '../blocs/tasks/tasks_bloc.dart';
 import '../blocs/tasks/tasks_event.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
@@ -103,6 +104,9 @@ class HomePage extends StatelessWidget {
               sl<TasksBloc>()..add(const TasksLoadRequested()),
         ),
         BlocProvider.value(value: sl<OverdueTasksCubit>()..start()),
+        // Started here, not when Settings opens: the dot on the Settings
+        // icon has to be able to appear before the user goes looking.
+        BlocProvider.value(value: sl<UpdateCubit>()..start()),
       ],
       child: const _HomeView(),
     );

@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "profileId": "65cedc5481be18962170e60243ba2b38",
+  "feedUrl": "https://hobleyd.github.io/nightmail/app-archive.json",
+  "activeKeyId": "release-b53948b0e36b895fa047a8f4",
+  "publicKeys": {
+    "release-b53948b0e36b895fa047a8f4": "CS5SJb9jMzPxDQZpkLXANll0mu0sFBpyQFny9lp72Qw="
+  }
+}

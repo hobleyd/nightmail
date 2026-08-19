@@ -19,6 +19,8 @@ import '../blocs/mail_poller/mail_poller_cubit.dart';
 import '../blocs/mail_poller/mail_poller_state.dart';
 import '../blocs/theme/theme_cubit.dart';
 import '../blocs/theme/theme_state.dart';
+import '../blocs/update/update_cubit.dart';
+import '../widgets/app_update_section.dart';
 import '../widgets/compose_body_builder.dart';
 import '../widgets/html_email_editor.dart';
 import '../widgets/insert_link_dialog.dart';
@@ -47,12 +49,18 @@ class SettingsDialog extends StatefulWidget {
     final themeCubit = context.read<ThemeCubit>();
     final accountCubit = context.read<AccountCubit>();
     final pollerCubit = context.read<MailPollerCubit>();
+    // Settings opens as its own route — a dialog on desktop, a page on mobile —
+    // so HomePage's provider subtree is out of scope inside it and every cubit
+    // the sections read has to be carried across explicitly. _AboutSection
+    // reads the update status, hence UpdateCubit.
+    final updateCubit = context.read<UpdateCubit>();
 
     Widget wrap(Widget child) => MultiBlocProvider(
           providers: [
             BlocProvider.value(value: themeCubit),
             BlocProvider.value(value: accountCubit),
             BlocProvider.value(value: pollerCubit),
+            BlocProvider.value(value: updateCubit),
           ],
           child: child,
         );
@@ -278,6 +286,9 @@ class _AboutSectionState extends State<_AboutSection> {
               height: 1.5,
             ),
           ),
+          const SizedBox(height: 24),
+          const AppUpdateSection(),
+          const SizedBox(height: 8),
         ],
       ),
     );

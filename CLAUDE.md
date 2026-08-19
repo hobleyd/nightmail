@@ -706,6 +706,125 @@ when the whole field matches nothing. `_queryUsed` records which of the two was
 used, so selecting a room removes only the query and leaves the rest of the
 location — clearing the whole field would delete what the user typed.
 
+## In-App Updates
+
+Two mechanisms behind one status, because no single one covers the platforms.
+
+| Platform | Mechanism | Where it comes from |
+|---|---|---|
+| macOS, Windows | `desktop_updater` — download, verify, stage, hand to a native installer | signed `app-archive.json` on GitHub Pages |
+| Android | APK handed to the system package installer | newest GitHub release's `.apk` asset |
+| Linux | none — the snap self-updates | |
+| iOS, web | none | |
+
+`AppUpdateService` (`infrastructure/update/`) is the only place that knows
+which; everything above it reads one `AppUpdateStatus`. `UpdateCubit` is the
+bloc-shaped window onto it, the same shape as `OverdueTasksCubit` over
+`TaskReminderService`.
+
+**Linux is excluded deliberately, not overlooked.** The Linux build ships as a
+snap and there is no Linux entry in the app-archive, so a controller there would
+sit in a permanent no-update state while snapd did the actual work.
+
+Checking is automatic — at launch and every 6 h after, since a mail client is
+left open for days and a launch-only check would mean never. **Only the check
+is.** Nothing downloads or installs without the user pressing the button, which
+is what lets the timer be quiet and unattended. It skips a cycle once an update
+has been found: there is nothing further to learn until the user acts, and
+re-checking would clear and re-set the status the dot is drawn from.
+
+### The service starts at launch, not when Settings opens
+
+`../inkworm` — which this is modelled on — builds its `DesktopUpdaterController`
+inside the About widget's `initState`. NightMail cannot: the dot on the folder
+panel's Settings icon has to appear before the user has gone looking. So the
+service is a singleton started from `HomePage.build` (`UpdateCubit.start()`) and
+the About panel *attaches* to a status that is already being published.
+
+That has a consequence worth knowing: **Settings opens as its own route**, so
+`HomePage`'s provider subtree is out of scope inside it and every cubit its
+sections read is re-provided by hand in `SettingsDialog.open`'s `wrap()`.
+Registering `UpdateCubit` only under `HomePage` gets the dot and then throws
+`ProviderNotFoundException` the moment About is opened. Both the desktop dialog
+and the mobile page go through `wrap()`, so one entry covers both. `UpdateCubit`
+and `AppUpdateService` are `registerLazySingleton` for the same reason — the dot
+and the panel must be reading the same status.
+
+**Main window only.** `AppWindow.isMain` gates the whole service. `desktop_updater`
+is a plain method-channel plugin, so this is *not* the fatal `NativeCallable`
+hazard above — the reason is the recovery marker: a second engine would run its
+own `recoverPendingInstall()` over the same file and could start a second native
+install handoff concurrently with the first. In a sub-window the status is
+`unsupported` and every action is a no-op.
+
+### The dot means "there is something to press"
+
+`AppUpdateStatus.hasActionableUpdate` — `available`, `freshInstallRequired` or
+`readyToInstall`. A download already running does **not** light it: the user has
+acted, and a dot beside a progress bar reads as a second, separate thing still
+wanting attention.
+
+**`freshInstallRequired` is a separate phase for a reason.** A release marked
+fresh-install-only cannot be staged, and `DesktopUpdaterController.downloadUpdate()`
+*throws* outright in that state — so folding it into `available` gives the About
+panel a "Download update" button that reliably fails. It gets its own phase and
+its own button (`openFreshInstallDownload()`), which is the only action the
+controller supports there. `UpdateBlockedBySupportPolicy` is the opposite case and
+does map onto `available`: the controller accepts a download there, treating it as
+mandatory.
+
+### Release notes are generated, not GitHub's
+
+`generate_release_notes: true` builds its body out of *merged pull requests*, and
+this repo pushes straight to `main` — so that body comes back empty (inkworm's
+does). The commit subjects are strictly conventional, which is the structure the
+notes want, so `tool/release_notes.dart` groups the subjects between the previous
+version tag and this one into `desktop_updater`'s rich release-notes schema and
+the deploy job publishes it as `release-notes.json`.
+
+`chore`, `docs`, `ci`, `build`, `style` and `test` never reach it: a release-notes
+list is what changed *for the user*, and a version bump is not that. A breaking
+`!` is lifted out of its type into its own leading section.
+
+**Both platforms read that one document**, fetched by the app itself rather than
+through `desktop_updater`'s own release-notes machinery — which only works while
+the controller holds an active descriptor, so it yields nothing on Android and
+nothing on a machine that is already up to date. The notes are wanted in both
+cases, since the file always describes the newest published release: with an
+update pending it is what you are about to get, without one it is what you have.
+Nothing about them is signature-verified, and needn't be — they are text shown to
+a human. What gets *installed* is chosen from the signed archive and descriptor.
+
+### Trust
+
+`tool/setup_updater.sh` does the whole out-of-repo half of this — keypair,
+secrets, `gh-pages`, Pages — and is safe to re-run; `--check` reports the state
+without changing anything.
+
+`kTrustedReleasePublicKeys` in `app_update_service.dart` pins the Ed25519 public
+key from `desktop_updater.keys.json`. That pin is the whole of the update chain's
+security: an attacker who serves a different archive from the same URL cannot
+sign it. The public profile is committed; the private bundle lives in the local
+key store and, base64'd, in the `DESKTOP_UPDATER_KEY_BUNDLE_B64` GitHub secret.
+`*.dukey` is gitignored so an exported bundle cannot be committed by accident.
+
+**Rotating the key means changing both** the profile and the constant, in the
+same release — a build pinning only the new key cannot verify an archive still
+signed by the old one. `setup_updater.sh` refuses to go on when the two have
+drifted, and `--force` re-issues the secrets after a rotation.
+
+### Android compares less than desktop does
+
+Desktop compares version *and* build number out of the signed archive. Android
+compares the GitHub tag, which the workflow strips to the semver part (`1.20.0`,
+not `1.20.0+17`) and `EndBug/latest-tag` *moves* — so a rebuild at the same
+pubspec version is invisible to Android. Bumping `pubspec.yaml` is what publishes
+an update there. Same as inkworm; not a bug.
+
+The APK goes to the app's own cache directory, which is the only path
+`res/xml/file_paths.xml` grants the `FileProvider` — so `REQUEST_INSTALL_PACKAGES`
+is the only permission involved and no storage permission is needed.
+
 ## Contacts Typeahead Architecture
 
 **The dropdown never hits the network.** Every address book is pulled down at

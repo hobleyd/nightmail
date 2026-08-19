@@ -139,6 +139,7 @@ import 'infrastructure/sync/imap_connection_gate.dart';
 import 'infrastructure/sync/outbox_drain_service.dart';
 import 'infrastructure/sync/removal_tombstone_store.dart';
 import 'infrastructure/sync/spam_db_sync_service.dart';
+import 'infrastructure/update/app_update_service.dart';
 import 'presentation/blocs/account/account_cubit.dart';
 import 'presentation/blocs/calendar/calendar_bloc.dart';
 import 'presentation/blocs/compose/compose_bloc.dart';
@@ -151,6 +152,7 @@ import 'presentation/blocs/migration/migration_cubit.dart';
 import 'presentation/blocs/tasks/overdue_tasks_cubit.dart';
 import 'presentation/blocs/tasks/tasks_bloc.dart';
 import 'presentation/blocs/theme/theme_cubit.dart';
+import 'presentation/blocs/update/update_cubit.dart';
 
 final sl = GetIt.instance;
 
@@ -471,6 +473,14 @@ Future<void> configureDependencies() async {
       removalTombstones: sl<RemovalTombstoneStore>(),
       spamDbSyncService: sl<SpamDbSyncService>(),
     ),
+  );
+  // In-app updates. The service is a singleton because it owns the platform
+  // updater and its recovery marker; the cubit is one because both the folder
+  // panel's Settings dot and the About panel must read the same status, and
+  // the About panel lives in a separate dialog route (see SettingsDialog.open).
+  sl.registerLazySingleton(() => AppUpdateService());
+  sl.registerLazySingleton(
+    () => UpdateCubit(service: sl<AppUpdateService>()),
   );
   sl.registerLazySingleton(
     () => OverdueTasksCubit(

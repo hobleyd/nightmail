@@ -35,6 +35,7 @@ import '../blocs/home/home_cubit.dart';
 import '../blocs/mail_poller/mail_poller_cubit.dart';
 import '../blocs/migration/migration_cubit.dart';
 import '../blocs/tasks/overdue_tasks_cubit.dart';
+import '../blocs/update/update_cubit.dart';
 import '../blocs/theme/theme_cubit.dart';
 import '../pages/settings_page.dart';
 import '../pages/add_account_page.dart';
@@ -1518,6 +1519,12 @@ class _SettingsFooter extends StatelessWidget {
     // Red dot on the Tasks icon: the active account has something already past
     // due, in any of its lists — not only the one the pane last showed.
     final overdueTasks = context.watch<OverdueTasksCubit>().state;
+    // Red dot on the Settings icon: a newer release has been found and is
+    // waiting to be downloaded, or has been downloaded and is waiting to be
+    // installed. A download already in flight does not light it — see
+    // AppUpdateStatus.hasActionableUpdate.
+    final updateWaiting =
+        context.watch<UpdateCubit>().state.hasActionableUpdate;
 
     return SizedBox(
       height: touchRowHeight(28),
@@ -1598,9 +1605,29 @@ class _SettingsFooter extends StatelessWidget {
           ),
           const Spacer(),
           IconButton(
-            icon: Icon(Icons.settings_outlined,
-                size: touchIcon(16), color: c.textMuted),
-            tooltip: 'Settings',
+            // Same dot as the Tasks icon's: an update is waiting behind
+            // Settings → About, which is the only place it can be acted on.
+            icon: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Icon(Icons.settings_outlined,
+                    size: touchIcon(16), color: c.textMuted),
+                if (updateWaiting)
+                  Positioned(
+                    top: -2,
+                    right: -2,
+                    child: Container(
+                      width: 7,
+                      height: 7,
+                      decoration: const BoxDecoration(
+                        color: AppColors.notification,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            tooltip: updateWaiting ? 'Settings (update available)' : 'Settings',
             padding: EdgeInsets.zero,
             constraints: BoxConstraints(
               minWidth: touchTarget(28),

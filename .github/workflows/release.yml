@@ -87,6 +87,49 @@ jobs:
           tag_name: ${{ needs.prepare.outputs.version }}
           files: 'nightmail.dmg'
 
+      # In-app updates: the .app is zipped and described by a release.json that
+      # the app verifies against the pinned public key before installing.
+      # --artifact-url must be where the deploy job below actually publishes it.
+      - name: Package release for desktop_updater
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          BUILD_NUMBER="${{ needs.prepare.outputs.build_number }}"
+          APP_NAME="nightmail"
+          dart run desktop_updater:package \
+            --input "build/macos/Build/Products/Release/nightmail.app" \
+            --output "dist/${VERSION}+${BUILD_NUMBER}-macos" \
+            --package-id au.com.sharpblue.nightmail \
+            --app-name "$APP_NAME" \
+            --version "$VERSION" \
+            --build-number "$BUILD_NUMBER" \
+            --platform macos \
+            --channel stable \
+            --artifact-url "https://hobleyd.github.io/nightmail/releases/${VERSION}+${BUILD_NUMBER}-macos/${APP_NAME}-${VERSION}-macos.zip" \
+            --install-strategy wholeBundleReplace
+
+      - name: Import release signing key
+        env:
+          DESKTOP_UPDATER_KEY_PASSPHRASE: ${{ secrets.DESKTOP_UPDATER_KEY_PASSPHRASE }}
+        run: |
+          echo "${{ secrets.DESKTOP_UPDATER_KEY_BUNDLE_B64 }}" | base64 --decode > "$RUNNER_TEMP/release-key.dukey"
+          dart run desktop_updater:release keys import \
+            --input "$RUNNER_TEMP/release-key.dukey" \
+            --passphrase-env DESKTOP_UPDATER_KEY_PASSPHRASE
+
+      - name: Sign release descriptor
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          BUILD_NUMBER="${{ needs.prepare.outputs.build_number }}"
+          dart run desktop_updater:release sign \
+            --release "dist/${VERSION}+${BUILD_NUMBER}-macos/release.json" \
+            --key-profile desktop_updater.keys.json
+
+      - name: Upload distribution artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dist
+          path: dist/${{ needs.prepare.outputs.version }}+${{ needs.prepare.outputs.build_number }}-macos/
+
   build-windows:
     needs: prepare
     runs-on: windows-latest
@@ -118,6 +161,51 @@ jobs:
           name: 'nightmail-${{ needs.prepare.outputs.version }}'
           tag_name: ${{ needs.prepare.outputs.version }}
           files: 'build/windows/nightmail-${{ needs.prepare.outputs.version }}.exe'
+
+      # The in-app updater replaces the unpacked runner directory, not the Inno
+      # installer above — the .exe stays the download for a fresh install.
+      - name: Package release for desktop_updater
+        shell: bash
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          BUILD_NUMBER="${{ needs.prepare.outputs.build_number }}"
+          APP_NAME="nightmail"
+          dart run desktop_updater:package \
+            --input "build/windows/x64/runner/Release" \
+            --output "dist/${VERSION}+${BUILD_NUMBER}-windows" \
+            --package-id au.com.sharpblue.nightmail \
+            --app-name "$APP_NAME" \
+            --version "$VERSION" \
+            --build-number "$BUILD_NUMBER" \
+            --platform windows \
+            --channel stable \
+            --artifact-url "https://hobleyd.github.io/nightmail/releases/${VERSION}+${BUILD_NUMBER}-windows/${APP_NAME}-${VERSION}-windows.zip" \
+            --install-strategy wholeDirectoryReplace
+
+      - name: Import release signing key
+        shell: bash
+        env:
+          DESKTOP_UPDATER_KEY_PASSPHRASE: ${{ secrets.DESKTOP_UPDATER_KEY_PASSPHRASE }}
+        run: |
+          echo "${{ secrets.DESKTOP_UPDATER_KEY_BUNDLE_B64 }}" | base64 --decode > "$RUNNER_TEMP/release-key.dukey"
+          dart run desktop_updater:release keys import \
+            --input "$RUNNER_TEMP/release-key.dukey" \
+            --passphrase-env DESKTOP_UPDATER_KEY_PASSPHRASE
+
+      - name: Sign release descriptor
+        shell: bash
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          BUILD_NUMBER="${{ needs.prepare.outputs.build_number }}"
+          dart run desktop_updater:release sign \
+            --release "dist/${VERSION}+${BUILD_NUMBER}-windows/release.json" \
+            --key-profile desktop_updater.keys.json
+
+      - name: Upload distribution artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-dist
+          path: dist/${{ needs.prepare.outputs.version }}+${{ needs.prepare.outputs.build_number }}-windows/
 
   build-linux:
     needs: prepare
@@ -270,3 +358,100 @@ jobs:
           tag_name: ${{ needs.prepare.outputs.version }}
           files: 'build/app/outputs/apk/release/nightmail-${{ needs.prepare.outputs.version }}-release.apk'
           generate_release_notes: true
+  # Publishes everything the in-app updater reads: the signed app-archive index,
+  # each platform's signed release descriptor and zip, and the release notes the
+  # About panel shows. Android is not here — it installs its APK straight from
+  # the GitHub release — but it reads release-notes.json from this same site.
+  deploy:
+    needs: [prepare, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Release notes are derived from the commits since the previous
+          # version tag, so the whole history and every tag has to be present.
+          fetch-depth: 0
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: false
+
+      - run: flutter pub get
+
+      - name: Download macOS distribution
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-dist
+          path: deploy/releases/${{ needs.prepare.outputs.version }}+${{ needs.prepare.outputs.build_number }}-macos/
+
+      - name: Download Windows distribution
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-dist
+          path: deploy/releases/${{ needs.prepare.outputs.version }}+${{ needs.prepare.outputs.build_number }}-windows/
+
+      - name: Generate release notes
+        run: |
+          dart run tool/release_notes.dart \
+            --version "${{ needs.prepare.outputs.version }}" \
+            --output deploy/release-notes.json
+          cat deploy/release-notes.json
+
+      - name: Update app-archive.json
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          BUILD_NUMBER="${{ needs.prepare.outputs.build_number }}"
+          APP_NAME="nightmail"
+
+          git fetch origin gh-pages 2>/dev/null || true
+          if git show origin/gh-pages:app-archive.json > deploy/app-archive.json 2>/dev/null \
+              && jq -e '.schemaVersion == 3' deploy/app-archive.json > /dev/null 2>&1; then
+            echo "Using existing schema v3 app-archive.json from gh-pages"
+            # The published archive is signed from the previous run; upsert
+            # refuses to touch a signed archive, and the whole thing is re-signed
+            # below anyway.
+            jq 'del(.signature)' deploy/app-archive.json > deploy/app-archive.json.tmp
+            mv deploy/app-archive.json.tmp deploy/app-archive.json
+          else
+            rm -f deploy/app-archive.json
+            echo "No compatible existing app-archive.json found; starting a new schema v3 index"
+          fi
+
+          for PLATFORM in macos windows; do
+            dart run desktop_updater:app_archive upsert \
+              --archive deploy/app-archive.json \
+              --app-name "$APP_NAME" \
+              --version "$VERSION" \
+              --build-number "$BUILD_NUMBER" \
+              --platform "$PLATFORM" \
+              --channel stable \
+              --release-url "https://hobleyd.github.io/nightmail/releases/${VERSION}+${BUILD_NUMBER}-${PLATFORM}/release.json"
+          done
+
+      - name: Import release signing key
+        env:
+          DESKTOP_UPDATER_KEY_PASSPHRASE: ${{ secrets.DESKTOP_UPDATER_KEY_PASSPHRASE }}
+        run: |
+          echo "${{ secrets.DESKTOP_UPDATER_KEY_BUNDLE_B64 }}" | base64 --decode > "$RUNNER_TEMP/release-key.dukey"
+          dart run desktop_updater:release keys import \
+            --input "$RUNNER_TEMP/release-key.dukey" \
+            --passphrase-env DESKTOP_UPDATER_KEY_PASSPHRASE
+
+      - name: Sign app-archive.json
+        run: |
+          dart run desktop_updater:release sign \
+            --app-archive deploy/app-archive.json \
+            --key-profile desktop_updater.keys.json
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./deploy
+          # Past releases must survive: an app still on an old version fetches
+          # its descriptor from the URL the archive recorded at the time.
+          keep_files: true

@@ -56,3 +56,10 @@ app.*.map.json
 
 # Firecrawl scratch output
 .firecrawl/
+
+# Release signing. The public key profile (desktop_updater.keys.json) IS
+# committed — the app pins it. The private bundle never is: `release keys
+# export` writes one for the DESKTOP_UPDATER_KEY_BUNDLE_B64 GitHub secret, and
+# it must not be one `git add -A` away from being published.
+*.dukey
+/dist/

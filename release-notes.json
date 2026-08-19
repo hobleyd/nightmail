@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "format": "desktop_updater.release_notes.v1",
+  "version": "1.20.0",
+  "sections": [
+    {
+      "type": "features",
+      "title": "New features",
+      "items": [
+        {
+          "body": "add automatic in-app updates",
+          "title": "updates"
+        },
+        {
+          "body": "add account migration between mailboxes",
+          "title": "accounts"
+        },
+        {
+          "body": "add shared mailbox support for Microsoft accounts",
+          "title": "accounts"
+        },
+        {
+          "body": "auto-scroll and auto-expand the folder list during an email drag",
+          "title": "mail"
+        }
+      ]
+    },
+    {
+      "type": "fixes",
+      "title": "Fixes",
+      "items": [
+        {
+          "body": "withhold Migrate Account… on Gmail accounts",
+          "title": "accounts"
+        },
+        {
+          "body": "a blocked remote image left a hole, not a placeholder",
+          "title": "mail"
+        },
+        {
+          "body": "the envelope badge cleared on account switch, not on reading mail",
+          "title": "mail"
+        },
+        {
+          "body": "a folder's cache never pruned rows that no longer belonged",
+          "title": "mail"
+        },
+        {
+          "body": "silence async-alternative warning on contacts requestAccess",
+          "title": "macos"
+        }
+      ]
+    }
+  ]
+}

@@ -268,6 +268,50 @@ store.requestAccess(for: .contacts) { granted, error in
 }
 ```
 
+## Gmail Sign-In Opens Chrome, Not Safari
+
+On macOS, Gmail's OAuth flow **bypasses `flutter_web_auth_2`** and runs its own
+loopback server (`LoopbackAuthFlow`, `infrastructure/auth/`), handing the
+authorization URL to Chrome through a native channel
+(`au.com.sharpblue.nightmail/browser_launcher`).
+
+The plugin cannot be asked to do this. Its macOS implementation is the method
+channel alone — `ASWebAuthenticationSession`, which always renders in Safari's
+WebKit; `useWebview: false` is inert there because its Dart loopback server is
+registered for Windows and Linux only. And that server calls `launchUrl`, i.e.
+the *default* browser, so it could not be pointed at Chrome either. The point is
+to land in the browser the user is already signed into Google with.
+
+Four things here are load-bearing:
+
+- **The redirect URI and the branch in `signIn()` must agree.** macOS is now in
+  `_useLoopbackRedirect` (so Google is told `http://127.0.0.1:34572`) *and* in
+  `_useOwnLoopback` (so the code waits on that port). Flipping only the first
+  points Google at a socket nothing is listening on, and sign-in hangs silently
+  until it times out rather than failing.
+- **`NSWorkspace`, never `open -a "Google Chrome"`.** Release builds are
+  sandboxed and the sandbox denies spawning a process while permitting
+  LaunchServices, so the shell route works in debug and ships broken.
+  `openInChrome` returns `false` rather than erroring when Chrome is absent, and
+  `AuthBrowserLauncher` falls back to `launchUrl`.
+- **`com.apple.security.network.server` in `Release.entitlements`** — the
+  sandbox refuses the `HttpServer.bind` without it. Debug/profile are
+  unsandboxed, so a passing `flutter run` proves nothing about this.
+- **The port is closed in a `finally` and the app re-activated by hand.** An
+  abandoned sign-in that left 34572 bound would fail every later attempt on
+  "address already in use", and nothing brings the window back from Chrome
+  otherwise — the plugin path got that from `WindowToFront`.
+
+Requests on that port without a `code` or `error` parameter are answered 404 and
+ignored: the browser asks for `/favicon.ico` off the back of the landing page,
+and completing on the first request regardless resolves the flow with a URL
+carrying no authorization code.
+
+**Microsoft, Windows, Linux and Android are untouched.** Azure accepts the
+`nightmail://` custom scheme for public clients, so macOS Microsoft sign-in still
+goes through `ASWebAuthenticationSession`; Windows and Linux still use the
+plugin's own loopback server and the default browser.
+
 ## AI Subsystem
 
 The AI slice (compose reply, provider catalog, inference) introduces two

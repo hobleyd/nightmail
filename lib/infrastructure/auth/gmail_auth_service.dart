@@ -10,6 +10,7 @@ import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import '../../core/error/exceptions.dart';
 import 'auth_service.dart';
 import 'auth_token.dart';
+import 'loopback_auth_flow.dart';
 import 'token_refresh_coordinator.dart';
 import 'token_refresh_error.dart';
 import 'token_storage.dart';
@@ -126,12 +127,25 @@ class GmailAuthService implements AuthService {
   static const _loopbackPort = 34572;
   static const _loopbackRedirect = 'http://127.0.0.1:$_loopbackPort';
 
-  static bool get _useLoopback =>
+  /// Windows and Linux run the loopback flow through flutter_web_auth_2's own
+  /// Dart server (`useWebview: false`).
+  static bool get _usePluginLoopback =>
       !kIsWeb && (Platform.isWindows || Platform.isLinux);
+
+  /// macOS runs the same loopback flow, but through [LoopbackAuthFlow] instead
+  /// of the plugin, so sign-in opens in Chrome rather than in Safari's WebKit.
+  /// See the class doc there for why the plugin cannot be asked to do this.
+  static bool get _useOwnLoopback => !kIsWeb && Platform.isMacOS;
+
+  /// Both loopback paths redirect to [_loopbackRedirect]; only the custom
+  /// scheme intercepted by Custom Tabs (Android) uses [redirectUri]. This must
+  /// agree with the branch taken in [signIn] — a redirect_uri pointing where
+  /// nothing is listening hangs the flow until it times out.
+  static bool get _useLoopbackRedirect => _usePluginLoopback || _useOwnLoopback;
 
   String get _effectiveRedirectUri {
     if (kIsWeb) return '${Uri.base.origin}/callback.html';
-    if (_useLoopback) return _loopbackRedirect;
+    if (_useLoopbackRedirect) return _loopbackRedirect;
     return redirectUri;
   }
 
@@ -162,17 +176,34 @@ class GmailAuthService implements AuthService {
     final String resultUrl;
     if (kIsWeb) {
       resultUrl = await authenticateWeb(authUri.toString());
+    } else if (_useOwnLoopback) {
+      assert(() {
+        // ignore: avoid_print
+        print('[GmailAuth] own loopback redirectUri=$_effectiveRedirectUri');
+        // ignore: avoid_print
+        print('[GmailAuth] opening: $authUri');
+        return true;
+      }());
+      resultUrl = await const LoopbackAuthFlow().authenticate(
+        authorizationUrl: authUri,
+        port: _loopbackPort,
+      );
+      assert(() {
+        // ignore: avoid_print
+        print('[GmailAuth] callback received: $resultUrl');
+        return true;
+      }());
     } else {
-      final String callbackScheme = _useLoopback
+      final String callbackScheme = _usePluginLoopback
           ? _loopbackRedirect
           : Uri.parse(redirectUri).scheme;
-      final FlutterWebAuth2Options authOptions = _useLoopback
+      final FlutterWebAuth2Options authOptions = _usePluginLoopback
           ? const FlutterWebAuth2Options(useWebview: false)
           : const FlutterWebAuth2Options(preferEphemeral: true);
 
       assert(() {
         // ignore: avoid_print
-        print('[GmailAuth] loopback=$_useLoopback '
+        print('[GmailAuth] loopback=$_usePluginLoopback '
             'redirectUri=$_effectiveRedirectUri callbackScheme=$callbackScheme');
         // ignore: avoid_print
         print('[GmailAuth] opening: $authUri');

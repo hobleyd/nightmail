@@ -103,6 +103,7 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     allChannels.append(mainDraftsChannel)
 
     registerWindowUtilsChannel(messenger: flutterViewController.engine.binaryMessenger) { [weak self] in self }
+    registerBrowserLauncherChannel(messenger: flutterViewController.engine.binaryMessenger)
 
     // Register contacts + plugins for every secondary window too.
     FlutterMultiWindowPlugin.setOnWindowCreatedCallback { [weak self] controller in
@@ -116,6 +117,7 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
         messenger: controller.engine.binaryMessenger,
         windowProvider: { [weak controller] in controller?.view.window }
       )
+      self?.registerBrowserLauncherChannel(messenger: controller.engine.binaryMessenger)
       self?.registerDesktopDrop(on: controller)
     }
 
@@ -776,6 +778,66 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
           "mainScreenHeight": mainScreenHeight,
         ])
       } else {
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    allChannels.append(channel)
+  }
+
+  // MARK: - Browser launcher (OAuth sign-in)
+
+  /// Chrome, in the order we would rather have it. A machine with only a
+  /// pre-release channel installed still gets Chrome rather than the default
+  /// browser.
+  private static let chromeBundleIdentifiers = [
+    "com.google.Chrome",
+    "com.google.Chrome.beta",
+    "com.google.Chrome.dev",
+    "com.google.Chrome.canary",
+  ]
+
+  /// Opens a sign-in URL in Chrome for `AuthBrowserLauncher`, and brings this
+  /// app back to the front once the loopback redirect has landed.
+  ///
+  /// Deliberately NSWorkspace and not `open -a "Google Chrome"`: release builds
+  /// run under the App Sandbox, which denies spawning a process but does permit
+  /// LaunchServices. `openInChrome` answers `false` rather than erroring when
+  /// Chrome is absent, and Dart falls back to the default browser.
+  private func registerBrowserLauncherChannel(messenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(
+      name: "au.com.sharpblue.nightmail/browser_launcher",
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "openInChrome":
+        guard
+          let args = call.arguments as? [String: Any],
+          let urlString = args["url"] as? String,
+          let url = URL(string: urlString)
+        else {
+          result(FlutterError(code: "bad_arguments", message: "A url is required", details: nil))
+          return
+        }
+        let workspace = NSWorkspace.shared
+        let chrome = MainFlutterWindow.chromeBundleIdentifiers
+          .lazy
+          .compactMap { workspace.urlForApplication(withBundleIdentifier: $0) }
+          .first
+        guard let chrome else {
+          result(false)
+          return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        workspace.open([url], withApplicationAt: chrome, configuration: configuration) { _, error in
+          // FlutterResult must be answered on the platform thread.
+          DispatchQueue.main.async { result(error == nil) }
+        }
+      case "activate":
+        NSApp.activate(ignoringOtherApps: true)
+        result(nil)
+      default:
         result(FlutterMethodNotImplemented)
       }
     }

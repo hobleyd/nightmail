@@ -138,6 +138,17 @@ Settings → Accounts.
   mapping special folders by kind rather than name; resumable, with a status
   dialog reporting live progress and any permanent per-message failures
 
+### Updates
+- Checks for a new version at launch and every 6 hours, with a dot on the
+  Settings icon when one is waiting; nothing downloads or installs until you
+  press the button
+- **macOS and Windows** download, verify and install the update in place, from
+  a signed release archive
+- **Android** installs the newest release's APK through the system installer
+- **Linux** ships as a snap, which updates itself
+- Release notes for the newest published version, grouped by change type, shown
+  whether or not an update is pending
+
 ---
 
 ## Supported Providers

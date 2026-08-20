@@ -28,6 +28,7 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - A thread's collapsed row shows the newest message from someone else, not just the newest overall
 - The provider's own flag (Graph flag, Gmail star, IMAP `\Flagged`) shown as a read-only icon on the message list
 - `mailto:` links open the compose window instead of the OS's default mail client
+- SharePoint, OneDrive and Google Drive document links open as a preview in the reading pane, like an attachment — from any mailbox, whichever account holds the file (file access is asked for once, the first time you open one)
 - The compose window reopens at the size and position it was last closed at
 
 ### Folders
@@ -172,6 +173,7 @@ NightMail connects to Microsoft 365 via the Microsoft Graph API using OAuth 2.0 
    | `Calendars.ReadWrite` | Read and write calendar events |
    | `Tasks.ReadWrite` | Read and write Microsoft To Do |
    | `People.Read` | Organisation contact suggestions |
+   | `Files.Read.All` | Preview a linked SharePoint/OneDrive document (optional — asked for separately, the first time you open one) |
    | `offline_access` | Refresh tokens (required) |
 
 3. A **redirect URI** configured for the platform:
@@ -197,6 +199,7 @@ NightMail connects to Google via the Gmail API, Google Calendar API, Google Task
    - Google Calendar API
    - Google Tasks API
    - Google People API
+   - Google Drive API (optional — only to preview a linked Drive document)
 
 2. An **OAuth 2.0 Client ID** of type **Desktop application**.
 
@@ -211,6 +214,7 @@ NightMail connects to Google via the Gmail API, Google Calendar API, Google Task
    | `tasks` | Read and write Google Tasks |
    | `contacts.readonly` | Personal contact suggestions |
    | `directory.readonly` | Organisation directory suggestions |
+   | `drive.readonly` | Preview a linked Drive document (optional — asked for separately, the first time you open one) |
 
 4. A **redirect URI** added to the OAuth client:
    - macOS / iOS: `nightmail://google-auth-callback`

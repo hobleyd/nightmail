@@ -1,6 +1,8 @@
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:sqlite3/common.dart' show CommonDatabase;
+import 'package:sqlite3/sqlite3.dart' show Database;
 
 import '../../domain/entities/email_folder.dart';
 import '../datasources/local/delta_token_datasource.dart';
@@ -1067,7 +1069,52 @@ class AppDatabase extends _$AppDatabase
     return rows.map(_toLedgerRecord).toList();
   }
 
+  /// Runs inside drift's background isolate as each connection is opened, and
+  /// gives the `sqlite3*` handle away to nobody: the process keeps it until it
+  /// exits.
+  ///
+  /// **Nothing may call `sqlite3_close_v2` on this app's database.** Two
+  /// generations of macOS crash reports are the same SIGSEGV inside
+  /// `sqlite3Close` on a background `DartWorker` while quitting, and the
+  /// faulting instruction is `blr x8` where `x8` is
+  /// `sqlite3GlobalConfig.mutex.xMutexEnter` — NULL. The handle itself is
+  /// valid (its `eOpenState` magic passes `sqlite3SafetyCheckSickOrOk`), so the
+  /// close is executing against a *mapping of libsqlite3 whose
+  /// `sqlite3_initialize()` never ran* — the crash log has
+  /// `sqlite3.framework` mapped **twice**, at two base addresses with one
+  /// UUID. A handle opened through the initialised mapping, closed through the
+  /// other, dies on the first mutex call.
+  ///
+  /// Both call paths had to go, which is why this is at *open* time rather
+  /// than a change to the shutdown code:
+  ///
+  /// - `package:sqlite3` attaches a `NativeFinalizer` whose callback *is*
+  ///   `sqlite3_close_v2` (`ffi/bindings.dart`), and Dart fires native
+  ///   finalizers when an isolate group is torn down. That is the crash that
+  ///   was reported before anything closed the database explicitly.
+  /// - Closing it explicitly at quit — the fix that was tried instead — only
+  ///   moved the same call earlier, which is the crash reported after it.
+  ///
+  /// `leak()` detaches that finalizer *and* marks the connection borrowed, so
+  /// `close()` stops before `sqlite3_close_v2` too (`implementation.dart`,
+  /// `database.dart`). Every other operation is unaffected, and
+  /// [AppDatabase.close] still does the part worth doing: it drains in-flight
+  /// queries and shuts the isolate down.
+  ///
+  /// Leaving a database unclosed at process exit is not data loss. Recovering
+  /// a journal or WAL that nobody checkpointed is the case SQLite is built
+  /// for — it is the same state a power cut leaves behind, and the next open
+  /// replays it.
+  ///
+  /// Must stay a static tear-off: drift sends it to the background isolate.
+  static void _keepHandleUntilProcessExit(CommonDatabase db) {
+    (db as Database).leak();
+  }
+
   static QueryExecutor _openConnection() {
-    return driftDatabase(name: 'nightmail_cache');
+    return driftDatabase(
+      name: 'nightmail_cache',
+      native: DriftNativeOptions(setup: _keepHandleUntilProcessExit),
+    );
   }
 }

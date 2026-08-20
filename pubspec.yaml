@@ -54,6 +54,9 @@ dependencies:
   enough_mail: ^2.1.7
   drift: ^2.34.1
   drift_flutter: ^0.3.1
+  # Direct only for Database.leak() in AppDatabase._openConnection — see the
+  # comment there. drift pulls the same version in transitively.
+  sqlite3: ^3.5.1
   cryptography: ^2.7.0
   # Native AES-GCM on Android/iOS/macOS, and BackgroundAesGcm — the same cipher
   # in a background isolate — on Windows and Linux. See CacheEncryptionService.

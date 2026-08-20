@@ -461,20 +461,24 @@ class _NightMailAppState extends State<NightMailApp> with WindowListener {
     } catch (_) {}
   }
 
-  // The drift cache database runs on a background isolate. Close it through
-  // drift's own shutdown protocol before tearing down the engine/process,
-  // otherwise the isolate can be killed mid-query, crashing native sqlite3
-  // (SIGSEGV in sqlite3Close) instead of shutting down cleanly. Guarded so
-  // both the windowShouldClose path (onWindowClose) and the Cmd-Q path
-  // (applicationShouldTerminate, via _appLifecycleChannel above) can call
-  // this without racing or closing twice.
+  // The drift cache database runs on a background isolate, so let it drain
+  // in-flight queries and shut that isolate down before the engine/process
+  // goes. Guarded so both the windowShouldClose path (onWindowClose) and the
+  // Cmd-Q path (applicationShouldTerminate, via _appLifecycleChannel above)
+  // can call this without racing or closing twice.
+  //
+  // This close does *not* close native sqlite3, and must not: the handle is
+  // deliberately leaked at open time, because calling `sqlite3_close_v2` while
+  // the process is coming down is what crashed the app. This code used to
+  // claim it prevented a SIGSEGV in `sqlite3Close` caused by an isolate killed
+  // mid-query — it did not. The close was the crashing call. See
+  // `AppDatabase._keepHandleUntilProcessExit`.
   Future<void> _prepareForShutdown() async {
     if (_shutdownStarted) return;
     _shutdownStarted = true;
     _boundsDebounce?.cancel();
-    // Close the database first and give it the lion's share of the shutdown
-    // budget — it's the crash-critical step. Window-bounds save is best
-    // effort and shouldn't eat into the time a draining query needs.
+    // Drain the database first: a query still in flight has a bounded amount
+    // of work left, and the window-bounds save is best effort.
     try {
       await sl<AppDatabase>().close().timeout(const Duration(seconds: 3));
     } catch (_) {}

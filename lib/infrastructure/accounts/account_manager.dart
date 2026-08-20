@@ -8,14 +8,17 @@ import 'package:uuid/uuid.dart';
 import '../../core/config/app_config.dart';
 import '../../core/config/oauth_client_id_storage.dart';
 import '../../data/datasources/remote/caldav_calendar_datasource_impl.dart';
+import '../../data/datasources/remote/cloud_drive_datasource.dart';
 import '../../data/datasources/remote/calendar_remote_datasource.dart';
 import '../../data/datasources/remote/email_remote_datasource.dart';
 import '../../data/datasources/remote/eventkit_calendar_datasource_impl.dart';
 import '../../data/datasources/remote/gmail_contacts_datasource_impl.dart';
 import '../../data/datasources/remote/gmail_datasource_impl.dart';
 import '../../data/datasources/remote/google_calendar_datasource_impl.dart';
+import '../../data/datasources/remote/google_drive_datasource_impl.dart';
 import '../../data/datasources/remote/google_tasks_datasource_impl.dart';
 import '../../data/datasources/remote/graph_api_datasource_impl.dart';
+import '../../data/datasources/remote/graph_drive_datasource_impl.dart';
 import '../../data/datasources/remote/imap_datasource_impl.dart';
 import '../../data/datasources/remote/tasks_remote_datasource.dart';
 import '../auth/auth_service.dart';
@@ -27,9 +30,11 @@ import '../auth/microsoft_auth_service.dart';
 import '../auth/token_storage.dart';
 import '../http/gmail_http_client.dart';
 import '../http/google_calendar_http_client.dart';
+import '../http/google_drive_http_client.dart';
 import '../http/google_people_http_client.dart';
 import '../http/google_tasks_http_client.dart';
 import '../http/graph_http_client.dart';
+import '../../domain/entities/cloud_document.dart';
 import 'account.dart';
 import 'account_storage.dart';
 
@@ -254,6 +259,158 @@ class AccountManager {
     } catch (_) {
       return null;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cloud document preview (SharePoint/OneDrive and Google Drive body links)
+  // ---------------------------------------------------------------------------
+
+  // Lazily built and cached per account ID, like the contacts and directory
+  // caches above: a drive datasource is a stateless HTTP client, but the
+  // service it talks to has nothing to do with which account is active — a
+  // Drive link routinely arrives in an Exchange mailbox and vice versa.
+  final Map<String, CloudDriveDatasource> _driveDatasourceCache = {};
+
+  /// The accounts that could fetch a [provider] document, in the order to try
+  /// them: the active account first when it is one of them, since it is the
+  /// likeliest to have access to something its own mail linked to.
+  ///
+  /// Shared Microsoft mailboxes are skipped — they hold no credentials of their
+  /// own, and the parent account is already in the list.
+  List<Account> cloudDriveCandidates(CloudDriveProvider provider) {
+    bool matches(Account a) => switch (provider) {
+          CloudDriveProvider.microsoft =>
+            a is MicrosoftAccount && a.parentAccountId == null,
+          CloudDriveProvider.google => a is GmailAccount,
+        };
+    final active = activeAccount;
+    return [
+      if (active != null && matches(active)) active,
+      ..._accounts.where((a) => matches(a) && a.id != active?.id),
+    ];
+  }
+
+  /// Whether [accountId]'s stored token already carries the provider's
+  /// file-read scope.
+  ///
+  /// The token *is* the record of what was consented to — both providers echo
+  /// the granted scopes back on every token and refresh response — so there is
+  /// no separate flag here to drift out of step with the real grant.
+  Future<bool> hasCloudDriveAccess(String accountId) async {
+    final account = accountById(accountId);
+    final authService = account == null ? null : _buildOAuthServiceForAccount(account);
+    if (authService == null) return false;
+    final token = await authService.getStoredToken();
+    if (token == null) return false;
+    return switch (account) {
+      MicrosoftAccount() => MicrosoftAuthService.grantsFileAccess(token.scope),
+      GmailAccount() => GmailAuthService.grantsFileAccess(token.scope),
+      _ => false,
+    };
+  }
+
+  /// Runs the interactive sign-in again for [accountId], this time also asking
+  /// for read access to that provider's files.
+  ///
+  /// Returns whether the scope came back granted — the user can decline it in
+  /// the browser, and the flow itself still "succeeds". Nothing else about the
+  /// account changes: the new token lands under the same per-account key with
+  /// its existing scopes intact (Microsoft re-requests the base set, Google is
+  /// told `include_granted_scopes`).
+  Future<bool> requestCloudDriveAccess(String accountId) async {
+    final account = accountById(accountId);
+    if (account == null) throw StateError('Unknown account: $accountId');
+
+    // Settings can edit the OAuth client IDs; pick up any change first, as the
+    // other interactive paths do.
+    await _loadAndMigrateClientIds();
+
+    final tokenStorage =
+        TokenStorage(_secureStorage, storageKey: 'token_${account.id}');
+    final AuthService authService;
+    switch (account) {
+      case MicrosoftAccount():
+        authService = MicrosoftAuthService(
+          clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
+          tenantId: account.tenantId,
+          redirectUri: AppConfig.microsoftRedirectUri,
+          tokenStorage: tokenStorage,
+          extraScopes: const [MicrosoftAuthService.filesReadScope],
+        );
+      case GmailAccount():
+        authService = GmailAuthService(
+          clientId: _googleClientId ?? AppConfig.gmailClientId,
+          clientSecret: _googleClientSecret ?? '',
+          redirectUri: AppConfig.gmailRedirectUri,
+          tokenStorage: tokenStorage,
+          accountEmail: account.emailAddress,
+          extraScopes: const [GmailAuthService.driveReadonlyScope],
+        );
+      case ImapAccount():
+        return false;
+    }
+
+    final token = await authService.signIn();
+    // The datasource caches hold clients built around the old token's storage
+    // key, which is unchanged — but the active account's pipeline is rebuilt
+    // for the same reason reauthenticateOAuthAccount does it: so the new token
+    // is used now rather than after the next refresh cycle.
+    if (accountId == activeAccount?.id) _buildDatasourcesForActiveAccount();
+
+    return switch (account) {
+      MicrosoftAccount() => MicrosoftAuthService.grantsFileAccess(token.scope),
+      GmailAccount() => GmailAuthService.grantsFileAccess(token.scope),
+      ImapAccount() => false,
+    };
+  }
+
+  /// A datasource that can fetch cloud documents as [accountId], or null when
+  /// that account belongs to neither drive provider.
+  CloudDriveDatasource? cloudDriveDatasourceForAccount(String accountId) {
+    final cached = _driveDatasourceCache[accountId];
+    if (cached != null) return cached;
+
+    final account = accountById(accountId);
+    if (account == null) return null;
+
+    final CloudDriveDatasource datasource;
+    switch (account) {
+      case MicrosoftAccount():
+        final cfg = _microsoftAuthConfig(account);
+        datasource = GraphDriveDatasourceImpl(
+          client: GraphHttpClient(
+            authService: MicrosoftAuthService(
+              clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
+              tenantId: cfg.tenantId,
+              redirectUri: AppConfig.microsoftRedirectUri,
+              tokenStorage: cfg.tokenStorage,
+            ),
+            onAuthFailure: () =>
+                _authFailureController.add(cfg.credentialOwnerId),
+            onAuthSuccess: () =>
+                _authSuccessController.add(cfg.credentialOwnerId),
+          ),
+        );
+      case GmailAccount():
+        datasource = GoogleDriveDatasourceImpl(
+          client: GoogleDriveHttpClient(
+            authService: GmailAuthService(
+              clientId: _googleClientId ?? AppConfig.gmailClientId,
+              clientSecret: _googleClientSecret ?? '',
+              redirectUri: AppConfig.gmailRedirectUri,
+              tokenStorage: TokenStorage(_secureStorage,
+                  storageKey: 'token_${account.id}'),
+              accountEmail: account.emailAddress,
+            ),
+            onAuthFailure: () => _authFailureController.add(account.id),
+            onAuthSuccess: () => _authSuccessController.add(account.id),
+          ),
+        );
+      case ImapAccount():
+        return null;
+    }
+    _driveDatasourceCache[accountId] = datasource;
+    return datasource;
   }
 
   /// Load persisted accounts and run legacy token migration if needed.

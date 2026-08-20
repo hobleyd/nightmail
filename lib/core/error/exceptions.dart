@@ -46,3 +46,18 @@ class MeetingForwardUnsupportedException implements Exception {
   @override
   String toString() => 'MeetingForwardUnsupportedException: $message';
 }
+
+/// The cloud document a body link points at is not something the reading pane
+/// can show — an archive, a video, an unknown binary.
+///
+/// Thrown by the drive datasources *before* they download anything, so a file
+/// that could only have ended in an apology is never fetched. The repository
+/// reads it as "leave this link to the browser", which is where it would have
+/// opened before any of this existed.
+class CloudDocumentNotPreviewableException implements Exception {
+  const CloudDocumentNotPreviewableException({required this.message});
+  final String message;
+
+  @override
+  String toString() => 'CloudDocumentNotPreviewableException: $message';
+}

@@ -20,12 +20,15 @@ import 'plain_text_body_view.dart';
 import 'add_to_calendar_banner.dart';
 import 'contact_hover_card.dart';
 import 'forward_meeting_dialog.dart';
+import 'cloud_document_preview_host.dart';
 import 'invite_banner_parts.dart';
 import 'date_time_fields.dart';
 
 import '../../core/platform/touch_metrics.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/error/failures.dart';
+import '../../core/utils/cloud_document_format.dart';
 import '../../core/utils/meeting_conflicts.dart';
 import '../../data/services/eml_parser.dart';
 import '../../data/services/office_preview_service.dart';
@@ -36,10 +39,12 @@ import '../../domain/entities/meeting_invite.dart';
 import '../../domain/usecases/check_sender_anomaly.dart';
 import '../../domain/usecases/delete_email.dart';
 import '../../domain/usecases/download_attachment.dart';
+import '../../domain/usecases/fetch_cloud_document.dart';
 import '../../domain/usecases/cancel_meeting_from_email.dart';
 import '../../domain/usecases/accept_proposed_time_from_email.dart';
 import '../../domain/usecases/remove_cancelled_meeting.dart';
 import '../../domain/entities/calendar_event.dart';
+import '../../domain/entities/cloud_document.dart';
 import '../../domain/usecases/get_calendar_events.dart';
 import '../../domain/usecases/forward_meeting_from_email.dart';
 import '../../domain/usecases/propose_new_time_from_email.dart';
@@ -331,6 +336,196 @@ class _EmailViewState extends State<_EmailView> {
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Cloud document links (SharePoint/OneDrive, Google Drive)
+  // ---------------------------------------------------------------------------
+
+  /// The link currently being fetched, or null. Doubles as the "in flight"
+  /// flag: a webview click is easy to land twice, and the second one must not
+  /// start a second download of the same file.
+  String? _fetchingCloudUrl;
+
+  /// Fetches the document [link] names and shows it where an attachment
+  /// preview would go.
+  ///
+  /// Returns false to mean "open it in the browser after all" — which is the
+  /// answer for every case NightMail cannot improve on: no account can reach
+  /// the file, the reader declined the permission, the file is not something
+  /// this can draw. Only a genuine failure says anything on screen; the rest
+  /// simply behave as the link did before.
+  Future<bool> _previewCloudDocument(CloudDocumentLink link) async {
+    // Desktop only, for the same reason an attachment chip on a phone opens in
+    // the OS rather than previewing: the preview surfaces are built on the
+    // native webview (`_WebFilePreview`), which mobile has no controller for.
+    // The provider's own app or the browser handles it better there anyway.
+    if (defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS) {
+      return false;
+    }
+    if (_fetchingCloudUrl != null) {
+      // Already fetching something. Swallow the click rather than opening a
+      // browser tab on top of a preview that is about to appear.
+      return true;
+    }
+    setState(() => _fetchingCloudUrl = link.url);
+    try {
+      var result = await sl<FetchCloudDocument>()(link);
+
+      // The file scopes are asked for the first time a reader actually follows
+      // a cloud link, not at sign-in — see AccountManager.requestCloudDriveAccess.
+      final needsGrant = result.getLeft().toNullable();
+      if (needsGrant is CloudDriveAccessNotGranted) {
+        if (!mounted) return true;
+        final granted = await _askForCloudDriveAccess(needsGrant);
+        if (!granted || !mounted) return granted;
+        result = await sl<FetchCloudDocument>()(link);
+      }
+
+      final document = result.toNullable();
+      if (document == null) {
+        final failure = result.getLeft().toNullable();
+        // "Nothing here can open this" is not worth a message: the browser is
+        // about to open it, which is what the reader asked for. A server or
+        // network failure is, because the browser may not fare better.
+        if (failure != null && failure is! CloudDriveFailure && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text('Could not preview document: ${failure.message}')));
+        }
+        return false;
+      }
+      if (!mounted) return true;
+      return await _showCloudDocument(link, document);
+    } finally {
+      if (mounted) setState(() => _fetchingCloudUrl = null);
+    }
+  }
+
+  /// Writes the fetched bytes to a temp file and routes them to the same three
+  /// preview surfaces an attachment uses.
+  Future<bool> _showCloudDocument(
+      CloudDocumentLink link, CloudDocument document) async {
+    final dir = await getTemporaryDirectory();
+    // A provider-converted document keeps its original title but is a PDF now,
+    // and the webview decides what it is looking at by extension.
+    final fileName = document.convertedToPdf
+        ? '${_stem(document.name)}.pdf'
+        : document.name;
+    final file = File('${dir.path}/${_sanitizedFileName(fileName)}');
+    await file.writeAsBytes(document.bytes);
+    if (!mounted) return true;
+
+    final format = document.convertedToPdf
+        ? CloudDocumentFormat.pdf
+        : cloudDocumentFormatFor(
+            name: document.name, contentType: document.contentType);
+    final icon = _AttachmentChipState._iconFor(document.contentType, fileName);
+
+    switch (format) {
+      case CloudDocumentFormat.pdf:
+      case CloudDocumentFormat.plainText:
+        _showPreview(_AttachmentPreviewKind.webFile, file.path, document.name,
+            link.url, icon);
+        return true;
+      case CloudDocumentFormat.image:
+        _showPreview(_AttachmentPreviewKind.image, file.path, document.name,
+            link.url, icon);
+        return true;
+      case CloudDocumentFormat.officeConvertible:
+        // Only reached when the provider would not convert it — an uploaded
+        // Office file in Drive, which Drive cannot render without write access.
+        final path = await _officePreviewPath(file.path, document.name);
+        if (path == null || !mounted) return false;
+        _showPreview(_AttachmentPreviewKind.webFile, path, document.name,
+            link.url, icon);
+        return true;
+      case null:
+        return false;
+    }
+  }
+
+  /// The local Office preview for a file the provider declined to convert:
+  /// LibreOffice → PDF when it is installed, else the bundled JS viewer for the
+  /// three OOXML formats it can read. Null when neither applies, which sends
+  /// the link to the browser.
+  Future<String?> _officePreviewPath(String docPath, String name) async {
+    final svc = sl<OfficePreviewService>();
+    final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
+    final jsFormat = switch (ext) {
+      'docx' => OfficeFormat.docx,
+      'xlsx' => OfficeFormat.xlsx,
+      'pptx' => OfficeFormat.pptx,
+      _ => null,
+    };
+    if (svc.libreOfficeAvailable) {
+      final pdf = await svc.convertToPdf(docPath);
+      if (pdf != null) return pdf;
+    }
+    if (jsFormat == null) return null;
+    return svc.buildJsViewer(docPath, jsFormat);
+  }
+
+  static String _stem(String name) {
+    final dot = name.lastIndexOf('.');
+    return dot <= 0 ? name : name.substring(0, dot);
+  }
+
+  /// Asks for read access to the account's cloud files, then runs the OAuth
+  /// flow if the reader agrees.
+  ///
+  /// Worth asking rather than requesting the scope at sign-in: it is a heavier
+  /// permission than mail (Google classes Drive read as restricted, and a
+  /// tenant may require an admin to consent to Files.Read.All), and an
+  /// authorization request carrying a scope nobody has consented to fails
+  /// outright — which would break *adding an account* over a feature the
+  /// reader may never use.
+  Future<bool> _askForCloudDriveAccess(
+      CloudDriveAccessNotGranted failure) async {
+    final c = context.colors;
+    final agreed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: c.surfacePanel,
+        title: const Text('Preview cloud documents?'),
+        content: Text(
+          'To show this document inside NightMail, ${failure.accountEmail} '
+          'needs to grant read-only access to its files.\n\n'
+          'You will be asked to sign in once. Decline and the link opens in '
+          'your browser as usual.',
+          style: TextStyle(color: c.textBody, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Open in browser'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Grant access'),
+          ),
+        ],
+      ),
+    );
+    if (agreed != true) return false;
+
+    try {
+      final granted =
+          await sl<AccountManager>().requestCloudDriveAccess(failure.accountId);
+      if (!granted && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Access was not granted — opening in your browser'),
+        ));
+      }
+      return granted;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not grant access: $e')),
+        );
+      }
+      return false;
+    }
+  }
+
   Future<void> _doPrint(BuildContext context) async {
     final ctrl = _bodyController;
     if (ctrl != null) {
@@ -395,7 +590,11 @@ class _EmailViewState extends State<_EmailView> {
     // is on the email list / toolbar). For HTML emails where the WebView
     // HAS native focus, the NSEvent monitor in WebKitView.swift intercepts
     // instead (and consumes the event so this path never fires in that case).
-    return CallbackShortcuts(
+    // Published for the body renderers: a SharePoint/OneDrive or Drive link in
+    // the body previews here, into the same surface the attachment chips use.
+    return CloudDocumentPreviewHost(
+      onPreview: _previewCloudDocument,
+      child: CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.keyP, meta: true):
             () => _doPrint(context),
@@ -440,6 +639,7 @@ class _EmailViewState extends State<_EmailView> {
         ],
         // MeetingEmailType.responseNotification draws no banner on purpose: an
         // attendee's RSVP coming back to the organizer asks nothing of them.
+        if (_fetchingCloudUrl != null) const _CloudDocumentLoadingBar(),
         Expanded(
           child: switch (_previewKind) {
             _AttachmentPreviewKind.webFile => _WebFilePreview(
@@ -471,6 +671,41 @@ class _EmailViewState extends State<_EmailView> {
         ),
       ],
     ),
+    ),
+    );
+  }
+}
+
+/// Shown while a linked cloud document is being fetched.
+///
+/// A body link has no chip to spin, unlike an attachment, and a click that does
+/// nothing visible for two seconds reads as a click that missed.
+class _CloudDocumentLoadingBar extends StatelessWidget {
+  const _CloudDocumentLoadingBar();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      color: c.badgeBg,
+      child: Row(
+        children: [
+          SizedBox(
+            width: 12,
+            height: 12,
+            child: CircularProgressIndicator(
+              strokeWidth: 1.5,
+              color: AppColors.accent,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            'Opening document…',
+            style: TextStyle(color: c.textTertiary, fontSize: 12),
+          ),
+        ],
+      ),
     );
   }
 }

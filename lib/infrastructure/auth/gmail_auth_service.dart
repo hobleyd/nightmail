@@ -28,6 +28,7 @@ class GmailAuthService implements AuthService {
     required this.redirectUri,
     required this._tokenStorage,
     this.accountEmail,
+    this.extraScopes = const [],
     Dio? httpClient,
   }) : _http = httpClient ?? Dio();
 
@@ -41,6 +42,17 @@ class GmailAuthService implements AuthService {
   /// except adding a brand-new account. Used only to decide whether the
   /// Workspace-admin room scope may be requested; see [_requestedScopes].
   final String? accountEmail;
+
+  /// Scopes to request on top of the usual set, for a flow that exists *only*
+  /// to ask for them — today, Drive read access for the cloud-document preview
+  /// ([driveReadonlyScope]).
+  ///
+  /// Same reasoning as [_roomDirectoryScope], one step further: Google treats
+  /// `drive.readonly` as a *restricted* scope, so quietly adding it to every
+  /// sign-in would put a heavier consent screen (and, on the bundled client id,
+  /// a verification requirement) in front of adding a mail account. It is asked
+  /// for on its own, when the user clicks a Drive link and says yes.
+  final List<String> extraScopes;
 
   static const _scopes = [
     'openid',
@@ -76,6 +88,30 @@ class GmailAuthService implements AuthService {
   /// on a personal @gmail.com account, which would break adding one entirely.
   /// So it is only appended once we know the account is on a Workspace domain —
   /// see [_requestedScopes].
+  /// Read-only access to Drive files, for previewing a document a message links
+  /// to. Requested incrementally — see [extraScopes].
+  ///
+  /// `drive.readonly` is the narrowest scope that can read a file the user was
+  /// merely *sent* a link to: `drive.file` is limited to files this app itself
+  /// created or the user picked through Google's own picker, which a link in a
+  /// message is neither.
+  static const driveReadonlyScope =
+      'https://www.googleapis.com/auth/drive.readonly';
+
+  /// Whether a token's granted `scope` carries [driveReadonlyScope].
+  ///
+  /// Google echoes the granted scopes on both the code exchange and every
+  /// refresh, so the stored token is the record of what was consented to — no
+  /// separate flag to fall out of step with it.
+  static bool grantsFileAccess(String? scope) {
+    if (scope == null || scope.isEmpty) return false;
+    // Exact membership, not a substring test: `drive.metadata.readonly` grants
+    // no file *content*, and a substring match on `auth/drive` would accept it.
+    final granted = scope.split(RegExp(r'\s+')).toSet();
+    return granted.contains(driveReadonlyScope) ||
+        granted.contains('https://www.googleapis.com/auth/drive');
+  }
+
   static const _roomDirectoryScope =
       'https://www.googleapis.com/auth/admin.directory.resource.calendar.readonly';
 
@@ -95,7 +131,8 @@ class GmailAuthService implements AuthService {
   /// picks up [_roomDirectoryScope] then. Non-admin Workspace users are granted
   /// the scope and still get 403 from the Admin SDK, which is handled the same
   /// way as not having it.
-  List<String> get _requestedScopes => scopesForAccount(accountEmail);
+  List<String> get _requestedScopes =>
+      [...scopesForAccount(accountEmail), ...extraScopes];
 
   @visibleForTesting
   static List<String> scopesForAccount(String? accountEmail) {
@@ -164,6 +201,11 @@ class GmailAuthService implements AuthService {
         'code_challenge_method': 'S256',
         'access_type': 'offline',
         'prompt': 'consent',
+        // Incremental consent: keep everything already granted rather than
+        // replacing it with just the scopes named here. Without it, a flow run
+        // to add Drive access would come back holding *only* Drive access and
+        // the account would lose its mail token's scopes.
+        if (extraScopes.isNotEmpty) 'include_granted_scopes': 'true',
         // Pins the flow to the account we built the scope list for. Without it a
         // re-auth can land on a different account in the browser's session — and
         // if that one is a personal @gmail.com, the Workspace room scope it was

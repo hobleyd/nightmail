@@ -25,6 +25,7 @@ import 'data/datasources/local/contact_cache_local_datasource_impl.dart';
 import 'data/datasources/local/sender_local_datasource.dart';
 import 'data/datasources/local/sender_local_datasource_impl.dart';
 import 'data/repositories/calendar_repository_impl.dart';
+import 'data/repositories/cloud_drive_repository_impl.dart';
 import 'data/repositories/contact_cache_repository_impl.dart';
 import 'data/repositories/contact_details_repository_impl.dart';
 import 'data/repositories/directory_contacts_repository_impl.dart';
@@ -58,6 +59,7 @@ import 'presentation/blocs/ai/ai_compose_cubit.dart';
 import 'presentation/blocs/ai/ai_folder_cubit.dart';
 import 'presentation/blocs/ai/ai_settings_cubit.dart';
 import 'domain/repositories/calendar_repository.dart';
+import 'domain/repositories/cloud_drive_repository.dart';
 import 'domain/repositories/contact_details_repository.dart';
 import 'domain/repositories/contact_cache_repository.dart';
 import 'domain/repositories/directory_contacts_repository.dart';
@@ -70,6 +72,7 @@ import 'domain/usecases/attach_email_to_task.dart';
 import 'domain/usecases/check_sender_anomaly.dart';
 import 'domain/usecases/merge_sender_addresses.dart';
 import 'domain/usecases/cancel_calendar_event.dart';
+import 'domain/usecases/fetch_cloud_document.dart';
 import 'domain/usecases/check_attendees_availability.dart';
 import 'domain/usecases/get_meeting_rooms.dart';
 import 'domain/usecases/create_calendar_event.dart';
@@ -319,6 +322,9 @@ Future<void> configureDependencies() async {
       systemContacts: sl<SystemContactsRepository>(),
     ),
   );
+  sl.registerLazySingleton<CloudDriveRepository>(
+    () => CloudDriveRepositoryImpl(accountManager: sl<AccountManager>()),
+  );
   sl.registerLazySingleton<DirectoryContactsRepository>(
     () => DirectoryContactsRepositoryImpl(accountManager: sl<AccountManager>()),
   );
@@ -413,6 +419,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => ForwardCalendarEvent(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => EmlParser());
   sl.registerLazySingleton(() => OfficePreviewService());
+  sl.registerLazySingleton(() => FetchCloudDocument(sl<CloudDriveRepository>()));
   sl.registerLazySingleton(() => GetTaskLists(sl<TasksRepository>()));
   sl.registerLazySingleton(() => GetTasks(sl<TasksRepository>()));
   sl.registerLazySingleton(() => CreateTask(sl<TasksRepository>()));

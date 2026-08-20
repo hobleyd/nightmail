@@ -29,6 +29,7 @@ class MicrosoftAuthService implements AuthService {
     required this.redirectUri,
     required this._tokenStorage,
     this.clientSecret,
+    this.extraScopes = const [],
     Dio? httpClient,
   })  : _http = httpClient ?? Dio();
 
@@ -38,6 +39,19 @@ class MicrosoftAuthService implements AuthService {
   final String? clientSecret;
   final TokenStorage _tokenStorage;
   final Dio _http;
+
+  /// Scopes to request on top of [_scopes], for a flow that exists *only* to
+  /// ask for them — today, file read access for the cloud-document preview
+  /// ([filesReadScope]).
+  ///
+  /// Deliberately not part of [_scopes]. `Files.Read.All` is a scope a tenant
+  /// may require an administrator to consent to, and an unconsented scope in
+  /// the authorization request fails the request outright (AADSTS65001) — which
+  /// would mean nobody in that tenant could add an account at all, over a
+  /// feature they may never use. So it is asked for on its own, when the user
+  /// clicks a SharePoint link and says yes, and everything else keeps working
+  /// whether it is granted or refused.
+  final List<String> extraScopes;
 
   // On Windows, open the system browser with a localhost loopback redirect.
   // Microsoft Azure AD accepts any http://localhost:{port} for public-client
@@ -109,6 +123,39 @@ class MicrosoftAuthService implements AuthService {
     'https://graph.microsoft.com/Calendars.ReadWrite.Shared',
   ];
 
+  /// Read access to the account's OneDrive and the SharePoint sites it can
+  /// reach, for previewing a document a message links to. Requested
+  /// incrementally — see [extraScopes] for why it is not in [_scopes].
+  ///
+  /// `Files.Read.All` covers `/shares/{id}/driveItem`, which is how a sharing
+  /// link is resolved, for both OneDrive and SharePoint content. `Sites.Read.All`
+  /// is deliberately *not* requested: it is the scope most likely to need admin
+  /// consent, and the sharing-link route does not need it.
+  static const filesReadScope = 'https://graph.microsoft.com/Files.Read.All';
+
+  /// Whether a token's granted `scope` carries [filesReadScope].
+  ///
+  /// Microsoft echoes granted scopes back on both the token and refresh
+  /// responses, so the stored token is the record of what was consented to —
+  /// there is no separate flag to keep in step with it. Matched on the
+  /// permission name because the response abbreviates the resource prefix.
+  static bool grantsFileAccess(String? scope) =>
+      scope != null && scope.contains('Files.Read');
+
+  /// The scopes a refresh must ask for: the base set, plus any incremental
+  /// scope this token already carries.
+  ///
+  /// Load-bearing. A refresh names the scopes it wants, so refreshing with
+  /// [_scopes] alone would quietly hand back an access token *without*
+  /// `Files.Read.All` an hour after the user granted it — the grant would look
+  /// like it had lapsed. Asking for an incremental scope that was never
+  /// consented to fails the refresh, so it is added only when the token proves
+  /// it was.
+  List<String> _refreshScopes(AuthToken token) => [
+        ..._scopes,
+        if (grantsFileAccess(token.scope)) filesReadScope,
+      ];
+
   String get _baseUrl =>
       'https://login.microsoftonline.com/$tenantId/oauth2/v2.0';
 
@@ -122,7 +169,7 @@ class MicrosoftAuthService implements AuthService {
         'client_id': clientId,
         'response_type': 'code',
         'redirect_uri': _effectiveRedirectUri,
-        'scope': _scopes.join(' '),
+        'scope': [..._scopes, ...extraScopes].join(' '),
         'code_challenge': codeChallenge,
         'code_challenge_method': 'S256',
         'response_mode': 'query',
@@ -229,7 +276,7 @@ class MicrosoftAuthService implements AuthService {
           'client_id': clientId,
           'grant_type': 'refresh_token',
           'refresh_token': effective.refreshToken,
-          'scope': _scopes.join(' '),
+          'scope': _refreshScopes(effective).join(' '),
           'redirect_uri': _effectiveRedirectUri,
           if (clientSecret != null && clientSecret!.isNotEmpty)
             'client_secret': clientSecret!,

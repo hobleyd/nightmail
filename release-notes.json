@@ -1,19 +1,15 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.21.0",
+  "version": "1.22.0",
   "sections": [
     {
-      "type": "fixes",
-      "title": "Fixes",
+      "type": "features",
+      "title": "New features",
       "items": [
         {
-          "body": "open Gmail sign-in in Chrome, not Safari",
-          "title": "auth"
-        },
-        {
-          "body": "never close native sqlite3 — the close was the crash",
-          "title": "cache"
+          "body": "preview SharePoint/OneDrive and Drive links inline",
+          "title": "reading"
         }
       ]
     }

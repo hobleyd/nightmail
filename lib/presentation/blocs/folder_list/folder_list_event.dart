@@ -32,6 +32,12 @@ final class FolderListCreateFolderRequested extends FolderListEvent {
   List<Object?> get props => [parentFolderId, displayName];
 }
 
+/// Clears a failed [PendingFolderCreation] row. Only the failed case is
+/// dismissible — an in-flight create resolves on its own.
+final class FolderListCreateFolderDismissed extends FolderListEvent {
+  const FolderListCreateFolderDismissed();
+}
+
 final class FolderListRenameFolderRequested extends FolderListEvent {
   const FolderListRenameFolderRequested({
     required this.folderId,

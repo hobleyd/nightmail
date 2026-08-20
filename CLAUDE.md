@@ -608,6 +608,67 @@ yesterday's counts until the user pressed Refresh.
 and re-emitting the old mailbox's folders makes HomePage auto-select an Inbox id
 the new account does not have (`folderToAutoSelect`).
 
+## A New Folder Is Shown Before the Tree Is Re-Fetched
+
+Creating a folder used to await the create round trip *and then* a full
+folder-tree fetch — `getMailFolders` plus a `getChildFolders` round trip per
+level of the hierarchy — before anything appeared, so the name the user had
+just typed vanished and came back a beat or more later. Both halves were on
+the critical path; neither has been timed against a real mailbox, so which
+dominates is unknown, and the fix removes the second one either way.
+
+`EmailRepository.createFolder` returns the **created folder**, not `unit`.
+Every datasource already knew the server's id for it (Graph folder id, Gmail
+label id, IMAP path — the path is deterministic, so IMAP needs no lookup) and
+the repository was throwing it away. `FolderListBloc` inserts that folder into
+state as soon as the create returns and *then* requests the reconcile, which
+now only corrects counts and sort position.
+
+**No id that isn't the server's may reach the UI.** That rule is what makes
+this safe rather than something to defend with guards, and it is why the
+in-flight row is a `PendingFolderCreation` — a name and its parent, no id —
+rather than a folder with a local stand-in id. A stand-in would be a valid
+move destination as far as everything downstream could tell, and dropping mail
+on it would: enqueue a `move` op naming a folder the server has never heard
+of, tombstone the message and delete its cache row *immediately*, then fail on
+every drain — `move` is deliberately excluded from the 404-drop set — until the
+25-retry budget ran out. The message would appear to move, never arrive, and
+return on the next folder sync with nothing left to explain it.
+
+The pending row is drawn whether or not its parent is expanded, and appended
+at the root if that parent has gone altogether. A failed create is cleared
+only by its own retry or dismiss button and survives a reload by design, so
+anything that can hide the row strands it. It is dropped on an account switch
+for the same reason — its parent is in the mailbox being left.
+
+**A tree fetch that omits the just-created folder must not delete it.** The
+fetch is a wholesale replacement and both providers can answer one built a
+moment too early (Graph propagation, Gmail's cached label list), including the
+reconcile the create itself fires. So the bloc merges an unconfirmed folder
+back into a list that omits it, for `_unconfirmedFolderGrace` fetches — past
+that the omission is more likely the truth (deleted from another client) than
+lag. Entries are dropped on first sighting and cleared on an account switch.
+
+`EmailFolder.props` carries `parentFolderId` and `childFolderCount` because of
+this: inserting a child bumps its parent's count, and an emit that changed
+nothing else would otherwise compare equal and be dropped — same trap as
+`MailPollerState`.
+
+`test/presentation/widgets/folder_panel_test.dart` is the panel's first widget
+test, and two things in its harness are load-bearing: **the `FolderListBloc`
+must be constructed inside the test body, not in `setUp`** — a bloc's event
+stream belongs to the zone that made it, and one made in `setUp` delivers its
+events outside the tester's fake-async zone, so the load event never runs and
+the panel sits on its spinner until `pumpAndSettle` times out. The other is
+that `AccountCubit`, `MailPollerCubit`, `EmailListBloc` (every folder row
+subscribes to it), `OverdueTasksCubit` and `UpdateCubit` are all read during
+build, and `AccountMigrationService` is reached through `sl`.
+
+The failure is no longer swallowed. A failed create keeps the typed name on
+screen in red with the reason and a retry, which is also the only thing that
+reports a create attempted offline (`createFolder` goes through `_execute`, so
+it fails fast rather than queueing — folders are not in the outbox).
+
 ## The Poll Syncs the Folder On Screen, Not Just the Inbox
 
 `HomePage` tells `MailPollerCubit.setWatchedFolder` which folder is showing; the

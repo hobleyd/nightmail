@@ -3,15 +3,16 @@ import 'package:fpdart/fpdart.dart';
 
 import '../../core/error/failures.dart';
 import '../../core/usecases/usecase.dart';
+import '../entities/email_folder.dart';
 import '../repositories/email_repository.dart';
 
-class CreateFolder implements UseCase<Unit, CreateFolderParams> {
+class CreateFolder implements UseCase<EmailFolder, CreateFolderParams> {
   const CreateFolder(this._repository);
 
   final EmailRepository _repository;
 
   @override
-  Future<Either<Failure, Unit>> call(CreateFolderParams params) {
+  Future<Either<Failure, EmailFolder>> call(CreateFolderParams params) {
     return _repository.createFolder(
       parentFolderId: params.parentFolderId,
       displayName: params.displayName,

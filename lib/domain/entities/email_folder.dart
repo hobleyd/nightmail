@@ -24,6 +24,7 @@ class EmailFolder extends Equatable {
   EmailFolder copyWith({
     int? totalItemCount,
     int? unreadItemCount,
+    int? childFolderCount,
   }) {
     return EmailFolder(
       id: id,
@@ -32,10 +33,21 @@ class EmailFolder extends Equatable {
       unreadItemCount: unreadItemCount ?? this.unreadItemCount,
       parentFolderId: parentFolderId,
       isHidden: isHidden,
-      childFolderCount: childFolderCount,
+      childFolderCount: childFolderCount ?? this.childFolderCount,
     );
   }
 
+  // [parentFolderId] and [childFolderCount] are in here because the folder
+  // tree is drawn from them: a state emit that only bumps a parent's child
+  // count — which is what happens when a newly created folder is inserted
+  // optimistically — would otherwise compare equal and be dropped.
   @override
-  List<Object?> get props => [id, displayName, unreadItemCount, totalItemCount];
+  List<Object?> get props => [
+        id,
+        displayName,
+        unreadItemCount,
+        totalItemCount,
+        parentFolderId,
+        childFolderCount,
+      ];
 }

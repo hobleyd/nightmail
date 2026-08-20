@@ -16,6 +16,7 @@ import 'package:nightmail/data/models/email_model.dart';
 import 'package:nightmail/data/repositories/email_repository_impl.dart';
 import 'package:nightmail/domain/entities/email.dart';
 import 'package:nightmail/domain/entities/email_attachment.dart';
+import 'package:nightmail/domain/entities/email_folder.dart';
 import 'package:nightmail/domain/entities/inline_attachment.dart';
 import 'package:nightmail/domain/entities/meeting_invite.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
@@ -775,6 +776,61 @@ void main() {
 
       final folders = (result as Right).value as List;
       expect(folders.map((f) => f.displayName), isNot(contains('SPAMDB')));
+    });
+  });
+
+  group('createFolder', () {
+    test('returns the folder carrying the id the server assigned', () async {
+      when(mockRemoteDatasource.createFolder(
+        parentFolderId: anyNamed('parentFolderId'),
+        displayName: anyNamed('displayName'),
+      )).thenAnswer((_) async => 'AAMkAD-new-folder-id');
+
+      final result = await repository.createFolder(
+        parentFolderId: 'inbox-id',
+        displayName: 'Receipts',
+      );
+
+      // The real id is the whole point: it lets the caller draw the folder
+      // without a tree fetch, and mail can be moved into it at once.
+      final folder = (result as Right).value as EmailFolder;
+      expect(folder.id, 'AAMkAD-new-folder-id');
+      expect(folder.displayName, 'Receipts');
+      expect(folder.parentFolderId, 'inbox-id');
+      expect(folder.unreadItemCount, 0);
+    });
+
+    test('a root-level create reports no parent rather than the sentinel',
+        () async {
+      when(mockRemoteDatasource.createFolder(
+        parentFolderId: anyNamed('parentFolderId'),
+        displayName: anyNamed('displayName'),
+      )).thenAnswer((_) async => 'root-child-id');
+
+      final result = await repository.createFolder(
+        parentFolderId: '',
+        displayName: 'Archive 2025',
+      );
+
+      // '' is the datasources' root sentinel, not a folder id — carrying it
+      // through would make the folder a child of a folder that isn't there.
+      expect(((result as Right).value as EmailFolder).parentFolderId, isNull);
+    });
+
+    test('returns Left(NetworkFailure) offline without calling the datasource',
+        () async {
+      when(mockConnectivityService.isOnline).thenAnswer((_) async => false);
+
+      final result = await repository.createFolder(
+        parentFolderId: 'inbox-id',
+        displayName: 'Receipts',
+      );
+
+      expect((result as Left).value, isA<NetworkFailure>());
+      verifyNever(mockRemoteDatasource.createFolder(
+        parentFolderId: anyNamed('parentFolderId'),
+        displayName: anyNamed('displayName'),
+      ));
     });
   });
 

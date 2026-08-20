@@ -168,8 +168,16 @@ class _FolderPanelState extends State<FolderPanel> {
                             strokeWidth: 2,
                           ),
                         ),
-                      FolderListLoaded(:final folders, :final isRefreshing) =>
-                        _buildTree(folders, showUnreadCounts: !isRefreshing),
+                      FolderListLoaded(
+                        :final folders,
+                        :final isRefreshing,
+                        :final pendingCreate
+                      ) =>
+                        _buildTree(
+                          folders,
+                          showUnreadCounts: !isRefreshing,
+                          pendingCreate: pendingCreate,
+                        ),
                       // Auth failures (expired/revoked token) show the sign-in
                       // prompt so the user can re-authenticate in one tap.
                       FolderListError(isAuthFailure: true)
@@ -206,8 +214,12 @@ class _FolderPanelState extends State<FolderPanel> {
     );
   }
 
-  Widget _buildTree(List<EmailFolder> folders, {bool showUnreadCounts = true}) {
-    final items = _buildDisplayList(folders);
+  Widget _buildTree(
+    List<EmailFolder> folders, {
+    bool showUnreadCounts = true,
+    PendingFolderCreation? pendingCreate,
+  }) {
+    final items = _buildDisplayList(folders, pendingCreate);
     final folderById = {for (final f in folders) f.id: f};
 
     // A folder may be dropped onto [targetId] unless it would create a cycle
@@ -234,6 +246,22 @@ class _FolderPanelState extends State<FolderPanel> {
       itemCount: items.length,
       itemBuilder: (context, i) {
         final item = items[i];
+        final pending = item.pendingCreate;
+        if (pending != null) {
+          return _FolderPendingRow(
+            depth: item.depth,
+            pending: pending,
+            onRetry: () => context.read<FolderListBloc>().add(
+                  FolderListCreateFolderRequested(
+                    parentFolderId: pending.parentFolderId,
+                    displayName: pending.displayName,
+                  ),
+                ),
+            onDismiss: () => context
+                .read<FolderListBloc>()
+                .add(const FolderListCreateFolderDismissed()),
+          );
+        }
         if (item.isCreating) {
           return _FolderCreatingRow(
             key: _creatingRowKey,
@@ -339,7 +367,10 @@ class _FolderPanelState extends State<FolderPanel> {
     }
   }
 
-  List<_DisplayItem> _buildDisplayList(List<EmailFolder> all) {
+  List<_DisplayItem> _buildDisplayList(
+    List<EmailFolder> all,
+    PendingFolderCreation? pendingCreate,
+  ) {
     final folderById = {for (final f in all) f.id: f};
     final childrenOf = <String, List<EmailFolder>>{};
     final roots = <EmailFolder>[];
@@ -370,9 +401,40 @@ class _FolderPanelState extends State<FolderPanel> {
           result.add(_DisplayItem(folder: f, depth: depth + 1, isCreating: true));
         }
       }
+      // Same place, for the folder whose create is in flight (or has just
+      // failed): the editor is gone by then, and without this the name the
+      // user typed would vanish for the length of the round trip.
+      //
+      // Drawn whether or not the parent is expanded, unlike the editor. A
+      // failed create is only cleared by its own retry or dismiss button, so
+      // hiding the row behind a disclosure triangle strands it — set in the
+      // bloc, unreachable on screen, and surviving every reload by design.
+      if (pendingCreate != null && pendingCreate.parentFolderId == f.id) {
+        result.add(_DisplayItem(
+          folder: f,
+          depth: depth + 1,
+          pendingCreate: pendingCreate,
+        ));
+      }
     }
     for (final root in roots) {
       visit(root, 0);
+    }
+    // Last resort: the parent the create was addressed to is not in this list
+    // at all (deleted from another client while the create was failing). The
+    // row still has to be reachable, since only its own buttons clear it.
+    if (pendingCreate != null &&
+        !result.any((item) => item.pendingCreate != null)) {
+      result.add(_DisplayItem(
+        folder: EmailFolder(
+          id: pendingCreate.parentFolderId,
+          displayName: '',
+          totalItemCount: 0,
+          unreadItemCount: 0,
+        ),
+        depth: 0,
+        pendingCreate: pendingCreate,
+      ));
     }
     return result;
   }
@@ -405,10 +467,15 @@ class _DisplayItem {
     required this.folder,
     required this.depth,
     this.isCreating = false,
+    this.pendingCreate,
   });
+
+  /// The folder this row draws — or, for [isCreating] and [pendingCreate]
+  /// rows, the *parent* the new folder is being created under.
   final EmailFolder folder;
   final int depth;
   final bool isCreating;
+  final PendingFolderCreation? pendingCreate;
 }
 
 class _PanelHeader extends StatelessWidget {
@@ -1740,6 +1807,122 @@ class _FolderCreatingRowState extends State<_FolderCreatingRow> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// A folder the user has asked for, drawn while the server is being asked —
+/// and, if the create failed, drawn in red with the reason rather than
+/// disappearing as though nothing had been typed.
+///
+/// It has none of a real folder row's behaviour: no tap, no drag, no drop
+/// target, no context menu. There is no server id behind it yet, so there is
+/// nothing it could correctly do (see [PendingFolderCreation]).
+class _FolderPendingRow extends StatelessWidget {
+  const _FolderPendingRow({
+    required this.depth,
+    required this.pending,
+    required this.onRetry,
+    required this.onDismiss,
+  });
+
+  final int depth;
+  final PendingFolderCreation pending;
+  final VoidCallback onRetry;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final failed = pending.hasFailed;
+    final indentWidth = depth * 16.0;
+
+    // The whole row carries the tooltip rather than just its text: on a
+    // failure the reason is the only explanation there is, and a 13px label
+    // is a poor thing to have to find with the pointer.
+    return Tooltip(
+      message: failed
+          ? "Couldn't create ${pending.displayName}: ${pending.error}"
+          : 'Creating ${pending.displayName}…',
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+        padding: EdgeInsets.only(
+          left: 10 + indentWidth,
+          right: 10,
+          top: 8,
+          bottom: 8,
+        ),
+        child: Row(
+          children: [
+            SizedBox(width: touchIcon(20)),
+            Icon(
+              failed ? Icons.error_outline : Icons.folder_outlined,
+              size: touchIcon(16),
+              color: failed ? c.errorBannerText : c.textMuted,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                pending.displayName,
+                style: TextStyle(
+                  color: failed ? c.errorBannerText : c.textMuted,
+                  fontSize: 13,
+                  fontStyle: failed ? FontStyle.normal : FontStyle.italic,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (failed) ...[
+              _PendingAction(
+                icon: Icons.refresh_rounded,
+                tooltip: 'Try again',
+                onTap: onRetry,
+              ),
+              _PendingAction(
+                icon: Icons.close_rounded,
+                tooltip: 'Dismiss',
+                onTap: onDismiss,
+              ),
+            ] else
+              SizedBox(
+                width: touchIcon(12),
+                height: touchIcon(12),
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.5,
+                  color: AppColors.accent,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PendingAction extends StatelessWidget {
+  const _PendingAction({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(4),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2),
+          child: Icon(icon,
+              size: touchIcon(14), color: context.colors.textMuted),
+        ),
       ),
     );
   }

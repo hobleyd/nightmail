@@ -145,8 +145,13 @@ abstract interface class EmailRepository {
   /// Returns the raw RFC 822 MIME bytes for the email with [id].
   Future<Either<Failure, Uint8List>> getRawEmailBytes(String id);
 
-  /// Creates a new child folder under [parentFolderId] with [displayName].
-  Future<Either<Failure, Unit>> createFolder({
+  /// Creates a new child folder under [parentFolderId] with [displayName],
+  /// and returns it carrying the id the server assigned.
+  ///
+  /// That id is what lets the caller show the folder at once rather than
+  /// waiting for the next folder-tree fetch to reveal it — and it is a *real*
+  /// server id, so mail may be moved into the folder immediately.
+  Future<Either<Failure, EmailFolder>> createFolder({
     required String parentFolderId,
     required String displayName,
   });

@@ -29,6 +29,7 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
     on<FolderListFolderEmptied>(_onFolderEmptied);
     on<FolderListUnreadCountChanged>(_onUnreadCountChanged);
     on<FolderListCreateFolderRequested>(_onCreateFolderRequested);
+    on<FolderListCreateFolderDismissed>(_onCreateFolderDismissed);
     on<FolderListRenameFolderRequested>(_onRenameFolderRequested);
     on<FolderListMoveFolderRequested>(_onMoveFolderRequested);
   }
@@ -57,6 +58,21 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
   /// no folder highlighted and a message list loading a dead id.
   String? _loadedAccountId;
 
+  /// Folders this bloc created that no server folder list has come back
+  /// naming yet, and how many lists have now omitted each one.
+  ///
+  /// A create returns a real server id, so the folder is inserted into state
+  /// the moment it exists — but a folder-tree fetch is a wholesale replacement,
+  /// and both providers can answer one built a moment too early (Graph
+  /// propagation, Gmail's cached label list) *without* the new folder. That
+  /// would delete the row the user just watched appear. So an unconfirmed
+  /// folder is merged back into a list that omits it, for a few lists only:
+  /// past that, the omission is more likely to be the truth (the folder was
+  /// deleted from another client) than lag.
+  final Map<String, ({EmailFolder folder, int misses})> _unconfirmedFolders = {};
+
+  static const int _unconfirmedFolderGrace = 3;
+
   Future<void> _onLoadRequested(
     FolderListLoadRequested event,
     Emitter<FolderListState> emit,
@@ -64,6 +80,22 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
     final accountId = _accountManager.activeAccount?.id;
     final myGeneration = ++_loadGeneration;
     bool hasFolders = false;
+
+    // An unconfirmed folder belongs to the mailbox it was created in; merging
+    // it into another account's list would invent a folder there.
+    if (accountId != _loadedAccountId) _unconfirmedFolders.clear();
+
+    // A create in flight (or one showing its failure) survives a reload: this
+    // event fires from the poller and the refresh button as well, and neither
+    // has anything to say about a folder the user is in the middle of making.
+    // It does not survive an account switch — its parent folder is in the
+    // mailbox being left, so the row would have nothing to hang under and
+    // nothing on screen could clear it again.
+    final before = state;
+    final pendingCreate =
+        before is FolderListLoaded && accountId == _loadedAccountId
+            ? before.pendingCreate
+            : null;
 
     // Phase 1: show something at once rather than a spinner. Folders already
     // in state are preferred over the cache — re-reading the cache over a
@@ -90,8 +122,9 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
             hasFolders = true;
             _loadedAccountId = accountId;
             emit(FolderListLoaded(
-              folders: _sorted(cached),
+              folders: _sorted(_withUnconfirmed(cached)),
               isRefreshing: true,
+              pendingCreate: pendingCreate,
             ));
           }
         },
@@ -136,7 +169,10 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
                 '[FolderList] fetch recovered on attempt ${attempt + 1}');
           }
           _loadedAccountId = accountId;
-          emit(FolderListLoaded(folders: _sorted(folders)));
+          emit(FolderListLoaded(
+            folders: _sorted(_reconcileUnconfirmed(folders)),
+            pendingCreate: pendingCreate,
+          ));
         },
       );
 
@@ -185,18 +221,124 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
     ));
   }
 
+  /// Creating a folder shows it at once and reconciles afterwards.
+  ///
+  /// Three stages, and the middle one is the point: the typed name stays on
+  /// screen as a [PendingFolderCreation] row for as long as the create is in
+  /// flight, then becomes a real folder row carrying the **server's** id the
+  /// moment the create returns — without waiting for the folder-tree fetch
+  /// that follows, which walks every level of the hierarchy and is what used
+  /// to make a new folder disappear for a second or more.
+  ///
+  /// The reconcile is still requested, because only the server can say what
+  /// the folder's counts are and where it sorts among its siblings; it just
+  /// no longer stands between the user and seeing their folder.
   Future<void> _onCreateFolderRequested(
     FolderListCreateFolderRequested event,
     Emitter<FolderListState> emit,
   ) async {
+    final pending = PendingFolderCreation(
+      parentFolderId: event.parentFolderId,
+      displayName: event.displayName,
+    );
+    final before = state;
+    if (before is FolderListLoaded) {
+      emit(before.copyWith(pendingCreate: pending));
+    }
+
     final result = await _createFolder(CreateFolderParams(
       parentFolderId: event.parentFolderId,
       displayName: event.displayName,
     ));
+    if (isClosed) return;
+
     result.fold(
-      (_) {},
-      (_) => add(const FolderListLoadRequested()),
+      (failure) {
+        debugPrint('[FolderList] create "${event.displayName}" failed: '
+            '${failure.runtimeType} — ${failure.message}');
+        final current = state;
+        if (current is FolderListLoaded) {
+          emit(current.copyWith(pendingCreate: pending.withError(failure.message)));
+        }
+      },
+      (folder) {
+        _unconfirmedFolders[folder.id] = (folder: folder, misses: 0);
+        final current = state;
+        if (current is FolderListLoaded) {
+          emit(current.copyWith(
+            folders: _sorted(_insertFolder(current.folders, folder)),
+            clearPendingCreate: true,
+          ));
+        }
+        add(const FolderListLoadRequested());
+      },
     );
+  }
+
+  void _onCreateFolderDismissed(
+    FolderListCreateFolderDismissed event,
+    Emitter<FolderListState> emit,
+  ) {
+    final current = state;
+    if (current is! FolderListLoaded) return;
+    emit(current.copyWith(clearPendingCreate: true));
+  }
+
+  /// Adds [folder] to [folders], bumping its parent's [childFolderCount] so
+  /// the parent draws its disclosure arrow. A folder already in the list is
+  /// left alone — the parent's count has already been accounted for.
+  static List<EmailFolder> _insertFolder(
+    List<EmailFolder> folders,
+    EmailFolder folder,
+  ) {
+    if (folders.any((f) => f.id == folder.id)) return folders;
+    return [
+      for (final f in folders)
+        if (f.id == folder.parentFolderId)
+          f.copyWith(childFolderCount: f.childFolderCount + 1)
+        else
+          f,
+      folder,
+    ];
+  }
+
+  /// Merges every unconfirmed folder into [folders] without judging them, for
+  /// the cached list — which is not the server's answer either way, so an
+  /// omission there says nothing. Reached only when a load falls back to the
+  /// cache on the account it already had folders for, i.e. after a fetch came
+  /// back empty; the account-switch path clears the map first.
+  List<EmailFolder> _withUnconfirmed(List<EmailFolder> folders) {
+    var merged = folders;
+    for (final entry in _unconfirmedFolders.values) {
+      merged = _insertFolder(merged, entry.folder);
+    }
+    return merged;
+  }
+
+  /// Same merge, but against a list the *server* just gave us: a folder it
+  /// names is confirmed and stops being tracked, and one it has omitted for
+  /// [_unconfirmedFolderGrace] lists running is given up on.
+  List<EmailFolder> _reconcileUnconfirmed(List<EmailFolder> folders) {
+    if (_unconfirmedFolders.isEmpty) return folders;
+    final serverIds = {for (final f in folders) f.id};
+    var merged = folders;
+    for (final id in _unconfirmedFolders.keys.toList()) {
+      final entry = _unconfirmedFolders[id]!;
+      if (serverIds.contains(id)) {
+        _unconfirmedFolders.remove(id);
+        continue;
+      }
+      if (entry.misses + 1 >= _unconfirmedFolderGrace) {
+        debugPrint('[FolderList] giving up on unconfirmed folder '
+            '"${entry.folder.displayName}" — the server has not listed it in '
+            '$_unconfirmedFolderGrace fetches');
+        _unconfirmedFolders.remove(id);
+        continue;
+      }
+      _unconfirmedFolders[id] = (folder: entry.folder, misses: entry.misses + 1);
+      merged = _insertFolder(merged, entry.folder);
+    }
+    return merged;
   }
 
   Future<void> _onRenameFolderRequested(

@@ -707,16 +707,27 @@ class EmailRepositoryImpl implements EmailRepository {
   }
 
   @override
-  Future<Either<Failure, Unit>> createFolder({
+  Future<Either<Failure, EmailFolder>> createFolder({
     required String parentFolderId,
     required String displayName,
   }) async {
     return _execute(() async {
-      await _accountManager.emailDatasource.createFolder(
+      // Every datasource returns the id the server assigned (Graph folder id,
+      // Gmail label id, IMAP path), so the created folder can be handed back
+      // whole. The caller doesn't have to wait for a folder-tree fetch to
+      // learn it exists — and because the id is the server's, not a local
+      // stand-in, the folder is a valid move destination straight away.
+      final id = await _accountManager.emailDatasource.createFolder(
         parentFolderId: parentFolderId,
         displayName: displayName,
       );
-      return unit;
+      return EmailFolder(
+        id: id,
+        displayName: displayName,
+        totalItemCount: 0,
+        unreadItemCount: 0,
+        parentFolderId: parentFolderId.isEmpty ? null : parentFolderId,
+      );
     });
   }
 

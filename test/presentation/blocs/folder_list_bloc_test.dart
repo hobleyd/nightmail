@@ -74,6 +74,8 @@ void main() {
 
   setUpAll(() {
     provideDummy<Either<Failure, List<EmailFolder>>>(const Right([]));
+    provideDummy<Either<Failure, EmailFolder>>(
+        const Left(ServerFailure(message: 'dummy')));
   });
 
   setUp(() {
@@ -86,11 +88,12 @@ void main() {
   FolderListBloc makeBloc({
     List<Duration> retryDelays = const [Duration.zero, Duration.zero],
     AccountManager? accountManager,
+    CreateFolder? createFolder,
   }) =>
       FolderListBloc(
         getMailFolders: mockGetMailFolders,
         getCachedFolders: mockGetCachedFolders,
-        createFolder: MockCreateFolder(),
+        createFolder: createFolder ?? MockCreateFolder(),
         renameFolder: MockRenameFolder(),
         moveFolder: MockMoveFolder(),
         accountManager: accountManager ?? _FakeAccountManager(),
@@ -368,4 +371,251 @@ void main() {
 
     expect(_inboxUnread(bloc.state), 27);
   });
+
+  // ---------------------------------------------------------------------------
+  // Creating a folder
+  //
+  // Regression: the create was awaited, then a whole folder-tree fetch was
+  // awaited before anything appeared — so the name the user had just typed
+  // vanished from the panel for as long as both took (seconds, on a deep
+  // hierarchy) and then reappeared out of nowhere.
+  // ---------------------------------------------------------------------------
+
+  group('FolderListBloc — creating a folder', () {
+    late MockCreateFolder mockCreateFolder;
+
+    setUp(() {
+      mockCreateFolder = MockCreateFolder();
+      when(mockGetCachedFolders(any)).thenAnswer((_) async => const Right([]));
+      when(mockGetMailFolders(any))
+          .thenAnswer((_) async => Right([_folder('inbox-id', 'Inbox')]));
+    });
+
+    Future<FolderListBloc> loadedBloc() async {
+      final bloc = makeBloc(createFolder: mockCreateFolder);
+      addTearDown(bloc.close);
+      bloc.add(const FolderListLoadRequested());
+      await bloc.stream
+          .firstWhere((s) => s is FolderListLoaded && !s.isRefreshing);
+      return bloc;
+    }
+
+    test('shows the typed name while the create is in flight, then the folder',
+        () async {
+      final create = Completer<Either<Failure, EmailFolder>>();
+      when(mockCreateFolder(any)).thenAnswer((_) => create.future);
+      final bloc = await loadedBloc();
+
+      bloc.add(const FolderListCreateFolderRequested(
+        parentFolderId: 'inbox-id',
+        displayName: 'Receipts',
+      ));
+      await pumpEventQueue();
+
+      final pending = (bloc.state as FolderListLoaded).pendingCreate;
+      expect(pending?.displayName, 'Receipts');
+      expect(pending?.parentFolderId, 'inbox-id');
+      expect(pending?.hasFailed, isFalse);
+
+      // The reconcile fetch is deliberately made slow: the folder has to be on
+      // screen before it resolves, or this is no better than what it replaced.
+      final slowFetch = Completer<Either<Failure, List<EmailFolder>>>();
+      when(mockGetMailFolders(any)).thenAnswer((_) => slowFetch.future);
+
+      create.complete(Right(EmailFolder(
+        id: 'server-id',
+        displayName: 'Receipts',
+        totalItemCount: 0,
+        unreadItemCount: 0,
+        parentFolderId: 'inbox-id',
+      )));
+      await pumpEventQueue();
+
+      final loaded = bloc.state as FolderListLoaded;
+      expect(loaded.pendingCreate, isNull);
+      final created =
+          loaded.folders.where((f) => f.id == 'server-id').firstOrNull;
+      expect(created?.displayName, 'Receipts');
+      expect(created?.parentFolderId, 'inbox-id');
+      // The parent gains a child, so it draws its disclosure arrow.
+      expect(
+        loaded.folders.firstWhere((f) => f.id == 'inbox-id').childFolderCount,
+        1,
+      );
+
+      slowFetch.complete(Right([
+        _folder('inbox-id', 'Inbox'),
+        _folder('server-id', 'Receipts'),
+      ]));
+      await pumpEventQueue();
+      expect(
+        (bloc.state as FolderListLoaded).folders.map((f) => f.id),
+        containsAll(['inbox-id', 'server-id']),
+      );
+    });
+
+    test('a fetch that has not caught up yet does not remove the new folder',
+        () async {
+      when(mockCreateFolder(any)).thenAnswer((_) async => Right(EmailFolder(
+            id: 'server-id',
+            displayName: 'Receipts',
+            totalItemCount: 0,
+            unreadItemCount: 0,
+            parentFolderId: 'inbox-id',
+          )));
+      final bloc = await loadedBloc();
+
+      // Graph propagation / Gmail's cached label list: the folder exists, but
+      // the list built a moment later does not name it. A tree fetch is a
+      // wholesale replacement, so without the merge this deletes it.
+      when(mockGetMailFolders(any))
+          .thenAnswer((_) async => Right([_folder('inbox-id', 'Inbox')]));
+
+      bloc.add(const FolderListCreateFolderRequested(
+        parentFolderId: 'inbox-id',
+        displayName: 'Receipts',
+      ));
+      await pumpEventQueue();
+
+      expect(
+        (bloc.state as FolderListLoaded).folders.map((f) => f.id),
+        contains('server-id'),
+      );
+
+      // Once the server does list it, it is no longer merged in by hand —
+      // proved by the server's own copy (with its counts) being what shows.
+      when(mockGetMailFolders(any)).thenAnswer((_) async => Right([
+            _folder('inbox-id', 'Inbox'),
+            EmailFolder(
+              id: 'server-id',
+              displayName: 'Receipts',
+              totalItemCount: 4,
+              unreadItemCount: 2,
+              parentFolderId: 'inbox-id',
+            ),
+          ]));
+      bloc.add(const FolderListLoadRequested());
+      await pumpEventQueue();
+
+      expect(
+        (bloc.state as FolderListLoaded)
+            .folders
+            .firstWhere((f) => f.id == 'server-id')
+            .unreadItemCount,
+        2,
+      );
+    });
+
+    test('a folder the server never lists is eventually given up on', () async {
+      when(mockCreateFolder(any)).thenAnswer((_) async => Right(EmailFolder(
+            id: 'server-id',
+            displayName: 'Receipts',
+            totalItemCount: 0,
+            unreadItemCount: 0,
+            parentFolderId: 'inbox-id',
+          )));
+      final bloc = await loadedBloc();
+      when(mockGetMailFolders(any))
+          .thenAnswer((_) async => Right([_folder('inbox-id', 'Inbox')]));
+
+      bloc.add(const FolderListCreateFolderRequested(
+        parentFolderId: 'inbox-id',
+        displayName: 'Receipts',
+      ));
+      await pumpEventQueue();
+
+      // Two more fetches that omit it — past the grace, an omission is more
+      // likely the truth (deleted from another client) than propagation lag.
+      for (var i = 0; i < 3; i++) {
+        bloc.add(const FolderListLoadRequested());
+        await pumpEventQueue();
+      }
+
+      expect(
+        (bloc.state as FolderListLoaded).folders.map((f) => f.id),
+        isNot(contains('server-id')),
+      );
+    });
+
+    test('a failed create keeps the name on screen with the reason', () async {
+      when(mockCreateFolder(any)).thenAnswer(
+        (_) async => const Left(NetworkFailure(message: 'No network connection')),
+      );
+      final bloc = await loadedBloc();
+
+      bloc.add(const FolderListCreateFolderRequested(
+        parentFolderId: 'inbox-id',
+        displayName: 'Receipts',
+      ));
+      await pumpEventQueue();
+
+      final pending = (bloc.state as FolderListLoaded).pendingCreate;
+      expect(pending?.displayName, 'Receipts');
+      expect(pending?.error, 'No network connection');
+      // Nothing was invented in the tree to go with it.
+      expect((bloc.state as FolderListLoaded).folders.map((f) => f.id),
+          ['inbox-id']);
+
+      bloc.add(const FolderListCreateFolderDismissed());
+      await pumpEventQueue();
+      expect((bloc.state as FolderListLoaded).pendingCreate, isNull);
+    });
+
+    test('a pending create does not survive an account switch', () async {
+      when(mockCreateFolder(any)).thenAnswer(
+        (_) async => const Left(ServerFailure(message: 'nope')),
+      );
+      final accounts = _FakeAccountManager();
+      final bloc = makeBloc(
+        createFolder: mockCreateFolder,
+        accountManager: accounts,
+      );
+      addTearDown(bloc.close);
+      bloc.add(const FolderListLoadRequested());
+      await bloc.stream
+          .firstWhere((s) => s is FolderListLoaded && !s.isRefreshing);
+
+      bloc.add(const FolderListCreateFolderRequested(
+        parentFolderId: 'inbox-id',
+        displayName: 'Receipts',
+      ));
+      await pumpEventQueue();
+      expect((bloc.state as FolderListLoaded).pendingCreate, isNotNull);
+
+      // The failed row's parent is a folder in the mailbox being left, so it
+      // would have nothing to hang under — and only its own buttons clear it.
+      accounts.activeAccount = const GmailAccount(
+        id: 'acct-2',
+        displayName: 'Other',
+        emailAddress: 'c@d.com',
+      );
+      bloc.add(const FolderListLoadRequested());
+      await pumpEventQueue();
+
+      expect((bloc.state as FolderListLoaded).pendingCreate, isNull);
+    });
+
+    test('a reload while a create is in flight keeps the pending row', () async {
+      final create = Completer<Either<Failure, EmailFolder>>();
+      when(mockCreateFolder(any)).thenAnswer((_) => create.future);
+      final bloc = await loadedBloc();
+
+      bloc.add(const FolderListCreateFolderRequested(
+        parentFolderId: 'inbox-id',
+        displayName: 'Receipts',
+      ));
+      await pumpEventQueue();
+
+      // The poller and the refresh button add this event with no knowledge of
+      // a create in flight.
+      bloc.add(const FolderListLoadRequested());
+      await pumpEventQueue();
+
+      expect((bloc.state as FolderListLoaded).pendingCreate?.displayName,
+          'Receipts');
+      create.complete(const Left(ServerFailure(message: 'nope')));
+      await pumpEventQueue();
+    });
+  });
+
 }

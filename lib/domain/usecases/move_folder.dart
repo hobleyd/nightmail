@@ -5,13 +5,13 @@ import '../../core/error/failures.dart';
 import '../../core/usecases/usecase.dart';
 import '../repositories/email_repository.dart';
 
-class MoveFolder implements UseCase<Unit, MoveFolderParams> {
+class MoveFolder implements UseCase<String, MoveFolderParams> {
   const MoveFolder(this._repository);
 
   final EmailRepository _repository;
 
   @override
-  Future<Either<Failure, Unit>> call(MoveFolderParams params) {
+  Future<Either<Failure, String>> call(MoveFolderParams params) {
     return _repository.moveFolder(
       folderId: params.folderId,
       newParentFolderId: params.newParentFolderId,

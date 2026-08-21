@@ -1014,7 +1014,7 @@ class GmailDatasourceImpl implements EmailRemoteDatasource, MailDeltaDatasource 
   }
 
   @override
-  Future<void> moveFolder({
+  Future<String> moveFolder({
     required String folderId,
     required String newParentFolderId,
   }) async {
@@ -1065,6 +1065,12 @@ class GmailDatasourceImpl implements EmailRemoteDatasource, MailDeltaDatasource 
           );
         }
       }
+
+      // A real label keeps its id through a rename; a virtual folder's id
+      // *is* its path, so moving it mints a different one.
+      return folderId.startsWith('__virtual__')
+          ? '__virtual__$newName'
+          : folderId;
     } on DioException catch (e) {
       throw _mapException(e);
     }

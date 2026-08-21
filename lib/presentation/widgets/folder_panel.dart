@@ -312,6 +312,15 @@ class _FolderPanelState extends State<FolderPanel> {
                   folderId: draggedId,
                   newParentFolderId: item.folder.id,
                 ));
+            // Open the folder it was dropped on, or the move reads as the
+            // folder disappearing: a folder you have just dragged something
+            // onto is one you have not expanded, so the row lands out of
+            // sight inside it. Done on the drop rather than on the reply —
+            // expanding a folder is harmless if the move then fails.
+            if (_expandedIds.add(item.folder.id)) {
+              setState(() {});
+              widget.onExpandedIdsChanged?.call(_expandedIds);
+            }
           },
           onTap: () => widget.onFolderSelected(item.folder),
           onExpandTap: () {

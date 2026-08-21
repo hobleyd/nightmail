@@ -76,6 +76,8 @@ void main() {
     provideDummy<Either<Failure, List<EmailFolder>>>(const Right([]));
     provideDummy<Either<Failure, EmailFolder>>(
         const Left(ServerFailure(message: 'dummy')));
+    provideDummy<Either<Failure, String>>(
+        const Left(ServerFailure(message: 'dummy')));
   });
 
   setUp(() {
@@ -89,13 +91,14 @@ void main() {
     List<Duration> retryDelays = const [Duration.zero, Duration.zero],
     AccountManager? accountManager,
     CreateFolder? createFolder,
+    MoveFolder? moveFolder,
   }) =>
       FolderListBloc(
         getMailFolders: mockGetMailFolders,
         getCachedFolders: mockGetCachedFolders,
         createFolder: createFolder ?? MockCreateFolder(),
         renameFolder: MockRenameFolder(),
-        moveFolder: MockMoveFolder(),
+        moveFolder: moveFolder ?? MockMoveFolder(),
         accountManager: accountManager ?? _FakeAccountManager(),
         staleRetryDelays: retryDelays,
       );
@@ -615,6 +618,194 @@ void main() {
           'Receipts');
       create.complete(const Left(ServerFailure(message: 'nope')));
       await pumpEventQueue();
+    });
+  });
+
+
+  // ---------------------------------------------------------------------------
+  // Moving a folder
+  //
+  // Regression: only the folder-tree fetch moved the row, and when it landed
+  // the row disappeared — it had arrived inside a folder the user had not
+  // expanded, which is what dropping onto a folder makes it.
+  // ---------------------------------------------------------------------------
+
+  group('FolderListBloc — moving a folder', () {
+    late MockMoveFolder mockMoveFolder;
+
+    // Projects sits at the root; Archive is where it is going.
+    List<EmailFolder> tree() => [
+          _folder('inbox-id', 'Inbox'),
+          _folder('archive-id', 'Archive'),
+          _folder('projects-id', 'Projects'),
+        ];
+
+    setUp(() {
+      mockMoveFolder = MockMoveFolder();
+      when(mockGetCachedFolders(any)).thenAnswer((_) async => const Right([]));
+      when(mockGetMailFolders(any)).thenAnswer((_) async => Right(tree()));
+    });
+
+    Future<FolderListBloc> loadedBloc() async {
+      final bloc = makeBloc(moveFolder: mockMoveFolder);
+      addTearDown(bloc.close);
+      bloc.add(const FolderListLoadRequested());
+      await bloc.stream
+          .firstWhere((s) => s is FolderListLoaded && !s.isRefreshing);
+      return bloc;
+    }
+
+    EmailFolder? folderById(FolderListBloc bloc, String id) =>
+        (bloc.state as FolderListLoaded)
+            .folders
+            .where((f) => f.id == id)
+            .firstOrNull;
+
+    test('reparents the folder as soon as the provider accepts, without '
+        'waiting for the tree fetch', () async {
+      when(mockMoveFolder(any)).thenAnswer((_) async => const Right('projects-id'));
+      final bloc = await loadedBloc();
+
+      // Held open: the move has to be applied without it.
+      final slowFetch = Completer<Either<Failure, List<EmailFolder>>>();
+      when(mockGetMailFolders(any)).thenAnswer((_) => slowFetch.future);
+
+      bloc.add(const FolderListMoveFolderRequested(
+        folderId: 'projects-id',
+        newParentFolderId: 'archive-id',
+      ));
+      await pumpEventQueue();
+
+      expect(folderById(bloc, 'projects-id')?.parentFolderId, 'archive-id');
+      // Both parents' child counts move with it: they are what draw the
+      // disclosure arrows, and a new parent reporting none cannot be opened.
+      expect(folderById(bloc, 'archive-id')?.childFolderCount, 1);
+
+      slowFetch.complete(Right([
+        _folder('inbox-id', 'Inbox'),
+        _folder('archive-id', 'Archive'),
+        EmailFolder(
+          id: 'projects-id',
+          displayName: 'Projects',
+          totalItemCount: 0,
+          unreadItemCount: 0,
+          parentFolderId: 'archive-id',
+        ),
+      ]));
+      await pumpEventQueue();
+      expect(folderById(bloc, 'projects-id')?.parentFolderId, 'archive-id');
+    });
+
+    test('the folder it left loses a child from its count', () async {
+      final withSub = [
+        EmailFolder(
+          id: 'inbox-id',
+          displayName: 'Inbox',
+          totalItemCount: 0,
+          unreadItemCount: 0,
+          childFolderCount: 1,
+        ),
+        _folder('archive-id', 'Archive'),
+        EmailFolder(
+          id: 'sub-id',
+          displayName: 'Sub',
+          totalItemCount: 0,
+          unreadItemCount: 0,
+          parentFolderId: 'inbox-id',
+        ),
+      ];
+      when(mockGetMailFolders(any)).thenAnswer((_) async => Right(withSub));
+      when(mockMoveFolder(any)).thenAnswer((_) async => const Right('sub-id'));
+      final bloc = await loadedBloc();
+      expect(folderById(bloc, 'inbox-id')?.childFolderCount, 1);
+
+      bloc.add(const FolderListMoveFolderRequested(
+        folderId: 'sub-id',
+        newParentFolderId: 'archive-id',
+      ));
+      await pumpEventQueue();
+
+      // The Inbox is down to no children, so it stops drawing an arrow that
+      // would open onto nothing.
+      expect(folderById(bloc, 'sub-id')?.parentFolderId, 'archive-id');
+      expect(folderById(bloc, 'inbox-id')?.childFolderCount, 0);
+      expect(folderById(bloc, 'archive-id')?.childFolderCount, 1);
+    });
+
+    test('a fetch that still shows the old parent does not undo the move',
+        () async {
+      when(mockMoveFolder(any)).thenAnswer((_) async => const Right('projects-id'));
+      final bloc = await loadedBloc();
+
+      // The provider took the move; the list it answers with was built before
+      // it applied. A tree fetch replaces the whole list.
+      bloc.add(const FolderListMoveFolderRequested(
+        folderId: 'projects-id',
+        newParentFolderId: 'archive-id',
+      ));
+      await pumpEventQueue();
+
+      expect(folderById(bloc, 'projects-id')?.parentFolderId, 'archive-id');
+      expect(folderById(bloc, 'archive-id')?.childFolderCount, 1);
+    });
+
+    test('a server that keeps disagreeing is eventually believed', () async {
+      when(mockMoveFolder(any)).thenAnswer((_) async => const Right('projects-id'));
+      final bloc = await loadedBloc();
+
+      bloc.add(const FolderListMoveFolderRequested(
+        folderId: 'projects-id',
+        newParentFolderId: 'archive-id',
+      ));
+      await pumpEventQueue();
+
+      // Past the grace, the old parent is more likely the truth (moved back
+      // from another client) than propagation lag.
+      for (var i = 0; i < 3; i++) {
+        bloc.add(const FolderListLoadRequested());
+        await pumpEventQueue();
+      }
+
+      expect(folderById(bloc, 'projects-id')?.parentFolderId, isNull);
+    });
+
+    test('a move that changes the id is left to the fetch', () async {
+      // IMAP mailbox / Gmail virtual folder: the id *is* the path, so every
+      // descendant's id changed too and this bloc cannot derive them.
+      when(mockMoveFolder(any))
+          .thenAnswer((_) async => const Right('Archive.Projects'));
+      final bloc = await loadedBloc();
+
+      bloc.add(const FolderListMoveFolderRequested(
+        folderId: 'projects-id',
+        newParentFolderId: 'archive-id',
+      ));
+      await pumpEventQueue();
+
+      // No half-applied tree: the row is untouched and the reload is what
+      // moves it. Notably no phantom row under the old id.
+      expect(folderById(bloc, 'projects-id')?.parentFolderId, isNull);
+      expect(folderById(bloc, 'Archive.Projects'), isNull);
+      verify(mockGetMailFolders(any)).called(greaterThan(1));
+    });
+
+    test('a refused move changes nothing', () async {
+      when(mockMoveFolder(any)).thenAnswer(
+        (_) async => const Left(ServerFailure(message: 'nope')),
+      );
+      final bloc = await loadedBloc();
+      clearInteractions(mockGetMailFolders);
+
+      bloc.add(const FolderListMoveFolderRequested(
+        folderId: 'projects-id',
+        newParentFolderId: 'archive-id',
+      ));
+      await pumpEventQueue();
+
+      expect(folderById(bloc, 'projects-id')?.parentFolderId, isNull);
+      expect(folderById(bloc, 'archive-id')?.childFolderCount, 0);
+      // Nothing was applied, so there is nothing to reconcile either.
+      verifyNever(mockGetMailFolders(any));
     });
   });
 

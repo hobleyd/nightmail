@@ -641,13 +641,41 @@ only by its own retry or dismiss button and survives a reload by design, so
 anything that can hide the row strands it. It is dropped on an account switch
 for the same reason — its parent is in the mailbox being left.
 
+**Dragging a folder onto another one is the same story with a sharper edge.**
+Only the tree fetch moved the row — and when it landed the row *vanished*,
+because a folder you have just dropped something onto is a folder you have not
+expanded, so it arrived out of sight inside it. Two halves to that: `moveFolder`
+now returns the folder's id after the move and `FolderListBloc` reparents the
+row (adjusting both parents' `childFolderCount`, which is what draws the
+disclosure arrows) as soon as the provider accepts; and `FolderPanel` opens the
+drop target on the drop.
+
+Nothing is drawn ahead of the provider's answer here, unlike a create: the row
+is already on screen where it started, so moving it early would mean putting it
+back on a failure. A refused move leaves the folder where it was and changes
+nothing else.
+
+**A move can change the folder's id, and then the optimism is off.** IMAP
+mailbox paths and Gmail *virtual* folder ids (`__virtual__<path>`) are paths, so
+moving one mints a new id — and every descendant's id changed with it. Nothing
+above the datasource can derive what they are now, so the bloc applies nothing
+and leaves the whole subtree to the fetch. Graph and real Gmail labels keep
+their id, which is why the id has to be *returned* rather than assumed either
+way.
+
 **A tree fetch that omits the just-created folder must not delete it.** The
 fetch is a wholesale replacement and both providers can answer one built a
 moment too early (Graph propagation, Gmail's cached label list), including the
-reconcile the create itself fires. So the bloc merges an unconfirmed folder
-back into a list that omits it, for `_unconfirmedFolderGrace` fetches — past
-that the omission is more likely the truth (deleted from another client) than
-lag. Entries are dropped on first sighting and cleared on an account switch.
+reconcile the create itself fires. So the bloc re-applies an unconfirmed change
+to a list that disagrees with it, for `_unconfirmedFolderGrace` fetches — past
+that the disagreement is more likely the truth (changed from another client)
+than lag. Entries are cleared on an account switch.
+
+What counts as agreement differs by change, which is the whole of
+`_unconfirmedFolders`' `isMove` flag: a create is confirmed by its id being
+listed at all, a move only by its id being listed **under the parent it was
+moved to**. Confirming a move on the id alone would take a stale list naming
+the folder in its old place as agreement and put the row back.
 
 `EmailFolder.props` carries `parentFolderId` and `childFolderCount` because of
 this: inserting a child bumps its parent's count, and an emit that changed

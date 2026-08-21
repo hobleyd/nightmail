@@ -2462,7 +2462,7 @@ class ImapDatasourceImpl
   }
 
   @override
-  Future<void> moveFolder({
+  Future<String> moveFolder({
     required String folderId,
     required String newParentFolderId,
   }) =>
@@ -2471,7 +2471,7 @@ class ImapDatasourceImpl
             newParentFolderId: newParentFolderId,
           ));
 
-  Future<void> _moveFolderInner({
+  Future<String> _moveFolderInner({
     required String folderId,
     required String newParentFolderId,
   }) async {
@@ -2491,6 +2491,9 @@ class ImapDatasourceImpl
         pathSeparator: sep,
       );
       await client.renameMailbox(mailbox, newPath);
+      // The path *is* the id here, so a move changes the folder's identity
+      // along with its location.
+      return newPath;
     } on ImapException catch (e) {
       throw ServerException(message: e.message ?? 'IMAP error');
     }

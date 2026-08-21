@@ -834,6 +834,42 @@ void main() {
     });
   });
 
+  group('moveFolder', () {
+    test("returns the folder's id after the move, which is not always the "
+        'one that went in', () async {
+      // IMAP mailbox / Gmail virtual folder: the id is a path, so moving the
+      // folder mints a different one. The caller has to know, because every
+      // descendant's id changed with it.
+      when(mockRemoteDatasource.moveFolder(
+        folderId: anyNamed('folderId'),
+        newParentFolderId: anyNamed('newParentFolderId'),
+      )).thenAnswer((_) async => 'Archive.Projects');
+
+      final result = await repository.moveFolder(
+        folderId: 'Projects',
+        newParentFolderId: 'Archive',
+      );
+
+      expect((result as Right).value, 'Archive.Projects');
+    });
+
+    test('returns Left(NetworkFailure) offline without calling the datasource',
+        () async {
+      when(mockConnectivityService.isOnline).thenAnswer((_) async => false);
+
+      final result = await repository.moveFolder(
+        folderId: 'projects-id',
+        newParentFolderId: 'archive-id',
+      );
+
+      expect((result as Left).value, isA<NetworkFailure>());
+      verifyNever(mockRemoteDatasource.moveFolder(
+        folderId: anyNamed('folderId'),
+        newParentFolderId: anyNamed('newParentFolderId'),
+      ));
+    });
+  });
+
   group('markAsRead', () {
     test('delegates to datasource and returns updated email', () async {
       final updated = EmailModel(

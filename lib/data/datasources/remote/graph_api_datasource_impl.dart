@@ -3305,7 +3305,7 @@ class GraphApiDatasourceImpl
   }
 
   @override
-  Future<void> moveFolder({
+  Future<String> moveFolder({
     required String folderId,
     required String newParentFolderId,
   }) async {
@@ -3315,6 +3315,7 @@ class GraphApiDatasourceImpl
         '$_base/mailFolders/$folderId/move',
         data: {'destinationId': newParentFolderId},
       );
+      return folderId;
     } on DioException catch (e) {
       throw _mapDioException(e);
     }

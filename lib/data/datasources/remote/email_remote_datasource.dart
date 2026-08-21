@@ -125,7 +125,11 @@ abstract interface class EmailRemoteDatasource {
 
   /// Reparents [folderId] so it becomes a child of [newParentFolderId].
   /// Any sub-folders of [folderId] move with it.
-  Future<void> moveFolder({
+  /// Reparents [folderId] under [newParentFolderId], and returns the folder's
+  /// id **after** the move — which is not always the one that went in: an id
+  /// that encodes a path (IMAP mailbox, Gmail virtual folder) changes with the
+  /// path. Graph and real Gmail labels keep theirs.
+  Future<String> moveFolder({
     required String folderId,
     required String newParentFolderId,
   });

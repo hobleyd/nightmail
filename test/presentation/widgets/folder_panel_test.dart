@@ -108,7 +108,23 @@ class _FakeCreateFolder extends Fake implements CreateFolder {
 
 class _FakeRenameFolder extends Fake implements RenameFolder {}
 
-class _FakeMoveFolder extends Fake implements MoveFolder {}
+class _FakeMoveFolder extends Fake implements MoveFolder {
+  /// The folder's id after the move. Same id for Graph and a real Gmail
+  /// label; a different one where the id is a path.
+  String Function(MoveFolderParams)? idAfterMove;
+
+  /// Set to make the provider refuse the move.
+  Failure? failure;
+  final calls = <MoveFolderParams>[];
+
+  @override
+  Future<Either<Failure, String>> call(MoveFolderParams params) async {
+    calls.add(params);
+    final f = failure;
+    if (f != null) return Left(f);
+    return Right(idAfterMove?.call(params) ?? params.folderId);
+  }
+}
 
 @GenerateMocks([
   AccountCubit,
@@ -127,6 +143,7 @@ void main() {
 
   late _FakeGetMailFolders getMailFolders;
   late _FakeCreateFolder createFolder;
+  late _FakeMoveFolder moveFolder;
   late FolderListBloc folderList;
 
   /// The folders the server answers with, unless a test replaces [answer].
@@ -172,6 +189,7 @@ void main() {
     createFolder = _FakeCreateFolder(
       (_) async => throw StateError('a test must set the create answer'),
     );
+    moveFolder = _FakeMoveFolder();
   });
 
   tearDown(() async => sl.reset());
@@ -193,7 +211,7 @@ void main() {
       getCachedFolders: _FakeGetCachedFolders(),
       createFolder: createFolder,
       renameFolder: _FakeRenameFolder(),
-      moveFolder: _FakeMoveFolder(),
+      moveFolder: moveFolder,
       accountManager: _FakeAccountManager(),
       staleRetryDelays: const [],
     );
@@ -471,6 +489,105 @@ void main() {
       await tester.tap(find.text('Receipts'));
       await tester.pump();
       expect(selected, ['inbox-id', 'server-id']);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Dragging a folder onto another folder.
+  //
+  // Regression: nothing moved the row but the folder-tree fetch, and when it
+  // landed the row *vanished* — a folder you have just dropped something onto
+  // is a folder you have not expanded, so it arrived out of sight inside it.
+  // -------------------------------------------------------------------------
+
+  group('FolderPanel — moving a folder', () {
+    setUp(() {
+      serverFolders = [
+        _folder('inbox-id', 'Inbox'),
+        _folder('archive-id', 'Archive'),
+        _folder('projects-id', 'Projects'),
+      ];
+    });
+
+    /// Drags [from] onto [to]. The sideways nudge first is deliberate: a
+    /// straight vertical drag is claimed by the enclosing ListView.
+    Future<void> dragFolder(
+      WidgetTester tester, {
+      required String from,
+      required String to,
+    }) async {
+      final gesture = await tester.startGesture(tester.getCenter(find.text(from)));
+      await tester.pump(const Duration(milliseconds: 100));
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+      await gesture.moveTo(tester.getCenter(find.text(to)));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('reparents the row into the folder it was dropped on, and '
+        'opens it so the row is visible there', (tester) async {
+      await pumpPanel(tester);
+      final rootIndent = tester.getTopLeft(find.text('Projects')).dx;
+
+      // The fetch is held open: the move has to be on screen without it.
+      final slowFetch = Completer<Either<Failure, List<EmailFolder>>>();
+      getMailFolders.answer = () => slowFetch.future;
+
+      await dragFolder(tester, from: 'Projects', to: 'Archive');
+
+      expect(moveFolder.calls.single.folderId, 'projects-id');
+      expect(moveFolder.calls.single.newParentFolderId, 'archive-id');
+      // Still on screen — and now indented under its new parent, which is
+      // open. Both halves matter: the row used to be inside a collapsed
+      // Archive, which is indistinguishable from gone.
+      expect(find.text('Projects'), findsOneWidget);
+      expect(tester.getTopLeft(find.text('Projects')).dx,
+          greaterThan(rootIndent));
+      expect(tester.getTopLeft(find.text('Projects')).dy,
+          greaterThan(tester.getTopLeft(find.text('Archive')).dy));
+      // Its new parent draws an open disclosure arrow, so it can be closed
+      // again — a parent still reporting no children could not be.
+      expect(find.byIcon(Icons.expand_more_rounded), findsOneWidget);
+
+      slowFetch.complete(Right([
+        _folder('inbox-id', 'Inbox'),
+        _folder('archive-id', 'Archive', childFolderCount: 1),
+        _folder('projects-id', 'Projects', parentFolderId: 'archive-id'),
+      ]));
+      await tester.pumpAndSettle();
+      expect(find.text('Projects'), findsOneWidget);
+    });
+
+    testWidgets('a fetch that still shows the old place does not undo it',
+        (tester) async {
+      await pumpPanel(tester);
+
+      // serverFolders is left as it was: the provider has taken the move but
+      // the list it answers with was built before it applied. A tree fetch
+      // replaces the whole list, so this is the emit that used to move the
+      // row back.
+      await dragFolder(tester, from: 'Projects', to: 'Archive');
+
+      expect(find.text('Projects'), findsOneWidget);
+      expect(tester.getTopLeft(find.text('Projects')).dx,
+          greaterThan(tester.getTopLeft(find.text('Archive')).dx));
+    });
+
+    testWidgets('a failed move leaves the folder where it was',
+        (tester) async {
+      await pumpPanel(tester);
+      final rootIndent = tester.getTopLeft(find.text('Projects')).dx;
+      moveFolder.failure = const ServerFailure(message: 'nope');
+
+      await dragFolder(tester, from: 'Projects', to: 'Archive');
+
+      // Nothing is drawn ahead of the provider's answer, so there is nothing
+      // to put back: the folder simply never moved.
+      expect(moveFolder.calls, hasLength(1));
+      expect(find.text('Projects'), findsOneWidget);
+      expect(tester.getTopLeft(find.text('Projects')).dx, rootIndent);
     });
   });
 }

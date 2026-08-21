@@ -58,18 +58,24 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
   /// no folder highlighted and a message list loading a dead id.
   String? _loadedAccountId;
 
-  /// Folders this bloc created that no server folder list has come back
-  /// naming yet, and how many lists have now omitted each one.
+  /// Folder changes this bloc has made that no server folder list has come
+  /// back agreeing with yet, and how many lists have now disagreed with each.
   ///
-  /// A create returns a real server id, so the folder is inserted into state
-  /// the moment it exists — but a folder-tree fetch is a wholesale replacement,
-  /// and both providers can answer one built a moment too early (Graph
-  /// propagation, Gmail's cached label list) *without* the new folder. That
-  /// would delete the row the user just watched appear. So an unconfirmed
-  /// folder is merged back into a list that omits it, for a few lists only:
-  /// past that, the omission is more likely to be the truth (the folder was
-  /// deleted from another client) than lag.
-  final Map<String, ({EmailFolder folder, int misses})> _unconfirmedFolders = {};
+  /// A create returns a real server id and a move returns the folder's id
+  /// after it, so both are applied to state the moment the server accepts
+  /// them — but a folder-tree fetch is a wholesale replacement, and a provider
+  /// can answer one built a moment too early (Graph propagation, Gmail's
+  /// cached label list): without the new folder, or with the moved one still
+  /// under its old parent. That would undo the change the user just watched
+  /// happen. So each is re-applied to a list that disagrees, for a few lists
+  /// only: past that, the disagreement is more likely to be the truth
+  /// (changed from another client) than lag.
+  ///
+  /// [isMove] is what "agreeing" means here — a create is confirmed by the id
+  /// being present at all, a move only by it being present *under the parent
+  /// it was moved to*.
+  final Map<String, ({EmailFolder folder, bool isMove, int misses})>
+      _unconfirmedFolders = {};
 
   static const int _unconfirmedFolderGrace = 3;
 
@@ -262,7 +268,8 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
         }
       },
       (folder) {
-        _unconfirmedFolders[folder.id] = (folder: folder, misses: 0);
+        _unconfirmedFolders[folder.id] =
+            (folder: folder, isMove: false, misses: 0);
         final current = state;
         if (current is FolderListLoaded) {
           emit(current.copyWith(
@@ -302,41 +309,97 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
     ];
   }
 
-  /// Merges every unconfirmed folder into [folders] without judging them, for
-  /// the cached list — which is not the server's answer either way, so an
-  /// omission there says nothing. Reached only when a load falls back to the
-  /// cache on the account it already had folders for, i.e. after a fetch came
-  /// back empty; the account-switch path clears the map first.
+  /// Reparents [moved] within [folders], adjusting the child count of the
+  /// parent it left and the one it joined — the counts are what draw the
+  /// disclosure arrows, and a new parent still reporting none has no way to be
+  /// opened, which would hide the folder that was just moved into it.
+  ///
+  /// The row keeps whatever counts the list already had for it: only its
+  /// parent is this method's business. A folder not in the list at all is
+  /// added.
+  static List<EmailFolder> _applyMove(
+    List<EmailFolder> folders,
+    EmailFolder moved,
+  ) {
+    final existing = folders.where((f) => f.id == moved.id).firstOrNull;
+    if (existing != null &&
+        existing.parentFolderId == moved.parentFolderId) {
+      return folders;
+    }
+    final leftParentId = existing?.parentFolderId;
+    final joinedParentId = moved.parentFolderId;
+    final out = <EmailFolder>[];
+    for (final f in folders) {
+      if (f.id == moved.id) {
+        out.add(f.copyWith(parentFolderId: joinedParentId));
+        continue;
+      }
+      var g = f;
+      if (f.id == leftParentId && g.childFolderCount > 0) {
+        g = g.copyWith(childFolderCount: g.childFolderCount - 1);
+      }
+      if (f.id == joinedParentId) {
+        g = g.copyWith(childFolderCount: g.childFolderCount + 1);
+      }
+      out.add(g);
+    }
+    if (existing == null) out.add(moved);
+    return out;
+  }
+
+  static List<EmailFolder> _applyUnconfirmed(
+    List<EmailFolder> folders,
+    ({EmailFolder folder, bool isMove, int misses}) entry,
+  ) =>
+      entry.isMove
+          ? _applyMove(folders, entry.folder)
+          : _insertFolder(folders, entry.folder);
+
+  /// Re-applies every unconfirmed change to [folders] without judging them,
+  /// for the cached list — which is not the server's answer either way, so a
+  /// disagreement there says nothing. Reached only when a load falls back to
+  /// the cache on the account it already had folders for, i.e. after a fetch
+  /// came back empty; the account-switch path clears the map first.
   List<EmailFolder> _withUnconfirmed(List<EmailFolder> folders) {
     var merged = folders;
     for (final entry in _unconfirmedFolders.values) {
-      merged = _insertFolder(merged, entry.folder);
+      merged = _applyUnconfirmed(merged, entry);
     }
     return merged;
   }
 
-  /// Same merge, but against a list the *server* just gave us: a folder it
-  /// names is confirmed and stops being tracked, and one it has omitted for
+  /// Same, but against a list the *server* just gave us: a change it agrees
+  /// with stops being tracked, and one it has contradicted for
   /// [_unconfirmedFolderGrace] lists running is given up on.
   List<EmailFolder> _reconcileUnconfirmed(List<EmailFolder> folders) {
     if (_unconfirmedFolders.isEmpty) return folders;
-    final serverIds = {for (final f in folders) f.id};
+    final serverById = {for (final f in folders) f.id: f};
     var merged = folders;
     for (final id in _unconfirmedFolders.keys.toList()) {
       final entry = _unconfirmedFolders[id]!;
-      if (serverIds.contains(id)) {
+      final onServer = serverById[id];
+      final agreed = entry.isMove
+          ? onServer != null &&
+              onServer.parentFolderId == entry.folder.parentFolderId
+          : onServer != null;
+      if (agreed) {
         _unconfirmedFolders.remove(id);
         continue;
       }
       if (entry.misses + 1 >= _unconfirmedFolderGrace) {
-        debugPrint('[FolderList] giving up on unconfirmed folder '
-            '"${entry.folder.displayName}" — the server has not listed it in '
-            '$_unconfirmedFolderGrace fetches');
+        debugPrint('[FolderList] giving up on unconfirmed '
+            '${entry.isMove ? 'move of' : 'folder'} '
+            '"${entry.folder.displayName}" — the server has disagreed '
+            '$_unconfirmedFolderGrace times');
         _unconfirmedFolders.remove(id);
         continue;
       }
-      _unconfirmedFolders[id] = (folder: entry.folder, misses: entry.misses + 1);
-      merged = _insertFolder(merged, entry.folder);
+      _unconfirmedFolders[id] = (
+        folder: entry.folder,
+        isMove: entry.isMove,
+        misses: entry.misses + 1,
+      );
+      merged = _applyUnconfirmed(merged, entry);
     }
     return merged;
   }
@@ -355,17 +418,56 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
     );
   }
 
+  /// Dragging a folder onto another one reparents it in state as soon as the
+  /// provider accepts the move, and reconciles afterwards.
+  ///
+  /// Without that, the only thing that moved the row was the folder-tree fetch
+  /// — a `getChildFolders` round trip per level — and the row *vanished* when
+  /// it landed, because a folder just dropped onto is a folder the user has
+  /// not expanded. (`FolderPanel` opens the drop target for the same reason.)
+  ///
+  /// Unlike a create, nothing is drawn before the provider answers: the row is
+  /// already on screen where it started, and moving it early would mean
+  /// putting it back on a failure. A failed move leaves the folder where it
+  /// was, which is the honest picture.
   Future<void> _onMoveFolderRequested(
     FolderListMoveFolderRequested event,
     Emitter<FolderListState> emit,
   ) async {
+    final before = state;
+    final moving = before is FolderListLoaded
+        ? before.folders.where((f) => f.id == event.folderId).firstOrNull
+        : null;
+
     final result = await _moveFolder(MoveFolderParams(
       folderId: event.folderId,
       newParentFolderId: event.newParentFolderId,
     ));
+    if (isClosed) return;
+
     result.fold(
-      (_) {},
-      (_) => add(const FolderListLoadRequested()),
+      (failure) {
+        debugPrint('[FolderList] move ${event.folderId} failed: '
+            '${failure.runtimeType} — ${failure.message}');
+      },
+      (newId) {
+        // Only where the id survived the move. A changed id (IMAP mailbox,
+        // Gmail virtual folder — both are paths) means every descendant's id
+        // changed with it, and nothing here can derive what they are now; the
+        // fetch is the only thing that can, so leave the whole subtree to it.
+        final current = state;
+        if (current is FolderListLoaded &&
+            moving != null &&
+            newId == event.folderId) {
+          final moved =
+              moving.copyWith(parentFolderId: event.newParentFolderId);
+          _unconfirmedFolders[newId] = (folder: moved, isMove: true, misses: 0);
+          emit(current.copyWith(
+            folders: _sorted(_applyMove(current.folders, moved)),
+          ));
+        }
+        add(const FolderListLoadRequested());
+      },
     );
   }
 

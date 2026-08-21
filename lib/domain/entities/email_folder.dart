@@ -21,17 +21,21 @@ class EmailFolder extends Equatable {
 
   bool get hasUnread => unreadItemCount > 0;
 
+  /// [parentFolderId] can be set but not cleared — a folder is only ever
+  /// reparented *onto* another folder, and null has to keep meaning "leave it
+  /// alone" for every other caller.
   EmailFolder copyWith({
     int? totalItemCount,
     int? unreadItemCount,
     int? childFolderCount,
+    String? parentFolderId,
   }) {
     return EmailFolder(
       id: id,
       displayName: displayName,
       totalItemCount: totalItemCount ?? this.totalItemCount,
       unreadItemCount: unreadItemCount ?? this.unreadItemCount,
-      parentFolderId: parentFolderId,
+      parentFolderId: parentFolderId ?? this.parentFolderId,
       isHidden: isHidden,
       childFolderCount: childFolderCount ?? this.childFolderCount,
     );

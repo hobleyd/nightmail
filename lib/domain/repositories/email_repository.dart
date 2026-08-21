@@ -164,7 +164,13 @@ abstract interface class EmailRepository {
 
   /// Reparents [folderId] so it becomes a child of [newParentFolderId].
   /// Any sub-folders of [folderId] move with it.
-  Future<Either<Failure, Unit>> moveFolder({
+  ///
+  /// Returns the folder's id **after** the move — usually the one that went
+  /// in, but not always: an id that encodes a path (IMAP mailbox, Gmail
+  /// virtual folder) changes when the path does. The caller needs to know,
+  /// because a changed id means every descendant's id changed too and only a
+  /// fresh fetch can say what they are now.
+  Future<Either<Failure, String>> moveFolder({
     required String folderId,
     required String newParentFolderId,
   });

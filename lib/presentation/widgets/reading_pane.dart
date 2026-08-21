@@ -14,6 +14,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'html_body_view.dart';
 import 'plain_text_body_view.dart';
@@ -311,17 +312,27 @@ class _EmailViewState extends State<_EmailView> {
   String? _previewPath;
   String? _previewName;
   String? _previewAttachmentId;
+
+  /// The web address the previewed document came from, or null when it came
+  /// from the message itself. A cloud document is still somebody's file on
+  /// SharePoint or Drive — previewing it here must not be the only way to
+  /// reach it — so the header's title opens this in the browser.
+  String? _previewSourceUrl;
   _AttachmentPreviewKind? _previewKind;
   IconData _previewIcon = Icons.insert_drive_file_rounded;
   HtmlViewController? _bodyController;
 
   void _showPreview(_AttachmentPreviewKind kind, String path, String name,
-      String attachmentId, IconData icon) {
+      String attachmentId, IconData icon,
+      {String? sourceUrl}) {
     setState(() {
       _previewKind = kind;
       _previewPath = path;
       _previewName = name;
       _previewAttachmentId = attachmentId;
+      // Assigned on every path, not only the cloud one: an attachment shown
+      // after a cloud document would otherwise inherit its link.
+      _previewSourceUrl = sourceUrl;
       _previewIcon = icon;
       _bodyController = null; // HtmlBodyView leaves the tree
     });
@@ -333,6 +344,7 @@ class _EmailViewState extends State<_EmailView> {
       _previewPath = null;
       _previewName = null;
       _previewAttachmentId = null;
+      _previewSourceUrl = null;
     });
   }
 
@@ -424,11 +436,13 @@ class _EmailViewState extends State<_EmailView> {
       case CloudDocumentFormat.pdf:
       case CloudDocumentFormat.plainText:
         _showPreview(_AttachmentPreviewKind.webFile, file.path, document.name,
-            link.url, icon);
+            link.url, icon,
+            sourceUrl: link.url);
         return true;
       case CloudDocumentFormat.image:
         _showPreview(_AttachmentPreviewKind.image, file.path, document.name,
-            link.url, icon);
+            link.url, icon,
+            sourceUrl: link.url);
         return true;
       case CloudDocumentFormat.officeConvertible:
         // Only reached when the provider would not convert it — an uploaded
@@ -436,7 +450,8 @@ class _EmailViewState extends State<_EmailView> {
         final path = await _officePreviewPath(file.path, document.name);
         if (path == null || !mounted) return false;
         _showPreview(_AttachmentPreviewKind.webFile, path, document.name,
-            link.url, icon);
+            link.url, icon,
+            sourceUrl: link.url);
         return true;
       case null:
         return false;
@@ -647,12 +662,14 @@ class _EmailViewState extends State<_EmailView> {
                 filePath: _previewPath!,
                 fileName: _previewName!,
                 icon: _previewIcon,
+                sourceUrl: _previewSourceUrl,
                 onClose: _closePreview,
               ),
             _AttachmentPreviewKind.image => _ImagePreview(
                 key: ValueKey(_previewPath),
                 filePath: _previewPath!,
                 fileName: _previewName!,
+                sourceUrl: _previewSourceUrl,
                 onClose: _closePreview,
               ),
             _AttachmentPreviewKind.eml => _EmlPreview(
@@ -2883,11 +2900,16 @@ class _WebFilePreview extends StatefulWidget {
     required this.fileName,
     required this.icon,
     required this.onClose,
+    this.sourceUrl,
   });
   final String filePath;
   final String fileName;
   final IconData icon;
   final VoidCallback onClose;
+
+  /// Where the document came from, when it came from the web. See
+  /// [_PreviewHeader.sourceUrl].
+  final String? sourceUrl;
 
   @override
   State<_WebFilePreview> createState() => _WebFilePreviewState();
@@ -2927,6 +2949,7 @@ class _WebFilePreviewState extends State<_WebFilePreview> {
         _PreviewHeader(
           icon: widget.icon,
           fileName: widget.fileName,
+          sourceUrl: widget.sourceUrl,
           onClose: widget.onClose,
         ),
         Divider(height: 1, color: context.colors.border),
@@ -2940,15 +2963,36 @@ class _WebFilePreviewState extends State<_WebFilePreview> {
   }
 }
 
+/// Hands the document's own URL to the browser. Deliberately not
+/// `openBodyLink`: see [_PreviewHeader].
+void _openExternally(String url) {
+  final uri = Uri.tryParse(url);
+  if (uri == null) return;
+  unawaited(launchUrl(uri, mode: LaunchMode.externalApplication));
+}
+
+/// The bar above a preview: what is being shown, and the way out of it.
+///
+/// When [sourceUrl] is set the title is a link as well as a label. A cloud
+/// document is drawn here *instead of* the browser tab the reader clicked, so
+/// this is the only thing left offering them the file where it lives — to
+/// comment on it, edit it, or share it on. It goes straight to [launchUrl]
+/// rather than through `openBodyLink`, which would find the enclosing
+/// [CloudDocumentPreviewHost] and fetch the document all over again.
 class _PreviewHeader extends StatelessWidget {
   const _PreviewHeader({
     required this.icon,
     required this.fileName,
     required this.onClose,
+    this.sourceUrl,
   });
   final IconData icon;
   final String fileName;
   final VoidCallback onClose;
+
+  /// The document's own web address, or null for a preview of something that
+  /// arrived with the message and has nowhere else to be opened.
+  final String? sourceUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -2960,16 +3004,48 @@ class _PreviewHeader extends StatelessWidget {
           Icon(icon, size: 14, color: c.textMuted),
           const SizedBox(width: 6),
           Expanded(
-            child: Text(
-              fileName,
-              style: TextStyle(
-                color: c.textSecondary,
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-              ),
-              overflow: TextOverflow.ellipsis,
-            ),
+            child: sourceUrl == null
+                ? Text(
+                    fileName,
+                    style: TextStyle(
+                      color: c.textSecondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  )
+                // A Row rather than the bare link: the title must keep the
+                // full width for its ellipsis while the *clickable* area stays
+                // the text, not the empty bar beside it.
+                : Row(
+                    children: [
+                      Flexible(
+                        child: _PreviewSourceLink(
+                          fileName: fileName,
+                          url: sourceUrl!,
+                        ),
+                      ),
+                    ],
+                  ),
           ),
+          if (sourceUrl != null) ...[
+            const SizedBox(width: 8),
+            // The always-visible half of the affordance. The title's underline
+            // only appears under the pointer, and a reader who never happens to
+            // hover the exact text would never learn the file can still be
+            // opened where it lives.
+            Tooltip(
+              message: 'Open in browser',
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: GestureDetector(
+                  onTap: () => _openExternally(sourceUrl!),
+                  child: Icon(Icons.open_in_new_rounded,
+                      size: touchIcon(14), color: c.textMuted),
+                ),
+              ),
+            ),
+          ],
           const SizedBox(width: 8),
           GestureDetector(
             onTap: onClose,
@@ -2982,16 +3058,64 @@ class _PreviewHeader extends StatelessWidget {
   }
 }
 
+/// The preview title as a link. Hover-underlined rather than permanently
+/// styled: it is the bar's label first, and a row of blue in the chrome above
+/// every cloud preview would read as an alert.
+class _PreviewSourceLink extends StatefulWidget {
+  const _PreviewSourceLink({required this.fileName, required this.url});
+  final String fileName;
+  final String url;
+
+  @override
+  State<_PreviewSourceLink> createState() => _PreviewSourceLinkState();
+}
+
+class _PreviewSourceLinkState extends State<_PreviewSourceLink> {
+  bool _hovering = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Tooltip(
+      message: 'Open in browser',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovering = true),
+        onExit: (_) => setState(() => _hovering = false),
+        child: GestureDetector(
+          onTap: () => _openExternally(widget.url),
+          child: Text(
+            widget.fileName,
+            style: TextStyle(
+              color: _hovering ? AppColors.accent : c.textSecondary,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              decoration: _hovering ? TextDecoration.underline : null,
+              decorationColor: AppColors.accent,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ImagePreview extends StatelessWidget {
   const _ImagePreview({
     super.key,
     required this.filePath,
     required this.fileName,
     required this.onClose,
+    this.sourceUrl,
   });
   final String filePath;
   final String fileName;
   final VoidCallback onClose;
+
+  /// Where the image came from, when it came from the web. See
+  /// [_PreviewHeader.sourceUrl].
+  final String? sourceUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -3002,6 +3126,7 @@ class _ImagePreview extends StatelessWidget {
         _PreviewHeader(
           icon: Icons.image_rounded,
           fileName: fileName,
+          sourceUrl: sourceUrl,
           onClose: onClose,
         ),
         Divider(height: 1, color: c.border),

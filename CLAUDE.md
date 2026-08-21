@@ -551,6 +551,21 @@ what tells the preview to treat a document titled `.docx` as the PDF it now is;
 rule both the datasources and the pane read, so a file is never downloaded and
 *then* found to be unpreviewable.
 
+**The preview bar's title is the way back to the file.** Drawing the document
+here is *instead of* the browser tab the reader clicked, so the header
+(`_PreviewHeader`) carries the source URL and opens it externally on a tap —
+otherwise previewing a document would be the one thing that took away the
+ability to comment on it, edit it or share it on. It calls `launchUrl`
+directly rather than `openBodyLink`: the header is drawn **inside** the
+`CloudDocumentPreviewHost` the pane publishes, so going through the opener
+would match the link, find that host, and fetch the document again instead of
+leaving the app. `_previewSourceUrl` is assigned on every `_showPreview`,
+including the attachment paths that pass none — a preview opened after a cloud
+document would otherwise inherit its link and offer the wrong file. The title
+underlines only under the pointer, so an `open_in_new` icon beside the close
+button carries the same tap: a reader who never hovers the exact text would
+otherwise never learn the link is there.
+
 ## A Thread Row Is Not Its Newest Message
 
 A collapsed thread row shows its **anchor**: the newest message the user did not

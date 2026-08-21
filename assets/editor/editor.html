@@ -2,6 +2,16 @@
 <html>
 <head>
 <meta charset="utf-8">
+<!-- The editor runs script and holds a bridge to the host, so it cannot use
+     the reading pane's `script-src 'none'`. This policy's job is therefore not
+     to stop script — `_parseSanitizedBody` does that — but to cap what a
+     bypass could reach: `connect-src 'none'` means script that did run has no
+     way to send anything off the machine, which is what turns the Android
+     WebView's file access from a data-exfiltration path back into a local
+     nuisance. `script-src 'unsafe-inline'` is required: `default-src 'none'`
+     would otherwise block this page's own inline <script> and the editor would
+     not load at all. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob: file: https: http:; font-src data:; connect-src 'none'; object-src 'none'; frame-src 'none'; child-src 'none'; base-uri 'none'; form-action 'none'">
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -635,9 +645,19 @@ function fireChange() {
   }
 }
 
+// Replaces the whole body. Everything that loads content into the editor
+// arrives here — the quoted reply or forward built by ComposeBodyBuilder, a
+// draft fetched from the provider, a signature change — so this is where
+// inbound markup is sanitised (see _parseSanitizedBody). The nodes are adopted
+// from the inert document rather than serialised back to a string and assigned
+// to innerHTML: that second parse is what mutation-XSS exploits.
 function setContent(html) {
   deselectImage();
-  editor.innerHTML = html;
+  const clean = _parseSanitizedBody(html);
+  editor.innerHTML = '';
+  Array.from(clean.childNodes).forEach(function(node) {
+    editor.appendChild(document.importNode(node, true));
+  });
   const range = document.createRange();
   const sel = window.getSelection();
   if (editor.firstChild) {
@@ -912,26 +932,97 @@ function _looksLikeHtml(text) {
   return /<\/?[a-z][a-z0-9]*(\s[^<>]*)?>/i.test(text);
 }
 
-// Strips script/style/event-handler content so pasted markup can't execute
-// script inside the editor.
-function _sanitizeHtmlFragment(html) {
-  const container = document.createElement('div');
-  container.innerHTML = html;
-  const root = container.querySelector('body') || container;
-  root.querySelectorAll('script,style,meta,link,title,head,object,embed,iframe')
-      .forEach(function(el) { el.remove(); });
-  root.querySelectorAll('*').forEach(function(el) {
+// --- Sanitising inbound HTML ------------------------------------------
+// Every route into this document carries somebody else's markup: a quoted
+// reply, a forwarded body, a server-held draft, a pasted fragment. The page
+// has script enabled and a method channel to the host, so anything executable
+// that reaches the DOM can rewrite the message about to be sent
+// (onContentChanged), attach bytes of its choosing (onImagePasted), and — on
+// Android, where the WebView sits on a file:///android_asset origin — read
+// app-private files. `<script>` never runs from an innerHTML assignment, but
+// `<img src=x onerror=…>` and `<svg onload=…>` do, so "it isn't a script
+// tag" is not a defence.
+//
+// Two properties carry this, and both are easy to undo by accident:
+//
+//  - **The parse is inert.** `DOMParser` builds a document that fetches
+//    nothing and fires nothing, so a handler is removed before it could ever
+//    have run. Assigning to a *detached* element's `innerHTML` is not inert —
+//    the image load starts there, and only the fact that the attribute
+//    stripping happens in the same task keeps `onerror` from firing. That is a
+//    race a sanitiser should not be resting on.
+//  - **Nothing is re-parsed after being cleaned.** Serialising the cleaned
+//    tree and parsing it again is the mutation-XSS class: `svg`, `math` and
+//    `noscript` switch the parser's namespace, so a payload can survive
+//    serialise-then-reparse as something else entirely. `setContent` adopts
+//    the nodes instead. The paste path cannot — `execCommand('insertHTML')`
+//    takes a string — which is why those elements are dropped outright rather
+//    than merely stripped of their handlers.
+const _kRemovedTags =
+    'script,style,meta,link,title,head,base,basefont,form,object,embed,' +
+    'applet,iframe,frame,frameset,svg,math,noscript,noembed,noframes,' +
+    'template,xmp,portal';
+
+// Attributes whose value is a URL the engine will fetch or navigate to.
+const _kUrlAttrs = ['href', 'src', 'srcset', 'action', 'formaction',
+                    'background', 'poster', 'data', 'cite', 'longdesc',
+                    'ping', 'usemap', 'codebase'];
+
+// `data:` is allowed only where an inline image belongs, and only for raster
+// types. A quoted reply's inline images arrive as `data:` URLs built by
+// `ComposeBodyBuilder.resolveCidImages` out of the attachment's *own*
+// Content-Type — which the sender chose — so `data:text/html;base64,…` is
+// reachable from a crafted message and has to be refused here.
+// `image/svg+xml` is left out with them: an SVG cannot run script while it is
+// being drawn as an image, but it is a document, and the cost of refusing one
+// is a missing logo in a quote.
+const _kDataImageRe =
+    /^data:image\/(png|jpe?g|gif|webp|bmp|avif|x-icon|vnd\.microsoft\.icon)[;,]/;
+
+function _isSafeUrlAttr(name, value) {
+  // The engine ignores leading control characters and whitespace when it
+  // resolves a URL — including ones written as entities, which the parser has
+  // already decoded by the time the attribute is read here — so the scheme has
+  // to be tested with those taken out rather than as written.
+  const url = String(value).replace(/[\u0000-\u0020]+/g, '').toLowerCase();
+  if (/^(javascript|vbscript|livescript|mocha|jscript):/.test(url)) return false;
+  if (url.indexOf('data:') === 0) {
+    return (name === 'src' || name === 'poster') && _kDataImageRe.test(url);
+  }
+  return true;
+}
+
+// Cleans [html] inside an inert document and returns that document's <body>.
+// A caller that owns the destination element should adopt the children; one
+// that needs a string goes through _sanitizeHtmlFragment.
+function _parseSanitizedBody(html) {
+  const doc = new DOMParser().parseFromString(String(html), 'text/html');
+  doc.querySelectorAll(_kRemovedTags).forEach(function(el) { el.remove(); });
+  doc.querySelectorAll('*').forEach(function(el) {
     Array.from(el.attributes).forEach(function(attr) {
       const name = attr.name.toLowerCase();
-      if (name.indexOf('on') === 0) {
-        el.removeAttribute(attr.name);
-      } else if ((name === 'href' || name === 'src') &&
-                 /^\s*javascript:/i.test(attr.value)) {
+      // `on*` covers every event handler there is, present and future, which
+      // an allowlist of the ones known today would not.
+      if (name.indexOf('on') === 0 ||
+          name === 'srcdoc' ||
+          name.indexOf('xlink:') === 0 ||
+          (_kUrlAttrs.indexOf(name) !== -1 &&
+           !_isSafeUrlAttr(name, attr.value))) {
         el.removeAttribute(attr.name);
       }
     });
   });
-  return root.innerHTML;
+  // `style` attributes are deliberately kept: they are most of a quoted body's
+  // formatting, and the quote wrapper this app builds itself is a styled
+  // <blockquote>. No engine this app runs on has a script-bearing CSS property
+  // left.
+  return doc.body;
+}
+
+// Strips script/style/event-handler content so inbound markup can't execute
+// script inside the editor.
+function _sanitizeHtmlFragment(html) {
+  return _parseSanitizedBody(html).innerHTML;
 }
 
 function _escapePlainTextToHtml(text) {

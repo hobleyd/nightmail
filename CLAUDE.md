@@ -469,6 +469,65 @@ Only `http`/`https` and `www.`-prefixed hosts are linked. Guessing at bare
 addresses and `mailto:` URLs are linked too, but the last label must be
 alphabetic, or `package@1.2.3` becomes a way to mail somebody.
 
+## A Quoted Reply Is Somebody Else's Markup
+
+The compose editor is a webview with **script enabled** and a method channel to
+the host, and `ComposeBodyBuilder.buildInitialHtmlBody` loads the original
+sender's HTML into it — `extractHtmlBodyContent` only slices out the `<body>`.
+So the reading pane's answer (`script-src 'none'`) is not available here, and
+`editor.innerHTML = html` was giving a sender a script context: `<script>` does
+not run from an `innerHTML` assignment, but `<img src=x onerror=…>` and
+`<svg onload=…>` do, which is enough to rewrite the message about to be sent
+(`onContentChanged`), attach bytes of the sender's choosing (`onImagePasted`),
+and on Android read app-private files.
+
+`setContent` therefore sanitises, and it is the **one** route inbound HTML
+takes into the document — a quoted reply or forward, a draft fetched from the
+provider, a signature change all arrive there — which is why the sanitiser
+belongs at that end rather than in `ComposeBodyBuilder`. Paste goes through the
+same rules (`_sanitizeHtmlFragment`), which is where they used to live and all
+they used to cover.
+
+Four things in `assets/editor/editor.html` are load-bearing:
+
+- **The parse is inert.** `DOMParser.parseFromString` builds a document that
+  fetches nothing and fires nothing. Assigning to a *detached* element's
+  `innerHTML` — the shape the paste-only sanitiser used — is not inert: the
+  image load starts there, and only the attribute stripping happening in the
+  same task keeps `onerror` from firing.
+- **Nothing is re-parsed after being cleaned.** `setContent` adopts the cleaned
+  nodes (`importNode`) instead of serialising them back to a string, because
+  that second parse is the mutation-XSS class: `svg`, `math` and `noscript`
+  switch the parser's namespace, so a payload can survive
+  serialise-then-reparse as something else. The paste path cannot avoid the
+  string — `execCommand('insertHTML')` takes one — which is why those elements
+  are dropped outright rather than stripped of handlers.
+- **`data:` is refused outside an image.** Inline images in a quote arrive as
+  `data:` URLs that `resolveCidImages` builds out of the attachment's own
+  `Content-Type` — the sender's choice — so `data:text/html` is reachable from
+  a crafted message.
+- **The CSP caps a bypass; it cannot stop script.** The page needs its own
+  inline `<script>`, so `script-src` has to allow inline and the policy's real
+  work is `connect-src 'none'` (script that did run cannot send anything off
+  the machine) plus `object-src`/`frame-src`/`base-uri`/`form-action`. Dropping
+  `default-src 'none'`'s companion `script-src 'unsafe-inline'` stops the
+  editor loading at all. `img-src` must keep `data:` and `http(s):`, or quoted
+  images vanish.
+
+`style` attributes are deliberately kept — they are most of a quoted body's
+formatting, and this app's own quote wrapper is a styled `<blockquote>`.
+
+**The Android WebView's `allowFileAccessFromFileURLs` /
+`allowUniversalAccessFromFileURLs` must stay off** (`HtmlViewPlugin.kt`). Both
+default to false and both were on, which gave the editor — loaded from
+`file:///android_asset`, the one document here that runs script — the run of
+app-private storage and a same-origin channel to every other origin.
+`allowFileAccess` stays **on**: the reading pane loads its document from a real
+file when a message has inline images.
+
+`test/presentation/widgets/editor_html_sanitization_test.dart` pins the shape of
+all of this, since the behaviour itself only exists inside a real engine.
+
 ## A mailto: Link Is Answered Here, Not by the OS
 
 Every body link goes to `launchUrl` except `mailto:`, which `openBodyLink`

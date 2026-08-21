@@ -99,4 +99,90 @@ void main() {
       expect('data-blocked-src'.allMatches(out).length, 2);
     });
   });
+
+    group('what the policy refuses but no chip can be left for', () {
+      test('holds back a remote srcset, which would outrank the pixel', () {
+        // The candidate list wins over `src`, so leaving it would mean a
+        // request the policy refuses and then the broken-image glyph the
+        // substituted pixel exists to avoid.
+        final (out, blocked) = blockExternalImages(
+          '<img src="https://x/a.png" srcset="https://x/a2.png 2x">',
+        );
+
+        expect(blocked, isTrue);
+        expect(out, contains('data-blocked-srcset="https://x/a2.png 2x"'));
+        expect(out, isNot(contains(' srcset=')));
+        expect(out, contains('src="data:image/gif;base64,'));
+      });
+
+      test('gives an image that had only a srcset the pixel too', () {
+        final (out, blocked) =
+            blockExternalImages('<img srcset="https://x/a.png 1x" alt="a">');
+
+        expect(blocked, isTrue);
+        expect(out, contains('src="data:image/gif;base64,'));
+        expect(out, contains('data-blocked-srcset='));
+      });
+
+      test('does not rewrite the data-blocked-src it just wrote', () {
+        final (out, _) = blockExternalImages('<img src="https://x/a.png">');
+
+        expect(out, contains('data-blocked-src="https://x/a.png"'));
+        expect(out, isNot(contains('data-blocked-data-blocked')));
+      });
+
+      test('holds back a <picture>\'s remote source', () {
+        // A <source> is chosen ahead of the <img> inside the <picture>, so a
+        // remote candidate there decides the whole element.
+        final (out, blocked) = blockExternalImages(
+          '<picture><source srcset="https://x/a.webp" type="image/webp">'
+          '<img src="https://x/a.png"></picture>',
+        );
+
+        expect(blocked, isTrue);
+        expect(out, contains('data-blocked-srcset="https://x/a.webp"'));
+        expect(out, isNot(contains('<source srcset=')));
+      });
+
+      test('leaves a local srcset alone', () {
+        const html = '<img srcset="cid:logo 1x, data:image/png;base64,AA 2x">';
+
+        final (out, blocked) = blockExternalImages(html);
+
+        expect(out, html);
+        expect(blocked, isFalse);
+      });
+
+      test('reports a CSS background as blocked so the bar can offer it', () {
+        // Nothing is rewritten here — the policy is what refuses the fetch —
+        // but a message whose only remote content is a background image still
+        // has to be able to say so, or "Download once" is never offered.
+        final (out, blocked) = blockExternalImages(
+          '<div style="background:url(https://tracker/pixel.gif)">hi</div>',
+        );
+
+        expect(blocked, isTrue);
+        expect(out, contains('url(https://tracker/pixel.gif)'));
+      });
+
+      test('reports a remote stylesheet, @import and video poster', () {
+        for (final html in [
+          '<link rel="stylesheet" href="https://x/a.css">',
+          '<style>@import url("https://x/a.css");</style>',
+          '<video poster="https://x/p.jpg"></video>',
+        ]) {
+          final (_, blocked) = blockExternalImages(html);
+          expect(blocked, isTrue, reason: html);
+        }
+      });
+
+      test('a body with nothing remote in it is still reported clean', () {
+        final (_, blocked) = blockExternalImages(
+          '<div style="background:url(cid:bg)"><img src="data:image/png;base64,AA">'
+          '</div>',
+        );
+
+        expect(blocked, isFalse);
+      });
+    });
 }

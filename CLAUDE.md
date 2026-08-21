@@ -461,12 +461,61 @@ Host `evaluateJavaScript` is not subject to the page's policy, in either desktop
 engine — which is how this is testable at all, and worth knowing before treating
 a CSP as a limit on what the app itself can do to the document.
 
-## A Blocked Remote Image Leaves a Chip, Not a Hole
+What is *in* the policy is the section above; `script-src 'none'` is only the
+part of it that made a mail body inert.
 
-`blockExternalImages` renames `src` to `data-blocked-src` and substitutes a
-transparent pixel — no `src` at all makes the engine draw its own broken glyph
-and the sender's `alt` over the placeholder. Images declaring ≤3px in either
-dimension are trackers and stay hidden (`data-blocked-spacer`).
+## What Holds a Remote Image Back Is the Policy, Not the Rewrite
+
+**`contentSecurityPolicy(allowExternal: …)` is the enforcement.**
+`blockExternalImages` only decides what the reader *sees*. That division is the
+point: an `<img src>` is one of at least eight ways a mail body reaches a
+tracker, and element rewriting used to be the whole of the defence — so
+`style="background:url(https://…)"`, a `<style>`'s `@import`, an `@font-face`, a
+`srcset`, a `<picture><source>`, a `<video poster>`, a `<link rel=stylesheet>`,
+an `<input type=image>`, a `<table background>` and an `<iframe>` all still
+phoned home with blocking switched on. Measured, before the policy carried it:
+**14 requests** from one body, in both desktop engines. Naming the schemes a
+subresource may come from is one line and cannot be got round; rewriting each
+route in turn is a parser written in regular expressions.
+
+So `img-src`/`font-src`/`media-src` are `data: file:` while blocking, and gain
+`https: http:` when the reader presses Download once / Always. `data:` is the
+inline-attachment route and the substituted pixel, `file:` is the same
+attachments once the document is written to disk. **Not `'self'`** — a `file:`
+document's origin is opaque, so `'self'` matches nothing and would hold back the
+message's own images.
+
+Three directives never open, at either setting:
+
+- `script-src`/`object-src` — a mail body has no business executing.
+- `frame-src` — an `<iframe>` is a document this policy does not govern: it runs
+  its own script under its own origin, and in WKWebView a subframe can reach the
+  host's `messageHandlers` bridge. Both webmail providers strip iframes; this
+  refuses to fetch them, which is the same answer with an empty box left behind.
+  It stays refused after Download once, which is deliberate — the reader asked
+  for the pictures, not for a third party's document.
+- `base-uri` — a `<base href="https://…">` re-points every *relative* URL, and
+  a file-delivered message's inline images are referenced relatively. That turns
+  the sender's own attachments into a call home. Verified: it fires under the old
+  policy and is refused under this one.
+
+What `blockExternalImages` is still for:
+
+- **A held-back `<img>` gets the pixel, not an empty `src`** — no `src` at all
+  makes the engine draw its own broken glyph and the sender's `alt` over the
+  placeholder. The `src` is *renamed* to `data-blocked-src` because the injected
+  stylesheet keys the chip off it. Images declaring ≤3px either way are trackers
+  and stay hidden (`data-blocked-spacer`).
+- **`srcset` has to go with it.** A candidate list outranks `src`, so leaving one
+  would mean a request the policy refuses and then the broken glyph the pixel
+  exists to avoid. Same for a `<picture>`'s `<source>`, which is chosen ahead of
+  the `<img>` inside it — held back, the fallback `<img>` applies, and that is
+  the one already carrying the chip.
+- **Reporting.** The status bar's "Download once" is offered off the returned
+  flag, so a message whose only remote content is a CSS background has to count
+  as blocked even though nothing was rewritten (`_remoteSubresource`). A
+  background that never loads leaves nothing to draw, which is why the policy
+  alone is enough for the rest.
 
 ## Bare URLs in a Message Body
 

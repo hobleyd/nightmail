@@ -75,9 +75,59 @@ String forceUtf8Charset(String html) {
   return stripped.contains('</head>') ? '$_utf8Meta$stripped' : stripped;
 }
 
-const _cspMeta =
-    '<meta http-equiv="Content-Security-Policy" '
-    'content="script-src \'none\'; object-src \'none\';">';
+/// The reading pane's Content-Security-Policy.
+///
+/// **This is what actually holds a remote request back**, and it has to be,
+/// because [blockExternalImages] can only rewrite what it can recognise as an
+/// image element. A mail body reaches a remote host by at least seven other
+/// routes — `style="background:url(…)"`, a `<style>` block's `@import`, an
+/// `@font-face`, a `srcset`, a `<video poster>`, a `<link rel=stylesheet>`, an
+/// `<iframe>` — and every one of them is an open-tracking pixel and an IP
+/// disclosure with the reader's blocking switched on. Rewriting each in turn
+/// would be a parser written in regular expressions; naming the *schemes* a
+/// subresource may come from is one line and cannot be got round.
+///
+/// So the element rewriting is now only about what the reader *sees*: a held
+/// back `<img>` leaves a chip instead of a broken-image glyph, and the status
+/// bar can offer to fetch it. A CSS background that never loads leaves nothing
+/// to draw, so the policy alone is the whole of it.
+///
+/// [allowExternal] is the reader's "Download once"/"Always download" decision.
+/// It reopens `img-src`, and with it fonts, media and stylesheets: those are
+/// the same trade the reader just made, and a stylesheet that cannot load
+/// takes the message's layout with it. Four directives are *not* negotiable:
+///
+/// * `script-src`/`object-src` — a mail body has no business executing, at any
+///   setting.
+/// * `frame-src` — an `<iframe>` is a document this policy does not govern. It
+///   runs its own script under its own origin, and in WKWebView a subframe can
+///   reach the host's `messageHandlers` bridge. Both webmail providers strip
+///   iframes outright; this refuses to fetch them, which is the same answer
+///   with the frame left visible as an empty box.
+/// * `base-uri` — a `<base href="https://…">` re-points every *relative* URL
+///   in the document, and the inline images of a message delivered as a file
+///   are referenced relatively. That turns the sender's own attachments into a
+///   call home.
+@visibleForTesting
+String contentSecurityPolicy({required bool allowExternal}) {
+  // `data:` for the inline attachments and the held-back image's pixel, `file:`
+  // for the same images when the document is delivered as a file on disk. Not
+  // `'self'`: a `file:` document's origin is opaque, so `'self'` matches
+  // nothing there — which would hold back the message's own inline images.
+  const local = 'data: file:';
+  final remote = allowExternal ? ' https: http:' : '';
+  return "default-src 'none'; "
+      "script-src 'none'; "
+      "object-src 'none'; "
+      "frame-src 'none'; "
+      "child-src 'none'; "
+      "connect-src 'none'; "
+      "base-uri 'none'; "
+      "style-src 'unsafe-inline'$remote; "
+      'img-src $local$remote; '
+      'font-src $local$remote; '
+      'media-src $local$remote;';
+}
 
 final _leadingDoctype =
     RegExp(r'^\s*<!doctype\b[^>]*>', caseSensitive: false);
@@ -111,9 +161,15 @@ final _leadingDoctype =
 /// hand a sender's `img { width: 600px !important }` the argument over the
 /// `max-width` clamp — and over the held-back image's own chip styling.
 @visibleForTesting
-String installContentSecurityPolicy(String html) {
+String installContentSecurityPolicy(String html,
+    {required bool allowExternal}) {
   final at = _leadingDoctype.firstMatch(html)?.end ?? 0;
-  return html.replaceRange(at, at, _cspMeta);
+  return html.replaceRange(
+    at,
+    at,
+    '<meta http-equiv="Content-Security-Policy" '
+    'content="${contentSecurityPolicy(allowExternal: allowExternal)}">',
+  );
 }
 
 /// An image this small in either declared dimension is an open-tracking pixel
@@ -126,6 +182,33 @@ final _imgTag = RegExp(r'<img\b([^>]*)>', caseSensitive: false);
 
 final _imgHttpSrc = RegExp(
   r'''src=(["'])(https?://[^"']+)\1|src=(https?://[^\s>'"]+)''',
+  caseSensitive: false,
+);
+
+final _sourceTag = RegExp(r'<source\b([^>]*)>', caseSensitive: false);
+
+/// A `srcset` (or a `<source>`'s `src`) naming at least one remote candidate.
+/// The lookbehind keeps the pattern off the `data-blocked-src` a moment-earlier
+/// rewrite just wrote, which still holds the remote URL.
+/// The whole attribute goes: a candidate list is a set of alternatives for one
+/// image, so keeping the local ones and dropping the rest would change which
+/// picture the message shows.
+final _remoteCandidateAttr = RegExp(
+  r'''(?<![\w-])(srcset|imagesrcset|src)=(?:(["'])([^"']*https?://[^"']*)\2'''
+  r'''|(https?://[^\s>'"]+))''',
+  caseSensitive: false,
+);
+
+/// A remote subresource that is *not* an image element: a CSS background or
+/// `@font-face`, an `@import`, a `<link rel=stylesheet>`, a `<video poster>`.
+/// Each is a tracking pixel by another name, and the policy is what refuses
+/// them — this only decides whether the status bar admits to it, so that
+/// "Download once" is offered for a message whose only remote content is a
+/// background image.
+final _remoteSubresource = RegExp(
+  r'''url\(\s*['"]?\s*https?://'''
+  r'''|<link\b[^>]*\bhref\s*=\s*['"]?\s*https?://'''
+  r'''|\bposter\s*=\s*['"]?\s*https?://''',
   caseSensitive: false,
 );
 
@@ -166,10 +249,11 @@ const _blockedImagePixel =
 @visibleForTesting
 (String, bool) blockExternalImages(String html) {
   var blockedAny = false;
-  final out = html.replaceAllMapped(_imgTag, (imgMatch) {
+
+  var out = html.replaceAllMapped(_imgTag, (imgMatch) {
     final attrs = imgMatch.group(1)!;
     var blockedHere = false;
-    final rewritten = attrs.replaceFirstMapped(_imgHttpSrc, (sm) {
+    var rewritten = attrs.replaceFirstMapped(_imgHttpSrc, (sm) {
       blockedHere = true;
       final quote = sm.group(1);
       final held = quote != null
@@ -177,13 +261,49 @@ const _blockedImagePixel =
           : 'data-blocked-src=${sm.group(3)}';
       return 'src="$_blockedImagePixel" $held';
     });
+    // A candidate list outranks `src`, so leaving it would put a request the
+    // policy then refuses in front of the substituted pixel — and the reader
+    // would get the broken-image glyph the pixel exists to avoid. An image
+    // that carried *only* a srcset needs the pixel adding.
+    final srcsetHeld = _holdBackCandidates(rewritten);
+    if (srcsetHeld != null) {
+      rewritten = blockedHere ? srcsetHeld : ' src="$_blockedImagePixel"$srcsetHeld';
+      blockedHere = true;
+    }
     if (!blockedHere) return imgMatch.group(0)!;
     blockedAny = true;
     return _isSpacerImage(attrs)
         ? '<img data-blocked-spacer$rewritten>'
         : '<img$rewritten>';
   });
-  return (out, blockedAny);
+
+  // A `<picture>`'s `<source>` is chosen ahead of the `<img>` inside it, so a
+  // remote candidate there decides the whole element. Held back, the `<img>`
+  // fallback applies — which is the one already carrying the chip.
+  out = out.replaceAllMapped(_sourceTag, (m) {
+    final held = _holdBackCandidates(m.group(1)!);
+    if (held == null) return m.group(0)!;
+    blockedAny = true;
+    return '<source$held>';
+  });
+
+  // Everything the policy refuses that no rewriting can leave a chip for.
+  return (out, blockedAny || _remoteSubresource.hasMatch(out));
+}
+
+/// Renames every remote candidate attribute in [attrs] out of the way,
+/// returning the rewritten attributes — or null if there was nothing remote.
+String? _holdBackCandidates(String attrs) {
+  var held = false;
+  final out = attrs.replaceAllMapped(_remoteCandidateAttr, (m) {
+    held = true;
+    final name = m.group(1)!;
+    final quote = m.group(2);
+    return quote != null
+        ? 'data-blocked-$name=$quote${m.group(3)}$quote'
+        : 'data-blocked-$name=${m.group(4)}';
+  });
+  return held ? out : null;
 }
 
 class HtmlBodyView extends StatefulWidget {
@@ -556,7 +676,8 @@ table { max-width: 100% !important; }
     // Last, so it covers both branches — and, in the fragment branch, so it
     // lands ahead of the `<html>` the fragment was wrapped in rather than
     // inside the head that was built for it.
-    resolved = installContentSecurityPolicy(resolved);
+    resolved =
+        installContentSecurityPolicy(resolved, allowExternal: allowExternal);
 
     return (resolved, hasBlockedImages);
   }

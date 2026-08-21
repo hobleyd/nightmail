@@ -26,6 +26,18 @@
       "title": "Fixes",
       "items": [
         {
+          "body": "give the main window the refresh relay it invokes",
+          "title": "calendar"
+        },
+        {
+          "body": "send a state parameter and refuse a redirect without it",
+          "title": "auth"
+        },
+        {
+          "body": "block every remote subresource, not just <img src>",
+          "title": "reading"
+        },
+        {
           "body": "install the body CSP ahead of the sender's own head",
           "title": "reading"
         },

@@ -3,6 +3,7 @@ import 'dart:io';
 
 import '../../core/error/exceptions.dart';
 import 'auth_browser_launcher.dart';
+import 'oauth_state.dart';
 
 /// Runs an OAuth2 authorization-code flow through a loopback redirect
 /// (RFC 8252 §7.3): bind 127.0.0.1, hand the authorization URL to a browser,
@@ -29,14 +30,22 @@ class LoopbackAuthFlow {
 
   /// Opens [authorizationUrl] and completes with the full redirect URL the
   /// provider sent back, query string included.
+  ///
+  /// [expectedState] is the `state` carried in [authorizationUrl]; a
+  /// code-bearing request that does not echo it is refused. Required rather
+  /// than nullable on purpose — an optional one reinstates "absent means skip
+  /// the check" at the call site, which is the bypass [verifyOAuthState] exists
+  /// to close.
   Future<String> authenticate({
     required Uri authorizationUrl,
     required int port,
+    required String expectedState,
   }) async {
     final server = await _bind(port);
     try {
       await launcher.open(authorizationUrl);
-      final redirect = await _awaitRedirect(server).timeout(timeout);
+      final redirect =
+          await _awaitRedirect(server, expectedState).timeout(timeout);
       await launcher.activateThisApp();
       return redirect;
     } on TimeoutException {
@@ -61,7 +70,7 @@ class LoopbackAuthFlow {
     }
   }
 
-  Future<String> _awaitRedirect(HttpServer server) async {
+  Future<String> _awaitRedirect(HttpServer server, String expectedState) async {
     await for (final request in server) {
       final uri = request.requestedUri;
       final params = uri.queryParameters;
@@ -73,6 +82,18 @@ class LoopbackAuthFlow {
         request.response.statusCode = HttpStatus.notFound;
         await request.response.close();
         continue;
+      }
+      if (params.containsKey('code') && params['state'] != expectedState) {
+        // Anything on this port can present a code; only the flow that opened
+        // the authorization URL knows the state that went with it. A mismatch
+        // is an injected code or a bug in this file, and both fail here rather
+        // than waiting out the timeout — the browser is answered first, or the
+        // request hangs on a socket the `finally` clause is about to force
+        // shut. An `error` response is let through unchecked: `state` protects
+        // the code, and an error carries nothing to spend.
+        request.response.statusCode = HttpStatus.badRequest;
+        await request.response.close();
+        throw const AuthException(message: oauthStateMismatchMessage);
       }
       request.response.headers.contentType = ContentType.html;
       request.response.write(_landingPage);

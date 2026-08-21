@@ -11,6 +11,7 @@ import '../../core/error/exceptions.dart';
 import 'auth_service.dart';
 import 'auth_token.dart';
 import 'loopback_auth_flow.dart';
+import 'oauth_state.dart';
 import 'token_refresh_coordinator.dart';
 import 'token_refresh_error.dart';
 import 'token_storage.dart';
@@ -190,6 +191,9 @@ class GmailAuthService implements AuthService {
   Future<AuthToken> signIn() async {
     final codeVerifier = _generateCodeVerifier();
     final codeChallenge = _generateCodeChallenge(codeVerifier);
+    // A local, not a field: nothing serialises sign-ins, and a redirect may
+    // only ever be checked against the state the flow it belongs to sent.
+    final state = generateOAuthState();
 
     final authUri = Uri.parse(_authEndpoint).replace(
       queryParameters: {
@@ -199,6 +203,7 @@ class GmailAuthService implements AuthService {
         'scope': _requestedScopes.join(' '),
         'code_challenge': codeChallenge,
         'code_challenge_method': 'S256',
+        'state': state,
         'access_type': 'offline',
         'prompt': 'consent',
         // Incremental consent: keep everything already granted rather than
@@ -229,6 +234,7 @@ class GmailAuthService implements AuthService {
       resultUrl = await const LoopbackAuthFlow().authenticate(
         authorizationUrl: authUri,
         port: _loopbackPort,
+        expectedState: state,
       );
       assert(() {
         // ignore: avoid_print
@@ -285,6 +291,11 @@ class GmailAuthService implements AuthService {
     if (code == null) {
       throw const AuthException(message: 'No authorization code received');
     }
+
+    // Every path lands here — the loopback flow above checks it too, since it
+    // has to decide which request *is* the redirect, but the plugin and web
+    // paths have no listener of ours to do it in.
+    verifyOAuthState(expected: state, redirect: uri);
 
     return _exchangeCodeForToken(code: code, codeVerifier: codeVerifier);
   }

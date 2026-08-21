@@ -10,6 +10,7 @@ import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import '../../core/error/exceptions.dart';
 import 'auth_service.dart';
 import 'auth_token.dart';
+import 'oauth_state.dart';
 import 'token_refresh_coordinator.dart';
 import 'token_refresh_error.dart';
 import 'token_storage.dart';
@@ -163,6 +164,9 @@ class MicrosoftAuthService implements AuthService {
   Future<AuthToken> signIn() async {
     final codeVerifier = _generateCodeVerifier();
     final codeChallenge = _generateCodeChallenge(codeVerifier);
+    // A local, not a field: nothing serialises sign-ins, and a redirect may
+    // only ever be checked against the state the flow it belongs to sent.
+    final state = generateOAuthState();
 
     final authUri = Uri.parse('$_baseUrl/authorize').replace(
       queryParameters: {
@@ -172,6 +176,7 @@ class MicrosoftAuthService implements AuthService {
         'scope': [..._scopes, ...extraScopes].join(' '),
         'code_challenge': codeChallenge,
         'code_challenge_method': 'S256',
+        'state': state,
         'response_mode': 'query',
       },
     );
@@ -240,6 +245,12 @@ class MicrosoftAuthService implements AuthService {
     if (code == null) {
       throw const AuthException(message: 'No authorization code received');
     }
+
+    // Checked on every path. Neither the plugin's own loopback server
+    // (Windows/Linux) nor the `nightmail://` intercept nor the web popup does
+    // it for us, and the plugin's server resolves on the first request
+    // carrying a code just as ours used to.
+    verifyOAuthState(expected: state, redirect: uri);
 
     return _exchangeCodeForToken(code: code, codeVerifier: codeVerifier);
   }

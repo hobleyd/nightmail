@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/core/error/exceptions.dart';
 import 'package:nightmail/infrastructure/auth/auth_browser_launcher.dart';
 import 'package:nightmail/infrastructure/auth/loopback_auth_flow.dart';
+import 'package:nightmail/infrastructure/auth/oauth_state.dart';
 
 /// The loopback half of macOS Gmail sign-in. Everything asserted here is a
 /// property that fails silently in the real flow: a redirect resolved from the
@@ -19,6 +20,10 @@ void main() {
 
   /// A port nothing else is expected to be using; the real flow uses 34572.
   const port = 41599;
+
+  /// Stands in for the `state` the real flow mints per sign-in and carries in
+  /// the authorization URL.
+  const state = 'state-of-this-flow';
 
   Future<HttpClientResponse> get(String path) async {
     final client = HttpClient();
@@ -35,21 +40,27 @@ void main() {
     final result = flow.authenticate(
       authorizationUrl: Uri.parse('https://accounts.google.com/o/oauth2/v2/auth'),
       port: port,
+      expectedState: state,
     );
 
     await launcher.opened.future;
-    final response = await get('/?code=abc123&scope=email');
+    final response = await get('/?code=abc123&scope=email&state=$state');
     await response.drain<void>();
 
-    expect(await result, 'http://127.0.0.1:$port/?code=abc123&scope=email');
+    expect(
+      await result,
+      'http://127.0.0.1:$port/?code=abc123&scope=email&state=$state',
+    );
   });
 
   test('carries an error response back rather than hanging — the caller reads '
-      'error_description off it', () async {
+      'error_description off it, and it is let through without a state, since '
+      'state protects the code and an error has nothing to spend', () async {
     final flow = LoopbackAuthFlow(launcher: launcher);
     final result = flow.authenticate(
       authorizationUrl: Uri.parse('https://accounts.google.com/'),
       port: port,
+      expectedState: state,
     );
 
     await launcher.opened.future;
@@ -66,6 +77,7 @@ void main() {
     final result = flow.authenticate(
       authorizationUrl: Uri.parse('https://accounts.google.com/'),
       port: port,
+      expectedState: state,
     );
 
     await launcher.opened.future;
@@ -73,21 +85,80 @@ void main() {
     await ignored.drain<void>();
     expect(ignored.statusCode, HttpStatus.notFound);
 
-    final redirect = await get('/?code=second');
+    final redirect = await get('/?code=second&state=$state');
     await redirect.drain<void>();
 
     expect(await result, contains('code=second'));
   });
 
+  test('refuses a code that does not echo this flow\'s state — anything can '
+      'reach this port and present one, and PKCE alone would let it decide '
+      'which request the flow completes on', () async {
+    final flow = LoopbackAuthFlow(launcher: launcher);
+    final result = flow.authenticate(
+      authorizationUrl: Uri.parse('https://accounts.google.com/'),
+      port: port,
+      expectedState: state,
+    );
+    // The same message the services' own check reports, so a refused sign-in
+    // reads the same wherever it was caught.
+    final failure = expectLater(
+      result,
+      throwsA(
+        isA<AuthException>()
+            .having((e) => e.message, 'message', oauthStateMismatchMessage),
+      ),
+    );
+
+    await launcher.opened.future;
+    final response = await get('/?code=injected&state=somebody-else');
+    await response.drain<void>();
+
+    expect(response.statusCode, HttpStatus.badRequest);
+    // Fails rather than waiting the redirect out: a mismatch is an injected
+    // code or a bug here, and a five-minute silent hang describes neither.
+    await failure;
+  });
+
+  test('refuses a code carrying no state at all — absent is a failure, not a '
+      'check to skip', () async {
+    final flow = LoopbackAuthFlow(launcher: launcher);
+    final result = flow.authenticate(
+      authorizationUrl: Uri.parse('https://accounts.google.com/'),
+      port: port,
+      expectedState: state,
+    );
+    // The same message the services' own check reports, so a refused sign-in
+    // reads the same wherever it was caught.
+    final failure = expectLater(
+      result,
+      throwsA(
+        isA<AuthException>()
+            .having((e) => e.message, 'message', oauthStateMismatchMessage),
+      ),
+    );
+
+    await launcher.opened.future;
+    final response = await get('/?code=injected');
+    await response.drain<void>();
+
+    expect(response.statusCode, HttpStatus.badRequest);
+    await failure;
+  });
+
   test('opens the browser at the authorization URL it was given', () async {
     final flow = LoopbackAuthFlow(launcher: launcher);
     final authUrl = Uri.parse('https://accounts.google.com/o/oauth2/v2/auth?client_id=x');
-    final result = flow.authenticate(authorizationUrl: authUrl, port: port);
+    final result = flow.authenticate(
+      authorizationUrl: authUrl,
+      port: port,
+      expectedState: state,
+    );
 
     await launcher.opened.future;
     expect(launcher.urls.single, authUrl);
 
-    final response = await get('/?code=abc');
+    final response = await get('/?code=abc&state=$state');
     await response.drain<void>();
     await result;
     // Nothing brings the window back from Chrome on its own.
@@ -104,6 +175,7 @@ void main() {
       flow.authenticate(
         authorizationUrl: Uri.parse('https://accounts.google.com/'),
         port: port,
+        expectedState: state,
       ),
       throwsA(isA<AuthException>()),
     );
@@ -123,6 +195,7 @@ void main() {
       LoopbackAuthFlow(launcher: launcher).authenticate(
         authorizationUrl: Uri.parse('https://accounts.google.com/'),
         port: port,
+        expectedState: state,
       ),
       throwsA(isA<AuthException>()),
     );

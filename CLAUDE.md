@@ -66,6 +66,26 @@ Use an array to retain all channel instances:
 private var allChannels: [FlutterMethodChannel] = []
 ```
 
+**A relay channel needs its handler on the main window too, not just the
+sub-windows.** `calendar_refresh`/`drafts_refresh` broadcast one window's change
+to every other engine, and the main window was given a handler-*less* channel on
+the assumption that it only ever receives. But the **calendar pane lives in the
+main window**, so cancelling or rescheduling there invokes `notifyEventSaved` on
+that messenger: `MissingPluginException`, and the calendar sub-window was never
+told. `drafts_refresh` got the same treatment for symmetry — compose is a
+sub-window on desktop, so that invoke rarely comes from main, but a handler-less
+relay channel is the bug either way.
+
+The broadcast deliberately includes the originating channel (Windows has always
+done this). The extra refetch is wasted work, not a loop — `eventSaved` triggers
+`CalendarWeekNavigated`, which fetches and emits without notifying — and
+excluding the origin would be a third behaviour to keep in step with the other
+platforms.
+
+The Dart callers are best-effort regardless: only macOS and Windows implement
+these relays at all, so Linux, Android and iOS raise `MissingPluginException`
+every time as a matter of course.
+
 ## Sub-Windows and FFI Plugins
 
 **Critical rule: an FFI plugin may only be initialized in the main window.**
@@ -302,15 +322,65 @@ Four things here are load-bearing:
   "address already in use", and nothing brings the window back from Chrome
   otherwise — the plugin path got that from `WindowToFront`.
 
-Requests on that port without a `code` or `error` parameter are answered 404 and
-ignored: the browser asks for `/favicon.ico` off the back of the landing page,
-and completing on the first request regardless resolves the flow with a URL
-carrying no authorization code.
+Which request on that port is the redirect is decided twice over. A request
+carrying neither `code` nor `error` is answered 404 and ignored: the browser
+asks for `/favicon.ico` off the back of the landing page, and completing on the
+first request regardless resolves the flow with a URL carrying no authorization
+code. A request carrying a `code` must also echo the `state` this flow minted,
+or it is answered 400 and the sign-in fails — see below.
 
 **Microsoft, Windows, Linux and Android are untouched.** Azure accepts the
 `nightmail://` custom scheme for public clients, so macOS Microsoft sign-in still
 goes through `ASWebAuthenticationSession`; Windows and Linux still use the
 plugin's own loopback server and the default browser.
+
+## Both OAuth Flows Send a `state`, and Refuse a Redirect Without It
+
+`state` (RFC 6749 §10.12) is minted per sign-in in `signIn()`, carried in the
+authorization URL and checked on the way back — `oauth_state.dart` holds both
+halves, and both `GmailAuthService` and `MicrosoftAuthService` use it.
+
+PKCE already stops a code somebody else injected from being *exchanged*: the
+exchange carries this client's verifier and an injected code was issued against
+a different challenge. What `state` adds is the step before that — a redirect
+that did not come from the authorization URL this client opened is refused
+rather than acted on, and in the loopback flow it is what decides which request
+on the port *is* the redirect. Before it, anything that could reach
+127.0.0.1:34572 during the window could resolve the flow with its own code.
+
+Four things here are load-bearing:
+
+- **A missing `state` is a failure, not a skipped check.** That is the whole of
+  the bypass, and it is also what keeps the request side honest: leave `state`
+  out of an authorization URL and the provider echoes nothing back, so the very
+  first sign-in fails loudly rather than quietly losing the defence.
+- **`LoopbackAuthFlow.authenticate` takes `expectedState` as a required named
+  parameter.** A nullable one reinstates "absent means skip the check" at the
+  call site.
+- **A mismatch fails immediately rather than waiting for the real redirect.**
+  Ignoring the request and carrying on would turn any genuine mismatch — a bug
+  in this file, a provider quirk — into a five-minute silent hang, which is the
+  failure mode this whole section otherwise exists to avoid. The attack traded
+  away is somebody who can already reach the port cancelling a sign-in, which
+  gains them nothing.
+- **An `error` response is let through unchecked.** `state` protects the code;
+  an error carries nothing to spend, and requiring one there would turn a
+  legible `access_denied` into a mismatch message.
+
+`signIn()` checks it on *every* path, not just the loopback one: neither
+`flutter_web_auth_2`'s own loopback server (Windows/Linux), nor the
+`nightmail://` intercept, nor the web popup does it for us — the plugin's
+server resolves on the first request carrying a code, exactly as ours used to.
+The value is a local in `signIn()` rather than a field: nothing serialises
+sign-ins, and a redirect may only ever be checked against the state the flow it
+belongs to sent. It is never derived from the PKCE verifier, which is the secret
+half of PKCE and would end up in the URL and the browser's history.
+
+On web the redirect lands on `callback.html`, which posts `window.location.href`
+verbatim over the `BroadcastChannel`, so `state` arrives with the code — both
+providers answer with a query (`response_mode: query` is explicit for Microsoft,
+and the default for Google's `response_type=code`), and nothing in that path
+rewrites the URL.
 
 ## AI Subsystem
 

@@ -428,6 +428,39 @@ message's own `Content-Type` header alongside the main fetch
 (`declaresPlainTextBody`); a plain-text message with an attachment is
 `multipart/mixed` and still renders as HTML.
 
+## The Reading Pane's CSP Goes First, or It Governs Nothing
+
+`script-src 'none'` is the whole reason a mail body can be handed to a webview
+that has script enabled (which the desktop ones do — mobile disables it
+outright). **A `<meta>` policy only governs what is parsed after it**, so it was
+spliced in before `</head>`, behind whatever the sender wrote — and a `<script>`
+in the sender's own head had already run by then, with the page's bridge to the
+host in reach.
+
+`installContentSecurityPolicy` puts it at the very start of the document
+instead. Three things about that position:
+
+- **It cannot simply follow the literal `<head>`.** A `<script>` written
+  *before* `<head>` is malformed and the parser hoists it into an implicit head,
+  ahead of a policy placed inside the sender's head tag. Starting the document
+  is the only position that covers both.
+- **Behind a leading doctype, never in front of it.** Anything before the
+  doctype makes the parser ignore it and lay the document out in quirks mode,
+  which moves the tables in most of the mail people read.
+- **Ahead of `<html>` is fine** — the parser hoists a leading meta into the
+  implicit head, the same property `forceUtf8Charset` already relies on, and the
+  charset prescan reads bytes rather than the tree.
+
+**The injected styles stay at the end of the head.** They are `!important`
+throughout, and at equal specificity the later `!important` wins, so hoisting
+them with the policy would hand a sender's `img { width: 600px !important }` the
+argument over the `max-width` clamp and the blocked-image chip. That is why the
+policy is a separate splice rather than the first line of `injected`.
+
+Host `evaluateJavaScript` is not subject to the page's policy, in either desktop
+engine — which is how this is testable at all, and worth knowing before treating
+a CSP as a limit on what the app itself can do to the document.
+
 ## A Blocked Remote Image Leaves a Chip, Not a Hole
 
 `blockExternalImages` renames `src` to `data-blocked-src` and substitutes a

@@ -75,6 +75,47 @@ String forceUtf8Charset(String html) {
   return stripped.contains('</head>') ? '$_utf8Meta$stripped' : stripped;
 }
 
+const _cspMeta =
+    '<meta http-equiv="Content-Security-Policy" '
+    'content="script-src \'none\'; object-src \'none\';">';
+
+final _leadingDoctype =
+    RegExp(r'^\s*<!doctype\b[^>]*>', caseSensitive: false);
+
+/// Puts the reading pane's Content-Security-Policy ahead of anything the
+/// sender wrote.
+///
+/// **A meta policy only governs what is parsed after it.** Spliced in before
+/// `</head>` — alongside the injected styles, where it used to be — it arrives
+/// after the sender's own head, so a `<script>` in there had already run: on
+/// desktop, where the webview has script enabled, with the page's bridge to
+/// the host in reach. So it goes at the very start of the document instead,
+/// which is the only position that covers a script the sender put *before*
+/// `<head>` as well: that is malformed, the parser hoists it into an implicit
+/// head, and a policy sitting after the literal `<head>` would lose to it.
+///
+/// Two things about the position:
+///
+/// * **Behind a leading doctype, never in front of it.** Anything before the
+///   doctype makes the parser ignore it and render the document in quirks
+///   mode, which changes how a mail body's tables lay out — a rendering
+///   regression across most of the mail people read, in exchange for nothing.
+/// * **Ahead of `<html>` is fine.** The parser hoists a leading meta into an
+///   implicit head, and the sender's own `<head>` start tag is then ignored
+///   while its contents still land there. Same property [forceUtf8Charset]
+///   relies on.
+///
+/// The injected *styles* deliberately stay at the end of the head. They are
+/// `!important` throughout, and at equal specificity the later `!important`
+/// declaration wins — hoisting them in front of the sender's stylesheet would
+/// hand a sender's `img { width: 600px !important }` the argument over the
+/// `max-width` clamp — and over the held-back image's own chip styling.
+@visibleForTesting
+String installContentSecurityPolicy(String html) {
+  final at = _leadingDoctype.firstMatch(html)?.end ?? 0;
+  return html.replaceRange(at, at, _cspMeta);
+}
+
 /// An image this small in either declared dimension is an open-tracking pixel
 /// or a layout spacer rather than content, so it is held back without leaving
 /// a placeholder — a mailing-list message carries several and each one would
@@ -461,7 +502,6 @@ class _HtmlBodyViewState extends State<HtmlBodyView> {
     }
 
     const injected = '''
-<meta http-equiv="Content-Security-Policy" content="script-src 'none'; object-src 'none';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
 <style>
 * { box-sizing: border-box !important; }
@@ -512,6 +552,11 @@ table { max-width: 100% !important; }
       resolved =
           '<html><head>$_utf8Meta$injected</head><body>$resolved</body></html>';
     }
+
+    // Last, so it covers both branches — and, in the fragment branch, so it
+    // lands ahead of the `<html>` the fragment was wrapped in rather than
+    // inside the head that was built for it.
+    resolved = installContentSecurityPolicy(resolved);
 
     return (resolved, hasBlockedImages);
   }

@@ -29,11 +29,13 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - The provider's own flag (Graph flag, Gmail star, IMAP `\Flagged`) shown as a read-only icon on the message list
 - `mailto:` links open the compose window instead of the OS's default mail client
 - SharePoint, OneDrive and Google Drive document links open as a preview in the reading pane, like an attachment — from any mailbox, whichever account holds the file (file access is asked for once, the first time you open one)
+- A previewed SharePoint, OneDrive or Google Drive document keeps a link to the file itself — tap the preview bar's title or the open-in-new icon to open it in the browser
 - The compose window reopens at the size and position it was last closed at
 
 ### Folders
 - Full folder hierarchy with unread counts
 - Create folders via right-click context menu
+- A new folder appears the moment the provider accepts it, and a create that fails or is attempted offline keeps the typed name on screen with the reason and a retry
 - Empty folder (with permanent delete option)
 - Incremental sync with delta tokens (Microsoft 365)
 - Incremental sync for Gmail (history API) and IMAP (UID-based) accounts too

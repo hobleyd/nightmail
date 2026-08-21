@@ -8,8 +8,34 @@
       "title": "New features",
       "items": [
         {
+          "body": "open a previewed cloud document in the browser",
+          "title": "reading"
+        },
+        {
+          "body": "show a new folder at once, reconcile after",
+          "title": "folders"
+        },
+        {
           "body": "preview SharePoint/OneDrive and Drive links inline",
           "title": "reading"
+        }
+      ]
+    },
+    {
+      "type": "fixes",
+      "title": "Fixes",
+      "items": [
+        {
+          "body": "install the body CSP ahead of the sender's own head",
+          "title": "reading"
+        },
+        {
+          "body": "sanitise a quoted body before it reaches the editor",
+          "title": "compose"
+        },
+        {
+          "body": "a dragged folder no longer vanishes into its new parent",
+          "title": "folders"
         }
       ]
     }

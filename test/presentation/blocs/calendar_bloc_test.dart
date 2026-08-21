@@ -219,6 +219,29 @@ void main() {
       verify(mockGetCalendarEvents(any)).called(1);
     });
 
+    test('cancel still reloads the week when no window relay exists', () async {
+      // Linux, Android and iOS have no native calendar_refresh handler at all,
+      // so notifyEventSaved is a MissingPluginException there. Clearing the
+      // mock reproduces that. An uncaught throw would skip the reload.
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('au.com.sharpblue.nightmail/calendar_refresh'),
+        null,
+      );
+      when(mockCancelCalendarEvent(any))
+          .thenAnswer((_) async => Right(null));
+      when(mockGetCalendarEvents(any))
+          .thenAnswer((_) async => Right(_tEvents));
+
+      final bloc = makeBloc();
+      bloc.add(const CalendarEventCancelRequested(eventId: 'e1'));
+      await bloc.stream
+          .firstWhere((s) => s is CalendarLoaded || s is CalendarError);
+      await bloc.close();
+
+      verify(mockGetCalendarEvents(any)).called(1);
+    });
+
     test('decline reloads week on success', () async {
       when(mockDeclineCalendarEvent(any))
           .thenAnswer((_) async => Right(null));

@@ -86,21 +86,13 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     // foreground and tap callbacks.
     UNUserNotificationCenter.current().delegate = self
 
-    // Register the main window's calendar refresh channel for broadcasting eventSaved into Flutter.
-    let mainCalendarChannel = FlutterMethodChannel(
-      name: "au.com.sharpblue.nightmail/calendar_refresh",
-      binaryMessenger: flutterViewController.engine.binaryMessenger
-    )
-    calendarNotifyChannels.append(mainCalendarChannel)
-    allChannels.append(mainCalendarChannel)
-
-    // Register the main window's drafts refresh channel for broadcasting draftChanged into Flutter.
-    let mainDraftsChannel = FlutterMethodChannel(
-      name: "au.com.sharpblue.nightmail/drafts_refresh",
-      binaryMessenger: flutterViewController.engine.binaryMessenger
-    )
-    draftsRefreshChannels.append(mainDraftsChannel)
-    allChannels.append(mainDraftsChannel)
+    // The main window gets the same relay as every secondary window, not just a
+    // channel to broadcast *into*: the calendar pane lives in this window, so a
+    // cancel or reschedule made here invokes notifyEventSaved on this
+    // messenger. A handler-less channel answers that with
+    // MissingPluginException and the sub-windows are never told.
+    registerCalendarRefreshRelay(messenger: flutterViewController.engine.binaryMessenger)
+    registerDraftsRefreshRelay(messenger: flutterViewController.engine.binaryMessenger)
 
     registerWindowUtilsChannel(messenger: flutterViewController.engine.binaryMessenger) { [weak self] in self }
     registerBrowserLauncherChannel(messenger: flutterViewController.engine.binaryMessenger)

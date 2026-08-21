@@ -332,7 +332,14 @@ class _EventEditWindowPageState extends State<_EventEditWindowPage>
         body: BlocListener<EventEditBloc, EventEditState>(
           listener: (context, state) async {
             if (state is EventEditSaved) {
-              await _kCalendarRefreshChannel.invokeMethod('notifyEventSaved');
+              // Best-effort — no relay exists on Linux, Android or iOS. An
+              // uncaught MissingPluginException here would skip _close() and
+              // with it the geometry save below.
+              try {
+                await _kCalendarRefreshChannel.invokeMethod('notifyEventSaved');
+              } catch (e) {
+                debugPrint('EventEditWindow notifyEventSaved failed: $e');
+              }
               // Awaited so the window's final geometry is on disk before the
               // close takes this engine down with it.
               await _close();

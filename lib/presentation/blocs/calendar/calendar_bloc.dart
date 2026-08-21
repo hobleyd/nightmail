@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -65,8 +66,19 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
   static const _calendarRefreshChannel =
       MethodChannel('au.com.sharpblue.nightmail/calendar_refresh');
 
+  /// Best-effort: asks every other window to re-fetch the week it is showing.
+  ///
+  /// Deliberately swallows failures. Only macOS and Windows implement the
+  /// relay — Linux, Android and iOS have no native handler at all, so this is
+  /// a `MissingPluginException` there as a matter of course. The window that
+  /// made the change refreshes itself either way, so what is lost is another
+  /// window's immediacy, not correctness.
   Future<void> _notifyOtherWindows() async {
-    await _calendarRefreshChannel.invokeMethod('notifyEventSaved');
+    try {
+      await _calendarRefreshChannel.invokeMethod('notifyEventSaved');
+    } catch (e) {
+      debugPrint('CalendarBloc._notifyOtherWindows failed: $e');
+    }
   }
 
   Future<void> _onLoadRequested(

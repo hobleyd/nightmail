@@ -2,5 +2,16 @@
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
   "version": "1.22.1",
-  "sections": []
+  "sections": [
+    {
+      "type": "fixes",
+      "title": "Fixes",
+      "items": [
+        {
+          "body": "move a thread out of a folder none of its messages is in",
+          "title": "gmail"
+        }
+      ]
+    }
+  ]
 }

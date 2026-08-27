@@ -2,6 +2,23 @@ import 'package:equatable/equatable.dart';
 
 import '../../../domain/entities/email.dart';
 
+/// A one-off failure to report over the list that is still on screen.
+///
+/// Not [EmailListError]: that replaces the whole list, which is right for a load
+/// that failed and wrong for an action that did while the folder is showing
+/// perfectly well. [sequence] makes two identical failures in a row two events —
+/// without it the second emit compares equal on [props] and is dropped, and the
+/// user pressing the same broken button twice sees nothing the second time.
+class EmailListActionFailure extends Equatable {
+  const EmailListActionFailure({required this.message, required this.sequence});
+
+  final String message;
+  final int sequence;
+
+  @override
+  List<Object?> get props => [message, sequence];
+}
+
 sealed class EmailListState extends Equatable {
   const EmailListState();
 
@@ -32,6 +49,7 @@ final class EmailListLoaded extends EmailListState {
     this.activeSearchQuery,
     this.focusedThreadId,
     this.focusedThreadSubject,
+    this.actionFailure,
   });
 
   final List<Email> emails;
@@ -66,6 +84,10 @@ final class EmailListLoaded extends EmailListState {
   /// Subject of the focused thread, for the header banner.
   final String? focusedThreadSubject;
 
+  /// Set when an action taken on this list failed, for the panel to report.
+  /// Consumed by a listener rather than drawn, so nothing clears it.
+  final EmailListActionFailure? actionFailure;
+
   /// True when [emails] is something other than the current folder's listing,
   /// so handlers that repaint from the folder know to stand down.
   bool get isShowingFolder => activeSearchQuery == null && focusedThreadId == null;
@@ -85,6 +107,7 @@ final class EmailListLoaded extends EmailListState {
     Object? activeSearchQuery = _unset,
     Object? focusedThreadId = _unset,
     Object? focusedThreadSubject = _unset,
+    Object? actionFailure = _unset,
   }) {
     return EmailListLoaded(
       emails: emails ?? this.emails,
@@ -106,6 +129,9 @@ final class EmailListLoaded extends EmailListState {
       focusedThreadSubject: identical(focusedThreadSubject, _unset)
           ? this.focusedThreadSubject
           : focusedThreadSubject as String?,
+      actionFailure: identical(actionFailure, _unset)
+          ? this.actionFailure
+          : actionFailure as EmailListActionFailure?,
     );
   }
 
@@ -124,6 +150,7 @@ final class EmailListLoaded extends EmailListState {
         activeSearchQuery,
         focusedThreadId,
         focusedThreadSubject,
+        actionFailure,
       ];
 }
 

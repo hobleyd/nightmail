@@ -490,6 +490,66 @@ than 25; Gmail has no multi-thread get, so it is bounded to 8 in flight instead.
 25 at once is enough for either provider to throttle, and a 429 buys a second or
 more of `RetryInterceptor` backoff.
 
+## A Gmail Thread Can Be In a Folder When None of Its Messages Is
+
+A Gmail folder listing is `GET /users/me/threads?labelIds=<folder>` — it asks
+for **threads** the label applies to and then shows every message of each one.
+So a thread can sit in the Inbox with not one of its messages carrying `INBOX`.
+Real mailboxes reach that state: a move that reached some messages and not
+others, a filter, a label edit from another client.
+
+Every folder-scoped action is per *message* (`Email.isInFolder`, off the raw
+label list the parser stamps into `folderIds`). In that state none of them
+qualifies, so `_onEmailsMoved` used to hit `if (idsToMove.isEmpty) return;` —
+**no request, no error, no change on screen**, and the thread back on the next
+listing. Pressing Move did nothing, forever, and looked like nothing had been
+pressed.
+
+`ConversationFolderDatasource.removeConversationFromFolder` is the fallback:
+`threads/{id}/modify`, which writes the *conversation's* own label state — the
+thing the listing reads and the thing a loop over `messages/{id}/modify` cannot
+touch, since each of those would be a no-op here.
+
+Four things are load-bearing:
+
+- **Removal only, never an add.** The thread endpoint reaches the copies in
+  Sent, and dropping a destination label on those is exactly what
+  `Email.isMovableFrom`'s Sent guard exists to prevent. So the fallback cannot
+  *file* a thread, only take it out of here — `destinationFolderId` is not
+  honoured. In practice a thread that gets stuck like this has usually been
+  moved already and the labels are right; the listing is all that is wrong.
+- **`UnsupportedFailure` is not a failure to report.** Graph and IMAP file a
+  message in exactly one folder and have no thread-level membership, so there
+  the empty `idsToMove` really does mean "this selection is other-folder
+  context" and the old silent return is correct. A distinct failure type is what
+  lets the bloc tell that apart from a move that genuinely broke.
+- **Network-first, deliberately not in the outbox.** Every pending op is keyed by
+  *message* id, and a Gmail thread id is routinely also the id of the thread's
+  first message (`19f8c30ceaff85df` is both) — a queued op here would be in reach
+  of the drain's id-remapping for that message. Offline it fails and says so,
+  which is honest: there is nothing about a repaired thread to show
+  optimistically.
+- **It acts before touching the list**, unlike the per-message path either side
+  of it. There is no optimistic removal to make, and pulling rows out only to
+  put them back on the `UnsupportedFailure` every non-Gmail account returns would
+  flicker the list on the common case.
+
+**A drag has to be thread-scoped for any of this to be reached.** The only
+thing that raises `EmailListEmailsMoved` is the folder panel's drop target, and
+it passes the `conversationId` the dragged row carried. A conversation header
+always has one. A *top-level* single row is a one-message thread and now carries
+one too — but a **child** row inside an expanded thread deliberately does not:
+it is an individual message, and dragging the thread's copy in Sent out of the
+Inbox has to stay the no-op it is rather than filing the whole thread away. A
+multi-select drag drops the `conversationId` for the same reason — the user
+named specific messages.
+
+`EmailListActionFailure` carries a `sequence` because of `props`: without it the
+same failure twice in a row compares equal, the second emit is dropped, and a
+user pressing the same broken button twice is told once. Same trap as
+`MailPollerState`. It is a snack bar rather than `EmailListError` — the list
+itself is fine, and replacing it would be a worse lie than the silence.
+
 ## Graph Never Says Whether a Body Was Plain Text
 
 `body.contentType` reports the format Graph *rendered*, not the one the sender

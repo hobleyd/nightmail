@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../core/error/failures.dart';
 import '../../../core/utils/stale_data_retry.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/usecases/cache_emails.dart';
@@ -20,6 +21,7 @@ import '../../../domain/usecases/get_cached_emails.dart';
 import '../../../domain/usecases/get_emails.dart';
 import '../../../domain/usecases/mark_email_as_read.dart';
 import '../../../domain/usecases/move_email.dart';
+import '../../../domain/usecases/remove_conversation_from_folder.dart';
 import '../../../domain/usecases/record_known_senders.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
 import '../../../infrastructure/sync/outbox_drain_service.dart';
@@ -38,6 +40,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     required ForgetCachedEmails forgetCachedEmails,
     required MarkEmailAsRead markEmailAsRead,
     required MoveEmail moveEmail,
+    required RemoveConversationFromFolder removeConversationFromFolder,
     required ReportJunk reportJunk,
     required DeleteEmail deleteEmail,
     required EmptyFolder emptyFolder,
@@ -58,6 +61,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         _forgetCachedEmails = forgetCachedEmails,
         _markEmailAsRead = markEmailAsRead,
         _moveEmail = moveEmail,
+        _removeConversationFromFolder = removeConversationFromFolder,
         _reportJunk = reportJunk,
         _deleteEmail = deleteEmail,
         _emptyFolder = emptyFolder,
@@ -98,6 +102,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   final ForgetCachedEmails _forgetCachedEmails;
   final MarkEmailAsRead _markEmailAsRead;
   final MoveEmail _moveEmail;
+  final RemoveConversationFromFolder _removeConversationFromFolder;
   final ReportJunk _reportJunk;
   final DeleteEmail _deleteEmail;
   final EmptyFolder _emptyFolder;
@@ -111,6 +116,10 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   final SpamDbSyncService _spamDbSyncService;
   final OutboxDrainService _outboxDrainService;
   final List<Duration> _staleRetryDelays;
+
+  /// Makes each reported failure a distinct state — see
+  /// [EmailListActionFailure.sequence].
+  int _actionFailureSequence = 0;
 
   /// Tracks the server-side skip offset for the current folder independently
   /// of the in-memory email count, which may be inflated by cross-folder
@@ -553,10 +562,30 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         .where((id) => byId[id]?.isMovableFrom(folderId) ?? true)
         .toList();
 
-    // Nothing of this selection is in this folder: it is on screen purely as
-    // other-folder context. Leave both the server and the list alone rather
-    // than hiding messages that no move would have relocated.
-    if (idsToMove.isEmpty) return;
+    // Nothing of this selection is in this folder. Two different situations
+    // arrive here, and only one of them is "leave it alone".
+    //
+    // The benign one: the selection is on screen purely as other-folder
+    // context — a thread's replies already filed elsewhere, its copies in
+    // Sent — and no move would have relocated any of it. Hiding those would be
+    // a lie.
+    //
+    // The other one: the *thread* is in this folder while none of its messages
+    // is. Only Gmail can be in that state, because only Gmail lists a folder by
+    // thread (`threads?labelIds=…`) and then shows every message of it — so a
+    // thread stays listed in the Inbox with not one of its messages carrying
+    // `INBOX`. A real mailbox gets there by a move that reached some messages
+    // and not others, a filter, or a label edit from another client. Left as an
+    // early return, this is the folder-scoped move quietly doing nothing,
+    // forever: the user presses Move, no request is sent, no error is shown, and
+    // the thread is back on the next listing. Drop to the thread-level removal,
+    // which is the one operation that can take it out.
+    if (idsToMove.isEmpty) {
+      if (event.conversationId != null) {
+        await _removeConversationFromThisFolder(event, emit);
+      }
+      return;
+    }
 
     // When a conversationId is present, remove the entire thread from view
     // (including the cross-folder rows just spared above). With its in-folder
@@ -611,6 +640,78 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         }
       }
     }
+  }
+
+  /// Takes a conversation out of the folder being viewed when no *message* of
+  /// it is in that folder — the Gmail thread-listing case described at the call
+  /// site.
+  ///
+  /// **This can only remove, never file.** The thread's messages keep whatever
+  /// labels they already carry, so [EmailListEmailsMoved.destinationFolderId] is
+  /// not honoured: the messages are not in the folder being left, and relabelling
+  /// mail sitting in some *other* folder is not what "move this out of here"
+  /// asked for. In practice the thread that reaches this state has usually been
+  /// moved before — the labels are already right and the stuck listing is all
+  /// that is wrong. See [ConversationFolderDatasource].
+  ///
+  /// Unlike the per-message path above this acts *before* touching the list.
+  /// There is no optimistic removal to make: it is a rare corrective action, and
+  /// pulling rows out only to put them back on the [UnsupportedFailure] that
+  /// every non-Gmail account returns would flicker the list on the common case.
+  Future<void> _removeConversationFromThisFolder(
+    EmailListEmailsMoved event,
+    Emitter<EmailListState> emit,
+  ) async {
+    final current = state;
+    if (current is! EmailListLoaded) return;
+    final folderId = current.currentFolderId;
+    final conversationId = event.conversationId;
+    if (folderId == null || conversationId == null) return;
+
+    final result = await _removeConversationFromFolder(
+      RemoveConversationFromFolderParams(
+        conversationId: conversationId,
+        folderId: folderId,
+      ),
+    );
+
+    final after = state;
+    if (after is! EmailListLoaded) return;
+
+    result.fold(
+      (failure) {
+        // Graph and IMAP file a message in exactly one folder, so there is no
+        // thread-level membership for this to have repaired and nothing went
+        // wrong — the selection really was other-folder context. Stay silent,
+        // which is the behaviour this whole branch replaced.
+        if (failure is UnsupportedFailure) return;
+        emit(after.copyWith(
+          actionFailure: EmailListActionFailure(
+            message: 'Could not move this conversation out of '
+                '${after.currentFolderName ?? folderId}: ${failure.message}',
+            sequence: ++_actionFailureSequence,
+          ),
+        ));
+      },
+      (_) {
+        final removed = after.emails
+            .where((e) => e.conversationId == conversationId)
+            .toList();
+        emit(after.copyWith(
+          emails: after.emails
+              .where((e) => e.conversationId != conversationId)
+              .toList(),
+        ));
+        // Nothing above went through moveEmail, so no row has been un-cached —
+        // all of them are "spared" in the sense [_forgetSparedRows] means.
+        // That drops each message's rows under *every* folder, not just this
+        // one, which is deliberate and the same reach the spared-rows path
+        // already has: the labels these messages do carry are re-listed by the
+        // next fetch of those folders, and leaving this folder's rows behind
+        // would put the thread straight back on the next repaint from cache.
+        unawaited(_forgetSparedRows(removed, const {}));
+      },
+    );
   }
 
   /// Drops the cached rows of messages a folder-scoped move or delete removed

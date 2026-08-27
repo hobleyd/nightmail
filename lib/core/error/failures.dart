@@ -28,6 +28,13 @@ final class CacheFailure extends Failure {
   const CacheFailure({required super.message});
 }
 
+/// The active provider has no such operation — not a failed attempt, but one
+/// that was never made. Distinct from [ServerFailure] so a caller can tell "this
+/// went wrong" (report it) from "this does not apply here" (carry on quietly).
+final class UnsupportedFailure extends Failure {
+  const UnsupportedFailure({required super.message});
+}
+
 /// Base type for failures originating from the AI subsystem.
 sealed class AiFailure extends Failure {
   const AiFailure({required super.message});

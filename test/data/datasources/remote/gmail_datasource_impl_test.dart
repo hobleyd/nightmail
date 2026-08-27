@@ -402,6 +402,53 @@ void main() {
       expect(removed, contains('INBOX'));
     });
 
+    // A Gmail folder listing is `threads?labelIds=…`, so a thread stays listed
+    // in the Inbox with not one of its messages carrying INBOX. The per-message
+    // modify has nothing to act on there; the thread endpoint does.
+    test('removeConversationFromFolder posts to the thread modify endpoint',
+        () async {
+      stubModify();
+
+      await datasource.removeConversationFromFolder('thread1', 'INBOX');
+
+      final captured = verify(mockDio.post<void>(
+        '/users/me/threads/thread1/modify',
+        data: captureAnyNamed('data'),
+      )).captured.single as Map<String, dynamic>;
+
+      expect(captured['removeLabelIds'], ['INBOX']);
+    });
+
+    // Removal only. This reaches the thread's copies in Sent, and adding a
+    // destination label to those is exactly what the folder-scoped move's Sent
+    // guard exists to prevent — it would file the record of what was sent into
+    // the folder the user was tidying.
+    test('removeConversationFromFolder never adds a label', () async {
+      stubModify();
+
+      await datasource.removeConversationFromFolder('thread1', 'INBOX');
+
+      final captured = verify(mockDio.post<void>(
+        any,
+        data: captureAnyNamed('data'),
+      )).captured.single as Map<String, dynamic>;
+
+      expect(captured.containsKey('addLabelIds'), isFalse);
+    });
+
+    // It reads no metadata either: there is nothing to diff, and the whole
+    // point is that the message-level labels do not mention this folder.
+    test('removeConversationFromFolder fetches no metadata first', () async {
+      stubModify();
+
+      await datasource.removeConversationFromFolder('thread1', 'INBOX');
+
+      verifyNever(mockDio.get<Map<String, dynamic>>(
+        any,
+        queryParameters: anyNamed('queryParameters'),
+      ));
+    });
+
     test('fetches message metadata before posting modify', () async {
       stubMeta(['INBOX']);
       stubModify();

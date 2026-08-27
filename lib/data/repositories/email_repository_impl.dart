@@ -18,6 +18,7 @@ import '../../infrastructure/sync/removal_tombstone_store.dart';
 import '../datasources/local/email_local_datasource.dart';
 import '../datasources/local/folder_local_datasource.dart';
 import '../datasources/local/pending_operations_datasource.dart';
+import '../datasources/remote/conversation_folder_datasource.dart';
 import '../datasources/remote/email_remote_datasource.dart';
 
 class EmailRepositoryImpl implements EmailRepository {
@@ -513,6 +514,26 @@ class EmailRepositoryImpl implements EmailRepository {
         emailId: id,
       );
       unawaited(_outboxDrainService.drainForAccount(accountId));
+      return unit;
+    });
+  }
+
+  @override
+  Future<Either<Failure, Unit>> removeConversationFromFolder({
+    required String conversationId,
+    required String folderId,
+  }) async {
+    final datasource = _accountManager.emailDatasource;
+    if (datasource is! ConversationFolderDatasource) {
+      return const Left(UnsupportedFailure(
+        message: 'This account has no thread-level folder membership.',
+      ));
+    }
+    // Bound outside the closure: a captured local loses its promotion inside
+    // one, so the call would be against EmailRemoteDatasource again.
+    final capable = datasource as ConversationFolderDatasource;
+    return _execute(() async {
+      await capable.removeConversationFromFolder(conversationId, folderId);
       return unit;
     });
   }

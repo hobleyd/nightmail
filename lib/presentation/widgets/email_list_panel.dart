@@ -30,6 +30,7 @@ import '../blocs/mail_poller/mail_poller_cubit.dart';
 import '../blocs/tasks/tasks_bloc.dart';
 import '../blocs/tasks/tasks_event.dart';
 import '../blocs/tasks/tasks_state.dart';
+import 'error_snack_bar.dart';
 import 'email_date_formatter.dart';
 import 'email_list_conversations.dart';
 import 'email_list_item.dart';
@@ -467,14 +468,36 @@ class _EmailListPanelState extends State<EmailListPanel> {
     final c = context.colors;
     return ColoredBox(
       color: c.surfaceBase,
-      child: BlocListener<EmailListBloc, EmailListState>(
-        listenWhen: (prev, curr) {
-          // Clear selection when the folder changes
-          final prevId = prev is EmailListLoaded ? prev.currentFolderId : null;
-          final currId = curr is EmailListLoaded ? curr.currentFolderId : null;
-          return currId != null && prevId != currId;
-        },
-        listener: (context, state) => _clearSelection(),
+      child: MultiBlocListener(
+        listeners: [
+          BlocListener<EmailListBloc, EmailListState>(
+            listenWhen: (prev, curr) {
+              // Clear selection when the folder changes
+              final prevId =
+                  prev is EmailListLoaded ? prev.currentFolderId : null;
+              final currId =
+                  curr is EmailListLoaded ? curr.currentFolderId : null;
+              return currId != null && prevId != currId;
+            },
+            listener: (context, state) => _clearSelection(),
+          ),
+          // An action that failed while the folder is still on screen — the
+          // list itself is fine, so this is a snack bar rather than
+          // [EmailListError]. Compared on the whole value, not just the text:
+          // the sequence is what makes the same failure twice in a row two
+          // reports (see [EmailListActionFailure]).
+          BlocListener<EmailListBloc, EmailListState>(
+            listenWhen: (prev, curr) {
+              final p = prev is EmailListLoaded ? prev.actionFailure : null;
+              final c = curr is EmailListLoaded ? curr.actionFailure : null;
+              return c != null && c != p;
+            },
+            listener: (context, state) {
+              final failure = (state as EmailListLoaded).actionFailure!;
+              showErrorSnackBar(context, failure.message);
+            },
+          ),
+        ],
         child: Column(
           children: [
             BlocBuilder<EmailListBloc, EmailListState>(
@@ -1132,6 +1155,15 @@ class _EmailListView extends StatelessWidget {
             return _DraggableEmailItem(
               key: ValueKey('drag_${email.id}'),
               emailIds: [email.id],
+              // A *top-level* single row is a one-message thread, so the drag is
+              // thread-scoped like the conversation header's — which is what
+              // lets a move fall back to the thread-level removal when the
+              // message turns out not to be in this folder (see
+              // [EmailListBloc._onEmailsMoved]). A **child** row must not carry
+              // one: it is an individual message inside an expanded thread, and
+              // dragging the thread's copy in Sent out of the Inbox has to stay
+              // the no-op it is rather than filing the whole thread away.
+              conversationId: isChild ? null : email.conversationId,
               selectedEmailIds: selectedEmailIds,
               dragLabel: email.subject.isNotEmpty ? email.subject : email.from.displayName,
               child: child,

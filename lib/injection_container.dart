@@ -113,6 +113,7 @@ import 'domain/usecases/forward_meeting_from_email.dart';
 import 'domain/usecases/propose_new_time_from_email.dart';
 import 'domain/usecases/cancel_meeting_from_email.dart';
 import 'domain/usecases/accept_proposed_time_from_email.dart';
+import 'domain/usecases/remove_conversation_from_folder.dart';
 import 'domain/usecases/remove_cancelled_meeting.dart';
 import 'domain/usecases/respond_to_meeting_invite.dart';
 import 'domain/usecases/update_calendar_event.dart';
@@ -372,6 +373,8 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => SaveServerDraft(sl<EmailRepository>()));
   sl.registerLazySingleton(() => DeleteServerDraft(sl<EmailRepository>()));
   sl.registerLazySingleton(() => MoveEmail(sl<EmailRepository>()));
+  sl.registerLazySingleton(
+      () => RemoveConversationFromFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => ReportJunk(sl<EmailRepository>()));
   sl.registerLazySingleton(() => ClassifyEmails(sl<SpamFilterRepository>()));
   sl.registerLazySingleton(() => TrainSpamFilter(sl<SpamFilterRepository>()));
@@ -515,6 +518,7 @@ Future<void> configureDependencies() async {
         forgetCachedEmails: sl<ForgetCachedEmails>(),
         markEmailAsRead: sl<MarkEmailAsRead>(),
         moveEmail: sl<MoveEmail>(),
+        removeConversationFromFolder: sl<RemoveConversationFromFolder>(),
         reportJunk: sl<ReportJunk>(),
         deleteEmail: sl<DeleteEmail>(),
         emptyFolder: sl<EmptyFolder>(),

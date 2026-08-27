@@ -17,11 +17,16 @@ import '../../models/email_folder_model.dart';
 import '../../models/email_model.dart';
 import '../../models/mail_delta_result.dart';
 import 'contact_bulk_parser.dart' show googleNextPageToken;
+import 'conversation_folder_datasource.dart';
 import 'email_remote_datasource.dart';
 import 'gmail_message_parser.dart';
 import 'mail_delta_datasource.dart';
 
-class GmailDatasourceImpl implements EmailRemoteDatasource, MailDeltaDatasource {
+class GmailDatasourceImpl
+    implements
+        EmailRemoteDatasource,
+        MailDeltaDatasource,
+        ConversationFolderDatasource {
   GmailDatasourceImpl({required GmailHttpClient client, this.displayName = ''})
       : _dio = client.dio;
 
@@ -818,6 +823,30 @@ class GmailDatasourceImpl implements EmailRemoteDatasource, MailDeltaDatasource 
     );
     // Gmail's "move" is a label change — the message id is stable.
     return id;
+  }
+
+  @override
+  Future<void> removeConversationFromFolder(
+    String conversationId,
+    String folderId,
+  ) async {
+    try {
+      // `threads/{id}/modify`, not a loop over `messages/{id}/modify`. The two
+      // are not equivalent here: this is reached precisely when *no* message
+      // carries [folderId], so the per-message calls would each be a no-op and
+      // leave the thread listed under it. The thread endpoint writes the
+      // conversation's own label state, which is what the listing reads.
+      //
+      // No `addLabelIds` — see [ConversationFolderDatasource].
+      await _dio.post<void>(
+        '/users/me/threads/$conversationId/modify',
+        data: {
+          'removeLabelIds': [folderId],
+        },
+      );
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
   }
 
   @override

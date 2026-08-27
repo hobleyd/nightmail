@@ -77,6 +77,28 @@ abstract interface class EmailRepository {
   Future<Either<Failure, Unit>> moveEmail(
       String id, String destinationFolderId);
 
+  /// Takes a whole conversation out of [folderId], for the provider that has
+  /// thread-level folder membership (Gmail) and the case where no *message* of
+  /// the thread is in the folder the thread is listed under.
+  ///
+  /// The last resort of a folder-scoped move, not a substitute for one — it
+  /// cannot file the thread anywhere, only take it out of here. See
+  /// [ConversationFolderDatasource] for why it is removal-only and
+  /// [EmailListBloc._onEmailsMoved] for when it is reached.
+  ///
+  /// Returns [UnsupportedFailure] on a provider without the capability.
+  ///
+  /// **Network-first, deliberately not queued in the outbox.** The outbox keys
+  /// every op by *message* id, and a Gmail thread id is routinely also the id of
+  /// the thread's first message — so a queued op here would be in reach of the
+  /// drain's id-remapping for that message, which resolves a moved message's new
+  /// id by the same key. Offline this fails and is reported, which is honest:
+  /// there is nothing about a repaired thread to show optimistically.
+  Future<Either<Failure, Unit>> removeConversationFromFolder({
+    required String conversationId,
+    required String folderId,
+  });
+
   /// Reports [id] as junk/spam.
   Future<Either<Failure, Unit>> reportJunk(String id);
 

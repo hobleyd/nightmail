@@ -18,6 +18,7 @@ import 'package:nightmail/domain/usecases/get_email.dart';
 import 'package:nightmail/domain/usecases/get_emails.dart';
 import 'package:nightmail/domain/usecases/mark_email_as_read.dart';
 import 'package:nightmail/domain/usecases/move_email.dart';
+import 'package:nightmail/domain/usecases/remove_conversation_from_folder.dart';
 import 'package:nightmail/domain/usecases/record_known_senders.dart';
 import 'package:nightmail/domain/usecases/report_junk.dart';
 import 'package:nightmail/domain/usecases/search_emails.dart';
@@ -90,6 +91,7 @@ const _account = MicrosoftAccount(
   ForgetCachedEmails,
   MarkEmailAsRead,
   MoveEmail,
+  RemoveConversationFromFolder,
   ReportJunk,
   DeleteEmail,
   EmptyFolder,
@@ -107,6 +109,7 @@ void main() {
   late MockGetEmails mockGetEmails;
   late MockGetCachedEmails mockGetCachedEmails;
   late MockMoveEmail mockMoveEmail;
+  late MockRemoveConversationFromFolder mockRemoveConversationFromFolder;
   late MockEmptyFolder mockEmptyFolder;
   late MockMarkEmailAsRead mockMarkEmailAsRead;
   late MockDeleteEmail mockDeleteEmail;
@@ -130,6 +133,7 @@ void main() {
     mockGetEmails = MockGetEmails();
     mockGetCachedEmails = MockGetCachedEmails();
     mockMoveEmail = MockMoveEmail();
+    mockRemoveConversationFromFolder = MockRemoveConversationFromFolder();
     mockEmptyFolder = MockEmptyFolder();
     mockMarkEmailAsRead = MockMarkEmailAsRead();
     mockDeleteEmail = MockDeleteEmail();
@@ -151,6 +155,7 @@ void main() {
       forgetCachedEmails: mockForgetCachedEmails,
       markEmailAsRead: mockMarkEmailAsRead,
       moveEmail: mockMoveEmail,
+      removeConversationFromFolder: mockRemoveConversationFromFolder,
       reportJunk: MockReportJunk(),
       deleteEmail: mockDeleteEmail,
       emptyFolder: mockEmptyFolder,
@@ -416,9 +421,11 @@ void main() {
       expect(ids, contains('other'));
     });
 
-    // A thread on screen purely as other-folder context: no move would have
-    // relocated anything, so neither the server nor the list should be touched.
-    test('does nothing when no message in the thread is in this folder',
+    // A thread on screen purely as other-folder context, on a provider that
+    // files a message in exactly one folder: no move would have relocated
+    // anything, so neither the server nor the list should be touched — and the
+    // user is told nothing, because nothing went wrong.
+    test('does nothing when the provider has no thread-level membership',
         () async {
       await _loadEmails([
         _email('sent1', conversationId: 'conv-a', folderIds: ['SENT']),
@@ -426,6 +433,9 @@ void main() {
       ], folderId: 'INBOX');
 
       when(mockMoveEmail(any)).thenAnswer((_) async => const Right(unit));
+      when(mockRemoveConversationFromFolder(any)).thenAnswer(
+        (_) async => const Left(UnsupportedFailure(message: 'nope')),
+      );
 
       bloc.add(const EmailListEmailsMoved(
         emailIds: ['sent1', 'sent2'],
@@ -438,6 +448,124 @@ void main() {
       verifyNever(mockMoveEmail(any));
       final state = bloc.state as EmailListLoaded;
       expect(state.emails.map((e) => e.id), containsAll(['sent1', 'sent2']));
+      expect(state.actionFailure, isNull);
+    });
+
+    // The Gmail case this whole fallback exists for: the *thread* is listed in
+    // the folder while not one of its messages carries it, so the per-message
+    // move has nothing to act on. Before the fallback this returned silently
+    // and the thread came back on the next listing.
+    test(
+        'falls back to a thread-level removal when the thread is in the folder '
+        'but none of its messages is', () async {
+      await _loadEmails([
+        _email('sent1', conversationId: 'conv-a', folderIds: ['SENT']),
+        _email('filed', conversationId: 'conv-a', folderIds: ['Label_11']),
+        _email('other', conversationId: 'conv-b', folderIds: ['INBOX']),
+      ], folderId: 'INBOX');
+
+      when(mockMoveEmail(any)).thenAnswer((_) async => const Right(unit));
+      when(mockRemoveConversationFromFolder(any))
+          .thenAnswer((_) async => const Right(unit));
+
+      bloc.add(const EmailListEmailsMoved(
+        emailIds: ['sent1', 'filed'],
+        destinationFolderId: 'Label_18',
+        conversationId: 'conv-a',
+      ));
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      // Never per message — that is the call that does nothing here.
+      verifyNever(mockMoveEmail(any));
+      final params = verify(mockRemoveConversationFromFolder(captureAny))
+          .captured
+          .single as RemoveConversationFromFolderParams;
+      expect(params.conversationId, 'conv-a');
+      expect(params.folderId, 'INBOX');
+
+      final state = bloc.state as EmailListLoaded;
+      expect(state.emails.map((e) => e.id), ['other']);
+      expect(state.actionFailure, isNull);
+    });
+
+    // The silence is the bug, not just the inaction: a move that could not be
+    // performed has to say so.
+    test('reports a failed thread-level removal instead of returning silently',
+        () async {
+      await _loadEmails([
+        _email('sent1', conversationId: 'conv-a', folderIds: ['SENT']),
+        _email('filed', conversationId: 'conv-a', folderIds: ['Label_11']),
+      ], folderId: 'INBOX');
+
+      when(mockMoveEmail(any)).thenAnswer((_) async => const Right(unit));
+      when(mockRemoveConversationFromFolder(any)).thenAnswer(
+        (_) async => const Left(ServerFailure(message: 'boom')),
+      );
+
+      bloc.add(const EmailListEmailsMoved(
+        emailIds: ['sent1', 'filed'],
+        destinationFolderId: 'Label_18',
+        conversationId: 'conv-a',
+      ));
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final state = bloc.state as EmailListLoaded;
+      expect(state.actionFailure, isNotNull);
+      expect(state.actionFailure!.message, contains('boom'));
+      // Nothing was removed on a failure — the thread is still there to retry.
+      expect(state.emails.map((e) => e.id), containsAll(['sent1', 'filed']));
+    });
+
+    // Without a distinct sequence the second emit compares equal on props and
+    // is dropped, so pressing the same broken button twice reports once.
+    test('reports the same failure twice as two distinct states', () async {
+      await _loadEmails([
+        _email('sent1', conversationId: 'conv-a', folderIds: ['SENT']),
+      ], folderId: 'INBOX');
+
+      when(mockRemoveConversationFromFolder(any)).thenAnswer(
+        (_) async => const Left(ServerFailure(message: 'boom')),
+      );
+
+      const move = EmailListEmailsMoved(
+        emailIds: ['sent1'],
+        destinationFolderId: 'Label_18',
+        conversationId: 'conv-a',
+      );
+
+      bloc.add(move);
+      await Future.delayed(const Duration(milliseconds: 50));
+      final first = (bloc.state as EmailListLoaded).actionFailure!;
+
+      bloc.add(move);
+      await Future.delayed(const Duration(milliseconds: 50));
+      final second = (bloc.state as EmailListLoaded).actionFailure!;
+
+      expect(second.message, first.message);
+      expect(second, isNot(first));
+      expect(second.sequence, greaterThan(first.sequence));
+    });
+
+    // A single-message move must never reach the thread-level removal: it has
+    // no conversation to address, and the removal cannot file anything anyway.
+    test('does not fall back for a move with no conversationId', () async {
+      await _loadEmails([
+        _email('sent1', folderIds: ['SENT']),
+      ], folderId: 'INBOX');
+
+      when(mockMoveEmail(any)).thenAnswer((_) async => const Right(unit));
+
+      bloc.add(const EmailListEmailsMoved(
+        emailIds: ['sent1'],
+        destinationFolderId: 'Label_18',
+      ));
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      verifyNever(mockMoveEmail(any));
+      verifyNever(mockRemoveConversationFromFolder(any));
     });
   });
 
@@ -1223,6 +1351,7 @@ void main() {
         forgetCachedEmails: mockForgetCachedEmails,
         markEmailAsRead: MockMarkEmailAsRead(),
         moveEmail: mockMoveEmail,
+        removeConversationFromFolder: mockRemoveConversationFromFolder,
         reportJunk: MockReportJunk(),
         deleteEmail: MockDeleteEmail(),
         emptyFolder: mockEmptyFolder,
@@ -1281,6 +1410,7 @@ void main() {
         forgetCachedEmails: mockForgetCachedEmails,
         markEmailAsRead: MockMarkEmailAsRead(),
         moveEmail: mockMoveEmail,
+        removeConversationFromFolder: mockRemoveConversationFromFolder,
         reportJunk: MockReportJunk(),
         deleteEmail: MockDeleteEmail(),
         emptyFolder: mockEmptyFolder,

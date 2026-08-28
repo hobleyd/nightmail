@@ -5,6 +5,7 @@ import 'package:html_view/html_view.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/attendee_availability.dart';
 import '../../domain/entities/meeting_room.dart';
+import 'anchored_dropdown.dart';
 import 'availability_status_style.dart';
 
 /// The event form's Location field: booked rooms as chips, free text beside
@@ -75,6 +76,11 @@ class _RoomLocationFieldState extends State<RoomLocationField> {
 
   final _inputFocus = FocusNode();
   final _layerLink = LayerLink();
+
+  /// On the [CompositedTransformTarget], so the dropdown can measure where the
+  /// input has ended up after the room chips and shift itself off the window
+  /// edge.
+  final _targetKey = GlobalKey();
   final _overlayController = OverlayPortalController();
 
   List<MeetingRoom> _matches = const [];
@@ -418,28 +424,22 @@ class _RoomLocationFieldState extends State<RoomLocationField> {
                     onKeyEvent: (_, event) => _onKey(event),
                     child: OverlayPortal(
                       controller: _overlayController,
-                      overlayChildBuilder: (_) => Align(
-                        alignment: Alignment.topLeft,
-                        child: CompositedTransformFollower(
-                          link: _layerLink,
-                          showWhenUnlinked: false,
-                          targetAnchor: Alignment.bottomLeft,
-                          followerAnchor: Alignment.topLeft,
-                          child: Listener(
-                            onPointerDown: (_) =>
-                                _suppressNextFocusLoss = true,
-                            child: _RoomDropdown(
-                              rooms: _matches,
-                              highlightedIndex: _highlightedIndex,
-                              availability: widget.availability,
-                              checkingAvailability:
-                                  widget.checkingAvailability,
-                              onSelect: _selectRoom,
-                            ),
-                          ),
+                      overlayChildBuilder: (_) => AnchoredDropdown(
+                        link: _layerLink,
+                        targetKey: _targetKey,
+                        preferredWidth: _kRoomDropdownWidth,
+                        onPointerDown: () => _suppressNextFocusLoss = true,
+                        builder: (_, maxWidth) => _RoomDropdown(
+                          rooms: _matches,
+                          highlightedIndex: _highlightedIndex,
+                          availability: widget.availability,
+                          checkingAvailability: widget.checkingAvailability,
+                          onSelect: _selectRoom,
+                          maxWidth: maxWidth,
                         ),
                       ),
                       child: CompositedTransformTarget(
+                        key: _targetKey,
                         link: _layerLink,
                         child: TextField(
                           controller: widget.locationController,
@@ -563,6 +563,9 @@ class _RoomChip extends StatelessWidget {
 // Room dropdown
 // ---------------------------------------------------------------------------
 
+/// Width the room panel is drawn at when the window has room for it.
+const double _kRoomDropdownWidth = 420;
+
 class _RoomDropdown extends StatelessWidget {
   const _RoomDropdown({
     required this.rooms,
@@ -570,6 +573,7 @@ class _RoomDropdown extends StatelessWidget {
     required this.availability,
     required this.checkingAvailability,
     required this.onSelect,
+    required this.maxWidth,
   });
 
   final List<MeetingRoom> rooms;
@@ -577,6 +581,7 @@ class _RoomDropdown extends StatelessWidget {
   final Map<String, AttendeeAvailabilityStatus> availability;
   final bool checkingAvailability;
   final ValueChanged<MeetingRoom> onSelect;
+  final double maxWidth;
 
   @override
   Widget build(BuildContext context) {
@@ -586,7 +591,7 @@ class _RoomDropdown extends StatelessWidget {
       elevation: 8,
       borderRadius: BorderRadius.circular(6),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420, maxHeight: 300),
+        constraints: BoxConstraints(maxWidth: maxWidth, maxHeight: 300),
         child: ListView.separated(
           shrinkWrap: true,
           padding: EdgeInsets.zero,

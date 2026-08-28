@@ -9,6 +9,7 @@ import '../../domain/entities/contact_suggestion.dart';
 import '../../domain/repositories/system_contacts_repository.dart';
 import '../../domain/usecases/search_contacts.dart';
 import '../../injection_container.dart';
+import 'anchored_dropdown.dart';
 
 typedef RecipientDropAccepted = void Function(String address, String fromFieldId);
 
@@ -70,6 +71,10 @@ class RecipientInputFieldState extends State<RecipientInputField> {
   final _chipKeyFocus = FocusNode();
 
   final _layerLink = LayerLink();
+
+  /// On the [CompositedTransformTarget], so the dropdown can measure where the
+  /// input has ended up in the wrap and shift itself off the window edge.
+  final _targetKey = GlobalKey();
   final _overlayController = OverlayPortalController();
   List<ContactSuggestion> _suggestions = [];
   int _suggestionIndex = -1;
@@ -391,24 +396,20 @@ class RecipientInputFieldState extends State<RecipientInputField> {
               },
               child: OverlayPortal(
                 controller: _overlayController,
-                overlayChildBuilder: (ctx) => Align(
-                  alignment: Alignment.topLeft,
-                  child: CompositedTransformFollower(
-                    link: _layerLink,
-                    showWhenUnlinked: false,
-                    targetAnchor: Alignment.bottomLeft,
-                    followerAnchor: Alignment.topLeft,
-                    child: Listener(
-                      onPointerDown: (_) => _suppressNextFocusLoss = true,
-                      child: _SuggestionDropdown(
-                        suggestions: _suggestions,
-                        selectedIndex: _suggestionIndex,
-                        onSelect: _addSuggestion,
-                      ),
-                    ),
+                overlayChildBuilder: (ctx) => AnchoredDropdown(
+                  link: _layerLink,
+                  targetKey: _targetKey,
+                  preferredWidth: _kSuggestionDropdownWidth,
+                  onPointerDown: () => _suppressNextFocusLoss = true,
+                  builder: (_, maxWidth) => _SuggestionDropdown(
+                    suggestions: _suggestions,
+                    selectedIndex: _suggestionIndex,
+                    onSelect: _addSuggestion,
+                    maxWidth: maxWidth,
                   ),
                 ),
                 child: CompositedTransformTarget(
+                  key: _targetKey,
                   link: _layerLink,
                   child: TextField(
                     controller: _inputController,
@@ -483,16 +484,21 @@ class RecipientInputFieldState extends State<RecipientInputField> {
 // Suggestion dropdown
 // ---------------------------------------------------------------------------
 
+/// Width the suggestion panel is drawn at when the window has room for it.
+const double _kSuggestionDropdownWidth = 400;
+
 class _SuggestionDropdown extends StatelessWidget {
   const _SuggestionDropdown({
     required this.suggestions,
     required this.selectedIndex,
     required this.onSelect,
+    required this.maxWidth,
   });
 
   final List<ContactSuggestion> suggestions;
   final int selectedIndex;
   final ValueChanged<ContactSuggestion> onSelect;
+  final double maxWidth;
 
   @override
   Widget build(BuildContext context) {
@@ -502,7 +508,7 @@ class _SuggestionDropdown extends StatelessWidget {
       elevation: 8,
       borderRadius: BorderRadius.circular(6),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 400, maxHeight: 248),
+        constraints: BoxConstraints(maxWidth: maxWidth, maxHeight: 248),
         child: ListView.separated(
           shrinkWrap: true,
           padding: EdgeInsets.zero,

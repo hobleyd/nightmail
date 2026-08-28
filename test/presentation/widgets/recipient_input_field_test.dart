@@ -12,15 +12,19 @@ Widget _wrap({
   required ValueChanged<List<String>> onChanged,
   GlobalKey<RecipientInputFieldState>? fieldKey,
   Widget? Function(String address)? chipBadgeBuilder,
+  double leftInset = 0,
 }) {
   return MaterialApp(
     home: Scaffold(
-      body: RecipientInputField(
-        key: fieldKey,
-        label: 'To',
-        recipients: recipients,
-        onChanged: onChanged,
-        chipBadgeBuilder: chipBadgeBuilder,
+      body: Padding(
+        padding: EdgeInsets.only(left: leftInset),
+        child: RecipientInputField(
+          key: fieldKey,
+          label: 'To',
+          recipients: recipients,
+          onChanged: onChanged,
+          chipBadgeBuilder: chipBadgeBuilder,
+        ),
       ),
     ),
   );
@@ -341,6 +345,60 @@ void main() {
       await tester.pumpWidget(const MaterialApp(home: SizedBox()));
 
       expect(HtmlViewOverlayGuard.activeCount.value, 0);
+    });
+  });
+
+  // A guest or recipient added near the right of the window puts the caret
+  // there, and the panel is anchored to the caret — so without the shift it
+  // hung off the edge and was clipped. See core/utils/dropdown_placement.dart.
+  group('RecipientInputField — dropdown placement', () {
+    late _FakeSystemContacts contacts;
+
+    setUp(() {
+      contacts = _FakeSystemContacts();
+      sl.registerLazySingleton<SystemContactsRepository>(() => contacts);
+    });
+
+    tearDown(() async {
+      await sl.reset();
+      HtmlViewOverlayGuard.activeCount.value = 0;
+    });
+
+    Future<Rect> showDropdown(WidgetTester tester, double leftInset) async {
+      contacts.results = const [
+        ContactSuggestion(address: 'alice@example.com', name: 'Alice'),
+      ];
+
+      await tester.pumpWidget(_wrap(
+        recipients: const [],
+        onChanged: (_) {},
+        leftInset: leftInset,
+      ));
+
+      await tester.enterText(find.byType(TextField), 'ali');
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pump();
+
+      expect(find.text('Alice'), findsOneWidget);
+      return tester.getRect(find.byType(ListView));
+    }
+
+    testWidgets('stays inside the window when the input is near the right edge',
+        (tester) async {
+      final windowWidth = tester.view.physicalSize.width / tester.view.devicePixelRatio;
+      final rect = await showDropdown(tester, windowWidth - 120);
+
+      expect(rect.right, lessThanOrEqualTo(windowWidth));
+      expect(rect.left, greaterThanOrEqualTo(0));
+      // Unclipped means it kept its full width, not that it was squeezed.
+      expect(rect.width, 400);
+    });
+
+    testWidgets('is left where it falls when there is room', (tester) async {
+      final rect = await showDropdown(tester, 0);
+
+      final field = tester.getRect(find.byType(TextField));
+      expect(rect.left, moreOrLessEquals(field.left, epsilon: 0.5));
     });
   });
 }

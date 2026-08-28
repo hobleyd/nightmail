@@ -8,6 +8,10 @@
       "title": "Fixes",
       "items": [
         {
+          "body": "keep an anchored dropdown inside the window at the right edge",
+          "title": "compose"
+        },
+        {
           "body": "move a thread out of a folder none of its messages is in",
           "title": "gmail"
         }

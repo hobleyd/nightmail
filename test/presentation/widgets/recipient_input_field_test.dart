@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -25,6 +26,25 @@ Widget _wrap({
           onChanged: onChanged,
           chipBadgeBuilder: chipBadgeBuilder,
         ),
+      ),
+    ),
+  );
+}
+
+/// The compose window's shape: chips that can be dragged between fields, which
+/// is what puts a drag recognizer in the arena against the chip's own tap.
+Widget _wrapDraggable({
+  required List<String> recipients,
+  required ValueChanged<List<String>> onChanged,
+}) {
+  return MaterialApp(
+    home: Scaffold(
+      body: RecipientInputField(
+        label: 'To',
+        recipients: recipients,
+        onChanged: onChanged,
+        fieldId: 'to',
+        onDropAccepted: (_, _) {},
       ),
     ),
   );
@@ -399,6 +419,197 @@ void main() {
 
       final field = tester.getRect(find.byType(TextField));
       expect(rect.left, moreOrLessEquals(field.left, epsilon: 0.5));
+    });
+  });
+
+  // Clicking a chip and pressing Delete. The chip is a Draggable, and
+  // ImmediateMultiDragGestureRecognizer hard-codes its hit slop to one logical
+  // pixel for a mouse — so a click that drifts, as a trackpad click nearly
+  // always does, started a drag, won the arena, and the chip's tap never fired.
+  // Nothing was selected and Delete had nothing to act on.
+  group('RecipientInputField — chip selection', () {
+    /// Two fields side by side, so a chip can be dragged between them.
+    Widget twoFields({
+      required List<String> to,
+      required List<String> cc,
+      required ValueChanged<List<String>> onToChanged,
+      required ValueChanged<List<String>> onCcChanged,
+      required RecipientDropAccepted onDropToCc,
+    }) {
+      return MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: [
+              RecipientInputField(
+                label: 'To',
+                recipients: to,
+                fieldId: 'to',
+                onChanged: onToChanged,
+                onDropAccepted: (_, _) {},
+              ),
+              RecipientInputField(
+                label: 'Cc',
+                recipients: cc,
+                fieldId: 'cc',
+                onChanged: onCcChanged,
+                onDropAccepted: onDropToCc,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    /// A mouse press on [finder] that drifts [drift] pixels before releasing.
+    ///
+    /// The drift is the test, not incidental setup: a plain `tester.tap` uses
+    /// a touch pointer, whose slop is 18px, and passes against the bug.
+    Future<void> clickWithDrift(
+      WidgetTester tester,
+      Finder finder, {
+      double drift = 1.5,
+    }) async {
+      final gesture = await tester.startGesture(
+        tester.getCenter(finder),
+        kind: PointerDeviceKind.mouse,
+      );
+      if (drift > 0) await gesture.moveBy(Offset(drift, 0));
+      await gesture.up();
+      await tester.pump();
+    }
+
+    testWidgets('a drifting mouse click then Delete removes the chip',
+        (tester) async {
+      var recipients = ['alice@example.com', 'bob@example.com'];
+      await tester.pumpWidget(StatefulBuilder(
+        builder: (_, setState) => _wrapDraggable(
+          recipients: recipients,
+          onChanged: (r) => setState(() => recipients = r),
+        ),
+      ));
+
+      await clickWithDrift(tester, find.text('alice@example.com'));
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pump();
+
+      expect(recipients, ['bob@example.com']);
+    });
+
+    testWidgets('a drifting mouse click then Backspace removes the chip',
+        (tester) async {
+      var recipients = ['alice@example.com', 'bob@example.com'];
+      await tester.pumpWidget(StatefulBuilder(
+        builder: (_, setState) => _wrapDraggable(
+          recipients: recipients,
+          onChanged: (r) => setState(() => recipients = r),
+        ),
+      ));
+
+      await clickWithDrift(tester, find.text('bob@example.com'));
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.pump();
+
+      expect(recipients, ['alice@example.com']);
+    });
+
+    testWidgets('a still mouse click still selects', (tester) async {
+      var recipients = ['alice@example.com', 'bob@example.com'];
+      await tester.pumpWidget(StatefulBuilder(
+        builder: (_, setState) => _wrapDraggable(
+          recipients: recipients,
+          onChanged: (r) => setState(() => recipients = r),
+        ),
+      ));
+
+      await clickWithDrift(tester, find.text('alice@example.com'), drift: 0);
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pump();
+
+      expect(recipients, ['bob@example.com']);
+    });
+
+    // The chip-key Focus is an ancestor of the TextField, so a selection left
+    // set answers Delete even once the user is typing again — and the field's
+    // own tap, which clears it, never sees a tap the TextField took.
+    testWidgets('clicking into the input drops the selection', (tester) async {
+      var recipients = ['alice@example.com', 'bob@example.com'];
+      await tester.pumpWidget(StatefulBuilder(
+        builder: (_, setState) => _wrapDraggable(
+          recipients: recipients,
+          onChanged: (r) => setState(() => recipients = r),
+        ),
+      ));
+
+      await clickWithDrift(tester, find.text('alice@example.com'));
+      await clickWithDrift(tester, find.byType(TextField), drift: 0);
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pump();
+
+      expect(recipients, ['alice@example.com', 'bob@example.com']);
+    });
+
+    // A completed drag takes the chip out of the list, so the index would name
+    // whichever recipient shuffled up into its place.
+    testWidgets('dragging a chip to another field drops the selection',
+        (tester) async {
+      var to = ['alice@example.com', 'bob@example.com'];
+      var cc = <String>[];
+
+      await tester.pumpWidget(StatefulBuilder(
+        builder: (_, setState) => twoFields(
+          to: to,
+          cc: cc,
+          onToChanged: (r) => setState(() => to = r),
+          onCcChanged: (r) => setState(() => cc = r),
+          onDropToCc: (address, _) => setState(() {
+            to = List.of(to)..remove(address);
+            cc = List.of(cc)..add(address);
+          }),
+        ),
+      ));
+
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.text('alice@example.com')),
+        kind: PointerDeviceKind.mouse,
+      );
+      await gesture.moveTo(tester.getCenter(find.byType(TextField).last));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(to, ['bob@example.com']);
+      expect(cc, ['alice@example.com']);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pump();
+
+      expect(to, ['bob@example.com'], reason: 'nothing is selected any more');
+      expect(cc, ['alice@example.com']);
+    });
+
+    // The path that already worked before any of this, and which the
+    // clear-on-input-focus rule sits directly beside.
+    testWidgets('Backspace in an empty input selects the last chip, and a '
+        'second Backspace removes it', (tester) async {
+      var recipients = ['alice@example.com', 'bob@example.com'];
+      await tester.pumpWidget(StatefulBuilder(
+        builder: (_, setState) => _wrapDraggable(
+          recipients: recipients,
+          onChanged: (r) => setState(() => recipients = r),
+        ),
+      ));
+
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.pump();
+      expect(recipients, ['alice@example.com', 'bob@example.com'],
+          reason: 'the first Backspace only selects');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.pump();
+      expect(recipients, ['alice@example.com']);
     });
   });
 }

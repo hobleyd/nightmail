@@ -122,14 +122,21 @@ class RecipientInputFieldState extends State<RecipientInputField> {
   }
 
   void _onInputFocusChanged() {
-    if (!_inputFocus.hasFocus) {
-      if (_suppressNextFocusLoss) {
-        _suppressNextFocusLoss = false;
-        return;
-      }
-      _flushInput();
-      _clearSuggestions();
+    // Typing is not acting on a chip. The field's own tap clears the selection,
+    // but a tap that lands on the TextField is taken by the TextField and never
+    // reaches it — and the chip-key Focus is an *ancestor* of that TextField,
+    // so a stale selection would still answer Delete and remove a chip the user
+    // had clicked away from.
+    if (_inputFocus.hasFocus) {
+      if (_selectedIndex != null) setState(() => _selectedIndex = null);
+      return;
     }
+    if (_suppressNextFocusLoss) {
+      _suppressNextFocusLoss = false;
+      return;
+    }
+    _flushInput();
+    _clearSuggestions();
   }
 
   void flush() => _flushInput();
@@ -440,19 +447,45 @@ class RecipientInputFieldState extends State<RecipientInputField> {
     final isSelected = _selectedIndex == index;
     final badge = widget.chipBadgeBuilder?.call(address);
 
-    if (!draggable) {
-      return GestureDetector(
+    // Selection is taken on pointer *down*, through a Listener rather than a
+    // tap. A chip is a Draggable, and `ImmediateMultiDragGestureRecognizer`
+    // hard-codes its hit slop to one logical pixel for a mouse
+    // (`kPrecisePointerHitSlop`) — so a click that drifts, which a trackpad
+    // click nearly always does, wins the arena and the tap never fires. The
+    // chip was then never selected and Delete had nothing to act on, while a
+    // perfectly still click worked: the bug that looked intermittent.
+    //
+    // A Listener sits outside the arena, so nothing can take the press from
+    // it. Selecting on press is also what a desktop list does anyway.
+    //
+    // The tap handler still has to be here as well, doing the same thing. It
+    // is not for selecting — the Listener has already done that — but to keep
+    // the *field's* own tap, which clears the selection, from winning the
+    // arena and undoing it on the way back up. That is what the chip's tap
+    // was quietly doing before.
+    final Widget chip = Listener(
+      onPointerDown: (_) => _selectChip(index),
+      child: GestureDetector(
         onTap: () => _selectChip(index),
         child: _RecipientChip(
           address: address,
           isSelected: isSelected,
           badge: badge,
         ),
-      );
-    }
+      ),
+    );
+
+    if (!draggable) return chip;
 
     return Draggable<_RecipientDrag>(
       data: (address: address, sourceFieldId: widget.fieldId!),
+      // A drag that lands somewhere takes this chip out of the list, and the
+      // index would then name whichever recipient shuffled up into its place.
+      // A drag that is dropped nowhere leaves the list alone, so that one
+      // keeps its selection — it was a click as far as the user is concerned.
+      onDragCompleted: () {
+        if (mounted) setState(() => _selectedIndex = null);
+      },
       feedback: Material(
         color: Colors.transparent,
         child: _RecipientChip(
@@ -468,14 +501,7 @@ class RecipientInputFieldState extends State<RecipientInputField> {
         opacity: 0.35,
         badge: badge,
       ),
-      child: GestureDetector(
-        onTap: () => _selectChip(index),
-        child: _RecipientChip(
-          address: address,
-          isSelected: isSelected,
-          badge: badge,
-        ),
-      ),
+      child: chip,
     );
   }
 }

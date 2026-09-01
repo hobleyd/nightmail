@@ -587,6 +587,46 @@ void main() {
       expect(cc, ['alice@example.com']);
     });
 
+    // The whole reason selection focuses the TextField rather than a bare
+    // FocusNode: the compose body is a native webview that holds the window's
+    // firstResponder, and only Flutter's text input plugin takes it back. Move
+    // this to a bare node and the chip highlights while Delete edits the
+    // message body — which is invisible to a test without a real webview, so
+    // the focus target is what gets pinned instead.
+    testWidgets('selecting a chip leaves the keyboard on the input',
+        (tester) async {
+      var recipients = ['alice@example.com', 'bob@example.com'];
+      await tester.pumpWidget(StatefulBuilder(
+        builder: (_, setState) => _wrapDraggable(
+          recipients: recipients,
+          onChanged: (r) => setState(() => recipients = r),
+        ),
+      ));
+
+      await clickWithDrift(tester, find.text('alice@example.com'));
+
+      final input = tester.widget<TextField>(find.byType(TextField));
+      expect(input.focusNode?.hasFocus, isTrue);
+    });
+
+    testWidgets('typing drops the selection', (tester) async {
+      var recipients = ['alice@example.com', 'bob@example.com'];
+      await tester.pumpWidget(StatefulBuilder(
+        builder: (_, setState) => _wrapDraggable(
+          recipients: recipients,
+          onChanged: (r) => setState(() => recipients = r),
+        ),
+      ));
+
+      await clickWithDrift(tester, find.text('alice@example.com'));
+      await tester.enterText(find.byType(TextField), 'c');
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pump();
+
+      expect(recipients, ['alice@example.com', 'bob@example.com']);
+    });
+
     // The path that already worked before any of this, and which the
     // clear-on-input-focus rule sits directly beside.
     testWidgets('Backspace in an empty input selects the last chip, and a '

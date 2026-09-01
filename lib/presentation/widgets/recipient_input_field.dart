@@ -122,15 +122,7 @@ class RecipientInputFieldState extends State<RecipientInputField> {
   }
 
   void _onInputFocusChanged() {
-    // Typing is not acting on a chip. The field's own tap clears the selection,
-    // but a tap that lands on the TextField is taken by the TextField and never
-    // reaches it — and the chip-key Focus is an *ancestor* of that TextField,
-    // so a stale selection would still answer Delete and remove a chip the user
-    // had clicked away from.
-    if (_inputFocus.hasFocus) {
-      if (_selectedIndex != null) setState(() => _selectedIndex = null);
-      return;
-    }
+    if (_inputFocus.hasFocus) return;
     if (_suppressNextFocusLoss) {
       _suppressNextFocusLoss = false;
       return;
@@ -154,8 +146,25 @@ class RecipientInputFieldState extends State<RecipientInputField> {
   }
 
   void _selectChip(int index) {
+    // Focus has to land on the *TextField*, not on a bare FocusNode. The body
+    // editor is a native WKWebView sitting beside Flutter's view as a plain
+    // NSView, and while it is the window's firstResponder the OS delivers
+    // every keystroke to it. Nothing in Flutter's focus system makes the
+    // window change firstResponder — except the text input plugin, which
+    // reasserts itself when a text field takes focus (html_view's own
+    // WebKitView.swift says as much, from the other side). So selecting a chip
+    // used to highlight it while Delete went on editing the message body.
+    //
+    // With no input to focus there is nothing that can claim the keyboard, and
+    // the bare node is the best available.
+    _flushInput();
+    _clearSuggestions();
     setState(() => _selectedIndex = index);
-    _chipKeyFocus.requestFocus();
+    if (widget.showInput) {
+      _inputFocus.requestFocus();
+    } else {
+      _chipKeyFocus.requestFocus();
+    }
   }
 
   void _deleteSelected() {
@@ -167,6 +176,8 @@ class RecipientInputFieldState extends State<RecipientInputField> {
   }
 
   void _onTextChanged(String val) {
+    // Typing is not acting on a chip.
+    if (_selectedIndex != null) setState(() => _selectedIndex = null);
     if (val.endsWith(',') || val.endsWith(';')) {
       _flushInput();
       _clearSuggestions();
@@ -359,6 +370,21 @@ class RecipientInputFieldState extends State<RecipientInputField> {
             child: Focus(
               onKeyEvent: (_, event) {
                 if (event is! KeyDownEvent) return KeyEventResult.ignored;
+                // A selected chip answers first: the input holds the keyboard
+                // focus even while the selection is what the user is acting on,
+                // so without this Backspace would fall through to the rule
+                // below and merely re-select the last chip.
+                if (_selectedIndex != null) {
+                  if (event.logicalKey == LogicalKeyboardKey.backspace ||
+                      event.logicalKey == LogicalKeyboardKey.delete) {
+                    _deleteSelected();
+                    return KeyEventResult.handled;
+                  }
+                  if (event.logicalKey == LogicalKeyboardKey.escape) {
+                    setState(() => _selectedIndex = null);
+                    return KeyEventResult.handled;
+                  }
+                }
                 if (_suggestions.isNotEmpty) {
                   if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
                     setState(() => _suggestionIndex =
@@ -418,20 +444,31 @@ class RecipientInputFieldState extends State<RecipientInputField> {
                 child: CompositedTransformTarget(
                   key: _targetKey,
                   link: _layerLink,
-                  child: TextField(
-                    controller: _inputController,
-                    focusNode: _inputFocus,
-                    style: TextStyle(color: c.textPrimary, fontSize: 13),
-                    onSubmitted: (_) => _flushInput(),
-                    onChanged: _onTextChanged,
-                    decoration: InputDecoration(
-                      hintText:
-                          widget.recipients.isEmpty ? widget.hintText : null,
-                      hintStyle:
-                          TextStyle(color: c.textMuted, fontSize: 13),
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.zero,
-                      isDense: true,
+                  // Putting the caret back in the text is not acting on a chip
+                  // either. This cannot ride on the input taking focus, since
+                  // it now holds focus throughout a selection, nor on the
+                  // field's own tap, which never sees a tap the TextField took.
+                  child: Listener(
+                    onPointerDown: (_) {
+                      if (_selectedIndex != null) {
+                        setState(() => _selectedIndex = null);
+                      }
+                    },
+                    child: TextField(
+                      controller: _inputController,
+                      focusNode: _inputFocus,
+                      style: TextStyle(color: c.textPrimary, fontSize: 13),
+                      onSubmitted: (_) => _flushInput(),
+                      onChanged: _onTextChanged,
+                      decoration: InputDecoration(
+                        hintText:
+                            widget.recipients.isEmpty ? widget.hintText : null,
+                        hintStyle:
+                            TextStyle(color: c.textMuted, fontSize: 13),
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.zero,
+                        isDense: true,
+                      ),
                     ),
                   ),
                 ),

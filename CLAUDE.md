@@ -1427,6 +1427,19 @@ platform/channel/version/build slot and gh-pages overwrites that release's zip
 and descriptor together, leaving clients on that build correctly seeing nothing.
 Same as inkworm; not a bug.
 
+### What the About Panel Reports
+
+**The controller has no "up to date" state.** A check that finds nothing newer
+leaves `desktop_updater` on `UpdateIdle` — the same state it holds before
+anything has been checked — so only the typed result of `checkForUpdates()`
+(`ManualUpdateCheckUpToDate`) says a check finished with nothing to offer.
+`desktopStatusFor` therefore reports *no change* for `UpdateIdle` rather than a
+phase, and `_checkDesktop` emits `AppUpdatePhase.upToDate` off that result.
+Mapping idle onto `checking` instead is what left "Checking for updates…"
+spinning forever for anyone whose installed build was level with the archive —
+which is every install running the newest published build, so the desktop path
+could never report being up to date at all.
+
 **A waiting release is named `1.22.3+157`, not `1.22.3`**
 (`formatReleaseVersion`). The About panel prints the installed version as
 `version+build`, so naming the available one by its semver alone left the two

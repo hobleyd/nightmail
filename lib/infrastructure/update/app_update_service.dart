@@ -51,6 +51,72 @@ const Map<String, String> kTrustedReleasePublicKeys = {
 String formatReleaseVersion(String version, int? buildNumber) =>
     buildNumber == null ? version : '$version+$buildNumber';
 
+/// The message shown for a failed check, download or install.
+String _describeUpdateError(Object error) {
+  if (error is AndroidInstallException) return error.message;
+  if (error is StateError) return error.message;
+  return error.toString();
+}
+
+/// Translates `desktop_updater`'s state into the status to show, or null when
+/// the state says nothing about what to show.
+///
+/// **[UpdateIdle] is that null case**, and it is the reason this reports
+/// "no change" at all rather than a phase for every state. The controller has
+/// no "up to date" state: a check that found nothing newer leaves it idle,
+/// which is also what it holds before anything has been checked. Reading that
+/// as [AppUpdatePhase.checking] left the spinner turning forever for anyone
+/// level with the archive — reachable for any install running the newest
+/// published build. `_checkDesktop` emits [AppUpdatePhase.upToDate] off the
+/// typed result of `checkForUpdates()` instead, which is the only thing that
+/// distinguishes the two.
+///
+/// [UpdateFreshInstallRequired] gets its own phase rather than being folded
+/// into [AppUpdatePhase.available]: the controller *throws* from
+/// `downloadUpdate()` in that state, so an "available" mapping would offer a
+/// Download button that reliably fails. [UpdateBlockedBySupportPolicy] is
+/// different — the controller accepts a download there, treating it as
+/// mandatory — so it does map onto [AppUpdatePhase.available], with the
+/// deadline as the explanatory message.
+@visibleForTesting
+AppUpdateStatus? desktopStatusFor(UpdateState state, AppUpdateStatus current) {
+  return switch (state) {
+    UpdateIdle() => null,
+    UpdateChecking() => current.copyWith(phase: AppUpdatePhase.checking),
+    UpdateAvailable(:final descriptor) => current.copyWith(
+        phase: AppUpdatePhase.available,
+        availableVersion:
+            formatReleaseVersion(descriptor.version, descriptor.buildNumber),
+        clearError: true,
+      ),
+    UpdateFreshInstallRequired(:final descriptor) => current.copyWith(
+        phase: AppUpdatePhase.freshInstallRequired,
+        availableVersion:
+            formatReleaseVersion(descriptor.version, descriptor.buildNumber),
+        clearError: true,
+      ),
+    UpdateBlockedBySupportPolicy(:final descriptor) => current.copyWith(
+        phase: AppUpdatePhase.available,
+        availableVersion:
+            formatReleaseVersion(descriptor.version, descriptor.buildNumber),
+        error: 'This version is no longer supported. Please update.',
+      ),
+    UpdateDownloading(:final receivedBytes, :final totalBytes) =>
+      current.copyWith(
+        phase: AppUpdatePhase.downloading,
+        receivedBytes: receivedBytes,
+        totalBytes: totalBytes,
+      ),
+    UpdateReadyToInstall() =>
+      current.copyWith(phase: AppUpdatePhase.readyToInstall),
+    UpdateInstalling() => current.copyWith(phase: AppUpdatePhase.installing),
+    UpdateFailed(:final error) => current.copyWith(
+        phase: AppUpdatePhase.failed,
+        error: _describeUpdateError(error),
+      ),
+  };
+}
+
 /// Owns in-app updating, and is the one place that knows which mechanism this
 /// platform uses.
 ///
@@ -192,7 +258,7 @@ class AppUpdateService {
     } catch (error) {
       _emit(_status.copyWith(
         phase: AppUpdatePhase.failed,
-        error: _describe(error),
+        error: _describeUpdateError(error),
       ));
     }
 
@@ -236,62 +302,28 @@ class AppUpdateService {
 
     // checkVersion() throws on failure; checkForUpdates() returns a typed
     // result instead, which is what a user-triggered check wants.
-    await controller.checkForUpdates();
+    final result = await controller.checkForUpdates();
+
+    // **The controller has no "up to date" state.** A check that found nothing
+    // newer leaves it on UpdateIdle — the same state it holds before anything
+    // has been checked at all — so this typed result is the only thing that
+    // says a check finished with nothing to offer. Reading it off the state
+    // instead is what left "Checking for updates…" turning forever for anyone
+    // whose installed build was level with the archive.
+    if (result is ManualUpdateCheckUpToDate) {
+      _emit(_status.copyWith(
+        phase: AppUpdatePhase.upToDate,
+        clearAvailableVersion: true,
+        clearError: true,
+      ));
+      return;
+    }
     _readDesktopState(controller);
   }
 
-  /// Translates `desktop_updater`'s state into [AppUpdateStatus].
-  ///
-  /// [UpdateFreshInstallRequired] gets its own phase rather than being folded
-  /// into [AppUpdatePhase.available]: the controller *throws* from
-  /// `downloadUpdate()` in that state, so an "available" mapping would offer a
-  /// Download button that reliably fails. [UpdateBlockedBySupportPolicy] is
-  /// different — the controller accepts a download there, treating it as
-  /// mandatory — so it does map onto [AppUpdatePhase.available], with the
-  /// deadline as the explanatory message.
   void _readDesktopState(DesktopUpdaterController controller) {
-    final state = controller.state;
-    switch (state) {
-      case UpdateIdle():
-      case UpdateChecking():
-        _emit(_status.copyWith(phase: AppUpdatePhase.checking));
-      case UpdateAvailable(:final descriptor):
-        _emit(_status.copyWith(
-          phase: AppUpdatePhase.available,
-          availableVersion:
-              formatReleaseVersion(descriptor.version, descriptor.buildNumber),
-          clearError: true,
-        ));
-      case UpdateFreshInstallRequired(:final descriptor):
-        _emit(_status.copyWith(
-          phase: AppUpdatePhase.freshInstallRequired,
-          availableVersion:
-              formatReleaseVersion(descriptor.version, descriptor.buildNumber),
-          clearError: true,
-        ));
-      case UpdateBlockedBySupportPolicy(:final descriptor):
-        _emit(_status.copyWith(
-          phase: AppUpdatePhase.available,
-          availableVersion:
-              formatReleaseVersion(descriptor.version, descriptor.buildNumber),
-          error: 'This version is no longer supported. Please update.',
-        ));
-      case UpdateDownloading(:final receivedBytes, :final totalBytes):
-        _emit(_status.copyWith(
-          phase: AppUpdatePhase.downloading,
-          receivedBytes: receivedBytes,
-          totalBytes: totalBytes,
-        ));
-      case UpdateReadyToInstall():
-        _emit(_status.copyWith(phase: AppUpdatePhase.readyToInstall));
-      case UpdateInstalling():
-        _emit(_status.copyWith(phase: AppUpdatePhase.installing));
-      case UpdateFailed(:final error):
-        _emit(_status.copyWith(
-          phase: AppUpdatePhase.failed,
-          error: _describe(error),
-        ));
-    }
+    final next = desktopStatusFor(controller.state, _status);
+    if (next != null) _emit(next);
   }
 
   /// Downloads the waiting update.
@@ -335,7 +367,7 @@ class AppUpdateService {
     } catch (error) {
       _emit(_status.copyWith(
         phase: AppUpdatePhase.failed,
-        error: _describe(error),
+        error: _describeUpdateError(error),
       ));
     }
   }
@@ -357,7 +389,7 @@ class AppUpdateService {
     } catch (error) {
       _emit(_status.copyWith(
         phase: AppUpdatePhase.failed,
-        error: _describe(error),
+        error: _describeUpdateError(error),
       ));
     }
   }
@@ -377,7 +409,7 @@ class AppUpdateService {
     } catch (error) {
       _emit(_status.copyWith(
         phase: AppUpdatePhase.failed,
-        error: _describe(error),
+        error: _describeUpdateError(error),
       ));
     }
   }
@@ -434,11 +466,6 @@ class AppUpdateService {
     if (!_controller.isClosed) _controller.add(next);
   }
 
-  static String _describe(Object error) {
-    if (error is AndroidInstallException) return error.message;
-    if (error is StateError) return error.message;
-    return error.toString();
-  }
 
   Future<void> dispose() async {
     _recheckTimer?.cancel();

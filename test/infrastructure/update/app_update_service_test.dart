@@ -1,3 +1,4 @@
+import 'package:desktop_updater/desktop_updater.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/infrastructure/update/app_update_service.dart';
 import 'package:nightmail/infrastructure/update/app_update_status.dart';
@@ -95,4 +96,92 @@ void main() {
       expect(formatReleaseVersion('1.22.3', null), '1.22.3');
     });
   });
+
+  group('reading desktop_updater\'s state', () {
+    const checking = AppUpdateStatus(phase: AppUpdatePhase.checking);
+
+    test('idle says nothing, because it cannot say "up to date"', () {
+      // The whole of the spinner-never-stops bug. The controller has no
+      // up-to-date state: a check that found nothing newer lands back on
+      // UpdateIdle, which is also what it holds before anything is checked.
+      // Reporting a phase for it — checking, or up-to-date — is a claim the
+      // state does not support, so it reports no change and _checkDesktop
+      // reads the typed result of checkForUpdates() instead.
+      expect(desktopStatusFor(const UpdateIdle(), checking), isNull);
+    });
+
+    test('a check in flight is the only thing that turns the spinner', () {
+      expect(
+        desktopStatusFor(const UpdateChecking(), const AppUpdateStatus())?.phase,
+        AppUpdatePhase.checking,
+      );
+    });
+
+    test('an available release is named with its build number', () {
+      final next = desktopStatusFor(
+        UpdateAvailable(descriptor: _descriptor(), mandatory: false),
+        checking,
+      );
+
+      expect(next?.phase, AppUpdatePhase.available);
+      expect(next?.availableVersion, '1.22.3+157');
+    });
+
+    test('a fresh-install release keeps its own phase', () {
+      // Folding it into `available` would offer a Download button that throws.
+      final next = desktopStatusFor(
+        UpdateFreshInstallRequired(
+          descriptor: _descriptor(),
+          freshInstall: ReleaseFreshInstall(
+            downloadUrl: Uri.parse('${kUpdateBaseUrl}download'),
+          ),
+          mandatory: true,
+        ),
+        checking,
+      );
+
+      expect(next?.phase, AppUpdatePhase.freshInstallRequired);
+      expect(next?.availableVersion, '1.22.3+157');
+    });
+
+    test('download progress carries its counters', () {
+      final next = desktopStatusFor(
+        const UpdateDownloading(receivedBytes: 512, totalBytes: 1024),
+        checking,
+      );
+
+      expect(next?.phase, AppUpdatePhase.downloading);
+      expect(next?.progress, 0.5);
+    });
+
+    test('a failure reports its message', () {
+      final next = desktopStatusFor(
+        UpdateFailed(StateError('archive unreachable')),
+        checking,
+      );
+
+      expect(next?.phase, AppUpdatePhase.failed);
+      expect(next?.error, 'archive unreachable');
+    });
+  });
 }
+
+/// A minimal descriptor for the release the archive is offering.
+ReleaseDescriptor _descriptor() => ReleaseDescriptor(
+      schemaVersion: 3,
+      packageId: kUpdatePackageId,
+      appName: 'nightmail',
+      version: '1.22.3',
+      buildNumber: 157,
+      platform: 'macos',
+      channel: 'stable',
+      artifact: ReleaseArtifact(
+        kind: 'zip',
+        url: Uri.parse('${kUpdateBaseUrl}releases/1.22.3+157-macos/app.zip'),
+        sha256: '',
+        length: 1024,
+      ),
+      install: const ReleaseInstall(strategy: 'wholeBundleReplace'),
+      minimumUpdaterVersion: '3.0.0',
+      generatedAt: DateTime.utc(2026, 9, 2),
+    );

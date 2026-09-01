@@ -1,29 +1,15 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.22.2",
+  "version": "1.22.3",
   "sections": [
-    {
-      "type": "features",
-      "title": "New features",
-      "items": [
-        {
-          "body": "name the folder of a row that is from another folder",
-          "title": "email-list"
-        }
-      ]
-    },
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "give the keyboard to the input when a recipient chip is selected",
-          "title": "compose"
-        },
-        {
-          "body": "select a recipient chip on press, so Delete can remove it",
-          "title": "compose"
+          "body": "take the build number from pubspec, not the CI run counter",
+          "title": "update"
         }
       ]
     }

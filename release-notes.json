@@ -1,23 +1,19 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.22.1",
+  "version": "1.22.2",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "the WebView un-hid itself over the dialog it hid for",
-          "title": "linux"
-        },
-        {
-          "body": "keep an anchored dropdown inside the window at the right edge",
+          "body": "give the keyboard to the input when a recipient chip is selected",
           "title": "compose"
         },
         {
-          "body": "move a thread out of a folder none of its messages is in",
-          "title": "gmail"
+          "body": "select a recipient chip on press, so Delete can remove it",
+          "title": "compose"
         }
       ]
     }

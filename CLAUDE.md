@@ -1392,13 +1392,49 @@ same release — a build pinning only the new key cannot verify an archive still
 signed by the old one. `setup_updater.sh` refuses to go on when the two have
 drifted, and `--force` re-issues the secrets after a rotation.
 
-### Android compares less than desktop does
+### The Build Number Is the Whole of the Desktop Comparison
 
-Desktop compares version *and* build number out of the signed archive. Android
-compares the GitHub tag, which the workflow strips to the semver part (`1.20.0`,
-not `1.20.0+17`) and `EndBug/latest-tag` *moves* — so a rebuild at the same
-pubspec version is invisible to Android. Bumping `pubspec.yaml` is what publishes
-an update there. Same as inkworm; not a bug.
+**`desktop_updater` decides "newer" on the build number alone.** When both the
+candidate and the running app have one — and they always do; every archive item
+carries one and macOS reads `CFBundleVersion` back — `compareDesktopVersions`
+returns on that comparison and **never reaches the semver**
+(`lib/src/version_info.dart`). So build numbers have to rise monotonically
+across the entire published archive, forever: `1.20.0+145` beats `1.22.3+22`,
+and the client would offer the older release as an upgrade.
+
+That counter is `pubspec.yaml`'s `+BUILD`, read by the `prepare` job and passed
+to `flutter build --build-number` (which is what sets `CFBundleVersion`), to
+`desktop_updater:package` and to `app_archive upsert`. It used to be
+`github.run_number`, which is an unrelated sequence: a locally built app carried
+pubspec's `+21` while the archive carried the run counter's `+155`, so the app
+reported "Version 1.22.2 is available" against its own 1.22.2 — the same code,
+built twice, under two counters. `pubspec.yaml` jumps past the run numbers the
+old scheme had already published, or an install carrying one of those would
+never be offered another release. **Never move the counter down**,
+and never let a fresh start lose it: a build number below what is published
+silently serves an old release as the newest one.
+
+A missing or non-numeric `+BUILD` fails the `prepare` job rather than defaulting
+to 0, which would publish a release every install compares as older than what it
+already has.
+
+**Desktop and Android now agree: bumping `pubspec.yaml` is what publishes an
+update.** Android gets there differently — it compares the GitHub tag, which the
+workflow strips to the semver part (`1.20.0`, not `1.20.0+17`) and
+`EndBug/latest-tag` *moves*. So on both, a re-push at an unchanged pubspec
+version publishes no update: the archive `upsert` replaces the same
+platform/channel/version/build slot and gh-pages overwrites that release's zip
+and descriptor together, leaving clients on that build correctly seeing nothing.
+Same as inkworm; not a bug.
+
+One wording defect outlives this. `app_update_section.dart` prints
+`availableVersion`, which is `descriptor.version` — semver only — while
+`installedVersion` is `'${version}+${buildNumber}'`, so a same-semver
+different-build release still reads "Version 1.22.2 is available" against
+"1.22.2+200". `bump-version` always moves the semver, so that is now rare rather
+than every release.
+
+### Where the Android APK Goes
 
 The APK goes to the app's own cache directory, which is the only path
 `res/xml/file_paths.xml` grants the `FileProvider` — so `REQUEST_INSTALL_PACKAGES`

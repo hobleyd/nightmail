@@ -37,15 +37,37 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
-      build_number: ${{ github.run_number }}
+      build_number: ${{ steps.version.outputs.build_number }}
     steps:
       - uses: actions/checkout@v4
 
+      # Both halves of the version come from pubspec.yaml, and the build number
+      # is the one the in-app updater compares: desktop_updater decides "newer"
+      # on the build number ALONE and never reaches the semver when both sides
+      # have one, so this counter has to rise monotonically across the whole
+      # published archive, forever. It used to be github.run_number, which is a
+      # different sequence from pubspec's and so told every locally built app it
+      # was permanently out of date. Bumping pubspec.yaml is now what publishes
+      # an update on desktop, exactly as it already was on Android.
       - name: Get version from pubspec.yaml
         id: version
         run: |
           VERSION_FULL=$(grep '^version:' pubspec.yaml | awk '{print $2}')
-          echo "version=${VERSION_FULL%%+*}" >> $GITHUB_OUTPUT
+          VERSION="${VERSION_FULL%%+*}"
+          BUILD_NUMBER="${VERSION_FULL##*+}"
+          # A missing or non-numeric +BUILD would publish build 0, which every
+          # existing install compares as older than what it already has — a
+          # release nobody is ever offered. Fail rather than publish that.
+          case "$VERSION_FULL" in
+            *+*) ;;
+            *) echo "pubspec.yaml version '$VERSION_FULL' has no +BUILD suffix" >&2; exit 1 ;;
+          esac
+          case "$BUILD_NUMBER" in
+            ''|*[!0-9]*) echo "pubspec.yaml build number '$BUILD_NUMBER' is not a number" >&2; exit 1 ;;
+          esac
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "build_number=$BUILD_NUMBER" >> $GITHUB_OUTPUT
+          echo "Releasing $VERSION+$BUILD_NUMBER"
 
       - name: Push version tag
         uses: EndBug/latest-tag@latest

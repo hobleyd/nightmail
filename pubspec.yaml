@@ -2,7 +2,12 @@ name: nightmail
 description: "A cross-platform email client for Office 365, Gmail & IMAP."
 publish_to: 'none'
 
-version: 1.22.2+21
+# MAJOR.MINOR.PATCH+BUILD. The build number is what the in-app updater
+# compares on desktop (see "In-App Updates" in CLAUDE.md): it must only ever
+# rise, because desktop_updater decides "newer" on the build number alone and
+# never looks at the semver. It jumps past 21 here to clear the
+# github.run_number sequence that used to supply it.
+version: 1.22.3+157
 
 environment:
   sdk: ^3.12.1

@@ -8,6 +8,10 @@
       "title": "Fixes",
       "items": [
         {
+          "body": "name a waiting release by its build number too",
+          "title": "update"
+        },
+        {
           "body": "take the build number from pubspec, not the CI run counter",
           "title": "update"
         }

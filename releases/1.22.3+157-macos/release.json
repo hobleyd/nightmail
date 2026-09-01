@@ -9,8 +9,8 @@
   "artifact": {
     "kind": "zip",
     "url": "https://hobleyd.github.io/nightmail/releases/1.22.3+157-macos/nightmail-1.22.3-macos.zip",
-    "sha256": "d6ba27038e897a68b76f7bcd8b15f58b06a549e41cfbaac8bae479cee4a97cfd",
-    "length": 39231000
+    "sha256": "67f8b8ac4040e08f3251b69e16c4a3fb8778698b1a2ea35828549609ece7ab91",
+    "length": 39231614
   },
   "install": {
     "strategy": "wholeBundleReplace"
@@ -18,8 +18,8 @@
   "signature": {
     "algorithm": "ed25519",
     "publicKeyId": "release-b53948b0e36b895fa047a8f4",
-    "value": "e3GKdRnIFZC/852x/HV1EobSM6G06RtFkbjNg1i2/pHiVIl14j2sh+W2C52xfaNMoWEbdC+SvpzbPHg1+JAKBg=="
+    "value": "sKB7+2ftsrUF/iMb8mdEZUIOEsLcxqT9ZNWJGilRGBQHogg9Y01xiptR+155Bt8MiSF+AGxPflrHHgiSsI9wCg=="
   },
   "minimumUpdaterVersion": "2.0.0",
-  "generatedAt": "2026-09-01T12:35:07.574273Z"
+  "generatedAt": "2026-09-01T12:51:15.805132Z"
 }

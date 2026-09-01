@@ -4,6 +4,16 @@
   "version": "1.22.2",
   "sections": [
     {
+      "type": "features",
+      "title": "New features",
+      "items": [
+        {
+          "body": "name the folder of a row that is from another folder",
+          "title": "email-list"
+        }
+      ]
+    },
+    {
       "type": "fixes",
       "title": "Fixes",
       "items": [

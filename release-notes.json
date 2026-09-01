@@ -8,6 +8,10 @@
       "title": "Fixes",
       "items": [
         {
+          "body": "stop the spinner when there is nothing to update to",
+          "title": "update"
+        },
+        {
           "body": "name a waiting release by its build number too",
           "title": "update"
         },

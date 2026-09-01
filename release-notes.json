@@ -8,6 +8,10 @@
       "title": "Fixes",
       "items": [
         {
+          "body": "the WebView un-hid itself over the dialog it hid for",
+          "title": "linux"
+        },
+        {
           "body": "keep an anchored dropdown inside the window at the right edge",
           "title": "compose"
         },

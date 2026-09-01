@@ -23,6 +23,13 @@ struct WebkitView {
 
   gboolean alive;
 
+  // Dart asked for the overlay to be hidden (a Flutter modal or guarded
+  // overlay is on top of it). UpdatePosition must not undo that: it runs on
+  // every setPosition/setSize, and opening a dialog relayouts the reading
+  // pane, so without this flag the native WebView pops straight back over
+  // the dialog it was hidden for.
+  gboolean hidden_by_request;
+
   WebkitView(gint64 id, GtkOverlay* overlay, FlBinaryMessenger* messenger);
   ~WebkitView();
 

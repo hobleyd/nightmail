@@ -189,7 +189,7 @@ WebkitView::WebkitView(gint64 id_, GtkOverlay* overlay_,
       overlay(overlay_),
       pending_eval(nullptr),
       pos_x(0), pos_y(0), width(0), height(0),
-      alive(TRUE) {
+      alive(TRUE), hidden_by_request(FALSE) {
   WebKitUserContentManager* ucm = webkit_user_content_manager_new();
   webkit_user_content_manager_register_script_message_handler(ucm, "HtmlView");
   g_signal_connect(ucm, "script-message-received::HtmlView",
@@ -357,8 +357,9 @@ void WebkitView::HandleMethod(FlMethodCall* method_call) {
   } else if (strcmp(name, "setVisible") == 0 &&
              fl_value_get_type(args) == FL_VALUE_TYPE_BOOL) {
     gboolean visible = fl_value_get_bool(args);
+    hidden_by_request = !visible;
     if (visible) {
-      gtk_widget_show(GTK_WIDGET(web_view));
+      if (width > 0 && height > 0) gtk_widget_show(GTK_WIDGET(web_view));
     } else {
       gtk_widget_hide(GTK_WIDGET(web_view));
     }
@@ -372,8 +373,10 @@ void WebkitView::HandleMethod(FlMethodCall* method_call) {
 void WebkitView::UpdatePosition() {
   if (!overlay || !web_view) return;
 
-  // Show the widget once we have valid dimensions.
-  if (width > 0 && height > 0 && !gtk_widget_get_visible(GTK_WIDGET(web_view))) {
+  // Show the widget once we have valid dimensions — unless Dart has asked
+  // for it to stay hidden behind a modal.
+  if (!hidden_by_request && width > 0 && height > 0 &&
+      !gtk_widget_get_visible(GTK_WIDGET(web_view))) {
     gtk_widget_show(GTK_WIDGET(web_view));
   }
 

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/domain/entities/email.dart';
 import 'package:nightmail/domain/entities/email_address.dart';
+import 'package:nightmail/presentation/widgets/email_date_formatter.dart';
 import 'package:nightmail/presentation/widgets/email_list_item.dart';
 import 'package:nightmail/presentation/widgets/flag_icon_button.dart';
 
@@ -48,12 +49,14 @@ void main() {
     bool showCheckbox = false,
     bool isDesktop = true,
     bool isDuplicate = false,
+    String? folderLabel,
+    double width = 420,
     VoidCallback? onDoubleTap,
   }) async {
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
         body: SizedBox(
-          width: 420,
+          width: width,
           child: EmailListItem(
             email: email,
             isSelected: isSelected,
@@ -61,6 +64,7 @@ void main() {
             showCheckbox: showCheckbox,
             isDesktop: isDesktop,
             isDuplicate: isDuplicate,
+            folderLabel: folderLabel,
             onTap: () => taps++,
             onDelete: () => deletes++,
             onFlag: flags.add,
@@ -316,6 +320,69 @@ void main() {
       debugDefaultTargetPlatformOverride = null;
       expect(touchPaperclip, paperclip * 2);
       expect(touchCheckbox, checkbox * 2);
+    });
+  });
+
+  group('EmailListItem — folder label', () {
+    // The row's date is relative to today, so it has to be asked for rather
+    // than written down.
+    final dateText = formatEmailDate(DateTime(2026, 6, 10, 9));
+
+    testWidgets('draws the folder in brackets between sender and date',
+        (tester) async {
+      await pumpItem(tester, _email(), folderLabel: 'Archive');
+
+      expect(find.text('[Archive]'), findsOneWidget);
+
+      final row = tester.getRect(find.text('Ada'));
+      final folder = tester.getRect(find.text('[Archive]'));
+      final date = tester.getRect(find.text(dateText));
+      expect(folder.left, greaterThan(row.right - 1));
+      expect(date.left, greaterThan(folder.right - 1));
+    });
+
+    testWidgets('is omitted entirely when there is no folder to show',
+        (tester) async {
+      await pumpItem(tester, _email());
+
+      expect(find.textContaining('['), findsNothing);
+    });
+
+    testWidgets('is styled as the date is', (tester) async {
+      await pumpItem(tester, _email(isRead: false), folderLabel: 'Archive');
+
+      final folder = styleOf(tester, '[Archive]');
+      final date = styleOf(tester, dateText);
+      expect(folder.color, date.color);
+      expect(folder.fontSize, date.fontSize);
+      expect(folder.fontWeight, date.fontWeight);
+    });
+
+    testWidgets('the echo row italicises it with the rest', (tester) async {
+      await pumpItem(tester, _email(), isDuplicate: true, folderLabel: 'Sent');
+
+      expect(styleOf(tester, '[Sent]').fontStyle, FontStyle.italic);
+    });
+
+    testWidgets('ellipsises a long name rather than pushing the date off',
+        (tester) async {
+      await pumpItem(
+        tester,
+        _email(),
+        folderLabel: 'A folder with a preposterously long name',
+        width: 300,
+      );
+
+      final folder = tester.widget<Text>(
+          find.text('[A folder with a preposterously long name]'));
+      expect(folder.overflow, TextOverflow.ellipsis);
+      expect(folder.maxLines, 1);
+      // The date is the row's fixed point: it must still be laid out whole,
+      // inside the row, with the sender left something to show.
+      final date = tester.getRect(find.text(dateText));
+      expect(date.right, lessThanOrEqualTo(300));
+      expect(tester.getRect(find.text('Ada')).width, greaterThan(0));
+      expect(tester.takeException(), isNull);
     });
   });
 }

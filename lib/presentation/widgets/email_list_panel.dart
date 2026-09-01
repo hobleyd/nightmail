@@ -13,6 +13,7 @@ import '../../domain/entities/email.dart';
 import '../../domain/entities/email_address.dart';
 import '../../domain/entities/task_email_link.dart';
 import 'email_drag_data.dart';
+import 'email_folder_label.dart';
 import '../../domain/entities/email_folder.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../../injection_container.dart';
@@ -25,6 +26,7 @@ import '../blocs/email_list/email_list_event.dart';
 import '../blocs/email_list/email_list_state.dart';
 import '../blocs/folder_list/folder_list_bloc.dart';
 import '../blocs/folder_list/folder_list_event.dart';
+import '../blocs/folder_list/folder_list_state.dart';
 import '../blocs/home/home_cubit.dart';
 import '../blocs/mail_poller/mail_poller_cubit.dart';
 import '../blocs/tasks/tasks_bloc.dart';
@@ -63,6 +65,14 @@ class _EmailListPanelState extends State<EmailListPanel> {
   final _searchController = TextEditingController();
 
   Set<String> _selectedEmailIds = {};
+
+  /// Folder id to display name, for the bracketed folder each row shows.
+  ///
+  /// Held as state and refreshed only when a *name* changes, rather than
+  /// watched: [EmailFolder.props] carries the unread counts the poller rewrites
+  /// on every cycle, so watching the bloc would rebuild every row in the list
+  /// each time a count moved.
+  Map<String, String> _folderNames = const {};
   int? _lastSelectedIndex;
   bool _isMultiSelectMode = false;
 
@@ -78,6 +88,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
+    _folderNames = _folderNamesOf(context.read<FolderListBloc>().state);
     final platform = defaultTargetPlatform;
     _isAndroid = platform == TargetPlatform.android;
     _isMac = platform == TargetPlatform.macOS;
@@ -463,6 +474,11 @@ class _EmailListPanelState extends State<EmailListPanel> {
     _clearSelection();
   }
 
+  static Map<String, String> _folderNamesOf(FolderListState state) => {
+        if (state is FolderListLoaded)
+          for (final f in state.folders) f.id: f.displayName,
+      };
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -470,6 +486,14 @@ class _EmailListPanelState extends State<EmailListPanel> {
       color: c.surfaceBase,
       child: MultiBlocListener(
         listeners: [
+          BlocListener<FolderListBloc, FolderListState>(
+            listener: (context, state) {
+              final names = _folderNamesOf(state);
+              if (!mapEquals(names, _folderNames)) {
+                setState(() => _folderNames = names);
+              }
+            },
+          ),
           BlocListener<EmailListBloc, EmailListState>(
             listenWhen: (prev, curr) {
               // Clear selection when the folder changes
@@ -558,6 +582,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
                         ),
                       EmailListLoaded(
                         :final emails,
+                        :final isShowingFolder,
                         :final isLoadingMore,
                         :final expandedConversationIds,
                         :final spamEmailIds,
@@ -571,6 +596,16 @@ class _EmailListPanelState extends State<EmailListPanel> {
                               )
                             : _EmailListView(
                                 emails: emails,
+                                folderNames: _folderNames,
+                                // Only a folder listing may suppress the
+                                // label for its own folder. Search results and
+                                // a focused thread are drawn from across the
+                                // mailbox, so every row there names its folder
+                                // — a hit from Archive would otherwise be
+                                // silently taken for one in whatever folder is
+                                // still selected in the panel behind it.
+                                currentFolder:
+                                    isShowingFolder ? widget.folder : null,
                                 selfAddress: _selfAddress,
                                 anchorOnSelf: _anchorOnSelf,
                                 isLoadingMore: isLoadingMore,
@@ -1052,6 +1087,8 @@ class _EmailListView extends StatelessWidget {
     required this.expandedConversationIds,
     required this.onToggleConversation,
     required this.isDesktop,
+    this.folderNames = const {},
+    this.currentFolder,
     this.spamEmailIds = const {},
     this.onEmailLongPressed,
     this.onEmailDoubleTapped,
@@ -1067,6 +1104,14 @@ class _EmailListView extends StatelessWidget {
 
   /// See [_EmailListPanelState._anchorOnSelf].
   final bool anchorOnSelf;
+
+  /// Folder id to display name, for the bracketed folder each row carries.
+  /// See [emailFolderLabel].
+  final Map<String, String> folderNames;
+
+  /// The folder being listed, which answers for every row that really is in it
+  /// — including the ones the folder tree has no entry for.
+  final EmailFolder? currentFolder;
   final bool isLoadingMore;
   final String? selectedEmailId;
   final Set<String> selectedEmailIds;
@@ -1136,6 +1181,11 @@ class _EmailListView extends StatelessWidget {
             showCheckbox: showCheckboxes,
             indent: isChild ? 20.0 : 0.0,
             isSpam: spamEmailIds.contains(email.id),
+            folderLabel: emailFolderLabel(
+              email,
+              folderNames: folderNames,
+              currentFolder: currentFolder,
+            ),
             onTap: () => onEmailTapped(email, i),
             onDoubleTap: onEmailDoubleTapped != null ? () => onEmailDoubleTapped!(email) : null,
             onLongPress: () => onEmailLongPressed?.call(email, i),
@@ -1212,6 +1262,11 @@ class _EmailListView extends StatelessWidget {
           isSelected: isConvSelected,
           isMultiSelected: selectedEmailIds.contains(conv.anchorEmail.id),
           showCheckbox: showCheckboxes,
+          folderLabel: emailFolderLabel(
+            conv.anchorEmail,
+            folderNames: folderNames,
+            currentFolder: currentFolder,
+          ),
           onTap: () => onEmailTapped(conv.anchorEmail, i),
           onLongPress: () => onEmailLongPressed?.call(conv.anchorEmail, i),
           onToggleExpand: () => onToggleConversation(conv.conversationId),
@@ -1263,6 +1318,7 @@ class _ConversationHeader extends StatefulWidget {
     this.isDesktop = true,
     this.isMultiSelected = false,
     this.showCheckbox = false,
+    this.folderLabel,
     this.onLongPress,
     this.flagFocusNode,
     this.deleteFocusNode,
@@ -1278,6 +1334,9 @@ class _ConversationHeader extends StatefulWidget {
   final bool isMultiSelected;
   final bool showCheckbox;
   final bool isDesktop;
+
+  /// The folder the anchor message lives in — see [emailFolderLabel].
+  final String? folderLabel;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
   final VoidCallback onToggleExpand;
@@ -1373,46 +1432,74 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                widget.anchorEmail.from.displayName,
-                                style: TextStyle(
-                                  color: c.textPrimary,
-                                  fontSize: 13,
-                                  fontWeight: widget.hasUnread ? FontWeight.w600 : FontWeight.w400,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                              decoration: BoxDecoration(
-                                color: c.badgeBg,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text(
-                                '${widget.totalCount}',
-                                style: TextStyle(
-                                  color: AppColors.accent,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600,
+                        // See [EmailListItem]'s copy of this row for why the
+                        // folder label needs the row's own width.
+                        LayoutBuilder(builder: (context, constraints) {
+                          return Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  widget.anchorEmail.from.displayName,
+                                  style: TextStyle(
+                                    color: c.textPrimary,
+                                    fontSize: 13,
+                                    fontWeight: widget.hasUnread ? FontWeight.w600 : FontWeight.w400,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ),
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              formatEmailDate(widget.anchorEmail.receivedDateTime),
-                              style: TextStyle(
-                                color: c.textTertiary,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w400,
+                              const SizedBox(width: 4),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                decoration: BoxDecoration(
+                                  color: c.badgeBg,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  '${widget.totalCount}',
+                                  style: TextStyle(
+                                    color: AppColors.accent,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
                               ),
-                            ),
-                          ],
-                        ),
+                              if (widget.folderLabel != null) ...[
+                                const SizedBox(width: 4),
+                                // Capped and non-flex for the same reason as
+                                // [EmailListItem]'s: the sender is the row's only
+                                // Expanded, and a long folder name laid out at its
+                                // natural size would crowd it out.
+                                ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                      maxWidth: folderLabelMaxWidth(
+                                          constraints.maxWidth)),
+                                  child: Text(
+                                    '[${widget.folderLabel}]',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: c.textTertiary,
+                                      fontSize: 11,
+                                      fontWeight: widget.hasUnread
+                                          ? FontWeight.w500
+                                          : FontWeight.w400,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(width: 4),
+                              Text(
+                                formatEmailDate(widget.anchorEmail.receivedDateTime),
+                                style: TextStyle(
+                                  color: c.textTertiary,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w400,
+                                ),
+                              ),
+                            ],
+                          );
+                        }),
                         const SizedBox(height: 3),
                         Row(
                           children: [

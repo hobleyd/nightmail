@@ -4,6 +4,7 @@ import '../../core/platform/touch_metrics.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import 'email_date_formatter.dart';
+import 'email_folder_label.dart';
 import 'flag_icon_button.dart';
 
 class EmailListItem extends StatefulWidget {
@@ -20,6 +21,7 @@ class EmailListItem extends StatefulWidget {
     this.isSpam = false,
     this.isDesktop = true,
     this.isDuplicate = false,
+    this.folderLabel,
     this.onLongPress,
     this.onDoubleTap,
     this.flagFocusNode,
@@ -37,6 +39,11 @@ class EmailListItem extends StatefulWidget {
   /// above it. Drawn in italics to say so, and without the hover actions — they
   /// belong to the row this one echoes.
   final bool isDuplicate;
+
+  /// The folder this message lives in, drawn in brackets between the sender and
+  /// the date. Null when it could not be resolved to a real folder name — see
+  /// [emailFolderLabel].
+  final String? folderLabel;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
   final VoidCallback? onDoubleTap;
@@ -140,36 +147,63 @@ class _EmailListItemState extends State<EmailListItem> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            _senderLabel(widget.email),
+                    // A LayoutBuilder because the folder label's cap is a
+                    // fraction of the row (see [folderLabelMaxWidth]), and an
+                    // inflexible child of a Row is measured against an
+                    // unbounded width, so it cannot work that out for itself.
+                    LayoutBuilder(builder: (context, constraints) {
+                      return Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _senderLabel(widget.email),
+                              style: TextStyle(
+                                color: c.textPrimary,
+                                fontSize: 13,
+                                fontStyle: fontStyle,
+                                fontWeight: widget.email.isRead
+                                    ? FontWeight.w400
+                                    : FontWeight.w600,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (widget.folderLabel != null) ...[
+                            const SizedBox(width: 6),
+                            ConstrainedBox(
+                              constraints: BoxConstraints(
+                                  maxWidth:
+                                      folderLabelMaxWidth(constraints.maxWidth)),
+                              child: Text(
+                                '[${widget.folderLabel}]',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: c.textTertiary,
+                                  fontSize: 11,
+                                  fontStyle: fontStyle,
+                                  fontWeight: widget.email.isRead
+                                      ? FontWeight.w400
+                                      : FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ],
+                          const SizedBox(width: 8),
+                          Text(
+                            formatEmailDate(widget.email.receivedDateTime),
                             style: TextStyle(
-                              color: c.textPrimary,
-                              fontSize: 13,
+                              color: c.textTertiary,
+                              fontSize: 11,
                               fontStyle: fontStyle,
                               fontWeight: widget.email.isRead
                                   ? FontWeight.w400
-                                  : FontWeight.w600,
+                                  : FontWeight.w500,
                             ),
-                            overflow: TextOverflow.ellipsis,
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          formatEmailDate(widget.email.receivedDateTime),
-                          style: TextStyle(
-                            color: c.textTertiary,
-                            fontSize: 11,
-                            fontStyle: fontStyle,
-                            fontWeight: widget.email.isRead
-                                ? FontWeight.w400
-                                : FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
+                        ],
+                      );
+                    }),
                     const SizedBox(height: 3),
                     Row(
                       children: [

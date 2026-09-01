@@ -880,6 +880,45 @@ Three consequences, none incidental:
   keyboard stop — `_isNavigable` skips it, or arrow-down would select what is
   already selected and bounce back to the header on the next press.
 
+## A List Row Names Its Own Folder
+
+A row whose message is **somewhere else** names that folder in brackets between
+the sender and the date (`emailFolderLabel`,
+`presentation/widgets/email_folder_label.dart`). A folder listing carries
+messages from other folders — the copies in Sent and the already-filed replies
+both providers expand a thread with — and this is how a reader tells those apart
+from the mail that is really here.
+
+Five things here are load-bearing:
+
+- **A message that is in the folder on screen gets no label at all**
+  (`Email.isInFolder`). The pane already names that folder above the list, so
+  labelling nearly every row of a listing with it says nothing and crowds out
+  the sender. The label means *elsewhere*.
+- **Only a folder listing may suppress** (`EmailListLoaded.isShowingFolder`).
+  Search results and a focused thread are drawn from across the mailbox, so
+  there the panel passes no current folder and every row names its own — a hit
+  from Archive would otherwise be silently taken for one in whatever folder is
+  still selected in the panel behind it.
+- **A raw provider id is never drawn.** Gmail stamps every label a message
+  carries into `folderIds` — `UNREAD`, `IMPORTANT`, `CATEGORY_PERSONAL` among
+  them — and a Graph folder id means nothing to a reader. Anything that does not
+  resolve against `FolderListBloc`'s tree is skipped, and a row with nothing
+  left to resolve gets no brackets rather than a `Label_123`. Resolving against
+  the tree is what drops the non-folder labels, for free.
+- **The id→name map is held in `_EmailListPanelState`, not watched.**
+  `EmailFolder.props` carries the unread counts the poller rewrites every cycle,
+  so a `BlocBuilder` here would rebuild every row in the list each time a count
+  moved. A listener refreshes the map only when a *name* changes.
+- **The label is capped, and the cap is a fraction of the row**
+  (`folderLabelMaxWidth`). The sender is the row's only flexible child, so a
+  label laid out at its natural size squeezes the sender to nothing and then
+  pushes the date off the end — and making the label flexible instead would
+  ellipsise it while there was still room, since a Flex hands a loose child its
+  share rather than what it asks for. Hence the `LayoutBuilder`: an inflexible
+  child of a Row is measured against an unbounded width and cannot work its own
+  share out.
+
 ## A Failed First Load Must Not Freeze the Cache On Screen
 
 `FolderListBloc` and `EmailListBloc` both load cache-then-network and swallow the

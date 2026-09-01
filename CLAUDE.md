@@ -1427,12 +1427,15 @@ platform/channel/version/build slot and gh-pages overwrites that release's zip
 and descriptor together, leaving clients on that build correctly seeing nothing.
 Same as inkworm; not a bug.
 
-One wording defect outlives this. `app_update_section.dart` prints
-`availableVersion`, which is `descriptor.version` — semver only — while
-`installedVersion` is `'${version}+${buildNumber}'`, so a same-semver
-different-build release still reads "Version 1.22.2 is available" against
-"1.22.2+200". `bump-version` always moves the semver, so that is now rare rather
-than every release.
+**A waiting release is named `1.22.3+157`, not `1.22.3`**
+(`formatReleaseVersion`). The About panel prints the installed version as
+`version+build`, so naming the available one by its semver alone left the two
+lines comparing different things — the complaint that surfaced all of this was
+"Version 1.22.2 is available" against an installed "1.22.2+21". The build number
+is also the whole of the comparison, so on a same-semver release it is the only
+part that explains why an update is being offered. Android is the exception and
+reports the semver alone: it compares the GitHub tag, which the workflow strips
+to its semver part, so there is no build number to report.
 
 ### Where the Android APK Goes
 

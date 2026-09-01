@@ -37,6 +37,20 @@ const Map<String, String> kTrustedReleasePublicKeys = {
       'CS5SJb9jMzPxDQZpkLXANll0mu0sFBpyQFny9lp72Qw=',
 };
 
+/// How a waiting release is named on screen: `1.22.3+157`, not `1.22.3`.
+///
+/// The About panel prints the *installed* version as `version+build`, so naming
+/// the available one by its semver alone left the two lines comparing different
+/// things — a release at the same semver and a higher build read "Version 1.22.2
+/// is available" against an installed "1.22.2+21", which is exactly what the old
+/// `github.run_number` build numbers produced on every locally built app. The
+/// build number is also the *whole* of `desktop_updater`'s comparison (see
+/// "In-App Updates" in CLAUDE.md), so it is the only part that explains why an
+/// update is being offered at all.
+@visibleForTesting
+String formatReleaseVersion(String version, int? buildNumber) =>
+    buildNumber == null ? version : '$version+$buildNumber';
+
 /// Owns in-app updating, and is the one place that knows which mechanism this
 /// platform uses.
 ///
@@ -198,6 +212,9 @@ class AppUpdateService {
       return;
     }
     _emit(_status.copyWith(
+      // No build number to add: Android compares the GitHub tag, which the
+      // release workflow strips to the semver part, so the semver is the whole
+      // of what is known about the release here.
       phase: AppUpdatePhase.available,
       availableVersion: check.releaseVersion.toString(),
     ));
@@ -241,19 +258,22 @@ class AppUpdateService {
       case UpdateAvailable(:final descriptor):
         _emit(_status.copyWith(
           phase: AppUpdatePhase.available,
-          availableVersion: descriptor.version,
+          availableVersion:
+              formatReleaseVersion(descriptor.version, descriptor.buildNumber),
           clearError: true,
         ));
       case UpdateFreshInstallRequired(:final descriptor):
         _emit(_status.copyWith(
           phase: AppUpdatePhase.freshInstallRequired,
-          availableVersion: descriptor.version,
+          availableVersion:
+              formatReleaseVersion(descriptor.version, descriptor.buildNumber),
           clearError: true,
         ));
       case UpdateBlockedBySupportPolicy(:final descriptor):
         _emit(_status.copyWith(
           phase: AppUpdatePhase.available,
-          availableVersion: descriptor.version,
+          availableVersion:
+              formatReleaseVersion(descriptor.version, descriptor.buildNumber),
           error: 'This version is no longer supported. Please update.',
         ));
       case UpdateDownloading(:final receivedBytes, :final totalBytes):

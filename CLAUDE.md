@@ -584,10 +584,13 @@ Four things here are load-bearing:
   between, so the walk would pull a forward-inside-the-forward's images up into
   the list. They are referenced by *its* body, not the one being rendered, so
   that is megabytes of base64 spent on cid tokens nothing asks for.
-- **The nested message's own attachments are deliberately not offered.** The
-  bytes are on disk, but `_AttachmentChip` is welded to `sl<DownloadAttachment>()`
-  keyed by message id + attachment id, and a part inside a previewed `.eml` has
-  no server-side id. That is a bytes-provider seam, not a field addition.
+- **The nested message's own attachments come through a bytes-provider seam.**
+  A part inside a previewed `.eml` has no server-side id to download by, so
+  `_AttachmentsSection`/`_AttachmentChip`/`_SaveAllButton` take an optional
+  `bytesLoader` and use it in place of `sl<DownloadAttachment>()`. The choice is
+  made on the loader being **non-null, never by inspecting the id** — a MIME
+  path like `2` is a perfectly plausible provider id, and a heuristic there
+  fails silently towards hitting the network with a garbage id.
 - **Two attachments on one message routinely share a name**, so the scratch
   file each is written to is named from a directory keyed on the *attachment
   id* (`_scratchFile`), not from the name alone. Five `Undeliverable:` bounces
@@ -598,6 +601,50 @@ Four things here are load-bearing:
   showing the first. The discriminator is on the directory rather than the file
   so the name stays what the sender called it — the preview header shows it, and
   the mobile share sheet offers it as the name to save.
+
+### A part inside a previewed `.eml` is addressed by its own MIME path
+
+`EmlParser` numbers parts itself (`2`, `3.1`) rather than reading enough_mail's
+`fetchId`, because that one **collapses**: `collectContentInfo` hands a child of
+a `message/rfc822` part the *parent's* id instead of appending an index, so
+every attachment inside a forwarded message ends up sharing one id. That is
+`attachmentParseVersion` 2 in the cache — the chips look right and every one of
+them fetches the same wrong bytes. `_collectAttachments` and
+`extractEmlAttachmentBytes` run the *same* walk, so the path a chip carries and
+the path its bytes are fetched by cannot drift.
+
+Three more things here:
+
+- **Ids are namespaced `<emlId>#<partId>`.** Two previewed messages both have a
+  part `2`, and a bare path would collide in the reading pane's scratch
+  directory (`_scratchFile` keys on the attachment id) and in the active-chip
+  check. `emlPartIdOf` recovers the tail.
+- **The walk does not descend into an encapsulated message.** That message is
+  offered whole as its own `.eml`; descending would flatten its attachments into
+  its parent's list, which is the shape the numbering exists to avoid. Nesting
+  is not depth-limited — a bounce chain is a real thing, and each level is
+  reached by previewing the level above.
+- **Bytes are re-read and re-parsed on demand**, in an isolate, rather than held
+  from the original parse. A previewed message is opened far more often than its
+  attachments are, and keeping them resident would make every preview cost the
+  size of the whole message.
+
+`hasAttachments` is derived from the collected list rather than
+`MimeMessage.hasAttachments()`, which matches on `Content-Disposition` and so
+disagrees with the walk for a part named only by `Content-Type; name=` — a chip
+on screen while the flag said there were none.
+
+**`EmailDetailLoaded.emlSource` is the same seam for the other surface.** A
+`.eml` opened from a task attachment renders through the *main* reading pane,
+which has no file on disk to read parts back out of — so the raw bytes travel
+with the state. Without it that path draws chips it cannot honour, which is
+strictly worse than the empty list it used to draw. The bytes are kept out of
+`props` (Equatable would deep-compare a whole message on every emit); the length
+stands in.
+
+**Save All de-duplicates names.** Five `Undeliverable:` bounces off one send all
+have the same name, and every one of them used to be written to the same path —
+four of the five silently lost behind a progress bar that counted all five.
 
 ### Outlook attaches an email as an `itemAttachment`, which is not a file
 

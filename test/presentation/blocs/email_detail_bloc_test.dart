@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fpdart/fpdart.dart';
@@ -164,6 +166,51 @@ void main() {
 
       verifyNever(mockGetEmail(any));
       expect((bloc.state as EmailDetailLoaded).email.id, 'email-1');
+    });
+  });
+
+  // A .eml has no server-side attachment ids, so the reading pane can only
+  // honour the chips it draws if the bytes they came from travel with the
+  // state. Without this the chips are drawn and every one of them fails.
+  group('EmailDetailLoadedFromEml', () {
+    const mime = 'From: a@b.com\r\n'
+        'Subject: Bounce\r\n'
+        'MIME-Version: 1.0\r\n'
+        'Content-Type: multipart/mixed; boundary="b1"\r\n'
+        '\r\n'
+        '--b1\r\n'
+        'Content-Type: text/plain\r\n'
+        '\r\n'
+        'Delivery failed.\r\n'
+        '--b1\r\n'
+        'Content-Type: message/rfc822\r\n'
+        '\r\n'
+        'From: a@b.com\r\n'
+        'Subject: The original\r\n'
+        'Content-Type: text/plain\r\n'
+        '\r\n'
+        'Original body.\r\n'
+        '--b1--\r\n';
+
+    test('lists the attached message and carries the bytes to serve it',
+        () async {
+      final bytes = Uint8List.fromList(utf8.encode(mime));
+      bloc.add(EmailDetailLoadedFromEml(bytes: bytes));
+      // The parse runs in an isolate, so the queue draining is not enough.
+      final state = await bloc.stream.firstWhere((s) => s is EmailDetailLoaded)
+          as EmailDetailLoaded;
+      expect(state.email.attachments.single.name, 'The original.eml');
+      expect(state.email.hasAttachments, isTrue);
+      expect(state.emlSource, bytes);
+    });
+
+    test('a provider-loaded message carries no eml source', () async {
+      when(mockGetEmail(const GetEmailParams(id: 'email-1')))
+          .thenAnswer((_) async => Right(_email('email-1')));
+      bloc.add(const EmailDetailLoadRequested(emailId: 'email-1'));
+      await bloc.stream.firstWhere((s) => s is EmailDetailLoaded);
+
+      expect((bloc.state as EmailDetailLoaded).emlSource, isNull);
     });
   });
 }

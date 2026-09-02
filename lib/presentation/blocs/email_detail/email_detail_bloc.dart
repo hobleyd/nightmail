@@ -115,7 +115,7 @@ class EmailDetailBloc extends Bloc<EmailDetailEvent, EmailDetailState> {
         event.bytes,
         id: event.sourceId ?? 'task-attachment',
       );
-      emit(EmailDetailLoaded(email: email));
+      emit(EmailDetailLoaded(email: email, emlSource: event.bytes));
     } catch (e) {
       emit(EmailDetailError(message: 'Failed to parse email: $e'));
     }

@@ -95,7 +95,13 @@ class ReadingPane extends StatelessWidget {
                       color: AppColors.accent, strokeWidth: 2),
                 ),
               EmailDetailLoaded(:final email, :final senderAnomaly) =>
-                _EmailView(key: ValueKey(email.id), email: email, senderAnomaly: senderAnomaly, onBack: onBack),
+                _EmailView(
+                  key: ValueKey(email.id),
+                  email: email,
+                  senderAnomaly: senderAnomaly,
+                  onBack: onBack,
+                  emlSource: state.emlSource,
+                ),
               EmailDetailError(:final message) => _ErrorState(message: message, onBack: onBack),
             };
           },
@@ -299,10 +305,21 @@ class _ErrorState extends StatelessWidget {
 enum _AttachmentPreviewKind { webFile, image, eml }
 
 class _EmailView extends StatefulWidget {
-  const _EmailView({super.key, required this.email, this.senderAnomaly, this.onBack});
+  const _EmailView({
+    super.key,
+    required this.email,
+    this.senderAnomaly,
+    this.onBack,
+    this.emlSource,
+  });
   final Email email;
   final SenderAnomalyResult? senderAnomaly;
   final VoidCallback? onBack;
+
+  /// See [EmailDetailLoaded.emlSource]. Non-null when this message was parsed
+  /// from an `.eml` — a task attachment opened as mail — in which case its
+  /// attachments are MIME paths and their bytes come back out of here.
+  final Uint8List? emlSource;
 
   @override
   State<_EmailView> createState() => _EmailViewState();
@@ -321,6 +338,21 @@ class _EmailViewState extends State<_EmailView> {
   _AttachmentPreviewKind? _previewKind;
   IconData _previewIcon = Icons.insert_drive_file_rounded;
   HtmlViewController? _bodyController;
+
+  /// The bytes of one attachment of an `.eml`-sourced message, or null when
+  /// this message came from a provider and its chips download normally.
+  Future<List<int>?> Function(EmailAttachment)? get _emlBytesLoader {
+    final source = widget.emlSource;
+    if (source == null) return null;
+    return (attachment) async {
+      try {
+        return await sl<EmlParser>()
+            .attachmentBytes(source, attachmentId: attachment.id);
+      } catch (_) {
+        return null;
+      }
+    };
+  }
 
   void _showPreview(_AttachmentPreviewKind kind, String path, String name,
       String attachmentId, IconData icon,
@@ -630,6 +662,7 @@ class _EmailViewState extends State<_EmailView> {
           senderAnomaly: widget.senderAnomaly,
           onAttachmentPreview: _showPreview,
           activePreviewAttachmentId: _previewAttachmentId,
+          bytesLoader: _emlBytesLoader,
         ),
         Divider(height: 1, color: c.border),
         if (calendarAvailable && meetingType == MeetingEmailType.invitation) ...[
@@ -677,6 +710,8 @@ class _EmailViewState extends State<_EmailView> {
                 filePath: _previewPath!,
                 fileName: _previewName!,
                 onClose: _closePreview,
+                onAttachmentPreview: _showPreview,
+                activePreviewAttachmentId: _previewAttachmentId,
               ),
             null => _EmailBody(
                 email: widget.email,
@@ -2040,12 +2075,16 @@ class _EmailHeader extends StatelessWidget {
     this.senderAnomaly,
     this.onAttachmentPreview,
     this.activePreviewAttachmentId,
+    this.bytesLoader,
   });
   final Email email;
   final SenderAnomalyResult? senderAnomaly;
   final void Function(_AttachmentPreviewKind kind, String path, String name,
       String attachmentId, IconData icon)? onAttachmentPreview;
   final String? activePreviewAttachmentId;
+
+  /// See [_AttachmentsSection.bytesLoader].
+  final Future<List<int>?> Function(EmailAttachment attachment)? bytesLoader;
 
   static Color? _anomalyColor(double? score) {
     if (score == null) return null;
@@ -2107,6 +2146,7 @@ class _EmailHeader extends StatelessWidget {
                 attachments: email.attachments,
                 onAttachmentPreview: onAttachmentPreview,
                 activePreviewAttachmentId: activePreviewAttachmentId,
+                bytesLoader: bytesLoader,
               ),
             ],
           ],
@@ -2392,9 +2432,16 @@ class _AttachmentsSection extends StatelessWidget {
     required this.attachments,
     this.onAttachmentPreview,
     this.activePreviewAttachmentId,
+    this.bytesLoader,
   });
   final String emailId;
   final List<EmailAttachment> attachments;
+  /// Where an attachment's bytes come from, when they do not come from the
+  /// provider. Non-null exactly for the attachments *inside* a previewed
+  /// `.eml`, whose parts have no server-side id to download by — the choice is
+  /// made on this being set, never by inspecting the id, since a MIME path
+  /// like `2` is a perfectly plausible provider id too.
+  final Future<List<int>?> Function(EmailAttachment attachment)? bytesLoader;
   final void Function(_AttachmentPreviewKind kind, String path, String name,
       String attachmentId, IconData icon)? onAttachmentPreview;
   final String? activePreviewAttachmentId;
@@ -2431,6 +2478,9 @@ class _AttachmentsSection extends StatelessWidget {
                           attachment: a,
                           onAttachmentPreview: onAttachmentPreview,
                           isActive: a.id == activePreviewAttachmentId,
+                          bytesLoader: bytesLoader == null
+                              ? null
+                              : () => bytesLoader!(a),
                         ))
                     .toList(),
               ),
@@ -2440,6 +2490,7 @@ class _AttachmentsSection extends StatelessWidget {
                 child: _SaveAllButton(
                   emailId: emailId,
                   attachments: attachments,
+                  bytesLoader: bytesLoader,
                 ),
               ),
             ],
@@ -2451,9 +2502,16 @@ class _AttachmentsSection extends StatelessWidget {
 }
 
 class _SaveAllButton extends StatefulWidget {
-  const _SaveAllButton({required this.emailId, required this.attachments});
+  const _SaveAllButton({
+    required this.emailId,
+    required this.attachments,
+    this.bytesLoader,
+  });
   final String emailId;
   final List<EmailAttachment> attachments;
+
+  /// See [_AttachmentsSection.bytesLoader].
+  final Future<List<int>?> Function(EmailAttachment attachment)? bytesLoader;
 
   @override
   State<_SaveAllButton> createState() => _SaveAllButtonState();
@@ -2493,28 +2551,60 @@ class _SaveAllButtonState extends State<_SaveAllButton> {
     }
   }
 
+  /// This attachment's bytes, from the provider or from [widget.bytesLoader].
+  /// Returns the bytes, or the reason there are none.
+  Future<(List<int>?, String?)> _bytesFor(EmailAttachment attachment) async {
+    final loader = widget.bytesLoader;
+    if (loader != null) {
+      final bytes = await loader(attachment);
+      return (bytes, bytes == null ? 'could not be read' : null);
+    }
+    final result = await sl<DownloadAttachment>()(DownloadAttachmentParams(
+      messageId: widget.emailId,
+      attachmentId: attachment.id,
+    ));
+    return result.fold((f) => (null, f.message), (b) => (b, null));
+  }
+
+  /// `name`, `name (2)`, `name (3)` … so a message whose attachments share a
+  /// name saves all of them.
+  ///
+  /// Several attachments on one message routinely have the same name — five
+  /// `Undeliverable:` bounces off one send — and every one of them used to be
+  /// written to the same path, so four of the five were silently lost behind
+  /// a progress bar that counted all five.
+  static String _uniqueName(String name, Set<String> taken) {
+    final sanitized = _sanitizedFileName(name);
+    if (taken.add(sanitized)) return sanitized;
+
+    final dot = sanitized.lastIndexOf('.');
+    final stem = dot <= 0 ? sanitized : sanitized.substring(0, dot);
+    final ext = dot <= 0 ? '' : sanitized.substring(dot);
+    for (var i = 2;; i++) {
+      final candidate = '$stem ($i)$ext';
+      if (taken.add(candidate)) return candidate;
+    }
+  }
+
   Future<void> _saveAllDesktop() async {
     final directory = await getDirectoryPath();
     if (directory == null || !mounted) return;
 
     final errors = <String>[];
+    final used = <String>{};
     for (final attachment in widget.attachments) {
-      final result = await sl<DownloadAttachment>()(DownloadAttachmentParams(
-        messageId: widget.emailId,
-        attachmentId: attachment.id,
-      ));
+      final (bytes, error) = await _bytesFor(attachment);
       if (!mounted) return;
-      await result.fold(
-        (f) async => errors.add('${attachment.name}: ${f.message}'),
-        (bytes) async {
-          try {
-            await File('$directory/${_sanitizedFileName(attachment.name)}')
-                .writeAsBytes(bytes);
-          } catch (e) {
-            errors.add('${attachment.name}: $e');
-          }
-        },
-      );
+      if (bytes == null) {
+        errors.add('${attachment.name}: $error');
+      } else {
+        try {
+          await File('$directory/${_uniqueName(attachment.name, used)}')
+              .writeAsBytes(bytes);
+        } catch (e) {
+          errors.add('${attachment.name}: $e');
+        }
+      }
       if (mounted) setState(() => _completed++);
     }
 
@@ -2527,24 +2617,28 @@ class _SaveAllButtonState extends State<_SaveAllButton> {
   }
 
   Future<void> _saveAllMobile() async {
-    final dir = await getTemporaryDirectory();
+    // A bucket of this message's own, so a Save All on one previewed `.eml`
+    // cannot overwrite the files a Save All on another just staged — the same
+    // reason `_scratchFile` buckets, reached from the other direction. The
+    // de-duplication below only spans one call.
+    final temp = await getTemporaryDirectory();
+    final dir = Directory('${temp.path}/nightmail_attachments/'
+        '${widget.emailId.hashCode.toRadixString(16)}');
+    await dir.create(recursive: true);
 
     final errors = <String>[];
     final xFiles = <XFile>[];
+    final used = <String>{};
     for (final attachment in widget.attachments) {
-      final result = await sl<DownloadAttachment>()(DownloadAttachmentParams(
-        messageId: widget.emailId,
-        attachmentId: attachment.id,
-      ));
+      final (bytes, _) = await _bytesFor(attachment);
       if (!mounted) return;
-      await result.fold(
-        (f) async => errors.add(attachment.name),
-        (bytes) async {
-          final path = '${dir.path}/${_sanitizedFileName(attachment.name)}';
-          await File(path).writeAsBytes(bytes);
-          xFiles.add(XFile(path, mimeType: attachment.contentType));
-        },
-      );
+      if (bytes == null) {
+        errors.add(attachment.name);
+      } else {
+        final path = '${dir.path}/${_uniqueName(attachment.name, used)}';
+        await File(path).writeAsBytes(bytes);
+        xFiles.add(XFile(path, mimeType: attachment.contentType));
+      }
       if (mounted) setState(() => _completed++);
     }
 
@@ -2633,9 +2727,13 @@ class _AttachmentChip extends StatefulWidget {
     required this.attachment,
     this.onAttachmentPreview,
     this.isActive = false,
+    this.bytesLoader,
   });
   final String emailId;
   final EmailAttachment attachment;
+
+  /// See [_AttachmentsSection.bytesLoader].
+  final Future<List<int>?> Function()? bytesLoader;
   final void Function(_AttachmentPreviewKind kind, String path, String name,
       String attachmentId, IconData icon)? onAttachmentPreview;
   final bool isActive;
@@ -2735,6 +2833,21 @@ class _AttachmentChipState extends State<_AttachmentChip> {
     if (_isLoading) return;
     setState(() => _isLoading = true);
     try {
+      final loader = widget.bytesLoader;
+      if (loader != null) {
+        final bytes = await loader();
+        if (!mounted) return;
+        if (bytes == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Could not read that part of the message')),
+          );
+          return;
+        }
+        await action(bytes);
+        return;
+      }
+
       final result = await sl<DownloadAttachment>()(DownloadAttachmentParams(
         messageId: widget.emailId,
         attachmentId: widget.attachment.id,
@@ -3175,10 +3288,20 @@ class _EmlPreview extends StatefulWidget {
     required this.filePath,
     required this.fileName,
     required this.onClose,
+    this.onAttachmentPreview,
+    this.activePreviewAttachmentId,
   });
   final String filePath;
   final String fileName;
   final VoidCallback onClose;
+
+  /// Previewing an attachment of the attached message replaces this preview
+  /// with that one, on the same surface. Closing then returns to the message
+  /// body rather than to the `.eml` — one surface, one back step, and a
+  /// bounce chain stays walkable without a stack to reason about.
+  final void Function(_AttachmentPreviewKind kind, String path, String name,
+      String attachmentId, IconData icon)? onAttachmentPreview;
+  final String? activePreviewAttachmentId;
 
   @override
   State<_EmlPreview> createState() => _EmlPreviewState();
@@ -3228,7 +3351,13 @@ class _EmlPreviewState extends State<_EmlPreview> {
                   ),
                 )
               : email != null
-                  ? _EmlBodyView(email: email)
+                  ? _EmlBodyView(
+                      email: email,
+                      filePath: widget.filePath,
+                      onAttachmentPreview: widget.onAttachmentPreview,
+                      activePreviewAttachmentId:
+                          widget.activePreviewAttachmentId,
+                    )
                   : const Center(
                       child: CircularProgressIndicator(
                           strokeWidth: 1.5, color: AppColors.accent),
@@ -3240,8 +3369,35 @@ class _EmlPreviewState extends State<_EmlPreview> {
 }
 
 class _EmlBodyView extends StatelessWidget {
-  const _EmlBodyView({required this.email});
+  const _EmlBodyView({
+    required this.email,
+    required this.filePath,
+    this.onAttachmentPreview,
+    this.activePreviewAttachmentId,
+  });
   final Email email;
+
+  /// The `.eml` on disk. Its parts are re-read from here on demand rather than
+  /// held in memory: a previewed message is opened far more often than its
+  /// attachments are.
+  final String filePath;
+
+  final void Function(_AttachmentPreviewKind kind, String path, String name,
+      String attachmentId, IconData icon)? onAttachmentPreview;
+  final String? activePreviewAttachmentId;
+
+  /// The bytes of one part of this message, for [_AttachmentsSection]. Null on
+  /// any failure — the file has been moved or truncated, or the id names a
+  /// part that is no longer there.
+  Future<List<int>?> _partBytes(EmailAttachment attachment) async {
+    try {
+      final bytes = await File(filePath).readAsBytes();
+      return await sl<EmlParser>()
+          .attachmentBytes(bytes, attachmentId: attachment.id);
+    } catch (_) {
+      return null;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -3282,6 +3438,16 @@ class _EmlBodyView extends StatelessWidget {
                   label: 'Cc',
                   recipients: email.ccRecipients,
                 ),
+              if (email.attachments.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                _AttachmentsSection(
+                  emailId: email.id,
+                  attachments: email.attachments,
+                  onAttachmentPreview: onAttachmentPreview,
+                  activePreviewAttachmentId: activePreviewAttachmentId,
+                  bytesLoader: _partBytes,
+                ),
+              ],
             ],
           ),
         ),

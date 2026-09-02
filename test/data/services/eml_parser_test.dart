@@ -150,6 +150,153 @@ Just text.
     });
   });
 
+  group('attachments', () {
+    /// A bounce: a human-readable part, then two encapsulated messages, then a
+    /// plain file. The shape that found the id-collapse bug.
+    const bounce = """
+From: postmaster@example.com
+To: sender@example.com
+Subject: Undeliverable
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="b1"
+
+--b1
+Content-Type: text/plain
+
+Delivery failed.
+--b1
+Content-Type: message/rfc822
+
+From: sender@example.com
+Subject: First original
+Content-Type: text/plain
+
+Body of the first.
+--b1
+Content-Type: message/rfc822
+
+From: sender@example.com
+Subject: Second original
+Content-Type: text/plain
+
+Body of the second.
+--b1
+Content-Type: application/pdf; name="report.pdf"
+Content-Disposition: attachment; filename="report.pdf"
+Content-Transfer-Encoding: base64
+
+$_gifB64
+--b1--
+""";
+
+    test('lists encapsulated messages and files, but not the body', () {
+      final email = parseEmlBytes(
+        EmlParseParams(bytes: _bytes(bounce), id: '/tmp/a.eml'),
+      );
+
+      expect(email.hasAttachments, isTrue);
+      expect(
+        email.attachments.map((a) => a.name),
+        ['First original.eml', 'Second original.eml', 'report.pdf'],
+      );
+      expect(email.attachments[0].contentType, 'message/rfc822');
+      expect(email.attachments[2].contentType, 'application/pdf');
+    });
+
+    // The trap: enough_mail hands a child of a message/rfc822 part the
+    // *parent's* fetchId, so ids derived from it collapse and every chip
+    // fetches the same wrong bytes.
+    test('gives each attachment a distinct id', () {
+      final email = parseEmlBytes(
+        EmlParseParams(bytes: _bytes(bounce), id: '/tmp/a.eml'),
+      );
+
+      final ids = email.attachments.map((a) => a.id).toList();
+      expect(ids.toSet(), hasLength(3));
+      expect(ids.every((id) => id.startsWith('/tmp/a.eml#')), isTrue);
+    });
+
+    test('a distinct id fetches distinct bytes', () {
+      final email = parseEmlBytes(
+        EmlParseParams(bytes: _bytes(bounce), id: '/tmp/a.eml'),
+      );
+
+      String extract(int i) {
+        final bytes = extractEmlAttachmentBytes(EmlAttachmentRequest(
+          bytes: _bytes(bounce),
+          partId: emlPartIdOf(email.attachments[i].id),
+        ));
+        return utf8.decode(bytes!, allowMalformed: true);
+      }
+
+      expect(extract(0), contains('Body of the first.'));
+      expect(extract(0), isNot(contains('Body of the second.')));
+      expect(extract(1), contains('Body of the second.'));
+    });
+
+    test('an encapsulated message comes back whole, headers included', () {
+      final email = parseEmlBytes(
+        EmlParseParams(bytes: _bytes(bounce), id: '/tmp/a.eml'),
+      );
+      final bytes = extractEmlAttachmentBytes(EmlAttachmentRequest(
+        bytes: _bytes(bounce),
+        partId: emlPartIdOf(email.attachments.first.id),
+      ));
+
+      final text = utf8.decode(bytes!, allowMalformed: true);
+      expect(text, contains('Subject: First original'));
+      expect(text, contains('From: sender@example.com'));
+    });
+
+    // Namespacing is what keeps two previewed messages' part 2 apart, both in
+    // the scratch directory and in the active-chip check.
+    test('ids from two different .eml files do not collide', () {
+      final a = parseEmlBytes(
+        EmlParseParams(bytes: _bytes(bounce), id: '/tmp/a.eml'),
+      );
+      final b = parseEmlBytes(
+        EmlParseParams(bytes: _bytes(bounce), id: '/tmp/b.eml'),
+      );
+
+      expect(a.attachments.first.id, isNot(b.attachments.first.id));
+      expect(
+        emlPartIdOf(a.attachments.first.id),
+        emlPartIdOf(b.attachments.first.id),
+      );
+    });
+
+    test('an inline image is not also listed as an attachment', () {
+      final email = parseEmlBytes(EmlParseParams(
+        bytes: _bytes(_messageWithInlineImage(
+          disposition: 'Content-Disposition: attachment; filename="c.gif"',
+        )),
+        id: '/tmp/a.eml',
+      ));
+
+      expect(email.inlineAttachments, hasLength(1));
+      expect(email.attachments, isEmpty);
+    });
+
+    test('a message with no attachments lists none', () {
+      final email = parseEmlBytes(EmlParseParams(
+        bytes: _bytes(_messageWithInlineImage(disposition: '')),
+        id: '/tmp/a.eml',
+      ));
+
+      expect(email.attachments, isEmpty);
+      expect(email.hasAttachments, isFalse);
+    });
+
+    test('an unknown part id yields no bytes', () {
+      expect(
+        extractEmlAttachmentBytes(
+          EmlAttachmentRequest(bytes: _bytes(bounce), partId: '99'),
+        ),
+        isNull,
+      );
+    });
+  });
+
   group('EmlParser', () {
     test('parses off the isolate and returns the same result', () async {
       final email = await EmlParser().parse(

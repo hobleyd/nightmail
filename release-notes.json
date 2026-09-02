@@ -1,23 +1,15 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.22.3",
+  "version": "1.22.4",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "stop the spinner when there is nothing to update to",
-          "title": "update"
-        },
-        {
-          "body": "name a waiting release by its build number too",
-          "title": "update"
-        },
-        {
-          "body": "take the build number from pubspec, not the CI run counter",
-          "title": "update"
+          "body": "preview an email attached in Outlook",
+          "title": "reading-pane"
         }
       ]
     }

@@ -2490,13 +2490,37 @@ class GraphApiDatasourceImpl
       final data = response.data;
       final contentBytes = data?['contentBytes'] as String?;
       if (contentBytes == null || contentBytes.isEmpty) {
-        throw ServerException(
-            message: 'Attachment has no content', statusCode: 200);
+        // `contentBytes` is a property of the *fileAttachment* subtype. An
+        // attached email is an `itemAttachment`, which has none and used to
+        // fail here — so attaching a message in Outlook produced a chip that
+        // could not be opened, saved or previewed. `$value` serves that item as
+        // raw MIME, which is exactly the `.eml` the preview wants.
+        //
+        // Reached only where the old code threw, so the fileAttachment path is
+        // untouched: an attachment that really has no content still fails, just
+        // one round trip later.
+        return await _downloadAttachmentValue(messageId, attachmentId);
       }
       return base64Decode(contentBytes);
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
+  }
+
+  /// Raw bytes of an attachment from `/$value`, for the subtypes that do not
+  /// carry `contentBytes`.
+  Future<Uint8List> _downloadAttachmentValue(
+      String messageId, String attachmentId) async {
+    final response = await _dio.get<List<int>>(
+      '$_base/messages/$messageId/attachments/$attachmentId/\$value',
+      options: Options(responseType: ResponseType.bytes),
+    );
+    final bytes = response.data;
+    if (bytes == null || bytes.isEmpty) {
+      throw ServerException(
+          message: 'Attachment has no content', statusCode: 200);
+    }
+    return Uint8List.fromList(bytes);
   }
 
   @override

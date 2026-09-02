@@ -53,7 +53,12 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
   ///   the banner went on adding an event named '(No title)' from a row written
   ///   only moments earlier — the stamp is what a fetched invite is compared
   ///   against, so a fix to the *parse* needs one as much as a fix to the fetch.
-  static const attachmentParseVersion = 5;
+  /// * 5 — an email attached in Outlook arrives as a Graph `itemAttachment`,
+  ///   whose `name` is the attached message's *subject* and so carries no
+  ///   extension. The reading pane decides whether to offer a preview from the
+  ///   cached `name`/`contentType`, so a message read before the fix keeps a
+  ///   chip that will never preview, however many times it is reopened.
+  static const attachmentParseVersion = 6;
 
   /// JSON key for [attachmentParseVersion]. Absent on pre-versioning rows,
   /// which read back as version 1.

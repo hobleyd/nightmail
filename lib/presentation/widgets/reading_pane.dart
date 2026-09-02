@@ -2707,6 +2707,30 @@ class _AttachmentChipState extends State<_AttachmentChip> {
     return Icons.attach_file_rounded;
   }
 
+  /// A scratch file for this attachment, under a directory of its own.
+  ///
+  /// Several attachments on one message routinely share a name — five
+  /// `Undeliverable: …` bounces off one send, say — so the name alone is not a
+  /// unique path, and every one of them landed on top of the last. Two bugs
+  /// came out of that, and the second is the one that looks like nothing
+  /// happened: the reading pane keys its preview on the *path*
+  /// (`ValueKey(_previewPath)`), so an unchanged key reuses the existing State,
+  /// `initState` never runs again, and picking a different attachment goes on
+  /// showing the first one. Whichever State does read gets the wrong bytes
+  /// anyway, since the write clobbered them.
+  ///
+  /// The directory carries the discriminator rather than the file name, so the
+  /// name stays exactly what the sender called it — it is what the preview
+  /// header shows, and what the mobile share sheet offers to save.
+  Future<File> _scratchFile() async {
+    final dir = await getTemporaryDirectory();
+    final bucket = Directory('${dir.path}/nightmail_attachments/'
+        '${widget.attachment.id.hashCode.toRadixString(16)}');
+    await bucket.create(recursive: true);
+    return File(
+        '${bucket.path}/${_sanitizedFileName(widget.attachment.name)}');
+  }
+
   Future<void> _withBytes(Future<void> Function(List<int> bytes) action) async {
     if (_isLoading) return;
     setState(() => _isLoading = true);
@@ -2730,18 +2754,14 @@ class _AttachmentChipState extends State<_AttachmentChip> {
   }
 
   Future<void> _open() => _withBytes((bytes) async {
-        final dir = await getTemporaryDirectory();
-        final file = File(
-            '${dir.path}/${_sanitizedFileName(widget.attachment.name)}');
+        final file = await _scratchFile();
         await file.writeAsBytes(bytes);
         await OpenFile.open(file.path);
       });
 
   Future<void> _previewAttachment(_AttachmentPreviewKind kind) =>
       _withBytes((bytes) async {
-        final dir = await getTemporaryDirectory();
-        final file = File(
-            '${dir.path}/${_sanitizedFileName(widget.attachment.name)}');
+        final file = await _scratchFile();
         await file.writeAsBytes(bytes);
         widget.onAttachmentPreview?.call(
           kind,
@@ -2757,9 +2777,7 @@ class _AttachmentChipState extends State<_AttachmentChip> {
   /// viewer otherwise. The download spinner (`_isLoading`) stays up across the
   /// whole download-and-render/convert wait.
   Future<void> _previewOffice(OfficeFormat fmt) => _withBytes((bytes) async {
-        final dir = await getTemporaryDirectory();
-        final docFile = File(
-            '${dir.path}/${_sanitizedFileName(widget.attachment.name)}');
+        final docFile = await _scratchFile();
         await docFile.writeAsBytes(bytes);
 
         final svc = sl<OfficePreviewService>();
@@ -2786,9 +2804,7 @@ class _AttachmentChipState extends State<_AttachmentChip> {
   Future<void> _saveAs() => _withBytes((bytes) async {
         if (_isMobile) {
           // Mobile: share sheet lets the user pick Files / Downloads
-          final dir = await getTemporaryDirectory();
-          final tmp = File(
-              '${dir.path}/${_sanitizedFileName(widget.attachment.name)}');
+          final tmp = await _scratchFile();
           await tmp.writeAsBytes(bytes);
           await SharePlus.instance.share(ShareParams(
             files: [XFile(tmp.path, mimeType: widget.attachment.contentType)],
@@ -3181,7 +3197,7 @@ class _EmlPreviewState extends State<_EmlPreview> {
   Future<void> _load() async {
     try {
       final bytes = await File(widget.filePath).readAsBytes();
-      final email = sl<EmlParser>().parse(bytes, id: widget.filePath);
+      final email = await sl<EmlParser>().parse(bytes, id: widget.filePath);
       if (!mounted) return;
       setState(() => _email = email);
     } catch (e) {
@@ -3253,12 +3269,53 @@ class _EmlBodyView extends StatelessWidget {
                 style: TextStyle(color: c.textTertiary, fontSize: 11),
                 overflow: TextOverflow.ellipsis,
               ),
+              // Who else it went to. An attached message is usually being read
+              // to work out who was told what, so the recipients are the point
+              // of opening it and not incidental to the sender.
+              if (email.toRecipients.isNotEmpty)
+                _EmlRecipientLine(
+                  label: 'To',
+                  recipients: email.toRecipients,
+                ),
+              if (email.ccRecipients.isNotEmpty)
+                _EmlRecipientLine(
+                  label: 'Cc',
+                  recipients: email.ccRecipients,
+                ),
             ],
           ),
         ),
         Divider(height: 1, color: c.border),
         Expanded(child: _EmailBody(email: email)),
       ],
+    );
+  }
+}
+
+/// One `To:`/`Cc:` line of a previewed `.eml`'s header.
+///
+/// Capped at two lines rather than one: a mailing list has more names than fit
+/// across the pane, and truncating at the first is a way to be told there were
+/// other recipients without being told who.
+class _EmlRecipientLine extends StatelessWidget {
+  const _EmlRecipientLine({required this.label, required this.recipients});
+
+  final String label;
+  final List<EmailAddress> recipients;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    // [EmailAddress.displayName] already falls back to the address.
+    final names = recipients.map((r) => r.displayName).join(', ');
+    return Padding(
+      padding: const EdgeInsets.only(top: 3),
+      child: Text(
+        '$label: $names',
+        style: TextStyle(color: c.textTertiary, fontSize: 11),
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
     );
   }
 }

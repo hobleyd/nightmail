@@ -147,5 +147,92 @@ void main() {
         expect(filed.isDeletableFrom('AAMkAGarchive'), isTrue);
       });
     });
+
+    // Outlook's "attach an email" produces an itemAttachment: no contentBytes,
+    // and a `name` that is the attached message's subject, so it arrives with
+    // no extension for the reading pane's chip to read a type off.
+    group('attached email', () {
+      EmailModel parseWithAttachment(Map<String, dynamic> attachment) =>
+          EmailModel.fromJson({
+            ...baseJson(),
+            'hasAttachments': true,
+            'attachments': [attachment],
+          });
+
+      test('names an itemAttachment .eml and types it message/rfc822', () {
+        final email = parseWithAttachment({
+          '@odata.type': '#microsoft.graph.itemAttachment',
+          'id': 'att-1',
+          'name': 'Re: Budget review',
+          'size': 4096,
+        });
+
+        final attachment = email.attachments.single;
+        expect(attachment.name, 'Re: Budget review.eml');
+        expect(attachment.contentType, 'message/rfc822');
+      });
+
+      test('names an attachment already typed message/rfc822', () {
+        final email = parseWithAttachment({
+          'id': 'att-1',
+          'name': 'Forwarded note',
+          'contentType': 'message/rfc822',
+          'size': 4096,
+        });
+
+        expect(email.attachments.single.name, 'Forwarded note.eml');
+      });
+
+      test('does not double up an extension the name already has', () {
+        final email = parseWithAttachment({
+          '@odata.type': '#microsoft.graph.itemAttachment',
+          'id': 'att-1',
+          'name': 'Report.eml',
+          'size': 4096,
+        });
+
+        expect(email.attachments.single.name, 'Report.eml');
+      });
+
+      test('caps a runaway subject at 120 characters', () {
+        final email = parseWithAttachment({
+          '@odata.type': '#microsoft.graph.itemAttachment',
+          'id': 'att-1',
+          'name': 'x' * 300,
+          'size': 4096,
+        });
+
+        expect(email.attachments.single.name, '${'x' * 120}.eml');
+      });
+
+      // The claim is deliberately narrow: an attachment Graph merely declined
+      // to *type* must keep the open-externally behaviour that works today,
+      // rather than being offered as an email and parsing to an empty one.
+      test('leaves an untyped file attachment alone', () {
+        final email = parseWithAttachment({
+          '@odata.type': '#microsoft.graph.fileAttachment',
+          'id': 'att-1',
+          'name': 'scan',
+          'size': 4096,
+        });
+
+        final attachment = email.attachments.single;
+        expect(attachment.name, 'scan');
+        expect(attachment.contentType, 'application/octet-stream');
+      });
+
+      test('leaves an ordinary file attachment alone', () {
+        final email = parseWithAttachment({
+          'id': 'att-1',
+          'name': 'invoice.pdf',
+          'contentType': 'application/pdf',
+          'size': 4096,
+        });
+
+        final attachment = email.attachments.single;
+        expect(attachment.name, 'invoice.pdf');
+        expect(attachment.contentType, 'application/pdf');
+      });
+    });
   });
 }

@@ -419,6 +419,7 @@ hands the **undecoded** response body to `compute()`:
 | Gmail | `gmail_message_parser.dart` | `parseGmailFullMessage`, `parseGmailThreads`, `parseGmailMetadataMessages`, `parseGmailForwardSource`, `parseGmailHistoryPages` |
 | Microsoft | `graph_message_parser.dart` | `parseGraphFullMessage`, `parseGraphMessageCollection(s)`, `parseGraphDeltaPages` |
 | IMAP | `ImapDatasourceImpl.parseFullImapMessage` | raw MIME in, `EmailModel` out |
+| `.eml` | `eml_parser.dart` | `parseEmlBytes` — an attached or forwarded message |
 
 Three things here look incidental and are not:
 
@@ -549,6 +550,109 @@ same failure twice in a row compares equal, the second emit is dropped, and a
 user pressing the same broken button twice is told once. Same trap as
 `MailPollerState`. It is a snack bar rather than `EmailListError` — the list
 itself is fine, and replacing it would be a worse lie than the silence.
+
+## An Attached Email Is Previewed In Place
+
+A `message/rfc822` attachment — a forward, or a message somebody attached to
+another — is drawn in the reading pane's own preview surface
+(`_EmlPreview`/`_EmlBodyView` in `reading_pane.dart`), the same surface the PDF,
+image and cloud-document previews use. `_AttachmentChip._previewKind` claims it
+on `rfc822` in the content type or an `.eml` extension.
+
+Four things here are load-bearing:
+
+- **The parse goes through `compute()`, like every other message parser.**
+  `EmlParser.parse` is `Uint8List` in, `Email` out — the same shape as
+  `ImapDatasourceImpl.parseFullImapMessage` — and for the same reason: the MIME
+  carries the body *and* every inline image as base64, so the decode is the
+  expensive half and must not run on the UI isolate. Both callers
+  (`_EmlPreviewState._load` and `EmailDetailBloc._onLoadedFromEml`) are already
+  async, so this cost nothing at the call sites.
+- **Inline images are collected by a direct tree walk, not `findContentInfo`.**
+  That helper matches `Content-Disposition` *exactly*, so it answers neither the
+  `inline` nor the `attachment` query for a part carrying a `Content-Id` and no
+  disposition header at all — a very common shape. Disposition is the wrong
+  signal twice over: Gmail tags pasted inline images `attachment` while still
+  referencing them by `cid:`, and a forwarded Gmail message is the common case
+  for an `.eml`. A Content-Id on a non-text part is what decides membership.
+  Without this list every inline image drew as a broken glyph: `HtmlBodyView`
+  resolves `cid:` tokens from `inlineAttachments` alone, and the reading pane's
+  CSP is `img-src data: file:`, so an unresolved token is a reference the policy
+  refuses as well as one nothing satisfies.
+- **A nested `message/rfc822` is not descended into.** enough_mail hangs an
+  encapsulated message's parts directly off the rfc822 part with no node in
+  between, so the walk would pull a forward-inside-the-forward's images up into
+  the list. They are referenced by *its* body, not the one being rendered, so
+  that is megabytes of base64 spent on cid tokens nothing asks for.
+- **The nested message's own attachments are deliberately not offered.** The
+  bytes are on disk, but `_AttachmentChip` is welded to `sl<DownloadAttachment>()`
+  keyed by message id + attachment id, and a part inside a previewed `.eml` has
+  no server-side id. That is a bytes-provider seam, not a field addition.
+- **Two attachments on one message routinely share a name**, so the scratch
+  file each is written to is named from a directory keyed on the *attachment
+  id* (`_scratchFile`), not from the name alone. Five `Undeliverable:` bounces
+  off one send is the case that found this, and the second of the two bugs is
+  the one that reads as nothing having happened: the preview is keyed
+  `ValueKey(_previewPath)`, so an unchanged path reuses the existing State,
+  `initState` never runs again, and picking a different attachment goes on
+  showing the first. The discriminator is on the directory rather than the file
+  so the name stays what the sender called it — the preview header shows it, and
+  the mobile share sheet offers it as the name to save.
+
+### Outlook attaches an email as an `itemAttachment`, which is not a file
+
+Graph answers "attach an email" with a `#microsoft.graph.itemAttachment`. It has
+no `contentBytes` — that property is on the `fileAttachment` subtype — and its
+`name` is the attached message's *subject*, so it arrives with no extension to
+read a type off. Left alone it got no preview, no icon, and `downloadAttachment`
+threw outright, so the chip could not be opened or saved either.
+
+Two halves, and the split matters:
+
+- `GraphApiDatasourceImpl.downloadAttachment` falls back to `/$value` when
+  `contentBytes` is absent *or* empty, which serves the item as raw MIME.
+  Reached **only where the old code threw**, so the fileAttachment path is
+  untouched: an attachment that really has no content still fails, one round
+  trip later.
+- `EmailModel._isEmbeddedMessage` claims it on `@odata.type` containing
+  `itemattachment` **or** a content type containing `rfc822`, and
+  `_emlFileName` gives it a `<subject>.eml` name (capped at 120 characters,
+  mirroring the IMAP path's `_forwardedMessageName`).
+
+**`@odata.type` survives the `$select`, and `contentType` is `null`.** Verified
+against a live tenant, on a message carrying five `Undeliverable:` bounces:
+
+```json
+{ "@odata.type": "#microsoft.graph.itemAttachment",
+  "name": "Undeliverable: REQUEST FOR VOLUNTEERS",
+  "contentType": null, "size": 35588, "isInline": false }
+```
+
+So the type annotation is the discriminator that works, and it arrives even
+under `$expand=attachments($select=id,name,contentType,size,isInline)` — the
+caveat about `$select` stripping it applies to `eventMessage` on a
+single-resource GET, not to an expanded attachment collection.
+
+**The match must not be widened to "no content type", even though every
+itemAttachment shows one.** `null` there is not exclusive to attached mail, and
+an attachment Graph merely declined to *type* would then be offered as an
+email, parse to an empty one, and lose the open-externally behaviour that works
+today. The annotation is exact; the absence of a content type is a guess.
+
+Gmail and IMAP need none of this — Gmail names the part `<subject>.eml` with
+`Content-Type: message/rfc822`, and IMAP's `_forwardedMessageName` already does
+the same.
+
+### The cache is why a fix here needs a stamp bump
+
+The reading pane decides whether to offer a preview from the **cached**
+`name`/`contentType`, and a full-bodied cached row short-circuits the network.
+So the parse fix above changed nothing for any message already read: the chip
+kept its pre-fix metadata and would never preview, however many times it was
+reopened. `EmailLocalDatasourceImpl.attachmentParseVersion` is what forces the
+one-time refetch — it went to **6** for this. Any future change to what
+`_parseAttachments` produces needs the same, or it only ever applies to mail
+that arrives afterwards.
 
 ## Graph Never Says Whether a Body Was Plain Text
 

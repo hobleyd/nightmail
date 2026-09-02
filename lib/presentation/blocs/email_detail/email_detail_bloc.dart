@@ -111,7 +111,7 @@ class EmailDetailBloc extends Bloc<EmailDetailEvent, EmailDetailState> {
   ) async {
     emit(const EmailDetailLoading());
     try {
-      final email = _emlParser.parse(
+      final email = await _emlParser.parse(
         event.bytes,
         id: event.sourceId ?? 'task-attachment',
       );

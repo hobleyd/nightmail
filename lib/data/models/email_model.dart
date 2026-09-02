@@ -100,13 +100,56 @@ class EmailModel extends Email {
     return raw
         .cast<Map<String, dynamic>>()
         .where((a) => a['isInline'] != true)
-        .map((a) => EmailAttachment(
-              id: a['id'] as String? ?? '',
-              name: a['name'] as String? ?? 'Attachment',
-              contentType: a['contentType'] as String? ?? 'application/octet-stream',
-              size: a['size'] as int? ?? 0,
-            ))
+        .map((a) {
+          final embedded = _isEmbeddedMessage(a);
+          final name = a['name'] as String? ?? 'Attachment';
+          return EmailAttachment(
+            id: a['id'] as String? ?? '',
+            name: embedded ? _emlFileName(name) : name,
+            contentType: embedded
+                ? 'message/rfc822'
+                : a['contentType'] as String? ?? 'application/octet-stream',
+            size: a['size'] as int? ?? 0,
+          );
+        })
         .toList();
+  }
+
+  /// Whether an attachment is an email attached to this one.
+  ///
+  /// Outlook's "attach an email" produces a `#microsoft.graph.itemAttachment`,
+  /// which is not a file: it carries no `contentBytes`, and its `name` is the
+  /// attached message's *subject*, so it arrives with no extension to read a
+  /// type off. Left alone it got no preview and no icon, and downloading it
+  /// failed outright — see `GraphApiDatasourceImpl.downloadAttachment`, which
+  /// falls back to `/$value` for exactly this subtype.
+  ///
+  /// Deliberately matched on either signal and widened no further. Graph
+  /// omits `@odata.type` from a `$select`ed projection, and which of the two
+  /// shapes it answers with here is not something this code can assume — but
+  /// an attachment Graph merely declined to *type* must not be claimed, or a
+  /// file with no `contentType` gets offered as an email, parses to an empty
+  /// one, and loses the open-externally behaviour that works today. Silently
+  /// not previewing is the better wrong answer.
+  static bool _isEmbeddedMessage(Map<String, dynamic> a) {
+    final odataType = (a['@odata.type'] as String? ?? '').toLowerCase();
+    if (odataType.contains('itemattachment')) return true;
+    return (a['contentType'] as String? ?? '')
+        .toLowerCase()
+        .contains('rfc822');
+  }
+
+  /// `<subject>.eml`. The extension is what makes a saved attached message open
+  /// as mail rather than as nothing, and what the reading pane's chip reads to
+  /// offer the preview. Mirrors the IMAP path's `_forwardedMessageName`,
+  /// including its 120-character cap: a subject runs to any length and a file
+  /// name is not the place to find that out.
+  static String _emlFileName(String name) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return 'Attached message.eml';
+    if (trimmed.toLowerCase().endsWith('.eml')) return trimmed;
+    final capped = trimmed.length > 120 ? trimmed.substring(0, 120) : trimmed;
+    return '$capped.eml';
   }
 
   static List<InlineAttachment> _parseInlineAttachments(dynamic raw) {

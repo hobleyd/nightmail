@@ -4,6 +4,16 @@
   "version": "1.22.4",
   "sections": [
     {
+      "type": "features",
+      "title": "New features",
+      "items": [
+        {
+          "body": "offer the attachments inside a previewed email",
+          "title": "reading-pane"
+        }
+      ]
+    },
+    {
       "type": "fixes",
       "title": "Fixes",
       "items": [

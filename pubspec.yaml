@@ -7,7 +7,7 @@ publish_to: 'none'
 # rise, because desktop_updater decides "newer" on the build number alone and
 # never looks at the semver. It jumps past 21 here to clear the
 # github.run_number sequence that used to supply it.
-version: 1.22.3+157
+version: 1.22.4+158
 
 environment:
   sdk: ^3.12.1

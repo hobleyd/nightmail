@@ -1436,6 +1436,55 @@ when the whole field matches nothing. `_queryUsed` records which of the two was
 used, so selecting a room removes only the query and leaves the rest of the
 location — clearing the whole field would delete what the user typed.
 
+## Google Leaves the Organizer Out of the Guest List
+
+`events.insert` sets `organizer` from the calendar posted to and takes
+`attendees` **verbatim** — unlike Google's own web UI, which adds the organizer
+to the guest list of every event it creates (`organizer: true`, `self: true`,
+`responseStatus: 'accepted'` — visible on any event in a real calendar).
+
+Every guest list on both sides is drawn from `attendees` alone. So an organizer
+missing from it is missing from their own meeting *everywhere*: from the
+invitation, from the list of who has accepted, and from this app —
+`_parseEvent` has always noted that Google "inconsistently omits the organizer
+from `attendees`", and this was the half of that we caused.
+`GoogleCalendarDatasourceImpl` therefore sends the organizer itself
+(`_buildEventBody`), which is what `_accountEmail` is for. Graph needs none of
+this; Microsoft adds the organizer server-side.
+
+Three things are load-bearing:
+
+- **`responseStatus: 'accepted'` is explicit.** The default is `needsAction`,
+  which lands in `_parseEvent`'s `selfStatus` and feeds
+  `_parseStatus(selfResponseStatus:)` — so your own meetings would stop counting
+  as busy for conflict detection. `organizer` and `self` are output-only and
+  left to Google. The self entry *replaces* one the caller passed rather than
+  being skipped when present: a roster read back off the server now contains
+  the organizer, which is exactly what `CalendarBloc`'s drag-to-reschedule
+  rebuilds `attendeeEmails` from, and letting that through the guest loop would
+  send it bare and un-busy a meeting by dragging it.
+- **Only when somebody else is invited.** An event with no guests and no rooms
+  stays attendee-less, or every private appointment becomes a one-guest meeting
+  — and `_parseEvent` calls out the empty-`attendees` case as the common shape
+  for a self-created or recurring event.
+- **Sent on the update too, and the form does not show it.** An omitted field on
+  a PATCH means "leave unchanged", but the roster is always sent whole (same
+  reason as `location`), so leaving it off an update would drop the organizer
+  back out. The edit form's Guests field means *who I am inviting*, so
+  `event_edit_dialog` strips the user's own address out of the chips on a
+  meeting they organize — the datasource re-adds it regardless, and a chip that
+  comes back however often it is removed reads as broken. A guest looking at
+  somebody else's meeting still sees themselves in the list they were shown.
+
+**A create also has to ask for the invitations to be sent.** Google's default
+is `sendUpdates=false`, and `createCalendarEvent` was sending nothing: guests on
+Google Calendar were still written silently onto their own calendars, so the
+meeting looked like it had gone out and people could even accept it — but nobody
+was emailed an invitation, and a guest who is not a Google user got nothing at
+all. `updateCalendarEvent` had always mapped `notifyScope` onto it;
+`CreateCalendarEventParams` carries no scope because a create always notifies
+everyone, which is what `_computeNotifyScope` returns for one.
+
 ## In-App Updates
 
 Two mechanisms behind one status, because no single one covers the platforms.

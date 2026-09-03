@@ -71,7 +71,10 @@ void main() {
     mockDio = MockDio();
     final client = MockGoogleCalendarHttpClient();
     when(client.dio).thenReturn(mockDio);
-    datasource = GoogleCalendarDatasourceImpl(client: client);
+    datasource = GoogleCalendarDatasourceImpl(
+      client: client,
+      accountEmail: 'me@example.com',
+    );
   });
 
   group('GoogleCalendarDatasourceImpl participation → colour', () {

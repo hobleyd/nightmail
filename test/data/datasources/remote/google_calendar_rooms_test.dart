@@ -36,7 +36,10 @@ void main() {
     mockDio = MockDio();
     final client = MockGoogleCalendarHttpClient();
     when(client.dio).thenReturn(mockDio);
-    datasource = GoogleCalendarDatasourceImpl(client: client);
+    datasource = GoogleCalendarDatasourceImpl(
+      client: client,
+      accountEmail: 'me@example.com',
+    );
   });
 
   Response<Map<String, dynamic>> ok(Map<String, dynamic> data, String path) =>
@@ -481,8 +484,11 @@ void main() {
 
       final attendees =
           (body['attendees'] as List).cast<Map<String, dynamic>>();
-      expect(attendees.single['email'], _roomCalendarId);
-      expect(attendees.single['resource'], isTrue);
+      // The organizer travels alongside it — Google does not add them to
+      // `attendees` itself, and a guest list is drawn from that alone.
+      final room = attendees.singleWhere((a) => a['resource'] == true);
+      expect(room['email'], _roomCalendarId);
+      expect(attendees.map((a) => a['email']), contains('me@example.com'));
     });
 
     test('conferenceData is not sent, so the PATCH leaves the Meet alone',

@@ -335,9 +335,27 @@ class _EventEditFormState extends State<EventEditForm> {
     _timezone = (storedTz == null || storedTz == 'UTC')
         ? _localIanaTimezone()
         : storedTz;
+    // The account the meeting is being created on — not necessarily the active
+    // one. This form runs in its own window (and so its own engine, which
+    // restores whichever account was last persisted as active), so the id it
+    // was opened with is the only reliable signal of whose calendar this is.
+    final accounts = sl<AccountManager>();
+    _organizerEmail =
+        (accounts.accountById(widget.accountId) ?? accounts.activeAccount)
+            ?.emailAddress;
+
+    // The Guests field means "who I am inviting", so the organizer is not one
+    // of its chips — the provider adds them to the meeting's own attendee list
+    // (Graph always did; the Google datasource now sends it explicitly), and a
+    // chip for yourself that reappears however often it is removed reads as
+    // broken. Only on your own meeting: a guest looking at somebody else's
+    // belongs in the list they are shown.
+    final selfEmail = _organizerEmail?.trim().toLowerCase();
+    final hideSelf = (e?.isOrganizer ?? true) && selfEmail != null;
     _attendees = e?.attendees
             .where((a) => !a.isResource)
             .map((a) => a.email)
+            .where((a) => !hideSelf || a.trim().toLowerCase() != selfEmail)
             .toList() ??
         const [];
     _attendeeStatuses = {
@@ -352,15 +370,6 @@ class _EventEditFormState extends State<EventEditForm> {
     // A new meeting defaults to a 15-minute reminder; an existing one keeps
     // whatever the server has, including no reminder at all.
     _reminderMinutes = e == null ? _kDefaultReminderMinutes : e.reminderMinutes;
-    // The account the meeting is being created on — not necessarily the active
-    // one. This form runs in its own window (and so its own engine, which
-    // restores whichever account was last persisted as active), so the id it
-    // was opened with is the only reliable signal of whose calendar this is.
-    final accounts = sl<AccountManager>();
-    _organizerEmail =
-        (accounts.accountById(widget.accountId) ?? accounts.activeAccount)
-            ?.emailAddress;
-
     // Snapshot the initialized state, normalized the same way _submit() reads
     // it back, so change-detection compares like with like.
     _initialSubject = _titleController.text.trim();

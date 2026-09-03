@@ -907,8 +907,10 @@ class AccountManager {
           client: gmailClient,
           displayName: account.senderName,
         );
-        _calendarDatasource =
-            GoogleCalendarDatasourceImpl(client: calendarClient);
+        _calendarDatasource = GoogleCalendarDatasourceImpl(
+          client: calendarClient,
+          accountEmail: account.emailAddress,
+        );
         _tasksDatasource = GoogleTasksDatasourceImpl(client: tasksClient);
       case ImapAccount():
         final credStorage = ImapCredentialStorage(_secureStorage);
@@ -971,6 +973,7 @@ class AccountManager {
             onAuthFailure: () => _authFailureController.add(account.id),
             onAuthSuccess: () => _authSuccessController.add(account.id),
           ),
+          accountEmail: account.emailAddress,
         );
       case ImapAccount():
         return _buildImapCalendarDatasource(account);

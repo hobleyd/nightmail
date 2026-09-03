@@ -20,10 +20,19 @@ import '../../models/calendar_event_model.dart';
 import 'calendar_remote_datasource.dart';
 
 class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
-  GoogleCalendarDatasourceImpl({required GoogleCalendarHttpClient client})
-      : _dio = client.dio;
+  GoogleCalendarDatasourceImpl({
+    required GoogleCalendarHttpClient client,
+    required String accountEmail,
+  })  : _dio = client.dio,
+        _accountEmail = accountEmail;
 
   final Dio _dio;
+
+  /// This account's own address. Google does not add the organizer to
+  /// `attendees` on an API-created event the way its own web UI does, so we
+  /// have to send it ourselves — see [_buildEventBody]. Mirrors
+  /// `GraphApiDatasourceImpl.mailboxAddress`.
+  final String _accountEmail;
 
   // Cached popup-reminder minutes from the primary calendar's settings, used
   // when an event has reminders.useDefault == true (events.list carries no
@@ -167,11 +176,20 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       final response = await _dio.post<Map<String, dynamic>>(
         '/calendars/primary/events',
         data: body,
-        // Always 1, not only when creating a conference. Version 0 declares
-        // that this client has no conference support, and Google then leaves
-        // `conferenceData` out of the *response* — so the event we cache and
-        // paint from would have no join link even though the meeting has one.
-        queryParameters: const {'conferenceDataVersion': 1},
+        queryParameters: const {
+          // Always 1, not only when creating a conference. Version 0 declares
+          // that this client has no conference support, and Google then leaves
+          // `conferenceData` out of the *response* — so the event we cache and
+          // paint from would have no join link even though the meeting has one.
+          'conferenceDataVersion': 1,
+          // A create always notifies everyone invited, which is what
+          // `_computeNotifyScope` already returns for one. Google's default
+          // here is `sendUpdates=false`: guests on Google Calendar were still
+          // written onto their own calendars silently, so the meeting looked
+          // like it had gone out, but nobody was *emailed* an invitation —
+          // and a guest who is not a Google user got nothing at all.
+          'sendUpdates': 'all',
+        },
       );
 
       if (response.data == null) {
@@ -1114,8 +1132,38 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     // auto-accepting or declining on conflict — instead of treating the room
     // calendar as a person who was invited. Always sent for the same
     // PATCH-semantics reason as `location` above.
+    //
+    // The organizer is sent as an attendee of their own meeting. Google's web
+    // UI does that for every event it creates; the API does not — `organizer`
+    // is set from the calendar posted to, and `attendees` is taken verbatim.
+    // Every guest list is rendered from `attendees` alone, on both sides, so
+    // an organizer left out of it does not appear as a guest of their own
+    // meeting anywhere — not in the invitation, not beside the acceptances
+    // coming back, and not in this app (`_parseEvent` already notes Google
+    // "inconsistently omits the organizer from attendees"; this is the half
+    // of that we cause). `responseStatus` is explicit because the default is
+    // `needsAction`, which would feed `_parseStatus` and make our own meetings
+    // stop counting as busy for conflict detection.
+    //
+    // Only when somebody else is involved: an event with no guests and no
+    // rooms must stay attendee-less, or every private appointment becomes a
+    // one-guest meeting. `organizer`/`self` are output-only and left to Google.
+    // Self is *replaced* rather than skipped when the caller already names it.
+    // A roster read back off the server now contains the organizer — which is
+    // exactly what `CalendarBloc`'s drag-to-reschedule rebuilds its
+    // `attendeeEmails` from — and passing that entry through the guest loop
+    // would send it bare, i.e. back to `needsAction` and out of the busy count.
+    final selfEmail = _accountEmail.trim();
+    final self = selfEmail.toLowerCase();
+    final guests =
+        attendeeEmails.where((e) => e.trim().toLowerCase() != self).toList();
+    final invited = [...attendeeEmails, ...roomEmails]
+        .where((e) => e.trim().isNotEmpty);
+
     body['attendees'] = [
-      for (final e in attendeeEmails) {'email': e},
+      if (invited.isNotEmpty && selfEmail.isNotEmpty)
+        {'email': selfEmail, 'responseStatus': 'accepted'},
+      for (final e in guests) {'email': e},
       for (final e in roomEmails) {'email': e, 'resource': true},
     ];
 

@@ -30,6 +30,7 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - `mailto:` links open the compose window instead of the OS's default mail client
 - SharePoint, OneDrive and Google Drive document links open as a preview in the reading pane, like an attachment — from any mailbox, whichever account holds the file (file access is asked for once, the first time you open one)
 - A previewed SharePoint, OneDrive or Google Drive document keeps a link to the file itself — tap the preview bar's title or the open-in-new icon to open it in the browser
+- An email attached to another message opens as a preview in the reading pane, with its own attachments available to open or save
 - The compose window reopens at the size and position it was last closed at
 
 ### Folders
@@ -149,8 +150,8 @@ Settings → Accounts.
   a signed release archive
 - **Android** installs the newest release's APK through the system installer
 - **Linux** ships as a snap, which updates itself
-- Release notes for the newest published version, grouped by change type, shown
-  whether or not an update is pending
+- Release notes for every version published since the one you are running,
+  grouped by change type, shown whether or not an update is pending
 
 ---
 

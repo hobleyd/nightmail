@@ -1525,6 +1525,15 @@ update pending it is what you are about to get, without one it is what you have.
 Nothing about them is signature-verified, and needn't be — they are text shown to
 a human. What gets *installed* is chosen from the signed archive and descriptor.
 
+**They are re-read on every check, not once per process.** "The newest published
+release" is a moving target, so the first answer goes stale the moment one is
+published — and a mail client is left open for days. Holding it left a
+long-running app showing the notes for the release it was already on beside a
+status line offering a newer one: "Version 1.22.4 is available" over "What's new
+in 1.22.3". A check is a network round trip to the archive already, and this is
+one small document beside it. A failed re-read changes nothing, leaving whatever
+was on screen.
+
 ### Trust
 
 `tool/setup_updater.sh` does the whole out-of-repo half of this — keypair,

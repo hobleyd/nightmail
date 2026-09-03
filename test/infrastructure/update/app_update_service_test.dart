@@ -2,6 +2,7 @@ import 'package:desktop_updater/desktop_updater.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/infrastructure/update/app_update_service.dart';
 import 'package:nightmail/infrastructure/update/app_update_status.dart';
+import 'package:nightmail/infrastructure/update/release_notes_fetcher.dart';
 import 'package:nightmail/presentation/blocs/update/update_cubit.dart';
 
 void main() {
@@ -164,6 +165,65 @@ void main() {
       expect(next?.error, 'archive unreachable');
     });
   });
+
+  group('the release notes beside the status', () {
+    test('are re-read on every check, not once per process', () async {
+      // The document always describes whatever release is newest when it is
+      // fetched, so holding the first answer left a long-running app showing
+      // "What's new in 1.22.3" beside "Version 1.22.4 is available".
+      final fetcher = _CountingNotesFetcher();
+      // A supported platform, so the check takes its desktop path — which fails
+      // here for want of a platform channel. The notes load either way.
+      final service = AppUpdateService(
+        isSupportedOverride: true,
+        releaseNotesFetcher: fetcher,
+      );
+      addTearDown(service.dispose);
+
+      await service.checkForUpdate();
+      await Future<void>.delayed(Duration.zero);
+      expect(fetcher.calls, 1);
+
+      await service.checkForUpdate();
+      await Future<void>.delayed(Duration.zero);
+      expect(fetcher.calls, 2, reason: 'a second check must re-read them');
+
+      expect(service.status.notes?.version, '1.22.4');
+    });
+
+    test('a failed re-read leaves the notes already on screen alone', () async {
+      final fetcher = _CountingNotesFetcher();
+      final service = AppUpdateService(
+        isSupportedOverride: true,
+        releaseNotesFetcher: fetcher,
+      );
+      addTearDown(service.dispose);
+
+      await service.checkForUpdate();
+      await Future<void>.delayed(Duration.zero);
+
+      fetcher.throwOnNextFetch = true;
+      await service.checkForUpdate();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(service.status.notes?.version, '1.22.4');
+    });
+  });
+}
+
+/// Counts fetches, so a re-read can be told from a cached first answer.
+class _CountingNotesFetcher extends ReleaseNotesFetcher {
+  _CountingNotesFetcher() : super(url: kReleaseNotesUrl);
+
+  int calls = 0;
+  bool throwOnNextFetch = false;
+
+  @override
+  Future<UpdateReleaseNotes?> fetch() async {
+    calls++;
+    if (throwOnNextFetch) throw Exception('release-notes.json unreachable');
+    return const UpdateReleaseNotes(version: '1.22.4', sections: []);
+  }
 }
 
 /// A minimal descriptor for the release the archive is offering.

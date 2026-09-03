@@ -178,7 +178,6 @@ class AppUpdateService {
   AndroidReleaseCheck? _androidCheck;
   Timer? _recheckTimer;
   bool _started = false;
-  bool _notesRequested = false;
 
   static bool _platformIsSupported() {
     if (kIsWeb || !AppWindow.isMain) return false;
@@ -414,9 +413,15 @@ class AppUpdateService {
     }
   }
 
+  /// Re-read on **every** check, not once per process.
+  ///
+  /// The document describes whatever release is newest at the moment it is
+  /// fetched, so holding the first answer for the life of the process meant a
+  /// long-running app kept showing the notes for the release it was already on
+  /// while the status line beside them offered a newer one: "Version 1.22.4 is
+  /// available" over "What's new in 1.22.3". A check is a network round trip to
+  /// the archive already, and this is one small JSON document beside it.
   Future<void> _loadReleaseNotes() async {
-    if (_notesRequested && _status.notes != null) return;
-    _notesRequested = true;
     try {
       final notes = await _releaseNotesFetcher.fetch();
       if (notes != null) _emit(_status.copyWith(notes: notes));

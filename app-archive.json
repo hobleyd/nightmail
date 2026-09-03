@@ -107,6 +107,14 @@
       "release": "https://hobleyd.github.io/nightmail/releases/1.22.4+158-macos/release.json"
     },
     {
+      "version": "1.23.0",
+      "buildNumber": 159,
+      "platform": "macos",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "https://hobleyd.github.io/nightmail/releases/1.23.0+159-macos/release.json"
+    },
+    {
       "version": "1.20.0",
       "buildNumber": 145,
       "platform": "windows",
@@ -209,11 +217,19 @@
       "channel": "stable",
       "mandatory": false,
       "release": "https://hobleyd.github.io/nightmail/releases/1.22.4+158-windows/release.json"
+    },
+    {
+      "version": "1.23.0",
+      "buildNumber": 159,
+      "platform": "windows",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "https://hobleyd.github.io/nightmail/releases/1.23.0+159-windows/release.json"
     }
   ],
   "signature": {
     "algorithm": "ed25519",
     "publicKeyId": "release-b53948b0e36b895fa047a8f4",
-    "value": "505T7SSvPFbF6LsAYi4RB9i89m/R96RqO6lk4YSgfOrewAOWAEggXkoZKXosUgdKxZoHnJLryPD6IwJpUVB6AA=="
+    "value": "n4KrXgKWM6KJR6lc1sbyvZE4yJAqTy1f0xaHD1gKAwvdYLUHPG1jvJTYAe7ARpaLCXaNFy0/QelGi2mzZkTVDw=="
   }
 }

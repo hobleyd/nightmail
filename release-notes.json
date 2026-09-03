@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.22.4",
+  "version": "1.23.0",
   "sections": [
     {
       "type": "features",
       "title": "New features",
       "items": [
         {
-          "body": "offer the attachments inside a previewed email",
-          "title": "reading-pane"
+          "body": "show the release notes for every version since yours",
+          "title": "update"
         }
       ]
     },
@@ -18,8 +18,1257 @@
       "title": "Fixes",
       "items": [
         {
-          "body": "preview an email attached in Outlook",
-          "title": "reading-pane"
+          "body": "put the organiser in a Gmail meeting's guest list",
+          "title": "calendar"
+        },
+        {
+          "body": "re-read the release notes on every check",
+          "title": "update"
+        }
+      ]
+    }
+  ],
+  "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.22.4",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "offer the attachments inside a previewed email",
+              "title": "reading-pane"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "preview an email attached in Outlook",
+              "title": "reading-pane"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.22.3",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "stop the spinner when there is nothing to update to",
+              "title": "update"
+            },
+            {
+              "body": "name a waiting release by its build number too",
+              "title": "update"
+            },
+            {
+              "body": "take the build number from pubspec, not the CI run counter",
+              "title": "update"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.22.2",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "name the folder of a row that is from another folder",
+              "title": "email-list"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "give the keyboard to the input when a recipient chip is selected",
+              "title": "compose"
+            },
+            {
+              "body": "select a recipient chip on press, so Delete can remove it",
+              "title": "compose"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.22.1",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "the WebView un-hid itself over the dialog it hid for",
+              "title": "linux"
+            },
+            {
+              "body": "keep an anchored dropdown inside the window at the right edge",
+              "title": "compose"
+            },
+            {
+              "body": "move a thread out of a folder none of its messages is in",
+              "title": "gmail"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.22.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "open a previewed cloud document in the browser",
+              "title": "reading"
+            },
+            {
+              "body": "show a new folder at once, reconcile after",
+              "title": "folders"
+            },
+            {
+              "body": "preview SharePoint/OneDrive and Drive links inline",
+              "title": "reading"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "give the main window the refresh relay it invokes",
+              "title": "calendar"
+            },
+            {
+              "body": "send a state parameter and refuse a redirect without it",
+              "title": "auth"
+            },
+            {
+              "body": "block every remote subresource, not just <img src>",
+              "title": "reading"
+            },
+            {
+              "body": "install the body CSP ahead of the sender's own head",
+              "title": "reading"
+            },
+            {
+              "body": "sanitise a quoted body before it reaches the editor",
+              "title": "compose"
+            },
+            {
+              "body": "a dragged folder no longer vanishes into its new parent",
+              "title": "folders"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.21.0",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "open Gmail sign-in in Chrome, not Safari",
+              "title": "auth"
+            },
+            {
+              "body": "never close native sqlite3 — the close was the crash",
+              "title": "cache"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.20.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "add automatic in-app updates",
+              "title": "updates"
+            },
+            {
+              "body": "add account migration between mailboxes",
+              "title": "accounts"
+            },
+            {
+              "body": "add shared mailbox support for Microsoft accounts",
+              "title": "accounts"
+            },
+            {
+              "body": "auto-scroll and auto-expand the folder list during an email drag",
+              "title": "mail"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "withhold Migrate Account… on Gmail accounts",
+              "title": "accounts"
+            },
+            {
+              "body": "a blocked remote image left a hole, not a placeholder",
+              "title": "mail"
+            },
+            {
+              "body": "the envelope badge cleared on account switch, not on reading mail",
+              "title": "mail"
+            },
+            {
+              "body": "a folder's cache never pruned rows that no longer belonged",
+              "title": "mail"
+            },
+            {
+              "body": "silence async-alternative warning on contacts requestAccess",
+              "title": "macos"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.19.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "forward a meeting somebody else organised",
+              "title": "calendar"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "the hover card covered the Join button it sat over",
+              "title": "calendar"
+            },
+            {
+              "body": "the event window ignored the size it was given",
+              "title": "calendar"
+            },
+            {
+              "body": "an attached invite.ics offered no way onto the calendar",
+              "title": "calendar"
+            },
+            {
+              "body": "show a just-sent message where Sent is looked for",
+              "title": "mail"
+            }
+          ]
+        },
+        {
+          "type": "performance",
+          "title": "Performance",
+          "items": [
+            {
+              "body": "keep message bodies off the folder-listing path",
+              "title": "cache"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.18.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "reopen the meeting invite window where it was left",
+              "title": "calendar"
+            },
+            {
+              "body": "reopen the compose window where it was left",
+              "title": "compose"
+            },
+            {
+              "body": "red dot on the Tasks icon when something is already due",
+              "title": "tasks"
+            },
+            {
+              "body": "incremental sync for Gmail and IMAP, and close the remaining gaps",
+              "title": "sync"
+            },
+            {
+              "body": "answer a mailto: link in the app rather than through the OS",
+              "title": "mail"
+            },
+            {
+              "body": "act on an iCalendar part by what its METHOD says it is",
+              "title": "mail"
+            },
+            {
+              "body": "render a Graph plain-text message in the native text view",
+              "title": "mail"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "every 8-bit message body was mangled before its charset was read",
+              "title": "imap"
+            },
+            {
+              "body": "a folder listing emptied every other folder's cache",
+              "title": "cache"
+            },
+            {
+              "body": "every attachment in a forwarded message downloaded the forward",
+              "title": "imap"
+            },
+            {
+              "body": "the restored window jumped a second after it opened",
+              "title": "compose"
+            },
+            {
+              "body": "a quiet mailbox reloaded the whole UI on every poll",
+              "title": "sync"
+            },
+            {
+              "body": "a read-state delta blanked the message it belonged to",
+              "title": "sync"
+            },
+            {
+              "body": "stop a deleted message coming back on the next refresh",
+              "title": "mail"
+            },
+            {
+              "body": "a dropped close left the window stuck on \"Sending…\"",
+              "title": "compose"
+            },
+            {
+              "body": "drop a moved thread's spared rows from the folder's cache",
+              "title": "mail"
+            },
+            {
+              "body": "poll the folder on screen, not only the Inbox",
+              "title": "sync"
+            },
+            {
+              "body": "answer a webview call that arrives after the window is gone",
+              "title": "windows"
+            },
+            {
+              "body": "select the right folder when the account changes",
+              "title": "mail"
+            },
+            {
+              "body": "stop a failed first load freezing stale counts on screen",
+              "title": "mail"
+            },
+            {
+              "body": "stop a plain-text send arriving as escaped markup",
+              "title": "mail"
+            },
+            {
+              "body": "centre the folder count under the message list",
+              "title": "mail"
+            },
+            {
+              "body": "bump compileSdk to 37 for flutter_secure_storage",
+              "title": "android"
+            },
+            {
+              "body": "match workmanager_apple 0.9.10 handlePeriodicTask signature and lockfile",
+              "title": "ios"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.17.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "head a thread with the last message someone else sent",
+              "title": "mail"
+            },
+            {
+              "body": "book rooms from the Location field",
+              "title": "calendar"
+            },
+            {
+              "body": "make a URL typed as text in a message body clickable",
+              "title": "mail"
+            },
+            {
+              "body": "size icons for fingers and navigate the panels with back",
+              "title": "mobile"
+            },
+            {
+              "body": "paint meetings from a cache while the sync catches up",
+              "title": "calendar"
+            },
+            {
+              "body": "count a meeting reminder down to the start",
+              "title": "calendar"
+            },
+            {
+              "body": "hover a meeting to read it in full",
+              "title": "calendar"
+            },
+            {
+              "body": "move compose-to-sender into the contact hover card",
+              "title": "mail"
+            },
+            {
+              "body": "open on the working week, with hour gutters on both edges",
+              "title": "calendar"
+            },
+            {
+              "body": "show the URL under the pointer and let it be copied",
+              "title": "mail"
+            },
+            {
+              "body": "show the From address is clickable and add a copy button",
+              "title": "mail"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "stop an offline token refresh reading as revoked credentials",
+              "title": "auth"
+            },
+            {
+              "body": "wrap the invite buttons instead of squashing the date",
+              "title": "mail"
+            },
+            {
+              "body": "let the recipient dropdown out from under the body editor",
+              "title": "compose"
+            },
+            {
+              "body": "prompt for the draft when the window close button is used",
+              "title": "compose"
+            },
+            {
+              "body": "keep a filed thread out of the inbox it was filed from",
+              "title": "mail"
+            },
+            {
+              "body": "give the app data directory the right company name",
+              "title": "windows"
+            },
+            {
+              "body": "stop the otherContacts details lookup 400ing every time",
+              "title": "contacts"
+            },
+            {
+              "body": "cancel a moved event's old alert before rescheduling",
+              "title": "reminders"
+            },
+            {
+              "body": "stop a late autosave re-creating the draft after send",
+              "title": "compose"
+            },
+            {
+              "body": "keep a thread's sent and filed copies out of a folder delete",
+              "title": "mail"
+            },
+            {
+              "body": "refresh the tasks pane when the account changes",
+              "title": "tasks"
+            },
+            {
+              "body": "show Sending state immediately on Send tap",
+              "title": "compose"
+            }
+          ]
+        },
+        {
+          "type": "performance",
+          "title": "Performance",
+          "items": [
+            {
+              "body": "stagger the reminder reconcilers off the first poll",
+              "title": "startup"
+            },
+            {
+              "body": "parse messages on a background isolate",
+              "title": "mail"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.16.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "default new meetings to a 15-minute reminder",
+              "title": "calendar"
+            },
+            {
+              "body": "propose a new time, and accept one as the organizer",
+              "title": "invites"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "resolve recurrence for Google series split by the organizer",
+              "title": "calendar"
+            },
+            {
+              "body": "warn about conflicts against accepted Gmail meetings",
+              "title": "invites"
+            },
+            {
+              "body": "show IMAP parts sent inline without a Content-Id",
+              "title": "attachments"
+            },
+            {
+              "body": "diagnose SMTP handshake failures, and make error snackbars copyable",
+              "title": "imap"
+            },
+            {
+              "body": "force UTF-8 so Outlook bodies stop showing mojibake",
+              "title": "reading pane"
+            },
+            {
+              "body": "keep the notification plugin in the main window",
+              "title": "notifications"
+            },
+            {
+              "body": "show attendee availability when opening an existing meeting",
+              "title": "calendar"
+            },
+            {
+              "body": "apply Kotlin plugin to :jni and commit pubspec.lock",
+              "title": "android"
+            }
+          ]
+        },
+        {
+          "type": "performance",
+          "title": "Performance",
+          "items": [
+            {
+              "body": "prefetch full message bodies when new mail arrives",
+              "title": "mail"
+            },
+            {
+              "body": "cache the address book so the typeahead never hits the network",
+              "title": "contacts"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.15.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "add a Sign In Again button for Microsoft 365 and Gmail",
+              "title": "accounts"
+            },
+            {
+              "body": "report attendee free/busy for Gmail accounts",
+              "title": "calendar"
+            },
+            {
+              "body": "reach the schedule pane whenever a meeting has guests",
+              "title": "calendar"
+            },
+            {
+              "body": "add inline Join button to imminent meeting tiles",
+              "title": "calendar"
+            },
+            {
+              "body": "colour meetings by participation, consistent across Gmail and O365",
+              "title": "calendar"
+            },
+            {
+              "body": "show guest RSVP status in the Guests field",
+              "title": "calendar"
+            },
+            {
+              "body": "notify when a task falls due",
+              "title": "tasks"
+            },
+            {
+              "body": "link O365 tasks back to the source conversation via notes",
+              "title": "tasks"
+            },
+            {
+              "body": "edit recurring meetings by instance or series, notify attendees",
+              "title": "calendar"
+            },
+            {
+              "body": "open the source email's conversation in the list pane",
+              "title": "tasks"
+            },
+            {
+              "body": "sort the tasks pane by due date",
+              "title": "tasks"
+            },
+            {
+              "body": "lead task notes with the email correspondents",
+              "title": "tasks"
+            },
+            {
+              "body": "business-day follow-up options and Friday-morning week slots",
+              "title": "tasks"
+            },
+            {
+              "body": "replace meeting time picker with editable dropdown",
+              "title": "calendar"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "render and re-attach the original's inline images",
+              "title": "compose"
+            },
+            {
+              "body": "tile overlapping meetings when one runs past midnight",
+              "title": "calendar"
+            },
+            {
+              "body": "cache inline images on disk so large emails render",
+              "title": "reading-pane"
+            },
+            {
+              "body": "close drift database cleanly on quit to prevent sqlite3 crash",
+              "title": "macos"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.14.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "show weekday picker for daily recurrence, defaulting to Mon-Fri",
+              "title": "calendar"
+            },
+            {
+              "body": "support copying text with standard key combinations",
+              "title": "reading-pane"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.12.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "select pasted images to resize them inline",
+              "title": "editor"
+            },
+            {
+              "body": "font-family dropdown + inline image paste",
+              "title": "editor"
+            },
+            {
+              "body": "custom font-colour palette popup that closes on pick",
+              "title": "editor"
+            },
+            {
+              "body": "link source email in notes + expandable task notes",
+              "title": "tasks"
+            },
+            {
+              "body": "add Clear Cache button per account",
+              "title": "settings"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "restore maximized/fullscreen on the correct monitor",
+              "title": "window"
+            },
+            {
+              "body": "stop cross-account cache contamination + doomed outbox retries",
+              "title": "sync"
+            },
+            {
+              "body": "resolve Windows OAuth loopback + Tasks 403 misclassification",
+              "title": "gmail"
+            },
+            {
+              "body": "return plain DateTime from TZID parse so display uses OS zone",
+              "title": "calendar"
+            },
+            {
+              "body": "persist meeting invite through the local email cache",
+              "title": "cache"
+            },
+            {
+              "body": "honor TZID when parsing ICS invite times",
+              "title": "calendar"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.11.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "enable spell-checking on Linux (WebKitGTK)",
+              "title": "editor"
+            },
+            {
+              "body": "show spell-check suggestions on right-click (Windows)",
+              "title": "editor"
+            },
+            {
+              "body": "delete a conversation thread's in-folder messages",
+              "title": "reading-pane"
+            },
+            {
+              "body": "double-click an image to open it in a resizable window",
+              "title": "reading-pane"
+            },
+            {
+              "body": "add Google Meet toggle for Gmail meetings",
+              "title": "calendar"
+            },
+            {
+              "body": "drag folders in the list to reparent them",
+              "title": "folders"
+            },
+            {
+              "body": "sync the Bayesian spam filter across IMAP clients via a SPAMDB folder",
+              "title": "imap"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "keep maximized window state on startup restore",
+              "title": "windows"
+            },
+            {
+              "body": "notify organizer and remove event when declining a meeting",
+              "title": "gmail"
+            },
+            {
+              "body": "share removal tombstone with the poller so drained deletes stay gone",
+              "title": "sync"
+            },
+            {
+              "body": "add spacing between attachments and Save all button",
+              "title": "reading-pane"
+            },
+            {
+              "body": "mark all unread emails in a thread as read on open",
+              "title": "reading-pane"
+            },
+            {
+              "body": "ellipsise overly long attachment filenames",
+              "title": "reading-pane"
+            },
+            {
+              "body": "stop moved/deleted email reappearing after outbox drain",
+              "title": "sync"
+            },
+            {
+              "body": "render pasted inline (cid:) images",
+              "title": "gmail"
+            },
+            {
+              "body": "stop deleted email reappearing after optimistic delete",
+              "title": "sync"
+            },
+            {
+              "body": "stop contact hover-card spinner from stretching",
+              "title": "reading-pane"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.10.0",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "drop stale folder loads/refreshes after switching folders",
+              "title": "mail"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.9.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "make mutations outbox-first and fail network calls fast offline",
+              "title": "mail"
+            },
+            {
+              "body": "add the mutation outbox and drain engine (offline foundation)",
+              "title": "mail"
+            },
+            {
+              "body": "preview Word/Excel/PowerPoint documents",
+              "title": "attachments"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "gate the mutation-triggered outbox drain on connectivity too",
+              "title": "sync"
+            },
+            {
+              "body": "fail open on ambiguous connectivity probes, quarantine only the failing message in outbox drain",
+              "title": "sync"
+            },
+            {
+              "body": "reconcile poll/delta writes against pending outbox ops",
+              "title": "mail"
+            },
+            {
+              "body": "fix three real bugs found in live offline testing",
+              "title": "mail"
+            },
+            {
+              "body": "make the local cache authoritative for reads and background sync",
+              "title": "mail"
+            },
+            {
+              "body": "stop spurious folder-list reauth from refresh-token races",
+              "title": "auth"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.8.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "add per-account email signatures with merge-field templating",
+              "title": "signature"
+            },
+            {
+              "body": "add arrow-key navigation across folder → email list → flag/delete",
+              "title": "keyboard"
+            },
+            {
+              "body": "default all time pickers to input mode",
+              "title": "timepicker"
+            },
+            {
+              "body": "fix Teams meeting creation and add cancel-series support",
+              "title": "calendar"
+            },
+            {
+              "body": "add print button and Cmd-P / Ctrl-P shortcut",
+              "title": "reading-pane"
+            },
+            {
+              "body": "raise new-mail toasts on Windows/Linux, fix init race",
+              "title": "notifications"
+            },
+            {
+              "body": "add font size picker and format painter to rich text toolbar",
+              "title": "editor"
+            },
+            {
+              "body": "add cross-window calendar/drafts refresh relay, guard against dangling channels",
+              "title": "windows"
+            },
+            {
+              "body": "add inline preview for .eml and image attachments",
+              "title": "reading-pane"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "retry throttled Graph deletes and stop losing the empty-folder shimmer",
+              "title": "o365"
+            },
+            {
+              "body": "show real subject/sender for Gmail/IMAP new-mail toasts",
+              "title": "notifications"
+            },
+            {
+              "body": "make clicking the HTML editor actually focus it on macOS",
+              "title": "compose"
+            },
+            {
+              "body": "preserve meeting duration when proposing a new time",
+              "title": "invites"
+            },
+            {
+              "body": "broadcast channel notify after cancel/decline/reschedule so other windows refresh",
+              "title": "calendar"
+            },
+            {
+              "body": "silence Sendable warning in requestAccess by using completionHandler: label",
+              "title": "contacts"
+            },
+            {
+              "body": "request calendar.calendarlist.readonly so default reminders resolve",
+              "title": "gmail"
+            },
+            {
+              "body": "cache ImapDatasourceImpl per account to stop connection leak",
+              "title": "imap"
+            },
+            {
+              "body": "stop leaking Dio internals in meeting-response errors",
+              "title": "calendar"
+            },
+            {
+              "body": "recognize inline images without a filename",
+              "title": "gmail"
+            },
+            {
+              "body": "per-email notification taps, badge accuracy, stale folder counts",
+              "title": "notifications"
+            },
+            {
+              "body": "keep WorkManager Room impl from R8 stripping",
+              "title": "android"
+            },
+            {
+              "body": "fix errSecInteractionNotAllowed (-25308) on notification-tap launch",
+              "title": "ios"
+            },
+            {
+              "body": "add 10s timeout and retry screen for iOS keychain hang",
+              "title": "startup"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.7.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "replace send spinner with gradient shimmer",
+              "title": "compose"
+            },
+            {
+              "body": "replace app icon with new design",
+              "title": "icons"
+            },
+            {
+              "body": "show app version in About page",
+              "title": "settings"
+            },
+            {
+              "body": "update app icon across all platforms",
+              "title": "icons"
+            },
+            {
+              "body": "add paperclip attachment button to rich text toolbar",
+              "title": "editor"
+            },
+            {
+              "body": "refresh email list every 15s while actively viewing it",
+              "title": "mobile"
+            },
+            {
+              "body": "auto-superscript ordinal suffixes (1st, 2nd, 3rd, 4th)",
+              "title": "editor"
+            },
+            {
+              "body": "convert '- ' at line start into a bullet list item",
+              "title": "editor"
+            },
+            {
+              "body": "auto-advance to new day at midnight",
+              "title": "calendar"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "route target=_blank links through url_launcher on Windows/Linux",
+              "title": "html-view"
+            },
+            {
+              "body": "fix attachment duplication, From address, and draft list refresh",
+              "title": "drafts"
+            },
+            {
+              "body": "prevent superscript bleed-through after ordinal conversion",
+              "title": "editor"
+            },
+            {
+              "body": "detect inbox deletions on Microsoft accounts during bootstrap phase",
+              "title": "polling"
+            },
+            {
+              "body": "stop app raising itself every 15 minutes",
+              "title": "macos"
+            },
+            {
+              "body": "show back button on error screen when email fails to load",
+              "title": "mobile"
+            },
+            {
+              "body": "pop back to email list after deleting an email",
+              "title": "mobile"
+            },
+            {
+              "body": "reflow fixed-width email tables on narrow screens",
+              "title": "mobile"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.6.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "handle mailto: links on all five platforms"
+            },
+            {
+              "body": "add Join Meeting action and cleaner meeting-link display",
+              "title": "calendar"
+            },
+            {
+              "body": "schedule OS notifications for meeting reminders on all platforms",
+              "title": "calendar"
+            },
+            {
+              "body": "open calendar, tasks, and AI panes as full-screen routes",
+              "title": "mobile"
+            },
+            {
+              "body": "swipe-to-reveal actions on email list items",
+              "title": "mobile"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "restore nightmail.desktop deleted by 5aa11c0 and add mailto MimeType to snap",
+              "title": "linux"
+            },
+            {
+              "body": "restore consolidated snap packaging reverted by merge",
+              "title": "linux"
+            },
+            {
+              "body": "restore window position correctly on Wayland",
+              "title": "linux"
+            },
+            {
+              "body": "poll immediately on system wake from sleep",
+              "title": "macos"
+            },
+            {
+              "body": "defer HTML editor focus by one frame after unfocus",
+              "title": "compose"
+            },
+            {
+              "body": "unfocus Flutter fields before focusing HTML editor",
+              "title": "compose"
+            },
+            {
+              "body": "fix tab order To→Cc→Subject→Body and HTML editor autofocus",
+              "title": "compose"
+            },
+            {
+              "body": "pop back to email list after sending a reply or forward",
+              "title": "mobile"
+            },
+            {
+              "body": "add snap desktop integration and correct application ID",
+              "title": "linux"
+            },
+            {
+              "body": "append sent mail to Sent folder after SMTP send",
+              "title": "imap"
+            },
+            {
+              "body": "restore most recently used display, not external-first",
+              "title": "window-bounds"
+            },
+            {
+              "body": "fix infinite scroll stopping after first page",
+              "title": "email-list"
+            },
+            {
+              "body": "reload events after account switch when pane is open",
+              "title": "calendar"
+            },
+            {
+              "body": "stop double-quoting folder paths with parens in LIST",
+              "title": "imap"
+            },
+            {
+              "body": "surface Google Meet links and clip overflowing event tiles",
+              "title": "calendar"
+            },
+            {
+              "body": "surface load errors in embedded day panel",
+              "title": "calendar"
+            },
+            {
+              "body": "resize WebView overlay when panel layout changes",
+              "title": "html_view"
+            },
+            {
+              "body": "quote folder names with parens in COPY/MOVE, add move rollback",
+              "title": "imap"
+            }
+          ]
         }
       ]
     }

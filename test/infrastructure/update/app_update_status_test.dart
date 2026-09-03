@@ -132,4 +132,31 @@ void main() {
       isNot(const AppUpdateStatus(phase: AppUpdatePhase.available)),
     );
   });
+
+  test('the notes compare by value, not by list identity', () {
+    // They are fetched afresh on every check, so a new-but-equal list arrives
+    // every 6 hours. Comparing by identity would re-emit a status in which
+    // nothing changed — the same trap MailPollerState documents.
+    AppUpdateStatus withNotes() => AppUpdateStatus(
+          phase: AppUpdatePhase.upToDate,
+          notes: [
+            const UpdateReleaseNotes(version: '1.22.4', sections: []),
+            UpdateReleaseNotes(
+              version: '1.22.3',
+              sections: [
+                const UpdateNoteSection(
+                  title: 'Fixes',
+                  items: [UpdateNoteItem(body: 'a fix')],
+                ),
+              ],
+            ),
+          ],
+        );
+
+    expect(withNotes(), withNotes());
+    expect(
+      withNotes(),
+      isNot(const AppUpdateStatus(phase: AppUpdatePhase.upToDate)),
+    );
+  });
 }

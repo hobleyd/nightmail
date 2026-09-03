@@ -99,7 +99,7 @@ class AppUpdateStatus extends Equatable {
     this.receivedBytes = 0,
     this.totalBytes = 0,
     this.error,
-    this.notes,
+    this.notes = const [],
   });
 
   const AppUpdateStatus.unsupported()
@@ -109,7 +109,7 @@ class AppUpdateStatus extends Equatable {
         receivedBytes = 0,
         totalBytes = 0,
         error = null,
-        notes = null;
+        notes = const [];
 
   final AppUpdatePhase phase;
 
@@ -125,7 +125,11 @@ class AppUpdateStatus extends Equatable {
   /// Human-readable reason the last operation failed.
   final String? error;
 
-  final UpdateReleaseNotes? notes;
+  /// Every release the hosted document describes, newest first — the one
+  /// waiting and each one before it, so a reader who skipped versions sees what
+  /// changed in each rather than only in the release they are about to install.
+  /// Empty until the document has been fetched, or when it says nothing.
+  final List<UpdateReleaseNotes> notes;
 
   /// Fraction downloaded, or null when the total is not yet known — which is
   /// what a [CircularProgressIndicator] wants for its indeterminate spin.
@@ -155,7 +159,7 @@ class AppUpdateStatus extends Equatable {
     int? receivedBytes,
     int? totalBytes,
     String? error,
-    UpdateReleaseNotes? notes,
+    List<UpdateReleaseNotes>? notes,
     bool clearError = false,
     bool clearAvailableVersion = false,
   }) {

@@ -1525,6 +1525,35 @@ update pending it is what you are about to get, without one it is what you have.
 Nothing about them is signature-verified, and needn't be — they are text shown to
 a human. What gets *installed* is chosen from the signed archive and descriptor.
 
+**The document carries every release, not just the newest.** The top level is
+the newest one, in `desktop_updater`'s schema exactly as before, plus a
+`previous` array of the same shape for the releases before it (capped at 20 —
+a reader wants the versions they skipped, not the history of the app). The
+panel draws every release published since the running build
+(`releaseNotesToShow`), so skipping two versions shows what changed in each
+rather than only in the one being installed. Both directions degrade: a reader
+that does not know `previous` still shows the top-level release, and a document
+published before the key existed parses to a one-entry list.
+
+**When nothing is newer it falls back to the newest release, never to nothing.**
+The document describes the newest published release either way — with an update
+pending it is what you are about to get, without one it is what you have — so an
+empty block would take "What's new" off the panel for everyone who is current.
+The same fallback covers an installed version that will not parse, and a release
+that names no version is left out of a filtered list rather than guessed at.
+
+Build metadata does not affect the ordering, which is what lets `1.22.3+157` be
+compared against a release named `1.22.3` without the reader being offered their
+own build.
+
+**The history is regenerated from tags on every deploy**, not accumulated onto
+the previously published document: there is one source of truth, and a lost
+`release-notes.json` rebuilds complete. It is therefore not an immutable record
+— `EndBug/latest-tag` *moves* a tag, so a push at an unchanged pubspec version
+extends that version's range after its notes were first published, and the later
+regeneration covers more commits than what shipped at the time. More complete,
+not wrong.
+
 **They are re-read on every check, not once per process.** "The newest published
 release" is a moving target, so the first answer goes stale the moment one is
 published — and a mail client is left open for days. Holding it left a

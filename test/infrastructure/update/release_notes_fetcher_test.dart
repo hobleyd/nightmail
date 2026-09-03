@@ -130,4 +130,67 @@ void main() {
       expect(() => parseReleaseNotes('[]'), throwsA(isA<FormatException>()));
     });
   });
+
+  group('parseReleaseNotesHistory — every release the document carries', () {
+    Map<String, Object?> release(String version, String body) => {
+          'version': version,
+          'sections': [
+            {
+              'type': 'fixes',
+              'items': [
+                {'body': body}
+              ],
+            },
+          ],
+        };
+
+    test('reads the newest release first, then each earlier one', () {
+      final releases = parseReleaseNotesHistory(jsonEncode({
+        ...release('1.22.4', 'the newest thing'),
+        'previous': [
+          release('1.22.3', 'the one before'),
+          release('1.22.2', 'the one before that'),
+        ],
+      }));
+
+      expect(
+        releases.map((r) => r.version),
+        ['1.22.4', '1.22.3', '1.22.2'],
+      );
+      expect(releases.first.sections.single.items.single.body,
+          'the newest thing');
+    });
+
+    test('a document without `previous` is a one-entry list, not a failure', () {
+      // Every document published before the key existed, and any hand-written
+      // one. The old shape has to keep working.
+      final releases =
+          parseReleaseNotesHistory(jsonEncode(release('1.22.4', 'only this')));
+
+      expect(releases.single.version, '1.22.4');
+    });
+
+    test('an earlier release with nothing to say is dropped', () {
+      // A version whose commits were all chores. A bare heading over an empty
+      // list says less than leaving it out.
+      final releases = parseReleaseNotesHistory(jsonEncode({
+        ...release('1.22.4', 'the newest thing'),
+        'previous': [
+          {'version': '1.22.3', 'sections': <Object?>[]},
+          release('1.22.2', 'still here'),
+        ],
+      }));
+
+      expect(releases.map((r) => r.version), ['1.22.4', '1.22.2']);
+    });
+
+    test('a `previous` that is not a list is ignored, not fatal', () {
+      final releases = parseReleaseNotesHistory(jsonEncode({
+        ...release('1.22.4', 'the newest thing'),
+        'previous': 'nonsense',
+      }));
+
+      expect(releases.single.version, '1.22.4');
+    });
+  });
 }

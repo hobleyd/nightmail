@@ -424,7 +424,10 @@ class AppUpdateService {
   Future<void> _loadReleaseNotes() async {
     try {
       final notes = await _releaseNotesFetcher.fetch();
-      if (notes != null) _emit(_status.copyWith(notes: notes));
+      // An empty answer leaves whatever is on screen: a document that failed to
+      // parse, or one briefly missing mid-deploy, is not a reason to take the
+      // notes away from a panel that is already showing them.
+      if (notes.isNotEmpty) _emit(_status.copyWith(notes: notes));
     } catch (_) {
       // Notes are decoration. A missing or malformed document leaves the panel
       // without a "What's new" block and changes nothing else.

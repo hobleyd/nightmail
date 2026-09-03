@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:version/version.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../infrastructure/update/app_update_status.dart';
@@ -17,6 +18,52 @@ import '../blocs/update/update_cubit.dart';
 /// document always describes the newest published release: with an update
 /// pending it is what you are about to get, and without one it is what you
 /// already have. The heading says which.
+/// Which of the document's releases the panel draws, newest first.
+///
+/// Everything published since the running build — so a reader who skipped
+/// versions sees what changed in each of them, not only in the release they are
+/// about to install.
+///
+/// **When there is nothing newer it falls back to the newest release rather
+/// than to nothing.** The hosted document describes the newest published
+/// release either way: with an update pending it is what you are about to get,
+/// and without one it is what you already have, which is worth showing. An
+/// empty list there would take the "What's new" block off the panel for
+/// everyone who is up to date.
+///
+/// The same fallback covers an installed version that will not parse and a
+/// release that names no version — neither can be placed against the other, and
+/// silently dropping a release is worse than showing one the reader has.
+@visibleForTesting
+List<UpdateReleaseNotes> releaseNotesToShow(
+  List<UpdateReleaseNotes> notes,
+  String? installedVersion,
+) {
+  if (notes.isEmpty) return const [];
+
+  final installed = _parseVersion(installedVersion);
+  if (installed == null) return notes.take(1).toList();
+
+  final newer = [
+    for (final release in notes)
+      if (_parseVersion(release.version) case final version?)
+        if (version > installed) release,
+  ];
+
+  return newer.isEmpty ? notes.take(1).toList() : newer;
+}
+
+/// `1.22.3+157` and `1.22.4` both parse; build metadata does not affect the
+/// ordering, which is what lets an installed build be compared with a release.
+Version? _parseVersion(String? value) {
+  if (value == null || value.isEmpty) return null;
+  try {
+    return Version.parse(value.startsWith('v') ? value.substring(1) : value);
+  } on FormatException {
+    return null;
+  }
+}
+
 class AppUpdateSection extends StatelessWidget {
   const AppUpdateSection({super.key});
 
@@ -37,14 +84,16 @@ class AppUpdateSection extends StatelessWidget {
               const SizedBox(height: 12),
               _ErrorLine(message: status.error!),
             ],
-            if (status.notes != null) ...[
-              const SizedBox(height: 24),
-              _ReleaseNotes(
-                notes: status.notes!,
-                isForPendingUpdate: status.hasActionableUpdate ||
-                    status.phase == AppUpdatePhase.downloading,
+            for (final release
+                in releaseNotesToShow(status.notes, status.installedVersion))
+              Padding(
+                padding: const EdgeInsets.only(top: 24),
+                child: _ReleaseNotes(
+                  notes: release,
+                  isForPendingUpdate: status.hasActionableUpdate ||
+                      status.phase == AppUpdatePhase.downloading,
+                ),
               ),
-            ],
           ],
         );
       },

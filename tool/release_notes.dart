@@ -58,6 +58,12 @@ Future<int> main(List<String> args) async {
     version: options.version,
     subjects: subjects,
   );
+
+  // Every earlier release, so a reader who skipped versions sees what changed
+  // in each of them rather than only in the one they are about to install.
+  final previous = await _previousReleases(options.version, from);
+  if (previous.isNotEmpty) document['previous'] = previous;
+
   final json = '${const JsonEncoder.withIndent('  ').convert(document)}\n';
 
   final output = options.output;
@@ -130,6 +136,69 @@ Map<String, Object?> buildReleaseNotes({
   };
 }
 
+/// How many earlier releases the document carries.
+///
+/// A reader wants the versions they skipped, not the whole history of the app,
+/// and the document is fetched on every update check — so it is bounded rather
+/// than growing a section per release forever.
+const _historyLength = 20;
+
+/// Notes for each release before [version], newest first.
+///
+/// Each entry covers the commits between its own predecessor's tag and its tag,
+/// which is the same range [buildReleaseNotes] is given for the release being
+/// published. Regenerated from tags on every deploy rather than accumulated
+/// from the previously published document: there is one source of truth, and a
+/// lost or corrupted `release-notes.json` rebuilds complete.
+///
+/// [newestTag] is the tag the current release's own range started from, already
+/// resolved by the caller. Returns empty when there are no earlier tags — a
+/// first release, or a shallow clone that fetched none.
+Future<List<Map<String, Object?>>> _previousReleases(
+  String version,
+  String? newestTag,
+) async {
+  if (newestTag == null) return const [];
+
+  final tags = await _releaseTags();
+  // Descending, so the entry at index i is preceded by the one at i + 1.
+  final earlier = tags
+      .where((tag) => _compare(_normalise(tag), _normalise(version)) < 0)
+      .toList();
+
+  final releases = <Map<String, Object?>>[];
+  for (var i = 0; i < earlier.length && releases.length < _historyLength; i++) {
+    final tag = earlier[i];
+    final predecessor = i + 1 < earlier.length ? earlier[i + 1] : null;
+    final range = predecessor == null ? tag : '$predecessor..$tag';
+    final log = await _git(['log', '--no-merges', '--pretty=format:%s', range]);
+    final subjects = log
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList();
+
+    final document = buildReleaseNotes(
+      version: _normalise(tag).join('.'),
+      subjects: subjects,
+    );
+    // A release whose commits were all chores says nothing worth a heading.
+    if ((document['sections'] as List).isEmpty) continue;
+    releases.add(document);
+  }
+  return releases;
+}
+
+/// Every release tag, newest first. Plain semver, as the workflow pushes them.
+Future<List<String>> _releaseTags() async {
+  final output = await _git(['tag', '--list', '--sort=-v:refname']);
+  return output
+      .split('\n')
+      .map((line) => line.trim())
+      .where((line) => RegExp(r'^v?\d+\.\d+\.\d+$').hasMatch(line))
+      .toList();
+}
+
 /// The release tag immediately before [version].
 ///
 /// Tags are the plain semver the workflow pushes (`1.20.0`), so they sort by
@@ -137,13 +206,7 @@ Map<String, Object?> buildReleaseNotes({
 /// "the previous release". Returns null when this is the first release, in
 /// which case the whole history is summarised.
 Future<String?> _previousReleaseTag(String version) async {
-  final output = await _git(['tag', '--list', '--sort=-v:refname']);
-  final tags = output
-      .split('\n')
-      .map((line) => line.trim())
-      .where((line) => RegExp(r'^v?\d+\.\d+\.\d+$').hasMatch(line))
-      .toList();
-
+  final tags = await _releaseTags();
   final current = _normalise(version);
   for (final tag in tags) {
     if (_compare(_normalise(tag), current) < 0) return tag;

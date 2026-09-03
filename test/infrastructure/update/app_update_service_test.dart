@@ -188,7 +188,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(fetcher.calls, 2, reason: 'a second check must re-read them');
 
-      expect(service.status.notes?.version, '1.22.4');
+      expect(service.status.notes.first.version, '1.22.4');
     });
 
     test('a failed re-read leaves the notes already on screen alone', () async {
@@ -206,7 +206,7 @@ void main() {
       await service.checkForUpdate();
       await Future<void>.delayed(Duration.zero);
 
-      expect(service.status.notes?.version, '1.22.4');
+      expect(service.status.notes.first.version, '1.22.4');
     });
   });
 }
@@ -219,10 +219,13 @@ class _CountingNotesFetcher extends ReleaseNotesFetcher {
   bool throwOnNextFetch = false;
 
   @override
-  Future<UpdateReleaseNotes?> fetch() async {
+  Future<List<UpdateReleaseNotes>> fetch() async {
     calls++;
     if (throwOnNextFetch) throw Exception('release-notes.json unreachable');
-    return const UpdateReleaseNotes(version: '1.22.4', sections: []);
+    return const [
+      UpdateReleaseNotes(version: '1.22.4', sections: []),
+      UpdateReleaseNotes(version: '1.22.3', sections: []),
+    ];
   }
 }
 

@@ -38,11 +38,15 @@ class ReleaseNotesFetcher {
   final Uri url;
   final Dio _dio;
 
-  Future<UpdateReleaseNotes?> fetch() async {
+  /// The releases the document describes, newest first.
+  ///
+  /// Empty when there is nothing to show; never null, so a caller cannot
+  /// mistake "no notes" for "not fetched yet".
+  Future<List<UpdateReleaseNotes>> fetch() async {
     final response = await _dio.getUri<String>(url);
     final body = response.data;
-    if (body == null || body.trim().isEmpty) return null;
-    return parseReleaseNotes(body);
+    if (body == null || body.trim().isEmpty) return const [];
+    return parseReleaseNotesHistory(body);
   }
 }
 
@@ -73,12 +77,47 @@ const _sectionTitles = <String, String>{
 /// Returns null rather than throwing on a document that parses but says
 /// nothing — an empty notes file is a release with no user-visible changes, not
 /// an error to report.
-UpdateReleaseNotes? parseReleaseNotes(String body) {
+UpdateReleaseNotes? parseReleaseNotes(String body) =>
+    _parseRelease(_decodeDocument(body));
+
+/// Every release the document describes, newest first: the release at the top
+/// level, then each entry of its `previous` array.
+///
+/// `previous` is an addition to `desktop_updater`'s schema, and both directions
+/// degrade: a reader that does not know the key still shows the top-level
+/// release, and a document published before the key existed yields a
+/// single-entry list rather than failing.
+///
+/// A release carrying nothing to say is dropped rather than drawn as a bare
+/// heading — which is how a version whose commits were all chores appears.
+List<UpdateReleaseNotes> parseReleaseNotesHistory(String body) {
+  final decoded = _decodeDocument(body);
+
+  final releases = <UpdateReleaseNotes>[];
+  final newest = _parseRelease(decoded);
+  if (newest != null) releases.add(newest);
+
+  final previous = decoded['previous'];
+  if (previous is List) {
+    for (final raw in previous) {
+      if (raw is! Map) continue;
+      final release = _parseRelease(Map<String, dynamic>.from(raw));
+      if (release != null) releases.add(release);
+    }
+  }
+
+  return List.unmodifiable(releases);
+}
+
+Map<String, dynamic> _decodeDocument(String body) {
   final decoded = jsonDecode(body);
   if (decoded is! Map<String, dynamic>) {
     throw const FormatException('release-notes.json must be a JSON object.');
   }
+  return decoded;
+}
 
+UpdateReleaseNotes? _parseRelease(Map<String, dynamic> decoded) {
   final version = _optionalString(decoded['version']);
   final summary = _optionalString(decoded['summary']);
 

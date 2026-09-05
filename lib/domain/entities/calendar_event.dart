@@ -53,6 +53,7 @@ class CalendarEvent extends Equatable {
     this.recurrence,
     this.reminderMinutes,
     this.seriesMasterId,
+    this.sequence,
   });
 
   final String id;
@@ -124,6 +125,14 @@ class CalendarEvent extends Equatable {
 
   bool get isRecurringOccurrence => seriesMasterId != null;
 
+  /// The iTIP `SEQUENCE` of the organizer's copy, as Google reports it
+  /// (`sequence`). Any calendar object this app emails about the meeting — an
+  /// invitation to a guest added later, a cancellation to one removed — has to
+  /// carry it, or the recipient's client ranks the message against the copy
+  /// it already holds and discards whichever claims the lower revision. Null
+  /// for providers that do not expose one (Graph keeps its own).
+  final int? sequence;
+
   /// Returns a copy with the given fields replaced. Used to apply an optimistic
   /// mutation (an RSVP, a drag to a new time) to a cached event before the
   /// provider has been told about it.
@@ -152,6 +161,7 @@ class CalendarEvent extends Equatable {
     CalendarRecurrence? recurrence,
     int? reminderMinutes,
     String? seriesMasterId,
+    int? sequence,
   }) =>
       CalendarEvent(
         id: id ?? this.id,
@@ -173,6 +183,7 @@ class CalendarEvent extends Equatable {
         recurrence: recurrence ?? this.recurrence,
         reminderMinutes: reminderMinutes ?? this.reminderMinutes,
         seriesMasterId: seriesMasterId ?? this.seriesMasterId,
+        sequence: sequence ?? this.sequence,
       );
 
   Duration get duration => end.difference(start);

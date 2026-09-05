@@ -1,5 +1,6 @@
 import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/meeting_invite.dart';
+import '../../../domain/entities/meeting_notify_scope.dart';
 import '../../../domain/entities/meeting_room.dart';
 import '../../../domain/usecases/create_calendar_event.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
@@ -21,6 +22,19 @@ abstract interface class CalendarRemoteDatasource {
   Future<CalendarEventModel> updateCalendarEvent({
     required UpdateCalendarEventParams params,
   });
+
+  /// Whether a [MeetingNotifyScope.changedAttendeesOnly] update leaves telling
+  /// the added and removed guests to the provider.
+  ///
+  /// Graph does it natively: a PATCH that only alters the attendee collection
+  /// invites the newcomers and cancels the leavers, and nobody else hears.
+  /// CalDAV and EventKit never write attendees at all, so there is nobody for
+  /// the app to tell either. Google is the `false`: its `sendUpdates` is all or
+  /// none, and `all` re-emails every existing guest on a roster-only change —
+  /// so [CalendarRepositoryImpl] patches Google silently and emails the changed
+  /// guests itself, an invitation to each newcomer and a cancellation to each
+  /// leaver.
+  bool get notifiesChangedAttendeesItself;
 
   Future<void> respondToMeetingInvite({
     required String emailId,

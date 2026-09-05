@@ -27,7 +27,7 @@ void main() {
     String? recurrenceRule,
     List<String> passthroughLines = const [],
   }) =>
-      buildForwardRequestIcs(
+      buildRequestIcs(
         uid: uid,
         summary: summary,
         start: DateTime.utc(2026, 8, 3, 23),

@@ -19,6 +19,7 @@ import 'package:nightmail/domain/entities/calendar_event_attendee.dart';
 import 'package:nightmail/domain/entities/local_attachment.dart';
 import 'package:nightmail/domain/entities/meeting_forward.dart';
 import 'package:nightmail/domain/entities/meeting_invite.dart';
+import 'package:nightmail/domain/entities/meeting_notify_scope.dart';
 import 'package:nightmail/domain/entities/meeting_room.dart';
 import 'package:nightmail/domain/usecases/update_calendar_event.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
@@ -1379,6 +1380,283 @@ END:VCALENDAR''';
         accountId: 'acct-1',
         event: anyNamed('event'),
       )).called(1);
+    });
+
+    group('a roster-only save on a provider that would tell everyone', () {
+      late MockEmailRemoteDatasource mockEmailDatasource;
+
+      /// The provider's copy of the meeting: [attendees] as Google reports
+      /// them, [seriesMasterId] set when it is one occurrence of a series.
+      CalendarEventModel providerCopy({
+        List<CalendarEventAttendee> attendees = const [
+          // Google lists the organizer as a guest of their own meeting.
+          CalendarEventAttendee(email: 'me@example.com'),
+          CalendarEventAttendee(email: 'Sam@example.com'),
+          CalendarEventAttendee(email: 'lee@example.com'),
+          CalendarEventAttendee(
+              email: 'room-3@resource.calendar.google.com', isResource: true),
+        ],
+        String? seriesMasterId,
+      }) =>
+          CalendarEventModel(
+            id: 'event-1',
+            subject: 'Planning',
+            start: DateTime.utc(2026, 6, 10, 9, 0),
+            end: DateTime.utc(2026, 6, 10, 10, 0),
+            isAllDay: false,
+            iCalUid: 'evt-1@google.com',
+            sequence: 3,
+            isOrganizer: true,
+            organizerEmail: 'me@example.com',
+            organizerName: 'Test',
+            location: 'Boardroom',
+            onlineMeetingUrl: 'https://meet.google.com/abc-defg-hij',
+            attendees: attendees,
+            seriesMasterId: seriesMasterId,
+          );
+      final serverCopy = providerCopy();
+
+      UpdateCalendarEventParams params(List<String> attendees) =>
+          UpdateCalendarEventParams(
+            id: 'event-1',
+            subject: 'Planning',
+            start: serverCopy.start,
+            end: serverCopy.end,
+            isAllDay: false,
+            timezone: 'UTC',
+            attendeeEmails: attendees,
+            roomEmails: const ['room-3@resource.calendar.google.com'],
+            notifyScope: MeetingNotifyScope.changedAttendeesOnly,
+          );
+
+      /// One entry per email sent: recipients, subject, MIME type and the
+      /// unfolded ICS of its single attachment.
+      List<String> sentIcs() {
+        final call = verify(mockEmailDatasource.sendEmail(
+          toAddresses: captureAnyNamed('toAddresses'),
+          subject: captureAnyNamed('subject'),
+          body: anyNamed('body'),
+          newAttachments: captureAnyNamed('newAttachments'),
+          ccAddresses: anyNamed('ccAddresses'),
+          bodyType: anyNamed('bodyType'),
+        ));
+        final out = <String>[];
+        for (var i = 0; i < call.captured.length; i += 3) {
+          final attachments = call.captured[i + 2] as List<dynamic>;
+          final attachment = attachments.single as LocalAttachment;
+          out.add('TO:${(call.captured[i] as List<String>).join(',')}\n'
+              'SUBJECT:${call.captured[i + 1]}\n'
+              'MIME:${attachment.mimeType}\n'
+              '${_unfoldIcs(utf8.decode(attachment.bytes))}');
+        }
+        return out;
+      }
+
+      setUp(() {
+        mockEmailDatasource = MockEmailRemoteDatasource();
+        when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+        when(mockAccountManager.emailDatasource)
+            .thenReturn(mockEmailDatasource);
+        when(mockDatasource.notifiesChangedAttendeesItself).thenReturn(false);
+        when(mockDatasource.getCalendarEvent(id: 'event-1'))
+            .thenAnswer((_) async => serverCopy);
+        when(mockDatasource.updateCalendarEvent(params: anyNamed('params')))
+            .thenAnswer((inv) async {
+          final p = inv.namedArguments[const Symbol('params')]
+              as UpdateCalendarEventParams;
+          return providerCopy(attendees: [
+            const CalendarEventAttendee(email: 'me@example.com'),
+            for (final e in p.attendeeEmails) CalendarEventAttendee(email: e),
+            for (final e in p.roomEmails)
+              CalendarEventAttendee(email: e, isResource: true),
+          ]);
+        });
+        when(mockEmailDatasource.sendEmail(
+          toAddresses: anyNamed('toAddresses'),
+          ccAddresses: anyNamed('ccAddresses'),
+          subject: anyNamed('subject'),
+          body: anyNamed('body'),
+          bodyType: anyNamed('bodyType'),
+          newAttachments: anyNamed('newAttachments'),
+        )).thenAnswer((_) async {});
+        givenCached(serverCopy);
+      });
+
+      test('saves silently and invites only the newcomer', () async {
+        final result = await repository.updateCalendarEvent(
+          params: params(
+              ['sam@example.com', 'lee@example.com', 'ravi@example.com']),
+        );
+
+        expect(result.isRight(), isTrue);
+        // The provider is told to email nobody; the cached row is still the
+        // provider's answer, and nothing was queued (this path sends mail).
+        final sent = verify(mockDatasource.updateCalendarEvent(
+                params: captureAnyNamed('params')))
+            .captured
+            .single as UpdateCalendarEventParams;
+        expect(sent.notifyScope, MeetingNotifyScope.none);
+        expect(sent.attendeeEmails, contains('ravi@example.com'));
+        verifyNever(mockPendingOps.enqueueCalendarOperation(
+          accountId: anyNamed('accountId'),
+          targetId: anyNamed('targetId'),
+          opType: anyNamed('opType'),
+          payload: anyNamed('payload'),
+        ));
+        verify(mockLocal.upsertEvent(
+            accountId: 'acct-1', event: anyNamed('event'))).called(1);
+
+        final mails = sentIcs();
+        expect(mails, hasLength(1));
+        final mail = mails.single;
+        expect(mail, startsWith('TO:ravi@example.com\n'));
+        expect(mail, contains('SUBJECT:Invitation: Planning @ '));
+        expect(mail, contains('MIME:text/calendar; method=REQUEST'));
+        expect(mail, contains('METHOD:REQUEST'));
+        expect(mail, contains('UID:evt-1@google.com'));
+        // The provider's own revision, so the guest's client does not rank
+        // this above the organizer's next real update.
+        expect(mail, contains('SEQUENCE:3'));
+        expect(mail, contains('ORGANIZER;CN="Test":mailto:me@example.com'));
+        expect(
+            mail,
+            contains('ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;'
+                'RSVP=TRUE:mailto:ravi@example.com'));
+        // Who else is coming, without a status; the room is not a guest.
+        expect(mail, contains('ATTENDEE;ROLE=REQ-PARTICIPANT:mailto:sam@example.com'));
+        expect(mail, isNot(contains('room-3@resource')));
+        expect(mail, contains('LOCATION:Boardroom'));
+        expect(mail, contains('Join: https://meet.google.com/abc-defg-hij'));
+      });
+
+      test('cancels only the leaver, listing them alone', () async {
+        final result = await repository.updateCalendarEvent(
+          params: params(['sam@example.com']),
+        );
+
+        expect(result.isRight(), isTrue);
+        final mails = sentIcs();
+        expect(mails, hasLength(1));
+        final mail = mails.single;
+        expect(mail, startsWith('TO:lee@example.com\n'));
+        expect(mail, contains('SUBJECT:Cancelled: Planning @ '));
+        expect(mail, contains('MIME:text/calendar; method=CANCEL'));
+        expect(mail, contains('METHOD:CANCEL'));
+        expect(mail, contains('STATUS:CANCELLED'));
+        expect(mail, contains('UID:evt-1@google.com'));
+        expect(mail, contains('SEQUENCE:3'));
+        expect(mail, contains('ORGANIZER;CN="Test":mailto:me@example.com'));
+        // A CANCEL naming the remaining guests would withdraw *their* meeting.
+        final attendees = mail
+            .split('\r\n')
+            .where((l) => l.startsWith('ATTENDEE'))
+            .toList();
+        expect(attendees,
+            ['ATTENDEE;ROLE=REQ-PARTICIPANT:mailto:lee@example.com']);
+      });
+
+      test('diffs case-insensitively against the server copy, not the form',
+          () async {
+        // Same roster, differently capitalised: nothing changed, so nobody is
+        // emailed and the provider is still asked to notify nobody.
+        final result = await repository.updateCalendarEvent(
+          params: params(['SAM@example.com', 'lee@example.com']),
+        );
+
+        expect(result.isRight(), isTrue);
+        verifyNever(mockEmailDatasource.sendEmail(
+          toAddresses: anyNamed('toAddresses'),
+          ccAddresses: anyNamed('ccAddresses'),
+          subject: anyNamed('subject'),
+          body: anyNamed('body'),
+          bodyType: anyNamed('bodyType'),
+          newAttachments: anyNamed('newAttachments'),
+        ));
+        final sent = verify(mockDatasource.updateCalendarEvent(
+                params: captureAnyNamed('params')))
+            .captured
+            .single as UpdateCalendarEventParams;
+        expect(sent.notifyScope, MeetingNotifyScope.none);
+      });
+
+      test('a single occurrence is left to the provider to notify', () async {
+        // No RECURRENCE-ID can be built for it, so the invitation would file
+        // against the whole series. The provider notifies (everyone, on
+        // Google) rather than the guest being invited to the wrong thing.
+        when(mockDatasource.getCalendarEvent(id: 'event-1')).thenAnswer(
+            (_) async => providerCopy(seriesMasterId: 'master-1'));
+
+        await repository.updateCalendarEvent(
+          params: params(
+              ['sam@example.com', 'lee@example.com', 'ravi@example.com']),
+        );
+
+        final sent = verify(mockDatasource.updateCalendarEvent(
+                params: captureAnyNamed('params')))
+            .captured
+            .single as UpdateCalendarEventParams;
+        expect(sent.notifyScope, MeetingNotifyScope.changedAttendeesOnly);
+        verifyNever(mockEmailDatasource.sendEmail(
+          toAddresses: anyNamed('toAddresses'),
+          ccAddresses: anyNamed('ccAddresses'),
+          subject: anyNamed('subject'),
+          body: anyNamed('body'),
+          bodyType: anyNamed('bodyType'),
+          newAttachments: anyNamed('newAttachments'),
+        ));
+      });
+
+      test('a provider that scopes its own notifications is left alone',
+          () async {
+        when(mockDatasource.notifiesChangedAttendeesItself).thenReturn(true);
+
+        await repository.updateCalendarEvent(
+          params: params(
+              ['sam@example.com', 'lee@example.com', 'ravi@example.com']),
+        );
+
+        // Cache-first and queued, exactly as any other save.
+        verifyNever(mockDatasource.getCalendarEvent(id: anyNamed('id')));
+        verify(mockPendingOps.enqueueCalendarOperation(
+          accountId: 'acct-1',
+          targetId: 'event-1',
+          opType: PendingCalendarOperationType.updateEvent,
+          payload: anyNamed('payload'),
+        )).called(1);
+        verifyNever(mockEmailDatasource.sendEmail(
+          toAddresses: anyNamed('toAddresses'),
+          ccAddresses: anyNamed('ccAddresses'),
+          subject: anyNamed('subject'),
+          body: anyNamed('body'),
+          bodyType: anyNamed('bodyType'),
+          newAttachments: anyNamed('newAttachments'),
+        ));
+      });
+
+      test('a failed send reports the meeting as saved but the guest untold',
+          () async {
+        when(mockEmailDatasource.sendEmail(
+          toAddresses: anyNamed('toAddresses'),
+          ccAddresses: anyNamed('ccAddresses'),
+          subject: anyNamed('subject'),
+          body: anyNamed('body'),
+          bodyType: anyNamed('bodyType'),
+          newAttachments: anyNamed('newAttachments'),
+        )).thenThrow(const NetworkException(message: 'offline'));
+
+        final result = await repository.updateCalendarEvent(
+          params: params(
+              ['sam@example.com', 'lee@example.com', 'ravi@example.com']),
+        );
+
+        final failure = result.getLeft().toNullable();
+        expect(failure, isA<NetworkFailure>());
+        expect(failure!.message, contains('The meeting was saved'));
+        expect(failure.message, contains('ravi@example.com'));
+        // The save itself is on screen regardless.
+        verify(mockLocal.upsertEvent(
+            accountId: 'acct-1', event: anyNamed('event'))).called(1);
+      });
     });
   });
 

@@ -1485,6 +1485,60 @@ all. `updateCalendarEvent` had always mapped `notifyScope` onto it;
 `CreateCalendarEventParams` carries no scope because a create always notifies
 everyone, which is what `_computeNotifyScope` returns for one.
 
+## Google Cannot Tell Only the Changed Guests, So the App Does
+
+`sendUpdates` on a Google event PATCH is `all`, `externalOnly` or `none`, and
+`all` re-emails **every** existing guest even when the attendee list is the only
+thing that changed — adding one person to a meeting used to send the whole
+roster an "Updated invitation". Graph scopes this natively; Google's web UI does
+it through an endpoint the API does not expose.
+
+So a `MeetingNotifyScope.changedAttendeesOnly` save on a provider whose
+`notifiesChangedAttendeesItself` is false (only Google) takes a different path
+in `CalendarRepositoryImpl.updateCalendarEvent`
+(`_updateNotifyingChangedGuests`): fetch the provider's copy, diff its roster
+against the save, PATCH with `sendUpdates=none`, then email a `METHOD:REQUEST`
+to each guest added and a `METHOD:CANCEL` to each guest removed, from this
+account. The same `buildRequestIcs` the forward fallback uses, plus
+`buildCancelIcs`.
+
+Five things here are load-bearing:
+
+- **The diff is against the server's roster, not the form's snapshot.** The
+  server is the authority on who was invited, and it is what makes a repeat
+  harmless: once the PATCH has landed the diff is empty, so pressing Save again
+  after a failed send emails nobody twice. The organizer's own address is
+  excluded from both sides — Google lists them in `attendees` because
+  `_buildEventBody` puts them there, and the form never shows them, so they
+  would otherwise read as removed by every save.
+- **It is network-first, not queued.** Same rule as `proposeNewTimeFromEmail`:
+  an op that emails people cannot be replayed blindly. The cache is written
+  from the PATCH response *before* any mail goes out, so a failed send still
+  leaves the saved meeting on screen; the failure says the meeting was saved
+  and names the guest that was not told.
+- **`SEQUENCE` is the provider's, which is why `CalendarEvent.sequence` exists.**
+  Google's own emails to a guest carry its `sequence`; a CANCEL claiming a lower
+  one is discarded as stale by the guest's client, a REQUEST claiming a higher
+  one makes the organizer's next real update look stale. It is parsed from
+  Google (in both field masks), cached, and null for every other provider.
+- **A single occurrence of a series is left to Google to notify — everyone.**
+  An invitation to one occurrence needs a `RECURRENCE-ID` naming it, and
+  neither the event nor the params holds the original start to build one from;
+  without it the guest's client files the invitation against the whole series.
+  That is the one case `changedAttendeesOnly` still reaches
+  `GoogleCalendarDatasourceImpl.updateCalendarEvent`, where it maps to `all`.
+- **The CANCEL lists only the removed guests.** RFC 5546 §3.2.5 uses exactly
+  that shape for "attendee removed"; naming the remaining guests would withdraw
+  *their* meeting.
+
+A Google-hosted guest already has the meeting on their calendar by the time the
+email arrives — the silent PATCH put it there — so for them the REQUEST is the
+notification and Gmail's RSVP goes through Google as usual. For anyone else it
+is the invitation itself, and their reply reaches the organizer as an iMIP
+`REPLY`, which is how Google-organized meetings have always heard back from
+Outlook. The Meet link travels in the `DESCRIPTION` and the message body; there
+is no conference-URL property every client reads.
+
 ## In-App Updates
 
 Two mechanisms behind one status, because no single one covers the platforms.

@@ -5,7 +5,7 @@ import 'dart:convert';
 /// from an original unchanged.
 ///
 /// Split out of `ics_counter_builder.dart` when a second builder
-/// ([buildForwardRequestIcs]) needed the same rules. Getting any of these
+/// ([buildRequestIcs]) needed the same rules. Getting any of these
 /// subtly wrong produces a file that parses in one client and not in another,
 /// so there is exactly one implementation of each.
 

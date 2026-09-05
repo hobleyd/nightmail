@@ -1,14 +1,19 @@
 import 'ics_writer.dart';
 
-/// Builds the `METHOD:REQUEST` iCalendar that carries a forwarded meeting.
+/// Builds the `METHOD:REQUEST` iCalendar that invites somebody to a meeting.
 ///
-/// This is the fallback half of forwarding an invitation. When the provider
-/// can forward a meeting itself — Graph's `/events/{id}/forward`, or patching
-/// a Google event the organizer lets guests invite to — the recipient becomes
-/// a real attendee on the organizer's own copy and none of this is needed.
-/// When it will not, the invitation is emailed from the forwarder's account
-/// with this attached, which is what Outlook sends over SMTP for the same
-/// action.
+/// Two callers, both in `CalendarRepositoryImpl`, and both are the app doing
+/// by email what the provider would not do itself:
+///
+/// - **Forwarding an invitation.** When the provider can forward a meeting —
+///   Graph's `/events/{id}/forward`, or patching a Google event the organizer
+///   lets guests invite to — the recipient becomes a real attendee on the
+///   organizer's own copy and none of this is needed. When it will not, the
+///   invitation is emailed from the forwarder's account with this attached,
+///   which is what Outlook sends over SMTP for the same action.
+/// - **Adding a guest to a Google meeting.** Google's API can only email every
+///   guest or none when the roster changes, so the organizer's own app patches
+///   the event silently and sends the newcomers this instead.
 ///
 /// The point of a REQUEST rather than a `PUBLISH` (what "Add to calendar"
 /// carries) is that the recipient can RSVP: their reply is addressed to
@@ -30,7 +35,7 @@ import 'ics_writer.dart';
 /// are being asked. [existingAttendeeEmails] are listed without a status: who
 /// else is coming is useful context, but their real answers live on the
 /// organizer's copy and restating them here would be a guess.
-String buildForwardRequestIcs({
+String buildRequestIcs({
   required String uid,
   required String summary,
   required DateTime start,

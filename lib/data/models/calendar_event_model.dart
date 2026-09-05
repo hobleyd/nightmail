@@ -24,6 +24,7 @@ class CalendarEventModel extends CalendarEvent {
     super.recurrence,
     super.reminderMinutes,
     super.seriesMasterId,
+    super.sequence,
   });
 
   factory CalendarEventModel.fromJson(Map<String, dynamic> json) {

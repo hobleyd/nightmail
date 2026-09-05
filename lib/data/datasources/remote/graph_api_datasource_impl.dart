@@ -938,6 +938,9 @@ class GraphApiDatasourceImpl
   bool get supportsNativeProposeNewTime => true;
 
   @override
+  bool get notifiesChangedAttendeesItself => true;
+
+  @override
   Future<void> proposeNewTimeFromEmail({
     required String emailId,
     required DateTime newStart,

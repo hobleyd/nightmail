@@ -9,6 +9,7 @@ import 'package:intl/intl.dart';
 import '../../core/error/exceptions.dart';
 import '../../core/error/failures.dart';
 import '../../core/utils/calendar_event_patch.dart';
+import '../../core/utils/ics_cancel_builder.dart';
 import '../../core/utils/ics_counter_builder.dart';
 import '../../core/utils/ics_parser.dart';
 import '../../core/utils/ics_request_builder.dart';
@@ -16,9 +17,11 @@ import '../../core/utils/ics_writer.dart';
 import '../../core/utils/rrule.dart';
 import '../../domain/entities/attendee_availability.dart';
 import '../../domain/entities/calendar_event.dart';
+import '../../domain/entities/calendar_recurrence.dart';
 import '../../domain/entities/local_attachment.dart';
 import '../../domain/entities/meeting_forward.dart';
 import '../../domain/entities/meeting_invite.dart';
+import '../../domain/entities/meeting_notify_scope.dart';
 import '../../domain/entities/meeting_room.dart';
 import '../../domain/repositories/calendar_repository.dart';
 import '../../domain/usecases/create_calendar_event.dart';
@@ -231,6 +234,20 @@ class CalendarRepositoryImpl implements CalendarRepository {
     }
 
     final accountId = _accountId;
+
+    // A save that only changed the guest list, on a provider that would tell
+    // every guest about it: this app tells the changed guests instead. That is
+    // mail to other people, so it waits for the server rather than queueing —
+    // see [PendingCalendarOperationType].
+    if (params.notifyScope == MeetingNotifyScope.changedAttendeesOnly &&
+        !ds.notifiesChangedAttendeesItself) {
+      return _updateNotifyingChangedGuests(
+        ds,
+        accountId: accountId,
+        params: params,
+      );
+    }
+
     final cached = accountId == null
         ? null
         : await _localDatasource.getCachedEventById(
@@ -269,6 +286,276 @@ class CalendarRepositoryImpl implements CalendarRepository {
           _localDatasource.upsertEvent(accountId: accountId, event: optimistic),
       value: optimistic,
     );
+  }
+
+  /// [updateCalendarEvent] for a provider whose own notifications would reach
+  /// every guest (see [CalendarRemoteDatasource.notifiesChangedAttendeesItself]):
+  /// the provider is told to notify nobody, and the guests the save added or
+  /// removed are emailed an invitation or a cancellation from this account.
+  ///
+  /// The roster is diffed against the **provider's** copy, fetched first, not
+  /// against the form's snapshot. The server is the authority on who was
+  /// invited — another client may have moved the roster since the form opened —
+  /// and it is what makes a repeated save harmless: once the patch has landed
+  /// the diff is empty, so pressing Save again after a failed send emails
+  /// nobody twice.
+  ///
+  /// One occurrence of a series is the exception, and takes the provider's own
+  /// notification (everyone, on Google). An invitation to a single occurrence
+  /// has to carry a `RECURRENCE-ID` naming it, and neither the event nor the
+  /// params holds the original start to build one from; without it the guest's
+  /// client files the invitation against the series, or against nothing. Over-
+  /// notifying is the lesser wrong there.
+  ///
+  /// The cache is written before any mail is sent, so a send that fails still
+  /// leaves the saved meeting on screen; the failure names the guest that was
+  /// not told.
+  Future<Either<Failure, CalendarEvent>> _updateNotifyingChangedGuests(
+    CalendarRemoteDatasource ds, {
+    required String? accountId,
+    required UpdateCalendarEventParams params,
+  }) async {
+    try {
+      final before = await ds.getCalendarEvent(id: params.id);
+
+      if (before.isRecurringOccurrence) {
+        final event = await ds.updateCalendarEvent(params: params);
+        if (accountId != null) {
+          await _localDatasource.upsertEvent(
+              accountId: accountId, event: event);
+        }
+        return Right(event);
+      }
+
+      // The organizer is nobody's guest: Google lists them in `attendees` when
+      // this app put them there, and the form never shows them, so they would
+      // otherwise read as removed by every save.
+      final self = _accountManager.activeAccount?.emailAddress.trim().toLowerCase();
+      final requested = <String, String>{};
+      for (final email in params.attendeeEmails) {
+        final address = email.trim();
+        final key = address.toLowerCase();
+        if (address.isEmpty || key == self) continue;
+        requested.putIfAbsent(key, () => address);
+      }
+      final invited = <String>{};
+      final removed = <String>[];
+      for (final a in before.attendees) {
+        final key = a.email.trim().toLowerCase();
+        if (a.isResource || key.isEmpty || key == self) continue;
+        if (!invited.add(key)) continue;
+        if (!requested.containsKey(key)) removed.add(a.email.trim());
+      }
+      final added = [
+        for (final entry in requested.entries)
+          if (!invited.contains(entry.key)) entry.value,
+      ];
+
+      final event = await ds.updateCalendarEvent(
+        params: params.withNotifyScope(MeetingNotifyScope.none),
+      );
+      if (accountId != null) {
+        await _localDatasource.upsertEvent(accountId: accountId, event: event);
+      }
+
+      if (added.isNotEmpty) {
+        await _emailGuestInvitation(
+          meeting: event,
+          recipients: added,
+          recurrence: params.recurrence,
+        );
+      }
+      if (removed.isNotEmpty) {
+        await _emailGuestCancellation(
+          meeting: event,
+          recipients: removed,
+          recurrence: params.recurrence,
+        );
+      }
+      return Right(event);
+    } on AuthException catch (e) {
+      return Left(AuthFailure(message: e.message));
+    } on NetworkException catch (e) {
+      return Left(NetworkFailure(message: e.message));
+    } on ServerException catch (e) {
+      return Left(ServerFailure(message: e.message, statusCode: e.statusCode));
+    } catch (e) {
+      return Left(ServerFailure(message: e.toString()));
+    }
+  }
+
+  /// Emails [recipients] the invitation to a meeting they have just been added
+  /// to, from this account, for a provider that would otherwise have told
+  /// everyone (see [_updateNotifyingChangedGuests]).
+  ///
+  /// The `METHOD:REQUEST` part is what lets the recipient's client offer Accept
+  /// and Decline, and it names the real organizer so the reply reaches the
+  /// copy the provider holds. A Google-hosted guest already has the meeting on
+  /// their calendar by now — the silent patch put it there — so for them this
+  /// is the notification; for anyone else it is the invitation itself.
+  Future<void> _emailGuestInvitation({
+    required CalendarEvent meeting,
+    required List<String> recipients,
+    required CalendarRecurrence? recurrence,
+  }) async {
+    final organizer = _accountManager.activeAccount;
+    final organizerEmail = meeting.organizerEmail ?? organizer?.emailAddress;
+    final organizerName = meeting.organizerName ?? organizer?.displayName;
+
+    final body = StringBuffer()
+      ..writeln('${organizer?.displayName ?? 'Someone'} has invited you to a '
+          'meeting.')
+      ..writeln()
+      ..writeln(meeting.subject)
+      ..writeln('When: ${_formatRange(meeting.start, meeting.end)}');
+    if (meeting.location != null && meeting.location!.trim().isNotEmpty) {
+      body.writeln('Where: ${meeting.location!.trim()}');
+    }
+    if (meeting.hasOnlineMeeting) {
+      body.writeln('Join: ${meeting.onlineMeetingUrl}');
+    }
+    if (organizerEmail != null) {
+      final name = organizerName;
+      body.writeln('Organiser: ${name == null || name.isEmpty ? '' : '$name '}'
+          '<$organizerEmail>');
+    }
+    final description = meeting.bodyPreview?.trim();
+    if (description != null && description.isNotEmpty) {
+      body
+        ..writeln()
+        ..writeln(description);
+    }
+    body
+      ..writeln()
+      ..writeln('Accept or decline the attached invitation to let the '
+          'organiser know whether you can come.');
+
+    // The join link travels in the description: the recipient's client shows
+    // that wherever it shows the meeting, and there is no interoperable
+    // property for a conference URL that every client reads.
+    final icsDescription = [
+      if (description != null && description.isNotEmpty) description,
+      if (meeting.hasOnlineMeeting) 'Join: ${meeting.onlineMeetingUrl}',
+    ].join('\n\n');
+
+    final ics = buildRequestIcs(
+      uid: meeting.iCalUid ?? 'nightmail-${meeting.id}',
+      summary: meeting.subject,
+      start: meeting.start,
+      end: meeting.end,
+      isAllDay: meeting.isAllDay,
+      newAttendeeEmails: recipients,
+      existingAttendeeEmails: [
+        for (final a in meeting.attendees)
+          if (!a.isResource) a.email,
+      ],
+      organizerEmail: organizerEmail,
+      organizerName: organizerName,
+      location: meeting.location,
+      description: icsDescription.isEmpty ? null : icsDescription,
+      sequence: meeting.sequence,
+      recurrenceRule: recurrence == null ? null : buildRRule(recurrence),
+    );
+
+    await _sendGuestNotice(
+      recipients: recipients,
+      subject: 'Invitation: ${meeting.subject} @ '
+          '${_formatRange(meeting.start, meeting.end)}',
+      body: body.toString(),
+      attachmentName: 'invite.ics',
+      method: 'REQUEST',
+      ics: ics,
+      what: 'invitation',
+    );
+  }
+
+  /// Emails [recipients] the cancellation for a meeting they have just been
+  /// removed from — the other half of [_emailGuestInvitation]. A Google-hosted
+  /// guest has already lost the meeting from their calendar; anyone else still
+  /// holds a copy, and this is what withdraws it.
+  Future<void> _emailGuestCancellation({
+    required CalendarEvent meeting,
+    required List<String> recipients,
+    required CalendarRecurrence? recurrence,
+  }) async {
+    final organizer = _accountManager.activeAccount;
+
+    final body = StringBuffer()
+      ..writeln('${organizer?.displayName ?? 'The organiser'} has removed you '
+          'from this meeting.')
+      ..writeln()
+      ..writeln(meeting.subject)
+      ..writeln('When: ${_formatRange(meeting.start, meeting.end)}');
+    if (meeting.location != null && meeting.location!.trim().isNotEmpty) {
+      body.writeln('Where: ${meeting.location!.trim()}');
+    }
+
+    final ics = buildCancelIcs(
+      uid: meeting.iCalUid ?? 'nightmail-${meeting.id}',
+      summary: meeting.subject,
+      start: meeting.start,
+      end: meeting.end,
+      isAllDay: meeting.isAllDay,
+      removedAttendeeEmails: recipients,
+      organizerEmail: meeting.organizerEmail ?? organizer?.emailAddress,
+      organizerName: meeting.organizerName ?? organizer?.displayName,
+      sequence: meeting.sequence,
+      recurrenceRule: recurrence == null ? null : buildRRule(recurrence),
+    );
+
+    await _sendGuestNotice(
+      recipients: recipients,
+      subject: 'Cancelled: ${meeting.subject} @ '
+          '${_formatRange(meeting.start, meeting.end)}',
+      body: body.toString(),
+      attachmentName: 'cancel.ics',
+      method: 'CANCEL',
+      ics: ics,
+      what: 'cancellation',
+    );
+  }
+
+  /// Sends one guest notice and, if that fails, rethrows with a message that
+  /// says the meeting itself was saved. Each exception keeps its own type so
+  /// the caller still maps it to the right Failure — an expired token has to
+  /// stay an AuthFailure for the re-auth prompt to appear.
+  Future<void> _sendGuestNotice({
+    required List<String> recipients,
+    required String subject,
+    required String body,
+    required String attachmentName,
+    required String method,
+    required String ics,
+    required String what,
+  }) async {
+    String failed(String reason) =>
+        'The meeting was saved, but the $what could not be sent to '
+        '${recipients.join(', ')}: $reason';
+    try {
+      await _accountManager.emailDatasource.sendEmail(
+        toAddresses: recipients,
+        subject: subject,
+        body: body,
+        newAttachments: [
+          LocalAttachment(
+            name: attachmentName,
+            // The `method` parameter is what makes a client read the part as
+            // something to act on rather than a file to save.
+            mimeType: 'text/calendar; method=$method',
+            bytes: Uint8List.fromList(utf8.encode(ics)),
+          ),
+        ],
+      );
+    } on AuthException catch (e) {
+      throw AuthException(message: failed(e.message));
+    } on NetworkException catch (e) {
+      throw NetworkException(message: failed(e.message));
+    } on ServerException catch (e) {
+      throw ServerException(
+          message: failed(e.message), statusCode: e.statusCode);
+    } catch (e) {
+      throw ServerException(message: failed(e.toString()));
+    }
   }
 
   /// Finds the cached calendar copy of the meeting an invitation email is about.
@@ -990,6 +1277,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
         organizerName: event.organizerName,
         location: event.location,
         description: event.bodyPreview,
+        sequence: event.sequence,
         attendees: [
           // Rooms are left out: a resource attendee is a booking the organizer
           // holds, not a person the recipient should see listed as a guest.
@@ -1044,7 +1332,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
               'directly. They have not been told this was forwarded, so ask '
               'them to add you if you need updates to the meeting.');
 
-    final ics = buildForwardRequestIcs(
+    final ics = buildRequestIcs(
       uid: meeting.uid,
       summary: meeting.summary,
       start: meeting.start,

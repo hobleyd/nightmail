@@ -17,7 +17,10 @@
 ///   other people (a `METHOD:COUNTER` reply, a re-issued invitation). An op
 ///   that emails somebody cannot be retried blindly — a partial failure would
 ///   send the same proposal twice — so these wait for the server and patch the
-///   cache once it answers.
+///   cache once it answers. The same rule takes an [updateEvent] out of the
+///   queue when the repository is the one telling the changed guests (a
+///   roster-only save on Google, see
+///   `CalendarRemoteDatasource.notifiesChangedAttendeesItself`).
 /// * `createCalendarEvent` needs the id the provider assigns before it can be
 ///   cached at all.
 /// * `cancelMeetingFromEmail` carries no ICS, so there is no `UID` to find the

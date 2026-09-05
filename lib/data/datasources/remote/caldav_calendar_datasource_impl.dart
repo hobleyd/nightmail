@@ -348,6 +348,11 @@ class CalDavCalendarDatasourceImpl implements CalendarRemoteDatasource {
   @override
   bool get supportsNativeProposeNewTime => false;
 
+  // Attendees are never written (see [updateCalendarEvent]), so there is no
+  // roster change for the repository to announce.
+  @override
+  bool get notifiesChangedAttendeesItself => true;
+
   @override
   Future<void> proposeNewTimeFromEmail({
     required String emailId,

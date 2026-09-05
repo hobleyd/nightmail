@@ -88,5 +88,6 @@ CalendarEvent applyUpdate(
     recurrence: params.recurrence,
     reminderMinutes: params.reminderMinutes,
     seriesMasterId: event.seriesMasterId,
+    sequence: event.sequence,
   );
 }

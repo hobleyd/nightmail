@@ -256,6 +256,7 @@ class CalendarLocalDatasourceImpl implements CalendarLocalDatasource {
         'recurrence': _recurrenceToJson(e.recurrence),
         'reminderMinutes': e.reminderMinutes,
         'seriesMasterId': e.seriesMasterId,
+        'sequence': e.sequence,
       };
 
   static CalendarEvent _fromJson(Map<String, dynamic> j) {
@@ -301,6 +302,7 @@ class CalendarLocalDatasourceImpl implements CalendarLocalDatasource {
             _recurrenceFromJson(j['recurrence'] as Map<String, dynamic>?),
         reminderMinutes: j['reminderMinutes'] as int?,
         seriesMasterId: j['seriesMasterId'] as String?,
+        sequence: j['sequence'] as int?,
       );
   }
 

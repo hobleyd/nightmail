@@ -95,7 +95,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
           // identifies the invite's own auto-added copy. A field mask omitting
           // them makes every event look busy and unidentifiable.
           'fields':
-              'items(id,iCalUID,summary,start,end,description,location,status,transparency,eventType,organizer,attendees,hangoutLink,conferenceData,reminders,recurringEventId)',
+              'items(id,iCalUID,sequence,summary,start,end,description,location,status,transparency,eventType,organizer,attendees,hangoutLink,conferenceData,reminders,recurringEventId)',
         },
       );
 
@@ -134,7 +134,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
         '/calendars/primary/events/$id',
         queryParameters: {
           'fields':
-              'id,iCalUID,summary,start,end,description,location,status,transparency,eventType,organizer,attendees,hangoutLink,conferenceData,reminders,recurringEventId,recurrence',
+              'id,iCalUID,sequence,summary,start,end,description,location,status,transparency,eventType,organizer,attendees,hangoutLink,conferenceData,reminders,recurringEventId,recurrence',
         },
       );
       final json = resp.data;
@@ -225,10 +225,14 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       );
 
       // Google's API can only notify all guests or none — it cannot scope a
-      // notification to just the added/removed attendees. So a roster-only
-      // change (changedAttendeesOnly) falls back to notifying everyone; the
-      // added/removed guests still get the right invite/cancellation, but
-      // unchanged guests are also pinged. Graph handles the delta natively.
+      // notification to just the added/removed attendees, and `all` re-emails
+      // every existing guest even when the attendee list is the only change.
+      // So `changedAttendeesOnly` normally never reaches here: the repository
+      // sends `none` and emails the changed guests itself (see
+      // [notifiesChangedAttendeesItself]). It still arrives for a single
+      // occurrence of a series, whose invitation would need a `RECURRENCE-ID`
+      // this app cannot derive, and there over-notifying beats inviting the
+      // guest to the wrong thing. Graph handles the delta natively.
       final sendUpdates = switch (params.notifyScope) {
         MeetingNotifyScope.all => 'all',
         MeetingNotifyScope.changedAttendeesOnly => 'all',
@@ -769,6 +773,9 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
 
   @override
   bool get supportsNativeProposeNewTime => false;
+
+  @override
+  bool get notifiesChangedAttendeesItself => false;
 
   @override
   Future<void> proposeNewTimeFromEmail({
@@ -1480,6 +1487,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       reminderMinutes:
           _parseReminderMinutes(json['reminders'], defaultReminderMinutes),
       seriesMasterId: json['recurringEventId'] as String?,
+      sequence: json['sequence'] as int?,
     );
   }
 

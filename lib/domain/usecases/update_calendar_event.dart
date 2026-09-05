@@ -71,6 +71,27 @@ class UpdateCalendarEventParams extends Equatable {
   /// so callers that don't diff (e.g. drag-to-reschedule) keep notifying everyone.
   final MeetingNotifyScope notifyScope;
 
+  /// The same save with a different [notifyScope]. Used by the repository when
+  /// it takes the notifying over from the provider — the provider is then told
+  /// to send nothing, and the params otherwise go through unchanged.
+  UpdateCalendarEventParams withNotifyScope(MeetingNotifyScope scope) =>
+      UpdateCalendarEventParams(
+        id: id,
+        subject: subject,
+        start: start,
+        end: end,
+        isAllDay: isAllDay,
+        timezone: timezone,
+        location: location,
+        description: description,
+        attendeeEmails: attendeeEmails,
+        roomEmails: roomEmails,
+        recurrence: recurrence,
+        isOnlineMeeting: isOnlineMeeting,
+        reminderMinutes: reminderMinutes,
+        notifyScope: scope,
+      );
+
   @override
   List<Object?> get props => [
         id,

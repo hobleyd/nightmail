@@ -12,8 +12,9 @@ enum MeetingNotifyScope {
   ///
   /// Microsoft Graph honours this natively (a PATCH that only alters the
   /// attendee collection notifies just the delta). Google Calendar's API
-  /// cannot scope notifications to a subset of guests, so its datasource
-  /// falls back to [all] for this scope.
+  /// cannot scope notifications to a subset of guests, so there the
+  /// repository saves silently and emails the added and removed guests itself
+  /// (`CalendarRemoteDatasource.notifiesChangedAttendeesItself`).
   changedAttendeesOnly,
 
   /// Send no notifications. Used when nothing attendee-visible changed (e.g.

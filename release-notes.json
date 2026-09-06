@@ -1,34 +1,55 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.23.0",
+  "version": "1.23.1",
   "sections": [
-    {
-      "type": "features",
-      "title": "New features",
-      "items": [
-        {
-          "body": "show the release notes for every version since yours",
-          "title": "update"
-        }
-      ]
-    },
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "put the organiser in a Gmail meeting's guest list",
-          "title": "calendar"
+          "body": "stop a just-read message flipping back to unread",
+          "title": "mail"
         },
         {
-          "body": "re-read the release notes on every check",
-          "title": "update"
+          "body": "tell only the changed guests when a Gmail meeting's roster changes",
+          "title": "calendar"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.23.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "show the release notes for every version since yours",
+              "title": "update"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "put the organiser in a Gmail meeting's guest list",
+              "title": "calendar"
+            },
+            {
+              "body": "re-read the release notes on every check",
+              "title": "update"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -1157,116 +1178,6 @@
             {
               "body": "reflow fixed-width email tables on narrow screens",
               "title": "mobile"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.6.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "handle mailto: links on all five platforms"
-            },
-            {
-              "body": "add Join Meeting action and cleaner meeting-link display",
-              "title": "calendar"
-            },
-            {
-              "body": "schedule OS notifications for meeting reminders on all platforms",
-              "title": "calendar"
-            },
-            {
-              "body": "open calendar, tasks, and AI panes as full-screen routes",
-              "title": "mobile"
-            },
-            {
-              "body": "swipe-to-reveal actions on email list items",
-              "title": "mobile"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "restore nightmail.desktop deleted by 5aa11c0 and add mailto MimeType to snap",
-              "title": "linux"
-            },
-            {
-              "body": "restore consolidated snap packaging reverted by merge",
-              "title": "linux"
-            },
-            {
-              "body": "restore window position correctly on Wayland",
-              "title": "linux"
-            },
-            {
-              "body": "poll immediately on system wake from sleep",
-              "title": "macos"
-            },
-            {
-              "body": "defer HTML editor focus by one frame after unfocus",
-              "title": "compose"
-            },
-            {
-              "body": "unfocus Flutter fields before focusing HTML editor",
-              "title": "compose"
-            },
-            {
-              "body": "fix tab order To→Cc→Subject→Body and HTML editor autofocus",
-              "title": "compose"
-            },
-            {
-              "body": "pop back to email list after sending a reply or forward",
-              "title": "mobile"
-            },
-            {
-              "body": "add snap desktop integration and correct application ID",
-              "title": "linux"
-            },
-            {
-              "body": "append sent mail to Sent folder after SMTP send",
-              "title": "imap"
-            },
-            {
-              "body": "restore most recently used display, not external-first",
-              "title": "window-bounds"
-            },
-            {
-              "body": "fix infinite scroll stopping after first page",
-              "title": "email-list"
-            },
-            {
-              "body": "reload events after account switch when pane is open",
-              "title": "calendar"
-            },
-            {
-              "body": "stop double-quoting folder paths with parens in LIST",
-              "title": "imap"
-            },
-            {
-              "body": "surface Google Meet links and clip overflowing event tiles",
-              "title": "calendar"
-            },
-            {
-              "body": "surface load errors in embedded day panel",
-              "title": "calendar"
-            },
-            {
-              "body": "resize WebView overlay when panel layout changes",
-              "title": "html_view"
-            },
-            {
-              "body": "quote folder names with parens in COPY/MOVE, add move rollback",
-              "title": "imap"
             }
           ]
         }

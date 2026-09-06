@@ -23,6 +23,7 @@ import 'package:nightmail/infrastructure/network/connectivity_service.dart';
 import 'package:nightmail/infrastructure/sync/calendar_outbox_drain_service.dart';
 import 'package:nightmail/infrastructure/sync/imap_connection_gate.dart';
 import 'package:nightmail/infrastructure/sync/outbox_drain_service.dart';
+import 'package:nightmail/infrastructure/sync/recent_mutation_store.dart';
 import 'package:nightmail/infrastructure/sync/spam_db_sync_service.dart';
 
 import 'outbox_drain_service_test.mocks.dart';
@@ -93,6 +94,7 @@ void main() {
       database: db,
       encryption: _PlaintextEncryption(),
       inlineAttachments: InlineAttachmentCache(),
+      recentMutations: RecentMutationStore(),
     );
     mockAccountManager = MockAccountManager();
     mockRemoteDatasource = MockEmailRemoteDatasource();

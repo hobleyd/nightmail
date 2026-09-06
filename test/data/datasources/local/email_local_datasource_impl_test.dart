@@ -14,6 +14,7 @@ import 'package:nightmail/domain/entities/email.dart';
 import 'package:nightmail/domain/entities/inline_attachment.dart';
 import 'package:nightmail/domain/entities/meeting_invite.dart';
 import 'package:nightmail/infrastructure/cache/cache_encryption_service.dart';
+import 'package:nightmail/infrastructure/sync/recent_mutation_store.dart';
 
 // Bypasses secure-storage platform channels — tests only need round-trip
 // fidelity of the cache, not real encryption.
@@ -66,18 +67,91 @@ Future<void> _stripParseVersion(
 void main() {
   late AppDatabase db;
   late EmailLocalDatasourceImpl datasource;
+  late DateTime clock;
 
   setUp(() {
+    clock = DateTime(2026, 1, 1, 12);
     db = AppDatabase.forTesting(NativeDatabase.memory());
     datasource = EmailLocalDatasourceImpl(
       database: db,
       encryption: _PlaintextEncryption(),
       // No temp directory under the test binding, so every cache call no-ops.
       inlineAttachments: InlineAttachmentCache(),
+      recentMutations: RecentMutationStore(
+        ttl: const Duration(seconds: 30),
+        now: () => clock,
+      ),
     );
   });
 
   tearDown(() async => db.close());
+
+  group('updateEmailReadStatusInCache', () {
+    // Regression: on Office 365 a message read in a folder went read → unread
+    // and stayed there. The detail fetch had resolved (server: unread) just
+    // before the click, so it passed reconciliation, and its unawaited encrypt
+    // -and-write landed *after* the mark-read wrote the row — a lost update
+    // the poller's watched-folder sync can also produce every cycle. The rows
+    // cannot be ordered against each other, so the read side must answer with
+    // the user's value for the window it takes the server to catch up.
+    test('wins over a stale list write that lands after it, for the window',
+        () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '')],
+      );
+      await datasource.updateEmailReadStatusInCache(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+        isRead: true,
+      );
+      // The fetch that resolved before the click writes its unread copy late.
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '')], // isRead: false
+        replaceFolder: true,
+      );
+
+      final listed = await datasource.getCachedEmails(
+          accountId: 'acct-1', folderId: 'folder-1');
+      expect(listed.single.isRead, isTrue);
+      final single = await datasource.getCachedEmailById(
+          accountId: 'acct-1', emailId: 'email-1');
+      expect(single!.isRead, isTrue);
+
+      // Past the window the rows speak for themselves again: by then the
+      // outbox has drained and the next fetch carries the server's value.
+      clock = clock.add(const Duration(seconds: 31));
+      final later = await datasource.getCachedEmails(
+          accountId: 'acct-1', folderId: 'folder-1');
+      expect(later.single.isRead, isFalse);
+    });
+
+    test('a later change to the same message replaces the earlier one',
+        () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '')],
+      );
+      await datasource.updateEmailReadStatusInCache(
+          accountId: 'acct-1', emailId: 'email-1', isRead: true);
+      await datasource.updateEmailReadStatusInCache(
+          accountId: 'acct-1', emailId: 'email-1', isRead: false);
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '').copyWith(isRead: true)],
+        replaceFolder: true,
+      );
+
+      final listed = await datasource.getCachedEmails(
+          accountId: 'acct-1', folderId: 'folder-1');
+      expect(listed.single.isRead, isFalse);
+    });
+  });
 
   group('cacheEmails', () {
     // Regression: MailPollerCubit re-caches every message it sees in a

@@ -29,7 +29,7 @@ import '../../../infrastructure/notifications/notification_service.dart';
 import '../../../infrastructure/sync/body_prefetch_service.dart';
 import '../../../infrastructure/sync/imap_connection_gate.dart';
 import '../../../infrastructure/sync/outbox_drain_service.dart';
-import '../../../infrastructure/sync/removal_tombstone_store.dart';
+import '../../../infrastructure/sync/recent_mutation_store.dart';
 import '../../../infrastructure/sync/spam_db_sync_service.dart';
 import 'mail_poller_state.dart';
 
@@ -48,7 +48,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     required NotificationService notificationService,
     required OutboxDrainService outboxDrainService,
     required PendingOperationsDatasource pendingOperations,
-    required RemovalTombstoneStore removalTombstones,
+    required RecentMutationStore recentMutations,
     required SpamDbSyncService spamDbSyncService,
   })  : _accountManager = accountManager,
         _appSettings = appSettings,
@@ -63,7 +63,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
         _notificationService = notificationService,
         _outboxDrainService = outboxDrainService,
         _pendingOperations = pendingOperations,
-        _removalTombstones = removalTombstones,
+        _recentMutations = recentMutations,
         _spamDbSyncService = spamDbSyncService,
         super(const MailPollerState(
           accountsWithNewMail: {},
@@ -83,7 +83,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   final NotificationService _notificationService;
   final OutboxDrainService _outboxDrainService;
   final PendingOperationsDatasource _pendingOperations;
-  final RemovalTombstoneStore _removalTombstones;
+  final RecentMutationStore _recentMutations;
   final SpamDbSyncService _spamDbSyncService;
 
   Timer? _timer;
@@ -1286,20 +1286,19 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   }
 
   /// The ids this account has mutations queued against: [tombstoned] is being
-  /// removed from view (delete/move/junk, plus removals that have drained but
-  /// whose tombstone is still live), [pendingReadIds] has a read-state change
-  /// the server has not been told about yet.
-  ///
-  /// Shared by both reconciliation paths here so they cannot drift apart.
+  /// removed from view (delete/move/junk), [pendingReadIds] has a read-state
+  /// change the server may not reflect yet. Both include mutations that have
+  /// drained but whose grace entry in [RecentMutationStore] is still live:
+  /// that closes the race where a server snapshot built before the mutation
+  /// propagated resolves after the outbox drain removed the pending op. Shared
+  /// with EmailRepositoryImpl so both reconciliation paths agree; matters most
+  /// for a multi-message action like deleting a whole thread, whose ops drain
+  /// one at a time — and for Exchange Online, whose folder listing lags a
+  /// read-state PATCH by seconds as a matter of course. Shared by both
+  /// reconciliation paths here too, so they cannot drift apart.
   Future<({Set<String> tombstoned, Set<String> pendingReadIds})>
       _pendingMutations(String accountId) async {
     final pendingOps = await _pendingOperations.getPendingOperations(accountId);
-    // Recently-removed tombstones outlive op dequeue, closing the race where a
-    // server snapshot built before the mutation propagated resolves after the
-    // outbox drain removed the pending op. Shared with EmailRepositoryImpl so
-    // both reconciliation paths agree; matters most for a multi-message action
-    // like deleting a whole thread, whose ops drain one at a time.
-    final recentlyRemovedIds = _removalTombstones.activeIds(accountId);
 
     return (
       tombstoned: <String>{
@@ -1308,11 +1307,12 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
               op.opType == PendingOperationType.move ||
               op.opType == PendingOperationType.junk)
             op.emailId,
-        ...recentlyRemovedIds,
+        ..._recentMutations.recentlyRemovedIds(accountId),
       },
       pendingReadIds: <String>{
         for (final op in pendingOps)
           if (op.opType == PendingOperationType.markRead) op.emailId,
+        ..._recentMutations.recentReadStates(accountId).keys,
       },
     );
   }

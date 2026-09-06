@@ -1201,6 +1201,29 @@ blank, epoch-dated row that *replaces* the real one. Those arrive as
 `MailDeltaResult.fieldUpdates` and are applied to the cached row in place
 (`updateCachedEmailFields`), never through `cacheEmails`.
 
+**A just-set read state is answered from `RecentMutationStore`, not from the
+row.** A message read on Office 365 went read → unread → read: `markAsRead`
+writes the row and drains at once, but every list writer — `getEmail`,
+`getEmails`, the poller's watched-folder sync — reconciles, *then* encrypts,
+*then* writes, unordered against it, so a fetch that resolved a moment before
+the click passes reconciliation (nothing pending yet) and lands its stale
+`isRead:false` on top of the user's. The next poll's server copy used to paper
+over it. Ordering the writers is not on the table (the poller's window is a
+25-row decrypt-and-encrypt, every cycle), so
+`EmailLocalDatasourceImpl.updateEmailReadStatusInCache` records the value the
+user set and every cache read (`getCachedEmails`, `getCachedEmailById`)
+overlays it for the store's 30 s window — long enough for the drain and the
+next fetch to bring the server's copy. Pinning the *cached* value instead was
+tried first and pinned the stale write: read → unread → stuck.
+
+The same store carries the 30 s post-dequeue tombstone removals already had,
+and both reconciliation paths (`EmailRepositoryImpl._reconcileAgainstPendingOps`,
+`MailPollerCubit._pendingMutations` behind the watched-folder sync, the delta
+upserts and `_applyFieldUpdates`) read both namespaces alongside the pending
+ops — a folder listing that resolves after the op is dequeued would otherwise
+be *returned* to the bloc with the stale value even though the cache read
+would have corrected it.
+
 Failures are reported on `lastPollAt`/`lastPollErrors`, including the
 offline skip. A silent `catch (_)` here is how a deterministic failure came to
 look like a quiet mailbox for the life of an install.

@@ -14,7 +14,7 @@ import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../../infrastructure/network/connectivity_service.dart';
 import '../../infrastructure/sync/outbox_drain_service.dart';
-import '../../infrastructure/sync/removal_tombstone_store.dart';
+import '../../infrastructure/sync/recent_mutation_store.dart';
 import '../datasources/local/email_local_datasource.dart';
 import '../datasources/local/folder_local_datasource.dart';
 import '../datasources/local/pending_operations_datasource.dart';
@@ -29,7 +29,7 @@ class EmailRepositoryImpl implements EmailRepository {
     required this._pendingOperations,
     required this._outboxDrainService,
     required this._connectivityService,
-    required this._removalTombstones,
+    required this._recentMutations,
   });
 
   final AccountManager _accountManager;
@@ -38,12 +38,12 @@ class EmailRepositoryImpl implements EmailRepository {
   final PendingOperationsDatasource _pendingOperations;
   final OutboxDrainService _outboxDrainService;
   final ConnectivityService _connectivityService;
-  final RemovalTombstoneStore _removalTombstones;
+  final RecentMutationStore _recentMutations;
 
   static const _defaultFolderKey = '__DEFAULT__';
 
   void _tombstoneRemoval(String accountId, String emailId) {
-    _removalTombstones.record(accountId, emailId);
+    _recentMutations.recordRemoval(accountId, emailId);
   }
 
   /// Returns the datasource to send through for [accountId]. Falls back to
@@ -136,22 +136,23 @@ class EmailRepositoryImpl implements EmailRepository {
   ) async {
     final pendingOps = await _pendingOperations.getPendingOperations(accountId);
 
-    // Recently-removed tombstones survive a short window past op dequeue,
-    // closing the race where a server snapshot built before the mutation
-    // propagated resolves after the outbox drain removed the pending op.
-    final recentlyRemovedIds = _removalTombstones.activeIds(accountId);
-
+    // Recent mutations survive a short window past op dequeue, closing the
+    // race where a server snapshot built before the mutation propagated
+    // resolves after the outbox drain removed the pending op. Read-state needs
+    // it as much as removal: Exchange Online routinely answers a folder
+    // listing from a replica seconds behind the PATCH the drain just made.
     final tombstoned = <String>{
       for (final op in pendingOps)
         if (op.opType == PendingOperationType.delete ||
             op.opType == PendingOperationType.move ||
             op.opType == PendingOperationType.junk)
           op.emailId,
-      ...recentlyRemovedIds,
+      ..._recentMutations.recentlyRemovedIds(accountId),
     };
     final pendingReadIds = <String>{
       for (final op in pendingOps)
         if (op.opType == PendingOperationType.markRead) op.emailId,
+      ..._recentMutations.recentReadStates(accountId).keys,
     };
     if (tombstoned.isEmpty && pendingReadIds.isEmpty) return emails;
 
@@ -324,6 +325,9 @@ class EmailRepositoryImpl implements EmailRepository {
         payload: jsonEncode({'isRead': isRead}),
       );
       final updated = cached.copyWith(isRead: isRead);
+      // The datasource records the change in RecentMutationStore, and answers
+      // every cache read with it for the window — including the lookups the
+      // reconciliation above makes.
       await _localDatasource.updateEmailReadStatusInCache(
         accountId: accountId,
         emailId: id,

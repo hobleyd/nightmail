@@ -23,7 +23,7 @@ import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 import 'package:nightmail/infrastructure/network/connectivity_service.dart';
 import 'package:nightmail/infrastructure/sync/outbox_drain_service.dart';
-import 'package:nightmail/infrastructure/sync/removal_tombstone_store.dart';
+import 'package:nightmail/infrastructure/sync/recent_mutation_store.dart';
 
 import 'email_repository_impl_test.mocks.dart';
 
@@ -45,7 +45,7 @@ void main() {
   late MockPendingOperationsDatasource mockPendingOperations;
   late MockOutboxDrainService mockOutboxDrainService;
   late MockConnectivityService mockConnectivityService;
-  late RemovalTombstoneStore removalTombstones;
+  late RecentMutationStore recentMutations;
 
   setUp(() {
     mockAccountManager = MockAccountManager();
@@ -55,7 +55,7 @@ void main() {
     mockPendingOperations = MockPendingOperationsDatasource();
     mockOutboxDrainService = MockOutboxDrainService();
     mockConnectivityService = MockConnectivityService();
-    removalTombstones = RemovalTombstoneStore();
+    recentMutations = RecentMutationStore();
 
     when(mockAccountManager.emailDatasource).thenReturn(mockRemoteDatasource);
     // Return null active account so getEmails() skips cache write by default
@@ -89,7 +89,7 @@ void main() {
       pendingOperations: mockPendingOperations,
       outboxDrainService: mockOutboxDrainService,
       connectivityService: mockConnectivityService,
-      removalTombstones: removalTombstones,
+      recentMutations: recentMutations,
     );
   });
 
@@ -274,7 +274,7 @@ void main() {
       )).thenAnswer((_) async {});
       when(mockAccountManager.activeAccount).thenReturn(tAccount);
       // No pending op (default stub returns []), but it was recently removed.
-      removalTombstones.record('account-1', 'email-1');
+      recentMutations.recordRemoval('account-1', 'email-1');
 
       final result = await repository.getEmails(folderId: 'folder-1');
 
@@ -282,6 +282,52 @@ void main() {
       // Right → the reconciled list; falls back to a non-empty list only if it
       // were unexpectedly Left, which would (correctly) fail the isEmpty check.
       expect(result.getOrElse((_) => [tEmailModel]), isEmpty);
+    });
+
+    // Regression: on Office 365 a message read in a folder went read → unread
+    // → read. The markRead op drained and dequeued within a second, then a
+    // folder listing built before the PATCH landed resolved with isRead:false
+    // and, with no pending op left to reconcile against, overwrote the cache.
+    // The datasource records the change in RecentMutationStore and answers
+    // cache reads with it; the repository has to consult the store too, or the
+    // list it *returns* — which the bloc paints — carries the stale value.
+    test('keeps the cached isRead for a just-marked message after its op has '
+        'drained (no pending op)', () async {
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      // What updateEmailReadStatusInCache does; the outbox has already
+      // dequeued the op (default stub returns []).
+      recentMutations.recordReadChange('account-1', 'email-1', isRead: true);
+      final readCopy = tEmailModel.copyWith(isRead: true);
+      when(mockLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => readCopy);
+      when(mockRemoteDatasource.getEmails(
+        folderId: anyNamed('folderId'),
+        top: anyNamed('top'),
+        skip: anyNamed('skip'),
+        filter: anyNamed('filter'),
+        orderBy: anyNamed('orderBy'),
+      )).thenAnswer((_) async => [tEmailModel]); // server: isRead false
+      when(mockLocalDatasource.cacheEmails(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+        emails: anyNamed('emails'),
+        replaceFolder: anyNamed('replaceFolder'),
+      )).thenAnswer((_) async {});
+
+      final result = await repository.getEmails(folderId: 'folder-1');
+
+      final emails = result.getOrElse((_) => []);
+      expect(emails.map((e) => e.id), ['email-1']);
+      expect(emails.single.isRead, isTrue);
+      final written = verify(mockLocalDatasource.cacheEmails(
+        accountId: 'account-1',
+        folderId: 'folder-1',
+        emails: captureAnyNamed('emails'),
+        replaceFolder: anyNamed('replaceFolder'),
+      )).captured.single as List<Email>;
+      expect(written.single.isRead, isTrue);
     });
 
     test('returns Left(ServerFailure) on ServerException', () async {

@@ -118,8 +118,15 @@ abstract interface class EmailLocalDatasource {
     bool evictInlineAttachments,
   });
 
-  /// Updates the isRead flag on the cached email with [emailId] for [accountId].
-  /// No-ops silently when the email is not in the cache.
+  /// Records the user's read-state change for [emailId] and updates the cached
+  /// row. The row write no-ops silently when the email is not in the cache.
+  ///
+  /// The change is what every read here returns for the message for a short
+  /// window, whatever a row holds meanwhile: [cacheEmails] writes a fetched
+  /// copy's `isRead` verbatim and its callers reconcile, then encrypt, then
+  /// write, unordered against this — so a fetch that resolved just before the
+  /// user clicked lands its stale value on top of theirs. Overlaying on the
+  /// read side is what makes that order irrelevant.
   Future<void> updateEmailReadStatusInCache({
     required String accountId,
     required String emailId,

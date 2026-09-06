@@ -141,7 +141,7 @@ import 'infrastructure/sync/calendar_pending_op_reconciler.dart';
 import 'infrastructure/migration/account_migration_service.dart';
 import 'infrastructure/sync/imap_connection_gate.dart';
 import 'infrastructure/sync/outbox_drain_service.dart';
-import 'infrastructure/sync/removal_tombstone_store.dart';
+import 'infrastructure/sync/recent_mutation_store.dart';
 import 'infrastructure/sync/spam_db_sync_service.dart';
 import 'infrastructure/update/app_update_service.dart';
 import 'presentation/blocs/account/account_cubit.dart';
@@ -229,6 +229,7 @@ Future<void> configureDependencies() async {
       database: sl<AppDatabase>(),
       encryption: sl<CacheEncryptionService>(),
       inlineAttachments: sl<InlineAttachmentCache>(),
+      recentMutations: sl<RecentMutationStore>(),
     ),
   );
   sl.registerLazySingleton<SenderLocalDatasource>(
@@ -244,7 +245,7 @@ Future<void> configureDependencies() async {
     ),
   );
   sl.registerLazySingleton<ConnectivityService>(() => ConnectivityServiceImpl());
-  sl.registerLazySingleton(() => RemovalTombstoneStore());
+  sl.registerLazySingleton(() => RecentMutationStore());
   // Shared across OutboxDrainService, MailPollerCubit and account migration —
   // see ImapConnectionGate's own doc comment for why a single instance must
   // be injected into all three rather than each holding its own.
@@ -302,7 +303,7 @@ Future<void> configureDependencies() async {
       pendingOperations: sl<PendingOperationsDatasource>(),
       outboxDrainService: sl<OutboxDrainService>(),
       connectivityService: sl<ConnectivityService>(),
-      removalTombstones: sl<RemovalTombstoneStore>(),
+      recentMutations: sl<RecentMutationStore>(),
     ),
   );
   sl.registerLazySingleton<SenderRepository>(
@@ -480,7 +481,7 @@ Future<void> configureDependencies() async {
       notificationService: sl<NotificationService>(),
       outboxDrainService: sl<OutboxDrainService>(),
       pendingOperations: sl<PendingOperationsDatasource>(),
-      removalTombstones: sl<RemovalTombstoneStore>(),
+      recentMutations: sl<RecentMutationStore>(),
       spamDbSyncService: sl<SpamDbSyncService>(),
     ),
   );

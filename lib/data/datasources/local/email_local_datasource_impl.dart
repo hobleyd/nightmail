@@ -10,6 +10,7 @@ import '../../../domain/entities/inline_attachment.dart';
 import '../../database/app_database.dart';
 import '../../services/inline_attachment_cache.dart';
 import '../../../infrastructure/cache/cache_encryption_service.dart';
+import '../../../infrastructure/sync/recent_mutation_store.dart';
 import 'email_local_datasource.dart';
 
 class EmailLocalDatasourceImpl implements EmailLocalDatasource {
@@ -17,6 +18,7 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     required this._database,
     required this._encryption,
     required this._inlineAttachments,
+    required this._recentMutations,
   });
 
   final AppDatabase _database;
@@ -25,6 +27,18 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
   /// Inline images are cached on disk next to — but not inside — the SQLite
   /// cache, so removing a row here has to remove that email's files too.
   final InlineAttachmentCache _inlineAttachments;
+
+  /// Read states the user set moments ago, overlaid on every read here.
+  ///
+  /// The rows cannot be trusted to hold them: [cacheEmails] writes a fetched
+  /// copy's `isRead` verbatim, and its callers reconcile, then encrypt, then
+  /// write — unordered against [updateEmailReadStatusInCache]. A list fetch
+  /// that resolved just before the user clicked lands its stale `isRead` on
+  /// top of theirs, and the poller's watched-folder sync has the same window
+  /// every cycle. Making every writer wait on every other is not on the table,
+  /// so the read side answers with the user's value instead, for as long as it
+  /// takes the outbox to drain and the next fetch to bring the server's copy.
+  final RecentMutationStore _recentMutations;
 
   /// Stamped into every row this version writes, and bumped whenever the
   /// attachment-parsing code changes such that rows written before it may hold
@@ -89,7 +103,22 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
       final json = jsonDecode(plaintext) as Map<String, dynamic>;
       emails.add(_emailFromJson(json));
     }
-    return emails;
+    return _withRecentReadStates(accountId, emails);
+  }
+
+  /// Applies the user's recent read changes over what the rows hold — see
+  /// [_recentMutations].
+  List<Email> _withRecentReadStates(String accountId, List<Email> emails) {
+    final states = _recentMutations.recentReadStates(accountId);
+    if (states.isEmpty) return emails;
+    return [
+      for (final email in emails)
+        switch (states[email.id]) {
+          null => email,
+          final isRead when isRead == email.isRead => email,
+          final isRead => email.copyWith(isRead: isRead),
+        },
+    ];
   }
 
   @override
@@ -223,10 +252,11 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
 
     final plaintext = await _encryption.decrypt(row.encryptedData);
     final json = jsonDecode(plaintext) as Map<String, dynamic>;
-    return _emailFromJson(
+    final email = _emailFromJson(
       json,
       detail: await _detailFor(accountId, emailId),
     );
+    return _withRecentReadStates(accountId, [email]).single;
   }
 
   /// Whether [emailId] has a detail row — i.e. has ever been fetched in full.
@@ -562,6 +592,9 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     required String emailId,
     required bool isRead,
   }) async {
+    // Recorded before the write, so a read that lands between the two already
+    // answers with the user's value.
+    _recentMutations.recordReadChange(accountId, emailId, isRead: isRead);
     final rows = await (_database.select(_database.cachedEmails)
           ..where((t) => t.accountId.equals(accountId) & t.emailId.equals(emailId)))
         .get();

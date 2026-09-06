@@ -27,7 +27,7 @@ import 'package:nightmail/infrastructure/notifications/notification_service.dart
 import 'package:nightmail/infrastructure/sync/body_prefetch_service.dart';
 import 'package:nightmail/infrastructure/sync/imap_connection_gate.dart';
 import 'package:nightmail/infrastructure/sync/outbox_drain_service.dart';
-import 'package:nightmail/infrastructure/sync/removal_tombstone_store.dart';
+import 'package:nightmail/infrastructure/sync/recent_mutation_store.dart';
 import 'package:nightmail/infrastructure/sync/spam_db_sync_service.dart';
 import 'package:nightmail/presentation/blocs/mail_poller/mail_poller_cubit.dart';
 import 'package:nightmail/presentation/blocs/mail_poller/mail_poller_state.dart';
@@ -134,7 +134,7 @@ void main() {
   late MockOutboxDrainService mockOutboxDrainService;
   late MockPendingOperationsDatasource mockPendingOperations;
   late MockSpamDbSyncService mockSpamDbSyncService;
-  late RemovalTombstoneStore removalTombstones;
+  late RecentMutationStore recentMutations;
   late BodyPrefetchService bodyPrefetchService;
 
   MailPollerCubit _makeCubit() => MailPollerCubit(
@@ -151,7 +151,7 @@ void main() {
         notificationService: mockNotificationService,
         outboxDrainService: mockOutboxDrainService,
         pendingOperations: mockPendingOperations,
-        removalTombstones: removalTombstones,
+        recentMutations: recentMutations,
         spamDbSyncService: mockSpamDbSyncService,
       );
 
@@ -223,7 +223,7 @@ void main() {
     mockOutboxDrainService = MockOutboxDrainService();
     mockNotificationService = MockNotificationService();
     mockSpamDbSyncService = MockSpamDbSyncService();
-    removalTombstones = RemovalTombstoneStore();
+    recentMutations = RecentMutationStore();
     bodyPrefetchService =
         BodyPrefetchService(localDatasource: mockEmailLocalDatasource);
     provideDummy<Either<Failure, List<EmailFolder>>>(const Right([]));
@@ -569,7 +569,7 @@ void main() {
       // No pending op for it any more — the drain already dequeued it.
       when(mockPendingOperations.getPendingOperations(_msId))
           .thenAnswer((_) async => []);
-      removalTombstones.record(_msId, 'drained-msg');
+      recentMutations.recordRemoval(_msId, 'drained-msg');
 
       final cubit = _makeCubit();
       addTearDown(cubit.close);
@@ -710,10 +710,29 @@ void main() {
       )).called(1);
     });
 
+    test('do not overwrite isRead for a message whose read change drained '
+        'moments ago (no pending op)', () async {
+      when(mockPendingOperations.getPendingOperations(_msId))
+          .thenAnswer((_) async => []);
+      recentMutations.recordReadChange(_msId, 'msg-1', isRead: false);
+
+      final cubit = _makeCubit();
+      addTearDown(cubit.close);
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      verify(mockEmailLocalDatasource.updateCachedEmailFields(
+        accountId: _msId,
+        emailId: 'msg-1',
+        isRead: null,
+        isFlagged: null,
+      )).called(1);
+    });
+
     test('are skipped for a message with a pending removal', () async {
       when(mockPendingOperations.getPendingOperations(_msId))
           .thenAnswer((_) async => []);
-      removalTombstones.record(_msId, 'msg-1');
+      recentMutations.recordRemoval(_msId, 'msg-1');
 
       final cubit = _makeCubit();
       addTearDown(cubit.close);

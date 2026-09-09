@@ -814,15 +814,6 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
       final totalUnread =
           _latestPolledUnread.values.fold(0, (sum, n) => sum + n);
       await _badgeService.setBadgeCount(totalUnread);
-      if (activeInboxChanged) {
-        // On the first cycle this is the report that the counts and list the
-        // app opened with were stale — i.e. that the cold-start fetch failed
-        // and this poll is what repaired it. See [_shouldPrimeBaseline].
-        debugPrint('[MailPoller] active account changed in '
-            '${syncedForActive.join(', ')} — reloading folders and list'
-            '${wasInitialized ? '' : ' (first cycle: what the app '
-                'opened with was stale)'}');
-      }
       // syncedFolderIds is published on every cycle, not only a changed one:
       // it tells the UI which folders a *repaint from cache* is valid for, and
       // that answer is just as true when nothing changed.

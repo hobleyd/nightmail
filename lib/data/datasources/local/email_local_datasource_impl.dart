@@ -72,7 +72,14 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
   ///   extension. The reading pane decides whether to offer a preview from the
   ///   cached `name`/`contentType`, so a message read before the fix keeps a
   ///   chip that will never preview, however many times it is reopened.
-  static const attachmentParseVersion = 6;
+  /// * 6 — a Gmail body split across several `text/html` parts (Apple Mail
+  ///   interleaves one per inline image and attachment) was parsed as its
+  ///   *last* fragment alone, which is routinely an empty `<blockquote>`
+  ///   shell. The row is not empty, so nothing else here would refetch it: a
+  ///   non-empty body short-circuits the network for good. The same fragment
+  ///   carried none of the body's `cid:` references, so the message's inline
+  ///   images were filed as ordinary attachments too.
+  static const attachmentParseVersion = 7;
 
   /// JSON key for [attachmentParseVersion]. Absent on pre-versioning rows,
   /// which read back as version 1.

@@ -208,6 +208,134 @@ void main() {
       expect(parsed.pendingInline, isEmpty);
       expect(parsed.email.body, 'just text');
     });
+
+    // Apple Mail splits a body into one `text/html` fragment per inline image
+    // or attachment, inside a `multipart/mixed`. Taking the last fragment as
+    // the body renders the message blank: the trailing one is an empty
+    // `<blockquote>` shell, and everything the sender wrote is in the earlier
+    // ones. This is the shape of a real message that displayed nothing.
+    test('joins a body split across several text/html parts', () {
+      final parsed = parseGmailFullMessage(jsonEncode(message({
+        'mimeType': 'multipart/alternative',
+        'headers': <dynamic>[],
+        'parts': [
+          {
+            'mimeType': 'multipart/mixed',
+            'parts': [
+              {
+                'mimeType': 'text/html',
+                'body': {'data': _b64Url('<div>Hi Paul,</div>')},
+              },
+              {
+                'mimeType': 'image/png',
+                'headers': [
+                  {'name': 'Content-Id', 'value': '<sig1>'},
+                ],
+                'body': {'data': _b64Url('png'), 'size': 3},
+              },
+              {
+                'mimeType': 'text/html',
+                'body': {'data': _b64Url('<div><img src="cid:sig1"></div>')},
+              },
+              {
+                'mimeType': 'application/pdf',
+                'filename': 'code-of-conduct.pdf',
+                'body': {'attachmentId': 'att-pdf', 'size': 900},
+              },
+              {
+                'mimeType': 'text/html',
+                'body': {'data': _b64Url('<blockquote></blockquote>')},
+              },
+            ],
+          },
+        ],
+      })));
+
+      expect(parsed.email.bodyType, EmailBodyType.html);
+      expect(parsed.email.body, contains('Hi Paul,'));
+      expect(parsed.email.body, contains('cid:sig1'));
+      expect(parsed.email.body, contains('<blockquote></blockquote>'));
+      // The cid: reference lives in a fragment that used to be discarded, so
+      // the image it names was filed as an ordinary attachment.
+      expect(parsed.email.inlineAttachments.single.contentId, '<sig1>');
+      expect(parsed.email.attachments.single.name, 'code-of-conduct.pdf');
+    });
+
+    test('chooses between multipart/alternative branches rather than joining',
+        () {
+      // The opposite rule: one body in two forms. Joining them would show the
+      // message twice.
+      final parsed = parseGmailFullMessage(jsonEncode(message({
+        'mimeType': 'multipart/alternative',
+        'headers': <dynamic>[],
+        'parts': [
+          {
+            'mimeType': 'text/plain',
+            'body': {'data': _b64Url('plain rendering')},
+          },
+          {
+            'mimeType': 'text/html',
+            'body': {'data': _b64Url('<p>html rendering</p>')},
+          },
+        ],
+      })));
+
+      expect(parsed.email.bodyType, EmailBodyType.html);
+      expect(parsed.email.body, '<p>html rendering</p>');
+    });
+
+    test('joins split text/plain parts when there is no html', () {
+      final parsed = parseGmailFullMessage(jsonEncode(message({
+        'mimeType': 'multipart/mixed',
+        'headers': <dynamic>[],
+        'parts': [
+          {
+            'mimeType': 'text/plain',
+            'body': {'data': _b64Url('first')},
+          },
+          {
+            'mimeType': 'application/pdf',
+            'filename': 'a.pdf',
+            'body': {'attachmentId': 'att-1', 'size': 10},
+          },
+          {
+            'mimeType': 'text/plain',
+            'body': {'data': _b64Url('second')},
+          },
+        ],
+      })));
+
+      expect(parsed.email.bodyType, EmailBodyType.text);
+      expect(parsed.email.body, 'first\nsecond');
+    });
+
+    test('does not take a body out of an attached message', () {
+      // A `message/rfc822` is a message attached to this one, not part of its
+      // body — the same rule the `.eml` walk follows.
+      final parsed = parseGmailFullMessage(jsonEncode(message({
+        'mimeType': 'multipart/mixed',
+        'headers': <dynamic>[],
+        'parts': [
+          {
+            'mimeType': 'text/html',
+            'body': {'data': _b64Url('<p>see attached</p>')},
+          },
+          {
+            'mimeType': 'message/rfc822',
+            'filename': 'forwarded.eml',
+            'parts': [
+              {
+                'mimeType': 'text/html',
+                'body': {'data': _b64Url('<p>the attached message</p>')},
+              },
+            ],
+            'body': {'attachmentId': 'att-eml', 'size': 500},
+          },
+        ],
+      })));
+
+      expect(parsed.email.body, '<p>see attached</p>');
+    });
   });
 
   group('parseGraphFullMessage — inline attachments needing a fetch', () {

@@ -568,55 +568,75 @@ EmailModel _parseMessage(Map<String, dynamic> json, {required bool fullBody}) {
   );
 }
 
+/// The body, assembled from every text part that belongs to it.
+///
+/// A `multipart/mixed` names *sequential* content, so a body split across
+/// several `text/html` parts is the concatenation of them, not the last one.
+/// Apple Mail splits one that way as a matter of course — a fragment, an
+/// inline image, another fragment — and keeping only the last is how a real
+/// message came to render blank: its trailing fragment was an empty
+/// `<blockquote>` shell, everything the sender wrote having gone into the five
+/// fragments before it. Six full `<html>` documents concatenated is a shape
+/// the HTML parser is specified to merge (a second `<html>`/`<head>`/`<body>`
+/// in body content is ignored or folded into the open one), so they are joined
+/// as they stand rather than sliced apart and re-serialised.
+///
+/// `multipart/alternative` is the opposite: it names *one* body in several
+/// forms, so its branches are chosen between rather than joined, or the plain
+/// and HTML renderings of the same message would both be shown.
 (String, EmailBodyType) _extractBody(Map<String, dynamic> payload) {
-  final mimeType = payload['mimeType'] as String? ?? '';
+  final (html, text) = _collectBodyParts(payload);
+  if (html.isNotEmpty) return (html, EmailBodyType.html);
+  return (text, EmailBodyType.text);
+}
 
-  if (mimeType == 'text/html' || mimeType == 'text/plain') {
-    final data = (payload['body'] as Map<String, dynamic>?)?['data'] as String?;
-    if (data != null) {
-      final decoded = utf8.decode(base64Url.decode(padGmailBase64(data)));
-      return (
-        decoded,
-        mimeType == 'text/html' ? EmailBodyType.html : EmailBodyType.text
-      );
-    }
-  }
+/// `(html, text)` for one MIME node and everything below it.
+(String, String) _collectBodyParts(Map<String, dynamic> node) {
+  final mimeType = (node['mimeType'] as String? ?? '').toLowerCase();
 
-  // Multipart: prefer HTML part.
+  if (mimeType == 'text/html') return (_decodeTextPart(node), '');
+  if (mimeType == 'text/plain') return ('', _decodeTextPart(node));
+
+  // An image, a PDF — or a `message/rfc822`, which is a message attached to
+  // this one rather than part of its body, exactly as the `.eml` walk in
+  // [EmlParser] refuses to descend into one.
+  if (!mimeType.startsWith('multipart/')) return ('', '');
+
   final parts =
-      (payload['parts'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+      (node['parts'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
 
-  String? htmlBody;
-  String? textBody;
-
-  void scanParts(List<Map<String, dynamic>> partList) {
-    for (final part in partList) {
-      final mt = part['mimeType'] as String? ?? '';
-      if (mt == 'text/html') {
-        final data =
-            (part['body'] as Map<String, dynamic>?)?['data'] as String?;
-        if (data != null) {
-          htmlBody = utf8.decode(base64Url.decode(padGmailBase64(data)));
-        }
-      } else if (mt == 'text/plain' && htmlBody == null) {
-        final data =
-            (part['body'] as Map<String, dynamic>?)?['data'] as String?;
-        if (data != null) {
-          textBody = utf8.decode(base64Url.decode(padGmailBase64(data)));
-        }
-      } else if (mt.startsWith('multipart/')) {
-        final nested =
-            (part['parts'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
-        scanParts(nested);
-      }
+  if (mimeType == 'multipart/alternative') {
+    // Alternatives are ordered least to most faithful, so the last branch that
+    // yields anything wins — which for the usual [text/plain, text/html] pair
+    // is the HTML, as it always was.
+    var html = '';
+    var text = '';
+    for (final part in parts) {
+      final (h, t) = _collectBodyParts(part);
+      if (h.isNotEmpty) html = h;
+      if (t.isNotEmpty) text = t;
     }
+    return (html, text);
   }
 
-  scanParts(parts);
+  // mixed, related, signed, report, anything unrecognised: siblings run in
+  // sequence and every text part among them is part of the one body.
+  final html = <String>[];
+  final text = <String>[];
+  for (final part in parts) {
+    final (h, t) = _collectBodyParts(part);
+    if (h.isNotEmpty) html.add(h);
+    if (t.isNotEmpty) text.add(t);
+  }
+  return (html.join('\n'), text.join('\n'));
+}
 
-  if (htmlBody != null) return (htmlBody!, EmailBodyType.html);
-  if (textBody != null) return (textBody!, EmailBodyType.text);
-  return ('', EmailBodyType.text);
+/// Decodes a text part's inlined data, or '' when Gmail inlined none — a part
+/// carrying only an `attachmentId` reads as absent, as it did before.
+String _decodeTextPart(Map<String, dynamic> node) {
+  final data = (node['body'] as Map<String, dynamic>?)?['data'] as String?;
+  if (data == null || data.isEmpty) return '';
+  return utf8.decode(base64Url.decode(padGmailBase64(data)));
 }
 
 /// Recursively scan MIME parts for a text/calendar part and return its decoded

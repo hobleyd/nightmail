@@ -455,6 +455,56 @@ That is why the whole Gmail message path uses one response type (the thread and
 search *indexes* are plain too, decoded locally since they are only ids), and why
 these tests stub `get<String>` with `jsonEncode`d bodies.
 
+## A Message Body Can Be Split Across Several Parts
+
+`multipart/mixed` names **sequential** content, so a body split into several
+`text/html` parts is the concatenation of them. Apple Mail splits one that way
+as a matter of course — a fragment, an inline image, another fragment, an
+attachment, a fragment — and iOS Mail replying to an Outlook message with a
+signature produces five or six.
+
+The Gmail parser used to assign `htmlBody = <part>` on each `text/html` it
+walked past, so it kept the **last** fragment alone. A real message rendered
+completely blank on that: its trailing fragment was
+
+```html
+<html class="apple-mail-supports-explicit-dark-mode"><head>…</head>
+<body dir="auto"><div><blockquote type="cite"><div dir="ltr"></div>
+</blockquote></div></body></html>
+```
+
+— an empty quote shell, with everything the sender wrote in the five fragments
+before it. `_collectBodyParts` is therefore container-aware:
+
+- **`multipart/alternative` chooses; everything else joins.** An alternative
+  names one body in several forms, so joining its branches would show the
+  message twice — plain rendering followed by HTML. Anything else (mixed,
+  related, signed, report, unrecognised) is sequence, and every text part in it
+  belongs to the one body. The last branch that yields anything wins an
+  alternative, which for the usual `[text/plain, text/html]` pair is the HTML,
+  exactly as before.
+- **The fragments are joined as they stand, not sliced apart.** Each is a
+  complete `<html>` document, and six of them concatenated is a shape the HTML
+  parser is specified to merge: a second `<html>` or `<body>` start tag folds
+  its attributes into the open element, a `<head>` in body content is ignored.
+  Re-serialising them into one document would mean a second parse over
+  somebody else's markup for no gain.
+- **`message/rfc822` is still not descended into** — it is a message attached
+  to this one, not part of its body, the same rule
+  [`EmlParser`](lib/data/services/eml_parser.dart) follows.
+
+**The cache is why this needed a stamp bump.** The broken body was ~230
+characters, not empty, and a non-empty cached body short-circuits the network
+for good (`EmailRepositoryImpl.getEmail`) — so every message already read kept
+its blank shell forever, however many times it was reopened. The discarded
+fragments also held the body's `cid:` references, so `_referencedCids` saw none
+and the message's inline images were filed as ordinary attachments.
+`attachmentParseVersion` went to **7** for both.
+
+Graph is unaffected — it returns one rendered body. IMAP goes through
+enough_mail's own `decodeTextHtmlPart()`, which has not been checked against
+this shape.
+
 ## A Folder Listing Expands Its Threads Across Folders
 
 Both providers return a thread's copies from *other* folders alongside the folder

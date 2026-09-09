@@ -1,24 +1,45 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.23.1",
+  "version": "1.23.2",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "stop a just-read message flipping back to unread",
-          "title": "mail"
+          "body": "stop a stale tree fetch putting back an unread count",
+          "title": "folders"
         },
         {
-          "body": "tell only the changed guests when a Gmail meeting's roster changes",
-          "title": "calendar"
+          "body": "show a body Apple Mail split across several parts",
+          "title": "mail"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.23.1",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "stop a just-read message flipping back to unread",
+              "title": "mail"
+            },
+            {
+              "body": "tell only the changed guests when a Gmail meeting's roster changes",
+              "title": "calendar"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -1091,93 +1112,6 @@
             {
               "body": "add 10s timeout and retry screen for iOS keychain hang",
               "title": "startup"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.7.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "replace send spinner with gradient shimmer",
-              "title": "compose"
-            },
-            {
-              "body": "replace app icon with new design",
-              "title": "icons"
-            },
-            {
-              "body": "show app version in About page",
-              "title": "settings"
-            },
-            {
-              "body": "update app icon across all platforms",
-              "title": "icons"
-            },
-            {
-              "body": "add paperclip attachment button to rich text toolbar",
-              "title": "editor"
-            },
-            {
-              "body": "refresh email list every 15s while actively viewing it",
-              "title": "mobile"
-            },
-            {
-              "body": "auto-superscript ordinal suffixes (1st, 2nd, 3rd, 4th)",
-              "title": "editor"
-            },
-            {
-              "body": "convert '- ' at line start into a bullet list item",
-              "title": "editor"
-            },
-            {
-              "body": "auto-advance to new day at midnight",
-              "title": "calendar"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "route target=_blank links through url_launcher on Windows/Linux",
-              "title": "html-view"
-            },
-            {
-              "body": "fix attachment duplication, From address, and draft list refresh",
-              "title": "drafts"
-            },
-            {
-              "body": "prevent superscript bleed-through after ordinal conversion",
-              "title": "editor"
-            },
-            {
-              "body": "detect inbox deletions on Microsoft accounts during bootstrap phase",
-              "title": "polling"
-            },
-            {
-              "body": "stop app raising itself every 15 minutes",
-              "title": "macos"
-            },
-            {
-              "body": "show back button on error screen when email fails to load",
-              "title": "mobile"
-            },
-            {
-              "body": "pop back to email list after deleting an email",
-              "title": "mobile"
-            },
-            {
-              "body": "reflow fixed-width email tables on narrow screens",
-              "title": "mobile"
             }
           ]
         }

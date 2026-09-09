@@ -8,6 +8,10 @@
       "title": "Fixes",
       "items": [
         {
+          "body": "drop the vestigial WPE bundle that breaks the snap on newer hosts",
+          "title": "linux"
+        },
+        {
           "body": "stop a stale tree fetch putting back an unread count",
           "title": "folders"
         },

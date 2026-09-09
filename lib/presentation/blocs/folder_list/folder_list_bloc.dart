@@ -23,7 +23,11 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
     required this._moveFolder,
     required this._accountManager,
     List<Duration> staleRetryDelays = staleDataRetryDelays,
+    Duration countChangeTtl = const Duration(seconds: 30),
+    DateTime Function() now = DateTime.now,
   })  : _staleRetryDelays = staleRetryDelays,
+        _countChangeTtl = countChangeTtl,
+        _now = now,
         super(const FolderListInitial()) {
     on<FolderListLoadRequested>(_onLoadRequested);
     on<FolderListFolderEmptied>(_onFolderEmptied);
@@ -42,6 +46,8 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
   final MoveFolder _moveFolder;
   final AccountManager _accountManager;
   final List<Duration> _staleRetryDelays;
+  final Duration _countChangeTtl;
+  final DateTime Function() _now;
 
   /// Bumped by every [FolderListLoadRequested]. This event is added from
   /// several places that routinely overlap at startup — `HomePage.build`, the
@@ -79,6 +85,28 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
 
   static const int _unconfirmedFolderGrace = 3;
 
+  /// Count changes this bloc applied ahead of the server, newest last, with
+  /// what the folder read *before* each one.
+  ///
+  /// A folder-tree fetch replaces every count wholesale, and it is routinely
+  /// answered from before a change the user has just watched happen: the
+  /// poller's cycle echoes a mark-read back as a delta and reloads the tree,
+  /// and a message read while that walk is in flight (a `getChildFolders`
+  /// round trip per level) is decremented on screen and then put back by the
+  /// result. Graph's `unreadItemCount` also trails a PATCH by a moment, so a
+  /// fetch issued *after* the read can answer the same way. Either way the
+  /// Inbox showed one unread with nothing unread in it until something else
+  /// happened to reload the tree.
+  ///
+  /// So each change is kept for [_countChangeTtl] and re-applied to a fetched
+  /// list — but only to a folder that still reads **exactly** as it did before
+  /// the change was made, which is the signature of a server that has not
+  /// caught up yet. A folder whose counts have moved at all is taken at the
+  /// server's word: re-applying there would count the change twice once the
+  /// server did reflect it, and this bloc cannot tell that apart from another
+  /// client's change without the comparison.
+  final List<_CountChange> _recentCountChanges = [];
+
   Future<void> _onLoadRequested(
     FolderListLoadRequested event,
     Emitter<FolderListState> emit,
@@ -88,8 +116,12 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
     bool hasFolders = false;
 
     // An unconfirmed folder belongs to the mailbox it was created in; merging
-    // it into another account's list would invent a folder there.
-    if (accountId != _loadedAccountId) _unconfirmedFolders.clear();
+    // it into another account's list would invent a folder there. Likewise a
+    // recent count change: its folder ids are the other mailbox's.
+    if (accountId != _loadedAccountId) {
+      _unconfirmedFolders.clear();
+      _recentCountChanges.clear();
+    }
 
     // A create in flight (or one showing its failure) survives a reload: this
     // event fires from the poller and the refresh button as well, and neither
@@ -176,7 +208,9 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
           }
           _loadedAccountId = accountId;
           emit(FolderListLoaded(
-            folders: _sorted(_reconcileUnconfirmed(folders)),
+            folders: _sorted(
+              _withRecentCountChanges(_reconcileUnconfirmed(folders)),
+            ),
             pendingCreate: pendingCreate,
           ));
         },
@@ -219,12 +253,47 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
     emit(current.copyWith(
       folders: current.folders.map((f) {
         if (f.id != event.folderId) return f;
+        _recentCountChanges.add(_CountChange(
+          folderId: f.id,
+          unreadBefore: f.unreadItemCount,
+          totalBefore: f.totalItemCount,
+          unreadDelta: event.unreadCountDelta,
+          totalDelta: event.totalCountDelta,
+          expiry: _now().add(_countChangeTtl),
+        ));
         return f.copyWith(
           unreadItemCount: f.unreadItemCount + event.unreadCountDelta,
           totalItemCount: f.totalItemCount + event.totalCountDelta,
         );
       }).toList(),
     ));
+  }
+
+  /// Re-applies every live entry of [_recentCountChanges] to a list the server
+  /// just gave us, in the order they were made, each only if the folder's
+  /// counts — as adjusted by the entries before it — still read as they did
+  /// when it was made. See the field for why that is the test.
+  List<EmailFolder> _withRecentCountChanges(List<EmailFolder> folders) {
+    final now = _now();
+    _recentCountChanges.removeWhere((c) => !c.expiry.isAfter(now));
+    if (_recentCountChanges.isEmpty) return folders;
+    final byId = {for (final f in folders) f.id: f};
+    var applied = false;
+    for (final change in _recentCountChanges) {
+      final f = byId[change.folderId];
+      if (f == null ||
+          f.unreadItemCount != change.unreadBefore ||
+          f.totalItemCount != change.totalBefore) {
+        continue;
+      }
+      applied = true;
+      byId[f.id] = f.copyWith(
+        unreadItemCount: f.unreadItemCount + change.unreadDelta,
+        totalItemCount: f.totalItemCount + change.totalDelta,
+      );
+    }
+    if (!applied) return folders;
+    return [for (final f in folders) byId[f.id]!];
   }
 
   /// Creating a folder shows it at once and reconciles afterwards.
@@ -491,4 +560,24 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
       _ => 99,
     };
   }
+}
+
+/// One optimistic count change and the counts it was applied over; see
+/// [FolderListBloc._recentCountChanges].
+class _CountChange {
+  const _CountChange({
+    required this.folderId,
+    required this.unreadBefore,
+    required this.totalBefore,
+    required this.unreadDelta,
+    required this.totalDelta,
+    required this.expiry,
+  });
+
+  final String folderId;
+  final int unreadBefore;
+  final int totalBefore;
+  final int unreadDelta;
+  final int totalDelta;
+  final DateTime expiry;
 }

@@ -1120,6 +1120,27 @@ Five things here are load-bearing:
   child of a Row is measured against an unbounded width and cannot work its own
   share out.
 
+## A Folder Fetch Must Not Put Back a Count the User Just Changed
+
+Every unread/total count on the folder panel is optimistic first
+(`FolderListUnreadCountChanged`) and replaced wholesale by the next
+folder-tree fetch. That fetch is routinely answered from *before* the change:
+the poller echoes a mark-read back as a delta and reloads the tree, a second
+message read while that walk is in flight is decremented and then put back by
+the result — and Graph's `unreadItemCount` trails a PATCH by a moment, so a
+fetch issued *after* the read can answer the same way. Two unread, both read,
+Inbox saying 1 until something else reloaded the tree.
+
+`FolderListBloc._recentCountChanges` keeps each change for 30 s (the
+`RecentMutationStore` window) with the counts the folder read *before* it, and
+re-applies it to a fetched list **only where the folder still reads exactly
+that** — the signature of a server that has not caught up. A folder whose
+counts moved at all is taken at the server's word: re-applying there would
+count the change twice once the server did reflect it, and nothing in the
+bloc can tell that from another client's change without the comparison.
+Entries are re-applied in order over the running value, so two reads over a
+server behind both, or behind only the first, both land on the right count.
+
 ## A Failed First Load Must Not Freeze the Cache On Screen
 
 `FolderListBloc` and `EmailListBloc` both load cache-then-network and swallow the

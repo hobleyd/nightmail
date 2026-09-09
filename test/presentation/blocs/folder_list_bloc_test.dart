@@ -92,6 +92,8 @@ void main() {
     AccountManager? accountManager,
     CreateFolder? createFolder,
     MoveFolder? moveFolder,
+    Duration countChangeTtl = const Duration(seconds: 30),
+    DateTime Function() now = DateTime.now,
   }) =>
       FolderListBloc(
         getMailFolders: mockGetMailFolders,
@@ -101,6 +103,8 @@ void main() {
         moveFolder: moveFolder ?? MockMoveFolder(),
         accountManager: accountManager ?? _FakeAccountManager(),
         staleRetryDelays: retryDelays,
+        countChangeTtl: countChangeTtl,
+        now: now,
       );
 
   // ---------------------------------------------------------------------------
@@ -809,4 +813,161 @@ void main() {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // A fetch answered from before a count change the user just made.
+  //
+  // Regression: two unread in an O365 Inbox, both read, and the Inbox went on
+  // saying 1 until something else reloaded the tree. The poller echoed the
+  // first read back as a delta and reloaded the folders; the second message
+  // was read while that walk was in flight, so the result — built before it —
+  // put the 1 back. Graph's own count trailing the PATCH does the same thing
+  // to a fetch issued after the read.
+  // ---------------------------------------------------------------------------
+
+  group('FolderListBloc — a fetch that predates an optimistic count change', () {
+    late Completer<Either<Failure, List<EmailFolder>>> fetch;
+
+    setUp(() {
+      when(mockGetCachedFolders(any))
+          .thenAnswer((_) async => const Right([]));
+    });
+
+    /// A bloc showing the Inbox at [unread]/[total], with the next fetch held
+    /// open on [fetch] so a change can land while it is in flight.
+    Future<FolderListBloc> loadedBloc({
+      required int unread,
+      required int total,
+      Duration countChangeTtl = const Duration(seconds: 30),
+      DateTime Function() now = DateTime.now,
+    }) async {
+      when(mockGetMailFolders(any))
+          .thenAnswer((_) async => Right([_inbox(unread: unread, total: total)]));
+      final bloc = makeBloc(countChangeTtl: countChangeTtl, now: now);
+      addTearDown(bloc.close);
+      bloc.add(const FolderListLoadRequested());
+      await bloc.stream.firstWhere(
+        (s) => s is FolderListLoaded && !s.isRefreshing,
+      );
+      fetch = Completer();
+      when(mockGetMailFolders(any)).thenAnswer((_) => fetch.future);
+      return bloc;
+    }
+
+    void read(FolderListBloc bloc, {int count = 1}) =>
+        bloc.add(FolderListUnreadCountChanged(
+          folderId: 'inbox-id',
+          unreadCountDelta: -count,
+        ));
+
+    test('a read during the fetch survives a result that predates it',
+        () async {
+      final bloc = await loadedBloc(unread: 1, total: 2);
+
+      bloc.add(const FolderListLoadRequested());
+      await pumpEventQueue();
+      read(bloc);
+      await pumpEventQueue();
+      expect(_inboxUnread(bloc.state), 0);
+
+      // The server answers with the count from before the read.
+      fetch.complete(Right([_inbox(unread: 1, total: 2)]));
+      await bloc.stream.firstWhere(
+        (s) => s is FolderListLoaded && !s.isRefreshing,
+      );
+
+      expect(_inboxUnread(bloc.state), 0);
+    });
+
+    test('a result that already reflects the read is not decremented again',
+        () async {
+      final bloc = await loadedBloc(unread: 3, total: 3);
+
+      bloc.add(const FolderListLoadRequested());
+      await pumpEventQueue();
+      read(bloc);
+      await pumpEventQueue();
+
+      fetch.complete(Right([_inbox(unread: 2, total: 3)]));
+      await bloc.stream.firstWhere(
+        (s) => s is FolderListLoaded && !s.isRefreshing,
+      );
+
+      expect(_inboxUnread(bloc.state), 2);
+    });
+
+    test('a folder whose counts moved is taken at the server\'s word',
+        () async {
+      final bloc = await loadedBloc(unread: 2, total: 2);
+
+      bloc.add(const FolderListLoadRequested());
+      await pumpEventQueue();
+      read(bloc);
+      await pumpEventQueue();
+
+      // New mail arrived meanwhile: unread is back where it was but total is
+      // not, so this is not a server that has yet to catch up.
+      fetch.complete(Right([_inbox(unread: 2, total: 3)]));
+      await bloc.stream.firstWhere(
+        (s) => s is FolderListLoaded && !s.isRefreshing,
+      );
+
+      expect(_inboxUnread(bloc.state), 2);
+    });
+
+    test('two reads in a row are each re-applied over a server behind both',
+        () async {
+      final bloc = await loadedBloc(unread: 2, total: 2);
+
+      read(bloc);
+      await pumpEventQueue();
+      read(bloc);
+      await pumpEventQueue();
+      expect(_inboxUnread(bloc.state), 0);
+
+      // Graph's unreadItemCount trailing both PATCHes.
+      bloc.add(const FolderListLoadRequested());
+      await pumpEventQueue();
+      fetch.complete(Right([_inbox(unread: 2, total: 2)]));
+      await bloc.stream.firstWhere(
+        (s) => s is FolderListLoaded && !s.isRefreshing,
+      );
+      expect(_inboxUnread(bloc.state), 0);
+
+      // …and a server that caught up with only the first of them.
+      fetch = Completer();
+      when(mockGetMailFolders(any)).thenAnswer((_) => fetch.future);
+      bloc.add(const FolderListLoadRequested());
+      await pumpEventQueue();
+      fetch.complete(Right([_inbox(unread: 1, total: 2)]));
+      await bloc.stream.firstWhere(
+        (s) => s is FolderListLoaded && !s.isRefreshing,
+      );
+      expect(_inboxUnread(bloc.state), 0);
+    });
+
+    test('an expired change is no longer re-applied', () async {
+      var clock = DateTime(2026, 9, 7, 12);
+      final bloc = await loadedBloc(
+        unread: 1,
+        total: 1,
+        countChangeTtl: const Duration(seconds: 30),
+        now: () => clock,
+      );
+
+      read(bloc);
+      await pumpEventQueue();
+      clock = clock.add(const Duration(seconds: 31));
+
+      // Past the window the server's count is the truth even when it reads as
+      // it did before the change — a message marked unread from another client.
+      bloc.add(const FolderListLoadRequested());
+      await pumpEventQueue();
+      fetch.complete(Right([_inbox(unread: 1, total: 1)]));
+      await bloc.stream.firstWhere(
+        (s) => s is FolderListLoaded && !s.isRefreshing,
+      );
+
+      expect(_inboxUnread(bloc.state), 1);
+    });
+  });
 }

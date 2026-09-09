@@ -235,16 +235,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Add WPE WebKit PPA
-        run: |
-          curl -fsSL \
-            https://hobleyd.github.io/wpe-webkit-linux/wpe-webkit-linux.gpg \
-            | sudo gpg --dearmor \
-              -o /usr/share/keyrings/wpe-webkit-linux.gpg
-          echo "deb [signed-by=/usr/share/keyrings/wpe-webkit-linux.gpg] \
-            https://hobleyd.github.io/wpe-webkit-linux/apt noble main" \
-            | sudo tee /etc/apt/sources.list.d/wpe-webkit-linux.list
-
       - name: Install system dependencies
         run: |
           sudo apt-get update -y
@@ -254,7 +244,6 @@ jobs:
             libgtk-3-dev liblzma-dev libwebkit2gtk-4.1-dev \
             libsecret-1-dev libjson-glib-dev libgdk-pixbuf-2.0-dev \
             libsoup-3.0-dev \
-            libwpe-1.0-dev libwpebackend-fdo-1.0-dev libwpewebkit-1.0-dev \
             binutils coreutils desktop-file-utils fakeroot patchelf util-linux imagemagick
 
       - uses: subosito/flutter-action@v2
@@ -276,53 +265,6 @@ jobs:
 
       - name: Prepare bundle assets
         run: convert assets/logo.png -resize 512x512 build/linux/x64/release/bundle/nightmail.png
-
-      - name: Bundle WPE WebKit libraries
-        run: |
-          BUNDLE_LIB=build/linux/x64/release/bundle/lib
-          PROCESSED=$(mktemp -d)
-
-          ensure_soname_symlink() {
-            local lib=$1 name soname
-            name=$(basename "$lib")
-            soname=$(objdump -p "$lib" 2>/dev/null | awk '/SONAME/ {print $2}')
-            if [ -n "$soname" ] && [ "$soname" != "$name" ] && [ ! -e "$BUNDLE_LIB/$soname" ]; then
-              echo "  Symlink $soname -> $name"
-              ln -s "$name" "$BUNDLE_LIB/$soname"
-            fi
-          }
-
-          # Recursively bundle a library and its transitive deps.
-          # Skips glibc component libs (must come from the host).
-          bundle_with_deps() {
-            local src=$1 name
-            name=$(basename "$src")
-            [ -f "$PROCESSED/$name" ] && return
-            touch "$PROCESSED/$name"
-            case "$name" in
-              libc.so* | libm.so* | libpthread.so* | libdl.so* | librt.so* \
-              | ld-linux* | libgcc_s* | libresolv.so* | libnss_*.so* ) return ;;
-            esac
-            if [ ! -f "$BUNDLE_LIB/$name" ]; then
-              echo "  Bundling $name"
-              cp "$src" "$BUNDLE_LIB/" 2>/dev/null || return
-            fi
-            ensure_soname_symlink "$BUNDLE_LIB/$name"
-            ldd "$src" 2>/dev/null | awk '/=> \// { print $3 }' | while read dep; do
-              bundle_with_deps "$dep"
-            done
-          }
-
-          # WPEWebKit 2.0 and WPE backend libs from our PPA — not in Ubuntu 24.04
-          # so they must be bundled.  Built with -D_FORTIFY_SOURCE=2 so they only
-          # require glibc 2.39, which is what Ubuntu 24.04 and the snap base provide.
-          find /usr/lib/x86_64-linux-gnu \
-            \( -name "libWPEWebKit-2.0*.so*" \
-               -o -name "libWPEBackend-fdo*.so*" \) \
-            -type f 2>/dev/null | while read lib; do
-            bundle_with_deps "$lib"
-          done
-          rm -rf "$PROCESSED"
 
       - name: Install Snapcraft
         run: sudo snap install snapcraft --classic

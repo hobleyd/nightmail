@@ -901,6 +901,58 @@ void main() {
       expect(email.inlineAttachments.first.contentBytes, equals([1, 2, 3, 4]));
       // Shown inline, so not surfaced as a downloadable attachment chip.
       expect(email.attachments, isEmpty);
+      // Merging the fetched bytes rebuilds the model, and the rebuild must
+      // carry every field it isn't changing — see below.
+      expect(email.conversationId, 'thread1');
+    });
+
+    // Regression: fetching the inline bytes above takes the *rebuild* branch,
+    // which used to drop conversationId on the floor. The rebuilt copy is what
+    // BodyPrefetchService writes over every cached copy of a newly-arrived
+    // message, so the loss reached the list's grouping key: a reply, whose
+    // thread id is not its own id, drew a thread of its own until a manual
+    // refresh re-listed the folder.
+    test('the inline-merge rebuild keeps the thread id', () async {
+      const html = '<div><img src="cid:ii_x"></div>';
+
+      _stubGetByUrl((url) {
+        if (url.contains('/attachments/')) {
+          return {'data': base64Url.encode([9]).replaceAll('=', '')};
+        }
+        return {
+          'id': 'reply1',
+          // Not equal to the message id: the shape that exposes the bug.
+          'threadId': 'thread-abc',
+          'payload': {
+            'mimeType': 'multipart/related',
+            'headers': [
+              {'name': 'Subject', 'value': 'Re: hello'},
+              {'name': 'From', 'value': 'alice@example.com'},
+              {'name': 'Date', 'value': 'Tue, 9 Sep 2026 10:00:00 +1000'},
+            ],
+            'parts': [
+              {
+                'mimeType': 'text/html',
+                'body': {'data': _b64(html), 'size': html.length},
+              },
+              {
+                'mimeType': 'image/png',
+                'filename': 'image.png',
+                'headers': [
+                  {'name': 'Content-ID', 'value': '<ii_x>'},
+                ],
+                'body': {'attachmentId': 'att1', 'size': 1234},
+              },
+            ],
+          },
+        };
+      });
+
+      final email = await datasource.getEmail('reply1');
+
+      // The merge happened, so this is the rebuilt copy and not the parsed one.
+      expect(email.inlineAttachments, hasLength(1));
+      expect(email.conversationId, 'thread-abc');
     });
 
     // Regression guard: a part carrying a Content-ID that the body does NOT

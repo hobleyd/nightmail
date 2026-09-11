@@ -181,6 +181,23 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
         }
       }
 
+      // The same rule as the attachment carry-over above, for the field the
+      // list groups by: a copy that names no conversation must not blank a row
+      // that already knows its thread. Every provider's *listing* carries one,
+      // so this lookup is not on the folder-load path in practice — it is the
+      // single-message fetch (`EmailRepositoryImpl.getEmail`, which files its
+      // result under the message's own parent folder) that can arrive without
+      // one, from a provider path that rebuilt its model and dropped it. The
+      // column is read straight off the row, so nothing is decrypted for it.
+      var conversationId = email.conversationId;
+      if (conversationId == null) {
+        conversationId = (await _anyCachedRow(accountId, email.id))
+            ?.conversationId;
+        if (conversationId != null) {
+          json = {...json, 'conversationId': conversationId};
+        }
+      }
+
       final encryptedData = await _encryption.encrypt(jsonEncode(json));
       final detail = _hasDetail(email)
           ? await _encryption.encrypt(jsonEncode(_detailJson(email)))
@@ -193,7 +210,7 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
           isRead: email.isRead,
           hasAttachments: email.hasAttachments,
           receivedDateTimeMs: email.receivedDateTime.millisecondsSinceEpoch,
-          conversationId: Value(email.conversationId),
+          conversationId: Value(conversationId),
           cachedAtMs: now,
           encryptedData: encryptedData,
         ),
@@ -409,7 +426,17 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
         // of the encrypted JSON (see [getCachedEmailById]), so setting the
         // column alone would leave the stale flag as the one the reading pane
         // sees. Per copy, because each folder's row carries its own read state.
-        final merged = email.copyWith(isRead: row.isRead);
+        //
+        // This write *enriches* a row — a single-message fetch carrying a body
+        // over a row listed without one — so it must never subtract. A fetched
+        // copy that names no conversation keeps the row's own: the grouping key
+        // going missing splits the message out of its thread on the list until
+        // something re-lists the folder, and nothing about fetching a body can
+        // make a known thread membership unknown.
+        final merged = email.copyWith(
+          isRead: row.isRead,
+          conversationId: email.conversationId ?? row.conversationId,
+        );
         final encryptedData =
             await _encryption.encrypt(jsonEncode(_listJson(merged)));
         await (_database.update(_database.cachedEmails)

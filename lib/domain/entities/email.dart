@@ -124,7 +124,10 @@ class Email extends Equatable {
     return !folderIds.any(_sentLabelIds.contains);
   }
 
-  Email copyWith({bool? isRead, bool? isFlagged}) {
+  /// [conversationId] can only ever be *supplied*, never cleared: a message's
+  /// thread membership does not become unknown once it is known, and a caller
+  /// passing null means "leave it".
+  Email copyWith({bool? isRead, bool? isFlagged, String? conversationId}) {
     return Email(
       id: id,
       subject: subject,
@@ -139,7 +142,7 @@ class Email extends Equatable {
       receivedDateTime: receivedDateTime,
       sentDateTime: sentDateTime,
       importance: importance,
-      conversationId: conversationId,
+      conversationId: conversationId ?? this.conversationId,
       hasAttachments: hasAttachments,
       attachments: attachments,
       inlineAttachments: inlineAttachments,

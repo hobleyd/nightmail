@@ -31,7 +31,12 @@ class _PlaintextEncryption extends CacheEncryptionService {
   Future<String> decrypt(String stored) async => stored;
 }
 
-EmailModel _email(String id, {required String body, String folderId = 'folder-1'}) =>
+EmailModel _email(
+  String id, {
+  required String body,
+  String folderId = 'folder-1',
+  String? conversationId,
+}) =>
     EmailModel(
       id: id,
       subject: 'Subject $id',
@@ -44,6 +49,7 @@ EmailModel _email(String id, {required String body, String folderId = 'folder-1'
       isRead: false,
       receivedDateTime: DateTime(2026, 6, 1),
       importance: EmailImportance.normal,
+      conversationId: conversationId,
       parentFolderId: folderId,
     );
 
@@ -339,6 +345,56 @@ void main() {
     });
   });
 
+  // The same rule as the upgrade path below, for the other writer: a
+  // single-message fetch is cached under the message's own parent folder, and a
+  // provider path that rebuilt its model without the thread id would blank the
+  // grouping key on the row the folder listing put there.
+  group('cacheEmails and the thread id', () {
+    test('a copy naming no conversation keeps the row\'s thread id', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '', conversationId: 'thread-1')],
+      );
+
+      // What EmailRepositoryImpl.getEmail writes: the same message, fetched
+      // whole, filed under its own parent folder.
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '<p>fetched</p>')],
+      );
+
+      final listed = await datasource.getCachedEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+      );
+      expect(listed.single.conversationId, 'thread-1');
+    });
+
+    // The carry-over only fills a gap. A copy that names its own conversation
+    // is the newer answer, including when the row named a different one.
+    test('a copy that names its own conversation wins', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '', conversationId: 'thread-1')],
+      );
+
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '', conversationId: 'thread-2')],
+      );
+
+      final listed = await datasource.getCachedEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+      );
+      expect(listed.single.conversationId, 'thread-2');
+    });
+  });
+
   // Regression: BodyPrefetchService wrote its fetched body through cacheEmails,
   // which inserts. A message deleted while its body was in flight — the likeliest
   // case, since the prefetch targets exactly the mail the user is reading — was
@@ -361,6 +417,39 @@ void main() {
         emailId: 'email-1',
       );
       expect(cached!.body, '<p>fetched</p>');
+    });
+
+    // Regression: this write enriches a row, so it must never subtract. A
+    // provider path that rebuilt its model and dropped the thread id handed one
+    // in with conversationId null, and this wrote that null over every cached
+    // copy — which is the list's grouping key, so the message fell out of its
+    // thread and drew a row of its own until the folder was re-listed.
+    test('a fetched copy naming no conversation keeps the row\'s thread id',
+        () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('email-1', body: '', conversationId: 'thread-1')],
+      );
+
+      await datasource.upgradeCachedEmailBody(
+        accountId: 'acct-1',
+        email: _email('email-1', body: '<p>fetched</p>'),
+      );
+
+      // Read back off the list path, which is what the list groups by — and
+      // which serves no body, so the upgrade itself is checked by id.
+      final listed = await datasource.getCachedEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+      );
+      expect(listed.single.conversationId, 'thread-1');
+      final cached = await datasource.getCachedEmailById(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+      );
+      expect(cached!.body, '<p>fetched</p>');
+      expect(cached.conversationId, 'thread-1');
     });
 
     test('writes nothing at all when the row has gone', () async {

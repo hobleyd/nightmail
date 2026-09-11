@@ -455,6 +455,44 @@ That is why the whole Gmail message path uses one response type (the thread and
 search *indexes* are plain too, decoded locally since they are only ids), and why
 these tests stub `get<String>` with `jsonEncode`d bodies.
 
+### Rebuilding a Parsed Message Must Carry Every Field
+
+The rule above — "merge fetched extras by *rebuilding* the model, not
+re-parsing" — has a matching hazard: a rebuild that lists the fields by hand
+silently drops whatever it forgets, and what it produces is written to the
+cache.
+
+`conversationId` is the field that bites, and Gmail's `getEmail` never carried
+it — the rebuild was written without it. That path rebuilds to merge a
+separately-fetched inline image or ICS, so it is taken by any message with a
+`cid:` part Gmail did not inline — a signature logo is enough. It is the list's grouping key
+(`groupIntoConversations`), and it reaches the cache twice over:
+`EmailRepositoryImpl.getEmail` caches the fetched copy, and
+`BodyPrefetchService` — which the poller queues for **newly-arrived delta
+messages** — writes it over *every* folder's copy through
+`upgradeCachedEmailBody`.
+
+A Gmail thread id is routinely also the id of the thread's first message, so
+losing it is invisible there (`conversationId ?? id` lands on the same string)
+and splits every **reply** into a thread of its own. Two messages arriving in
+one thread therefore drew two rows, and went on drawing two until a manual
+refresh re-listed the folder and wrote the thread id back — which is also why
+it healed rather than persisting, and why the cache holds no evidence of it
+after a refresh.
+
+Both cache writers now keep the row's own `conversationId` when the copy handed
+to them names none — `upgradeCachedEmailBody`, and `cacheEmails` alongside its
+attachment carry-over. Neither write may *subtract*: nothing about fetching a
+message can make a known thread membership unknown. Every provider's listing
+carries one, so the `cacheEmails` lookup is not on the folder-load path in
+practice, and it reads the column rather than decrypting anything.
+
+That is a backstop, not the fix — Graph's `_rebuild` is the shape to copy, since
+it carries every field. Nothing forces a refetch, and nothing needs to: unlike
+an attachment parse, `conversationId` rides the *list* row, which every
+`replaceFolder` listing rewrites. A row nulled in a folder nobody opens stays
+nulled until that folder is next listed.
+
 ## A Message Body Can Be Split Across Several Parts
 
 `multipart/mixed` names **sequential** content, so a body split into several

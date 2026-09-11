@@ -453,6 +453,18 @@ class GmailDatasourceImpl
         ];
       }
 
+      // Every field is carried, not just the ones being changed. A rebuild
+      // that quietly drops one writes that loss into the cache — this path is
+      // reached by BodyPrefetchService for *newly arrived* mail, and
+      // `upgradeCachedEmailBody` applies what it returns to every folder's copy
+      // of the message.
+      //
+      // `conversationId` is the one that bites. It is the list's grouping key
+      // (`groupIntoConversations`), and Gmail's thread id is routinely also the
+      // id of the thread's first message — so dropping it is invisible on that
+      // first message and splits every *reply* into a thread of its own. Two
+      // messages arriving in one thread therefore drew two rows until a manual
+      // refresh re-listed the folder and wrote the thread id back.
       return EmailModel(
         id: email.id,
         subject: email.subject,
@@ -467,7 +479,9 @@ class GmailDatasourceImpl
         isRead: email.isRead,
         isFlagged: email.isFlagged,
         receivedDateTime: email.receivedDateTime,
+        sentDateTime: email.sentDateTime,
         importance: email.importance,
+        conversationId: email.conversationId,
         parentFolderId: email.parentFolderId,
         folderIds: email.folderIds,
         hasAttachments: email.hasAttachments,

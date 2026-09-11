@@ -1754,6 +1754,26 @@ void main() {
       expect((bloc.state as EmailListLoaded).emails.map((e) => e.id), ['a']);
     });
 
+    // The fourth guarded path, and the only one that fires on a *non-loaded*
+    // state: a cold start whose first fetch failed sits on an error with both
+    // _lastLoadedFolderId and _loadedAccountId set from the account being left,
+    // and the poller's repaint signal is what would reload that folder.
+    test('the repaint\'s cold-start reload loads nothing', () async {
+      when(mockGetCachedEmails(any)).thenAnswer((_) async => const Right([]));
+      when(mockGetEmails(any)).thenAnswer(
+          (_) async => const Left(NetworkFailure(message: 'No network')));
+      bloc.add(const EmailListLoadRequested(folderId: 'INBOX'));
+      await bloc.stream.firstWhere((s) => s is EmailListError);
+      clearInteractions(mockGetEmails);
+
+      fakeAccountManager.account = _otherAccount;
+      bloc.add(const EmailListCacheRefreshRequested());
+      await pumpEventQueue();
+
+      verifyNever(mockGetEmails(any));
+      expect(bloc.state, isA<EmailListError>());
+    });
+
     test('the folder the new account loads is fetched as normal', () async {
       await _loadEmails([_email('a')], folderId: 'INBOX');
 

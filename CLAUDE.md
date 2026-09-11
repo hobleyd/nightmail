@@ -1368,11 +1368,10 @@ use case reads have already become the next account's. Anything that reuses
 `currentFolderId` in that window addresses the new account with the old
 account's folder.
 
-Observed, on a real install: the Graph account's Inbox fetched under the Gmail
-label id `INBOX` — Graph resolves a well-known folder name case-insensitively,
-so the request *succeeds* — and the page cached under that key. The same 22
-messages, filed twice, ten seconds apart, the second time under the real folder
-id. `EmailRepositoryImpl.getEmails` already binds the account id and the
+Observed, on a real install: 22 Graph Inbox messages filed under the Gmail
+label id `INBOX`, and the same 22 under the real folder id ten seconds later.
+So the request evidently *succeeds* rather than erroring — which is the shape
+of this that makes it quiet. `EmailRepositoryImpl.getEmails` already binds the account id and the
 datasource together before its await (`email_repository_impl.dart`), which is a
 different half of the same race: those two agreed here, and the folder id was
 the stale one.

@@ -80,6 +80,14 @@ const _account = MicrosoftAccount(
   tenantId: 'common',
 );
 
+/// The account switched *to* in the account-switch tests.
+const _otherAccount = MicrosoftAccount(
+  id: 'account-2',
+  displayName: 'Other',
+  emailAddress: 'other@example.com',
+  tenantId: 'common',
+);
+
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
@@ -1685,6 +1693,80 @@ void main() {
       final state = bloc.state as EmailListLoaded;
       expect(state.emails.map((e) => e.id), ['hit']);
       expect(state.isLoadingFresh, isFalse);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Switching accounts
+  // ---------------------------------------------------------------------------
+
+  // AccountManager.activeAccount flips before AccountCubit emits, so for a
+  // moment this bloc holds one account's folder id while every use case it
+  // calls has already become the next account's. A folder id is only
+  // meaningful to the account it came from.
+  group('after the active account has changed under the list', () {
+    setUp(() => fakeAccountManager.account = _account);
+
+    test('a refresh fetches nothing and caches nothing', () async {
+      await _loadEmails([_email('a')], folderId: 'INBOX');
+      clearInteractions(mockGetEmails);
+      clearInteractions(mockCacheEmails);
+
+      fakeAccountManager.account = _otherAccount;
+      bloc.add(const EmailListRefreshRequested());
+      await pumpEventQueue();
+
+      // Observed before this guard: the *new* account's datasource answering
+      // for the *old* account's folder id, and a whole page cached under it.
+      verifyNever(mockGetEmails(any));
+      verifyNever(mockCacheEmails(any));
+    });
+
+    test('a load-more fetches nothing', () async {
+      // A full page, or hasMore is false and the handler returns before the
+      // guard is reached — the test would pass without it.
+      await _loadEmails(
+        [for (var i = 0; i < 25; i++) _email('a$i')],
+        folderId: 'INBOX',
+      );
+      expect((bloc.state as EmailListLoaded).hasMore, isTrue);
+      clearInteractions(mockGetEmails);
+
+      fakeAccountManager.account = _otherAccount;
+      bloc.add(const EmailListLoadMoreRequested());
+      await pumpEventQueue();
+
+      verifyNever(mockGetEmails(any));
+    });
+
+    test('a cache repaint reads nothing', () async {
+      await _loadEmails([_email('a')], folderId: 'INBOX');
+      clearInteractions(mockGetCachedEmails);
+
+      fakeAccountManager.account = _otherAccount;
+      bloc.add(const EmailListCacheRefreshRequested());
+      await pumpEventQueue();
+
+      // The read would be the new account's cache under the old account's
+      // folder key — which can hold rows, since the same race used to file a
+      // page there — and a hit paints one mailbox under the other's name.
+      verifyNever(mockGetCachedEmails(any));
+      expect((bloc.state as EmailListLoaded).emails.map((e) => e.id), ['a']);
+    });
+
+    test('the folder the new account loads is fetched as normal', () async {
+      await _loadEmails([_email('a')], folderId: 'INBOX');
+
+      fakeAccountManager.account = _otherAccount;
+      // What HomePage does once the new account's folder list lands.
+      bloc.add(const EmailListCleared());
+      await _loadEmails([_email('b')], folderId: 'folder-2');
+      clearInteractions(mockGetEmails);
+
+      bloc.add(const EmailListRefreshRequested());
+      await pumpEventQueue();
+
+      verify(mockGetEmails(any)).called(1);
     });
   });
 }

@@ -1359,6 +1359,51 @@ the saved id is checked against real folders and falls back to the Inbox.
 Nothing may select a folder at switch time: that listener clears it a beat
 later, which is what made the old restore in `folder_panel.dart` a no-op.
 
+### A Folder Id Is Only Meaningful to the Account It Came From
+
+`AccountManager.activeAccount` flips **before** `AccountCubit` emits, so between
+the switch and the `EmailListCleared` that follows it `EmailListBloc` holds one
+account's folder id while the datasource, the cache key and the account id every
+use case reads have already become the next account's. Anything that reuses
+`currentFolderId` in that window addresses the new account with the old
+account's folder.
+
+Observed, on a real install: the Graph account's Inbox fetched under the Gmail
+label id `INBOX` — Graph resolves a well-known folder name case-insensitively,
+so the request *succeeds* — and the page cached under that key. The same 22
+messages, filed twice, ten seconds apart, the second time under the real folder
+id. `EmailRepositoryImpl.getEmails` already binds the account id and the
+datasource together before its await (`email_repository_impl.dart`), which is a
+different half of the same race: those two agreed here, and the folder id was
+the stale one.
+
+`EmailListBloc._loadedAccountId` records the account that was active when the
+folder was *chosen* — set in `_onLoadRequested`, which is the only thing that
+establishes one — and `_folderBelongsToAnotherAccount` stands the refresh,
+load-more, cache-repaint and the repaint's cold-start reload down until the new
+account's own load arrives. Same shape as `FolderListBloc._loadedAccountId`.
+
+Three things here are load-bearing:
+
+- **The capture has to be at the load, not at the handler.** A handler that
+  reads the active account at its own start compares the new account against
+  the new account and passes — the switch happened before it ran. That version
+  looks right and guards nothing.
+- **`EmailListCleared` must not clear it.** That event *arrives* in the window
+  this guards, so clearing there would disarm the guard for exactly as long as
+  it is wanted. The next `EmailListLoadRequested` overwrites it, the same way
+  `_lastLoadedFolderId` is handled.
+- **The repaint is the one with a user-visible failure.** The others 404 or
+  write to a key nothing reads, but `_repaintFromCache` reads the *new*
+  account's cache under the *old* account's folder key — and that key can hold
+  rows, because this race is what filed them there. A hit paints one mailbox's
+  Inbox into a list the folder panel still names as the other's, with no network
+  call to fail and nothing to report.
+
+The rows already filed under a phantom key are left alone: nothing lists them
+once the read path is guarded, and a cleanup pass is new machinery for a
+bounded, inert residue.
+
 ## An ICS METHOD Decides Which Meeting Banner Appears
 
 `icsInviteType` (`data/datasources/remote/ics_meeting_invite.dart`) maps

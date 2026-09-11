@@ -141,6 +141,33 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   String? _lastLoadedFolderId;
   String? _lastLoadedFolderName;
 
+  /// The account that was active when the folder on screen was chosen.
+  ///
+  /// `AccountManager.activeAccount` flips *before* `AccountCubit` emits, so
+  /// between the switch and the `EmailListCleared` that follows it this bloc
+  /// holds one account's folder id while the datasource, the cache key and the
+  /// account id every use case reads have already become the next account's. A
+  /// handler that reuses `currentFolderId` in that window addresses the new
+  /// account with the old account's folder — and a folder id is only meaningful
+  /// to the account it came from. Observed: a Graph inbox fetched under the
+  /// Gmail label `INBOX` and cached under that key, a whole page of a mailbox
+  /// filed where nothing lists it (and where a cache repaint then found it, and
+  /// painted one account's Inbox under the other's name).
+  ///
+  /// Not cleared by [EmailListCleared]: that event *arrives* in the window this
+  /// guards, so clearing there would disarm the guard for exactly as long as it
+  /// is needed. The next [EmailListLoadRequested] — the only thing that
+  /// establishes a folder — overwrites it, the same way [_lastLoadedFolderId]
+  /// is handled.
+  String? _loadedAccountId;
+
+  /// Whether the folder on screen belongs to an account that is no longer the
+  /// active one. Nothing may be fetched for it, cached under it, or read back
+  /// out of the new account's cache by its id.
+  bool get _folderBelongsToAnotherAccount =>
+      _loadedAccountId != null &&
+      _loadedAccountId != _accountManager.activeAccount?.id;
+
   /// A cache repaint that arrived while search results or a focused thread were
   /// on screen. Repainting from the folder then would wipe out what the user is
   /// looking at, so the signal is held rather than dropped and applied when the
@@ -158,6 +185,9 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     _lastLoadedFolderName = event.folderDisplayName;
     final myGeneration = ++_activeRequestGeneration;
     final accountId = _accountManager.activeAccount?.id;
+    // This load is what binds the folder to an account — see
+    // [_folderBelongsToAnotherAccount].
+    _loadedAccountId = accountId;
     final folderKey = event.folderId ?? _defaultFolderKey;
     List<Email> cachedEmails = [];
     // Preserve in-flight Delete All tracking across a folder switch — it is
@@ -277,6 +307,8 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     if (current is! EmailListLoaded || !current.hasMore || current.isLoadingMore) {
       return;
     }
+    // The page after this one belongs to the account this folder came from.
+    if (_folderBelongsToAnotherAccount) return;
     final myGeneration = _activeRequestGeneration;
 
     emit(current.copyWith(isLoadingMore: true));
@@ -318,6 +350,12 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     EmailListRefreshRequested event,
     Emitter<EmailListState> emit,
   ) async {
+    // Before anything else, including the thread and search branches below:
+    // in that window nothing the state holds — folder id, thread, query —
+    // belongs to the account a fetch would now go to. The load for the new
+    // account is already on its way.
+    if (_folderBelongsToAnotherAccount) return;
+
     final prior = state is EmailListLoaded ? state as EmailListLoaded : null;
 
     // The list may be showing a single conversation rather than the folder.
@@ -420,7 +458,9 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       // Nothing on screen to repaint — which is exactly the cold start whose
       // first fetch failed, sitting on an error with an empty cache. This
       // signal is the poller saying it has data now, so load the folder
-      // properly rather than discard it.
+      // properly rather than discard it. Unless the folder it would reload is
+      // the account being left's: the new account's own load is on its way.
+      if (_folderBelongsToAnotherAccount) return;
       await _onLoadRequested(
         EmailListLoadRequested(
           folderId: _lastLoadedFolderId,
@@ -445,6 +485,12 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   Future<void> _repaintFromCache(Emitter<EmailListState> emit) async {
     final s = state;
     if (s is! EmailListLoaded) return;
+    // The worst of the window this guards: the read would be the *new*
+    // account's cache under the *old* account's folder key, and that key can
+    // hold rows — the same race used to file a page there. A hit paints one
+    // account's mail into a list the folder panel still names as the other's,
+    // with no network call to fail and nothing to report.
+    if (_folderBelongsToAnotherAccount) return;
     final accountId = _accountManager.activeAccount?.id;
     if (accountId == null) return;
 

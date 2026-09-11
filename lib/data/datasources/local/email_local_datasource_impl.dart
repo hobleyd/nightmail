@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:drift/drift.dart';
 
@@ -372,6 +373,77 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
           mode: InsertMode.insertOrIgnore,
         ));
     return additions.length;
+  }
+
+  /// The key a listing with no folder is filed under — `EmailListBloc` and
+  /// `EmailRepositoryImpl` both use it, and it is a real key rather than
+  /// residue, so it is never pruned as a foreign folder.
+  static const _defaultFolderKey = '__DEFAULT__';
+
+  /// How many message ids one delete statement names. The folder ids beside
+  /// them are not chunked and need not be: they are the folder keys this
+  /// account's cache holds that its folder tree does not, which is a handful at
+  /// the very most — one, in every case this pass was written for.
+  static const _pruneChunk = 400;
+
+  @override
+  Future<int> pruneForeignFolderRows({
+    required String accountId,
+    required Set<String> knownFolderIds,
+  }) async {
+    // An unknown folder tree is not an empty one. A fetch that failed, or an
+    // account whose folders have not been listed yet, must prune nothing.
+    if (knownFolderIds.isEmpty) return 0;
+
+    // Ids and folder keys only — the payload is the bulk of a row and none of
+    // this decrypts anything.
+    final query = _database.selectOnly(_database.cachedEmails)
+      ..addColumns([
+        _database.cachedEmails.emailId,
+        _database.cachedEmails.folderId,
+      ])
+      ..where(_database.cachedEmails.accountId.equals(accountId));
+    final rows = await query
+        .map((r) => (
+              emailId: r.read(_database.cachedEmails.emailId)!,
+              folderId: r.read(_database.cachedEmails.folderId)!,
+            ))
+        .get();
+
+    bool isKnown(String folderId) =>
+        folderId == _defaultFolderKey || knownFolderIds.contains(folderId);
+
+    // A message is only droppable from a foreign folder while a known folder
+    // still lists it. Anything else is the only copy there is, however oddly it
+    // is filed, and is left alone — see [pruneForeignFolderRows].
+    final filedSomewhereKnown = <String>{
+      for (final row in rows)
+        if (isKnown(row.folderId)) row.emailId,
+    };
+    final doomed = <String>{
+      for (final row in rows)
+        if (!isKnown(row.folderId) && filedSomewhereKnown.contains(row.emailId))
+          row.emailId,
+    };
+    if (doomed.isEmpty) return 0;
+
+    final foreignFolderIds = <String>{
+      for (final row in rows)
+        if (!isKnown(row.folderId)) row.folderId,
+    }.toList();
+
+    var deleted = 0;
+    final ids = doomed.toList();
+    for (var i = 0; i < ids.length; i += _pruneChunk) {
+      final chunk = ids.sublist(i, min(i + _pruneChunk, ids.length));
+      deleted += await (_database.delete(_database.cachedEmails)
+            ..where((t) =>
+                t.accountId.equals(accountId) &
+                t.folderId.isIn(foreignFolderIds) &
+                t.emailId.isIn(chunk)))
+          .go();
+    }
+    return deleted;
   }
 
   /// One cached copy of [emailId], whichever folder listing it was filed under.

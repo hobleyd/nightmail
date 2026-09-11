@@ -290,6 +290,7 @@ Future<void> configureDependencies() async {
     () => CacheMembershipRepairService(
       accountManager: sl<AccountManager>(),
       emailLocalDatasource: sl<EmailLocalDatasource>(),
+      folderLocalDatasource: sl<FolderLocalDatasource>(),
       deltaTokens: sl<DeltaTokenDatasource>(),
     ),
   );

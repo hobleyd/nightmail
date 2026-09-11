@@ -345,6 +345,155 @@ void main() {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // pruneForeignFolderRows
+  // ---------------------------------------------------------------------------
+
+  // An account switch used to let one account's folder id reach the other's
+  // fetch and cache write, filing a whole page under a key nothing lists. The
+  // pass that clears that residue is handed a folder list that may itself be
+  // wrong, so every guarantee below is about what it refuses to delete.
+  group('pruneForeignFolderRows', () {
+    Future<Set<String>> foldersHolding(String emailId) async {
+      final rows = await db.select(db.cachedEmails).get();
+      return {
+        for (final row in rows)
+          if (row.emailId == emailId) row.folderId,
+      };
+    }
+
+    Future<void> cacheIn(String folderId, String emailId) =>
+        datasource.cacheEmails(
+          accountId: 'acct-1',
+          folderId: folderId,
+          emails: [_email(emailId, body: '')],
+        );
+
+    test('drops a row filed under a folder the account does not have',
+        () async {
+      await cacheIn('real-folder', 'email-1');
+      await cacheIn('INBOX', 'email-1'); // the other account's folder id
+
+      final removed = await datasource.pruneForeignFolderRows(
+        accountId: 'acct-1',
+        knownFolderIds: {'real-folder'},
+      );
+
+      expect(removed, 1);
+      expect(await foldersHolding('email-1'), {'real-folder'});
+    });
+
+    // An unknown folder tree is not an empty one: a failed fetch, or an account
+    // whose folders have never been listed, must cost nothing.
+    test('prunes nothing at all when no folder is known', () async {
+      await cacheIn('INBOX', 'email-1');
+
+      expect(
+        await datasource.pruneForeignFolderRows(
+          accountId: 'acct-1',
+          knownFolderIds: const {},
+        ),
+        0,
+      );
+      expect(await foldersHolding('email-1'), {'INBOX'});
+    });
+
+    // The one copy there is, however oddly it is filed. A folder list that
+    // arrived incomplete would otherwise lose the message outright.
+    test('keeps a row that is the message\'s only one', () async {
+      await cacheIn('INBOX', 'email-1');
+
+      expect(
+        await datasource.pruneForeignFolderRows(
+          accountId: 'acct-1',
+          knownFolderIds: {'real-folder'},
+        ),
+        0,
+      );
+      expect(await foldersHolding('email-1'), {'INBOX'});
+    });
+
+    // The key a listing with no folder is filed under — a real key, not
+    // residue, and never in a folder tree.
+    test('never touches the default-folder key', () async {
+      await cacheIn('real-folder', 'email-1');
+      await cacheIn('__DEFAULT__', 'email-1');
+
+      expect(
+        await datasource.pruneForeignFolderRows(
+          accountId: 'acct-1',
+          knownFolderIds: {'real-folder'},
+        ),
+        0,
+      );
+      expect(await foldersHolding('email-1'), {'real-folder', '__DEFAULT__'});
+    });
+
+    // acct-2 is given the *same* shape acct-1 has — the message filed under
+    // both a known folder and 'INBOX' — so the only thing keeping its INBOX row
+    // alive is the account filter. Without that, the losslessness guard would
+    // spare the row anyway and the test could not tell which rule fired.
+    test('leaves another account\'s rows alone', () async {
+      for (final folderId in ['real-folder', 'INBOX']) {
+        await datasource.cacheEmails(
+          accountId: 'acct-2',
+          folderId: folderId,
+          emails: [_email('email-1', body: '')],
+        );
+      }
+      await cacheIn('real-folder', 'email-1');
+      await cacheIn('INBOX', 'email-1');
+
+      final removed = await datasource.pruneForeignFolderRows(
+        accountId: 'acct-1',
+        knownFolderIds: {'real-folder'},
+      );
+
+      expect(removed, 1);
+      final rows = await db.select(db.cachedEmails).get();
+      expect(
+        rows.where((r) => r.accountId == 'acct-2').map((r) => r.folderId),
+        unorderedEquals(['real-folder', 'INBOX']),
+      );
+    });
+
+    // Bodies live once per message and are collected when no folder lists it,
+    // so a prune that took the last row would take the body with it. It cannot:
+    // a row only goes while a known folder still lists the message.
+    test('orphans no cached body', () async {
+      await cacheIn('real-folder', 'email-1');
+      await cacheIn('INBOX', 'email-1');
+      await datasource.upgradeCachedEmailBody(
+        accountId: 'acct-1',
+        email: _email('email-1', body: '<p>fetched</p>'),
+      );
+
+      await datasource.pruneForeignFolderRows(
+        accountId: 'acct-1',
+        knownFolderIds: {'real-folder'},
+      );
+
+      final cached = await datasource.getCachedEmailById(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+      );
+      expect(cached!.body, '<p>fetched</p>');
+    });
+
+    test('running it twice removes nothing the second time', () async {
+      await cacheIn('real-folder', 'email-1');
+      await cacheIn('INBOX', 'email-1');
+
+      Future<int> prune() => datasource.pruneForeignFolderRows(
+            accountId: 'acct-1',
+            knownFolderIds: {'real-folder'},
+          );
+
+      expect(await prune(), 1);
+      expect(await prune(), 0);
+    });
+  });
+
   // The same rule as the upgrade path below, for the other writer: a
   // single-message fetch is cached under the message's own parent folder, and a
   // provider path that rebuilt its model without the thread id would blank the

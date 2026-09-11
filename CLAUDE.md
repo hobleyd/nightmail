@@ -1399,9 +1399,25 @@ Three things here are load-bearing:
   Inbox into a list the folder panel still names as the other's, with no network
   call to fail and nothing to report.
 
-The rows already filed under a phantom key are left alone: nothing lists them
-once the read path is guarded, and a cleanup pass is new machinery for a
-bounded, inert residue.
+The rows earlier builds filed under a phantom key are cleared by
+`CacheMembershipRepairService`'s second pass, once per account at launch
+(`pruneForeignFolderRows`). They cannot come back — the race is closed — so this
+is one-shot residue, and the pass is written to be **lossless rather than
+thorough**, because the folder list it judges rows by may itself be wrong:
+
+- **An unknown folder tree is not an empty one.** No cached folders means prune
+  nothing *and do not mark the account done*, or "we could not tell" is recorded
+  as "there was nothing to do" for good. The next launch, by which point a tree
+  has been cached, tries again.
+- **A row only goes while a known folder still lists the same message.** So the
+  worst a folder list that arrived incomplete can do is leave a row behind,
+  which is the thing being cleaned up — never lose a message, and never orphan a
+  cached body (bodies are collected once no folder lists their message).
+- **`__DEFAULT__` is a real key, not residue.** It is what a listing with no
+  folder is filed under, and it is in no folder tree.
+
+Its marker is its own sentinel (`__foreign_folder_prune__`), because an install
+that has run the older membership repair has not necessarily run this.
 
 ## An ICS METHOD Decides Which Meeting Banner Appears
 

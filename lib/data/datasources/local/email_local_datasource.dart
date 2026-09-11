@@ -59,6 +59,28 @@ abstract interface class EmailLocalDatasource {
   /// listing of either folder replaces both.
   Future<int> restoreFolderMemberships({required String accountId});
 
+  /// Drops this account's cached rows filed under a folder id that is not one
+  /// of [knownFolderIds], and returns how many went.
+  ///
+  /// A folder id is only meaningful to the account it came from, and an
+  /// account switch used to let one account's folder id reach the other's
+  /// fetch and cache write — so a mailbox's whole Inbox page could be filed
+  /// under a foreign key, where nothing lists it and a repaint of the wrong
+  /// account could still find it. Fixed at the source in `EmailListBloc`; this
+  /// clears what earlier builds left behind.
+  ///
+  /// Lossless by construction, because the folder list it is handed may be
+  /// wrong: an empty [knownFolderIds] prunes nothing at all (an unknown tree is
+  /// not an empty one), the reserved default-folder key is never touched, and a
+  /// row only goes when the same message is still filed under a folder that
+  /// *is* known — so no message and no cached body can be orphaned by a folder
+  /// list that arrived incomplete. The cost of being wrong is a row left
+  /// behind, which is what the pass is for in the first place.
+  Future<int> pruneForeignFolderRows({
+    required String accountId,
+    required Set<String> knownFolderIds,
+  });
+
   /// Upgrades the already-cached rows for [email] to its full copy — body,
   /// inline images and attachment metadata — and does **nothing at all** when
   /// the message is no longer cached. Never inserts, and never moves a row

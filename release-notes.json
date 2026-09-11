@@ -1,28 +1,59 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.23.2",
+  "version": "1.23.3",
   "sections": [
+    {
+      "type": "features",
+      "title": "New features",
+      "items": [
+        {
+          "body": "clear rows filed under another account's folder at launch",
+          "title": "cache"
+        }
+      ]
+    },
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "drop the vestigial WPE bundle that breaks the snap on newer hosts",
-          "title": "linux"
+          "body": "stop an account switch fetching one mailbox by the other's folder id",
+          "title": "mail"
         },
         {
-          "body": "stop a stale tree fetch putting back an unread count",
-          "title": "folders"
-        },
-        {
-          "body": "show a body Apple Mail split across several parts",
+          "body": "stop a Gmail reply falling out of its own thread",
           "title": "mail"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.23.2",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "drop the vestigial WPE bundle that breaks the snap on newer hosts",
+              "title": "linux"
+            },
+            {
+              "body": "stop a stale tree fetch putting back an unread count",
+              "title": "folders"
+            },
+            {
+              "body": "show a body Apple Mail split across several parts",
+              "title": "mail"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -1005,117 +1036,6 @@
             {
               "body": "stop spurious folder-list reauth from refresh-token races",
               "title": "auth"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.8.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "add per-account email signatures with merge-field templating",
-              "title": "signature"
-            },
-            {
-              "body": "add arrow-key navigation across folder → email list → flag/delete",
-              "title": "keyboard"
-            },
-            {
-              "body": "default all time pickers to input mode",
-              "title": "timepicker"
-            },
-            {
-              "body": "fix Teams meeting creation and add cancel-series support",
-              "title": "calendar"
-            },
-            {
-              "body": "add print button and Cmd-P / Ctrl-P shortcut",
-              "title": "reading-pane"
-            },
-            {
-              "body": "raise new-mail toasts on Windows/Linux, fix init race",
-              "title": "notifications"
-            },
-            {
-              "body": "add font size picker and format painter to rich text toolbar",
-              "title": "editor"
-            },
-            {
-              "body": "add cross-window calendar/drafts refresh relay, guard against dangling channels",
-              "title": "windows"
-            },
-            {
-              "body": "add inline preview for .eml and image attachments",
-              "title": "reading-pane"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "retry throttled Graph deletes and stop losing the empty-folder shimmer",
-              "title": "o365"
-            },
-            {
-              "body": "show real subject/sender for Gmail/IMAP new-mail toasts",
-              "title": "notifications"
-            },
-            {
-              "body": "make clicking the HTML editor actually focus it on macOS",
-              "title": "compose"
-            },
-            {
-              "body": "preserve meeting duration when proposing a new time",
-              "title": "invites"
-            },
-            {
-              "body": "broadcast channel notify after cancel/decline/reschedule so other windows refresh",
-              "title": "calendar"
-            },
-            {
-              "body": "silence Sendable warning in requestAccess by using completionHandler: label",
-              "title": "contacts"
-            },
-            {
-              "body": "request calendar.calendarlist.readonly so default reminders resolve",
-              "title": "gmail"
-            },
-            {
-              "body": "cache ImapDatasourceImpl per account to stop connection leak",
-              "title": "imap"
-            },
-            {
-              "body": "stop leaking Dio internals in meeting-response errors",
-              "title": "calendar"
-            },
-            {
-              "body": "recognize inline images without a filename",
-              "title": "gmail"
-            },
-            {
-              "body": "per-email notification taps, badge accuracy, stale folder counts",
-              "title": "notifications"
-            },
-            {
-              "body": "keep WorkManager Room impl from R8 stripping",
-              "title": "android"
-            },
-            {
-              "body": "fix errSecInteractionNotAllowed (-25308) on notification-tap launch",
-              "title": "ios"
-            },
-            {
-              "body": "add 10s timeout and retry screen for iOS keychain hang",
-              "title": "startup"
             }
           ]
         }

@@ -9,8 +9,8 @@
   "artifact": {
     "kind": "zip",
     "url": "https://hobleyd.github.io/nightmail/releases/1.23.3+162-windows/nightmail-1.23.3-windows.zip",
-    "sha256": "5a65c63a186ed028601ca3f2125fe74dcefe1e5fc7a9e428f17c4cae14d599db",
-    "length": 26862886
+    "sha256": "b43a4f0a61875c9ad76f1ba793831d82a711d85e3717483db46a1cd7b3fa677f",
+    "length": 26927291
   },
   "install": {
     "strategy": "wholeDirectoryReplace"
@@ -18,8 +18,8 @@
   "signature": {
     "algorithm": "ed25519",
     "publicKeyId": "release-b53948b0e36b895fa047a8f4",
-    "value": "VbgWY/kWE1KXKR0/nlJPtrFOqArAXpfLDJF5jxfOF28HPm0lbyZupnzoycEJzXG/xLPczCZ2hwNJc5Aj+Bs9Ag=="
+    "value": "aeNf1IY9Eld7VwdwzG7vLo+1kxgOk3KXphQpvapNRuUpxN8XN4ECIoU1b7LKvjGc6G/20e3PbVdqtHIw3oE1BQ=="
   },
   "minimumUpdaterVersion": "2.0.0",
-  "generatedAt": "2026-09-11T03:38:41.164133Z"
+  "generatedAt": "2026-09-11T05:17:47.124822Z"
 }

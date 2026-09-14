@@ -1442,6 +1442,71 @@ allows when `guestsCanInviteOthers` is on) so the recipient joins the
 may have forwarded it already and would invite them twice. The two outcomes are
 not equivalent, so `MeetingForwardMode` is returned and the dialog says which.
 
+## Answering a Gmail Invitation Never Creates an Event
+
+`GoogleCalendarDatasourceImpl.respondToMeetingInvite` used to fall back to
+`POST /calendars/primary/events` — the whole ICS roster, `sendUpdates: 'all'` —
+whenever it could not find the meeting to RSVP to. That event is organized by
+**this** account, so Google mailed everybody on the invitation "Invitation:
+<title>" for a meeting they were already in, and since `IcsParser` reads no
+`RRULE` what they were invited to was a single occurrence of what had been a
+series. Accepting a recurring meeting sent a new one.
+
+The lookup it depended on is `events.list?iCalUID=`, an exact string match, and
+a recurring invitation is exactly what it misses: the ICS carries the series'
+bare UID while Google files an expanded instance under
+`<masterUid>_<instanceStart>@google.com` — the mangling `_uidKey`
+(`core/utils/meeting_conflicts.dart`) already documents for the conflict check.
+An invitation on a calendar set to add invitations only once they are answered
+is not listed at all without `showHiddenInvitations`.
+
+Four things now hold this together:
+
+- **Nothing on the RSVP path creates an event.** A meeting that cannot be found
+  throws, the same as `GraphApiDatasourceImpl.respondToMeetingInvite` does after
+  its own three lookups. Making the create "safe" instead — no attendees, or
+  `sendUpdates: 'none'` — was rejected: a copy with no attendees never delivers
+  the RSVP to the organizer and still cannot carry the recurrence, which trades
+  a loud wrong answer for a quiet one.
+- **A missed UID falls back to the meeting's start time**, `_findInviteEvent` —
+  the shape Graph uses as its last resort and `_findCachedMeeting` uses locally.
+  A UID match within the window wins (normalised through `isSameMeetingUid`, so
+  the instance suffix and domain do not matter); failing that, a *single*
+  unambiguous event this account was invited to and does not organize. Two
+  candidates finds nothing and the caller reports it — answering the wrong
+  meeting is worse than answering none.
+- **Declining does not take that fallback** (`allowStartTimeMatch: false`). A
+  decline answers *and* deletes, and the bullet below resolves an instance to
+  its series master, so allowing the heuristic there would put "remove a
+  recurring series" behind a guess. Not finding the meeting stays the silent
+  no-op it has always been on that path — there is nothing to remove.
+- **An instance answers on its master** (`_rsvpTargetId` reads
+  `recurringEventId`), or accepting a recurring invitation would answer one
+  occurrence and leave the rest on `needsAction`. That is also what a hit on the
+  `iCalUID` lookup has always done, since that one is unexpanded. An invitation
+  to a *single* occurrence of a series is over-answered by this; `IcsParser`
+  reads no `RECURRENCE-ID` to tell the two apart.
+- **The roster PATCHed is the server's, with only this account's entry
+  changed.** Building it from the ICS — which is what both the accept and the
+  decline path did — hands Google a guest list that may differ from the one on
+  the event, and `sendUpdates: 'all'` then delivers every difference to
+  everybody as an invitation or a cancellation. An RSVP may only ever change the
+  answer this account is giving. The rosters come off the same `events.list`
+  response the lookup already made, so this costs no extra round trip.
+
+**The not-found failure carries a 404**, which is the calendar outbox's drop
+signal (`OutboxDrainService` treats 404/410 as "no retry can ever succeed").
+That is what this is: an RSVP only reaches the queue when
+`_findCachedMeeting` found a *cached* copy to answer optimistically, so the
+provider not holding one is settled rather than propagation lag. Left untyped it
+would be retried 25 times and then dropped just as quietly.
+
+Graph needs none of this: every one of its paths posts `accept`/`decline` to a
+message or event id, and it has never had anything that could create.
+
+`test/data/datasources/remote/google_calendar_rsvp_test.dart` pins it — chiefly
+that an accept whose lookups come up empty issues **no** POST.
+
 ## Calendar Cache
 
 The calendar is offline-first: it paints from `cached_calendar_events` and then

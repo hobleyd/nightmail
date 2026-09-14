@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../../core/error/exceptions.dart';
 import '../../../core/utils/ics_parser.dart';
+import '../../../core/utils/meeting_conflicts.dart';
 import '../../../core/utils/online_meeting_url.dart';
 import '../../../core/utils/rrule.dart';
 import '../../../domain/entities/attendee_availability.dart';
@@ -294,33 +295,28 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     //      PATCH must happen first and is what actually notifies.
     //   2. DELETE the local copy (sendUpdates:'none') so the declined event no
     //      longer shows on our calendar, without emitting a second notification.
-    // Decline never falls through to the create branch below — it must never add
-    // an event.
     if (response == MeetingInviteResponseType.decline) {
-      if (event.uid == null) return; // Nothing to look up / remove.
-      final attendees = <Map<String, dynamic>>[
-        ...event.attendees.where((a) => a != userEmail).map((a) => {'email': a}),
-        if (userEmail != null)
-          {
-            'email': userEmail,
-            'responseStatus': 'declined',
-            ..._responseComment(message),
-          },
-      ];
       try {
-        final searchResp = await _dio.get<Map<String, dynamic>>(
-          '/calendars/primary/events',
-          queryParameters: {'iCalUID': event.uid, 'maxResults': 1},
+        // Deliberately UID-only: a decline both answers *and* deletes, and
+        // `_rsvpTargetId` resolves an expanded instance to its series master —
+        // so letting the start-time heuristic reach this would put "delete a
+        // recurring series" behind a guess. Not finding the meeting stays the
+        // silent no-op it has always been here; there is nothing to remove.
+        final target = await _findInviteEvent(
+          uid: event.uid,
+          start: meetingStart ?? event.start,
+          userEmail: userEmail,
+          allowStartTimeMatch: false,
         );
-        final items = (searchResp.data?['items'] as List<dynamic>? ?? [])
-            .cast<Map<String, dynamic>>();
-        if (items.isEmpty) return; // Not on the calendar — nothing to decline.
-        final eventId = items.first['id'] as String;
+        if (target == null) return; // Not on the calendar — nothing to decline.
+        final eventId = _rsvpTargetId(target);
         // 1. Send the decline RSVP to the organizer.
-        await _dio.patch<void>(
-          '/calendars/primary/events/$eventId',
-          data: {if (attendees.isNotEmpty) 'attendees': attendees},
-          queryParameters: {'sendUpdates': 'all'},
+        await _patchRsvp(
+          serverEvent: target,
+          eventId: eventId,
+          responseStatus: 'declined',
+          userEmail: userEmail,
+          message: message,
         );
         // 2. Remove our now-declined copy from the calendar, silently.
         await _dio.delete<void>(
@@ -339,69 +335,216 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       MeetingInviteResponseType.decline => 'declined',
     };
 
-    // Build attendee list: include ICS attendees plus self with the chosen status.
-    final attendees = <Map<String, dynamic>>[
-      ...event.attendees.where((a) => a != userEmail).map((a) => {'email': a}),
-      if (userEmail != null)
-        {
-          'email': userEmail,
-          'responseStatus': responseStatus,
-          ..._responseComment(message),
-        },
-    ];
-
-    // Google auto-adds invite events to the calendar with needsAction status,
-    // so the event almost always already exists. Look it up by iCalUID and PATCH
-    // the attendee response — POSTing a new event returns 403 if the UID exists.
-    if (event.uid != null) {
-      try {
-        final searchResp = await _dio.get<Map<String, dynamic>>(
-          '/calendars/primary/events',
-          queryParameters: {'iCalUID': event.uid, 'maxResults': 1},
-        );
-        final items = (searchResp.data?['items'] as List<dynamic>? ?? [])
-            .cast<Map<String, dynamic>>();
-        if (items.isNotEmpty) {
-          final eventId = items.first['id'] as String;
-          await _dio.patch<void>(
-            '/calendars/primary/events/$eventId',
-            data: {if (attendees.isNotEmpty) 'attendees': attendees},
-            queryParameters: {'sendUpdates': 'all'},
-          );
-          return;
-        }
-      } on DioException catch (e) {
-        final status = e.response?.statusCode;
-        if (status == 401 || status == 403) throw _mapException(e);
-        // Search failed — fall through to create.
-      }
-    }
-
-    // Fallback: create the event (invite not yet auto-added to calendar).
-    final body = <String, dynamic>{
-      // Omitted when the invitation has no title; Google shows an untitled
-      // event as "(No title)" itself, and nothing here knows the covering
-      // email's subject to offer a better one.
-      if (event.summary != null) 'summary': event.summary,
-      'start': event.isAllDay
-          ? {'date': _formatDate(event.start)}
-          : {'dateTime': event.start.toUtc().toIso8601String(), 'timeZone': 'UTC'},
-      'end': event.isAllDay
-          ? {'date': _formatDate(event.end)}
-          : {'dateTime': event.end.toUtc().toIso8601String(), 'timeZone': 'UTC'},
-      if (event.location != null) 'location': event.location,
-      if (attendees.isNotEmpty) 'attendees': attendees,
-    };
-
+    // Google auto-adds an invitation to the calendar with `needsAction`, so the
+    // meeting is nearly always already there and an RSVP is a PATCH of this
+    // account's own entry on its roster.
+    //
+    // Nothing on this path may *create* an event. A created event is organized
+    // by this account, so Google mails every address on the ICS "Invitation:
+    // <title>" for a meeting they are already in — and since [IcsParser] never
+    // reads RRULE, what they are invited to is a single occurrence of what was
+    // a series. That is what answering a recurring invitation used to do
+    // whenever the lookup below missed. A meeting that cannot be found is now
+    // reported, the same way `GraphApiDatasourceImpl.respondToMeetingInvite`
+    // reports it.
+    final Map<String, dynamic>? target;
     try {
-      await _dio.post<void>(
-        '/calendars/primary/events',
-        data: body,
-        queryParameters: {'sendUpdates': 'all'},
+      target = await _findInviteEvent(
+        uid: event.uid,
+        start: meetingStart ?? event.start,
+        userEmail: userEmail,
       );
     } on DioException catch (e) {
       throw _mapException(e);
     }
+    if (target == null) {
+      // 404 is the calendar outbox's drop signal (`OutboxDrainService` treats
+      // 404/410 as "no retry can ever succeed"), and that is what this is: a
+      // queued RSVP only ever reaches here when a *cached* copy of the meeting
+      // was found to answer optimistically, so the provider not holding one is
+      // settled rather than propagation lag. Without it the op would be retried
+      // 25 times and then dropped just as silently.
+      throw const ServerException(
+        message: 'Could not find this meeting on your calendar to respond to',
+        statusCode: 404,
+      );
+    }
+
+    try {
+      await _patchRsvp(
+        serverEvent: target,
+        eventId: _rsvpTargetId(target),
+        responseStatus: responseStatus,
+        userEmail: userEmail,
+        message: message,
+      );
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  /// How far a listed event's start may sit from the invitation's before the
+  /// two are no longer taken for the same meeting.
+  static const _inviteStartSlack = Duration(minutes: 1);
+
+  /// The provider's own copy of the meeting an invitation is for, or null.
+  ///
+  /// `iCalUID` is asked first — that is what Google files an auto-added
+  /// invitation under, and a hit is unambiguous. The lookup is an exact string
+  /// match, though, and a recurring invitation is the case it misses: the ICS
+  /// carries the series' bare UID while Google gives an expanded instance
+  /// `<masterUid>_<instanceStart>@google.com` (see [isSameMeetingUid]).
+  /// `showHiddenInvitations` covers the other miss — a calendar set to add
+  /// invitations only once they are answered does not list an unanswered one at
+  /// all without it.
+  ///
+  /// A miss therefore falls back to the meeting's *start time*, which is the
+  /// shape `GraphApiDatasourceImpl.respondToMeetingInvite` uses as its own last
+  /// resort and `CalendarRepositoryImpl._findCachedMeeting` uses locally: a UID
+  /// match among the events in that window wins, and failing that a single
+  /// unambiguous event this account was invited to. Two candidates returns
+  /// null — answering the wrong meeting is worse than answering none, and the
+  /// caller reports rather than guessing.
+  Future<Map<String, dynamic>?> _findInviteEvent({
+    required String? uid,
+    required DateTime? start,
+    required String? userEmail,
+    bool allowStartTimeMatch = true,
+  }) async {
+    if (uid != null) {
+      final byUid = await _listPrimaryEvents({
+        'iCalUID': uid,
+        'maxResults': 1,
+        'showHiddenInvitations': true,
+      });
+      if (byUid.isNotEmpty) return byUid.first;
+    }
+    if (start == null || !allowStartTimeMatch) return null;
+
+    final window = await _listPrimaryEvents({
+      'timeMin': start.subtract(_inviteStartSlack).toUtc().toIso8601String(),
+      'timeMax': start.add(_inviteStartSlack).toUtc().toIso8601String(),
+      'singleEvents': true,
+      'showHiddenInvitations': true,
+      'maxResults': 50,
+    });
+    // timeMin/timeMax match anything *overlapping* the window, so a long
+    // meeting already under way is in the answer too. Only something starting
+    // at the invitation's own time is a candidate.
+    final atStart = window.where((e) => _startsAt(e, start)).toList();
+    for (final e in atStart) {
+      if (isSameMeetingUid(e['iCalUID'] as String?, uid)) return e;
+    }
+    final invited = atStart
+        .where((e) => (e['organizer'] as Map<String, dynamic>?)?['self'] != true)
+        .where((e) => _selfAttendee(e, userEmail) != null)
+        .toList();
+    return invited.length == 1 ? invited.first : null;
+  }
+
+  Future<List<Map<String, dynamic>>> _listPrimaryEvents(
+      Map<String, dynamic> query) async {
+    final resp = await _dio.get<Map<String, dynamic>>(
+      '/calendars/primary/events',
+      queryParameters: query,
+    );
+    return (resp.data?['items'] as List<dynamic>? ?? [])
+        .cast<Map<String, dynamic>>();
+  }
+
+  /// Whether [e] begins at [start]. An all-day event carries a `date` rather
+  /// than a `dateTime`, which parses to local midnight and so cannot be
+  /// compared as an instant — those are compared as calendar dates.
+  bool _startsAt(Map<String, dynamic> e, DateTime start) {
+    final s = e['start'] as Map<String, dynamic>?;
+    final dateTime = s?['dateTime'] as String?;
+    if (dateTime == null) {
+      final date = s?['date'] as String?;
+      if (date == null) return false;
+      // `IcsParser` renders an all-day DTSTART as UTC midnight, so that is the
+      // reading to compare; the local one is accepted as well for a start that
+      // reached us from somewhere else.
+      return date == _dateKey(start.toUtc()) || date == _dateKey(start.toLocal());
+    }
+    final parsed = DateTime.tryParse(dateTime);
+    if (parsed == null) return false;
+    return parsed.toUtc().difference(start.toUtc()).abs() <= _inviteStartSlack;
+  }
+
+  static String _dateKey(DateTime dt) => '${dt.year.toString().padLeft(4, '0')}'
+      '-${dt.month.toString().padLeft(2, '0')}'
+      '-${dt.day.toString().padLeft(2, '0')}';
+
+  /// This account's own entry on an event's roster, matched on Google's `self`
+  /// flag first and the address second (a delegate or an alias is listed under
+  /// the address the organizer invited, which need not be [_accountEmail]).
+  Map<String, dynamic>? _selfAttendee(
+      Map<String, dynamic> e, String? userEmail) {
+    final attendees =
+        (e['attendees'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
+    final email = (userEmail ?? _accountEmail).toLowerCase();
+    for (final a in attendees) {
+      if (a['self'] == true) return a;
+      if ((a['email'] as String?)?.toLowerCase() == email) return a;
+    }
+    return null;
+  }
+
+  /// The event an RSVP is addressed to. An expanded instance of a series
+  /// answers for the occurrence alone, and an invitation carries the series'
+  /// UID, so the answer belongs on the master — which is also what a hit on the
+  /// `iCalUID` lookup above (unexpanded, so already the master) has always
+  /// done. An invitation to a single occurrence of a series would be
+  /// over-answered by this; [IcsParser] reads no `RECURRENCE-ID` to tell the
+  /// two apart.
+  String _rsvpTargetId(Map<String, dynamic> serverEvent) =>
+      (serverEvent['recurringEventId'] as String?) ??
+      serverEvent['id'] as String;
+
+  /// Sends this account's RSVP by PATCHing [eventId]'s roster.
+  ///
+  /// The roster sent is the one Google returned, with only this account's own
+  /// entry changed. Building it out of the invitation's ICS instead — which is
+  /// what this used to do — hands Google a guest list that may differ from the
+  /// one on the event, and `sendUpdates: 'all'` then delivers every difference
+  /// to everybody as an invitation or a cancellation. An RSVP may only ever
+  /// change the answer this account is giving.
+  Future<void> _patchRsvp({
+    required Map<String, dynamic> serverEvent,
+    required String eventId,
+    required String responseStatus,
+    required String? userEmail,
+    required String? message,
+  }) async {
+    final attendees = (serverEvent['attendees'] as List<dynamic>? ?? [])
+        .cast<Map<String, dynamic>>()
+        .map(Map<String, dynamic>.from)
+        .toList();
+    final address = userEmail ?? _accountEmail;
+    var answered = false;
+    for (final a in attendees) {
+      final isSelf = a['self'] == true ||
+          (a['email'] as String?)?.toLowerCase() == address.toLowerCase();
+      if (!isSelf) continue;
+      answered = true;
+      a['responseStatus'] = responseStatus;
+      a.addAll(_responseComment(message));
+    }
+    if (!answered) {
+      // Not on the roster the server returned — a room-style resource invite,
+      // or an alias Google did not flag. Adding the entry is the only way to
+      // answer, and is what this path did for every attendee before.
+      attendees.add({
+        'email': address,
+        'responseStatus': responseStatus,
+        ..._responseComment(message),
+      });
+    }
+    await _dio.patch<void>(
+      '/calendars/primary/events/$eventId',
+      data: {'attendees': attendees},
+      queryParameters: {'sendUpdates': 'all'},
+    );
   }
 
   @override

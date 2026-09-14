@@ -297,23 +297,24 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     //      longer shows on our calendar, without emitting a second notification.
     if (response == MeetingInviteResponseType.decline) {
       try {
-        // Deliberately UID-only: a decline both answers *and* deletes, and
-        // `_rsvpTargetId` resolves an expanded instance to its series master —
-        // so letting the start-time heuristic reach this would put "delete a
-        // recurring series" behind a guess. Not finding the meeting stays the
-        // silent no-op it has always been here; there is nothing to remove.
+        // A decline both answers *and* deletes, so the start-time heuristic is
+        // only allowed to reach it where what it can remove is one occurrence:
+        // an invitation naming a `RECURRENCE-ID` is answered on the instance
+        // (see [_sendRsvp]), while a series invitation would be promoted to its
+        // master — and "delete a recurring series" may not sit behind a guess.
+        // Not finding the meeting stays the silent no-op it has always been
+        // here; there is nothing to remove.
         final target = await _findInviteEvent(
           uid: event.uid,
           start: meetingStart ?? event.start,
           userEmail: userEmail,
-          allowStartTimeMatch: false,
+          allowStartTimeMatch: event.recurrenceId != null,
         );
         if (target == null) return; // Not on the calendar — nothing to decline.
-        final eventId = _rsvpTargetId(target);
         // 1. Send the decline RSVP to the organizer.
-        await _patchRsvp(
+        final eventId = await _sendRsvp(
           serverEvent: target,
-          eventId: eventId,
+          occurrenceOnly: event.recurrenceId != null,
           responseStatus: 'declined',
           userEmail: userEmail,
           message: message,
@@ -371,9 +372,9 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     }
 
     try {
-      await _patchRsvp(
+      await _sendRsvp(
         serverEvent: target,
-        eventId: _rsvpTargetId(target),
+        occurrenceOnly: event.recurrenceId != null,
         responseStatus: responseStatus,
         userEmail: userEmail,
         message: message,
@@ -490,16 +491,53 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     return null;
   }
 
-  /// The event an RSVP is addressed to. An expanded instance of a series
-  /// answers for the occurrence alone, and an invitation carries the series'
-  /// UID, so the answer belongs on the master — which is also what a hit on the
-  /// `iCalUID` lookup above (unexpanded, so already the master) has always
-  /// done. An invitation to a single occurrence of a series would be
-  /// over-answered by this; [IcsParser] reads no `RECURRENCE-ID` to tell the
-  /// two apart.
-  String _rsvpTargetId(Map<String, dynamic> serverEvent) =>
-      (serverEvent['recurringEventId'] as String?) ??
-      serverEvent['id'] as String;
+  /// Sends the RSVP and returns the id of the event it was applied to.
+  ///
+  /// Which event that is turns on what was invited. An invitation carrying a
+  /// `RECURRENCE-ID` is about **one occurrence** ("Updated invitation: … @ Thu
+  /// 17 Sept"), and Google keeps a modified occurrence as its own resource with
+  /// its own roster — so an answer sent to the series master never reaches it,
+  /// and the occurrence sits on `needsAction`, which the app draws as tentative.
+  /// A series invitation is the other way round: answering one expanded
+  /// instance would leave every other occurrence unanswered, so it goes to the
+  /// master.
+  ///
+  /// A master id can 404, which is why that is retried rather than reported.
+  /// Editing a series as "this and following" splits it, and the instances
+  /// after the split name a master `<id>_R<UTC occurrence start>` that this
+  /// calendar holds no copy of when the split happened on the organizer's —
+  /// the same 404 the recurrence lookup already works around.
+  Future<String> _sendRsvp({
+    required Map<String, dynamic> serverEvent,
+    required bool occurrenceOnly,
+    required String responseStatus,
+    required String? userEmail,
+    required String? message,
+  }) async {
+    final instanceId = serverEvent['id'] as String;
+    final masterId = serverEvent['recurringEventId'] as String?;
+    final targetId = occurrenceOnly ? instanceId : (masterId ?? instanceId);
+    try {
+      await _patchRsvp(
+        serverEvent: serverEvent,
+        eventId: targetId,
+        responseStatus: responseStatus,
+        userEmail: userEmail,
+        message: message,
+      );
+      return targetId;
+    } on DioException catch (e) {
+      if (targetId == instanceId || e.response?.statusCode != 404) rethrow;
+      await _patchRsvp(
+        serverEvent: serverEvent,
+        eventId: instanceId,
+        responseStatus: responseStatus,
+        userEmail: userEmail,
+        message: message,
+      );
+      return instanceId;
+    }
+  }
 
   /// Sends this account's RSVP by PATCHing [eventId]'s roster.
   ///

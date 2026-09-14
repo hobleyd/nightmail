@@ -1475,17 +1475,28 @@ Four things now hold this together:
   unambiguous event this account was invited to and does not organize. Two
   candidates finds nothing and the caller reports it — answering the wrong
   meeting is worse than answering none.
-- **Declining does not take that fallback** (`allowStartTimeMatch: false`). A
-  decline answers *and* deletes, and the bullet below resolves an instance to
-  its series master, so allowing the heuristic there would put "remove a
-  recurring series" behind a guess. Not finding the meeting stays the silent
-  no-op it has always been on that path — there is nothing to remove.
-- **An instance answers on its master** (`_rsvpTargetId` reads
-  `recurringEventId`), or accepting a recurring invitation would answer one
-  occurrence and leave the rest on `needsAction`. That is also what a hit on the
-  `iCalUID` lookup has always done, since that one is unexpanded. An invitation
-  to a *single* occurrence of a series is over-answered by this; `IcsParser`
-  reads no `RECURRENCE-ID` to tell the two apart.
+- **Declining takes that fallback only for an occurrence**
+  (`allowStartTimeMatch: event.recurrenceId != null`). A decline answers *and*
+  deletes; what it can remove off a heuristic match is therefore held to one
+  occurrence, since a series invitation would be promoted to its master and
+  "remove a recurring series" may not sit behind a guess. Not finding the
+  meeting stays the silent no-op it has always been on that path — there is
+  nothing to remove.
+- **A master id that 404s retries the instance.** Editing a series as "this and
+  following" splits it, and the instances after the split name a master
+  `<id>_R<UTC occurrence start>` that an attendee's calendar holds no copy of
+  when the split happened on the organizer's — the same 404 the recurrence
+  lookup works around (`_recurrenceByMaster`). Reporting it instead would fail
+  an RSVP that the instance would have accepted.
+- **What the RSVP is addressed to turns on `RECURRENCE-ID`** (`_sendRsvp`).
+  An invitation carrying one is about a *single occurrence* — "Updated
+  invitation: Go/No-Go Fortnightly @ Thu 17 Sept" — and Google keeps a modified
+  occurrence as its own resource with its own roster, so an answer sent to the
+  series master never reaches it: the occurrence stays on `needsAction`, which
+  `_parseStatus` draws as **tentative**. That is an accept that visibly does not
+  take. A series invitation is the other way round and goes to the master
+  (`recurringEventId`), or every occurrence but one is left unanswered.
+  `IcsParser` parses `RECURRENCE-ID` for this and nothing else.
 - **The roster PATCHed is the server's, with only this account's entry
   changed.** Building it from the ICS — which is what both the accept and the
   decline path did — hands Google a guest list that may differ from the one on

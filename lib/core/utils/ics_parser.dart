@@ -16,6 +16,7 @@ class IcsEvent {
     this.organizer,
     this.organizerName,
     this.sequence,
+    this.recurrenceId,
   });
 
   /// The `SUMMARY` property, or null when the part declares none — the same
@@ -51,6 +52,15 @@ class IcsEvent {
   /// Organizer's display name, from the `ORGANIZER` property's `CN` parameter.
   final String? organizerName;
 
+  /// The `RECURRENCE-ID` property: the original start of the *one occurrence*
+  /// this component is about, absent on an invitation to a whole series.
+  ///
+  /// It is what tells a single-occurrence invitation from a series one, and an
+  /// RSVP has to know which it is answering — Google stores a modified
+  /// occurrence as its own resource with its own roster, so an answer sent to
+  /// the series master never reaches it.
+  final DateTime? recurrenceId;
+
   /// The `SEQUENCE` revision number, or null when the property is absent
   /// (which per RFC 5545 means 0). A reply must echo the sequence it is
   /// replying to so the organizer can discard replies to stale revisions.
@@ -74,6 +84,7 @@ class IcsParser {
     String? organizer;
     String? organizerName;
     int? sequence;
+    DateTime? recurrenceId;
     final attendees = <String>[];
 
     bool inVEvent = false;
@@ -141,6 +152,9 @@ class IcsParser {
             : value;
         if (mailto.contains('@')) organizer = mailto;
         organizerName = _extractCn(rawName);
+      } else if (namePart.startsWith('RECURRENCE-ID')) {
+        final (dt, _) = parseDateTime(rawName, value);
+        if (dt != null) recurrenceId = dt;
       } else if (namePart == 'SEQUENCE') {
         sequence = int.tryParse(value.trim());
       }
@@ -162,6 +176,7 @@ class IcsParser {
       organizer: organizer,
       organizerName: organizerName,
       sequence: sequence,
+      recurrenceId: recurrenceId,
     );
   }
 

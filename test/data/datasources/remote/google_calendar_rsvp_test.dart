@@ -36,6 +36,23 @@ void main() {
       'END:VEVENT\r\n'
       'END:VCALENDAR';
 
+  /// The shape Google sends for "Updated invitation: … @ Thu 17 Sept": one
+  /// occurrence of a series, named by `RECURRENCE-ID`, under the (split)
+  /// master's UID.
+  const occurrenceIcs = 'BEGIN:VCALENDAR\r\n'
+      'METHOD:REQUEST\r\n'
+      'BEGIN:VEVENT\r\n'
+      'UID:series-uid-1\r\n'
+      'DTSTART:20260910T010000Z\r\n'
+      'DTEND:20260910T020000Z\r\n'
+      'RECURRENCE-ID:20260910T011500Z\r\n'
+      'SUMMARY:Weekly sync\r\n'
+      'ORGANIZER:mailto:boss@example.com\r\n'
+      'ATTENDEE:mailto:boss@example.com\r\n'
+      'ATTENDEE:mailto:me@example.com\r\n'
+      'END:VEVENT\r\n'
+      'END:VCALENDAR';
+
   final meetingStart = DateTime.utc(2026, 9, 10, 1);
 
   Response<Map<String, dynamic>> listing(List<Map<String, dynamic>> items) =>
@@ -304,5 +321,77 @@ void main() {
     )).captured;
     expect(deleted[0], '/calendars/primary/events/master-1');
     expect((deleted[1] as Map)['sendUpdates'], 'none');
+  });
+
+  test('an invitation to one occurrence is answered on that occurrence',
+      () async {
+    // Google keeps a modified occurrence as its own resource with its own
+    // roster, so an answer sent to the series master never reaches it — the
+    // occurrence stays on `needsAction`, which the app draws as tentative.
+    stubUidLookup(const []);
+    stubWindowLookup([recurringInstance()]);
+
+    await datasource.respondToMeetingInvite(
+      emailId: 'msg-1',
+      response: MeetingInviteResponseType.accept,
+      icsData: occurrenceIcs,
+      meetingStart: meetingStart,
+      userEmail: 'me@example.com',
+    );
+
+    final patch = verify(mockDio.patch<void>(
+      captureAny,
+      data: anyNamed('data'),
+      queryParameters: anyNamed('queryParameters'),
+    )).captured;
+    expect(patch.single, '/calendars/primary/events/master-1_20260910T010000Z');
+  });
+
+  test('a series master that 404s falls back to the occurrence', () async {
+    // "This and following" splits a series: the instances after the split name
+    // a master `<id>_R<start>` an attendee holds no copy of.
+    stubUidLookup(const []);
+    stubWindowLookup([recurringInstance()]);
+    when(mockDio.patch<void>(
+      '/calendars/primary/events/master-1',
+      data: anyNamed('data'),
+      queryParameters: anyNamed('queryParameters'),
+    )).thenThrow(DioException(
+      requestOptions: RequestOptions(path: '/calendars/primary/events/master-1'),
+      response: Response<void>(
+        statusCode: 404,
+        requestOptions:
+            RequestOptions(path: '/calendars/primary/events/master-1'),
+      ),
+    ));
+
+    await accept();
+
+    verify(mockDio.patch<void>(
+      '/calendars/primary/events/master-1_20260910T010000Z',
+      data: anyNamed('data'),
+      queryParameters: anyNamed('queryParameters'),
+    )).called(1);
+  });
+
+  test('declining one occurrence removes that occurrence, not the series',
+      () async {
+    stubUidLookup(const []);
+    stubWindowLookup([recurringInstance()]);
+
+    await datasource.respondToMeetingInvite(
+      emailId: 'msg-1',
+      response: MeetingInviteResponseType.decline,
+      icsData: occurrenceIcs,
+      meetingStart: meetingStart,
+      userEmail: 'me@example.com',
+    );
+
+    final deleted = verify(mockDio.delete<void>(
+      captureAny,
+      queryParameters: anyNamed('queryParameters'),
+    )).captured;
+    expect(
+        deleted.single, '/calendars/primary/events/master-1_20260910T010000Z');
   });
 }

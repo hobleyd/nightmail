@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.23.3",
+  "version": "1.24.0",
   "sections": [
     {
       "type": "features",
       "title": "New features",
       "items": [
         {
-          "body": "clear rows filed under another account's folder at launch",
-          "title": "cache"
+          "body": "render a markdown attachment instead of showing its source",
+          "title": "preview"
         }
       ]
     },
@@ -18,17 +18,48 @@
       "title": "Fixes",
       "items": [
         {
-          "body": "stop an account switch fetching one mailbox by the other's folder id",
-          "title": "mail"
+          "body": "answer an invitation to one occurrence on that occurrence",
+          "title": "calendar"
         },
         {
-          "body": "stop a Gmail reply falling out of its own thread",
-          "title": "mail"
+          "body": "stop a Gmail RSVP inviting everyone to a meeting of its own",
+          "title": "calendar"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.23.3",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "clear rows filed under another account's folder at launch",
+              "title": "cache"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "stop an account switch fetching one mailbox by the other's folder id",
+              "title": "mail"
+            },
+            {
+              "body": "stop a Gmail reply falling out of its own thread",
+              "title": "mail"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -981,61 +1012,6 @@
             {
               "body": "drop stale folder loads/refreshes after switching folders",
               "title": "mail"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.9.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "make mutations outbox-first and fail network calls fast offline",
-              "title": "mail"
-            },
-            {
-              "body": "add the mutation outbox and drain engine (offline foundation)",
-              "title": "mail"
-            },
-            {
-              "body": "preview Word/Excel/PowerPoint documents",
-              "title": "attachments"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "gate the mutation-triggered outbox drain on connectivity too",
-              "title": "sync"
-            },
-            {
-              "body": "fail open on ambiguous connectivity probes, quarantine only the failing message in outbox drain",
-              "title": "sync"
-            },
-            {
-              "body": "reconcile poll/delta writes against pending outbox ops",
-              "title": "mail"
-            },
-            {
-              "body": "fix three real bugs found in live offline testing",
-              "title": "mail"
-            },
-            {
-              "body": "make the local cache authoritative for reads and background sync",
-              "title": "mail"
-            },
-            {
-              "body": "stop spurious folder-list reauth from refresh-token races",
-              "title": "auth"
             }
           ]
         }

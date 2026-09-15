@@ -789,6 +789,69 @@ one-time refetch — it went to **6** for this. Any future change to what
 `_parseAttachments` produces needs the same, or it only ever applies to mail
 that arrives afterwards.
 
+## A Markdown Attachment Is Rendered, Not Shown As Source
+
+A `.md` attachment is rendered to HTML by `MarkdownPreviewService`
+(`data/services/`) and drawn on the reading pane's webview preview surface —
+the same one the PDF and Office previews use. A drive link to one takes the
+same route: `.md` used to be a `plainText` cloud document, which drew the raw
+source, so `CloudDocumentFormat.markdown` exists to keep one file looking the
+same in one pane however it arrived. What *counts* as markdown is
+`isMarkdownFile` (`core/utils/markdown_file.dart`) — one rule, read by the
+attachment chips and by `cloudDocumentFormatFor`, because two copies of that
+list is how the same file comes to be two different things in one pane.
+
+Four things here are load-bearing:
+
+- **The render is Dart-side, and that is forced rather than merely cheaper.**
+  The generated document carries `script-src 'none'`, so a vendored `marked.js`
+  next to it — the shape `OfficePreviewService` uses for docx/xlsx — would be
+  inert in the page it was meant to render. It also means this page has no
+  sibling files at all, which keeps macOS's directory-scoped `loadFileURL` read
+  access out of the picture and needs no asset extraction.
+- **It cannot route through `_AttachmentChipState._previewKind`.** Returning
+  `webFile` there is tempting, since `webFile` is where it ends up — but that
+  path writes the attachment's own bytes to disk and hands the path to the
+  webview, which renders the markdown *source* as text. It needs the build step
+  first, so it branches beside `_previewOffice`. The output file is named
+  `markdown_<micros>.html` for the reason `buildJsViewer`'s is: the preview is
+  keyed `ValueKey(_previewPath)`, and an unchanged path goes on showing the
+  last document.
+- **The policy is this page's own, not `contentSecurityPolicy()`.** That one
+  governs a document *the sender wrote*, where a stylesheet that will not load
+  takes the message's layout with it and inline images arrive as `file:`
+  alongside. This one governs a document the app generated, so it names a much
+  shorter list and adds `form-action 'none'`. Remote images stay refused at
+  every setting — there is no "Download once" on this surface, that belongs to
+  the mail body's status bar, and a `.md` file carries a tracking pixel as
+  readily as a message body does. A refused image falls back to its alt text.
+- **Raw HTML is escaped by `_escapedRawTags`, not by GFM's tagfilter.** The
+  renderer offers one (`enableTagfilter`), and it fires only when the tag name
+  is immediately followed by `>` — so `<script>` is caught and
+  `<script src="…">` is not, which is precisely the wrong half. The list here
+  is every tag that fetches, executes or re-points the document; everything
+  else a README writes raw (`<br>`, `<details>`, `<img align>`) is kept. The
+  CSP is what makes them inert either way; escaping means the reader *sees*
+  what the file asked for instead of an empty box.
+
+Link destinations are filtered on the AST rather than the rendered string:
+`http`, `https`, `mailto`, a `#heading` anchor and a `data:image/` all survive,
+and everything else — `javascript:`, and a relative `./NOTES.md` that would
+resolve against the scratch directory — loses the attribute and renders as the
+text it was written as. The theme is passed in rather than left to
+`prefers-color-scheme`, which follows the OS past the in-app toggle.
+
+**A link in a previewed document now opens.** `_WebFilePreview` had no
+`onLinkOpened` listener, and the native side cancels every http/https/mailto
+navigation before reporting it — so a link in a previewed PDF or document was
+silently dead. Invisible there; obvious in a README, which is mostly links.
+It goes through `openBodyLink`, so a cloud-document link previews in place as
+it does from a message body. The preview *header's* title is the one that
+deliberately calls `launchUrl` directly instead (see `_PreviewHeader`).
+
+Nothing here needs an `attachmentParseVersion` bump: this changes how an
+attachment is *drawn*, not what `_parseAttachments` records about it.
+
 ## Graph Never Says Whether a Body Was Plain Text
 
 `body.contentType` reports the format Graph *rendered*, not the one the sender

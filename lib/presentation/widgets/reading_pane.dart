@@ -19,6 +19,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'html_body_view.dart';
 import 'plain_text_body_view.dart';
 import 'add_to_calendar_banner.dart';
+import 'body_link_opener.dart';
 import 'contact_hover_card.dart';
 import 'forward_meeting_dialog.dart';
 import 'cloud_document_preview_host.dart';
@@ -30,8 +31,10 @@ import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/error/failures.dart';
 import '../../core/utils/cloud_document_format.dart';
+import '../../core/utils/markdown_file.dart';
 import '../../core/utils/meeting_conflicts.dart';
 import '../../data/services/eml_parser.dart';
+import '../../data/services/markdown_preview_service.dart';
 import '../../data/services/office_preview_service.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_address.dart';
@@ -448,6 +451,9 @@ class _EmailViewState extends State<_EmailView> {
   /// preview surfaces an attachment uses.
   Future<bool> _showCloudDocument(
       CloudDocumentLink link, CloudDocument document) async {
+    // Read before the first await, so the markdown render below is not asking
+    // a possibly-unmounted context what theme it is in.
+    final dark = Theme.of(context).brightness == Brightness.dark;
     final dir = await getTemporaryDirectory();
     // A provider-converted document keeps its original title but is a PDF now,
     // and the webview decides what it is looking at by extension.
@@ -468,6 +474,14 @@ class _EmailViewState extends State<_EmailView> {
       case CloudDocumentFormat.pdf:
       case CloudDocumentFormat.plainText:
         _showPreview(_AttachmentPreviewKind.webFile, file.path, document.name,
+            link.url, icon,
+            sourceUrl: link.url);
+        return true;
+      case CloudDocumentFormat.markdown:
+        final rendered = await sl<MarkdownPreviewService>()
+            .buildPreview(document.bytes, dark: dark);
+        if (!mounted) return true;
+        _showPreview(_AttachmentPreviewKind.webFile, rendered, document.name,
             link.url, icon,
             sourceUrl: link.url);
         return true;
@@ -2786,6 +2800,11 @@ class _AttachmentChipState extends State<_AttachmentChip> {
     }
   }
 
+  bool get _isMarkdown => isMarkdownFile(
+        name: widget.attachment.name,
+        contentType: widget.attachment.contentType,
+      );
+
   static IconData _iconFor(String contentType, String name) {
     final ct = contentType.toLowerCase();
     final ext =
@@ -2793,6 +2812,9 @@ class _AttachmentChipState extends State<_AttachmentChip> {
     if (ct.startsWith('image/')) { return Icons.image_rounded; }
     if (ct.contains('pdf') || ext == 'pdf') { return Icons.picture_as_pdf_rounded; }
     if (ct.contains('rfc822') || ext == 'eml') { return Icons.mail_outline_rounded; }
+    if (isMarkdownFile(contentType: contentType, name: name)) {
+      return Icons.article_rounded;
+    }
     if (ct.contains('word') || ext == 'doc' || ext == 'docx') { return Icons.description_rounded; }
     if (ct.contains('excel') || ct.contains('spreadsheet') ||
         ext == 'xls' || ext == 'xlsx' || ext == 'csv') { return Icons.table_chart_rounded; }
@@ -2914,6 +2936,32 @@ class _AttachmentChipState extends State<_AttachmentChip> {
         );
       });
 
+  /// Markdown preview: rendered to HTML here and shown on the same webview
+  /// surface the PDF and Office previews use.
+  ///
+  /// It cannot go through [_previewKind] the way a PDF does, tempting as that
+  /// is when `webFile` is where it ends up: that path writes the attachment's
+  /// own bytes to disk and hands the path to the webview, which would render
+  /// the markdown *source* as plain text. The build step is the whole point,
+  /// so this branches like [_previewOffice] does.
+  Future<void> _previewMarkdown() {
+    // Read before the await: the app's own brightness, not the OS's, since
+    // `prefers-color-scheme` would follow the system past the in-app toggle.
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return _withBytes((bytes) async {
+      final path =
+          await sl<MarkdownPreviewService>().buildPreview(bytes, dark: dark);
+      if (!mounted) return;
+      widget.onAttachmentPreview?.call(
+        _AttachmentPreviewKind.webFile,
+        path,
+        widget.attachment.name,
+        widget.attachment.id,
+        _iconFor(widget.attachment.contentType, widget.attachment.name),
+      );
+    });
+  }
+
   Future<void> _saveAs() => _withBytes((bytes) async {
         if (_isMobile) {
           // Mobile: share sheet lets the user pick Files / Downloads
@@ -2945,7 +2993,9 @@ class _AttachmentChipState extends State<_AttachmentChip> {
               ? () => _previewAttachment(previewKind)
               : officeFormat != null
                   ? () => _previewOffice(officeFormat)
-                  : null,
+                  : _isMarkdown
+                      ? _previewMarkdown
+                      : null,
       onDoubleTap: _isMobile ? null : _open,
       onLongPress: _isMobile ? _saveAs : null,
       onSecondaryTap: _isMobile ? null : _saveAs,
@@ -3046,6 +3096,7 @@ class _WebFilePreview extends StatefulWidget {
 
 class _WebFilePreviewState extends State<_WebFilePreview> {
   HtmlViewController? _htmlController;
+  StreamSubscription<String>? _linkSub;
   bool _disposed = false;
 
   @override
@@ -3058,6 +3109,16 @@ class _WebFilePreviewState extends State<_WebFilePreview> {
     final ctrl = HtmlViewController();
     await ctrl.initialize();
     if (_disposed) { unawaited(ctrl.dispose()); return; }
+    // The native side cancels every http/https/mailto navigation and reports
+    // it here, so without a listener a link in a previewed document is simply
+    // dead — which a markdown README, being mostly links, makes obvious. It
+    // goes to `openBodyLink` rather than `launchUrl` so a cloud-document link
+    // still previews in place, exactly as it does from a message body; the
+    // preview header's own title is the one that deliberately does not (see
+    // [_PreviewHeader]).
+    _linkSub = ctrl.onLinkOpened.listen((url) {
+      if (mounted) unawaited(openBodyLink(context, url));
+    });
     setState(() => _htmlController = ctrl);
     unawaited(ctrl.loadUrl(Uri.file(widget.filePath).toString()));
   }
@@ -3065,6 +3126,7 @@ class _WebFilePreviewState extends State<_WebFilePreview> {
   @override
   void dispose() {
     _disposed = true;
+    unawaited(_linkSub?.cancel());
     unawaited(_htmlController?.dispose());
     super.dispose();
   }

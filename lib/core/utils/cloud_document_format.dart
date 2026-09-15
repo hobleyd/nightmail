@@ -6,6 +6,8 @@
 /// download and a dead end for the reader.
 library;
 
+import 'markdown_file.dart';
+
 enum CloudDocumentFormat {
   /// Already a PDF — download and show it in the webview.
   pdf,
@@ -20,6 +22,13 @@ enum CloudDocumentFormat {
 
   /// Plain text, which the webview renders as-is from a file URL.
   plainText,
+
+  /// Markdown, rendered to HTML by `MarkdownPreviewService` before it reaches
+  /// the webview. Split out of [plainText] so a `.md` file looks the same in
+  /// the reading pane whether it arrived as an attachment or as a link to
+  /// somebody's drive — which is the sort of split this one rule exists to
+  /// prevent.
+  markdown,
 }
 
 /// Formats Microsoft Graph will convert to PDF (`content?format=pdf`), which
@@ -34,7 +43,7 @@ const _imageExtensions = <String>{
   'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'heic',
 };
 
-const _plainTextExtensions = <String>{'txt', 'log', 'md'};
+const _plainTextExtensions = <String>{'txt', 'log'};
 
 /// The preview route for a document, or null when there is none — in which
 /// case the link belongs in the browser after all, and no bytes should be
@@ -53,6 +62,9 @@ CloudDocumentFormat? cloudDocumentFormatFor({
   }
   if (_officeExtensions.contains(ext)) {
     return CloudDocumentFormat.officeConvertible;
+  }
+  if (isMarkdownFile(name: name, contentType: contentType)) {
+    return CloudDocumentFormat.markdown;
   }
   if (_plainTextExtensions.contains(ext) || ct.startsWith('text/plain')) {
     return CloudDocumentFormat.plainText;

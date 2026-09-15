@@ -36,6 +36,7 @@ import 'data/repositories/system_contacts_repository_impl.dart';
 import 'data/repositories/tasks_repository_impl.dart';
 import 'data/services/eml_parser.dart';
 import 'data/services/inline_attachment_cache.dart';
+import 'data/services/markdown_preview_service.dart';
 import 'data/services/office_preview_service.dart';
 // AI subsystem
 import 'data/datasources/ai/ai_adapter_factory.dart';
@@ -424,6 +425,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => ForwardCalendarEvent(sl<CalendarRepository>()));
   sl.registerLazySingleton(() => EmlParser());
   sl.registerLazySingleton(() => OfficePreviewService());
+  sl.registerLazySingleton(() => MarkdownPreviewService());
   sl.registerLazySingleton(() => FetchCloudDocument(sl<CloudDriveRepository>()));
   sl.registerLazySingleton(() => GetTaskLists(sl<TasksRepository>()));
   sl.registerLazySingleton(() => GetTasks(sl<TasksRepository>()));

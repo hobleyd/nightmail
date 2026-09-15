@@ -31,6 +31,7 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - SharePoint, OneDrive and Google Drive document links open as a preview in the reading pane, like an attachment — from any mailbox, whichever account holds the file (file access is asked for once, the first time you open one)
 - A previewed SharePoint, OneDrive or Google Drive document keeps a link to the file itself — tap the preview bar's title or the open-in-new icon to open it in the browser
 - An email attached to another message opens as a preview in the reading pane, with its own attachments available to open or save
+- A markdown attachment or a `.md` document link renders as formatted text in the reading pane's preview, rather than showing its raw source
 - The compose window reopens at the size and position it was last closed at
 
 ### Folders

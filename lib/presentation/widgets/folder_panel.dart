@@ -80,6 +80,29 @@ class _FolderPanelState extends State<FolderPanel> {
   // real pointer position. Track the pointer directly instead.
   Offset? _lastPointerGlobalPosition;
 
+  // Scrolling a row into view.
+  //
+  // A new folder sorts in among its siblings rather than landing where the
+  // editor was, and the list is routinely taller than the panel — so both the
+  // editor and the folder that replaces it arrive off screen, which reads as
+  // the create having done nothing.
+  //
+  // The panel has no id to watch for at submit time, so the create is
+  // remembered by the only thing it knows (the parent and the typed name) and
+  // matched against whichever state first carries the folder: the create's own
+  // reply, or the reconcile fetch behind it.
+  ({String parentFolderId, String displayName})? _awaitingCreate;
+  // The row owed a scroll, as one of the two things it can be. Only one is
+  // ever set.
+  bool _revealCreatingRow = false;
+  String? _revealFolderId;
+  final GlobalKey _revealRowKey = GlobalKey();
+  // Where that row is in the display list, and how long the list is — recorded
+  // at build time because that is where the list is built, and needed by the
+  // estimate below.
+  int _revealIndex = -1;
+  int _lastItemCount = 0;
+
   @override
   void initState() {
     super.initState();
@@ -99,6 +122,138 @@ class _FolderPanelState extends State<FolderPanel> {
     _autoScrollTimer?.cancel();
     _folderScrollController.dispose();
     super.dispose();
+  }
+
+  bool get _hasRevealTarget => _revealCreatingRow || _revealFolderId != null;
+
+  bool _isRevealTarget(_DisplayItem item) {
+    if (_revealCreatingRow) return item.isCreating;
+    final id = _revealFolderId;
+    return id != null &&
+        !item.isCreating &&
+        item.pendingCreate == null &&
+        item.folder.id == id;
+  }
+
+  void _clearReveal() {
+    if (!_hasRevealTarget) return;
+    setState(() {
+      _revealCreatingRow = false;
+      _revealFolderId = null;
+    });
+  }
+
+  /// Four is enough for the estimate below to converge on any real list; it is
+  /// a backstop against a row that can never be built, not a search.
+  static const int _maxRevealAttempts = 4;
+
+  /// Scrolls the row the panel currently owes a scroll to into view.
+  ///
+  /// The awkward half is that `ListView.builder` only builds what is on screen
+  /// (plus its cache extent), so a row further away than that has no context
+  /// and `Scrollable.ensureVisible` has nothing to scroll to — which is why
+  /// the create's own editor used to open invisibly under a folder with enough
+  /// children. So an unbuilt row is first *jumped* to, using the row's index
+  /// against the list's own extent estimate (the average of the rows it has
+  /// built), and positioned exactly on the next frame, when it really exists.
+  ///
+  /// A row already fully inside the viewport is left alone. `ensureVisible`
+  /// scrolls unconditionally, so centring one would jerk the list on the
+  /// common case of a folder appearing directly under its parent.
+  void _revealTargetRow({int attempt = 0}) {
+    if (!mounted || !_hasRevealTarget) return;
+    // The editor keeps its own GlobalKey, which is also what preserves the
+    // text being typed into it when the wrapper below comes and goes.
+    final ctx = _revealCreatingRow
+        ? _creatingRowKey.currentContext
+        : _revealRowKey.currentContext;
+    if (ctx != null) {
+      if (!_isRowFullyVisible(ctx)) {
+        Scrollable.ensureVisible(
+          ctx,
+          alignment: 0.5,
+          // Only the first attempt animates: by the second the list has
+          // already jumped, and animating from there is a second movement
+          // over the same distance.
+          duration: attempt == 0
+              ? const Duration(milliseconds: 200)
+              : Duration.zero,
+        );
+      }
+      _clearReveal();
+      return;
+    }
+    if (attempt >= _maxRevealAttempts ||
+        !_folderScrollController.hasClients ||
+        _revealIndex < 0 ||
+        _lastItemCount == 0) {
+      _clearReveal();
+      return;
+    }
+    final position = _folderScrollController.position;
+    final extent = position.maxScrollExtent + position.viewportDimension;
+    final target = ((_revealIndex + 0.5) / _lastItemCount * extent -
+            position.viewportDimension / 2)
+        .clamp(position.minScrollExtent, position.maxScrollExtent);
+    if (target == position.pixels) {
+      // Nothing would move, so nothing would be built and no frame would be
+      // scheduled — the retry below would never fire.
+      _clearReveal();
+      return;
+    }
+    _folderScrollController.jumpTo(target);
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _revealTargetRow(attempt: attempt + 1));
+  }
+
+  bool _isRowFullyVisible(BuildContext rowContext) {
+    final row = rowContext.findRenderObject();
+    final list = _folderListAreaKey.currentContext?.findRenderObject();
+    if (row is! RenderBox ||
+        list is! RenderBox ||
+        !row.attached ||
+        !list.attached) {
+      return false;
+    }
+    final rowTop = row.localToGlobal(Offset.zero).dy;
+    final listTop = list.localToGlobal(Offset.zero).dy;
+    return rowTop >= listTop &&
+        rowTop + row.size.height <= listTop + list.size.height;
+  }
+
+  /// Matches the folder the user asked for against the state that first
+  /// carries it — the create's reply, or the fetch behind it — and scrolls to
+  /// it. A failed create keeps [_awaitingCreate] set, so its retry button
+  /// needs nothing of its own.
+  void _onFolderListState(FolderListState state) {
+    final awaiting = _awaitingCreate;
+    if (awaiting == null ||
+        state is! FolderListLoaded ||
+        state.pendingCreate != null) {
+      return;
+    }
+    final wanted = awaiting.displayName.trim().toLowerCase();
+    EmailFolder? created;
+    for (final f in state.folders) {
+      if (f.parentFolderId == awaiting.parentFolderId &&
+          f.displayName.trim().toLowerCase() == wanted) {
+        created = f;
+        break;
+      }
+    }
+    if (created == null) return;
+    final folder = created;
+    setState(() {
+      _awaitingCreate = null;
+      _revealCreatingRow = false;
+      _revealFolderId = folder.id;
+      // A row has to be in the display list to be scrolled to, and the parent
+      // may have been collapsed while the create was in flight.
+      final parentId = folder.parentFolderId;
+      if (parentId != null) _expandedIds.add(parentId);
+    });
+    widget.onExpandedIdsChanged?.call(_expandedIds);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _revealTargetRow());
   }
 
   void _startAutoScroll(bool scrollUp) {
@@ -159,7 +314,9 @@ class _FolderPanelState extends State<FolderPanel> {
                         pollerReauthAccounts
                             .contains(accountState.activeAccount.id));
 
-                final folderArea = BlocBuilder<FolderListBloc, FolderListState>(
+                final folderArea =
+                    BlocConsumer<FolderListBloc, FolderListState>(
+                  listener: (context, state) => _onFolderListState(state),
                   builder: (context, state) {
                     return switch (state) {
                       FolderListInitial() || FolderListLoading() => Center(
@@ -239,123 +396,142 @@ class _FolderPanelState extends State<FolderPanel> {
       return true;
     }
 
-    final listView = ListView.builder(
+    _lastItemCount = items.length;
+    _revealIndex = _hasRevealTarget ? items.indexWhere(_isRevealTarget) : -1;
+
+    Widget buildRow(BuildContext context, _DisplayItem item) {
+      final pending = item.pendingCreate;
+      if (pending != null) {
+        return _FolderPendingRow(
+          depth: item.depth,
+          pending: pending,
+          onRetry: () => context.read<FolderListBloc>().add(
+                FolderListCreateFolderRequested(
+                  parentFolderId: pending.parentFolderId,
+                  displayName: pending.displayName,
+                ),
+              ),
+          onDismiss: () {
+            setState(() => _awaitingCreate = null);
+            context
+                .read<FolderListBloc>()
+                .add(const FolderListCreateFolderDismissed());
+          },
+        );
+      }
+      if (item.isCreating) {
+        return _FolderCreatingRow(
+          key: _creatingRowKey,
+          depth: item.depth,
+          onSubmit: (name) {
+            // Fire the event before setState so the context is still mounted.
+            context.read<FolderListBloc>().add(
+                  FolderListCreateFolderRequested(
+                    parentFolderId: item.folder.id,
+                    displayName: name,
+                  ),
+                );
+            setState(() {
+              _creatingChildOfId = null;
+              _awaitingCreate = (
+                parentFolderId: item.folder.id,
+                displayName: name,
+              );
+            });
+          },
+          onCancel: () => setState(() {
+            _creatingChildOfId = null;
+            _awaitingCreate = null;
+          }),
+        );
+      }
+      if (item.folder.id == _renamingFolderId) {
+        return _FolderRenamingRow(
+          depth: item.depth,
+          currentName: item.folder.displayName,
+          onSubmit: (name) {
+            context.read<FolderListBloc>().add(
+                  FolderListRenameFolderRequested(
+                    folderId: item.folder.id,
+                    newDisplayName: name,
+                  ),
+                );
+            setState(() => _renamingFolderId = null);
+          },
+          onCancel: () => setState(() => _renamingFolderId = null),
+        );
+      }
+      return _FolderItem(
+        folder: item.folder,
+        depth: item.depth,
+        isSelected: item.folder.id == widget.selectedFolderId,
+        isExpanded: _expandedIds.contains(item.folder.id),
+        hasChildren: item.folder.childFolderCount > 0,
+        showUnreadCount: showUnreadCounts,
+        isDraggable: !_isSystemFolder(item.folder),
+        onEmailDragMove: _handleFolderListDragMove,
+        onEmailDragLeave: _stopAutoScroll,
+        canAcceptFolderDrop: (draggedId) =>
+            canDrop(draggedId, item.folder.id),
+        onFolderDropped: (draggedId) {
+          context.read<FolderListBloc>().add(FolderListMoveFolderRequested(
+                folderId: draggedId,
+                newParentFolderId: item.folder.id,
+              ));
+          // Open the folder it was dropped on, or the move reads as the
+          // folder disappearing: a folder you have just dragged something
+          // onto is one you have not expanded, so the row lands out of
+          // sight inside it. Done on the drop rather than on the reply —
+          // expanding a folder is harmless if the move then fails.
+          if (_expandedIds.add(item.folder.id)) {
+            setState(() {});
+            widget.onExpandedIdsChanged?.call(_expandedIds);
+          }
+        },
+        onTap: () => widget.onFolderSelected(item.folder),
+        onExpandTap: () {
+          setState(() {
+            if (_expandedIds.contains(item.folder.id)) {
+              _expandedIds.remove(item.folder.id);
+            } else {
+              _expandedIds.add(item.folder.id);
+            }
+          });
+          widget.onExpandedIdsChanged?.call(_expandedIds);
+        },
+        onAddFolder: () {
+          setState(() {
+            _expandedIds.add(item.folder.id);
+            _creatingChildOfId = item.folder.id;
+            _revealFolderId = null;
+            _revealCreatingRow = true;
+          });
+          widget.onExpandedIdsChanged?.call(_expandedIds);
+          // The editor opens under the parent's last child, so a folder with
+          // more children than fit on screen used to open it out of sight —
+          // and out of reach, since the row it is in was never built.
+          WidgetsBinding.instance
+              .addPostFrameCallback((_) => _revealTargetRow());
+        },
+        onRename: () => setState(() => _renamingFolderId = item.folder.id),
+      );
+    }
+
+    return ListView.builder(
       key: _folderListAreaKey,
       controller: _folderScrollController,
       padding: const EdgeInsets.symmetric(vertical: 8),
       itemCount: items.length,
       itemBuilder: (context, i) {
-        final item = items[i];
-        final pending = item.pendingCreate;
-        if (pending != null) {
-          return _FolderPendingRow(
-            depth: item.depth,
-            pending: pending,
-            onRetry: () => context.read<FolderListBloc>().add(
-                  FolderListCreateFolderRequested(
-                    parentFolderId: pending.parentFolderId,
-                    displayName: pending.displayName,
-                  ),
-                ),
-            onDismiss: () => context
-                .read<FolderListBloc>()
-                .add(const FolderListCreateFolderDismissed()),
-          );
-        }
-        if (item.isCreating) {
-          return _FolderCreatingRow(
-            key: _creatingRowKey,
-            depth: item.depth,
-            onSubmit: (name) {
-              // Fire the event before setState so the context is still mounted.
-              context.read<FolderListBloc>().add(
-                    FolderListCreateFolderRequested(
-                      parentFolderId: item.folder.id,
-                      displayName: name,
-                    ),
-                  );
-              setState(() => _creatingChildOfId = null);
-            },
-            onCancel: () => setState(() => _creatingChildOfId = null),
-          );
-        }
-        if (item.folder.id == _renamingFolderId) {
-          return _FolderRenamingRow(
-            depth: item.depth,
-            currentName: item.folder.displayName,
-            onSubmit: (name) {
-              context.read<FolderListBloc>().add(
-                    FolderListRenameFolderRequested(
-                      folderId: item.folder.id,
-                      newDisplayName: name,
-                    ),
-                  );
-              setState(() => _renamingFolderId = null);
-            },
-            onCancel: () => setState(() => _renamingFolderId = null),
-          );
-        }
-        return _FolderItem(
-          folder: item.folder,
-          depth: item.depth,
-          isSelected: item.folder.id == widget.selectedFolderId,
-          isExpanded: _expandedIds.contains(item.folder.id),
-          hasChildren: item.folder.childFolderCount > 0,
-          showUnreadCount: showUnreadCounts,
-          isDraggable: !_isSystemFolder(item.folder),
-          onEmailDragMove: _handleFolderListDragMove,
-          onEmailDragLeave: _stopAutoScroll,
-          canAcceptFolderDrop: (draggedId) =>
-              canDrop(draggedId, item.folder.id),
-          onFolderDropped: (draggedId) {
-            context.read<FolderListBloc>().add(FolderListMoveFolderRequested(
-                  folderId: draggedId,
-                  newParentFolderId: item.folder.id,
-                ));
-            // Open the folder it was dropped on, or the move reads as the
-            // folder disappearing: a folder you have just dragged something
-            // onto is one you have not expanded, so the row lands out of
-            // sight inside it. Done on the drop rather than on the reply —
-            // expanding a folder is harmless if the move then fails.
-            if (_expandedIds.add(item.folder.id)) {
-              setState(() {});
-              widget.onExpandedIdsChanged?.call(_expandedIds);
-            }
-          },
-          onTap: () => widget.onFolderSelected(item.folder),
-          onExpandTap: () {
-            setState(() {
-              if (_expandedIds.contains(item.folder.id)) {
-                _expandedIds.remove(item.folder.id);
-              } else {
-                _expandedIds.add(item.folder.id);
-              }
-            });
-            widget.onExpandedIdsChanged?.call(_expandedIds);
-          },
-          onAddFolder: () {
-            setState(() {
-              _expandedIds.add(item.folder.id);
-              _creatingChildOfId = item.folder.id;
-            });
-            widget.onExpandedIdsChanged?.call(_expandedIds);
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              final rowContext = _creatingRowKey.currentContext;
-              if (rowContext != null) {
-                Scrollable.ensureVisible(
-                  rowContext,
-                  duration: const Duration(milliseconds: 200),
-                  alignment: 0.5,
-                );
-              }
-            });
-          },
-          onRename: () => setState(() => _renamingFolderId = item.folder.id),
-        );
+        final row = buildRow(context, items[i]);
+        // Keyed by index rather than by matching the item again: a GlobalKey
+        // that landed on two rows at once would throw. The editor row is
+        // excluded — it carries its own GlobalKey, which is what keeps the
+        // text being typed alive across this wrapper appearing and going.
+        if (i != _revealIndex || _revealCreatingRow) return row;
+        return KeyedSubtree(key: _revealRowKey, child: row);
       },
     );
-
-    return listView;
   }
 
   static const double _autoScrollHotZone = 32.0;
@@ -1760,6 +1936,15 @@ class _FolderCreatingRowState extends State<_FolderCreatingRow> {
       }
       return KeyEventResult.ignored;
     };
+    // Focused outright rather than left to the TextField's `autofocus`, which
+    // is only honoured while nothing else in the enclosing FocusScope holds
+    // focus — and by the time an inline editor opens, something usually does:
+    // the context menu it was chosen from restores focus to whatever had it
+    // before, on the way out. The field then opened dead, needing a click
+    // before it would take a keystroke.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNode.requestFocus();
+    });
   }
 
   @override
@@ -1974,6 +2159,15 @@ class _FolderRenamingRowState extends State<_FolderRenamingRow> {
       }
       return KeyEventResult.ignored;
     };
+    // Focused outright rather than left to the TextField's `autofocus`, which
+    // is only honoured while nothing else in the enclosing FocusScope holds
+    // focus — and by the time an inline editor opens, something usually does:
+    // the context menu it was chosen from restores focus to whatever had it
+    // before, on the way out. The field then opened dead, needing a click
+    // before it would take a keystroke.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNode.requestFocus();
+    });
   }
 
   @override

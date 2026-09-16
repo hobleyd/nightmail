@@ -1330,6 +1330,50 @@ this: inserting a child bumps its parent's count, and an emit that changed
 nothing else would otherwise compare equal and be dropped — same trap as
 `MailPollerState`.
 
+### Being drawn is not the same as being on screen
+
+Both ends of a create — the inline editor, and the folder row that replaces it
+— land wherever the tree puts them, which in a list taller than the panel is
+routinely out of sight. The editor opens under the parent's *last child*, and
+the folder then sorts in among its siblings, so the two are not even in the
+same place: adding a folder to a parent with forty children opened the editor
+below the fold and, once named, filed the row above it.
+
+`Scrollable.ensureVisible` is not enough on its own, because **a
+`ListView.builder` row that is off screen has no context to scroll to** — it
+was never built. That is why the editor's old reveal was a silent no-op in
+exactly the case that needed it (an invisible editor is also an unreachable
+one: there is no `TextField` to type into). So `_revealTargetRow` *jumps*
+first, using the row's index against the list's own extent estimate, and
+positions it exactly on the next frame, when the row really exists. Four
+attempts is a backstop, not a search.
+
+Three things here are load-bearing:
+
+- **A row already fully inside the viewport is left alone.** `ensureVisible`
+  scrolls whether or not it needs to, so centring unconditionally would jerk
+  the list on the common case — a folder appearing directly under the parent
+  it was added to, in plain sight.
+- **The create is remembered by parent + typed name, not by id.** There is no
+  id at submit time, and the folder may arrive on either of two states (the
+  create's reply, or the reconcile fetch behind it). It is kept across a
+  *failed* create so the retry button needs nothing of its own, and the parent
+  is re-expanded when the match lands — a row must be in the display list to
+  be scrolled to.
+- **The editor focuses itself outright, not by `autofocus`.** A `TextField`'s
+  `autofocus` is honoured only while nothing else in the enclosing
+  `FocusScope` holds focus — and the context menu the editor was chosen from
+  restores focus to whatever had it before, on its way out. So the field
+  opened *dead*: visibly ready, needing a click before it would take a
+  keystroke. It is invisible in a test harness holding nothing else focusable,
+  which is why `folder_panel_test` pumps the panel beside a `Focus` standing in
+  for the rest of the app. The rename editor is the same shape and got the same
+  treatment.
+- **The `GlobalKey` is attached by index, and never to the editor.** Matching
+  the item a second time could put one key on two rows, which throws; and the
+  editor keeps its own key, which is what preserves the text being typed while
+  the reveal wrapper comes and goes.
+
 `test/presentation/widgets/folder_panel_test.dart` is the panel's first widget
 test, and two things in its harness are load-bearing: **the `FolderListBloc`
 must be constructed inside the test body, not in `setUp`** — a bloc's event

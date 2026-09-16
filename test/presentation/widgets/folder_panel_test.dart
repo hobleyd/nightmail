@@ -194,6 +194,10 @@ void main() {
 
   tearDown(() async => sl.reset());
 
+  /// Focused by a test that wants the panel to open its editor against a
+  /// scope that already has a focused descendant.
+  late FocusNode elsewhere;
+
   /// Pumps the panel with the folder list already loaded, and [expanded]
   /// folders open — the panel expands a folder itself when the user asks to
   /// add a child, so a test only needs this for a parent it wants open first.
@@ -216,10 +220,18 @@ void main() {
       staleRetryDelays: const [],
     );
     addTearDown(() => unawaited(folderList.close()));
+    elsewhere = FocusNode();
+    addTearDown(elsewhere.dispose);
 
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
-        body: SizedBox(
+        body: Row(children: [
+          // Stands in for the rest of the app: a focusable the panel shares a
+          // FocusScope with. `autofocus` is ignored while anything else in the
+          // scope holds focus, so an editor that focuses itself in an empty
+          // harness can still open dead in the app.
+          Focus(focusNode: elsewhere, child: const SizedBox(width: 1)),
+          SizedBox(
           width: 260,
           height: 700,
           child: MultiBlocProvider(
@@ -241,6 +253,7 @@ void main() {
             ),
           ),
         ),
+        ]),
       ),
     ));
     folderList.add(const FolderListLoadRequested());
@@ -263,11 +276,137 @@ void main() {
     await tester.pump();
   }
 
+  /// Whether [name]'s row is not just built but actually inside the list's
+  /// viewport. `findsOneWidget` is not enough: ListView.builder's cache extent
+  /// builds rows a little past the fold, so a row the user cannot see still
+  /// matches a plain finder.
+  bool rowIsOnScreen(WidgetTester tester, String name) {
+    final row = find.text(name);
+    if (row.evaluate().isEmpty) return false;
+    final list = tester.getRect(find.byType(ListView));
+    final rect = tester.getRect(row);
+    return rect.top >= list.top && rect.bottom <= list.bottom;
+  }
+
   Finder creatingRow(String name) => find.byTooltip('Creating $name…');
   Finder failedRow(String name, String reason) =>
       find.byTooltip("Couldn't create $name: $reason");
 
   group('FolderPanel — creating a folder', () {
+    testWidgets('scrolls the new folder into view when it sorts off screen',
+        (tester) async {
+      // The list is taller than the panel, and a new folder sorts in among
+      // its siblings rather than landing where the editor was — so the row
+      // the user just asked for arrives off screen and the create reads as
+      // having done nothing.
+      serverFolders = [
+        _folder('inbox-id', 'Inbox', childFolderCount: 40),
+        for (var i = 1; i <= 40; i++)
+          _folder('child-$i', 'Child ${i.toString().padLeft(2, '0')}',
+              parentFolderId: 'inbox-id'),
+      ];
+      createFolder.answer = (_) async => Right(_folder(
+            'server-id',
+            'Aardvark',
+            parentFolderId: 'inbox-id',
+          ));
+      await pumpPanel(tester, expanded: {'inbox-id'});
+
+      // The editor opens below the last child, so the list is scrolled to the
+      // bottom by the time the name is submitted; the folder itself sorts to
+      // the top of the children, which is now well above the fold.
+      await addFolder(tester, folderName: 'Inbox', name: 'Aardvark');
+      await tester.pumpAndSettle();
+
+      expect(rowIsOnScreen(tester, 'Aardvark'), isTrue);
+    });
+
+    testWidgets('opens the editor focused, even when it had to be scrolled to',
+        (tester) async {
+      serverFolders = [
+        _folder('inbox-id', 'Inbox', childFolderCount: 40),
+        for (var i = 1; i <= 40; i++)
+          _folder('child-$i', 'Child ${i.toString().padLeft(2, '0')}',
+              parentFolderId: 'inbox-id'),
+      ];
+      await pumpPanel(tester, expanded: {'inbox-id'});
+      elsewhere.requestFocus();
+      await tester.pump();
+
+      await tester.tap(find.text('Inbox'), buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Add Folder'));
+      await tester.pumpAndSettle();
+
+      // `enterText` focuses the field itself, so every other test here would
+      // pass on an editor the user has to click first.
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).focusNode?.hasFocus,
+        isTrue,
+      );
+    });
+
+    testWidgets('the rename editor opens focused too', (tester) async {
+      serverFolders = [
+        _folder('inbox-id', 'Inbox'),
+        _folder('projects-id', 'Projects'),
+      ];
+      await pumpPanel(tester);
+      elsewhere.requestFocus();
+      await tester.pump();
+
+      await tester.tap(find.text('Projects'), buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Rename'));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).focusNode?.hasFocus,
+        isTrue,
+      );
+    });
+
+    testWidgets('leaves the list where it is when the new row is already there',
+        (tester) async {
+      // `Scrollable.ensureVisible` scrolls whether or not it needs to, so
+      // centring the new row unconditionally would jerk the list on the
+      // common case: a folder appearing directly under the parent it was
+      // added to, in plain sight.
+      serverFolders = [
+        _folder('inbox-id', 'Inbox'),
+        for (var i = 1; i <= 40; i++) _folder('root-$i', 'Folder $i'),
+      ];
+      createFolder.answer = (params) async => Right(_folder(
+            'server-id',
+            params.displayName,
+            parentFolderId: params.parentFolderId,
+          ));
+      await pumpPanel(tester);
+
+      // Scrolled off both ends, and the parent taken from the lower part of
+      // the viewport, so centring its new child really would move the list —
+      // the offset holding still below is the visibility guard's doing and
+      // not `ensureVisible`'s clamp against the top of the list.
+      final controller =
+          tester.widget<ListView>(find.byType(ListView)).controller!;
+      controller.jumpTo(300);
+      await tester.pumpAndSettle();
+      final list = tester.getRect(find.byType(ListView));
+      final parent = [for (var i = 1; i <= 40; i++) 'Folder $i'].firstWhere((n) {
+        final row = find.text(n);
+        if (row.evaluate().isEmpty) return false;
+        final rect = tester.getRect(row);
+        return rect.top > list.top + list.height * 0.6 &&
+            rect.bottom <= list.bottom;
+      });
+
+      await addFolder(tester, folderName: parent, name: 'Receipts');
+      await tester.pumpAndSettle();
+
+      expect(rowIsOnScreen(tester, 'Receipts'), isTrue);
+      expect(controller.offset, 300);
+    });
+
     testWidgets('keeps the typed name on screen while the create is in flight',
         (tester) async {
       final create = Completer<Either<Failure, EmailFolder>>();

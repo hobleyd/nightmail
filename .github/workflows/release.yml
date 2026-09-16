@@ -77,6 +77,10 @@ jobs:
   build-macos:
     needs: prepare
     runs-on: macos-latest
+    env:
+      # `if:` conditions cannot reference the secrets context directly, so
+      # gate signing/notarization steps on this instead.
+      HAS_SIGNING_CERT: ${{ secrets.MACOS_CERT_P12 != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -98,7 +102,7 @@ jobs:
       # fork PR builds ad-hoc/unsigned exactly as before, so contributor CI
       # never fails for lacking a certificate it was never meant to have.
       - name: Import Developer ID signing certificate
-        if: ${{ secrets.MACOS_CERT_P12 != '' }}
+        if: ${{ env.HAS_SIGNING_CERT == 'true' }}
         env:
           MACOS_CERT_P12_B64: ${{ secrets.MACOS_CERT_P12 }}
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
@@ -138,7 +142,7 @@ jobs:
       - run: flutter build macos --release --no-tree-shake-icons --build-number ${{ needs.prepare.outputs.build_number }}
 
       - name: Notarize and staple
-        if: ${{ secrets.MACOS_CERT_P12 != '' }}
+        if: ${{ env.HAS_SIGNING_CERT == 'true' }}
         env:
           NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
@@ -212,7 +216,7 @@ jobs:
           path: dist/${{ needs.prepare.outputs.version }}+${{ needs.prepare.outputs.build_number }}-macos/
 
       - name: Remove signing keychain
-        if: ${{ always() && secrets.MACOS_CERT_P12 != '' }}
+        if: ${{ always() && env.HAS_SIGNING_CERT == 'true' }}
         run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
 
   build-windows:

@@ -38,7 +38,8 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - Full folder hierarchy with unread counts
 - Create folders via right-click context menu
 - A new folder appears the moment the provider accepts it, and a create that fails or is attempted offline keeps the typed name on screen with the reason and a retry
-- Empty folder (with permanent delete option)
+- Delete a folder, and the folders inside it, from the right-click context menu
+- Empty folder (with permanent delete option), on every provider — emptying a Gmail trash asks Google for permission to delete mail the first time
 - Incremental sync with delta tokens (Microsoft 365)
 - Incremental sync for Gmail (history API) and IMAP (UID-based) accounts too
 - Drag folders in the list to reparent them
@@ -219,6 +220,7 @@ NightMail connects to Google via the Gmail API, Google Calendar API, Google Task
    | `contacts.readonly` | Personal contact suggestions |
    | `directory.readonly` | Organisation directory suggestions |
    | `drive.readonly` | Preview a linked Drive document (optional — asked for separately, the first time you open one) |
+   | `https://mail.google.com/` | Permanently delete mail (optional — asked for separately, the first time you empty the trash) |
 
 4. A **redirect URI** added to the OAuth client:
    - macOS / iOS: `nightmail://google-auth-callback`

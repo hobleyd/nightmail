@@ -9,6 +9,7 @@ import 'package:nightmail/domain/entities/email_folder.dart';
 import 'package:nightmail/domain/usecases/create_folder.dart';
 import 'package:nightmail/domain/usecases/get_cached_folders.dart';
 import 'package:nightmail/domain/usecases/get_mail_folders.dart';
+import 'package:nightmail/domain/usecases/delete_folder.dart';
 import 'package:nightmail/domain/usecases/move_folder.dart';
 import 'package:nightmail/domain/usecases/rename_folder.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
@@ -65,6 +66,8 @@ class _FakeCreateFolder extends Fake implements CreateFolder {}
 class _FakeRenameFolder extends Fake implements RenameFolder {}
 
 class _FakeMoveFolder extends Fake implements MoveFolder {}
+
+class _FakeDeleteFolder extends Fake implements DeleteFolder {}
 
 void main() {
   // -------------------------------------------------------------------------
@@ -175,6 +178,7 @@ void main() {
         createFolder: _FakeCreateFolder(),
         renameFolder: _FakeRenameFolder(),
         moveFolder: _FakeMoveFolder(),
+        deleteFolder: _FakeDeleteFolder(),
         accountManager: accounts,
       );
       addTearDown(bloc.close);

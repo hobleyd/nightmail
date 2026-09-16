@@ -2462,6 +2462,41 @@ class ImapDatasourceImpl
   }
 
   @override
+  Future<void> deleteFolder({required String folderId}) =>
+      withConnection(() => _deleteFolderInner(folderId: folderId));
+
+  /// RFC 3501 leaves a deleted mailbox's *inferior* names in place — deleting
+  /// a parent that has children either fails or leaves the name behind as a
+  /// `\Noselect` placeholder — so the children are deleted first, deepest
+  /// first, and the folder itself last.
+  Future<void> _deleteFolderInner({required String folderId}) async {
+    try {
+      final client = await _getConnectedClient();
+      final sep = _pathSeparator;
+      final children = await client.listMailboxes(
+        path: '$folderId$sep',
+        recursive: true,
+      );
+      final paths = [
+        for (final mb in children)
+          if (mb.path != folderId && mb.path.startsWith('$folderId$sep'))
+            mb.path,
+      ]..sort((a, b) => b.length.compareTo(a.length));
+      for (final path in [...paths, folderId]) {
+        final lastSep = path.lastIndexOf(sep);
+        await client.deleteMailbox(Mailbox(
+          encodedName: lastSep >= 0 ? path.substring(lastSep + sep.length) : path,
+          encodedPath: path,
+          flags: [],
+          pathSeparator: sep,
+        ));
+      }
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    }
+  }
+
+  @override
   Future<String> moveFolder({
     required String folderId,
     required String newParentFolderId,

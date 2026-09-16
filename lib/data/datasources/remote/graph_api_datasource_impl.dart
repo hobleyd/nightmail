@@ -3332,6 +3332,15 @@ class GraphApiDatasourceImpl
   }
 
   @override
+  Future<void> deleteFolder({required String folderId}) async {
+    try {
+      await _dio.delete<void>('$_base/mailFolders/$folderId');
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
   Future<String> moveFolder({
     required String folderId,
     required String newParentFolderId,

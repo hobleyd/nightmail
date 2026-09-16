@@ -123,6 +123,15 @@ abstract interface class EmailRemoteDatasource {
     required String newDisplayName,
   });
 
+  /// Deletes [folderId], and any folders inside it.
+  ///
+  /// What becomes of the messages is the provider's business and differs: a
+  /// Gmail label is a tag, so deleting one leaves every message it was on
+  /// where it is, while Graph and IMAP delete a container and take its
+  /// contents with it. Callers that tell the user what is about to happen
+  /// have to say which.
+  Future<void> deleteFolder({required String folderId});
+
   /// Reparents [folderId] so it becomes a child of [newParentFolderId].
   /// Any sub-folders of [folderId] move with it.
   /// Reparents [folderId] under [newParentFolderId], and returns the folder's

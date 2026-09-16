@@ -9,6 +9,7 @@ import 'package:nightmail/domain/entities/email_folder.dart';
 import 'package:nightmail/domain/usecases/create_folder.dart';
 import 'package:nightmail/domain/usecases/get_cached_folders.dart';
 import 'package:nightmail/domain/usecases/get_mail_folders.dart';
+import 'package:nightmail/domain/usecases/delete_folder.dart';
 import 'package:nightmail/domain/usecases/move_folder.dart';
 import 'package:nightmail/domain/usecases/rename_folder.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
@@ -67,6 +68,7 @@ int? _inboxUnread(FolderListState state) => state is FolderListLoaded
   CreateFolder,
   RenameFolder,
   MoveFolder,
+  DeleteFolder,
 ])
 void main() {
   late MockGetMailFolders mockGetMailFolders;
@@ -77,6 +79,8 @@ void main() {
     provideDummy<Either<Failure, EmailFolder>>(
         const Left(ServerFailure(message: 'dummy')));
     provideDummy<Either<Failure, String>>(
+        const Left(ServerFailure(message: 'dummy')));
+    provideDummy<Either<Failure, Unit>>(
         const Left(ServerFailure(message: 'dummy')));
   });
 
@@ -92,6 +96,7 @@ void main() {
     AccountManager? accountManager,
     CreateFolder? createFolder,
     MoveFolder? moveFolder,
+    DeleteFolder? deleteFolder,
     Duration countChangeTtl = const Duration(seconds: 30),
     DateTime Function() now = DateTime.now,
   }) =>
@@ -101,6 +106,7 @@ void main() {
         createFolder: createFolder ?? MockCreateFolder(),
         renameFolder: MockRenameFolder(),
         moveFolder: moveFolder ?? MockMoveFolder(),
+        deleteFolder: deleteFolder ?? MockDeleteFolder(),
         accountManager: accountManager ?? _FakeAccountManager(),
         staleRetryDelays: retryDelays,
         countChangeTtl: countChangeTtl,
@@ -970,4 +976,108 @@ void main() {
       expect(_inboxUnread(bloc.state), 1);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Deleting a folder
+  // ---------------------------------------------------------------------------
+
+  group('FolderListBloc — deleting a folder', () {
+    late MockDeleteFolder mockDeleteFolder;
+
+    // Projects has a child, which has a child of its own: deleting the top of
+    // that takes all three.
+    List<EmailFolder> tree() => [
+          _folder('inbox-id', 'Inbox'),
+          EmailFolder(
+            id: 'projects-id',
+            displayName: 'Projects',
+            totalItemCount: 0,
+            unreadItemCount: 0,
+            childFolderCount: 1,
+          ),
+          EmailFolder(
+            id: 'sub-id',
+            displayName: 'Datadog',
+            totalItemCount: 0,
+            unreadItemCount: 0,
+            parentFolderId: 'projects-id',
+            childFolderCount: 1,
+          ),
+          EmailFolder(
+            id: 'sub-sub-id',
+            displayName: 'Invoices',
+            totalItemCount: 0,
+            unreadItemCount: 0,
+            parentFolderId: 'sub-id',
+          ),
+        ];
+
+    setUp(() {
+      mockDeleteFolder = MockDeleteFolder();
+      when(mockGetCachedFolders(any)).thenAnswer((_) async => const Right([]));
+      when(mockGetMailFolders(any)).thenAnswer((_) async => Right(tree()));
+    });
+
+    Future<FolderListBloc> loadedBloc() async {
+      final bloc = makeBloc(deleteFolder: mockDeleteFolder);
+      addTearDown(bloc.close);
+      bloc.add(const FolderListLoadRequested());
+      await bloc.stream
+          .firstWhere((s) => s is FolderListLoaded && !s.isRefreshing);
+      return bloc;
+    }
+
+    List<String> idsIn(FolderListBloc bloc) =>
+        [for (final f in (bloc.state as FolderListLoaded).folders) f.id];
+
+    test('takes the folder and its whole subtree away as soon as the provider '
+        'accepts, without waiting for the tree fetch', () async {
+      when(mockDeleteFolder(any)).thenAnswer((_) async => const Right(unit));
+      final bloc = await loadedBloc();
+
+      // Held open: the delete has to be applied without it.
+      final slowFetch = Completer<Either<Failure, List<EmailFolder>>>();
+      when(mockGetMailFolders(any)).thenAnswer((_) => slowFetch.future);
+
+      bloc.add(const FolderListDeleteFolderRequested(folderId: 'sub-id'));
+      await pumpEventQueue();
+
+      expect(verify(mockDeleteFolder(captureAny)).captured.single, 'sub-id');
+      // The child's own child goes too — every provider deletes the subtree,
+      // so leaving its row would strand a folder that no longer exists.
+      expect(idsIn(bloc), unorderedEquals(['inbox-id', 'projects-id']));
+      // And the parent stops claiming a child, or it draws a disclosure arrow
+      // that opens on nothing.
+      expect(
+        (bloc.state as FolderListLoaded)
+            .folders
+            .firstWhere((f) => f.id == 'projects-id')
+            .childFolderCount,
+        0,
+      );
+
+      slowFetch.complete(Right([
+        _folder('inbox-id', 'Inbox'),
+        _folder('projects-id', 'Projects'),
+      ]));
+      await bloc.stream
+          .firstWhere((s) => s is FolderListLoaded && !s.isRefreshing);
+      expect(idsIn(bloc), unorderedEquals(['inbox-id', 'projects-id']));
+    });
+
+    test('a refused delete leaves the folder where it was', () async {
+      when(mockDeleteFolder(any))
+          .thenAnswer((_) async => const Left(ServerFailure(message: 'nope')));
+      final bloc = await loadedBloc();
+
+      bloc.add(const FolderListDeleteFolderRequested(folderId: 'sub-id'));
+      await pumpEventQueue();
+
+      expect(
+        idsIn(bloc),
+        unorderedEquals(['inbox-id', 'projects-id', 'sub-id', 'sub-sub-id']),
+      );
+    });
+  });
+
 }

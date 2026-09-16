@@ -771,6 +771,14 @@ class EmailRepositoryImpl implements EmailRepository {
   }
 
   @override
+  Future<Either<Failure, Unit>> deleteFolder({required String folderId}) async {
+    return _execute(() async {
+      await _accountManager.emailDatasource.deleteFolder(folderId: folderId);
+      return unit;
+    });
+  }
+
+  @override
   Future<Either<Failure, String>> moveFolder({
     required String folderId,
     required String newParentFolderId,

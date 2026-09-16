@@ -1407,6 +1407,66 @@ screen in red with the reason and a retry, which is also the only thing that
 reports a create attempted offline (`createFolder` goes through `_execute`, so
 it fails fast rather than queueing — folders are not in the outbox).
 
+### Deleting One Is the Same Shape, Minus the Optimism
+
+"Delete Folder" sits on the folder's own context menu between "Rename Folder"
+and "Delete All" — which deletes the *mail* in a folder, not the folder, and is
+why the new item needed a name that could not be read as the old one.
+
+Nothing is drawn or undrawn ahead of the provider's answer, the same rule a
+move follows: the row is on screen where it has always been, so a refused
+delete simply leaves it there, and that row is the whole of the report. Once
+the provider accepts, `FolderListBloc` takes the row away — with its whole
+subtree — and requests the reconcile fetch behind it.
+
+Five things here are load-bearing:
+
+- **The subtree goes, and two providers need telling.** Graph and IMAP delete a
+  container and its contents follow, but a Gmail "folder" is a label and
+  `Vendors/Datadog` is a *separate* label that outlives `Vendors` — as a root
+  folder, which is worse than leaving it alone. So the Gmail datasource deletes
+  every label sharing the path prefix, which also makes a **virtual** folder
+  (`__virtual__<path>`, a path segment with no label of its own) deletable at
+  all: its descendants are the only thing there is to delete. IMAP goes
+  deepest-first, because RFC 3501 leaves a deleted parent's inferior names in
+  place and the parent behind as a `\Noselect` husk.
+  `test/data/datasources/remote/gmail_delete_folder_test.dart` pins which
+  labels the Gmail path deletes — chiefly that a sibling named
+  `Vendors Archive` is *not* inside `Vendors`, and that an unresolvable id
+  deletes nothing rather than resolving to an empty prefix that matches every
+  label there is.
+- **What happens to the messages is said out loud, and it differs.** Deleting a
+  Gmail label deletes no mail — every message keeps its other labels and stays
+  in All Mail — where Graph and IMAP take the contents with the folder. Those
+  are not the same warning, so the dialog asks `AccountCubit` which account is
+  active and says the one that applies. It does not name Deleted Items:
+  where a deleted folder's mail lands is the server's business and is not the
+  same everywhere.
+- **A system folder gets no menu item**, rather than one that fails. That is
+  the whole of `_FolderItem.onDelete` being nullable: the question is asked
+  once, where `_isSystemFolder` already answers it for dragging. That match is
+  by *display name*, not by any provider's well-known-folder id — so a user
+  folder called "Archive" is undeletable here too. Pre-existing, and the
+  conservative direction, but it is a name match and not a fact about the
+  server.
+- **No unconfirmed-delete grace, deliberately.** A create needs one because a
+  tree fetch built a moment too early would *delete the new folder* from the
+  list — unrecoverable, and invisible. The delete direction is benign: the
+  worst a stale list can do is show a folder that really does still exist for
+  that moment, and the next fetch takes it away again.
+- **A selection pointing into the subtree moves before the answer comes back**,
+  unlike everything else here — the alternative is a list pane sitting on a
+  folder whose row has just left the panel. The dialog lives on
+  `_FolderPanelState` rather than the row for this: only the panel holds the
+  folder list, which is what says both what else is about to go and where the
+  selection can safely land (the Inbox). Clearing the reading pane is left to
+  `onFolderSelected`, which does it for every folder change already.
+
+Cached rows for a deleted folder are **not** cleared. They are keyed by folder
+id and nothing lists that folder any more, so they are dead weight rather than
+a wrong answer; clearing them would mean a new bloc dependency and an account
+id to go with it.
+
 ## The Poll Syncs the Folder On Screen, Not Just the Inbox
 
 `HomePage` tells `MailPollerCubit.setWatchedFolder` which folder is showing; the

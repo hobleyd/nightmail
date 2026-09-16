@@ -12,6 +12,7 @@ import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/core/usecases/usecase.dart';
 import 'package:nightmail/domain/entities/email_folder.dart';
 import 'package:nightmail/domain/usecases/create_folder.dart';
+import 'package:nightmail/domain/usecases/delete_folder.dart';
 import 'package:nightmail/domain/usecases/get_cached_folders.dart';
 import 'package:nightmail/domain/usecases/get_mail_folders.dart';
 import 'package:nightmail/domain/usecases/move_folder.dart';
@@ -108,6 +109,21 @@ class _FakeCreateFolder extends Fake implements CreateFolder {
 
 class _FakeRenameFolder extends Fake implements RenameFolder {}
 
+class _FakeDeleteFolder extends Fake implements DeleteFolder {
+  _FakeDeleteFolder();
+
+  /// Set to make the provider refuse the delete.
+  Failure? failure;
+  final calls = <String>[];
+
+  @override
+  Future<Either<Failure, Unit>> call(String folderId) async {
+    calls.add(folderId);
+    final f = failure;
+    return f == null ? const Right(unit) : Left(f);
+  }
+}
+
 class _FakeMoveFolder extends Fake implements MoveFolder {
   /// The folder's id after the move. Same id for Graph and a real Gmail
   /// label; a different one where the id is a path.
@@ -144,6 +160,7 @@ void main() {
   late _FakeGetMailFolders getMailFolders;
   late _FakeCreateFolder createFolder;
   late _FakeMoveFolder moveFolder;
+  late _FakeDeleteFolder deleteFolder;
   late FolderListBloc folderList;
 
   /// The folders the server answers with, unless a test replaces [answer].
@@ -190,6 +207,7 @@ void main() {
       (_) async => throw StateError('a test must set the create answer'),
     );
     moveFolder = _FakeMoveFolder();
+    deleteFolder = _FakeDeleteFolder();
   });
 
   tearDown(() async => sl.reset());
@@ -205,6 +223,7 @@ void main() {
     WidgetTester tester, {
     Set<String> expanded = const {},
     ValueChanged<EmailFolder>? onFolderSelected,
+    String selectedFolderId = 'inbox-id',
   }) async {
     // Built inside the test body, not in setUp: a bloc's event stream is
     // created in whatever zone constructs it, and one made in setUp delivers
@@ -216,6 +235,7 @@ void main() {
       createFolder: createFolder,
       renameFolder: _FakeRenameFolder(),
       moveFolder: moveFolder,
+      deleteFolder: deleteFolder,
       accountManager: _FakeAccountManager(),
       staleRetryDelays: const [],
     );
@@ -244,7 +264,7 @@ void main() {
               BlocProvider<FolderListBloc>.value(value: folderList),
             ],
             child: FolderPanel(
-              selectedFolderId: 'inbox-id',
+              selectedFolderId: selectedFolderId,
               onFolderSelected: onFolderSelected ?? (_) {},
               onCalendarTapped: () {},
               onTasksTapped: () {},
@@ -357,7 +377,7 @@ void main() {
 
       await tester.tap(find.text('Projects'), buttons: kSecondaryButton);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Rename'));
+      await tester.tap(find.text('Rename Folder'));
       await tester.pumpAndSettle();
 
       expect(
@@ -628,6 +648,116 @@ void main() {
       await tester.tap(find.text('Receipts'));
       await tester.pump();
       expect(selected, ['inbox-id', 'server-id']);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Deleting a folder.
+  // -------------------------------------------------------------------------
+
+  group('FolderPanel — deleting a folder', () {
+    setUp(() {
+      serverFolders = [
+        _folder('inbox-id', 'Inbox'),
+        _folder('projects-id', 'Projects', childFolderCount: 1),
+        _folder('sub-id', 'Datadog', parentFolderId: 'projects-id'),
+      ];
+    });
+
+    Future<void> openMenu(WidgetTester tester, String folderName) async {
+      await tester.tap(find.text(folderName), buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('is offered on a user folder and not on a system one',
+        (tester) async {
+      await pumpPanel(tester);
+
+      await openMenu(tester, 'Projects');
+      expect(find.text('Delete Folder'), findsOneWidget);
+      // The label change goes with it: "Rename" alone read as renaming
+      // whatever was selected.
+      expect(find.text('Rename Folder'), findsOneWidget);
+      await tester.tap(find.text('Add Folder'));
+      await tester.pumpAndSettle();
+
+      // Every provider refuses to delete its own system folders, so the item
+      // is not drawn rather than drawn and failing.
+      await openMenu(tester, 'Inbox');
+      expect(find.text('Delete Folder'), findsNothing);
+    });
+
+    testWidgets('asks first, names what goes with it, and deletes on confirm',
+        (tester) async {
+      await pumpPanel(tester, expanded: {'projects-id'});
+
+      await openMenu(tester, 'Projects');
+      await tester.tap(find.text('Delete Folder'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('1 folder inside it'), findsOneWidget);
+      expect(deleteFolder.calls, isEmpty, reason: 'deleted before confirming');
+
+      await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await tester.pumpAndSettle();
+      expect(deleteFolder.calls, isEmpty);
+      expect(find.text('Projects'), findsOneWidget);
+
+      // The reconcile fetch the delete fires is held open: the row has to go
+      // without it, or this is no better than waiting for the tree.
+      final slowFetch = Completer<Either<Failure, List<EmailFolder>>>();
+      getMailFolders.answer = () => slowFetch.future;
+
+      await openMenu(tester, 'Projects');
+      await tester.tap(find.text('Delete Folder'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(TextButton, 'Delete Folder'));
+      await tester.pumpAndSettle();
+
+      expect(deleteFolder.calls, ['projects-id']);
+      // Gone before the tree fetch, and its child with it.
+      expect(find.text('Projects'), findsNothing);
+      expect(find.text('Datadog'), findsNothing);
+
+      slowFetch.complete(Right([_folder('inbox-id', 'Inbox')]));
+      await tester.pumpAndSettle();
+      expect(find.text('Projects'), findsNothing);
+    });
+
+    testWidgets('moves the selection off a folder that is going away',
+        (tester) async {
+      final selected = <String>[];
+      // The child of the doomed folder is what is on screen: deleting the
+      // parent takes it too, so the pane would be left on a folder the panel
+      // no longer lists.
+      await pumpPanel(
+        tester,
+        expanded: {'projects-id'},
+        selectedFolderId: 'sub-id',
+        onFolderSelected: (f) => selected.add(f.id),
+      );
+
+      await openMenu(tester, 'Projects');
+      await tester.tap(find.text('Delete Folder'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(TextButton, 'Delete Folder'));
+      await tester.pumpAndSettle();
+
+      expect(selected, ['inbox-id']);
+    });
+
+    testWidgets('a refused delete leaves the folder on screen', (tester) async {
+      deleteFolder.failure = const ServerFailure(message: 'nope');
+      await pumpPanel(tester);
+
+      await openMenu(tester, 'Projects');
+      await tester.tap(find.text('Delete Folder'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(TextButton, 'Delete Folder'));
+      await tester.pumpAndSettle();
+
+      expect(deleteFolder.calls, ['projects-id']);
+      expect(find.text('Projects'), findsOneWidget);
     });
   });
 

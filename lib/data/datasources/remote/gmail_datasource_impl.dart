@@ -1056,6 +1056,48 @@ class GmailDatasourceImpl
     }
   }
 
+  /// A Gmail label's children are separate labels sharing its name as a path
+  /// prefix — deleting `Vendors` leaves `Vendors/Datadog` behind as a root
+  /// folder — so the descendants go too, and a *virtual* folder (a path
+  /// segment with no label of its own) is precisely the case where the
+  /// descendants are all there is to delete.
+  ///
+  /// The messages are untouched: a label is a tag, and one a message loses
+  /// still leaves it in All Mail with whatever else it carries.
+  @override
+  Future<void> deleteFolder({required String folderId}) async {
+    try {
+      final listResp =
+          await _dio.get<Map<String, dynamic>>('/users/me/labels');
+      final labels = (listResp.data?['labels'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      String? path;
+      if (folderId.startsWith('__virtual__')) {
+        path = folderId.substring('__virtual__'.length);
+      } else {
+        for (final l in labels) {
+          if ((l['id'] as String?) == folderId) {
+            path = l['name'] as String?;
+            break;
+          }
+        }
+      }
+      if (path == null) {
+        throw const ServerException(message: 'Folder not found');
+      }
+      for (final l in labels) {
+        final id = l['id'] as String?;
+        final name = l['name'] as String?;
+        if (id == null || name == null) continue;
+        if (name == path || name.startsWith('$path/')) {
+          await _dio.delete<void>('/users/me/labels/$id');
+        }
+      }
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
   @override
   Future<String> moveFolder({
     required String folderId,

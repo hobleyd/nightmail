@@ -514,6 +514,9 @@ class _FolderPanelState extends State<FolderPanel> {
               .addPostFrameCallback((_) => _revealTargetRow());
         },
         onRename: () => setState(() => _renamingFolderId = item.folder.id),
+        onDelete: _isSystemFolder(item.folder)
+            ? null
+            : () => _confirmDeleteFolder(context, item.folder, folders),
       );
     }
 
@@ -532,6 +535,105 @@ class _FolderPanelState extends State<FolderPanel> {
         return KeyedSubtree(key: _revealRowKey, child: row);
       },
     );
+  }
+
+  /// Asks before deleting [folder], then hands the delete to the bloc.
+  ///
+  /// It lives here rather than on the row (where "Delete All" asks) because
+  /// only the panel holds [folders], and both halves of this need the list:
+  /// what else is about to go with the folder, and where to send a selection
+  /// that is about to point at nothing.
+  Future<void> _confirmDeleteFolder(
+    BuildContext context,
+    EmailFolder folder,
+    List<EmailFolder> folders,
+  ) async {
+    final doomed = _folderAndDescendants(folder.id, folders);
+    final subfolders = doomed.length - 1;
+    final accountState = context.read<AccountCubit>().state;
+    // What happens to the mail is the provider's rule and the two answers are
+    // nothing alike, so the dialog says which one applies rather than
+    // splitting the difference. A Gmail folder is a label: losing it leaves
+    // every message it was on where it was.
+    final keepsMessages = accountState is AccountsLoaded &&
+        accountState.activeAccount is GmailAccount;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Folder?'),
+        content: Text([
+          if (subfolders > 0)
+            '"${folder.displayName}" and the '
+                '$subfolders folder${subfolders == 1 ? '' : 's'} inside it '
+                'will be deleted.'
+          else
+            '"${folder.displayName}" will be deleted.',
+          if (keepsMessages)
+            'The messages in it are not deleted — they keep their other '
+                'labels and stay in All Mail.'
+          else
+            'The messages in it will be deleted too. This cannot be undone.',
+        ].join('\n\n')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: keepsMessages
+                ? null
+                : TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete Folder'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    context
+        .read<FolderListBloc>()
+        .add(FolderListDeleteFolderRequested(folderId: folder.id));
+
+    // A selection pointing at a folder that is going away has to move, and it
+    // moves now rather than on the provider's answer: the alternative is a
+    // list pane sitting on a folder whose row has just left the panel. A
+    // refused delete leaves the user on the Inbox, which is a smaller wrong
+    // than a mailbox that is no longer there.
+    if (!doomed.contains(widget.selectedFolderId)) return;
+    final surviving = [
+      for (final f in folders)
+        if (!doomed.contains(f.id)) f,
+    ];
+    if (surviving.isEmpty) return;
+    // The reading pane is left to `onFolderSelected`, which clears it for
+    // every folder change already.
+    widget.onFolderSelected(surviving.firstWhere(
+      (f) => f.displayName.toLowerCase() == 'inbox',
+      orElse: () => surviving.first,
+    ));
+  }
+
+  /// [folderId] and every folder beneath it — what a delete takes with it.
+  static Set<String> _folderAndDescendants(
+    String folderId,
+    List<EmailFolder> folders,
+  ) {
+    final ids = <String>{folderId};
+    var grew = true;
+    while (grew) {
+      grew = false;
+      for (final f in folders) {
+        if (!ids.contains(f.id) &&
+            f.parentFolderId != null &&
+            ids.contains(f.parentFolderId)) {
+          ids.add(f.id);
+          grew = true;
+        }
+      }
+    }
+    return ids;
   }
 
   static const double _autoScrollHotZone = 32.0;
@@ -1101,7 +1203,7 @@ class _AccountMenuState extends State<AccountMenu> {
   }
 }
 
-enum _FolderAction { addFolder, rename, deleteAll }
+enum _FolderAction { addFolder, rename, deleteFolder, deleteAll }
 
 class _FolderItem extends StatefulWidget {
   const _FolderItem({
@@ -1113,6 +1215,7 @@ class _FolderItem extends StatefulWidget {
     required this.onTap,
     required this.onExpandTap,
     required this.onAddFolder,
+    required this.onDelete,
     required this.onRename,
     required this.isDraggable,
     required this.canAcceptFolderDrop,
@@ -1134,6 +1237,11 @@ class _FolderItem extends StatefulWidget {
   final VoidCallback onTap;
   final VoidCallback onExpandTap;
   final VoidCallback onAddFolder;
+
+  /// Null for a folder that may not be deleted — the system folders, which
+  /// every provider refuses to delete anyway. The menu item is drawn only
+  /// when this is non-null, so "can it be deleted" is asked once, here.
+  final VoidCallback? onDelete;
   final VoidCallback onRename;
   // Notifies the panel while an email drag hovers this row, so it can
   // re-check the (independently tracked) pointer position against the
@@ -1515,10 +1623,21 @@ class _FolderItemState extends State<_FolderItem>
             children: const [
               Icon(Icons.drive_file_rename_outline_rounded, size: 16),
               SizedBox(width: 8),
-              Text('Rename', style: TextStyle(fontSize: 13)),
+              Text('Rename Folder', style: TextStyle(fontSize: 13)),
             ],
           ),
         ),
+        if (widget.onDelete != null)
+          PopupMenuItem(
+            value: _FolderAction.deleteFolder,
+            child: Row(
+              children: const [
+                Icon(Icons.folder_delete_outlined, size: 16),
+                SizedBox(width: 8),
+                Text('Delete Folder', style: TextStyle(fontSize: 13)),
+              ],
+            ),
+          ),
         const PopupMenuDivider(),
         PopupMenuItem(
           value: _FolderAction.deleteAll,
@@ -1543,6 +1662,8 @@ class _FolderItemState extends State<_FolderItem>
       widget.onAddFolder();
     } else if (result == _FolderAction.rename) {
       widget.onRename();
+    } else if (result == _FolderAction.deleteFolder) {
+      widget.onDelete?.call();
     } else if (result == _FolderAction.deleteAll) {
       await _confirmDeleteAll(context);
     }

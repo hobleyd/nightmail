@@ -6,6 +6,7 @@ import '../../../core/usecases/usecase.dart';
 import '../../../core/utils/stale_data_retry.dart';
 import '../../../domain/entities/email_folder.dart';
 import '../../../domain/usecases/create_folder.dart';
+import '../../../domain/usecases/delete_folder.dart';
 import '../../../domain/usecases/get_cached_folders.dart';
 import '../../../domain/usecases/get_mail_folders.dart';
 import '../../../domain/usecases/move_folder.dart';
@@ -21,6 +22,7 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
     required this._createFolder,
     required this._renameFolder,
     required this._moveFolder,
+    required this._deleteFolder,
     required this._accountManager,
     List<Duration> staleRetryDelays = staleDataRetryDelays,
     Duration countChangeTtl = const Duration(seconds: 30),
@@ -36,6 +38,7 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
     on<FolderListCreateFolderDismissed>(_onCreateFolderDismissed);
     on<FolderListRenameFolderRequested>(_onRenameFolderRequested);
     on<FolderListMoveFolderRequested>(_onMoveFolderRequested);
+    on<FolderListDeleteFolderRequested>(_onDeleteFolderRequested);
   }
 
 
@@ -44,6 +47,7 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
   final CreateFolder _createFolder;
   final RenameFolder _renameFolder;
   final MoveFolder _moveFolder;
+  final DeleteFolder _deleteFolder;
   final AccountManager _accountManager;
   final List<Duration> _staleRetryDelays;
   final Duration _countChangeTtl;
@@ -485,6 +489,79 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
       (_) {},
       (_) => add(const FolderListLoadRequested()),
     );
+  }
+
+  /// Deleting a folder takes its row away once the provider has accepted, and
+  /// reconciles afterwards.
+  ///
+  /// Nothing is drawn — or undrawn — ahead of the provider's answer, for the
+  /// same reason a move isn't: the row is on screen where it has always been,
+  /// and putting it back on a failure is worse than leaving it there. A
+  /// refused delete therefore leaves the folder exactly as it was, which is
+  /// the honest picture and the only report the user gets.
+  ///
+  /// The subtree goes with it. Every provider deletes the descendants —
+  /// Graph and IMAP because a container takes its contents, Gmail because the
+  /// datasource deletes the labels sharing the path prefix — so leaving their
+  /// rows on screen would strand folders that no longer exist. Unlike a
+  /// create, a fetch that has not caught up needs no grace: the worst a stale
+  /// list can do here is show a folder that really does still exist for that
+  /// moment, and the next fetch takes it away again.
+  Future<void> _onDeleteFolderRequested(
+    FolderListDeleteFolderRequested event,
+    Emitter<FolderListState> emit,
+  ) async {
+    final result = await _deleteFolder(event.folderId);
+    if (isClosed) return;
+
+    result.fold(
+      (failure) {
+        debugPrint('[FolderList] delete ${event.folderId} failed: '
+            '${failure.runtimeType} — ${failure.message}');
+      },
+      (_) {
+        final current = state;
+        if (current is FolderListLoaded) {
+          emit(current.copyWith(
+            folders: _removeFolderTree(current.folders, event.folderId),
+          ));
+        }
+        add(const FolderListLoadRequested());
+      },
+    );
+  }
+
+  /// Removes [folderId] and every folder beneath it, and drops one from its
+  /// parent's [EmailFolder.childFolderCount] — which is what draws the
+  /// parent's disclosure arrow, so a parent left claiming a child it no
+  /// longer has offers an arrow that opens on nothing.
+  static List<EmailFolder> _removeFolderTree(
+    List<EmailFolder> folders,
+    String folderId,
+  ) {
+    final target = folders.where((f) => f.id == folderId).firstOrNull;
+    if (target == null) return folders;
+    final doomed = <String>{folderId};
+    var grew = true;
+    while (grew) {
+      grew = false;
+      for (final f in folders) {
+        if (!doomed.contains(f.id) &&
+            f.parentFolderId != null &&
+            doomed.contains(f.parentFolderId)) {
+          doomed.add(f.id);
+          grew = true;
+        }
+      }
+    }
+    return [
+      for (final f in folders)
+        if (!doomed.contains(f.id))
+          if (f.id == target.parentFolderId && f.childFolderCount > 0)
+            f.copyWith(childFolderCount: f.childFolderCount - 1)
+          else
+            f,
+    ];
   }
 
   /// Dragging a folder onto another one reparents it in state as soon as the

@@ -184,6 +184,13 @@ abstract interface class EmailRepository {
     required String newDisplayName,
   });
 
+  /// Deletes [folderId] and every folder inside it.
+  ///
+  /// The messages follow the provider's own rule: Gmail's folders are labels,
+  /// so its messages keep every other label and stay in All Mail; Graph and
+  /// IMAP delete a container and its contents go with it.
+  Future<Either<Failure, Unit>> deleteFolder({required String folderId});
+
   /// Reparents [folderId] so it becomes a child of [newParentFolderId].
   /// Any sub-folders of [folderId] move with it.
   ///

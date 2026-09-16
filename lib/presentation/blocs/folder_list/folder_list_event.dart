@@ -51,6 +51,16 @@ final class FolderListRenameFolderRequested extends FolderListEvent {
   List<Object?> get props => [folderId, newDisplayName];
 }
 
+/// Deletes [folderId] and every folder inside it.
+final class FolderListDeleteFolderRequested extends FolderListEvent {
+  const FolderListDeleteFolderRequested({required this.folderId});
+
+  final String folderId;
+
+  @override
+  List<Object?> get props => [folderId];
+}
+
 final class FolderListMoveFolderRequested extends FolderListEvent {
   const FolderListMoveFolderRequested({
     required this.folderId,

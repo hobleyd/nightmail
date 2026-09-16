@@ -38,6 +38,15 @@ void main() {
     'label-7': 'Suppliers',
   };
 
+  // The categories as the folder tree really exposes them: Gmail's
+  // `getMailFolders` turns `CATEGORY_PERSONAL` into a folder displayed as
+  // "Personal", so these ids resolve like any other.
+  const categoryNames = {
+    ...names,
+    'CATEGORY_PERSONAL': 'Personal',
+    'CATEGORY_PROMOTIONS': 'Promotions',
+  };
+
   group('emailFolderLabel', () {
     // The pane already names the folder above the list; saying it again on
     // nearly every row would crowd out the sender for nothing.
@@ -89,12 +98,65 @@ void main() {
 
     test('a Gmail label that is not a folder is skipped, not shown raw', () {
       final label = emailFolderLabel(
-        _email(folderIds: const ['UNREAD', 'CATEGORY_PERSONAL', 'label-7']),
+        _email(folderIds: const ['UNREAD', 'label-7']),
         folderNames: names,
         currentFolder: _folder('inbox', 'Inbox'),
       );
 
       expect(label, 'Suppliers');
+    });
+
+    // Gmail's categories *are* in the folder tree (`Category/Personal` and
+    // friends), and Gmail's own label order routinely puts one ahead of the
+    // label the user filed the message under — so the first id that resolves
+    // is the wrong answer. A message nobody moved to Personal must not say it
+    // is in Personal.
+    test('a Gmail category never wins over the folder the message is filed in',
+        () {
+      final label = emailFolderLabel(
+        _email(folderIds: const ['CATEGORY_PERSONAL', 'label-7']),
+        folderNames: categoryNames,
+        currentFolder: _folder('inbox', 'Inbox'),
+      );
+
+      expect(label, 'Suppliers');
+    });
+
+    // An archived message with nothing but a category on it. Saying nothing is
+    // strictly better than pointing at a folder it was never put in.
+    test('a message whose only folder is a Gmail category gets no brackets',
+        () {
+      expect(
+        emailFolderLabel(
+          _email(folderIds: const ['CATEGORY_PROMOTIONS']),
+          folderNames: categoryNames,
+          currentFolder: _folder('inbox', 'Inbox'),
+        ),
+        isNull,
+      );
+      // Including the parent-folder fallback, which must not reinstate what the
+      // loop just skipped.
+      expect(
+        emailFolderLabel(
+          _email(parentFolderId: 'CATEGORY_PERSONAL'),
+          folderNames: categoryNames,
+          currentFolder: _folder('inbox', 'Inbox'),
+        ),
+        isNull,
+      );
+    });
+
+    // The five ids are a closed set; a user label is free to be called
+    // anything, and swallowing one would be the bug in reverse.
+    test('a user label that merely looks like a category still names itself',
+        () {
+      final label = emailFolderLabel(
+        _email(folderIds: const ['CATEGORY_WHATEVER']),
+        folderNames: const {'CATEGORY_WHATEVER': 'Receipts'},
+        currentFolder: _folder('inbox', 'Inbox'),
+      );
+
+      expect(label, 'Receipts');
     });
 
     test('falls back to the parent folder when no label resolves', () {

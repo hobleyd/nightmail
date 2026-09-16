@@ -1203,11 +1203,29 @@ Five things here are load-bearing:
   from Archive would otherwise be silently taken for one in whatever folder is
   still selected in the panel behind it.
 - **A raw provider id is never drawn.** Gmail stamps every label a message
-  carries into `folderIds` — `UNREAD`, `IMPORTANT`, `CATEGORY_PERSONAL` among
-  them — and a Graph folder id means nothing to a reader. Anything that does not
-  resolve against `FolderListBloc`'s tree is skipped, and a row with nothing
-  left to resolve gets no brackets rather than a `Label_123`. Resolving against
-  the tree is what drops the non-folder labels, for free.
+  carries into `folderIds` — `UNREAD` and `IMPORTANT` among them — and a Graph
+  folder id means nothing to a reader. Anything that does not resolve against
+  `FolderListBloc`'s tree is skipped, and a row with nothing left to resolve
+  gets no brackets rather than a `Label_123`. Resolving against the tree is what
+  drops the non-folder labels, for free.
+- **A Gmail category resolves, and is skipped anyway** (`isGmailCategoryLabel`,
+  `core/utils/gmail_category_label.dart`). `getMailFolders` turns the five
+  `CATEGORY_*` ids into folders (`Category/Personal` and friends) — browsing one
+  is the only way to reach an inbox tab in an app that has none — so they are
+  *in* the tree, and the first-resolvable-id loop named them. `folderIds` is in
+  Gmail's own order, which routinely puts `CATEGORY_PERSONAL` ahead of the label
+  the message was actually filed under, so a message filed under a nested user
+  label — `Vendors/Acme`, say — drew `[Personal]` and sent the reader looking in
+  a folder it had never been in. A category is skipped rather than ranked last: a
+  message carrying nothing else gets no brackets, because naming the category
+  there is the same wrong claim with nothing on the row left to contradict it.
+  The parser already keeps categories out of `parentFolderId` (`_isSystemLabel`
+  lists all five), so the fallback agrees with the loop; it is guarded regardless
+  so the two cannot drift. Matched by exact id, never the `CATEGORY_` prefix — a
+  *user* label may be called anything, and swallowing one would be this bug in
+  reverse. Note that two folders can display as "Personal" either way, since a
+  Gmail label's display name is its leaf segment: `CATEGORY_PERSONAL` and a user
+  label `Work/Personal` both draw as `Personal`.
 - **The id→name map is held in `_EmailListPanelState`, not watched.**
   `EmailFolder.props` carries the unread counts the poller rewrites every cycle,
   so a `BlocBuilder` here would rebuild every row in the list each time a count

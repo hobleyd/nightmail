@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import '../../core/utils/gmail_category_label.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_folder.dart';
 
@@ -19,10 +20,21 @@ import '../../domain/entities/email_folder.dart';
 /// search results and a focused thread want.
 ///
 /// **A raw provider id is never rendered.** Gmail stamps every label a message
-/// carries into [Email.folderIds] — `UNREAD`, `IMPORTANT`, `CATEGORY_PERSONAL`
-/// among them — and a Graph folder id is meaningless to a reader. Anything that
-/// does not resolve to a folder in [folderNames] is dropped, and a row with no
-/// resolvable folder gets no brackets at all rather than a `Label_123`.
+/// carries into [Email.folderIds] — `UNREAD` and `IMPORTANT` among them — and a
+/// Graph folder id is meaningless to a reader. Anything that does not resolve
+/// to a folder in [folderNames] is dropped, and a row with no resolvable folder
+/// gets no brackets at all rather than a `Label_123`.
+///
+/// **A Gmail category is not a place, even though it resolves.** The categories
+/// are exposed as folders (`Category/Personal` and friends), so the loop below
+/// would otherwise happily name one — and [Email.folderIds] is in Gmail's own
+/// order, which routinely puts `CATEGORY_PERSONAL` ahead of the label the user
+/// actually filed the message under. That is a row saying `[Personal]` about a
+/// message nobody ever moved to Personal, pointing at a folder the reader will
+/// not find it in. So categories are skipped rather than merely ranked last:
+/// falling back to one when a message has no other folder would be the same
+/// wrong claim with nothing else on the row to contradict it, and no brackets
+/// says strictly less than a bracket that is wrong.
 String? emailFolderLabel(
   Email email, {
   required Map<String, String> folderNames,
@@ -30,11 +42,17 @@ String? emailFolderLabel(
 }) {
   if (currentFolder != null && email.isInFolder(currentFolder.id)) return null;
   for (final id in email.folderIds) {
+    if (isGmailCategoryLabel(id)) continue;
     final name = folderNames[id];
     if (name != null) return name;
   }
+  // The parser already keeps a category out of parentFolderId (it picks the
+  // first non-system label), so this agrees with the loop rather than
+  // reinstating what it just skipped. Guarded anyway: the two derive the same
+  // answer and should not be able to drift apart.
   final parentId = email.parentFolderId;
-  return parentId == null ? null : folderNames[parentId];
+  if (parentId == null || isGmailCategoryLabel(parentId)) return null;
+  return folderNames[parentId];
 }
 
 /// How wide the bracketed folder is allowed to get on a row [rowWidth] wide.

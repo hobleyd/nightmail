@@ -86,7 +86,6 @@ jobs:
           cache: false
 
       - run: flutter config --enable-macos-desktop
-      - run: flutter create --platforms=macos .
       - run: flutter pub get
 
       - run: dart run build_runner build --delete-conflicting-outputs
@@ -94,7 +93,67 @@ jobs:
         working-directory: packages/enough_mail
         run: dart pub get && dart run build_runner build --delete-conflicting-outputs
       - run: dart run flutter_launcher_icons
+
+      # Only a push to main (or a same-repo PR) carries these secrets; a
+      # fork PR builds ad-hoc/unsigned exactly as before, so contributor CI
+      # never fails for lacking a certificate it was never meant to have.
+      - name: Import Developer ID signing certificate
+        if: ${{ secrets.MACOS_CERT_P12 != '' }}
+        env:
+          MACOS_CERT_P12_B64: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          echo "$MACOS_CERT_P12_B64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN_PATH" -P "$MACOS_CERT_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | sed 's/"//g')
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Patch the checked-out (not committed) pbxproj so Release actually
+          # signs with the Developer ID identity just imported. Left alone,
+          # Release stays CODE_SIGN_STYLE=Automatic with no DEVELOPMENT_TEAM,
+          # i.e. ad-hoc -- exactly what an unsigned/fork run should still get.
+          python3 - <<'EOF'
+          import pathlib
+          path = pathlib.Path("macos/Runner.xcodeproj/project.pbxproj")
+          text = path.read_text()
+          anchor = "\t\t\t\tCODE_SIGN_ENTITLEMENTS = Runner/Release.entitlements;\n\t\t\t\tCODE_SIGN_STYLE = Automatic;\n"
+          assert text.count(anchor) == 1, "Release Runner build-settings anchor not found or not unique -- pbxproj layout changed, update this patch"
+          replacement = (
+              "\t\t\t\tCODE_SIGN_ENTITLEMENTS = Runner/Release.entitlements;\n"
+              "\t\t\t\tCODE_SIGN_IDENTITY = \"Developer ID Application\";\n"
+              "\t\t\t\tCODE_SIGN_STYLE = Manual;\n"
+              "\t\t\t\tDEVELOPMENT_TEAM = 69XRMYD9XG;\n"
+              "\t\t\t\tENABLE_HARDENED_RUNTIME = YES;\n"
+          )
+          path.write_text(text.replace(anchor, replacement))
+          EOF
+
       - run: flutter build macos --release --no-tree-shake-icons --build-number ${{ needs.prepare.outputs.build_number }}
+
+      - name: Notarize and staple
+        if: ${{ secrets.MACOS_CERT_P12 != '' }}
+        env:
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          APP_PATH="build/macos/Build/Products/Release/nightmail.app"
+          echo "$NOTARY_KEY_P8" > "$RUNNER_TEMP/notary_key.p8"
+
+          ditto -c -k --keepParent "$APP_PATH" "$RUNNER_TEMP/nightmail-notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/nightmail-notarize.zip" \
+            --key "$RUNNER_TEMP/notary_key.p8" \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" \
+            --wait
+          xcrun stapler staple "$APP_PATH"
 
       - name: Create DMG
         uses: lethja/create-dmg-action@v0.0.2
@@ -151,6 +210,10 @@ jobs:
         with:
           name: macos-dist
           path: dist/${{ needs.prepare.outputs.version }}+${{ needs.prepare.outputs.build_number }}-macos/
+
+      - name: Remove signing keychain
+        if: ${{ always() && secrets.MACOS_CERT_P12 != '' }}
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
 
   build-windows:
     needs: prepare

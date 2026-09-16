@@ -1,15 +1,19 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.24.0",
+  "version": "1.25.0",
   "sections": [
     {
       "type": "features",
       "title": "New features",
       "items": [
         {
-          "body": "render a markdown attachment instead of showing its source",
-          "title": "preview"
+          "body": "empty the trash, asking Google for the delete scope first",
+          "title": "gmail"
+        },
+        {
+          "body": "delete a folder from its context menu",
+          "title": "folders"
         }
       ]
     },
@@ -18,17 +22,52 @@
       "title": "Fixes",
       "items": [
         {
-          "body": "answer an invitation to one occurrence on that occurrence",
-          "title": "calendar"
+          "body": "empty a folder, and stop a failed empty painting mail elsewhere",
+          "title": "gmail"
         },
         {
-          "body": "stop a Gmail RSVP inviting everyone to a meeting of its own",
-          "title": "calendar"
+          "body": "stop a Gmail category naming the folder a row is in",
+          "title": "list"
+        },
+        {
+          "body": "scroll a new folder into view, and focus the editor that names it",
+          "title": "folders"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.24.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "render a markdown attachment instead of showing its source",
+              "title": "preview"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "answer an invitation to one occurrence on that occurrence",
+              "title": "calendar"
+            },
+            {
+              "body": "stop a Gmail RSVP inviting everyone to a meeting of its own",
+              "title": "calendar"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -995,23 +1034,6 @@
             {
               "body": "stop contact hover-card spinner from stretching",
               "title": "reading-pane"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.10.0",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "drop stale folder loads/refreshes after switching folders",
-              "title": "mail"
             }
           ]
         }

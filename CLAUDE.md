@@ -1498,17 +1498,46 @@ adding `TRASH` and removing the folder's own label. Five things:
   `deleteFolder` resolves the same id to its descendants — it can, because
   deleting a *label* takes no message anywhere — but emptying one would delete
   mail out of folders the user did not name.
-- **Gmail's trash gets no "Delete All" item at all.** Emptying the trash is a
-  *permanent* delete, and Gmail's only one — `messages.batchDelete` — is behind
-  the `https://mail.google.com/` scope, which is restricted, requested at
-  sign-in, and would cost every existing account a re-authorisation. So
-  `_canDeleteAll` withholds the item there rather than offering one that
-  reliably 403s, the same question `onDelete == null` already answers for a
-  system folder. `emptyFolder` refuses before making a request as the
-  backstop — on the `TRASH` id as well as on the flag, since the item is
-  withheld off `AccountCubit` while the datasource is reached through
-  `AccountManager.emailDatasource`, and a caller that disagreed would otherwise
-  send `addLabelIds: [TRASH]` and `removeLabelIds: [TRASH]` in one request.
+- **The trash is `messages.batchDelete` instead, and asks for a scope first.**
+  Emptying the trash is a *permanent* delete, and Gmail's only one accepts no
+  scope short of `https://mail.google.com/` — see below. The datasource takes
+  that route on the `TRASH` id **as well as** on the `permanentDelete` flag,
+  because the two are decided in different places (the panel asks
+  `AccountCubit`, this runs off `AccountManager.emailDatasource`) and the other
+  reading of a trash empty is `addLabelIds: [TRASH]` alongside
+  `removeLabelIds: [TRASH]` in one request, which Gmail resolves however it
+  pleases.
+
+#### Permanently deleting needs a scope a sign-in does not ask for
+
+`GmailAuthService.fullMailScope` (`https://mail.google.com/`) is what
+`messages.batchDelete` takes, and nothing less does — `gmail.modify` can move a
+message to the trash but never destroy one. It is requested **incrementally**,
+by the confirm dialog that empties the trash, for the same reason
+`driveReadonlyScope` is (and `_roomDirectoryScope` before it): Google classes it
+restricted and it is the broadest scope Gmail has, so naming it in `_scopes`
+puts the heaviest consent screen Google shows — plus, on a client id that has
+not been through verification, a warning interstitial — in front of **adding a
+mail account**, over an action most accounts never take.
+
+`AccountManager.hasFullMailAccess` / `requestFullMailAccess` are the pair,
+shaped exactly like the cloud-drive ones: the stored token's `scope` **is** the
+record of the grant (Google echoes granted scopes on the exchange and every
+refresh), so there is no flag to fall out of step with it, and the
+re-authorisation lands under the same per-account key with
+`include_granted_scopes` carrying the mail scopes back.
+
+Three things in the dialog:
+
+- **It says Google will ask, before the destructive button**, rather than
+  springing a browser on somebody who has just confirmed a delete.
+- **It only says it when the scope is missing.** `hasFullMailAccess` is read
+  ahead of the dialog, so an account that has already granted it sees the plain
+  warning and no second step.
+- **Declining empties nothing.** It is an answer, not an error — nothing has
+  been deleted, and going on regardless would spend the whole listing to earn a
+  403 per page. Graph and IMAP permanently delete under the scopes every account
+  already holds, so none of this is on their path.
 
 **A failure is now reported** (`EmailListActionFailure`, so it needs a
 `sequence` like the move path), and the event carries the folder's display name

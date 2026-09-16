@@ -920,24 +920,6 @@ class GmailDatasourceImpl
 
   @override
   Future<void> emptyFolder(String folderId, {bool permanentDelete = false}) async {
-    // `TRASH` as well as the flag, because emptying the trash *is* a permanent
-    // delete however it is asked for — and the two are decided from different
-    // places: the menu item is withheld off `AccountCubit`, this runs off
-    // `AccountManager.emailDatasource`. Without it a caller that disagreed
-    // would send `addLabelIds: [TRASH]` and `removeLabelIds: [TRASH]` in one
-    // request and get whichever Gmail applied last.
-    if (permanentDelete || folderId == 'TRASH') {
-      // `messages.batchDelete` is Gmail's only permanent delete and it is
-      // reserved for the `https://mail.google.com/` scope, which this app does
-      // not ask for (`GmailAuthService._scopes` stops at `gmail.modify`) — a
-      // restricted scope, requested at sign-in, that would cost every account
-      // a re-authorisation and a verification review. So a Gmail trash folder
-      // is offered no "Delete All" item at all rather than one that reliably
-      // 403s; this is the backstop for a caller that asks regardless.
-      throw const ServerException(
-        message: 'Permanently deleting is not available on a Gmail account.',
-      );
-    }
     if (folderId.startsWith('__virtual__')) {
       // A path segment carrying no label of its own: there is no label to list
       // by and none to remove, so the ids would come back empty and the whole
@@ -951,41 +933,60 @@ class GmailDatasourceImpl
             'empty the folders inside it instead.',
       );
     }
+    // The trash takes the permanent route whether or not the flag says so:
+    // emptying it *is* a permanent delete, and the alternative reading —
+    // `addLabelIds: [TRASH]` alongside `removeLabelIds: [TRASH]` in one
+    // request — is a contradiction Gmail resolves however it pleases. The two
+    // are decided in different places (the menu asks `AccountCubit`, this runs
+    // off `AccountManager.emailDatasource`), so they are not assumed to agree.
+    final destroy = permanentDelete || folderId == 'TRASH';
     try {
       // List, modify, re-list — never paginate. Each batch stops carrying
       // [folderId], so the next listing *is* the next page, and a page token
       // minted before the labels moved out from under it is not.
       //
-      // One `batchModify` per page rather than Graph's request per message: a
-      // spam folder is routinely hundreds of messages, and the per-message
-      // shape spends hundreds of round trips to earn a 429.
+      // One `batchModify`/`batchDelete` per page rather than Graph's request
+      // per message: a spam folder is routinely hundreds of messages, and the
+      // per-message shape spends hundreds of round trips to earn a 429.
       final seen = <String>{};
       while (true) {
         final ids = await _listMessageIds(folderId);
         if (ids.isEmpty) break;
         final fresh = [for (final id in ids) if (seen.add(id)) id];
-        // Listed again, unchanged: a modify answered 200 without taking. Not a
-        // finished empty — returning here would report success over a folder
+        // Listed again, unchanged: the write answered 200 without taking. Not
+        // a finished empty — returning here would report success over a folder
         // still full of mail, and the repository would clear its cache on the
         // strength of it. Re-listing the same ids forever is the only worse
         // answer.
         if (fresh.isEmpty) {
           throw const ServerException(
             message: 'Gmail kept listing the same messages under this folder — '
-                'some of them were not moved.',
+                'some of them were not deleted.',
           );
         }
-        await _dio.post<void>(
-          '/users/me/messages/batchModify',
-          data: {
-            'ids': fresh,
-            'addLabelIds': ['TRASH'],
-            // The source label goes with it, exactly as [moveEmail] does it: a
-            // message that keeps SPAM is still listed under Spam by
-            // `threads.list`, which is what the folder on screen reads.
-            'removeLabelIds': [folderId],
-          },
-        );
+        if (destroy) {
+          // `messages.batchDelete` is Gmail's only permanent delete — there is
+          // no lesser scope for it, which is why
+          // [GmailAuthService.fullMailScope] is asked for before the user gets
+          // here (`AccountManager.requestFullMailAccess`). Without the grant
+          // this is a 403, reported like any other server refusal.
+          await _dio.post<void>(
+            '/users/me/messages/batchDelete',
+            data: {'ids': fresh},
+          );
+        } else {
+          await _dio.post<void>(
+            '/users/me/messages/batchModify',
+            data: {
+              'ids': fresh,
+              'addLabelIds': ['TRASH'],
+              // The source label goes with it, exactly as [moveEmail] does it:
+              // a message that keeps SPAM is still listed under Spam by
+              // `threads.list`, which is what the folder on screen reads.
+              'removeLabelIds': [folderId],
+            },
+          );
+        }
       }
     } on DioException catch (e) {
       throw _mapException(e);

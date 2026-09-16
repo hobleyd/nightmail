@@ -364,6 +364,59 @@ class AccountManager {
     };
   }
 
+  /// Whether [accountId]'s stored token already carries Gmail's full-mailbox
+  /// scope, which is the only one that can permanently delete mail.
+  ///
+  /// Gmail only: Graph and IMAP both delete permanently under the scopes every
+  /// account already holds, so there is nothing to ask them for.
+  Future<bool> hasFullMailAccess(String accountId) async {
+    final account = accountById(accountId);
+    if (account is! GmailAccount) return false;
+    final authService = _buildOAuthServiceForAccount(account);
+    if (authService == null) return false;
+    final token = await authService.getStoredToken();
+    if (token == null) return false;
+    return GmailAuthService.grantsFullMailAccess(token.scope);
+  }
+
+  /// Runs the interactive sign-in again for [accountId], this time also asking
+  /// for [GmailAuthService.fullMailScope].
+  ///
+  /// Returns whether the scope came back granted — the user can decline it in
+  /// the browser and the flow still "succeeds". Nothing else about the account
+  /// changes: the new token lands under the same per-account key, and Google is
+  /// told `include_granted_scopes`, so the mail scopes it already had come back
+  /// with it. Same shape as [requestCloudDriveAccess]; see that for why neither
+  /// scope may be moved into the base set.
+  Future<bool> requestFullMailAccess(String accountId) async {
+    final account = accountById(accountId);
+    if (account == null) throw StateError('Unknown account: $accountId');
+    if (account is! GmailAccount) return false;
+
+    // Settings can edit the OAuth client ids; pick up any change first, as the
+    // other interactive paths do.
+    await _loadAndMigrateClientIds();
+
+    final authService = GmailAuthService(
+      clientId: _googleClientId ?? AppConfig.gmailClientId,
+      clientSecret: _googleClientSecret ?? '',
+      redirectUri: AppConfig.gmailRedirectUri,
+      tokenStorage:
+          TokenStorage(_secureStorage, storageKey: 'token_${account.id}'),
+      accountEmail: account.emailAddress,
+      extraScopes: const [GmailAuthService.fullMailScope],
+    );
+
+    final token = await authService.signIn();
+    // The mail datasource holds a client built around this account's token
+    // storage — the key is unchanged, but rebuild for the reason
+    // requestCloudDriveAccess does: so the new token is used now rather than
+    // after the next refresh.
+    if (accountId == activeAccount?.id) _buildDatasourcesForActiveAccount();
+
+    return GmailAuthService.grantsFullMailAccess(token.scope);
+  }
+
   /// A datasource that can fetch cloud documents as [accountId], or null when
   /// that account belongs to neither drive provider.
   CloudDriveDatasource? cloudDriveDatasourceForAccount(String accountId) {

@@ -17,6 +17,7 @@ import '../../data/datasources/local/migration_local_datasource.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_folder.dart';
 import '../../infrastructure/accounts/account.dart';
+import '../../infrastructure/accounts/account_manager.dart';
 import '../../infrastructure/migration/account_migration_service.dart';
 import '../../injection_container.dart';
 import 'add_shared_mailbox_dialog.dart';
@@ -1263,19 +1264,13 @@ class _FolderItemState extends State<_FolderItem>
   bool get _isTrashFolder => ['deleted items', 'trash']
       .contains(widget.folder.displayName.toLowerCase());
 
-  /// Whether "Delete All" is offered at all.
-  ///
-  /// Emptying the trash is a *permanent* delete, and Gmail has exactly one —
-  /// `messages.batchDelete`, behind the `https://mail.google.com/` scope this
-  /// app deliberately does not ask for. So the item is withheld there rather
-  /// than offered and reliably failed, the same question `onDelete == null`
-  /// already answers for a system folder. Every other Gmail folder empties by
-  /// moving its mail to the trash, which `gmail.modify` permits.
-  bool _canDeleteAll(BuildContext context) {
-    if (!_isTrashFolder) return true;
+  /// The active account, when it is a Gmail one — the only kind that has to be
+  /// asked for a scope before it can permanently delete.
+  GmailAccount? _activeGmailAccount(BuildContext context) {
     final accountState = context.read<AccountCubit>().state;
-    return !(accountState is AccountsLoaded &&
-        accountState.activeAccount is GmailAccount);
+    if (accountState is! AccountsLoaded) return null;
+    final account = accountState.activeAccount;
+    return account is GmailAccount ? account : null;
   }
 
   @override
@@ -1653,24 +1648,22 @@ class _FolderItemState extends State<_FolderItem>
               ],
             ),
           ),
-        if (_canDeleteAll(context)) ...[
-          const PopupMenuDivider(),
-          PopupMenuItem(
-            value: _FolderAction.deleteAll,
-            child: Row(
-              children: [
-                Icon(
-                  _isTrashFolder
-                      ? Icons.delete_forever_outlined
-                      : Icons.delete_outline_rounded,
-                  size: 16,
-                ),
-                const SizedBox(width: 8),
-                const Text('Delete All', style: TextStyle(fontSize: 13)),
-              ],
-            ),
+        const PopupMenuDivider(),
+        PopupMenuItem(
+          value: _FolderAction.deleteAll,
+          child: Row(
+            children: [
+              Icon(
+                _isTrashFolder
+                    ? Icons.delete_forever_outlined
+                    : Icons.delete_outline_rounded,
+                size: 16,
+              ),
+              const SizedBox(width: 8),
+              const Text('Delete All', style: TextStyle(fontSize: 13)),
+            ],
           ),
-        ],
+        ),
       ],
     );
 
@@ -1688,15 +1681,31 @@ class _FolderItemState extends State<_FolderItem>
 
   Future<void> _confirmDeleteAll(BuildContext context) async {
     final isPermanent = _isTrashFolder;
+    // Gmail is the one provider that cannot permanently delete under the
+    // scopes a sign-in asks for, so emptying its trash needs a grant first —
+    // and the dialog says so *before* the destructive button, rather than
+    // springing a browser on someone who has just confirmed a delete.
+    final gmail = isPermanent ? _activeGmailAccount(context) : null;
+    final needsGrant = gmail != null &&
+        !await sl<AccountManager>().hasFullMailAccess(gmail.id);
+    if (!context.mounted) return;
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(
             isPermanent ? 'Permanently Delete All?' : 'Delete All?'),
         content: Text(
-          isPermanent
-              ? 'All emails in ${widget.folder.displayName} will be permanently deleted. This cannot be undone.'
-              : 'All emails in ${widget.folder.displayName} will be moved to Deleted Items.',
+          [
+            if (isPermanent)
+              'All emails in ${widget.folder.displayName} will be permanently deleted. This cannot be undone.'
+            else
+              'All emails in ${widget.folder.displayName} will be moved to Deleted Items.',
+            if (needsGrant)
+              'Google will ask you to allow NightMail to delete mail — '
+                  'permanently deleting is the one thing it has not already '
+                  'been given permission for.',
+          ].join('\n\n'),
         ),
         actions: [
           TextButton(
@@ -1714,20 +1723,43 @@ class _FolderItemState extends State<_FolderItem>
       ),
     );
 
-    if (confirmed == true && context.mounted) {
-      context.read<EmailListBloc>().add(EmailListFolderEmptied(
-            folderId: widget.folder.id,
-            permanentDelete: isPermanent,
-            folderDisplayName: widget.folder.displayName,
-          ));
-      context.read<EmailDetailBloc>().add(const EmailDetailCleared());
-      context.read<FolderListBloc>().add(
-            FolderListFolderEmptied(folderId: widget.folder.id),
-          );
-      if (widget.folder.displayName.toLowerCase() == 'inbox' &&
-          widget.folder.unreadItemCount > 0) {
-        context.read<MailPollerCubit>().updateBadgeFromFolders(0);
+    if (confirmed != true || !context.mounted) return;
+
+    if (needsGrant) {
+      final messenger = ScaffoldMessenger.of(context);
+      bool granted;
+      try {
+        granted = await sl<AccountManager>().requestFullMailAccess(gmail.id);
+      } catch (e) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('Could not ask Google for permission: $e')),
+        );
+        return;
       }
+      // Declining is an answer, not an error — and nothing has been deleted,
+      // so there is nothing to undo. Going on regardless would spend the whole
+      // listing to earn a 403 per page.
+      if (!granted) {
+        messenger.showSnackBar(const SnackBar(
+          content: Text('Permission to delete mail was not granted'),
+        ));
+        return;
+      }
+      if (!context.mounted) return;
+    }
+
+    context.read<EmailListBloc>().add(EmailListFolderEmptied(
+          folderId: widget.folder.id,
+          permanentDelete: isPermanent,
+          folderDisplayName: widget.folder.displayName,
+        ));
+    context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+    context.read<FolderListBloc>().add(
+          FolderListFolderEmptied(folderId: widget.folder.id),
+        );
+    if (widget.folder.displayName.toLowerCase() == 'inbox' &&
+        widget.folder.unreadItemCount > 0) {
+      context.read<MailPollerCubit>().updateBadgeFromFolders(0);
     }
   }
 

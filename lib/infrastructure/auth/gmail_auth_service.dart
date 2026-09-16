@@ -113,6 +113,35 @@ class GmailAuthService implements AuthService {
         granted.contains('https://www.googleapis.com/auth/drive');
   }
 
+  /// Full mailbox access, for permanently deleting mail (`messages.batchDelete`
+  /// and `messages.delete`, which accept no lesser scope). Requested
+  /// incrementally — see [extraScopes].
+  ///
+  /// Google classes this as *restricted*, and it is the broadest scope Gmail
+  /// has: it carries send, read and delete over the whole mailbox. Putting it
+  /// in [_scopes] would therefore put the heaviest consent screen Google shows
+  /// — and, on a client id that has not been through verification, a warning
+  /// interstitial — in front of *adding a mail account*, over an action most
+  /// accounts will never take. It is asked for on its own, when the user
+  /// empties the trash and agrees.
+  static const fullMailScope = 'https://mail.google.com/';
+
+  /// Whether a token's granted `scope` carries [fullMailScope].
+  ///
+  /// Google echoes the granted scopes on both the code exchange and every
+  /// refresh, so the stored token is the record of the grant — the same
+  /// reasoning as [grantsFileAccess], and the same reason there is no flag.
+  static bool grantsFullMailAccess(String? scope) {
+    if (scope == null || scope.isEmpty) return false;
+    // Exact membership. `gmail.modify` is a prefix of nothing here, but
+    // `https://mail.google.com/` differing from the granted string by so much
+    // as its trailing slash is a real possibility, so compare whole tokens
+    // with the slash normalised rather than by substring.
+    return scope
+        .split(RegExp(r'\s+'))
+        .any((s) => s == fullMailScope || s == 'https://mail.google.com');
+  }
+
   static const _roomDirectoryScope =
       'https://www.googleapis.com/auth/admin.directory.resource.calendar.readonly';
 
@@ -134,6 +163,14 @@ class GmailAuthService implements AuthService {
   /// way as not having it.
   List<String> get _requestedScopes =>
       [...scopesForAccount(accountEmail), ...extraScopes];
+
+  /// The list above, for tests. What a sign-in *sends* is the thing that
+  /// matters — an incremental scope that never reaches the authorization URL
+  /// fails as a silent 403 later, a long way from here, and every check
+  /// against the token it comes back with still passes because the token
+  /// simply does not carry it.
+  @visibleForTesting
+  List<String> get requestedScopes => _requestedScopes;
 
   @visibleForTesting
   static List<String> scopesForAccount(String? accountEmail) {

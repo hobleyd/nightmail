@@ -23,7 +23,9 @@ import 'package:nightmail/infrastructure/migration/account_migration_service.dar
 import 'package:nightmail/infrastructure/update/app_update_status.dart';
 import 'package:nightmail/injection_container.dart';
 import 'package:nightmail/presentation/blocs/account/account_cubit.dart';
+import 'package:nightmail/presentation/blocs/email_detail/email_detail_bloc.dart';
 import 'package:nightmail/presentation/blocs/email_list/email_list_bloc.dart';
+import 'package:nightmail/presentation/blocs/email_list/email_list_event.dart';
 import 'package:nightmail/presentation/blocs/email_list/email_list_state.dart';
 import 'package:nightmail/presentation/blocs/folder_list/folder_list_bloc.dart';
 import 'package:nightmail/presentation/blocs/folder_list/folder_list_event.dart';
@@ -75,6 +77,21 @@ EmailFolder _folder(
 class _FakeAccountManager extends Fake implements AccountManager {
   @override
   Account? activeAccount = _account;
+
+  /// Whether the stored token already carries Gmail's full-mailbox scope, and
+  /// what the browser flow answers when it is asked for.
+  bool fullMailAccess = false;
+  bool grantAnswer = true;
+  int grantCalls = 0;
+
+  @override
+  Future<bool> hasFullMailAccess(String accountId) async => fullMailAccess;
+
+  @override
+  Future<bool> requestFullMailAccess(String accountId) async {
+    grantCalls++;
+    return grantAnswer;
+  }
 }
 
 class _FakeGetMailFolders extends Fake implements GetMailFolders {
@@ -149,13 +166,18 @@ class _FakeMoveFolder extends Fake implements MoveFolder {
   OverdueTasksCubit,
   UpdateCubit,
 ])
+// Read from the confirm dialog to clear the reading pane; a nice mock is
+// enough, since nothing here asserts on it.
+@GenerateNiceMocks([MockSpec<EmailDetailBloc>()])
 @GenerateNiceMocks([MockSpec<AccountMigrationService>()])
 void main() {
   late MockAccountCubit accountCubit;
+  late _FakeAccountManager accountManager;
   late MockMailPollerCubit mailPoller;
   late MockEmailListBloc emailList;
   late MockOverdueTasksCubit overdueTasks;
   late MockUpdateCubit updateCubit;
+  late MockEmailDetailBloc emailDetail;
 
   late _FakeGetMailFolders getMailFolders;
   late _FakeCreateFolder createFolder;
@@ -188,6 +210,9 @@ void main() {
     when(emailList.stream).thenAnswer((_) => const Stream.empty());
     when(emailList.state).thenReturn(const EmailListInitial());
 
+    emailDetail = MockEmailDetailBloc();
+    when(emailDetail.stream).thenAnswer((_) => const Stream.empty());
+
     overdueTasks = MockOverdueTasksCubit();
     when(overdueTasks.stream).thenAnswer((_) => const Stream.empty());
     when(overdueTasks.state).thenReturn(0);
@@ -200,6 +225,11 @@ void main() {
     // migration entry; a nice mock answers "no active job".
     sl.registerLazySingleton<AccountMigrationService>(
         () => MockAccountMigrationService());
+
+    // Reached through `sl` rather than a provider by the one path that has to
+    // ask Google for a scope before it can act — emptying a Gmail trash.
+    accountManager = _FakeAccountManager();
+    sl.registerLazySingleton<AccountManager>(() => accountManager);
 
     serverFolders = [_folder('inbox-id', 'Inbox')];
     getMailFolders = _FakeGetMailFolders(() async => Right(serverFolders));
@@ -236,7 +266,7 @@ void main() {
       renameFolder: _FakeRenameFolder(),
       moveFolder: moveFolder,
       deleteFolder: deleteFolder,
-      accountManager: _FakeAccountManager(),
+      accountManager: accountManager,
       staleRetryDelays: const [],
     );
     addTearDown(() => unawaited(folderList.close()));
@@ -259,6 +289,7 @@ void main() {
               BlocProvider<AccountCubit>.value(value: accountCubit),
               BlocProvider<MailPollerCubit>.value(value: mailPoller),
               BlocProvider<EmailListBloc>.value(value: emailList),
+              BlocProvider<EmailDetailBloc>.value(value: emailDetail),
               BlocProvider<OverdueTasksCubit>.value(value: overdueTasks),
               BlocProvider<UpdateCubit>.value(value: updateCubit),
               BlocProvider<FolderListBloc>.value(value: folderList),
@@ -869,30 +900,84 @@ void main() {
   // -------------------------------------------------------------------------
 
   group('Delete All', () {
-    testWidgets('is withheld on a Gmail trash folder', (tester) async {
+    /// Right-clicks [folderName] and presses "Delete All", leaving the confirm
+    /// dialog on screen.
+    Future<void> openDeleteAll(WidgetTester tester, String folderName) async {
+      await tester.tap(find.text(folderName), buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete All'));
+      await tester.pumpAndSettle();
+    }
+
+    List<EmailListFolderEmptied> emptied() =>
+        verify(emailList.add(captureAny))
+            .captured
+            .whereType<EmailListFolderEmptied>()
+            .toList();
+
+    testWidgets('asks Google for the delete scope before emptying a Gmail '
+        'trash, and says so in the dialog', (tester) async {
       serverFolders = [_folder('inbox-id', 'Inbox'), _folder('trash-id', 'Trash')];
       await pumpPanel(tester);
 
-      await tester.tap(find.text('Trash'), buttons: kSecondaryButton);
+      await openDeleteAll(tester, 'Trash');
+      // Said before the destructive button rather than springing a browser on
+      // someone who has just confirmed a delete.
+      expect(find.textContaining('Google will ask you'), findsOneWidget);
+
+      await tester.tap(find.text('Delete Permanently'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Delete All'), findsNothing);
-      // The rest of the menu is untouched — this withholds one item, it does
-      // not make a trash folder inert.
-      expect(find.text('Rename Folder'), findsOneWidget);
+      expect(accountManager.grantCalls, 1);
+      expect(emptied().single.permanentDelete, isTrue);
     });
 
-    testWidgets('is offered on every other Gmail folder', (tester) async {
+    testWidgets('a declined grant empties nothing', (tester) async {
+      accountManager.grantAnswer = false;
+      serverFolders = [_folder('inbox-id', 'Inbox'), _folder('trash-id', 'Trash')];
+      await pumpPanel(tester);
+
+      await openDeleteAll(tester, 'Trash');
+      await tester.tap(find.text('Delete Permanently'));
+      await tester.pumpAndSettle();
+
+      expect(accountManager.grantCalls, 1);
+      verifyNever(emailList.add(argThat(isA<EmailListFolderEmptied>())));
+      expect(find.textContaining('was not granted'), findsOneWidget);
+    });
+
+    testWidgets('a token that already carries the scope asks for nothing',
+        (tester) async {
+      accountManager.fullMailAccess = true;
+      serverFolders = [_folder('inbox-id', 'Inbox'), _folder('trash-id', 'Trash')];
+      await pumpPanel(tester);
+
+      await openDeleteAll(tester, 'Trash');
+      expect(find.textContaining('Google will ask you'), findsNothing);
+
+      await tester.tap(find.text('Delete Permanently'));
+      await tester.pumpAndSettle();
+
+      expect(accountManager.grantCalls, 0);
+      expect(emptied(), hasLength(1));
+    });
+
+    testWidgets('every other folder empties by moving mail to the trash, '
+        'which needs no grant', (tester) async {
       serverFolders = [_folder('inbox-id', 'Inbox'), _folder('spam-id', 'Spam')];
       await pumpPanel(tester);
 
-      await tester.tap(find.text('Spam'), buttons: kSecondaryButton);
+      await openDeleteAll(tester, 'Spam');
+      expect(find.textContaining('Google will ask you'), findsNothing);
+
+      await tester.tap(find.text('Delete All'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Delete All'), findsOneWidget);
+      expect(accountManager.grantCalls, 0);
+      expect(emptied().single.permanentDelete, isFalse);
     });
 
-    testWidgets('is offered on a trash folder elsewhere', (tester) async {
+    testWidgets('a trash folder elsewhere is never asked', (tester) async {
       // Graph and IMAP both permanently delete under the scopes already held.
       when(accountCubit.state).thenReturn(const AccountsLoaded(
         accounts: [
@@ -911,10 +996,14 @@ void main() {
       ];
       await pumpPanel(tester);
 
-      await tester.tap(find.text('Deleted Items'), buttons: kSecondaryButton);
+      await openDeleteAll(tester, 'Deleted Items');
+      expect(find.textContaining('Google will ask you'), findsNothing);
+
+      await tester.tap(find.text('Delete Permanently'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Delete All'), findsOneWidget);
+      expect(accountManager.grantCalls, 0);
+      expect(emptied().single.permanentDelete, isTrue);
     });
   });
 }

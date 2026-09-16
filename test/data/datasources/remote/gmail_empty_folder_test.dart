@@ -32,6 +32,13 @@ void main() {
               .last as Map)
           .cast<String, dynamic>();
 
+  List<Map<String, dynamic>> deleteBodies() =>
+      verify(mockDio.post<void>('/users/me/messages/batchDelete',
+              data: captureAnyNamed('data')))
+          .captured
+          .map((d) => (d as Map).cast<String, dynamic>())
+          .toList();
+
   List<Map<String, dynamic>> modifyBodies() =>
       verify(mockDio.post<void>('/users/me/messages/batchModify',
               data: captureAnyNamed('data')))
@@ -67,6 +74,13 @@ void main() {
               statusCode: 204,
               requestOptions:
                   RequestOptions(path: '/users/me/messages/batchModify'),
+            ));
+    when(mockDio.post<void>('/users/me/messages/batchDelete',
+            data: anyNamed('data')))
+        .thenAnswer((_) async => Response<void>(
+              statusCode: 204,
+              requestOptions:
+                  RequestOptions(path: '/users/me/messages/batchDelete'),
             ));
   });
 
@@ -158,14 +172,17 @@ void main() {
   });
 
   // Emptying the trash is a permanent delete however it is asked for, and the
-  // menu item that withholds it is decided from a different source of truth
-  // (AccountCubit) than the datasource that runs it.
-  test('refuses the trash even without the permanent flag', () async {
-    await expectLater(
-      datasource.emptyFolder('TRASH'),
-      throwsA(isA<ServerException>()),
-    );
+  // flag is decided somewhere else (the panel, off AccountCubit) than this is.
+  // Taking the label route there would send `addLabelIds: [TRASH]` alongside
+  // `removeLabelIds: [TRASH]` in one request.
+  test('treats the trash as permanent even without the flag', () async {
+    pages = [
+      ['m1'],
+    ];
 
+    await datasource.emptyFolder('TRASH');
+
+    expect(deleteBodies(), hasLength(1));
     verifyNever(mockDio.post<void>('/users/me/messages/batchModify',
         data: anyNamed('data')));
   });
@@ -177,21 +194,23 @@ void main() {
         data: anyNamed('data')));
   });
 
-  // `messages.batchDelete` needs the full `https://mail.google.com/` scope,
-  // which the app does not hold — so this fails before asking rather than
-  // spending a round trip on a 403. The menu item is withheld on a Gmail trash
-  // folder; this is the backstop.
-  test('refuses a permanent delete without listing anything', () async {
-    await expectLater(
-      datasource.emptyFolder('TRASH', permanentDelete: true),
-      throwsA(isA<ServerException>()),
-    );
+  // A permanent delete is `messages.batchDelete`, which accepts only the full
+  // `https://mail.google.com/` scope — asked for on the way in, so a 403 here
+  // is a refusal like any other rather than something to anticipate.
+  test('permanently deletes through batchDelete, not a label change', () async {
+    pages = [
+      ['m1', 'm2'],
+    ];
 
-    verifyNever(mockDio.get<String>(
-      '/users/me/messages',
-      queryParameters: anyNamed('queryParameters'),
-      options: anyNamed('options'),
-    ));
+    await datasource.emptyFolder('TRASH', permanentDelete: true);
+
+    expect(deleteBodies(), [
+      {
+        'ids': ['m1', 'm2'],
+      },
+    ]);
+    verifyNever(mockDio.post<void>('/users/me/messages/batchModify',
+        data: anyNamed('data')));
   });
 
   test('maps a server error to a ServerException', () async {

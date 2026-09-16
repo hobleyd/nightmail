@@ -188,6 +188,13 @@ class GmailDatasourceImpl
   /// `RetryInterceptor` backoff — which is slower than the queue it replaced.
   static const _threadFetchConcurrency = 8;
 
+  /// Message ids asked for per round of [emptyFolder].
+  ///
+  /// 500 is `messages.list`'s own ceiling, and comfortably inside
+  /// `batchModify`'s 1000-id limit, so a round is always one list and one
+  /// modify.
+  static const _emptyFolderPageSize = 500;
+
   /// Reads one label's message counts into [_labelCounts]. Never throws: a label
   /// that could not be counted keeps its last known figures rather than failing
   /// the whole folder listing.
@@ -879,9 +886,110 @@ class GmailDatasourceImpl
     await _dio.post<void>('/users/me/messages/$id/trash');
   }
 
+  /// Ids Gmail lists under [folderId], newest first, one page at a time.
+  ///
+  /// `includeSpamTrash` because the listing hides both by default — asking for
+  /// `labelIds=SPAM` without it is the failure this whole path exists to avoid:
+  /// no ids, nothing modified, and a "Delete All" that reports success over a
+  /// folder it never touched.
+  ///
+  /// Plain and decoded here, like every other request this class makes: the
+  /// response is ids and a token, and one response type across the message
+  /// endpoints is what keeps them stubbable as one thing (a Dart `Invocation`
+  /// does not carry the type argument that would tell `get<Map>` from
+  /// `get<String>`).
+  Future<List<String>> _listMessageIds(String folderId) async {
+    final resp = await _dio.get<String>(
+      '/users/me/messages',
+      queryParameters: {
+        'labelIds': folderId,
+        'maxResults': _emptyFolderPageSize,
+        'includeSpamTrash': true,
+        'fields': 'messages/id',
+      },
+      options: Options(responseType: ResponseType.plain),
+    );
+    final raw = resp.data;
+    if (raw == null || raw.isEmpty) return const [];
+    final data = jsonDecode(raw) as Map<String, dynamic>;
+    final messages = data['messages'] as List<dynamic>? ?? const [];
+    return [
+      for (final m in messages) (m as Map<String, dynamic>)['id'] as String,
+    ];
+  }
+
   @override
-  Future<void> emptyFolder(String folderId, {bool permanentDelete = false}) {
-    throw UnimplementedError('emptyFolder not yet supported for Gmail');
+  Future<void> emptyFolder(String folderId, {bool permanentDelete = false}) async {
+    // `TRASH` as well as the flag, because emptying the trash *is* a permanent
+    // delete however it is asked for — and the two are decided from different
+    // places: the menu item is withheld off `AccountCubit`, this runs off
+    // `AccountManager.emailDatasource`. Without it a caller that disagreed
+    // would send `addLabelIds: [TRASH]` and `removeLabelIds: [TRASH]` in one
+    // request and get whichever Gmail applied last.
+    if (permanentDelete || folderId == 'TRASH') {
+      // `messages.batchDelete` is Gmail's only permanent delete and it is
+      // reserved for the `https://mail.google.com/` scope, which this app does
+      // not ask for (`GmailAuthService._scopes` stops at `gmail.modify`) — a
+      // restricted scope, requested at sign-in, that would cost every account
+      // a re-authorisation and a verification review. So a Gmail trash folder
+      // is offered no "Delete All" item at all rather than one that reliably
+      // 403s; this is the backstop for a caller that asks regardless.
+      throw const ServerException(
+        message: 'Permanently deleting is not available on a Gmail account.',
+      );
+    }
+    if (folderId.startsWith('__virtual__')) {
+      // A path segment carrying no label of its own: there is no label to list
+      // by and none to remove, so the ids would come back empty and the whole
+      // thing would report having emptied a folder it never looked at. Its
+      // messages are its children's, and taking mail out of folders the user
+      // did not name is the one direction that cannot be undone — unlike
+      // `deleteFolder`, which resolves the same id to its descendants because
+      // deleting a *label* takes no message anywhere.
+      throw const ServerException(
+        message: 'This folder holds no messages of its own — '
+            'empty the folders inside it instead.',
+      );
+    }
+    try {
+      // List, modify, re-list — never paginate. Each batch stops carrying
+      // [folderId], so the next listing *is* the next page, and a page token
+      // minted before the labels moved out from under it is not.
+      //
+      // One `batchModify` per page rather than Graph's request per message: a
+      // spam folder is routinely hundreds of messages, and the per-message
+      // shape spends hundreds of round trips to earn a 429.
+      final seen = <String>{};
+      while (true) {
+        final ids = await _listMessageIds(folderId);
+        if (ids.isEmpty) break;
+        final fresh = [for (final id in ids) if (seen.add(id)) id];
+        // Listed again, unchanged: a modify answered 200 without taking. Not a
+        // finished empty — returning here would report success over a folder
+        // still full of mail, and the repository would clear its cache on the
+        // strength of it. Re-listing the same ids forever is the only worse
+        // answer.
+        if (fresh.isEmpty) {
+          throw const ServerException(
+            message: 'Gmail kept listing the same messages under this folder — '
+                'some of them were not moved.',
+          );
+        }
+        await _dio.post<void>(
+          '/users/me/messages/batchModify',
+          data: {
+            'ids': fresh,
+            'addLabelIds': ['TRASH'],
+            // The source label goes with it, exactly as [moveEmail] does it: a
+            // message that keeps SPAM is still listed under Spam by
+            // `threads.list`, which is what the folder on screen reads.
+            'removeLabelIds': [folderId],
+          },
+        );
+      }
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
   }
 
   @override

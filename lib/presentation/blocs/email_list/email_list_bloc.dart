@@ -950,6 +950,28 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       ));
     }
 
+    // Said out loud, over whatever is on screen. An empty that fails silently
+    // is a folder that reports itself emptied and is not — the shape this whole
+    // handler was found by — and the snack bar reaches the user whether or not
+    // they are still looking at the folder they emptied. [sequence] for the
+    // reason [EmailListActionFailure] carries one: twice in a row is two
+    // events, not one dropped emit.
+    result.fold(
+      (failure) {
+        final s = state;
+        if (s is! EmailListLoaded) return;
+        emit(s.copyWith(
+          actionFailure: EmailListActionFailure(
+            message: 'Could not empty '
+                '${event.folderDisplayName ?? 'this folder'}: '
+                '${failure.message}',
+            sequence: ++_actionFailureSequence,
+          ),
+        ));
+      },
+      (_) {},
+    );
+
     // A failed/partial empty (e.g. throttled partway through a large folder)
     // must not leave the optimistic "folder is empty" view above standing —
     // re-fetch so whatever is actually still on the server reappears.
@@ -964,11 +986,21 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       fetchResult.fold(
         (_) {},
         (emails) {
-          _serverOffset = _pageSize;
+          // Checked *after* the await as well as before it. The fetch is a
+          // folder page — seconds, on Gmail, where it is one request per thread
+          // — and a user whose list has just blanked routinely clicks somewhere
+          // else inside it. Emitting then paints the emptied folder's mail into
+          // whichever folder is now on screen, with nothing but a manual
+          // refresh to take it away again: a list pane showing the Inbox, full
+          // of Spam. [_serverOffset] would be reset under that folder too.
           final s = state;
-          if (s is EmailListLoaded) {
-            emit(s.copyWith(emails: emails, hasMore: emails.length >= _pageSize));
+          if (s is! EmailListLoaded ||
+              s.currentFolderId != event.folderId ||
+              _folderBelongsToAnotherAccount) {
+            return;
           }
+          _serverOffset = _pageSize;
+          emit(s.copyWith(emails: emails, hasMore: emails.length >= _pageSize));
         },
       );
     }

@@ -859,4 +859,62 @@ void main() {
       expect(tester.getTopLeft(find.text('Projects')).dx, rootIndent);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // "Delete All" — offered only where it can work.
+  //
+  // Emptying the trash is a permanent delete, and Gmail's only one
+  // (`messages.batchDelete`) is behind a scope the app does not ask for. A
+  // menu item that reliably fails is worse than no menu item.
+  // -------------------------------------------------------------------------
+
+  group('Delete All', () {
+    testWidgets('is withheld on a Gmail trash folder', (tester) async {
+      serverFolders = [_folder('inbox-id', 'Inbox'), _folder('trash-id', 'Trash')];
+      await pumpPanel(tester);
+
+      await tester.tap(find.text('Trash'), buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Delete All'), findsNothing);
+      // The rest of the menu is untouched — this withholds one item, it does
+      // not make a trash folder inert.
+      expect(find.text('Rename Folder'), findsOneWidget);
+    });
+
+    testWidgets('is offered on every other Gmail folder', (tester) async {
+      serverFolders = [_folder('inbox-id', 'Inbox'), _folder('spam-id', 'Spam')];
+      await pumpPanel(tester);
+
+      await tester.tap(find.text('Spam'), buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Delete All'), findsOneWidget);
+    });
+
+    testWidgets('is offered on a trash folder elsewhere', (tester) async {
+      // Graph and IMAP both permanently delete under the scopes already held.
+      when(accountCubit.state).thenReturn(const AccountsLoaded(
+        accounts: [
+          MicrosoftAccount(
+            id: 'acct-2',
+            displayName: 'Bob',
+            emailAddress: 'b@example.com',
+            tenantId: 'tenant',
+          )
+        ],
+        activeIndex: 0,
+      ));
+      serverFolders = [
+        _folder('inbox-id', 'Inbox'),
+        _folder('trash-id', 'Deleted Items'),
+      ];
+      await pumpPanel(tester);
+
+      await tester.tap(find.text('Deleted Items'), buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Delete All'), findsOneWidget);
+    });
+  });
 }

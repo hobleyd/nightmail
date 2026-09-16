@@ -1467,6 +1467,68 @@ id and nothing lists that folder any more, so they are dead weight rather than
 a wrong answer; clearing them would mean a new bloc dependency and an account
 id to go with it.
 
+### Emptying One Is Gmail's Odd Case, and It Failed Silently
+
+"Delete All" empties a folder's *mail*. `GmailDatasourceImpl.emptyFolder` threw
+`UnimplementedError` — which `_executeLocal`'s bare `catch` turns into a
+`ServerFailure` like any other — so on a Gmail account the action had never
+worked, and nothing said so: the list blanked optimistically, the failure was
+discarded, and the folder's counts were zeroed on the panel.
+
+Gmail has no empty-folder endpoint, so this is list-then-batch:
+`messages.list?labelIds=<folder>` for ids, then one `messages/batchModify`
+adding `TRASH` and removing the folder's own label. Five things:
+
+- **`includeSpamTrash` is not optional.** The listing hides both by default, so
+  asking for `labelIds=SPAM` without it returns no ids at all — an empty that
+  touches nothing and reports success, which is the failure this replaced.
+- **The source label goes with the message.** A message that keeps `SPAM` is
+  still listed under Spam by `threads.list`, which is what the folder on screen
+  reads. Same rule `moveEmail` follows.
+- **It re-lists rather than paginates.** Each batch stops carrying the label, so
+  the next listing *is* the next page — and a page token minted before the
+  labels moved out from under it is not. An *empty* listing ends the loop; one
+  that comes back **unchanged** is a modify that answered 200 without taking,
+  and that **fails** rather than ending it. The difference matters because
+  success here is not inert: `EmailRepositoryImpl.emptyFolder` clears the
+  folder's cache on it, so breaking out quietly would be the silent empty all
+  over again, with the local copy of the surviving mail thrown away too.
+- **A `__virtual__` folder is refused.** It is a path segment carrying no label
+  of its own, so there is nothing to list by and nothing to remove.
+  `deleteFolder` resolves the same id to its descendants — it can, because
+  deleting a *label* takes no message anywhere — but emptying one would delete
+  mail out of folders the user did not name.
+- **Gmail's trash gets no "Delete All" item at all.** Emptying the trash is a
+  *permanent* delete, and Gmail's only one — `messages.batchDelete` — is behind
+  the `https://mail.google.com/` scope, which is restricted, requested at
+  sign-in, and would cost every existing account a re-authorisation. So
+  `_canDeleteAll` withholds the item there rather than offering one that
+  reliably 403s, the same question `onDelete == null` already answers for a
+  system folder. `emptyFolder` refuses before making a request as the
+  backstop — on the `TRASH` id as well as on the flag, since the item is
+  withheld off `AccountCubit` while the datasource is reached through
+  `AccountManager.emailDatasource`, and a caller that disagreed would otherwise
+  send `addLabelIds: [TRASH]` and `removeLabelIds: [TRASH]` in one request.
+
+**A failure is now reported** (`EmailListActionFailure`, so it needs a
+`sequence` like the move path), and the event carries the folder's display name
+because the folder emptied is routinely not the one on screen — it is chosen
+from the panel — so the state's own `currentFolderName` names the wrong one and
+a raw `Label_12` names nothing. The panel's optimistic zeroed counts are left
+to the next tree fetch: `FolderListFolderEmptied` does not register in
+`_recentCountChanges`, so nothing re-applies them over the server's answer.
+
+**The recovery fetch is re-checked after its await, not only before it.** A
+failed empty re-fetches the folder so whatever the server still holds
+reappears — a folder page, which on Gmail is a request per thread and takes
+seconds. A user whose list has just blanked routinely clicks somewhere else
+inside that window, and the emit that landed checked nothing: it painted the
+emptied folder's mail into whichever folder was now on screen, and
+`_serverOffset` with it. That is a list pane titled Inbox full of Spam, with
+nothing but a manual refresh to take it away — no cache was poisoned, because
+the fetch caches under the folder it asked for, which is why refreshing fixed
+it.
+
 ## The Poll Syncs the Folder On Screen, Not Just the Inbox
 
 `HomePage` tells `MailPollerCubit.setWatchedFolder` which folder is showing; the

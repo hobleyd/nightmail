@@ -115,12 +115,20 @@ final class EmailListFolderEmptied extends EmailListEvent {
   const EmailListFolderEmptied({
     required this.folderId,
     this.permanentDelete = false,
+    this.folderDisplayName,
   });
   final String folderId;
   final bool permanentDelete;
 
+  /// What to call the folder when reporting a failure. The folder emptied is
+  /// routinely not the one on screen — it is chosen from the panel, with any
+  /// folder still showing in the list — so the state's own
+  /// `currentFolderName` names the wrong one, and a raw id (`Label_12`) names
+  /// nothing a reader recognises.
+  final String? folderDisplayName;
+
   @override
-  List<Object?> get props => [folderId, permanentDelete];
+  List<Object?> get props => [folderId, permanentDelete, folderDisplayName];
 }
 
 final class EmailListJunkReported extends EmailListEvent {

@@ -1263,6 +1263,21 @@ class _FolderItemState extends State<_FolderItem>
   bool get _isTrashFolder => ['deleted items', 'trash']
       .contains(widget.folder.displayName.toLowerCase());
 
+  /// Whether "Delete All" is offered at all.
+  ///
+  /// Emptying the trash is a *permanent* delete, and Gmail has exactly one —
+  /// `messages.batchDelete`, behind the `https://mail.google.com/` scope this
+  /// app deliberately does not ask for. So the item is withheld there rather
+  /// than offered and reliably failed, the same question `onDelete == null`
+  /// already answers for a system folder. Every other Gmail folder empties by
+  /// moving its mail to the trash, which `gmail.modify` permits.
+  bool _canDeleteAll(BuildContext context) {
+    if (!_isTrashFolder) return true;
+    final accountState = context.read<AccountCubit>().state;
+    return !(accountState is AccountsLoaded &&
+        accountState.activeAccount is GmailAccount);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1638,22 +1653,24 @@ class _FolderItemState extends State<_FolderItem>
               ],
             ),
           ),
-        const PopupMenuDivider(),
-        PopupMenuItem(
-          value: _FolderAction.deleteAll,
-          child: Row(
-            children: [
-              Icon(
-                _isTrashFolder
-                    ? Icons.delete_forever_outlined
-                    : Icons.delete_outline_rounded,
-                size: 16,
-              ),
-              const SizedBox(width: 8),
-              const Text('Delete All', style: TextStyle(fontSize: 13)),
-            ],
+        if (_canDeleteAll(context)) ...[
+          const PopupMenuDivider(),
+          PopupMenuItem(
+            value: _FolderAction.deleteAll,
+            child: Row(
+              children: [
+                Icon(
+                  _isTrashFolder
+                      ? Icons.delete_forever_outlined
+                      : Icons.delete_outline_rounded,
+                  size: 16,
+                ),
+                const SizedBox(width: 8),
+                const Text('Delete All', style: TextStyle(fontSize: 13)),
+              ],
+            ),
           ),
-        ),
+        ],
       ],
     );
 
@@ -1701,6 +1718,7 @@ class _FolderItemState extends State<_FolderItem>
       context.read<EmailListBloc>().add(EmailListFolderEmptied(
             folderId: widget.folder.id,
             permanentDelete: isPermanent,
+            folderDisplayName: widget.folder.displayName,
           ));
       context.read<EmailDetailBloc>().add(const EmailDetailCleared());
       context.read<FolderListBloc>().add(

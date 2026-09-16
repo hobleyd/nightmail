@@ -1097,6 +1097,74 @@ void main() {
       await bloc.stream.firstWhere(
           (s) => s is EmailListLoaded && s.emptyingFolderIds.isEmpty);
     });
+
+    // Regression: the recovery fetch above is a whole folder page — seconds on
+    // Gmail, which spends a request per thread — and a user whose list has just
+    // blanked routinely clicks elsewhere inside that window. The emit that
+    // landed re-checked nothing, so Spam's mail was painted into the Inbox and
+    // stayed there until a manual refresh.
+    test('the recovery fetch is dropped when the user has moved to another '
+        'folder while it was in flight', () async {
+      when(mockGetCachedEmails(any)).thenAnswer((_) async => const Right([]));
+      when(mockGetEmails(any)).thenAnswer((_) async => Right([_email('spam1')]));
+      bloc.add(const EmailListLoadRequested(folderId: 'SPAM'));
+      await bloc.stream.firstWhere((s) => s is EmailListLoaded);
+
+      when(mockEmptyFolder(any)).thenAnswer(
+          (_) async => const Left(ServerFailure(message: 'not supported')));
+
+      // The recovery fetch of SPAM is held open; the INBOX load the user asks
+      // for in the meantime answers at once.
+      final spamFetch = Completer<Either<Failure, List<Email>>>();
+      when(mockGetEmails(any)).thenAnswer((inv) {
+        final params = inv.positionalArguments.first as GetEmailsParams;
+        if (params.folderId == 'SPAM') return spamFetch.future;
+        return Future.value(Right([_email('inbox1')]));
+      });
+
+      bloc.add(const EmailListFolderEmptied(folderId: 'SPAM'));
+      await bloc.stream.firstWhere(
+          (s) => s is EmailListLoaded && s.emptyingFolderIds.isEmpty);
+
+      bloc.add(const EmailListLoadRequested(folderId: 'INBOX'));
+      await bloc.stream.firstWhere((s) =>
+          s is EmailListLoaded &&
+          s.currentFolderId == 'INBOX' &&
+          s.emails.any((e) => e.id == 'inbox1'));
+
+      spamFetch.complete(Right([_email('spam1'), _email('spam2')]));
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final state = bloc.state as EmailListLoaded;
+      expect(state.currentFolderId, 'INBOX');
+      expect(state.emails.map((e) => e.id), ['inbox1']);
+    });
+
+    // A Delete All that fails silently is a folder that reports itself emptied
+    // and is not — which is how an unimplemented Gmail empty went unnoticed.
+    test('reports a failed empty by name, over whatever list is on screen',
+        () async {
+      when(mockGetCachedEmails(any)).thenAnswer((_) async => const Right([]));
+      when(mockGetEmails(any)).thenAnswer((_) async => Right([_email('id1')]));
+      bloc.add(const EmailListLoadRequested(folderId: 'INBOX'));
+      await bloc.stream.firstWhere((s) => s is EmailListLoaded);
+
+      when(mockEmptyFolder(any)).thenAnswer(
+          (_) async => const Left(ServerFailure(message: 'refused')));
+
+      bloc.add(const EmailListFolderEmptied(
+        folderId: 'SPAM',
+        folderDisplayName: 'Spam',
+      ));
+
+      final state = await bloc.stream.firstWhere((s) =>
+          s is EmailListLoaded && s.actionFailure != null) as EmailListLoaded;
+
+      expect(state.actionFailure!.message, contains('Spam'));
+      expect(state.actionFailure!.message, contains('refused'));
+      // The list it was reported over is untouched.
+      expect(state.emails.map((e) => e.id), ['id1']);
+    });
   });
 
   // ---------------------------------------------------------------------------

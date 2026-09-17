@@ -11,6 +11,15 @@ reach. Deleted Items/Junk (Graph `_expansionExcludedFolderIds`) and TRASH/SPAM
 refresh: a delete *moves* it, so it keeps its `conversationId` and gets a **new
 id** the outbox's pending-op and tombstone reconciliation cannot recognise.
 
+**Graph's exclusion is in the request, not in the merge.** The expansion filter
+carries `parentFolderId ne '<id>'` for each excluded folder, because Graph does
+not encode a folder id consistently: `/mailFolders/deleteditems` answered one
+mailbox with an `AQMk…` id while its messages carried `AAMk…` in
+`parentFolderId`, so a string comparison on the client kept nothing out and a
+Drafts listing filled with the Deleted Items copies of the threads its drafts
+answered. The merge still compares client-side as a second line, and the
+per-conversation fallback retries without the clause if a tenant refuses it.
+
 The whole page is cached under the folder being listed, expansion rows
 included — so a `cached_emails` row is *one message as seen in one folder*, and
 `folderId` is in its primary key. Without it an `insertOrReplace` moved the row,
@@ -206,6 +215,26 @@ selection; `folderToAutoSelect` restores it when the new folder list *lands*, so
 the saved id is checked against real folders and falls back to the Inbox.
 Nothing may select a folder at switch time: that listener clears it a beat
 later, which is what made the old restore in `folder_panel.dart` a no-op.
+
+### A Null Folder Is the Whole Mailbox, Not No Folder
+
+`getEmails(folderId: null)` is `/me/messages` on Graph: the newest mail of the
+entire mailbox, every folder included, cached under `__DEFAULT__`. Nothing in
+the app asks for that on purpose, so a null reaching a fetch is a bug that
+*succeeds* — 25 rows come back and are painted into whatever folder the panel
+still names, each labelled with its own folder because `currentFolderId` is
+null. Observed, on a real install: an **empty Drafts folder** filled on refresh
+with the last few hours of Deleted Items, Junk and filed mail, and 25 rows
+under `__DEFAULT__` in the cache afterwards.
+
+`_onRefreshRequested` used to read the folder off the loaded state alone, and a
+folder with nothing cached and nothing yet fetched has none — it is
+`EmailListLoading`, or `EmailListError` if the first fetch failed — so every
+refresh that landed in that window (a poll, the drafts-changed channel, the
+Refresh button) went mailbox-wide, and being the slower of the two fetches in
+the same generation it won the screen. It now stands down while a load is
+running, exactly as `_onCacheRefreshRequested` does, and otherwise takes the
+folder from `_lastLoadedFolderId`, which is what that field is for.
 
 ### A Folder Id Is Only Meaningful to the Account It Came From
 

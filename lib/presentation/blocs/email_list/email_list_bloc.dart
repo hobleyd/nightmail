@@ -374,10 +374,25 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       return;
     }
 
+    // A load already running will emit on its own account. Refreshing beside
+    // it would race two fetches of the same generation, and the slower one —
+    // this one, if it fell through to the mailbox-wide listing below — would
+    // win the screen.
+    if (state is EmailListLoading) return;
+
     _serverOffset = 0;
     final myGeneration = _activeRequestGeneration;
-    final folderId = event.folderId ?? prior?.currentFolderId;
-    final folderName = prior?.currentFolderName;
+    // With nothing loaded — the folder's first fetch failed, or a repaint
+    // arrived on an error — the folder has to come from the last load rather
+    // than the state. `prior?.currentFolderId` here read null, and a null
+    // folder is not "no folder": on Graph it is `/me/messages`, the newest
+    // mail of the *whole mailbox*, cached under `__DEFAULT__` and painted into
+    // whatever folder the panel still names. An empty Drafts folder showed
+    // the Deleted Items, Junk and filed mail of the last few hours.
+    final folderId = event.folderId ??
+        (prior != null ? prior.currentFolderId : _lastLoadedFolderId);
+    final folderName =
+        prior != null ? prior.currentFolderName : _lastLoadedFolderName;
     final accountId = _accountManager.activeAccount?.id;
 
     if (prior != null) {

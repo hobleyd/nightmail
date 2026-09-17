@@ -1405,6 +1405,70 @@ void main() {
   // EmailListRefreshRequested — cache ordering
   // ---------------------------------------------------------------------------
 
+  // Regression: an empty Drafts folder on an Office 365 account filled with the
+  // newest Deleted Items, Junk and filed mail of the whole mailbox on refresh.
+  // The refresh read its folder off the loaded state; with the folder still
+  // loading (empty cache, nothing on screen) or sitting on an error there was
+  // no loaded state, so it fetched with no folder at all — which on Graph is
+  // `/me/messages`, mailbox-wide — and painted that into the Drafts pane.
+  group('EmailListRefreshRequested with nothing loaded', () {
+    setUp(() {
+      fakeAccountManager.account = _account;
+      when(mockGetCachedEmails(any)).thenAnswer((_) async => const Right([]));
+      when(mockCacheEmails(any)).thenAnswer((_) async => const Right(unit));
+    });
+
+    test('while the folder is still loading, does not list the mailbox',
+        () async {
+      final loadCompleter = Completer<Either<Failure, List<Email>>>();
+      when(mockGetEmails(any)).thenAnswer((_) => loadCompleter.future);
+
+      bloc.add(const EmailListLoadRequested(
+        folderId: 'drafts',
+        folderDisplayName: 'Drafts',
+      ));
+      await bloc.stream.firstWhere((s) => s is EmailListLoading);
+
+      bloc.add(const EmailListRefreshRequested());
+      await Future.delayed(Duration.zero);
+
+      // The folder turns out to be empty.
+      loadCompleter.complete(const Right([]));
+      await bloc.stream.firstWhere((s) => s is EmailListLoaded);
+
+      final state = bloc.state as EmailListLoaded;
+      expect(state.currentFolderId, 'drafts');
+      expect(state.emails, isEmpty);
+      verifyNever(mockGetEmails(argThat(
+          predicate<GetEmailsParams>((p) => p.folderId == null))));
+    });
+
+    test('after a failed first load, reloads that folder rather than the '
+        'mailbox', () async {
+      when(mockGetEmails(any)).thenAnswer(
+          (_) async => const Left(ServerFailure(message: 'boom')));
+      bloc.add(const EmailListLoadRequested(
+        folderId: 'drafts',
+        folderDisplayName: 'Drafts',
+      ));
+      await bloc.stream.firstWhere((s) => s is EmailListError);
+
+      when(mockGetEmails(any))
+          .thenAnswer((_) async => Right([_email('draft-1')]));
+      bloc.add(const EmailListRefreshRequested());
+      final state = await bloc.stream
+          .firstWhere((s) => s is EmailListLoaded) as EmailListLoaded;
+
+      expect(state.currentFolderId, 'drafts');
+      expect(state.currentFolderName, 'Drafts');
+      expect(state.emails.map((e) => e.id), ['draft-1']);
+      verifyNever(mockGetEmails(argThat(
+          predicate<GetEmailsParams>((p) => p.folderId == null))));
+      verify(mockCacheEmails(argThat(predicate<CacheEmailsParams>(
+          (p) => p.folderId == 'drafts' && p.replaceFolder)))).called(1);
+    });
+  });
+
   group('EmailListRefreshRequested cache ordering (active account)', () {
     // Regression: the fresh page must *replace* the folder's rows, so an email
     // deleted or moved elsewhere stops being listed. The repository also fires

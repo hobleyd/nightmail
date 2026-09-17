@@ -173,20 +173,12 @@ class GraphApiDatasourceImpl
 
       if (conversationIds.isEmpty) return folderEmails;
 
-      // Ask for the whole page's threads in as few requests as possible, then
-      // decode the lot in one background isolate rather than one per
-      // conversation — compute() spawns an isolate per call, and a page can
-      // easily hold 25 distinct threads.
-      final rawBatches = await _fetchConversationsForPage(conversationIds);
-      final crossFolderEmails =
-          await compute(parseGraphMessageCollections, rawBatches);
-
       // The expansion must not drag a *deleted* or junked copy back into the
       // folder being listed. deleteEmail/reportJunk move the message to Deleted
       // Items / Junk Email, where it keeps its conversationId — so the
-      // mailbox-wide fetch above hands it straight back, and the merge below
-      // re-lists it here. Sent Items, Drafts and user folders are deliberately
-      // kept: surfacing those is the whole point of the expansion (and
+      // mailbox-wide fetch below hands it straight back, and the merge re-lists
+      // it here. Sent Items, Drafts and user folders are deliberately kept:
+      // surfacing those is the whole point of the expansion (and
       // EmailConversation.anchor relies on the Sent copies being there).
       //
       // A move also *changes* the message's id, so neither the outbox's
@@ -195,7 +187,29 @@ class GraphApiDatasourceImpl
       // message of a thread whose other messages are still in the folder
       // therefore put it back on screen at every refresh, indefinitely. The
       // Gmail thread listing excludes TRASH/SPAM for the same reason.
+      //
+      // The exclusion is applied on the *server*, as `parentFolderId ne` clauses
+      // on the expansion's own filter, and only secondarily by the client-side
+      // check in the merge. Graph does not encode a folder's id consistently:
+      // `/mailFolders/deleteditems` can answer with one encoding (`AQMk…`)
+      // while every message in that folder carries another (`AAMk…`) in
+      // `parentFolderId`, and the two never compare equal as strings — so on
+      // such a mailbox the client-side check silently kept nothing out, and a
+      // Drafts listing filled with the Deleted Items copies of the threads its
+      // drafts reply to. Graph resolves both encodings to the same folder, so
+      // the comparison has to be its.
       final excludedFolderIds = await _expansionExcludedFolderIds(folderId);
+
+      // Ask for the whole page's threads in as few requests as possible, then
+      // decode the lot in one background isolate rather than one per
+      // conversation — compute() spawns an isolate per call, and a page can
+      // easily hold 25 distinct threads.
+      final rawBatches = await _fetchConversationsForPage(
+        conversationIds,
+        excludedFolderIds: excludedFolderIds,
+      );
+      final crossFolderEmails =
+          await compute(parseGraphMessageCollections, rawBatches);
 
       // Merge: folder emails + cross-folder emails, de-duplicated by id.
       final byId = <String, EmailModel>{};
@@ -288,22 +302,65 @@ class GraphApiDatasourceImpl
 
   /// Fetches one conversation's messages **undecoded**, for a parser isolate to
   /// decode. Returns null when the fetch fails, which the batch parser skips.
-  Future<String?> _fetchConversationRaw(String conversationId) async {
+  ///
+  /// Copies in [excludedFolderIds] are left out by the server (see
+  /// [_expansionFilter]). Should a tenant refuse that filter, the request is
+  /// made again without it: the merge in [getEmails] still applies the same
+  /// exclusion client-side, so degrading to it loses at most the copies whose
+  /// folder id Graph encoded differently — never the thread.
+  Future<String?> _fetchConversationRaw(
+    String conversationId, {
+    Set<String> excludedFolderIds = const {},
+  }) async {
+    final conversationClause = "conversationId eq '$conversationId'";
     try {
-      final response = await _dio.get<String>(
-        '$_base/messages',
-        queryParameters: {
-          '\$filter': "conversationId eq '$conversationId'",
-          '\$select': _emailListSelect,
-          '\$top': 200,
-        },
-        options: Options(responseType: ResponseType.plain),
+      return await _fetchMessagesRaw(
+        _expansionFilter(conversationClause, excludedFolderIds),
       );
-      return response.data;
+    } catch (_) {
+      if (excludedFolderIds.isEmpty) return null;
+    }
+    try {
+      return await _fetchMessagesRaw(conversationClause);
     } catch (_) {
       return null;
     }
   }
+
+  /// One page of `/messages` matching [filter], undecoded.
+  Future<String?> _fetchMessagesRaw(String filter) async {
+    final response = await _dio.get<String>(
+      '$_base/messages',
+      queryParameters: {
+        '\$filter': filter,
+        '\$select': _emailListSelect,
+        '\$top': 200,
+      },
+      options: Options(responseType: ResponseType.plain),
+    );
+    return response.data;
+  }
+
+  /// The `$filter` of a cross-folder expansion: [conversationClause], narrowed
+  /// to messages outside [excludedFolderIds].
+  ///
+  /// Graph compares the folder ids itself, which is the point — see the
+  /// exclusion in [getEmails] for why a client-side comparison is not enough.
+  static String _expansionFilter(
+    String conversationClause,
+    Set<String> excludedFolderIds,
+  ) {
+    final buffer = StringBuffer(conversationClause);
+    for (final id in excludedFolderIds) {
+      buffer.write(" and parentFolderId ne '${_odataQuote(id)}'");
+    }
+    return buffer.toString();
+  }
+
+  /// [value] as the inside of an OData string literal: a quote is escaped by
+  /// doubling it. Ids are base64-ish in practice, so this is belt and braces
+  /// against one arriving with a quote in it and silently truncating the filter.
+  static String _odataQuote(String value) => value.replaceAll("'", "''");
 
   /// Conversation ids asked for in one `in (…)` filter.
   ///
@@ -324,8 +381,9 @@ class GraphApiDatasourceImpl
   /// data in it warrants. The chunks themselves run concurrently, but there are
   /// only ever two of them for a full page.
   Future<List<String?>> _fetchConversationsForPage(
-    Set<String> conversationIds,
-  ) async {
+    Set<String> conversationIds, {
+    Set<String> excludedFolderIds = const {},
+  }) async {
     final ids = conversationIds.toList();
     final chunks = <List<String>>[];
     for (var i = 0; i < ids.length; i += _conversationsPerRequest) {
@@ -334,7 +392,12 @@ class GraphApiDatasourceImpl
         (i + _conversationsPerRequest).clamp(0, ids.length),
       ));
     }
-    final batches = await Future.wait(chunks.map(_fetchConversationChunkRaw));
+    final batches = await Future.wait(chunks.map(
+      (chunk) => _fetchConversationChunkRaw(
+        chunk,
+        excludedFolderIds: excludedFolderIds,
+      ),
+    ));
     return batches.expand((pages) => pages).toList();
   }
 
@@ -346,20 +409,25 @@ class GraphApiDatasourceImpl
   /// rejects the filter must still get its cross-folder rows — losing them
   /// silently would strand replies out of the thread and, in Sent, take the
   /// anchor's own message with them (see `EmailConversation.anchor`).
-  Future<List<String?>> _fetchConversationChunkRaw(List<String> ids) async {
-    // OData escapes a quote inside a string literal by doubling it. Ids are
-    // base64-ish in practice, so this is belt and braces against one arriving
-    // with a quote in it and silently truncating the filter.
-    final quoted = ids.map((id) => "'${id.replaceAll("'", "''")}'").join(',');
+  Future<List<String?>> _fetchConversationChunkRaw(
+    List<String> ids, {
+    Set<String> excludedFolderIds = const {},
+  }) async {
+    final quoted = ids.map((id) => "'${_odataQuote(id)}'").join(',');
     try {
       final result = await _fetchAllGraphPages('$_base/messages', {
-        '\$filter': 'conversationId in ($quoted)',
+        '\$filter': _expansionFilter(
+          'conversationId in ($quoted)',
+          excludedFolderIds,
+        ),
         '\$select': _emailListSelect,
         '\$top': 200,
       });
       return result.pages;
     } catch (_) {
-      return Future.wait(ids.map(_fetchConversationRaw));
+      return Future.wait(ids.map(
+        (id) => _fetchConversationRaw(id, excludedFolderIds: excludedFolderIds),
+      ));
     }
   }
 

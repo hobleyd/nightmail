@@ -339,6 +339,154 @@ void main() {
       ));
     });
 
+    // Regression: a SharpBlue Office 365 Drafts listing filled with the Deleted
+    // Items copies of the threads its drafts replied to. Graph had answered
+    // `/mailFolders/deleteditems` with one encoding of the folder's id and
+    // stamped another on every message's parentFolderId, so the client-side
+    // comparison never matched. The exclusion therefore has to be in the
+    // request, where Graph compares the ids itself.
+    group('the exclusion is made by the server', () {
+      const deletedItemsAsMessagesSeeIt = 'AAMk-deleted-items';
+
+      /// Stubs `/me/messages` as a server that honours `parentFolderId ne`
+      /// against *its* idea of the folder — dropping the copy whose
+      /// parentFolderId is the other encoding of the excluded id.
+      void stubServerSideExclusion(List<Map<String, dynamic>> conversation) {
+        when(mockDio.get<String>(
+          '/me/messages',
+          queryParameters: anyNamed('queryParameters'),
+          options: anyNamed('options'),
+        )).thenAnswer((invocation) async {
+          final params = invocation.namedArguments[#queryParameters]
+              as Map<String, dynamic>;
+          final filter = params[r'$filter'] as String;
+          final excludesDeleted =
+              filter.contains("parentFolderId ne '$deletedItemsId'");
+          return _resp({
+            'value': conversation
+                .where((m) => !excludesDeleted ||
+                    m['parentFolderId'] != deletedItemsAsMessagesSeeIt)
+                .toList(),
+          });
+        });
+      }
+
+      test('the expansion filter names both excluded folders', () async {
+        stubMailbox(
+          listedFolderId: 'drafts',
+          folderPage: [_messageJson('draft', 'conv-1', parentFolderId: 'd')],
+          conversation: [_messageJson('draft', 'conv-1', parentFolderId: 'd')],
+        );
+
+        await datasource.getEmails(folderId: 'drafts');
+
+        final captured = verify(mockDio.get<String>(
+          '/me/messages',
+          queryParameters: captureAnyNamed('queryParameters'),
+          options: anyNamed('options'),
+        )).captured;
+        final filter =
+            (captured.single as Map<String, dynamic>)[r'$filter'] as String;
+        expect(filter, startsWith("conversationId in ('conv-1')"));
+        expect(filter, contains(" and parentFolderId ne '$deletedItemsId'"));
+        expect(filter, contains(" and parentFolderId ne '$junkId'"));
+      });
+
+      test('drops a deleted copy whose parentFolderId is encoded differently',
+          () async {
+        stubMailbox(
+          listedFolderId: 'drafts',
+          folderPage: [_messageJson('draft', 'conv-1', parentFolderId: 'd')],
+          conversation: const [],
+        );
+        stubServerSideExclusion([
+          _messageJson('draft', 'conv-1', parentFolderId: 'd'),
+          _messageJson('filed', 'conv-1', parentFolderId: 'AAMk-admin'),
+          _messageJson('discarded', 'conv-1',
+              parentFolderId: deletedItemsAsMessagesSeeIt),
+        ]);
+
+        final emails = await datasource.getEmails(folderId: 'drafts');
+
+        expect(emails.map((e) => e.id), ['draft', 'filed']);
+      });
+
+      test('no exclusion clause when listing Deleted Items itself', () async {
+        stubMailbox(
+          listedFolderId: 'deleteditems',
+          folderPage: [
+            _messageJson('deleted1', 'conv-1', parentFolderId: deletedItemsId),
+          ],
+          conversation: [
+            _messageJson('deleted1', 'conv-1', parentFolderId: deletedItemsId),
+          ],
+        );
+
+        await datasource.getEmails(folderId: 'deleteditems');
+
+        final captured = verify(mockDio.get<String>(
+          '/me/messages',
+          queryParameters: captureAnyNamed('queryParameters'),
+          options: anyNamed('options'),
+        )).captured;
+        final filter =
+            (captured.single as Map<String, dynamic>)[r'$filter'] as String;
+        expect(filter, isNot(contains('parentFolderId')));
+      });
+
+      // A tenant that refuses the `ne` clause must still get its thread: the
+      // per-conversation fallback drops the clause on a second try, and the
+      // merge's client-side check is what is left of the exclusion.
+      test('falls back to an unfiltered request when the clause is refused',
+          () async {
+        stubMailbox(
+          listedFolderId: 'drafts',
+          folderPage: [_messageJson('draft', 'conv-1', parentFolderId: 'd')],
+          conversation: const [],
+        );
+        final filters = <String>[];
+        when(mockDio.get<String>(
+          '/me/messages',
+          queryParameters: anyNamed('queryParameters'),
+          options: anyNamed('options'),
+        )).thenAnswer((invocation) async {
+          final params = invocation.namedArguments[#queryParameters]
+              as Map<String, dynamic>;
+          final filter = params[r'$filter'] as String;
+          filters.add(filter);
+          if (filter.contains('parentFolderId')) {
+            throw DioException(
+              type: DioExceptionType.badResponse,
+              response: Response(
+                statusCode: 400,
+                requestOptions: RequestOptions(path: '/me/messages'),
+              ),
+              requestOptions: RequestOptions(path: '/me/messages'),
+            );
+          }
+          return _resp({
+            'value': [
+              _messageJson('draft', 'conv-1', parentFolderId: 'd'),
+              _messageJson('filed', 'conv-1', parentFolderId: 'AAMk-admin'),
+              _messageJson('discarded', 'conv-1',
+                  parentFolderId: deletedItemsId),
+            ],
+          });
+        });
+
+        final emails = await datasource.getEmails(folderId: 'drafts');
+
+        expect(emails.map((e) => e.id), ['draft', 'filed']);
+        expect(filters, [
+          "conversationId in ('conv-1') and parentFolderId ne '$deletedItemsId'"
+              " and parentFolderId ne '$junkId'",
+          "conversationId eq 'conv-1' and parentFolderId ne '$deletedItemsId'"
+              " and parentFolderId ne '$junkId'",
+          "conversationId eq 'conv-1'",
+        ]);
+      });
+    });
+
     // A folder listing must not depend on the lookup, and a partial answer must
     // not be cached — otherwise one throttled request expands deleted mail back
     // into the folder for the rest of the session.

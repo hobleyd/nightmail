@@ -203,10 +203,19 @@ jobs:
           fi
           xcrun stapler staple "$APP_PATH"
 
+      # `name` is both halves of the DMG's identity: the action writes
+      # `<name>.dmg` and passes the same string to create-dmg as `--volname`.
+      # It was the bare `nightmail`, so the one asset on the release that a
+      # person downloads by hand was the only one carrying no version — every
+      # other platform's is `nightmail-<version>.exe` / `_<version>_amd64.snap`
+      # / `-<version>-release.apk` — and the volume it mounted as said nothing
+      # either. A release page listing several `nightmail.dmg`s, and a Finder
+      # window that cannot tell you which one you opened, is how the wrong
+      # build gets installed and then reported as a bug.
       - name: Create DMG
         uses: lethja/create-dmg-action@v0.0.2
         with:
-          name: 'nightmail'
+          name: 'nightmail-${{ needs.prepare.outputs.version }}'
           srcdir: 'build/macos/Build/Products/Release/nightmail.app'
 
       - name: Upload to GitHub Release
@@ -214,7 +223,7 @@ jobs:
         with:
           name: 'nightmail-${{ needs.prepare.outputs.version }}'
           tag_name: ${{ needs.prepare.outputs.version }}
-          files: 'nightmail.dmg'
+          files: 'nightmail-${{ needs.prepare.outputs.version }}.dmg'
 
       # In-app updates: the .app is zipped and described by a release.json that
       # the app verifies against the pinned public key before installing.

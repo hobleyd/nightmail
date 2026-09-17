@@ -144,6 +144,18 @@ Settings → Accounts.
   mapping special folders by kind rather than name; resumable, with a status
   dialog reporting live progress and any permanent per-message failures
 
+### Out of Office
+- **Settings → Out of Office** sets the mailbox's own automatic reply — a start
+  date, an end date, and the message — for Microsoft 365 and Gmail accounts.
+  It is a server setting, so it applies however you read your mail, not just in
+  NightMail
+- Choose who gets a reply: everyone, your contacts, or nobody outside your
+  organisation
+- Microsoft 365 accounts can send a different message to people outside the
+  organisation
+- Saving asks the provider for one extra permission the first time; reading
+  your current setting needs nothing new
+
 ### Updates
 - Checks for a new version at launch and every 6 hours, with a dot on the
   Settings icon when one is waiting; nothing downloads or installs until you
@@ -179,6 +191,7 @@ NightMail connects to Microsoft 365 via the Microsoft Graph API using OAuth 2.0 
    | `Tasks.ReadWrite` | Read and write Microsoft To Do |
    | `People.Read` | Organisation contact suggestions |
    | `Files.Read.All` | Preview a linked SharePoint/OneDrive document (optional — asked for separately, the first time you open one) |
+   | `MailboxSettings.ReadWrite` | Set an out-of-office reply (optional — asked for separately, the first time you save one) |
    | `offline_access` | Refresh tokens (required) |
 
 3. A **redirect URI** configured for the platform:
@@ -220,6 +233,7 @@ NightMail connects to Google via the Gmail API, Google Calendar API, Google Task
    | `contacts.readonly` | Personal contact suggestions |
    | `directory.readonly` | Organisation directory suggestions |
    | `drive.readonly` | Preview a linked Drive document (optional — asked for separately, the first time you open one) |
+   | `gmail.settings.basic` | Set an out-of-office reply (optional — asked for separately, the first time you save one) |
    | `https://mail.google.com/` | Permanently delete mail (optional — asked for separately, the first time you empty the trash) |
 
 4. A **redirect URI** added to the OAuth client:

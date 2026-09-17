@@ -107,6 +107,7 @@ jobs:
           MACOS_CERT_P12_B64: ${{ secrets.MACOS_CERT_P12 }}
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          PROVISIONING_PROFILE_B64: ${{ secrets.PROVISIONING_PROFILE_B64 }}
         run: |
           KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
           echo "$MACOS_CERT_P12_B64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
@@ -119,6 +120,16 @@ jobs:
           security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | sed 's/"//g')
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
+          # keychain-access-groups requires an actual Developer ID profile --
+          # Manual signing with none at all fails "requires a provisioning
+          # profile" even though Developer ID never uses one for anything
+          # else. Xcode reads profiles by content, not filename, but names
+          # them by UUID by convention.
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          echo "$PROVISIONING_PROFILE_B64" | base64 --decode > "$RUNNER_TEMP/Nightmail.provisionprofile"
+          PROFILE_UUID=$(security cms -D -i "$RUNNER_TEMP/Nightmail.provisionprofile" | plutil -extract UUID xml1 -o - - | sed -n 's/.*<string>\(.*\)<\/string>.*/\1/p')
+          cp "$RUNNER_TEMP/Nightmail.provisionprofile" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.provisionprofile"
+
           # Patch the checked-out (not committed) pbxproj so Release actually
           # signs with the Developer ID identity just imported. Left alone,
           # Release stays CODE_SIGN_STYLE=Automatic with no DEVELOPMENT_TEAM,
@@ -127,16 +138,35 @@ jobs:
           import pathlib
           path = pathlib.Path("macos/Runner.xcodeproj/project.pbxproj")
           text = path.read_text()
+
           anchor = "\t\t\t\tCODE_SIGN_ENTITLEMENTS = Runner/Release.entitlements;\n\t\t\t\tCODE_SIGN_STYLE = Automatic;\n"
           assert text.count(anchor) == 1, "Release Runner build-settings anchor not found or not unique -- pbxproj layout changed, update this patch"
           replacement = (
               "\t\t\t\tCODE_SIGN_ENTITLEMENTS = Runner/Release.entitlements;\n"
               "\t\t\t\tCODE_SIGN_IDENTITY = \"Developer ID Application\";\n"
+              "\t\t\t\tCODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;\n"
               "\t\t\t\tCODE_SIGN_STYLE = Manual;\n"
               "\t\t\t\tDEVELOPMENT_TEAM = 69XRMYD9XG;\n"
               "\t\t\t\tENABLE_HARDENED_RUNTIME = YES;\n"
           )
-          path.write_text(text.replace(anchor, replacement))
+          text = text.replace(anchor, replacement)
+
+          # An empty PROVISIONING_PROFILE_SPECIFIER is fine for ad-hoc, but
+          # Manual signing with keychain-access-groups needs the real one.
+          old_tail = "\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = \"\";\n\t\t\t\tSWIFT_VERSION = 5.0;\n\t\t\t};\n\t\t\tname = Release;\n\t\t};\n"
+          assert text.count(old_tail) == 1, "Release Runner tail anchor not found or not unique"
+          new_tail = "\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = Nightmail;\n\t\t\t\tSWIFT_VERSION = 5.0;\n\t\t\t};\n\t\t\tname = Release;\n\t\t};\n"
+          text = text.replace(old_tail, new_tail)
+
+          # TargetAttributes.ProvisioningStyle is a separate, higher-precedence
+          # setting Xcode's own UI maintains; per-config CODE_SIGN_STYLE alone
+          # doesn't override it, so it has to move to Manual too.
+          old_attr = "\t\t\t\t\t\tCreatedOnToolsVersion = 9.2;\n\t\t\t\t\t\tLastSwiftMigration = 1100;\n\t\t\t\t\t\tProvisioningStyle = Automatic;\n"
+          assert text.count(old_attr) == 1, "ProvisioningStyle anchor not found or not unique"
+          new_attr = "\t\t\t\t\t\tCreatedOnToolsVersion = 9.2;\n\t\t\t\t\t\tLastSwiftMigration = 1100;\n\t\t\t\t\t\tProvisioningStyle = Manual;\n"
+          text = text.replace(old_attr, new_attr)
+
+          path.write_text(text)
           EOF
 
       - run: flutter build macos --release --no-tree-shake-icons --build-number ${{ needs.prepare.outputs.build_number }}

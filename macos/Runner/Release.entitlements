@@ -19,11 +19,7 @@
 	<true/>
 	<key>keychain-access-groups</key>
 	<array>
-		<!-- Hardcoded rather than $(AppIdentifierPrefix): Manual signing with
-		     no provisioning profile leaves that variable unpopulated, which
-		     silently produces group ".au.com.sharpblue.nightmail" and breaks
-		     the app's own keychain (OAuth tokens) in release builds only. -->
-		<string>69XRMYD9XG.au.com.sharpblue.nightmail</string>
+		<string>$(AppIdentifierPrefix)au.com.sharpblue.nightmail</string>
 	</array>
 </dict>
 </plist>

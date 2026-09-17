@@ -22,6 +22,7 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - Double-click an image in a message to open it in a resizable window
 - Spell-checking with inline suggestions in the compose editor (macOS, Windows, Linux)
 - Compose editor: font-family dropdown, custom font-colour palette, and pasting/resizing images inline
+- Keyboard shortcuts for bold, italic, underline, strikethrough, lists, indent and link in the compose editor, under Cmd on macOS and Ctrl elsewhere; Tab and Shift+Tab nest and un-nest a list item
 - Select and copy message text (subject, sender, recipients, date, body) with standard platform shortcuts (Cmd/Ctrl+C)
 - URLs typed as plain text in a message become clickable links, with a hover preview and a copy-link button
 - The sender's address is clickable to compose a reply, with a copy button on hover

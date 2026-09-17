@@ -233,9 +233,17 @@ class ComposeFormState extends State<ComposeForm> {
   // which only means Send was pressed — there is nothing left worth keeping, so
   // closing must not offer to save what has already been sent as a draft.
   bool _sendSucceeded = false;
-  // Tracks an in-flight _saveDraft() call so _submit() can await it and
-  // collect the ID of any draft created after _sent was set to true.
-  Completer<String?>? _saveCompleter;
+  // The tail of the autosave chain: the save on the wire, or the one queued
+  // behind it. Saves are serialised because two overlapping *creates* each
+  // mint a draft and only the second is remembered — the first sits in Drafts
+  // for good, and Send deletes the wrong one. A save that lands while another
+  // is in flight waits for it, so it sees the id the first one produced and
+  // updates that draft instead. Anything that decides what to delete
+  // (`_submit`, discard, the dispose flush) waits on this first.
+  Future<String?>? _saveInFlight;
+  // A save is already queued behind the in-flight one. It reads the fields
+  // when it runs, so a third would only upload the same thing again.
+  bool _saveWaiting = false;
 
   static const _kDraftsRefreshChannel =
       MethodChannel('au.com.sharpblue.nightmail/drafts_refresh');
@@ -496,8 +504,6 @@ class ComposeFormState extends State<ComposeForm> {
     // reschedules it; without this guard the flush below re-uploads the body
     // as a fresh draft once the send completes and the window tears down.
     final hasPendingSave = !_sent && _draftTimer?.isActive == true;
-    final draftId = _serverDraftId;
-    final oldDraftId = _pendingOldDraftId;
     final to = List<String>.from(_toRecipients);
     final cc = List<String>.from(_ccRecipients);
     final subject = _subjectController.text;
@@ -518,19 +524,27 @@ class ComposeFormState extends State<ComposeForm> {
     super.dispose();
 
     if (hasPendingSave) {
-      sl<SaveServerDraft>()(SaveServerDraftParams(
-        existingDraftId: draftId,
-        toAddresses: to,
-        ccAddresses: cc,
-        subject: subject,
-        body: body,
-        bodyType: bodyType,
-        newAttachments: attachments,
-      )).then((result) {
-        result.fold((_) {}, (newId) {
-          if (oldDraftId != null && newId != oldDraftId) {
-            sl<DeleteServerDraft>()(oldDraftId).ignore();
-          }
+      // A create still on the wire is about to mint the id this flush has to
+      // update, so wait for it — the ids are read once it has landed, not
+      // now. The fields survive dispose; only the widget tree is gone.
+      final settled = _saveInFlight ?? Future<String?>.value();
+      settled.then((_) {
+        final draftId = _serverDraftId;
+        final oldDraftId = _pendingOldDraftId;
+        return sl<SaveServerDraft>()(SaveServerDraftParams(
+          existingDraftId: draftId,
+          toAddresses: to,
+          ccAddresses: cc,
+          subject: subject,
+          body: body,
+          bodyType: bodyType,
+          newAttachments: attachments,
+        )).then((result) {
+          result.fold((_) {}, (newId) {
+            if (oldDraftId != null && newId != oldDraftId) {
+              sl<DeleteServerDraft>()(oldDraftId).ignore();
+            }
+          });
         });
       }).ignore();
     }
@@ -551,18 +565,41 @@ class ComposeFormState extends State<ComposeForm> {
     _draftTimer = Timer(const Duration(milliseconds: 1500), _saveDraft);
   }
 
-  Future<String?> _saveDraft() async {
-    if (_sent) return null;
+  /// Saves the form to the server as a draft, behind any save already in
+  /// flight. Resolves to an error message, or null when the save landed.
+  Future<String?> _saveDraft() {
+    if (_sent) return Future<String?>.value();
+    final previous = _saveInFlight;
+    if (previous != null && _saveWaiting) return previous;
     final completer = Completer<String?>();
-    _saveCompleter = completer;
-    final oldDraftId = _pendingOldDraftId;
-    // cid: rather than the editor's data: URLs, so the bytes are stored once as
-    // attachment parts instead of being re-uploaded base64-inflated inside the
-    // body on every autosave.
-    final body = _bodyType == EmailBodyType.html
-        ? _substituteInlineImageSrcs(_htmlBodyCache)
-        : _bodyController.text;
+    _saveInFlight = completer.future;
+    _runDraftSave(previous, completer);
+    return completer.future;
+  }
+
+  Future<void> _runDraftSave(
+      Future<String?>? previous, Completer<String?> completer) async {
     try {
+      if (previous != null) {
+        _saveWaiting = true;
+        await previous;
+        _saveWaiting = false;
+      }
+      // Send may have been pressed while this was queued; _submit() is
+      // waiting on the chain and will delete whatever the earlier saves made.
+      if (_sent) {
+        completer.complete(null);
+        return;
+      }
+      final oldDraftId = _pendingOldDraftId;
+      // Read the fields now rather than when the save was scheduled, so a
+      // queued save uploads what is on screen when it finally runs.
+      // cid: rather than the editor's data: URLs, so the bytes are stored once
+      // as attachment parts instead of being re-uploaded base64-inflated
+      // inside the body on every autosave.
+      final body = _bodyType == EmailBodyType.html
+          ? _substituteInlineImageSrcs(_htmlBodyCache)
+          : _bodyController.text;
       final result = await sl<SaveServerDraft>()(SaveServerDraftParams(
         existingDraftId: _serverDraftId,
         toAddresses: _toRecipients,
@@ -572,33 +609,38 @@ class ComposeFormState extends State<ComposeForm> {
         bodyType: _bodyType,
         newAttachments: _attachmentsForBody(body),
       ));
-      return result.fold(
-        (failure) {
-          completer.complete(null);
-          return failure.message;
-        },
+      result.fold(
+        (failure) => completer.complete(failure.message),
         (newId) {
-          completer.complete(newId);
-          if (_sent) {
-            // _submit() is waiting on this completer and will delete the draft.
-            return null;
-          }
+          // Recorded even after Send was pressed: it is what _submit() deletes.
           _serverDraftId = newId;
-          if (mounted) setState(() => _lastDraftSavedAt = DateTime.now());
+          if (!_sent && mounted) {
+            setState(() => _lastDraftSavedAt = DateTime.now());
+          }
           if (oldDraftId != null) {
             _pendingOldDraftId = null;
             if (newId != oldDraftId) {
               sl<DeleteServerDraft>()(oldDraftId).ignore();
             }
           }
-          return null;
+          completer.complete(null);
         },
       );
     } catch (e) {
-      if (!completer.isCompleted) completer.complete(null);
-      rethrow;
+      if (!completer.isCompleted) completer.complete('$e');
     } finally {
-      if (_saveCompleter == completer) _saveCompleter = null;
+      _saveWaiting = false;
+      if (identical(_saveInFlight, completer.future)) _saveInFlight = null;
+    }
+  }
+
+  /// Waits for every autosave on the wire or queued behind one, so
+  /// [_serverDraftId] names what is actually on the server.
+  Future<void> _settleDraftSaves() async {
+    while (true) {
+      final pending = _saveInFlight;
+      if (pending == null) return;
+      await pending;
     }
   }
 
@@ -624,9 +666,13 @@ class ComposeFormState extends State<ComposeForm> {
   }
 
   Future<void> _deleteDraft() async {
-    if (_serverDraftId == null) return;
-    await sl<DeleteServerDraft>()(_serverDraftId!);
+    // A create still in flight has no id to delete yet; let it land first or
+    // the draft arrives a moment after the user discarded it.
+    await _settleDraftSaves();
+    final id = _serverDraftId;
+    if (id == null) return;
     _serverDraftId = null;
+    await sl<DeleteServerDraft>()(id);
   }
 
   bool get _hasContent {
@@ -1197,20 +1243,16 @@ class ComposeFormState extends State<ComposeForm> {
     // it as soon as ComposeSent fires. Delete the draft HERE, with await, so the
     // deletion completes before we dispatch (and before the process can be torn down).
     //
-    // If _saveDraft() is still in-flight (timer already fired, HTTP pending),
-    // wait for it via _saveCompleter so we get the ID it creates/returns.
-    final inFlightId =
-        _saveCompleter != null ? await _saveCompleter!.future : null;
-    final idsToDelete = <String>{?_serverDraftId, ?inFlightId};
+    // A save still on the wire (timer already fired, HTTP pending) — or queued
+    // behind one — has to land first: until it does, _serverDraftId does not
+    // yet name the draft it is about to create.
+    await _settleDraftSaves();
+    final draftId = _serverDraftId;
     _serverDraftId = null;
-    if (idsToDelete.isNotEmpty) {
-      await Future.wait(
-        idsToDelete.map((id) async {
-          try {
-            await sl<DeleteServerDraft>()(id);
-          } catch (_) {}
-        }),
-      );
+    if (draftId != null) {
+      try {
+        await sl<DeleteServerDraft>()(draftId);
+      } catch (_) {}
       unawaited(_kDraftsRefreshChannel
           .invokeMethod<void>('notifyDraftChanged')
           .catchError((_) {}));

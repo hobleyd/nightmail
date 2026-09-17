@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -33,6 +35,11 @@ class _RecordingEmailRepository extends Fake implements EmailRepository {
   final updated = <String>[];
   int _nextId = 1;
 
+  /// When set, every create waits on it before answering — a draft create
+  /// held on the wire, which is where overlapping autosaves used to mint two.
+  Completer<void>? createGate;
+  int createsStarted = 0;
+
   @override
   Future<Either<Failure, String>> createServerDraft({
     required List<String> toAddresses,
@@ -42,6 +49,9 @@ class _RecordingEmailRepository extends Fake implements EmailRepository {
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
+    createsStarted++;
+    final gate = createGate;
+    if (gate != null) await gate.future;
     final id = 'draft-${_nextId++}';
     created.add(id);
     return Right(id);
@@ -283,6 +293,87 @@ void main() {
       expect(find.text('Save draft?'), findsNothing);
       expect(closeCount, 1);
       expect(repository.created, isEmpty);
+    });
+  });
+
+  group('an autosave that outlasts the next one', () {
+    testWidgets('updates the draft it made rather than creating a second',
+        (tester) async {
+      final gate = Completer<void>();
+      repository.createGate = gate;
+      await pumpForm(tester);
+
+      // First pause: the timer fires and the create goes on the wire.
+      await tester.enterText(find.byType(TextField).at(2), 'First');
+      await tester.pump(const Duration(milliseconds: 1600));
+      expect(repository.createsStarted, 1);
+
+      // Second pause, while that create is still in flight. The form does not
+      // yet know an id, which is what used to make this a second create.
+      await tester.enterText(find.byType(TextField).at(2), 'First, then more');
+      await tester.pump(const Duration(milliseconds: 1600));
+      expect(repository.createsStarted, 1,
+          reason: 'the second save must wait for the first to mint an id');
+
+      gate.complete();
+      await tester.pump();
+      await tester.pump();
+
+      expect(repository.created, ['draft-1']);
+      expect(repository.updated, ['draft-1']);
+
+      // Send deletes the one draft there is, and nothing is left behind.
+      await send(tester);
+      expect(repository.sent, ['Subject']);
+      expect(repository.deleted, ['draft-1']);
+      expect(repository.created, ['draft-1']);
+    });
+
+    testWidgets('sending during the create still deletes what it made',
+        (tester) async {
+      final gate = Completer<void>();
+      repository.createGate = gate;
+      await pumpForm(tester);
+      await tester.enterText(find.byType(TextField).at(0), 'you@example.com');
+      await tester.enterText(find.byType(TextField).at(2), 'Subject');
+      await tester.pump(const Duration(milliseconds: 1600));
+      expect(repository.createsStarted, 1);
+
+      await tester.tap(find.text('Send'));
+      await tester.pump();
+      expect(repository.sent, isEmpty,
+          reason: 'the send waits for the create to land');
+
+      gate.complete();
+      for (var i = 0; i < 4; i++) {
+        await tester.pump();
+      }
+
+      expect(repository.sent, ['Subject']);
+      expect(repository.deleted, ['draft-1']);
+    });
+
+    testWidgets('discarding during the create deletes what it made',
+        (tester) async {
+      final gate = Completer<void>();
+      repository.createGate = gate;
+      final state = await pumpForm(tester);
+      await tester.enterText(find.byType(TextField).at(2), 'Half-written');
+      await tester.pump(const Duration(milliseconds: 1600));
+      expect(repository.createsStarted, 1);
+
+      state.requestClose();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete'));
+      await tester.pump();
+      expect(closeCount, 0, reason: 'nothing to delete until the create lands');
+
+      gate.complete();
+      await tester.pumpAndSettle();
+
+      expect(repository.created, ['draft-1']);
+      expect(repository.deleted, ['draft-1']);
+      expect(closeCount, 1);
     });
   });
 

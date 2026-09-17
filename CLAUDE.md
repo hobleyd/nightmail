@@ -128,6 +128,23 @@ turned its `setPreventClose` guard off — see `_close` in `compose_window.dart`
 which retries and puts the guard back. `destroy()` is never an option in a
 sub-window: it is `PostQuitMessage`/`NSApp.terminate` and takes the app with it.
 
+### Draft autosaves are serialised, and everything that deletes waits on them
+
+`ComposeFormState._saveDraft` chains every save behind the one on the wire
+(`_saveInFlight`), and `_submit`, discard and the dispose flush all call
+`_settleDraftSaves()` before reading `_serverDraftId`. Two overlapping
+*creates* each mint a draft and only the second is remembered — the first
+sat in Drafts for good and Send deleted the wrong one. Gmail showed it most:
+a create is a `getProfile` round trip, a MIME build and an upload of the
+whole raw message, which routinely outlasts the 1.5 s debounce between two
+pauses in typing. Graph has the same shape with one request per attachment.
+
+A queued save reads the fields when it *runs*, not when it was scheduled, and
+a second queued save is coalesced into it (`_saveWaiting`). A save that
+finishes after Send was pressed still records its id — that is what
+`_submit` deletes. `compose_close_test.dart` holds a create on the wire with
+`createGate` to pin all three paths.
+
 ### Where a window opens
 
 `WindowBoundsService` persists geometry per display; the main window and each

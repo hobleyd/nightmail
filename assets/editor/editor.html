@@ -298,9 +298,16 @@ let changeTimer = null;
 // Initialise swatch to match the input's default value
 colorSwatch.style.background = colorInput.value;
 
+// A toolbar button has to show the state it has just put the caret into, not
+// the state it was in. With a collapsed caret nothing moves, so no
+// selectionchange fires and the button would stay stale until the next
+// keystroke — which is exactly when the user wants to know what typing will
+// do. The same applies to the native Cmd/Ctrl+B shortcuts (see the keyup
+// listener beside updateToolbarState).
 function fmt(cmd) {
   document.execCommand(cmd, false, null);
   editor.focus();
+  scheduleToolbarUpdate();
   scheduleChange();
 }
 
@@ -590,6 +597,7 @@ function applyPaintedFormat() {
   if (paintedFormat.fontSize) setFontSize(paintedFormat.fontSize);
 
   cancelFormatPainter();
+  scheduleToolbarUpdate();
   scheduleChange();
 }
 
@@ -1179,11 +1187,17 @@ function updateToolbarState() {
   updateFontSizeSelect();
   updateFontFamilySelect();
 }
-document.addEventListener('selectionchange', function() {
+function scheduleToolbarUpdate() {
   if (toolbarUpdateScheduled) return;
   toolbarUpdateScheduled = true;
   requestAnimationFrame(updateToolbarState);
-});
+}
+document.addEventListener('selectionchange', scheduleToolbarUpdate);
+// Cmd/Ctrl+B and friends are handled by the engine itself, and on a collapsed
+// caret they change the typing style without moving the selection — so no
+// selectionchange follows. Typing already schedules an update through
+// selectionchange, so on that path this coalesces into the same frame.
+editor.addEventListener('keyup', scheduleToolbarUpdate);
 
 // Converts CSS rgb(...) or #rrggbb strings returned by queryCommandValue to #rrggbb
 function cssColorToHex(color) {

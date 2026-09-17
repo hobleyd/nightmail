@@ -272,14 +272,14 @@ body { display: flex; flex-direction: column; }
     <option value="48">48</option>
   </select>
   <span class="sep"></span>
-  <button title="Bullet list" onmousedown="event.preventDefault(); fmt('insertUnorderedList')">&#x2022;&#x2261;</button>
-  <button title="Numbered list" onmousedown="event.preventDefault(); fmt('insertOrderedList')">1&#x2261;</button>
+  <button title="Bullet list" id="btn-ul" onmousedown="event.preventDefault(); fmt('insertUnorderedList')">&#x2022;&#x2261;</button>
+  <button title="Numbered list" id="btn-ol" onmousedown="event.preventDefault(); fmt('insertOrderedList')">1&#x2261;</button>
   <span class="sep"></span>
-  <button title="Decrease indent" onmousedown="event.preventDefault(); fmt('outdent')">&#x21E4;</button>
-  <button title="Increase indent" onmousedown="event.preventDefault(); fmt('indent')">&#x21E5;</button>
+  <button title="Decrease indent" id="btn-outdent" onmousedown="event.preventDefault(); fmt('outdent')">&#x21E4;</button>
+  <button title="Increase indent" id="btn-indent" onmousedown="event.preventDefault(); fmt('indent')">&#x21E5;</button>
   <span class="sep"></span>
-  <button title="Insert link" onmousedown="event.preventDefault(); requestLink()">&#x1F517;</button>
-  <button title="Remove formatting" onmousedown="event.preventDefault(); fmt('removeFormat')">&#x2715;</button>
+  <button title="Insert link" id="btn-link" onmousedown="event.preventDefault(); requestLink()">&#x1F517;</button>
+  <button title="Remove formatting" id="btn-removeformat" onmousedown="event.preventDefault(); fmt('removeFormat')">&#x2715;</button>
   <button title="Attach file" style="margin-left:auto" onmousedown="event.preventDefault(); requestAttach()">&#x1F4CE;</button>
 </div>
 <div class="color-popup" id="color-popup" style="display:none;">
@@ -444,6 +444,13 @@ function _caretElement() {
   if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
   if (!node || !editor.contains(node)) return null;
   return node;
+}
+
+// True when the caret sits inside a list item, which is what decides whether
+// Tab nests the item or inserts an indent of spaces.
+function _caretInListItem() {
+  const node = _caretElement();
+  return !!(node && node.closest('li'));
 }
 
 // Makes a <select> display [value] even when it isn't one of the ship-time
@@ -616,7 +623,22 @@ editor.addEventListener('keydown', function(e) {
   if (e.key === 'Escape' && paintedFormat) cancelFormatPainter();
 });
 
+// The host hides this webview while the Insert-link dialog is up, and a
+// WKWebView that loses first responder has WebKit clear its DOM selection
+// outright — coming back gives a fresh caret at offset 0 (see
+// docs/claude/webviews.md). So the range the link is meant to wrap has to be
+// snapshotted here, on the way out, and put back in `insertLink`. Focusing the
+// editor is not enough: it restores the caret, not the selection, and
+// `createLink` over a collapsed caret links nothing.
+var pendingLinkRange = null;
+
 function requestLink() {
+  pendingLinkRange = null;
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0) {
+    const r = sel.getRangeAt(0);
+    if (_rangeInEditor(r)) pendingLinkRange = r.cloneRange();
+  }
   _flutterNotify('onLinkRequest');
 }
 
@@ -626,6 +648,12 @@ function requestAttach() {
 
 function insertLink(url) {
   editor.focus();
+  if (pendingLinkRange && _rangeInEditor(pendingLinkRange)) {
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(pendingLinkRange);
+  }
+  pendingLinkRange = null;
   document.execCommand('createLink', false, url);
   scheduleChange();
 }
@@ -1109,7 +1137,19 @@ editor.addEventListener('input', function() {
 
 editor.addEventListener('keydown', function(e) {
   if (e.key === 'Tab') {
+    // Cmd/Ctrl/Alt+Tab belong to the window manager; only a bare Tab is ours.
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
     e.preventDefault();
+    // Inside a list, Tab and Shift+Tab nest and un-nest the item — what every
+    // other mail client does, and the only way to reach a sub-bullet without
+    // the toolbar. Everywhere else Tab is still four spaces, and Shift+Tab has
+    // nothing to undo (it used to insert four *more* spaces, which was only
+    // ever `e.key === 'Tab'` matching both directions).
+    if (_caretInListItem()) {
+      fmt(e.shiftKey ? 'outdent' : 'indent');
+      return;
+    }
+    if (e.shiftKey) return;
     document.execCommand('insertHTML', false, '    ');
     scheduleChange();
   }
@@ -1159,6 +1199,94 @@ editor.addEventListener('keydown', function(e) {
   }
 });
 
+// --- Keyboard shortcuts ----------------------------------------------------
+// Every binding calls the same function the matching toolbar button does, so a
+// shortcut and a click cannot drift apart. The set is the Gmail/Docs/Outlook
+// consensus, which is what a mail composer's muscle memory is built on:
+//
+//   B  bold          I  italic        U  underline     Shift+X  strikethrough
+//   Shift+8  bullets Shift+7  numbers ]  indent        [  outdent
+//   K  insert link   \  remove formatting
+//
+// Colour, font, size, the format painter and attach stay mouse-only: no two
+// mail clients agree on a key for those, so inventing one is worse than
+// leaving them off.
+//
+// **B/I/U are intercepted rather than left to the engine.** Each engine binds
+// some of them natively inside a contenteditable, but not the same ones — and
+// a native toggle on a collapsed caret changes the typing style without moving
+// the selection, so no `selectionchange` follows and the toolbar's pressed
+// state only catches up on the keyup fallback below. Going through `fmt()`
+// updates it in the same frame, and makes all five engines behave alike.
+//
+// **Letters match on `e.key`, digits and punctuation on `e.code`.** With Shift
+// held, `e.key` for the 7 key is '&' on a US layout and something else again
+// on a UK or German one, so a `key === '7'` test would never fire; `e.code`
+// names the physical key regardless. Letters stay on `e.key` so a Dvorak or
+// AZERTY user gets the letter printed on the keycap they pressed rather than
+// the US key underneath it.
+const IS_APPLE = /Mac|iPhone|iPad|iPod/.test(navigator.platform || '') ||
+    /Mac OS X/.test(navigator.userAgent || '');
+
+// The platform's own modifier and only it: Ctrl+B on macOS is the system's
+// "back one character" text binding and must keep working, and Cmd on Windows
+// and Linux is the Super/Windows key, which belongs to the desktop. Alt is
+// never part of a binding here — it makes a different shortcut, and on macOS
+// it rewrites `e.key` into the character it would type.
+function _isShortcutModifier(e) {
+  if (e.altKey) return false;
+  return IS_APPLE ? (e.metaKey && !e.ctrlKey) : (e.ctrlKey && !e.metaKey);
+}
+
+// A shortcut nobody can see is a shortcut nobody uses, so each bound button
+// names its own chord the way Gmail and Outlook do. Written from JS rather
+// than the markup because the symbols differ by platform, and the binding
+// table above is then the only place a key is spelled out.
+(function () {
+  const MOD = IS_APPLE ? '\u2318' : 'Ctrl+';
+  const SHIFT_MOD = IS_APPLE ? '\u21e7\u2318' : 'Ctrl+Shift+';
+  const HINTS = {
+    'btn-bold': MOD + 'B',
+    'btn-italic': MOD + 'I',
+    'btn-underline': MOD + 'U',
+    'btn-strike': SHIFT_MOD + 'X',
+    'btn-ul': SHIFT_MOD + '8',
+    'btn-ol': SHIFT_MOD + '7',
+    'btn-indent': MOD + ']',
+    'btn-outdent': MOD + '[',
+    'btn-link': MOD + 'K',
+    'btn-removeformat': MOD + '\\',
+  };
+  Object.keys(HINTS).forEach(function (id) {
+    const btn = document.getElementById(id);
+    if (btn) btn.title = btn.title + ' (' + HINTS[id] + ')';
+  });
+})();
+
+editor.addEventListener('keydown', function(e) {
+  if (!_isShortcutModifier(e)) return;
+  const key = (e.key || '').toLowerCase();
+  const code = e.code || '';
+  const shift = e.shiftKey;
+  let handled = true;
+
+  if (!shift && key === 'b') fmt('bold');
+  else if (!shift && key === 'i') fmt('italic');
+  else if (!shift && key === 'u') fmt('underline');
+  else if (shift && key === 'x') fmt('strikeThrough');
+  else if (shift && code === 'Digit8') fmt('insertUnorderedList');
+  else if (shift && code === 'Digit7') fmt('insertOrderedList');
+  else if (!shift && code === 'BracketRight') fmt('indent');
+  else if (!shift && code === 'BracketLeft') fmt('outdent');
+  else if (!shift && key === 'k') requestLink();
+  else if (!shift && code === 'Backslash') fmt('removeFormat');
+  else handled = false;
+
+  // Only a binding we recognise is swallowed — Cmd+A, Cmd+C, Cmd+Z and the
+  // rest still reach the engine.
+  if (handled) e.preventDefault();
+});
+
 // Update toolbar button active states and colour swatch on selection change.
 // document.queryCommandState()/queryCommandValue() do synchronous style
 // computation that scales with DOM size/complexity, and selectionchange
@@ -1193,9 +1321,11 @@ function scheduleToolbarUpdate() {
   requestAnimationFrame(updateToolbarState);
 }
 document.addEventListener('selectionchange', scheduleToolbarUpdate);
-// Cmd/Ctrl+B and friends are handled by the engine itself, and on a collapsed
-// caret they change the typing style without moving the selection — so no
-// selectionchange follows. Typing already schedules an update through
+// Cmd/Ctrl+B and friends now go through `fmt()`, which schedules its own
+// update — but the engine still owns keys this file does not intercept, and
+// Cmd+Z is the one that matters: undoing a bold changes the typing style on a
+// collapsed caret without moving the selection, so no selectionchange follows
+// and the button would stay lit. Typing already schedules an update through
 // selectionchange, so on that path this coalesces into the same frame.
 editor.addEventListener('keyup', scheduleToolbarUpdate);
 

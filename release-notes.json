@@ -1,44 +1,61 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.26.1",
+  "version": "1.26.2",
   "sections": [
     {
-      "type": "fixes",
-      "title": "Fixes",
+      "type": "features",
+      "title": "New features",
       "items": [
         {
-          "body": "build the DMG directly, so its name can carry the version",
+          "body": "give the DMG a background drawn from the logo",
           "title": "release"
-        },
-        {
-          "body": "let Enter pick the first recipient suggestion like Tab",
-          "title": "compose"
-        },
-        {
-          "body": "put the version in the DMG's name and its volume",
-          "title": "release"
-        },
-        {
-          "body": "let a macOS update install, and keep the app's files in one place",
-          "title": "update"
-        },
-        {
-          "body": "serialise draft autosaves so an overlapping create is not orphaned",
-          "title": "compose"
-        },
-        {
-          "body": "stop a toolbar click sending the caret to the start of the line",
-          "title": "editor"
-        },
-        {
-          "body": "show a style button's state before anything is typed",
-          "title": "editor"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.26.1",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "build the DMG directly, so its name can carry the version",
+              "title": "release"
+            },
+            {
+              "body": "let Enter pick the first recipient suggestion like Tab",
+              "title": "compose"
+            },
+            {
+              "body": "put the version in the DMG's name and its volume",
+              "title": "release"
+            },
+            {
+              "body": "let a macOS update install, and keep the app's files in one place",
+              "title": "update"
+            },
+            {
+              "body": "serialise draft autosaves so an overlapping create is not orphaned",
+              "title": "compose"
+            },
+            {
+              "body": "stop a toolbar click sending the caret to the start of the line",
+              "title": "editor"
+            },
+            {
+              "body": "show a style button's state before anything is typed",
+              "title": "editor"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -811,79 +828,6 @@
             {
               "body": "parse messages on a background isolate",
               "title": "mail"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.16.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "default new meetings to a 15-minute reminder",
-              "title": "calendar"
-            },
-            {
-              "body": "propose a new time, and accept one as the organizer",
-              "title": "invites"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "resolve recurrence for Google series split by the organizer",
-              "title": "calendar"
-            },
-            {
-              "body": "warn about conflicts against accepted Gmail meetings",
-              "title": "invites"
-            },
-            {
-              "body": "show IMAP parts sent inline without a Content-Id",
-              "title": "attachments"
-            },
-            {
-              "body": "diagnose SMTP handshake failures, and make error snackbars copyable",
-              "title": "imap"
-            },
-            {
-              "body": "force UTF-8 so Outlook bodies stop showing mojibake",
-              "title": "reading pane"
-            },
-            {
-              "body": "keep the notification plugin in the main window",
-              "title": "notifications"
-            },
-            {
-              "body": "show attendee availability when opening an existing meeting",
-              "title": "calendar"
-            },
-            {
-              "body": "apply Kotlin plugin to :jni and commit pubspec.lock",
-              "title": "android"
-            }
-          ]
-        },
-        {
-          "type": "performance",
-          "title": "Performance",
-          "items": [
-            {
-              "body": "prefetch full message bodies when new mail arrives",
-              "title": "mail"
-            },
-            {
-              "body": "cache the address book so the typeahead never hits the network",
-              "title": "contacts"
             }
           ]
         }

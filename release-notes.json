@@ -10,6 +10,10 @@
         {
           "body": "give the DMG a background drawn from the logo",
           "title": "release"
+        },
+        {
+          "body": "format from the keyboard, with the platform's own modifier",
+          "title": "editor"
         }
       ]
     }

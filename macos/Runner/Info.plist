@@ -30,6 +30,8 @@
 	<string>NSApplication</string>
 	<key>NSContactsUsageDescription</key>
 	<string>NightMail uses your contacts to suggest recipients when composing email.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>NightMail shows your macOS calendars alongside your mail accounts&apos; calendars, and adds events you accept from an invitation.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

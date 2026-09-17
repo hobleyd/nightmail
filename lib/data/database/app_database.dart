@@ -1,10 +1,13 @@
+import 'dart:io' show Directory, Platform;
+
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:sqlite3/common.dart' show CommonDatabase;
 import 'package:sqlite3/sqlite3.dart' show Database;
 
 import '../../domain/entities/email_folder.dart';
+import '../../core/platform/app_data_directory.dart';
 import '../datasources/local/delta_token_datasource.dart';
 import '../datasources/local/folder_local_datasource.dart';
 import '../datasources/local/migration_local_datasource.dart';
@@ -1111,10 +1114,36 @@ class AppDatabase extends _$AppDatabase
     (db as Database).leak();
   }
 
+  /// Where the cache file lives on macOS: [appDataDirectory], not the
+  /// documents directory drift defaults to.
+  ///
+  /// That default was the sandbox container's own documents directory — private
+  /// and out of sight. With the sandbox gone (which the in-app updater requires
+  /// — see `macos/Runner/Release.entitlements`) the very same call resolves to
+  /// **`~/Documents`**: a multi-megabyte mail cache dropped in among the user's
+  /// own files, on a folder that is iCloud Drive by default.
+  ///
+  /// macOS only. Windows resolves the documents directory to
+  /// `%USERPROFILE%\Documents` and has the same objection, but moving it there
+  /// means migrating every existing Windows install and is not part of this
+  /// change.
+  ///
+  /// [migrateMacOSAppData] brings an existing database here — from the sandbox
+  /// container, and from the `~/Documents` copy an unsandboxed build left
+  /// behind — so no cache is rebuilt from nothing.
+  ///
+  /// A static tear-off, like [_keepHandleUntilProcessExit]: drift may resolve
+  /// this off the calling isolate.
+  static Future<Directory> _databaseDirectory() => appDataDirectory();
+
   static QueryExecutor _openConnection() {
     return driftDatabase(
       name: 'nightmail_cache',
-      native: DriftNativeOptions(setup: _keepHandleUntilProcessExit),
+      native: DriftNativeOptions(
+        setup: _keepHandleUntilProcessExit,
+        databaseDirectory:
+            !kIsWeb && Platform.isMacOS ? _databaseDirectory : null,
+      ),
     );
   }
 }

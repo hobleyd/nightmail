@@ -41,6 +41,16 @@ enum AppUpdatePhase {
   /// Handed to the native installer.
   installing,
 
+  /// macOS only: the staged update is ready, but macOS wants the user to
+  /// approve `desktop_updater`'s privileged install helper before it may run.
+  ///
+  /// This is the **normal first-install path** on macOS 13+, not an edge case —
+  /// `SMAppService.daemon` registration always asks the first time. It gets its
+  /// own phase rather than being reported as a failure because it is not one,
+  /// and because the only useful thing to do about it is open the Login Items
+  /// settings pane, which is a different button from "Restart and install".
+  helperApprovalRequired,
+
   /// The last check, download or install failed. See [AppUpdateStatus.error].
   failed,
 }
@@ -145,7 +155,8 @@ class AppUpdateStatus extends Equatable {
   bool get hasActionableUpdate =>
       phase == AppUpdatePhase.available ||
       phase == AppUpdatePhase.freshInstallRequired ||
-      phase == AppUpdatePhase.readyToInstall;
+      phase == AppUpdatePhase.readyToInstall ||
+      phase == AppUpdatePhase.helperApprovalRequired;
 
   bool get isBusy =>
       phase == AppUpdatePhase.checking ||

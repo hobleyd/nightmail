@@ -2,8 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:screen_retriever/screen_retriever.dart';
+
+import '../../core/platform/app_data_directory.dart';
 
 /// Returned by [WindowBoundsService.loadValidatedBounds].
 class WindowRestoreState {
@@ -58,7 +59,7 @@ class WindowBoundsService {
   static const double _titleBarHeight = 40.0;
 
   Future<File> _file() async {
-    final dir = await getApplicationSupportDirectory();
+    final dir = await appDataDirectory();
     return File('${dir.path}/$_boundsFile');
   }
 

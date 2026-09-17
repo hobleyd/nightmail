@@ -3,10 +3,11 @@ import 'dart:io';
 
 import 'package:desktop_updater/desktop_updater.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../../core/platform/window_utils.dart';
+import '../../core/platform/app_data_directory.dart';
 import 'android_apk_updater.dart';
 import 'app_update_status.dart';
 import 'release_notes_fetcher.dart';
@@ -55,8 +56,21 @@ String formatReleaseVersion(String version, int? buildNumber) =>
 String _describeUpdateError(Object error) {
   if (error is AndroidInstallException) return error.message;
   if (error is StateError) return error.message;
+  // `desktop_updater`'s native side reports through the method channel, so an
+  // install failure arrives as a PlatformException whose toString() is a wall
+  // of code, message and details map. The message is the only readable part and
+  // is written for a person.
+  if (error is PlatformException) {
+    final message = error.message;
+    if (message != null && message.isNotEmpty) return message;
+  }
   return error.toString();
 }
+
+/// The error code macOS raises when the privileged install helper has not been
+/// approved yet. `desktop_updater` documents the remedy in the error's own
+/// `details` map, which names [DesktopUpdaterController.openMacOSBackgroundItemsSettings].
+const String _helperApprovalErrorCode = 'PrivilegedHelperApprovalRequired';
 
 /// Translates `desktop_updater`'s state into the status to show, or null when
 /// the state says nothing about what to show.
@@ -405,6 +419,40 @@ class AppUpdateService {
     try {
       final controller = await _desktopController();
       await controller.restartApp();
+    } on PlatformException catch (error) {
+      // Not a failure: macOS asks the user to approve the privileged install
+      // helper the first time it is registered, which is the normal path on a
+      // first install rather than something that went wrong. Reporting it as a
+      // failure would show a raw PlatformException and no way to act on it.
+      if (error.code == _helperApprovalErrorCode) {
+        _emit(_status.copyWith(phase: AppUpdatePhase.helperApprovalRequired));
+        return;
+      }
+      _emit(_status.copyWith(
+        phase: AppUpdatePhase.failed,
+        error: _describeUpdateError(error),
+      ));
+    } catch (error) {
+      _emit(_status.copyWith(
+        phase: AppUpdatePhase.failed,
+        error: _describeUpdateError(error),
+      ));
+    }
+  }
+
+  /// Opens macOS's Login Items & Extensions pane, where the privileged install
+  /// helper is approved.
+  ///
+  /// The staged update is still staged, so the user comes back to
+  /// [AppUpdatePhase.readyToInstall] and presses Restart and install again.
+  Future<void> openHelperApprovalSettings() async {
+    if (!_isSupported || !Platform.isMacOS) return;
+    try {
+      final controller = await _desktopController();
+      await controller.openMacOSBackgroundItemsSettings();
+      // Back to the state the install was attempted from: nothing about the
+      // stage changed, and the same button is what finishes the job.
+      _emit(_status.copyWith(phase: AppUpdatePhase.readyToInstall));
     } catch (error) {
       _emit(_status.copyWith(
         phase: AppUpdatePhase.failed,
@@ -444,7 +492,7 @@ class AppUpdateService {
     final existing = _desktop;
     if (existing != null) return existing;
 
-    final supportDir = await getApplicationSupportDirectory();
+    final supportDir = await appDataDirectory();
     final recoveryFile = File(
       '${supportDir.path}${Platform.pathSeparator}'
       'desktop_updater_pending_install.json',

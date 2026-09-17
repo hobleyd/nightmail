@@ -2,9 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Sandbox is disabled for debug/profile builds so the Keychain
-	     (flutter_secure_storage) works without a provisioning profile.
-	     Release builds re-enable the sandbox and have keychain-access-groups. -->
+	<!-- Sandbox is disabled here, and in Release.entitlements too — the
+	     in-app updater cannot work inside one. Release additionally carries
+	     keychain-access-groups (and so needs a provisioning profile); debug
+	     leaves it off so the Keychain works without one. -->
 	<key>com.apple.security.cs.allow-jit</key>
 	<true/>
 	<key>com.apple.security.network.client</key>

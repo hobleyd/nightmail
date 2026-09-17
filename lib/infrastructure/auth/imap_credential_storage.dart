@@ -2,7 +2,8 @@ import 'dart:io' show File, Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:path_provider/path_provider.dart';
+
+import '../../core/platform/app_data_directory.dart';
 
 class ImapCredentialStorage {
   ImapCredentialStorage(this._storage);
@@ -49,7 +50,7 @@ class ImapCredentialStorage {
   }
 
   Future<File> _legacyFile(String accountId) async {
-    final dir = await getApplicationSupportDirectory();
+    final dir = await appDataDirectory();
     return File('${dir.path}/.imap_pw_$accountId');
   }
 }

@@ -1,8 +1,8 @@
 import 'dart:io';
 
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:path_provider/path_provider.dart';
 
+import '../../../core/platform/app_data_directory.dart';
 import 'theme_state.dart';
 
 class ThemeCubit extends Cubit<ThemeState> {
@@ -13,7 +13,7 @@ class ThemeCubit extends Cubit<ThemeState> {
   static const _fontScaleFile = 'theme_font_scale';
 
   Future<File> _file(String name) async {
-    final dir = await getApplicationSupportDirectory();
+    final dir = await appDataDirectory();
     return File('${dir.path}/$name');
   }
 

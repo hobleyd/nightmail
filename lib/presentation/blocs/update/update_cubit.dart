@@ -47,6 +47,11 @@ class UpdateCubit extends Cubit<AppUpdateStatus> {
 
   Future<void> install() => _service.installUpdate();
 
+  /// macOS only: opens the pane where the privileged install helper is
+  /// approved, the one action [AppUpdatePhase.helperApprovalRequired] supports.
+  Future<void> openHelperApprovalSettings() =>
+      _service.openHelperApprovalSettings();
+
   @override
   Future<void> close() {
     _sub?.cancel();

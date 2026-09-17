@@ -10,6 +10,9 @@ void main() {
         // on; only the action differs.
         AppUpdatePhase.freshInstallRequired,
         AppUpdatePhase.readyToInstall,
+        // macOS asking for the install helper to be approved is a thing to
+        // press, not a failure — and the press is a different button.
+        AppUpdatePhase.helperApprovalRequired,
       ]) {
         expect(
           AppUpdateStatus(phase: phase).hasActionableUpdate,

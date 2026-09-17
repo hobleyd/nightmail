@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'core/platform/macos_app_data_migration.dart';
 import 'core/platform/window_utils.dart';
 import 'core/platform/windows_app_data_migration.dart';
 import 'core/settings/window_bounds_service.dart';
@@ -293,6 +294,11 @@ void main(List<String> args) async {
   // run — and before configureDependencies(), because the service locator
   // reads the support directory (secure storage lives there on Windows).
   await migrateWindowsAppDataDirectory();
+  // Gathers what earlier macOS builds left in the sandbox container, in
+  // Application Support and in ~/Documents into ~/.nightmail. Same placement
+  // and the same reason: the service locator resolves the data directory, and
+  // AppDatabase opens the cache out of it.
+  await migrateMacOSAppData();
   await configureDependencies();
   // Sweeps inline-image directories left behind by emails whose id the server
   // reassigned (a move), which per-email eviction cannot know about.

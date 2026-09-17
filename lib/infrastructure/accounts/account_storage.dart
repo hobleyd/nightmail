@@ -4,8 +4,8 @@ import 'dart:io' show File, Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:path_provider/path_provider.dart';
 
+import '../../core/platform/app_data_directory.dart';
 import 'account.dart';
 
 class AccountStorage {
@@ -98,7 +98,7 @@ class AccountStorage {
   // One-time migration: move account data from plain files to Keychain then delete files.
   Future<void> _migrateLegacyFiles() async {
     if (kIsWeb || (!Platform.isMacOS && !Platform.isWindows && !Platform.isLinux)) return;
-    final dir = await getApplicationSupportDirectory();
+    final dir = await appDataDirectory();
 
     final accountsFile = File('${dir.path}/$_accountsFileName');
     if (accountsFile.existsSync()) {
@@ -127,7 +127,7 @@ class AccountStorage {
 
   Future<void> _deleteLegacyFiles() async {
     if (kIsWeb || (!Platform.isMacOS && !Platform.isWindows && !Platform.isLinux)) return;
-    final dir = await getApplicationSupportDirectory();
+    final dir = await appDataDirectory();
     final accountsFile = File('${dir.path}/$_accountsFileName');
     final activeIndexFile = File('${dir.path}/$_activeIndexFileName');
     if (accountsFile.existsSync()) await accountsFile.delete();

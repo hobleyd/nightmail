@@ -29,6 +29,77 @@ is what lets the timer be quiet and unattended. It skips a cycle once an update
 has been found: there is nothing further to learn until the user acts, and
 re-checking would clear and re-set the status the dot is drawn from.
 
+### macOS Ships Unsandboxed, Because the Updater Cannot Work Inside One
+
+`macos/Runner/Release.entitlements` sets `com.apple.security.app-sandbox` to
+**false**. That is load-bearing for updating, not a convenience:
+
+- **Staging spawns command-line tools.** `desktop_updater` verifies a staged app
+  in Dart (`update_client.dart` → `macos_update.dart`) by running `codesign`,
+  `spctl` and `xcrun stapler`. Child processes inherit the sandbox, and two of
+  the three cannot survive it: `spctl --assess` answers **"internal error in
+  Code Signing subsystem"** and `xcrun` refuses outright with *"cannot be used
+  within an App Sandbox"*. `codesign` alone is fine. No entitlement fixes
+  `xcrun` — the refusal is xcrun's own check, not the kernel's.
+- **Installing registers a privileged helper.** The handoff goes through
+  `SMAppService.daemon`, which a sandboxed app may not do at all.
+
+That failure reached the user as a bare `ProcessException`: the package's
+`_runChecked` puts the child's stderr into the exception message and
+[_describeUpdateError] falls back to `error.toString()`, so `spctl`'s own
+wording was what the About panel printed. If an update failure ever names a
+command-line tool, that is the path it came down.
+
+`../inkworm` and `desktop_updater`'s own example app both ship unsandboxed for
+the same reason.
+
+What went with the sandbox: `network.client`/`network.server` (the Gmail
+loopback bind at 127.0.0.1:34572 needs no permission outside one) and
+`files.user-selected.read-write`. `personal-information.addressbook` and
+`.calendars` had to go too — see [../../../macos/CLAUDE.md](../../../macos/CLAUDE.md).
+**`keychain-access-groups` stays**, with the provisioning profile the release
+workflow embeds for it: every account, OAuth token and IMAP password lives in
+the Keychain under that group, so dropping it would sign the user out of
+everything. Where the app's *files* went is
+[../../core/platform/CLAUDE.md](../../core/platform/CLAUDE.md).
+
+### The Install Helper Is Embedded by a Build Phase, or the Install Fails Last
+
+`prepareAndCommitInstall` reads the sealed release-key policy out of
+`Contents/Helpers/DesktopUpdaterInstallHelper`'s **signature** before it will
+accept a staged update. Nothing builds that binary by default, so without the
+build phase an update downloads, verifies, stages — and then reports "Unable to
+prepare update installation" with `details: nil`, which is a worse error than
+the one it replaced.
+
+`macos/embed_update_helper.sh` is the "Embed Desktop Updater Install Helper"
+build phase. It wraps the package's own `embed_install_helper.sh` and does the
+three things that script leaves to the host project:
+
+- **Finds the package** through `Flutter/ephemeral/.symlinks/plugins/`, which
+  `flutter pub get` rebuilds, so a version bump needs no path edited here.
+- **Derives `DESKTOP_UPDATER_SEALED_POLICY_SHA256` from the policy file.** The
+  example project hardcodes that digest in `project.pbxproj`, where it silently
+  drifts the first time anyone edits the policy.
+- **Skips every configuration but Release.** Nothing installs an update from a
+  `flutter run` build, a per-architecture `swift build` on every debug build is
+  a real tax on the edit loop, and an ad-hoc signed debug build cannot satisfy
+  the Developer ID requirement the sealed policy names anyway.
+
+**`macos/Runner/DesktopUpdaterHelperPolicy.json` must stay canonical JSON** —
+compact, keys sorted. The build script digests the file with one trailing
+newline stripped; the *app* re-serialises the JSON through `JSONSerialization`
+with sorted keys and digests that. They agree only while the file is already in
+that form, so a reformatted policy builds and signs cleanly and then fails on
+the user's machine with nothing to point at. The wrapper checks it and says so
+at build time instead.
+
+The policy names the pinned Ed25519 release key — it must match
+`kTrustedReleasePublicKeys`, or every release is refused — the app and helper
+designated requirements, and `/Applications` as the only install root. The build
+phase runs **last** on the Runner target: Xcode seals the bundle after every
+phase, so the helper has to be in `Contents/Helpers` before that.
+
 ### The service starts at launch, not when Settings opens
 
 `../inkworm` — which this is modelled on — builds its `DesktopUpdaterController`
@@ -55,10 +126,23 @@ install handoff concurrently with the first. In a sub-window the status is
 
 ### The dot means "there is something to press"
 
-`AppUpdateStatus.hasActionableUpdate` — `available`, `freshInstallRequired` or
-`readyToInstall`. A download already running does **not** light it: the user has
-acted, and a dot beside a progress bar reads as a second, separate thing still
-wanting attention.
+`AppUpdateStatus.hasActionableUpdate` — `available`, `freshInstallRequired`,
+`readyToInstall` or `helperApprovalRequired`. A download already running does
+**not** light it: the user has acted, and a dot beside a progress bar reads as a
+second, separate thing still wanting attention.
+
+**`helperApprovalRequired` is the macOS first-install path, and is not a
+failure.** `SMAppService.daemon` registration asks the user to approve the
+privileged install helper the first time, and `prepareAndCommitInstall` reports
+that as `PlatformException(PrivilegedHelperApprovalRequired)` carrying the
+remedy in its own `details`. Left in the `failed` bucket it printed a raw
+PlatformException — code, message and details map — into the About panel with no
+route to the toggle, which after a string of genuine failures reads as one more.
+It gets its own phase, its own line and a button that opens Login Items &
+Extensions; the stage is untouched, so pressing it returns to `readyToInstall`
+and Restart and install is what finishes the job. `_describeUpdateError` also
+unwraps a PlatformException to its `message` now, so the *other* native install
+errors read as sentences rather than as a dump.
 
 **`freshInstallRequired` is a separate phase for a reason.** A release marked
 fresh-install-only cannot be staged, and `DesktopUpdaterController.downloadUpdate()`

@@ -4,7 +4,8 @@ import 'dart:io' show File, Platform;
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:path_provider/path_provider.dart';
+
+import '../../core/platform/app_data_directory.dart';
 
 /// Manages the AES-256-GCM key used to encrypt cached email content.
 ///
@@ -83,7 +84,7 @@ class CacheEncryptionService {
 
   Future<void> _migrateLegacyFile() async {
     if (kIsWeb || (!Platform.isMacOS && !Platform.isWindows && !Platform.isLinux)) return;
-    final dir = await getApplicationSupportDirectory();
+    final dir = await appDataDirectory();
     final file = File('${dir.path}/$_legacyKeyFileName');
     if (!file.existsSync()) return;
     try {

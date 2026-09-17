@@ -136,6 +136,11 @@ class _StatusLine extends StatelessWidget {
           AppColors.accent,
         ),
       AppUpdatePhase.installing => ('Installing…', c.textSecondary),
+      AppUpdatePhase.helperApprovalRequired => (
+          'macOS needs you to allow NightMail to install updates. Turn '
+              'NightMail on under Login Items & Extensions, then install again.',
+          AppColors.accent,
+        ),
       AppUpdatePhase.failed => ('Could not check for updates.', c.textMuted),
     };
 
@@ -216,6 +221,13 @@ class _UpdateAction extends StatelessWidget {
           'Restart and install',
           Icons.restart_alt_rounded,
           cubit.install,
+        ),
+      // The staged update is untouched by this, so pressing it returns to
+      // readyToInstall and the button above is what finishes the job.
+      AppUpdatePhase.helperApprovalRequired => (
+          'Open Login Items settings',
+          Icons.settings_rounded,
+          cubit.openHelperApprovalSettings,
         ),
       _ => ('Check for updates', Icons.refresh_rounded, cubit.check),
     };

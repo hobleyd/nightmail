@@ -244,6 +244,7 @@
 				33CC110E2044A8840003C045 /* Bundle Framework */,
 				3399D490228B24CF009A79C7 /* ShellScript */,
 				1357CAEB5BF1A3A1BDE439A1 /* [CP] Embed Pods Frameworks */,
+				D9A11EE72F1A4C0100NM0001 /* Embed Desktop Updater Install Helper */,
 			);
 			buildRules = (
 			);
@@ -332,6 +333,29 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		D9A11EE72F1A4C0100NM0001 /* Embed Desktop Updater Install Helper */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(PROJECT_DIR)/embed_update_helper.sh",
+				"$(PROJECT_DIR)/Runner/DesktopUpdaterHelperPolicy.json",
+			);
+			name = "Embed Desktop Updater Install Helper";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/Helpers/DesktopUpdaterInstallHelper",
+				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/Library/LaunchDaemons/au.com.sharpblue.nightmail.helper.plist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PROJECT_DIR}/embed_update_helper.sh\"\n";
+		};
 		1357CAEB5BF1A3A1BDE439A1 /* [CP] Embed Pods Frameworks */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;

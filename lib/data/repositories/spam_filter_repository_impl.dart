@@ -2,11 +2,11 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../../core/spam/bayesian_spam_filter.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/repositories/spam_filter_repository.dart';
+import '../../core/platform/app_data_directory.dart';
 
 class SpamFilterRepositoryImpl implements SpamFilterRepository {
   final _cache = <String, BayesianSpamFilter>{};
@@ -80,7 +80,7 @@ class SpamFilterRepositoryImpl implements SpamFilterRepository {
   }
 
   Future<File> _filterFile(String accountId) async {
-    final dir = await getApplicationSupportDirectory();
+    final dir = await appDataDirectory();
     final safe = accountId.replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
     return File('${dir.path}/spam_filter_$safe.json');
   }

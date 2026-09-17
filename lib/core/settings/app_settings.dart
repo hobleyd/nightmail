@@ -1,8 +1,8 @@
 import 'dart:io';
 
-import 'package:path_provider/path_provider.dart';
 
 import '../../domain/entities/email.dart';
+import '../../core/platform/app_data_directory.dart';
 
 class AppSettings {
   static const int defaultPollIntervalSeconds = 30;
@@ -17,7 +17,7 @@ class AppSettings {
   static const String _composeFormatFile = 'compose_format';
 
   Future<File> _file(String name) async {
-    final dir = await getApplicationSupportDirectory();
+    final dir = await appDataDirectory();
     return File('${dir.path}/$name');
   }
 

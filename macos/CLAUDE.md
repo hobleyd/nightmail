@@ -67,12 +67,42 @@ The contacts channel is implemented natively in `MainFlutterWindow.swift`
 (`au.com.sharpblue.nightmail/contacts`). Do **not** use the `flutter_contacts`
 package — its SPM artifacts do not link into the app bundle reliably.
 
-**Do not add `com.apple.security.personal-information.addressbook` to
-`DebugProfile.entitlements`.** This entitlement is for sandboxed apps only.
-On a non-sandboxed debug build it causes `CNError.authorizationDenied` (code 100)
-without ever showing a dialog.
+**`com.apple.security.personal-information.addressbook` must not be in
+*either* entitlements file now.** It is a sandbox-only entitlement, and on a
+non-sandboxed build it causes `CNError.authorizationDenied` (code 100) without
+ever showing a dialog. It used to live in `Release.entitlements` because that
+file enabled the sandbox; **it no longer does** — see
+[The App Is Not Sandboxed](#the-app-is-not-sandboxed) below — so the entitlement
+went with it, and the same is true of
+`com.apple.security.personal-information.calendars`.
 
-The entitlement belongs only in `Release.entitlements` (which enables the sandbox).
+Contacts and Calendar access now rest on the Info.plist usage strings alone:
+`NSContactsUsageDescription`, and `NSCalendarsFullAccessUsageDescription` for
+the EventKit channel, which calls `requestFullAccessToEvents` — TCC terminates
+an app that asks without the matching string.
+
+## The App Is Not Sandboxed
+
+`Release.entitlements` sets `com.apple.security.app-sandbox` to **false**, and
+`DebugProfile.entitlements` never enabled it. Both configurations are therefore
+the same shape, which is worth knowing when a permission behaves differently
+between them — it is no longer the sandbox that differs.
+
+The reason is the in-app updater, which cannot work inside a sandbox at all:
+`spctl` and `xcrun` fail there (the first with *"internal error in Code Signing
+subsystem"*), and `SMAppService.daemon` cannot be registered. The full account is
+in [../lib/infrastructure/update/CLAUDE.md](../lib/infrastructure/update/CLAUDE.md).
+
+Two things survived the sandbox going away and are still load-bearing:
+
+- **`keychain-access-groups`**, and the Developer ID provisioning profile the
+  release workflow embeds so it can be claimed. Every account, OAuth token and
+  IMAP password lives in the Keychain under that group.
+- **Everything else the app writes moved** to `~/.nightmail` — see
+  [../lib/core/platform/CLAUDE.md](../lib/core/platform/CLAUDE.md).
+
+`flutter clean` after changing any of this. Entitlement and signing changes do
+not reliably invalidate the incremental build.
 
 ### TCC permission dialogs require real code signing
 

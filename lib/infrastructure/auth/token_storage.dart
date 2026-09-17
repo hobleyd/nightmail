@@ -3,8 +3,8 @@ import 'dart:io' show File, Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:path_provider/path_provider.dart';
 
+import '../../core/platform/app_data_directory.dart';
 import 'auth_token.dart';
 
 class TokenStorage {
@@ -69,7 +69,7 @@ class TokenStorage {
   }
 
   Future<File> get _legacyFile async {
-    final dir = await getApplicationSupportDirectory();
+    final dir = await appDataDirectory();
     return File('${dir.path}/$_legacyFileName');
   }
 }

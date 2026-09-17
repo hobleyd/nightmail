@@ -1,6 +1,53 @@
-# Desktop Sub-Windows & FFI Isolation
+# Desktop Platform Concerns
 
-How `desktop_multi_window` sub-windows relate to the main window, and the FFI-plugin hazard that follows from each getting its own isolate. See [../../../CLAUDE.md](../../../CLAUDE.md) for architecture-wide rules and [../../../macos/CLAUDE.md](../../../macos/CLAUDE.md) for the macOS-specific native-channel rules this interacts with.
+Where the app keeps its files, how `desktop_multi_window` sub-windows relate to the main window, and the FFI-plugin hazard that follows from each getting its own isolate. See [../../../CLAUDE.md](../../../CLAUDE.md) for architecture-wide rules and [../../../macos/CLAUDE.md](../../../macos/CLAUDE.md) for the macOS-specific native-channel rules this interacts with.
+
+## Everything NightMail Stores on macOS Is in `~/.nightmail`
+
+`appDataDirectory()` (`app_data_directory.dart`) is the one directory the app
+writes to, and every store goes through it — settings, window bounds, spam
+rules, the legacy credential files, and the drift cache database.
+
+It exists because the platform's own answer moved under the app. The macOS
+release build used to be sandboxed, so every path resolved inside
+`~/Library/Containers/au.com.sharpblue.nightmail/Data`. Taking the sandbox away
+(which the in-app updater requires — see
+[../../infrastructure/update/CLAUDE.md](../../infrastructure/update/CLAUDE.md))
+makes the same calls resolve outside it, and drift's default in particular —
+`getApplicationDocumentsDirectory()` — becomes the user's own **`~/Documents`**:
+a multi-megabyte mail cache dropped in among their files, on a folder that is
+iCloud Drive by default. A directory the app names itself cannot drift like
+that again.
+
+Three things here are load-bearing:
+
+- **The redirect is triggered by the platform's answer, not by the platform.**
+  `getApplicationSupportDirectory()` is resolved first and only rewritten when
+  it came back under `~/Library` — the real macOS answer, sandboxed
+  (`Library/Containers/…`) or not. A test that fakes `PathProviderPlatform` gets
+  a temp directory, does not match, and is honoured. Redirecting on
+  `Platform.isMacOS` alone made every test that writes through this reach into
+  the developer's real home directory, which `spam_filter_repository_impl_test`
+  caught by leaking state between two runs of the same test.
+- **Only macOS.** Windows and Linux already resolve somewhere private and
+  conventional, and moving them would mean migrating those installs for no gain.
+  Windows' documents directory has the same objection as macOS's — that is a
+  separate change, not an oversight.
+- **`migrateMacOSAppData()` runs before `configureDependencies()`**, beside the
+  Windows one and for the same reason: the service locator resolves the data
+  directory, and `AppDatabase` opens the cache out of it.
+
+The migration reads three previous locations — the sandbox container, plain
+`~/Library/Application Support`, and a `nightmail_cache.sqlite` in either
+`Documents` — and **copies**, so an older build stays runnable. The single
+exception is a database in the user's own `~/Documents`, which is *taken*:
+leaving a file of ours in their folder is the thing `~/.nightmail` exists to
+stop. The `-shm` is never copied; SQLite rebuilds it from the write-ahead log,
+and it is the one piece of the set that can be stale against the other two.
+
+Accounts, OAuth tokens and IMAP passwords are not part of any of this — they are
+in the Keychain under `keychain-access-groups`, which the entitlements keep
+unchanged.
 
 ## Sub-Windows and FFI Plugins
 

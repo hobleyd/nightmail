@@ -2,21 +2,40 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- NOT sandboxed, deliberately. NightMail is Developer ID signed and
+	     notarized and ships outside the Mac App Store, so the sandbox is
+	     optional — and the in-app updater cannot work inside one:
+
+	     * `desktop_updater` verifies a staged app by spawning `spctl` and
+	       `xcrun stapler`. Children inherit the sandbox: `spctl` answers
+	       "internal error in Code Signing subsystem" and `xcrun` refuses
+	       outright ("cannot be used within an App Sandbox"). No entitlement
+	       fixes either — xcrun's refusal is its own check, not the kernel's.
+	     * The install handoff registers a privileged helper through
+	       `SMAppService.daemon`, which a sandboxed app may not do.
+
+	     `../inkworm`, which this updater was modelled on, and desktop_updater's
+	     own example app both ship unsandboxed for the same reason.
+
+	     Consequences that used to be handled by entitlements here:
+	     * network.client / network.server are unnecessary — the Gmail OAuth
+	       loopback bind (LoopbackAuthFlow, 127.0.0.1:34572) needs no
+	       permission outside the sandbox.
+	     * files.user-selected.read-write is unnecessary.
+	     * personal-information.addressbook / .calendars must NOT be here.
+	       They are sandbox-only entitlements, and on a non-sandboxed build
+	       they make CNContactStore return authorizationDenied without ever
+	       showing a dialog — see macOS Privacy Permissions in CLAUDE.md.
+	       Contacts and Calendar access come from the Info.plist usage
+	       strings instead.
+
+	     keychain-access-groups stays. Every account, OAuth token and IMAP
+	     password lives in the Keychain under this group, and the group is what
+	     keeps them readable across this change — dropping it would sign the
+	     user out of everything. It is why the release build still needs the
+	     Developer ID provisioning profile the workflow embeds. -->
 	<key>com.apple.security.app-sandbox</key>
-	<true/>
-	<key>com.apple.security.network.client</key>
-	<true/>
-	<!-- Gmail sign-in binds 127.0.0.1:34572 for the OAuth loopback redirect
-	     (LoopbackAuthFlow). Without this the sandbox refuses the bind and
-	     sign-in fails in release builds only. -->
-	<key>com.apple.security.network.server</key>
-	<true/>
-	<key>com.apple.security.files.user-selected.read-write</key>
-	<true/>
-	<key>com.apple.security.personal-information.addressbook</key>
-	<true/>
-	<key>com.apple.security.personal-information.calendars</key>
-	<true/>
+	<false/>
 	<key>keychain-access-groups</key>
 	<array>
 		<string>$(AppIdentifierPrefix)au.com.sharpblue.nightmail</string>

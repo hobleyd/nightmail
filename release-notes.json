@@ -1,24 +1,30 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.26.2",
-  "sections": [
+  "version": "1.27.0",
+  "sections": [],
+  "previous": [
     {
-      "type": "features",
-      "title": "New features",
-      "items": [
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.26.2",
+      "sections": [
         {
-          "body": "give the DMG a background drawn from the logo",
-          "title": "release"
-        },
-        {
-          "body": "format from the keyboard, with the platform's own modifier",
-          "title": "editor"
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "give the DMG a background drawn from the logo",
+              "title": "release"
+            },
+            {
+              "body": "format from the keyboard, with the platform's own modifier",
+              "title": "editor"
+            }
+          ]
         }
       ]
-    }
-  ],
-  "previous": [
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -707,131 +713,6 @@
             {
               "body": "match workmanager_apple 0.9.10 handlePeriodicTask signature and lockfile",
               "title": "ios"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.17.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "head a thread with the last message someone else sent",
-              "title": "mail"
-            },
-            {
-              "body": "book rooms from the Location field",
-              "title": "calendar"
-            },
-            {
-              "body": "make a URL typed as text in a message body clickable",
-              "title": "mail"
-            },
-            {
-              "body": "size icons for fingers and navigate the panels with back",
-              "title": "mobile"
-            },
-            {
-              "body": "paint meetings from a cache while the sync catches up",
-              "title": "calendar"
-            },
-            {
-              "body": "count a meeting reminder down to the start",
-              "title": "calendar"
-            },
-            {
-              "body": "hover a meeting to read it in full",
-              "title": "calendar"
-            },
-            {
-              "body": "move compose-to-sender into the contact hover card",
-              "title": "mail"
-            },
-            {
-              "body": "open on the working week, with hour gutters on both edges",
-              "title": "calendar"
-            },
-            {
-              "body": "show the URL under the pointer and let it be copied",
-              "title": "mail"
-            },
-            {
-              "body": "show the From address is clickable and add a copy button",
-              "title": "mail"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "stop an offline token refresh reading as revoked credentials",
-              "title": "auth"
-            },
-            {
-              "body": "wrap the invite buttons instead of squashing the date",
-              "title": "mail"
-            },
-            {
-              "body": "let the recipient dropdown out from under the body editor",
-              "title": "compose"
-            },
-            {
-              "body": "prompt for the draft when the window close button is used",
-              "title": "compose"
-            },
-            {
-              "body": "keep a filed thread out of the inbox it was filed from",
-              "title": "mail"
-            },
-            {
-              "body": "give the app data directory the right company name",
-              "title": "windows"
-            },
-            {
-              "body": "stop the otherContacts details lookup 400ing every time",
-              "title": "contacts"
-            },
-            {
-              "body": "cancel a moved event's old alert before rescheduling",
-              "title": "reminders"
-            },
-            {
-              "body": "stop a late autosave re-creating the draft after send",
-              "title": "compose"
-            },
-            {
-              "body": "keep a thread's sent and filed copies out of a folder delete",
-              "title": "mail"
-            },
-            {
-              "body": "refresh the tasks pane when the account changes",
-              "title": "tasks"
-            },
-            {
-              "body": "show Sending state immediately on Send tap",
-              "title": "compose"
-            }
-          ]
-        },
-        {
-          "type": "performance",
-          "title": "Performance",
-          "items": [
-            {
-              "body": "stagger the reminder reconcilers off the first poll",
-              "title": "startup"
-            },
-            {
-              "body": "parse messages on a background isolate",
-              "title": "mail"
             }
           ]
         }

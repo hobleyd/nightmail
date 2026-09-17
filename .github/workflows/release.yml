@@ -219,21 +219,39 @@ jobs:
       # In-app updates: the .app is zipped and described by a release.json that
       # the app verifies against the pinned public key before installing.
       # --artifact-url must be where the deploy job below actually publishes it.
+      #
+      # --app-name must be the .app bundle's real on-disk name, because
+      # desktop_updater's client stages the extracted zip at
+      # <staging>/<descriptor.appName> (update_client.dart) -- it doesn't
+      # look inside the archive for the app, it trusts this field. ditto
+      # --keepParent writes the archive's top-level entry as whatever name
+      # the bundle actually has on the case-preserving APFS runner, which is
+      # "NightMail.app" (matching CFBundleName), not the lowercase path this
+      # workflow addresses it by. Passing "nightmail" here (no ".app", wrong
+      # case) made every install look for a directory that was never in the
+      # zip: "FormatException: Staged macOS app must be a directory: .../nightmail".
+      # The actual zip filename the packager writes is derived from
+      # --app-name too (its ".app"/".exe" suffix stripped, case otherwise
+      # kept -- see ZipReleasePackager._artifactNameStem), so --artifact-url
+      # has to be built from the same APP_BUNDLE_NAME, not a separately
+      # hand-picked lowercase name, or it points at a file that was never
+      # written.
       - name: Package release for desktop_updater
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           BUILD_NUMBER="${{ needs.prepare.outputs.build_number }}"
-          APP_NAME="nightmail"
+          APP_BUNDLE_NAME="NightMail.app"
+          ARTIFACT_STEM="${APP_BUNDLE_NAME%.app}"
           dart run desktop_updater:package \
             --input "build/macos/Build/Products/Release/nightmail.app" \
             --output "dist/${VERSION}+${BUILD_NUMBER}-macos" \
             --package-id au.com.sharpblue.nightmail \
-            --app-name "$APP_NAME" \
+            --app-name "$APP_BUNDLE_NAME" \
             --version "$VERSION" \
             --build-number "$BUILD_NUMBER" \
             --platform macos \
             --channel stable \
-            --artifact-url "https://hobleyd.github.io/nightmail/releases/${VERSION}+${BUILD_NUMBER}-macos/${APP_NAME}-${VERSION}-macos.zip" \
+            --artifact-url "https://hobleyd.github.io/nightmail/releases/${VERSION}+${BUILD_NUMBER}-macos/${ARTIFACT_STEM}-${VERSION}-macos.zip" \
             --install-strategy wholeBundleReplace
 
       - name: Import release signing key

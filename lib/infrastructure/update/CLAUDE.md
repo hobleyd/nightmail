@@ -100,6 +100,43 @@ designated requirements, and `/Applications` as the only install root. The build
 phase runs **last** on the Runner target: Xcode seals the bundle after every
 phase, so the helper has to be in `Contents/Helpers` before that.
 
+### Every Privileged-Handoff Failure Reports the Same Sentence
+
+"Unable to confirm update installation handoff" is
+`MacInstallClientError.installRecoveryRequired`, and `MacInstallHelper`'s
+`prepareInstall` and `commitAfterExit` both end in a bare `catch` that converts
+*everything* to it. So that one sentence covers a LaunchDaemon that was never
+registered, one registered and awaiting approval, one approved but not loaded,
+an XPC endpoint that never came up, and a helper whose signature did not match —
+and the app cannot tell them apart, because the package discards the underlying
+error before the method channel sees it. Nothing in the package logs, either:
+`/Library/Logs/DesktopUpdater/` is written by the privileged helper, so it is
+absent in precisely the case you need it.
+
+The three facts that *do* tell them apart are all root-only — `launchctl print
+system/<label>`, `launchctl print-disabled system`, and `sfltool dumpbtm` —
+which is why **`tool/diagnose_macos_update.sh`** exists rather than a wider net
+of in-app reporting. It reads the installed bundle's layout, signature,
+notarization, quarantine and helper Info.plist keys, then asks for a password
+once for the three privileged reads, and writes one report. `--watch` streams
+launchd, `smd` and `backgroundtaskmanagementd` while the update is attempted.
+
+Two things worth knowing before reading a report:
+
+- **A first `SMAppService.daemon(…).register()` always fails.** It throws
+  `SMAppServiceErrorDomain` code 1, "Operation not permitted", and leaves
+  `status == .requiresApproval` — installing a LaunchDaemon needs the user to
+  approve the background item. The package checks that status and raises
+  `PrivilegedHelperApprovalRequired`, which is
+  [AppUpdatePhase.helperApprovalRequired] and the "Open Login Items settings"
+  button. So an install that reports the *handoff* sentence rather than the
+  approval one has got past registration — the daemon is registered and the
+  Mach service still is not being vended.
+- **`sudo` declining reads exactly like a clean machine.** Every privileged
+  read in that section greps its output, so an unanswered password prompt would
+  otherwise print "no BTM record" — the most misleading possible answer. The
+  script primes `sudo -v` and says it skipped instead.
+
 ### The service starts at launch, not when Settings opens
 
 `../inkworm` — which this is modelled on — builds its `DesktopUpdaterController`

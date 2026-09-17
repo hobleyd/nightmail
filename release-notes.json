@@ -1,62 +1,79 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.25.0",
+  "version": "1.25.1",
   "sections": [
-    {
-      "type": "features",
-      "title": "New features",
-      "items": [
-        {
-          "body": "sign and notarize macOS release builds",
-          "title": "release"
-        },
-        {
-          "body": "empty the trash, asking Google for the delete scope first",
-          "title": "gmail"
-        },
-        {
-          "body": "delete a folder from its context menu",
-          "title": "folders"
-        }
-      ]
-    },
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "add a secure timestamp to the Developer ID signature",
-          "title": "release"
-        },
-        {
-          "body": "surface the notarytool rejection reason",
-          "title": "release"
-        },
-        {
-          "body": "wire in the real Developer ID provisioning profile",
-          "title": "release"
-        },
-        {
-          "body": "route signing gate through env, not secrets in if:",
-          "title": "release"
-        },
-        {
-          "body": "empty a folder, and stop a failed empty painting mail elsewhere",
-          "title": "gmail"
-        },
-        {
-          "body": "stop a Gmail category naming the folder a row is in",
-          "title": "list"
-        },
-        {
-          "body": "scroll a new folder into view, and focus the editor that names it",
-          "title": "folders"
+          "body": "queue a short horizon of alerts, and ask what the OS kept",
+          "title": "reminders"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.25.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "sign and notarize macOS release builds",
+              "title": "release"
+            },
+            {
+              "body": "empty the trash, asking Google for the delete scope first",
+              "title": "gmail"
+            },
+            {
+              "body": "delete a folder from its context menu",
+              "title": "folders"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "add a secure timestamp to the Developer ID signature",
+              "title": "release"
+            },
+            {
+              "body": "surface the notarytool rejection reason",
+              "title": "release"
+            },
+            {
+              "body": "wire in the real Developer ID provisioning profile",
+              "title": "release"
+            },
+            {
+              "body": "route signing gate through env, not secrets in if:",
+              "title": "release"
+            },
+            {
+              "body": "empty a folder, and stop a failed empty painting mail elsewhere",
+              "title": "gmail"
+            },
+            {
+              "body": "stop a Gmail category naming the folder a row is in",
+              "title": "list"
+            },
+            {
+              "body": "scroll a new folder into view, and focus the editor that names it",
+              "title": "folders"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -967,93 +984,6 @@
             {
               "body": "honor TZID when parsing ICS invite times",
               "title": "calendar"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.11.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "enable spell-checking on Linux (WebKitGTK)",
-              "title": "editor"
-            },
-            {
-              "body": "show spell-check suggestions on right-click (Windows)",
-              "title": "editor"
-            },
-            {
-              "body": "delete a conversation thread's in-folder messages",
-              "title": "reading-pane"
-            },
-            {
-              "body": "double-click an image to open it in a resizable window",
-              "title": "reading-pane"
-            },
-            {
-              "body": "add Google Meet toggle for Gmail meetings",
-              "title": "calendar"
-            },
-            {
-              "body": "drag folders in the list to reparent them",
-              "title": "folders"
-            },
-            {
-              "body": "sync the Bayesian spam filter across IMAP clients via a SPAMDB folder",
-              "title": "imap"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "keep maximized window state on startup restore",
-              "title": "windows"
-            },
-            {
-              "body": "notify organizer and remove event when declining a meeting",
-              "title": "gmail"
-            },
-            {
-              "body": "share removal tombstone with the poller so drained deletes stay gone",
-              "title": "sync"
-            },
-            {
-              "body": "add spacing between attachments and Save all button",
-              "title": "reading-pane"
-            },
-            {
-              "body": "mark all unread emails in a thread as read on open",
-              "title": "reading-pane"
-            },
-            {
-              "body": "ellipsise overly long attachment filenames",
-              "title": "reading-pane"
-            },
-            {
-              "body": "stop moved/deleted email reappearing after outbox drain",
-              "title": "sync"
-            },
-            {
-              "body": "render pasted inline (cid:) images",
-              "title": "gmail"
-            },
-            {
-              "body": "stop deleted email reappearing after optimistic delete",
-              "title": "sync"
-            },
-            {
-              "body": "stop contact hover-card spinner from stretching",
-              "title": "reading-pane"
             }
           ]
         }

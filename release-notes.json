@@ -1,8 +1,19 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.27.0",
-  "sections": [],
+  "version": "1.27.1",
+  "sections": [
+    {
+      "type": "fixes",
+      "title": "Fixes",
+      "items": [
+        {
+          "body": "an empty Drafts folder no longer fills with the whole mailbox on refresh",
+          "title": "mail"
+        }
+      ]
+    }
+  ],
   "previous": [
     {
       "schemaVersion": 1,

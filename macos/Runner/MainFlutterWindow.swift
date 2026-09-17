@@ -76,6 +76,9 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       case "cancelReminder":
         let args = call.arguments as? [String: Any] ?? [:]
         self.handleCancelReminder(args: args, result: result)
+      case "pendingReminderIds":
+        let args = call.arguments as? [String: Any] ?? [:]
+        self.handlePendingReminderIds(args: args, result: result)
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -309,6 +312,24 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     result(nil)
   }
 
+  /// The identifiers UNUserNotificationCenter is still holding for this app,
+  /// stripped back to the keys Dart scheduled them under.
+  ///
+  /// `add` reports success for a request the system discards — every platform
+  /// caps how many pending alerts one app may hold — so this is the only way
+  /// the Dart side can tell what it asked for from what is actually queued.
+  private func handlePendingReminderIds(args: [String: Any], result: @escaping FlutterResult) {
+    let kind = args["kind"] as? String ?? "event"
+    let prefix = "\(kind)_reminder_"
+    UNUserNotificationCenter.current().getPendingNotificationRequests { requests in
+      let ids = requests.compactMap { request -> String? in
+        guard request.identifier.hasPrefix(prefix) else { return nil }
+        return String(request.identifier.dropFirst(prefix.count))
+      }
+      DispatchQueue.main.async { result(ids) }
+    }
+  }
+
   // Called when a notification is delivered while the app is in the foreground.
   func userNotificationCenter(
     _ center: UNUserNotificationCenter,
@@ -452,6 +473,9 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       case "cancelReminder":
         let args = call.arguments as? [String: Any] ?? [:]
         self.handleCancelReminder(args: args, result: result)
+      case "pendingReminderIds":
+        let args = call.arguments as? [String: Any] ?? [:]
+        self.handlePendingReminderIds(args: args, result: result)
       default:
         result(FlutterMethodNotImplemented)
       }

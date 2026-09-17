@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../data/datasources/local/reminder_schedule_local_datasource.dart';
+import '../../domain/entities/calendar_event.dart';
 import '../accounts/account.dart';
 import '../accounts/account_manager.dart';
 import 'notification_service.dart';
@@ -26,6 +27,34 @@ class CalendarReminderService {
         _database = database;
 
   static const _lookahead = Duration(days: 14);
+
+  /// How far ahead alerts are actually handed to the OS.
+  ///
+  /// Deliberately much shorter than [_lookahead]: the fetch has to reach far
+  /// enough to notice a meeting whose reminder is days long, but the *queue*
+  /// must not. Every platform caps how many pending alerts one app may hold
+  /// (Apple documents 64) and the countdown turns one meeting into up to five,
+  /// so a fortnight of a working calendar asks for several hundred. The
+  /// requests past the cap are discarded silently — `add` still reports success
+  /// — and because a row lands in `scheduled_reminders` regardless, the
+  /// [_notificationService.osRetainsSchedule] skip below then never revisits
+  /// them: a dropped alert stays dropped for the life of the event. Measured on
+  /// a real mailbox: 99 events, 321 alerts requested, ~100 held.
+  ///
+  /// A pass runs every 15 minutes, so the window rolls forward long before
+  /// anything inside it fires. What it cannot cover is a machine that was
+  /// asleep or shut down across the whole window — but nothing can, since the
+  /// alert has to be queued while the app is running either way.
+  static const _scheduleHorizon = Duration(hours: 36);
+
+  /// The most alerts one pass will hand the OS, across every account.
+  ///
+  /// The horizon is the usual limit; this is the backstop for a calendar dense
+  /// enough that a day and a half of it still overflows. Set below the 64 Apple
+  /// documents, because the pool is per *app*: [TaskReminderService] queues into
+  /// the same one, and a reminder that never arrives is worse than one queued a
+  /// cycle later.
+  static const _maxScheduledAlerts = 48;
 
   final AccountManager _accountManager;
   final NotificationService _notificationService;
@@ -94,19 +123,47 @@ class CalendarReminderService {
   }
 
   Future<void> _reconcileEveryAccount() async {
+    final now = DateTime.now().toUtc();
+
+    // Fetch every account first, then decide what to queue across all of them
+    // at once. The budget below is per *app*, not per account, so it cannot be
+    // spent one mailbox at a time — doing that would hand the first account
+    // everything and leave the second with nothing however close its meetings
+    // were.
+    final fetched = <String, List<CalendarEvent>>{};
     for (final account in _accountManager.accounts) {
       try {
-        await _reconcileAccount(account);
+        fetched[account.id] = await _fetchEvents(account, now);
       } catch (e) {
         // Skip accounts that fail (auth error, network blip, calendar not
-        // supported for this account type) — the next cycle retries.
+        // supported for this account type) — the next cycle retries. Their
+        // persisted rows are deliberately left alone: a fetch that did not
+        // happen is not evidence that a meeting was cancelled.
         debugPrint(
-            'CalendarReminderService: reconcile failed for account ${account.id}: $e');
+            'CalendarReminderService: fetch failed for account ${account.id}: $e');
+      }
+    }
+    if (fetched.isEmpty) return;
+
+    final wanted = _chooseWhatToSchedule(fetched, now);
+    final pending = await _notificationService.pendingReminders();
+
+    for (final entry in fetched.entries) {
+      try {
+        await _applyAccount(
+          accountId: entry.key,
+          wanted: wanted[entry.key] ?? const {},
+          pending: pending,
+          now: now,
+        );
+      } catch (e) {
+        debugPrint(
+            'CalendarReminderService: reconcile failed for account ${entry.key}: $e');
       }
     }
   }
 
-  Future<void> _reconcileAccount(Account account) async {
+  Future<List<CalendarEvent>> _fetchEvents(Account account, DateTime now) async {
     // For the currently-active account, reuse AccountManager's shared
     // datasource instead of building a fresh one. buildCalendarDatasourceForAccount
     // constructs its own independent auth/token pipeline (separate
@@ -118,33 +175,67 @@ class CalendarReminderService {
     final ds = account.id == _accountManager.activeAccount?.id
         ? _accountManager.calendarDatasource
         : _accountManager.buildCalendarDatasourceForAccount(account);
-    if (ds == null) return;
+    if (ds == null) return const [];
 
-    final now = DateTime.now().toUtc();
-    final events = await ds.getCalendarEvents(
+    return ds.getCalendarEvents(
       startDateTime: now,
       endDateTime: now.add(_lookahead),
     );
+  }
 
-    final persisted = await _database.getScheduledReminders(account.id);
+  /// Picks the events whose alerts this pass will actually queue, account id →
+  /// event id → event.
+  ///
+  /// Soonest first, across every account, until either the horizon or the alert
+  /// budget runs out. Chronological order is what makes the budget defensible:
+  /// when it binds, what is dropped is the furthest away, which is also what the
+  /// next pass has the most time to pick up.
+  Map<String, Map<String, CalendarEvent>> _chooseWhatToSchedule(
+    Map<String, List<CalendarEvent>> fetched,
+    DateTime now,
+  ) {
+    final horizon = now.add(_scheduleHorizon);
+    final candidates = <({String accountId, CalendarEvent event, DateTime triggerAt})>[];
+    for (final entry in fetched.entries) {
+      for (final e in entry.value) {
+        final reminderMinutes = e.reminderMinutes;
+        if (reminderMinutes == null) continue;
+        final triggerAt = e.start.subtract(Duration(minutes: reminderMinutes));
+        if (triggerAt.isAfter(horizon)) continue;
+        candidates.add((accountId: entry.key, event: e, triggerAt: triggerAt));
+      }
+    }
+    candidates.sort((a, b) => a.triggerAt.compareTo(b.triggerAt));
+
+    final chosen = <String, Map<String, CalendarEvent>>{};
+    var alerts = 0;
+    for (final c in candidates) {
+      final count = NotificationService.alertCountFor(
+        startUtc: c.event.start,
+        reminderMinutes: c.event.reminderMinutes!,
+        now: now,
+      );
+      // Stop rather than skip: taking a later, cheaper event once a nearer one
+      // has been refused would put the queue out of chronological order for no
+      // gain, and the pass is over either way.
+      if (alerts + count > _maxScheduledAlerts) break;
+      alerts += count;
+      (chosen[c.accountId] ??= {})[c.event.id] = c.event;
+    }
+    return chosen;
+  }
+
+  Future<void> _applyAccount({
+    required String accountId,
+    required Map<String, CalendarEvent> wanted,
+    required PendingReminders? pending,
+    required DateTime now,
+  }) async {
+    final persisted = await _database.getScheduledReminders(accountId);
     final persistedByEventId = {for (final r in persisted) r.eventId: r};
 
-    final liveEventIds = <String>{};
-    for (final e in events) {
-      liveEventIds.add(e.id);
-      final reminderMinutes = e.reminderMinutes;
-
-      if (reminderMinutes == null) {
-        // Event exists but has no reminder now (removed elsewhere) — cancel
-        // any reminder we previously scheduled for it.
-        if (persistedByEventId.containsKey(e.id)) {
-          await _notificationService.cancelEventReminder(
-              accountId: account.id, eventId: e.id);
-          await _database.deleteScheduledReminder(account.id, e.id);
-        }
-        continue;
-      }
-
+    for (final e in wanted.values) {
+      final reminderMinutes = e.reminderMinutes!;
       final triggerAtMs = e.start
           .subtract(Duration(minutes: reminderMinutes))
           .millisecondsSinceEpoch;
@@ -160,7 +251,20 @@ class CalendarReminderService {
           // so re-arm it every pass instead. Rescheduling is idempotent: the
           // cancel below clears the old timers and offsets already gone by are
           // skipped, so a meeting mid-countdown picks it up where it is.
-          _notificationService.osRetainsSchedule;
+          _notificationService.osRetainsSchedule &&
+          // Where the OS can be asked, ask it rather than assuming. A row here
+          // records what was *requested*; a request past the platform's pending
+          // cap is discarded silently, and a schedule can also be cleared behind
+          // the app's back. Either way the row alone would skip the event
+          // forever. A null answer is "nothing learned" — fall back to the row.
+          (pending?.holdsSeries(
+                accountId: accountId,
+                eventId: e.id,
+                startUtc: e.start,
+                reminderMinutes: reminderMinutes,
+                now: now,
+              ) ??
+              true);
       if (unchanged) continue;
 
       // Drop the alerts already sitting with the OS before queuing the new
@@ -177,10 +281,10 @@ class CalendarReminderService {
       // pending that only a cancel by id can reach. Cancelling ids the OS never
       // had is a no-op.
       await _notificationService.cancelEventReminder(
-          accountId: account.id, eventId: e.id);
+          accountId: accountId, eventId: e.id);
 
       await _notificationService.scheduleEventReminder(
-        accountId: account.id,
+        accountId: accountId,
         eventId: e.id,
         eventTitle: e.subject,
         startUtc: e.start,
@@ -188,7 +292,7 @@ class CalendarReminderService {
         startIso: e.start.toIso8601String(),
       );
       await _database.upsertScheduledReminder(
-        accountId: account.id,
+        accountId: accountId,
         eventId: e.id,
         triggerAtMs: triggerAtMs,
         reminderMinutes: reminderMinutes,
@@ -196,15 +300,21 @@ class CalendarReminderService {
       );
     }
 
-    // Cancel reminders for events that dropped out of the lookahead window
-    // entirely (cancelled/declined server-side, or otherwise no longer
-    // returned by the fetch).
+    // Cancel reminders for anything this pass is not holding alerts for:
+    // events cancelled or declined server-side, ones whose reminder was
+    // removed, and ones that have fallen back outside the scheduling horizon
+    // or off the end of the budget.
+    //
+    // Deleting the row is the point, not the cancel. A row is a claim that the
+    // OS is holding this series, and the `unchanged` test above believes it —
+    // so leaving one behind for an event nothing was queued for is exactly how
+    // a meeting comes to be skipped silently on every pass once it does come
+    // back into range.
     for (final r in persisted) {
-      if (!liveEventIds.contains(r.eventId)) {
-        await _notificationService.cancelEventReminder(
-            accountId: account.id, eventId: r.eventId);
-        await _database.deleteScheduledReminder(account.id, r.eventId);
-      }
+      if (wanted.containsKey(r.eventId)) continue;
+      await _notificationService.cancelEventReminder(
+          accountId: accountId, eventId: r.eventId);
+      await _database.deleteScheduledReminder(accountId, r.eventId);
     }
   }
 

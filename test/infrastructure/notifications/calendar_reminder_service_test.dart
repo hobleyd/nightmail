@@ -70,6 +70,10 @@ void main() {
     when(accountManager.calendarDatasource).thenReturn(calendarDatasource);
 
     when(notifications.osRetainsSchedule).thenReturn(true);
+    // Default: the platform cannot be asked what it is holding, so the
+    // persisted row is the only evidence there is. The tests that care about
+    // the OS disagreeing with it stub this themselves.
+    when(notifications.pendingReminders()).thenAnswer((_) async => null);
     when(notifications.scheduleEventReminder(
       accountId: anyNamed('accountId'),
       eventId: anyNamed('eventId'),
@@ -244,5 +248,218 @@ void main() {
             accountId: account.id, eventId: 'e1'))
         .called(1);
     expect(await db.getScheduledReminders(account.id), isEmpty);
+  });
+
+  // --- The scheduling horizon, the alert budget, and checking the OS ---------
+  //
+  // A row in scheduled_reminders is a claim that the OS holds this series, and
+  // the `unchanged` skip believes it. Everything below exists because that
+  // claim used to be made for alerts the OS silently discarded: a fortnight of
+  // a working calendar asks for several hundred pending alerts against a cap
+  // of tens, and a dropped one was never re-armed for the life of the event.
+
+  test('does not queue an event beyond the scheduling horizon', () async {
+    // Inside the 14-day fetch, well outside the window alerts are queued for.
+    final start = DateTime.now().toUtc().add(const Duration(days: 5));
+    stubEvents([event('far', start: start)]);
+
+    await service.reconcileAll();
+
+    verifyNever(notifications.scheduleEventReminder(
+      accountId: anyNamed('accountId'),
+      eventId: anyNamed('eventId'),
+      eventTitle: anyNamed('eventTitle'),
+      startUtc: anyNamed('startUtc'),
+      reminderMinutes: anyNamed('reminderMinutes'),
+      startIso: anyNamed('startIso'),
+    ));
+    // And no row, or the skip would silence it once it does come into range.
+    expect(await db.getScheduledReminders(account.id), isEmpty);
+  });
+
+  test('queues an event once it comes inside the horizon', () async {
+    final far = DateTime.now().toUtc().add(const Duration(days: 5));
+    stubEvents([event('e1', start: far)]);
+    await service.reconcileAll();
+    clearInteractions(notifications);
+
+    // Brought forward — the same event, now a couple of hours away.
+    final near = DateTime.now().toUtc().add(const Duration(hours: 2));
+    stubEvents([event('e1', start: near)]);
+    await service.reconcileAll();
+
+    verify(notifications.scheduleEventReminder(
+      accountId: account.id,
+      eventId: 'e1',
+      eventTitle: anyNamed('eventTitle'),
+      startUtc: near,
+      reminderMinutes: 15,
+      startIso: anyNamed('startIso'),
+    )).called(1);
+  });
+
+  test('gives up the furthest-away events when the alert budget runs out',
+      () async {
+    // 15 minutes of lead time expands to four alerts (15/10/5/0), so 20 events
+    // ask for 80 against a budget of 48 — twelve events fit, the rest wait for
+    // a later pass. Chronological, so what is dropped is what is furthest off.
+    final base = DateTime.now().toUtc().add(const Duration(hours: 1));
+    stubEvents([
+      for (var i = 0; i < 20; i++)
+        event('e$i', start: base.add(Duration(minutes: i * 30))),
+    ]);
+
+    await service.reconcileAll();
+
+    final rows = await db.getScheduledReminders(account.id);
+    expect(rows.length, 12);
+    expect(
+      rows.map((r) => r.eventId).toSet(),
+      {for (var i = 0; i < 12; i++) 'e$i'},
+    );
+  });
+
+  test('re-arms an unchanged event the OS is no longer holding alerts for',
+      () async {
+    final start = DateTime.now().toUtc().add(const Duration(hours: 2));
+    stubEvents([event('e1', start: start)]);
+    await service.reconcileAll();
+    clearInteractions(notifications);
+
+    // The OS kept the lead-time alert and lost the rest of the countdown —
+    // which is what happens when a request lands past the pending cap. The row
+    // is unchanged, so without asking the OS this event is skipped for good.
+    when(notifications.pendingReminders()).thenAnswer(
+      (_) async => const PendingReminders.fromKeys({'acct-1::e1'}),
+    );
+    await service.reconcileAll();
+
+    verifyInOrder([
+      notifications.cancelEventReminder(accountId: account.id, eventId: 'e1'),
+      notifications.scheduleEventReminder(
+        accountId: account.id,
+        eventId: 'e1',
+        eventTitle: 'Event e1',
+        startUtc: start,
+        reminderMinutes: 15,
+        startIso: anyNamed('startIso'),
+      ),
+    ]);
+  });
+
+  test('leaves an unchanged event alone when the OS still holds every alert',
+      () async {
+    final start = DateTime.now().toUtc().add(const Duration(hours: 2));
+    stubEvents([event('e1', start: start)]);
+    await service.reconcileAll();
+    clearInteractions(notifications);
+
+    when(notifications.pendingReminders()).thenAnswer(
+      (_) async => const PendingReminders.fromKeys({
+        'acct-1::e1',
+        'acct-1::e1::10',
+        'acct-1::e1::5',
+        'acct-1::e1::0',
+      }),
+    );
+    await service.reconcileAll();
+
+    verifyNever(notifications.scheduleEventReminder(
+      accountId: anyNamed('accountId'),
+      eventId: anyNamed('eventId'),
+      eventTitle: anyNamed('eventTitle'),
+      startUtc: anyNamed('startUtc'),
+      reminderMinutes: anyNamed('reminderMinutes'),
+      startIso: anyNamed('startIso'),
+    ));
+  });
+
+  // --- Two accounts ---------------------------------------------------------
+  //
+  // The alert budget is per *app*, which is the whole reason the pass fetches
+  // every account before it schedules anything. Spent one mailbox at a time it
+  // would hand the first account everything, however much nearer the second
+  // account's meetings were — and David's own install is Google beside Graph,
+  // so this is the shape it ships into.
+
+  group('across two accounts', () {
+    const second = GmailAccount(
+      id: 'acct-2',
+      displayName: 'Personal',
+      emailAddress: 'me@example.com',
+    );
+    late MockCalendarRemoteDatasource secondDatasource;
+
+    setUp(() {
+      secondDatasource = MockCalendarRemoteDatasource();
+      when(accountManager.accounts).thenReturn([account, second]);
+      // The active account keeps AccountManager's shared datasource; anything
+      // else is built per account.
+      when(accountManager.buildCalendarDatasourceForAccount(second))
+          .thenReturn(secondDatasource);
+    });
+
+    void stubSecondEvents(List<CalendarEventModel> events) {
+      when(secondDatasource.getCalendarEvents(
+        startDateTime: anyNamed('startDateTime'),
+        endDateTime: anyNamed('endDateTime'),
+      )).thenAnswer((_) async => events);
+    }
+
+    test('spends the budget by start time, not by account', () async {
+      // Twelve events of four alerts each exhausts the 48-alert budget. The
+      // first account offers twelve early ones and twelve late ones; the second
+      // offers six that fall between them. Ordering by account would queue the
+      // first account's twelve early events and nothing of the second's — the
+      // point is that the second's six displace the first's later six.
+      final base = DateTime.now().toUtc().add(const Duration(hours: 1));
+      stubEvents([
+        for (var i = 0; i < 12; i++)
+          event('a$i', start: base.add(Duration(minutes: i * 10))),
+      ]);
+      stubSecondEvents([
+        for (var i = 0; i < 6; i++)
+          event('b$i', start: base.add(Duration(minutes: 5 + i * 10))),
+      ]);
+
+      await service.reconcileAll();
+
+      final first =
+          (await db.getScheduledReminders(account.id)).map((r) => r.eventId);
+      final other =
+          (await db.getScheduledReminders(second.id)).map((r) => r.eventId);
+      expect(first.length + other.length, 12);
+      // a0 b0 a1 b1 … a5 b5 by start time, then a6 onwards is over budget.
+      expect(first.toSet(), {for (var i = 0; i < 6; i++) 'a$i'});
+      expect(other.toSet(), {for (var i = 0; i < 6; i++) 'b$i'});
+    });
+
+    test('a failing fetch leaves that account\'s rows alone', () async {
+      final start = DateTime.now().toUtc().add(const Duration(hours: 2));
+      stubEvents([event('a1', start: start)]);
+      stubSecondEvents([event('b1', start: start)]);
+      await service.reconcileAll();
+      expect(await db.getScheduledReminders(second.id), hasLength(1));
+      clearInteractions(notifications);
+
+      // The second account's calendar is unreachable this pass. A fetch that
+      // did not happen is not evidence that a meeting was cancelled, so its row
+      // must survive — deleting it would drop the claim that its alerts are
+      // queued and, worse, cancel them.
+      when(secondDatasource.getCalendarEvents(
+        startDateTime: anyNamed('startDateTime'),
+        endDateTime: anyNamed('endDateTime'),
+      )).thenThrow(Exception('auth expired'));
+      await service.reconcileAll();
+
+      expect(
+        (await db.getScheduledReminders(second.id)).map((r) => r.eventId),
+        ['b1'],
+      );
+      verifyNever(notifications.cancelEventReminder(
+          accountId: second.id, eventId: anyNamed('eventId')));
+      // And the account that did answer is still reconciled.
+      expect(await db.getScheduledReminders(account.id), hasLength(1));
+    });
   });
 }

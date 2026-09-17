@@ -551,6 +551,57 @@ class NotificationService {
   /// dropped and needs re-raising on the next reconcile.
   bool get osRetainsSchedule => !Platform.isLinux;
 
+  /// How many alerts [scheduleEventReminder] would hand the OS for one meeting
+  /// right now: the series minus the offsets already gone by, which that method
+  /// skips individually.
+  ///
+  /// Static so a caller budgeting a whole reconcile pass against the OS's
+  /// per-app ceiling counts what will actually be queued rather than what the
+  /// series would be in the abstract — and so a mocked [NotificationService]
+  /// cannot answer with a dummy that silently disables the budget.
+  static int alertCountFor({
+    required DateTime startUtc,
+    required int reminderMinutes,
+    required DateTime now,
+  }) =>
+      reminderOffsets(reminderMinutes)
+          .where((offset) =>
+              startUtc.subtract(Duration(minutes: offset)).isAfter(now))
+          .length;
+
+  /// What the OS is *still holding*, as opposed to what it was asked for.
+  ///
+  /// Null where that cannot be established — a sub-window (which owns no
+  /// plugin), Linux (whose reminders are in-process timers that die with the
+  /// app, already covered by [osRetainsSchedule]), or a platform call that
+  /// failed. A null answer means "nothing learned", never "nothing pending":
+  /// callers must fall back to trusting their own records rather than treating
+  /// every reminder as missing and rescheduling the lot.
+  Future<PendingReminders?> pendingReminders() async {
+    if (Platform.isMacOS) {
+      try {
+        final ids = await _macChannel
+            .invokeMethod<List<dynamic>>('pendingReminderIds', {'kind': 'event'});
+        if (ids == null) return null;
+        return PendingReminders._keys(ids.cast<String>().toSet());
+      } catch (e) {
+        debugPrint('NotificationService.pendingReminders failed: $e');
+        return null;
+      }
+    }
+    if (Platform.isLinux) return null;
+    final plugin = _plugin;
+    if (plugin == null) return null;
+    try {
+      await _initLocalNotifications();
+      final requests = await plugin.pendingNotificationRequests();
+      return PendingReminders._ids(requests.map((r) => r.id).toSet());
+    } catch (e) {
+      debugPrint('NotificationService.pendingReminders failed: $e');
+      return null;
+    }
+  }
+
   /// Shows a "task is due" alert immediately. Used for tasks that fell due
   /// while NightMail wasn't running (or on Linux, where the in-process timer
   /// didn't survive), so the user still learns about it at the next poll.
@@ -811,5 +862,72 @@ class NotificationService {
     if (minutes < 60) return '$minutes minute${minutes == 1 ? '' : 's'}';
     final h = minutes ~/ 60;
     return '$h hour${h == 1 ? '' : 's'}';
+  }
+}
+
+/// A snapshot of the alerts the OS is still holding, taken once per reconcile
+/// pass by [NotificationService.pendingReminders].
+///
+/// Scheduling reports success for a request the system silently discarded —
+/// every platform here caps how many pending alerts one app may hold, and
+/// NightMail's countdown series multiplies one meeting into up to five — so a
+/// row in `scheduled_reminders` records what was *asked for*, not what is
+/// queued. This is how a caller tells the two apart, and it covers the other
+/// way a schedule goes missing too: anything cleared behind the app's back
+/// while it was not running.
+///
+/// Two shapes because the platforms address an alert differently: macOS holds
+/// the keys verbatim, everything else holds the hashed integer ids
+/// [NotificationService._idFor] derives from them. Which one is in hand is an
+/// implementation detail of the platform, not of the caller.
+class PendingReminders {
+  const PendingReminders._keys(Set<String> keys)
+      : _keys = keys,
+        _ids = null;
+
+  const PendingReminders._ids(Set<int> ids)
+      : _keys = null,
+        _ids = ids;
+
+  /// The macOS shape, built directly. The key format is a contract with
+  /// `scheduleEventReminder` and with the `<kind>_reminder_` prefix the Swift
+  /// side strips, so it is worth pinning from a test.
+  @visibleForTesting
+  const PendingReminders.fromKeys(Set<String> keys)
+      : _keys = keys,
+        _ids = null;
+
+  final Set<String>? _keys;
+  final Set<int>? _ids;
+
+  /// Whether every alert that *should* still be pending for this meeting is.
+  ///
+  /// Offsets already gone by are not expected — `scheduleEventReminder` skips
+  /// them — so a meeting mid-countdown is not judged missing over the alerts it
+  /// has already delivered. A series with nothing left to fire is held
+  /// vacuously, which is what stops a meeting inside its own lead time being
+  /// rescheduled on every pass for the rest of its life.
+  bool holdsSeries({
+    required String accountId,
+    required String eventId,
+    required DateTime startUtc,
+    required int reminderMinutes,
+    required DateTime now,
+  }) {
+    final base = NotificationService._key(accountId, eventId);
+    final offsets = NotificationService.reminderOffsets(reminderMinutes);
+    for (var i = 0; i < offsets.length; i++) {
+      final offset = offsets[i];
+      if (!startUtc.subtract(Duration(minutes: offset)).isAfter(now)) continue;
+      // The first alert keeps the bare key, exactly as scheduling assigns it.
+      final key =
+          i == 0 ? base : NotificationService._followUpKey(base, offset);
+      final keys = _keys;
+      final held = keys != null
+          ? keys.contains(key)
+          : _ids!.contains(NotificationService._idFor(key));
+      if (!held) return false;
+    }
+    return true;
   }
 }

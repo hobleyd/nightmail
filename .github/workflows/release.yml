@@ -182,11 +182,24 @@ jobs:
           echo "$NOTARY_KEY_P8" > "$RUNNER_TEMP/notary_key.p8"
 
           ditto -c -k --keepParent "$APP_PATH" "$RUNNER_TEMP/nightmail-notarize.zip"
-          xcrun notarytool submit "$RUNNER_TEMP/nightmail-notarize.zip" \
+          # --wait exits 0 once Apple responds at all, Accepted or Invalid --
+          # a rejection is not a CLI failure, so the status has to be checked
+          # explicitly rather than relying on notarytool's own exit code.
+          SUBMIT_OUTPUT=$(xcrun notarytool submit "$RUNNER_TEMP/nightmail-notarize.zip" \
             --key "$RUNNER_TEMP/notary_key.p8" \
             --key-id "$NOTARY_KEY_ID" \
             --issuer "$NOTARY_ISSUER_ID" \
-            --wait
+            --wait)
+          echo "$SUBMIT_OUTPUT"
+          SUBMISSION_ID=$(echo "$SUBMIT_OUTPUT" | awk '/id:/ { print $2; exit }')
+          if ! echo "$SUBMIT_OUTPUT" | grep -q "status: Accepted"; then
+            echo "::error::Notarization did not succeed -- fetching the detailed log"
+            xcrun notarytool log "$SUBMISSION_ID" \
+              --key "$RUNNER_TEMP/notary_key.p8" \
+              --key-id "$NOTARY_KEY_ID" \
+              --issuer "$NOTARY_ISSUER_ID"
+            exit 1
+          fi
           xcrun stapler staple "$APP_PATH"
 
       - name: Create DMG

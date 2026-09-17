@@ -1,20 +1,61 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.26.0",
+  "version": "1.26.1",
   "sections": [
     {
-      "type": "features",
-      "title": "New features",
+      "type": "fixes",
+      "title": "Fixes",
       "items": [
         {
-          "body": "out of office replies for Microsoft 365 and Gmail",
-          "title": "settings"
+          "body": "build the DMG directly, so its name can carry the version",
+          "title": "release"
+        },
+        {
+          "body": "let Enter pick the first recipient suggestion like Tab",
+          "title": "compose"
+        },
+        {
+          "body": "put the version in the DMG's name and its volume",
+          "title": "release"
+        },
+        {
+          "body": "let a macOS update install, and keep the app's files in one place",
+          "title": "update"
+        },
+        {
+          "body": "serialise draft autosaves so an overlapping create is not orphaned",
+          "title": "compose"
+        },
+        {
+          "body": "stop a toolbar click sending the caret to the start of the line",
+          "title": "editor"
+        },
+        {
+          "body": "show a style button's state before anything is typed",
+          "title": "editor"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.26.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "out of office replies for Microsoft 365 and Gmail",
+              "title": "settings"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -843,97 +884,6 @@
             {
               "body": "cache the address book so the typeahead never hits the network",
               "title": "contacts"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.15.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "add a Sign In Again button for Microsoft 365 and Gmail",
-              "title": "accounts"
-            },
-            {
-              "body": "report attendee free/busy for Gmail accounts",
-              "title": "calendar"
-            },
-            {
-              "body": "reach the schedule pane whenever a meeting has guests",
-              "title": "calendar"
-            },
-            {
-              "body": "add inline Join button to imminent meeting tiles",
-              "title": "calendar"
-            },
-            {
-              "body": "colour meetings by participation, consistent across Gmail and O365",
-              "title": "calendar"
-            },
-            {
-              "body": "show guest RSVP status in the Guests field",
-              "title": "calendar"
-            },
-            {
-              "body": "notify when a task falls due",
-              "title": "tasks"
-            },
-            {
-              "body": "link O365 tasks back to the source conversation via notes",
-              "title": "tasks"
-            },
-            {
-              "body": "edit recurring meetings by instance or series, notify attendees",
-              "title": "calendar"
-            },
-            {
-              "body": "open the source email's conversation in the list pane",
-              "title": "tasks"
-            },
-            {
-              "body": "sort the tasks pane by due date",
-              "title": "tasks"
-            },
-            {
-              "body": "lead task notes with the email correspondents",
-              "title": "tasks"
-            },
-            {
-              "body": "business-day follow-up options and Friday-morning week slots",
-              "title": "tasks"
-            },
-            {
-              "body": "replace meeting time picker with editable dropdown",
-              "title": "calendar"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "render and re-attach the original's inline images",
-              "title": "compose"
-            },
-            {
-              "body": "tile overlapping meetings when one runs past midnight",
-              "title": "calendar"
-            },
-            {
-              "body": "cache inline images on disk so large emails render",
-              "title": "reading-pane"
-            },
-            {
-              "body": "close drift database cleanly on quit to prevent sqlite3 crash",
-              "title": "macos"
             }
           ]
         }

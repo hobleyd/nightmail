@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.25.2",
+  "version": "1.26.0",
   "sections": [
     {
-      "type": "fixes",
-      "title": "Fixes",
+      "type": "features",
+      "title": "New features",
       "items": [
         {
-          "body": "match the macOS zip's real bundle name",
-          "title": "release"
+          "body": "out of office replies for Microsoft 365 and Gmail",
+          "title": "settings"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.25.2",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "match the macOS zip's real bundle name",
+              "title": "release"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -917,27 +934,6 @@
             {
               "body": "close drift database cleanly on quit to prevent sqlite3 crash",
               "title": "macos"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.14.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "show weekday picker for daily recurrence, defaulting to Mon-Fri",
-              "title": "calendar"
-            },
-            {
-              "body": "support copying text with standard key combinations",
-              "title": "reading-pane"
             }
           ]
         }

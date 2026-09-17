@@ -8,6 +8,10 @@
       "title": "New features",
       "items": [
         {
+          "body": "sign and notarize macOS release builds",
+          "title": "release"
+        },
+        {
           "body": "empty the trash, asking Google for the delete scope first",
           "title": "gmail"
         },
@@ -21,6 +25,22 @@
       "type": "fixes",
       "title": "Fixes",
       "items": [
+        {
+          "body": "add a secure timestamp to the Developer ID signature",
+          "title": "release"
+        },
+        {
+          "body": "surface the notarytool rejection reason",
+          "title": "release"
+        },
+        {
+          "body": "wire in the real Developer ID provisioning profile",
+          "title": "release"
+        },
+        {
+          "body": "route signing gate through env, not secrets in if:",
+          "title": "release"
+        },
         {
           "body": "empty a folder, and stop a failed empty painting mail elsewhere",
           "title": "gmail"

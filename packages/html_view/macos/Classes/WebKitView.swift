@@ -60,14 +60,38 @@ private let kJsBridge = """
 // unfocuses its own field first, then calls back to focus() (same native
 // makeFirstResponder + DOM focus path Tab already uses) — guaranteeing our
 // focus grab is always the last word.
+//
+// The signal is only sent when this view does *not* already hold first
+// responder, because that round trip is not free: handing first responder to
+// Flutter's text input plugin and taking it back collapses WebKit's DOM
+// selection to the start of the text node it was in. Measured in a bare
+// WKWebView over this very asset — caret at offset 5, away to an NSTextField
+// and back, caret at offset 0; asking for first responder while already
+// holding it leaves it at 5. Since mouseDown fires for every click in the
+// page, the compose toolbar sits inside it: pressing Bold or Italic after
+// typing a word sent the caret back to the start of the line. There is
+// nothing to steal focus from when we already have it, so the cheapest fix is
+// not to ask.
 private class FocusableWebView: WKWebView {
   var onClickFocus: (() -> Void)?
 
   override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
   override func mouseDown(with event: NSEvent) {
-    onClickFocus?()
+    if !isFirstResponder { onClickFocus?() }
     super.mouseDown(with: event)
+  }
+
+  /// True when this view, or something inside it, is the window's first
+  /// responder. AppKit reports the WKWebView itself today, but a field editor
+  /// or a future internal content view would be a descendant.
+  private var isFirstResponder: Bool {
+    var responder = window?.firstResponder as? NSView
+    while let view = responder {
+      if view === self { return true }
+      responder = view.superview
+    }
+    return false
   }
 }
 

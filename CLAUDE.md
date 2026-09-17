@@ -1210,6 +1210,48 @@ Only `http`/`https` and `www.`-prefixed hosts are linked. Guessing at bare
 addresses and `mailto:` URLs are linked too, but the last label must be
 alphabetic, or `package@1.2.3` becomes a way to mail somebody.
 
+## Resigning First Responder Costs the Caret
+
+On macOS the editor and reading-pane webviews are plain sibling `NSView`s, so
+nothing in Flutter's focus system ever gives them first responder — hence
+`FocusableWebView.mouseDown` signalling `onClickFocus`, and the Dart side
+unfocusing its own field before calling `focus()` (`WebKitView.swift` explains
+the ordering).
+
+**That round trip is not free: resigning first responder makes WebKit clear
+the DOM selection outright, and regaining it makes a fresh one at offset 0 of
+the text node the caret was in.** Measured in a bare WKWebView over
+`assets/editor/editor.html` — caret at offset 5, away to an `NSTextField` and
+back, caret at 0.
+
+`mouseDown` fires for every click in the page, and the compose **toolbar is
+inside the webview**, so every press of Bold or Italic sent the caret to the
+start of the line. Invisible until the caret has moved off the start, which is
+why it read as "Italic does it, Bold doesn't" — Bold is just the one pressed
+while the document is still empty.
+
+Two measurements decide the fix, and both are needed:
+
+- **Asking for first responder while already holding it changes nothing** —
+  no resign, caret untouched. So the signal is sent only when the view does
+  *not* hold it (`isFirstResponder`, walking up from `window.firstResponder`
+  so a field editor or a future internal content view still counts as ours).
+  There is nothing to steal focus from otherwise.
+- **A caret placed while the view holds nothing survives being given it.** So
+  the genuine steal — focus in the To: field, user clicks into the body — is
+  unaffected, and needs no selection to be saved and restored around it.
+
+The reading pane takes the same signal for the same reason (native Cmd+C) and
+gets the same guard, which does nothing there until the view already holds
+focus.
+
+**One thing the guard does take away.** When the webview holds first responder
+and Flutter's `primaryFocus` is on something that does *not* make the text
+input plugin claim it — a button, a chip — clicking the editor no longer runs
+`unfocus()`, so that widget keeps its focus ring. Keystrokes still go to the
+webview, so it is cosmetic; it is named here because it is the one case where
+the guard suppresses work that used to happen.
+
 ## A Quoted Reply Is Somebody Else's Markup
 
 The compose editor is a webview with **script enabled** and a method channel to

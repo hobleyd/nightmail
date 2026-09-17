@@ -203,20 +203,55 @@ jobs:
           fi
           xcrun stapler staple "$APP_PATH"
 
-      # `name` is both halves of the DMG's identity: the action writes
-      # `<name>.dmg` and passes the same string to create-dmg as `--volname`.
-      # It was the bare `nightmail`, so the one asset on the release that a
-      # person downloads by hand was the only one carrying no version — every
-      # other platform's is `nightmail-<version>.exe` / `_<version>_amd64.snap`
-      # / `-<version>-release.apk` — and the volume it mounted as said nothing
-      # either. A release page listing several `nightmail.dmg`s, and a Finder
-      # window that cannot tell you which one you opened, is how the wrong
-      # build gets installed and then reported as a bug.
+      # create-dmg is called directly rather than through
+      # lethja/create-dmg-action, which derives *three* things from its one
+      # `name` input: the output file, `--volname`, and `--icon <name>.app` —
+      # and that last one names the bundle **inside** the volume, which Finder
+      # then has to find to position. So the version could not be added to the
+      # file name without also claiming the app was called
+      # `nightmail-1.26.1.app`, and AppleScript failed the build with
+      # "Can't set item ... (-10006)".
+      #
+      # Versioning it matters because the DMG was the one release asset with no
+      # version in it, while every other platform's has one —
+      # `nightmail-<version>.exe`, `nightmail_<version>_amd64.snap`,
+      # `nightmail-<version>-release.apk`. A downloads folder holding three
+      # `nightmail.dmg`s, and a Finder window that cannot tell you which one is
+      # open, is how the wrong build gets installed and then reported as a bug.
+      # Driving create-dmg ourselves lets the file name match the other assets
+      # and the volume read as a name ("NightMail 1.26.1") independently.
+      #
+      # The bundle name is **resolved from disk, not written down**. The real
+      # directory is `NightMail.app` (CFBundleName, case-preserved by APFS),
+      # not the lowercase path this workflow addresses it by — the old
+      # `--icon nightmail.app` only ever matched because Finder compares names
+      # case-insensitively. Same trap as the `--app-name` the packaging step
+      # below documents.
+      #
+      # What is lost against the action: it generated a plain gradient
+      # background PNG on the fly and passed `--background`. Nothing in this
+      # repo is that image, and a white window holding the app beside the
+      # Applications drop-link is the ordinary shape of a macOS installer.
       - name: Create DMG
-        uses: lethja/create-dmg-action@v0.0.2
-        with:
-          name: 'nightmail-${{ needs.prepare.outputs.version }}'
-          srcdir: 'build/macos/Build/Products/Release/nightmail.app'
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          APP_DIR="build/macos/Build/Products/Release"
+          APP_BUNDLE_NAME=$(basename "$(ls -d "$APP_DIR"/*.app | head -1)")
+          if [ -z "$APP_BUNDLE_NAME" ]; then
+            echo "::error::no .app in $APP_DIR to build a DMG from" >&2
+            exit 1
+          fi
+          echo "Packaging $APP_BUNDLE_NAME as nightmail-$VERSION.dmg"
+          brew install create-dmg
+          create-dmg \
+            --volname "NightMail $VERSION" \
+            --window-pos 200 120 \
+            --window-size 800 450 \
+            --icon-size 100 \
+            --icon "$APP_BUNDLE_NAME" 200 185 \
+            --app-drop-link 600 185 \
+            "nightmail-$VERSION.dmg" \
+            "$APP_DIR/$APP_BUNDLE_NAME"
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v0.1.15

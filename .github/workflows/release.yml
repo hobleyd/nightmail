@@ -228,10 +228,11 @@ jobs:
       # case-insensitively. Same trap as the `--app-name` the packaging step
       # below documents.
       #
-      # What is lost against the action: it generated a plain gradient
-      # background PNG on the fly and passed `--background`. Nothing in this
-      # repo is that image, and a white window holding the app beside the
-      # Applications drop-link is the ordinary shape of a macOS installer.
+      # The background is `macos/dmg/background.png`, drawn from the logo's own
+      # night sky by `tool/dmg_background.swift` — which carries the same window
+      # and icon geometry as the flags below, and has to be re-run if either
+      # moves. It replaces the anonymous gradient the action used to generate on
+      # the fly.
       - name: Create DMG
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
@@ -245,6 +246,7 @@ jobs:
           brew install create-dmg
           create-dmg \
             --volname "NightMail $VERSION" \
+            --background macos/dmg/background.png \
             --window-pos 200 120 \
             --window-size 800 450 \
             --icon-size 100 \

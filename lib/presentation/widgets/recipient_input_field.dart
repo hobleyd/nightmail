@@ -402,12 +402,13 @@ class RecipientInputFieldState extends State<RecipientInputField> {
                     _clearSuggestions();
                     return KeyEventResult.handled;
                   }
-                  if (event.logicalKey == LogicalKeyboardKey.enter &&
-                      _suggestionIndex >= 0) {
-                    _addSuggestion(_suggestions[_suggestionIndex]);
-                    return KeyEventResult.handled;
-                  }
-                  if (event.logicalKey == LogicalKeyboardKey.tab) {
+                  // Enter and Tab both take the highlighted suggestion, or the
+                  // first one when nothing has been arrowed to. Enter must be
+                  // handled here rather than left to onSubmitted, which would
+                  // add the half-typed text as a bare address instead.
+                  if (event.logicalKey == LogicalKeyboardKey.enter ||
+                      event.logicalKey == LogicalKeyboardKey.numpadEnter ||
+                      event.logicalKey == LogicalKeyboardKey.tab) {
                     _addSuggestion(
                         _suggestions[_suggestionIndex >= 0 ? _suggestionIndex : 0]);
                     return KeyEventResult.handled;

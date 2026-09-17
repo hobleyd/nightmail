@@ -371,6 +371,67 @@ void main() {
   // A guest or recipient added near the right of the window puts the caret
   // there, and the panel is anchored to the caret — so without the shift it
   // hung off the edge and was clipped. See core/utils/dropdown_placement.dart.
+  group('RecipientInputField — suggestion keys', () {
+    late _FakeSystemContacts contacts;
+
+    setUp(() {
+      contacts = _FakeSystemContacts();
+      contacts.results = const [
+        ContactSuggestion(address: 'alice@example.com', name: 'Alice'),
+        ContactSuggestion(address: 'alicia@example.com', name: 'Alicia'),
+      ];
+      sl.registerLazySingleton<SystemContactsRepository>(() => contacts);
+    });
+
+    tearDown(() async {
+      await sl.reset();
+      HtmlViewOverlayGuard.activeCount.value = 0;
+    });
+
+    Future<List<String>> pressWithDropdownOpen(
+      WidgetTester tester,
+      List<LogicalKeyboardKey> keys,
+    ) async {
+      List<String> committed = const [];
+      await tester.pumpWidget(
+          _wrap(recipients: const [], onChanged: (r) => committed = r));
+      await tester.enterText(find.byType(TextField), 'ali');
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pump();
+      expect(find.text('Alice'), findsOneWidget);
+
+      for (final key in keys) {
+        await tester.sendKeyEvent(key);
+        await tester.pump();
+      }
+      return committed;
+    }
+
+    testWidgets('Enter with nothing highlighted takes the first suggestion',
+        (tester) async {
+      final committed =
+          await pressWithDropdownOpen(tester, [LogicalKeyboardKey.enter]);
+      expect(committed, ['Alice <alice@example.com>']);
+      expect(find.text('Alice'), findsNothing);
+    });
+
+    testWidgets('Enter takes the highlighted suggestion', (tester) async {
+      final committed = await pressWithDropdownOpen(tester, [
+        LogicalKeyboardKey.arrowDown,
+        LogicalKeyboardKey.arrowDown,
+        LogicalKeyboardKey.enter,
+      ]);
+      expect(committed, ['Alicia <alicia@example.com>']);
+    });
+
+    testWidgets('Tab with nothing highlighted takes the first suggestion',
+        (tester) async {
+      final committed =
+          await pressWithDropdownOpen(tester, [LogicalKeyboardKey.tab]);
+      expect(committed, ['Alice <alice@example.com>']);
+    });
+  });
+
   group('RecipientInputField — dropdown placement', () {
     late _FakeSystemContacts contacts;
 

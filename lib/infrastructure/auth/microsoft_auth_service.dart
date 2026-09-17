@@ -4,7 +4,7 @@ import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 
 import '../../core/error/exceptions.dart';
@@ -143,6 +143,35 @@ class MicrosoftAuthService implements AuthService {
   static bool grantsFileAccess(String? scope) =>
       scope != null && scope.contains('Files.Read');
 
+  /// Write access to the mailbox's own settings, which is what an automatic
+  /// reply ("out of office") is stored in. Requested incrementally — see
+  /// [extraScopes].
+  ///
+  /// Deliberately not in [_scopes], for a reason the other incremental scopes
+  /// do not have: `MailboxSettings.ReadWrite` *supersedes* the
+  /// `MailboxSettings.Read` already in the base set, so moving it there would
+  /// leave every account authorised before today holding a token that reads
+  /// the setting fine and 403s the moment the user presses Save — a silent
+  /// failure a long way from the button that caused it. Asking for it when the
+  /// user first saves an out-of-office puts the consent exactly where the
+  /// action is, and existing accounts need nothing done to them beforehand.
+  static const mailboxSettingsWriteScope =
+      'https://graph.microsoft.com/MailboxSettings.ReadWrite';
+
+  /// Whether a token's granted `scope` carries [mailboxSettingsWriteScope].
+  ///
+  /// Microsoft echoes granted scopes back on the token and every refresh, so
+  /// the stored token is the record of the grant — no separate flag to fall
+  /// out of step with it. Matched on whole tokens rather than by substring,
+  /// because `MailboxSettings.Read` is a prefix of `MailboxSettings.ReadWrite`
+  /// and a `contains` test in the other direction would read the base scope as
+  /// the write one.
+  static bool grantsMailboxSettingsWrite(String? scope) {
+    if (scope == null || scope.isEmpty) return false;
+    return scope.split(RegExp(r'\s+')).any((s) =>
+        s == mailboxSettingsWriteScope || s == 'MailboxSettings.ReadWrite');
+  }
+
   /// The scopes a refresh must ask for: the base set, plus any incremental
   /// scope this token already carries.
   ///
@@ -155,7 +184,20 @@ class MicrosoftAuthService implements AuthService {
   List<String> _refreshScopes(AuthToken token) => [
         ..._scopes,
         if (grantsFileAccess(token.scope)) filesReadScope,
+        if (grantsMailboxSettingsWrite(token.scope)) mailboxSettingsWriteScope,
       ];
+
+  /// [_refreshScopes], for tests. A refresh that drops an incremental scope
+  /// hands back a token without it an hour after the user granted it, and the
+  /// grant reads as having lapsed — a failure with no visible cause anywhere
+  /// near this file.
+  @visibleForTesting
+  List<String> refreshScopesFor(AuthToken token) => _refreshScopes(token);
+
+  /// What a plain sign-in asks for, for tests. An incremental scope that leaks
+  /// into this list puts its consent screen in front of adding an account.
+  @visibleForTesting
+  static List<String> get baseScopes => List.unmodifiable(_scopes);
 
   String get _baseUrl =>
       'https://login.microsoftonline.com/$tenantId/oauth2/v2.0';

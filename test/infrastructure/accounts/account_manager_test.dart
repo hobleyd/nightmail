@@ -38,6 +38,63 @@ void main() {
     );
   });
 
+  /// A shared Microsoft mailbox holds no credentials of its own: its token
+  /// lives under the signed-in owner's key (`_microsoftAuthConfig` resolves
+  /// `parentAccountId` for exactly that). Asking the shared account directly
+  /// reads no token at all — which reports "permission needed" forever, and
+  /// then re-authenticates the wrong mailbox when the user agrees.
+  group('out-of-office write access resolves the credential owner', () {
+    const owner = MicrosoftAccount(
+      id: 'owner-1',
+      displayName: 'Owner',
+      emailAddress: 'owner@contoso.com',
+      tenantId: 'common',
+    );
+    const shared = MicrosoftAccount(
+      id: 'shared-1',
+      displayName: 'Support',
+      emailAddress: 'support@contoso.com',
+      tenantId: 'common',
+      parentAccountId: 'owner-1',
+    );
+
+    String tokenJson(String scope) => jsonEncode({
+          'access_token': 'a',
+          'expires_at':
+              DateTime.now().add(const Duration(hours: 1)).toIso8601String(),
+          'refresh_token': 'r',
+          'token_type': 'Bearer',
+          'scope': scope,
+        });
+
+    Future<void> signIn(String ownerScope) async {
+      when(mockAccountStorage.loadAccounts())
+          .thenAnswer((_) async => [owner, shared]);
+      when(mockAccountStorage.loadActiveIndex()).thenAnswer((_) async => 0);
+      when(mockSecureStorage.read(key: anyNamed('key')))
+          .thenAnswer((_) async => null);
+      when(mockSecureStorage.read(key: 'token_owner-1'))
+          .thenAnswer((_) async => tokenJson(ownerScope));
+      // The shared mailbox's own key holds nothing — that is the whole point.
+      when(mockSecureStorage.read(key: 'token_shared-1'))
+          .thenAnswer((_) async => null);
+      await accountManager.initialize();
+    }
+
+    test('reads the owner\'s grant, not the shared mailbox\'s empty key',
+        () async {
+      await signIn('Mail.ReadWrite MailboxSettings.ReadWrite');
+      expect(await accountManager.hasOutOfOfficeWriteAccess('shared-1'), isTrue);
+    });
+
+    test('and still reports a missing grant as missing', () async {
+      await signIn('Mail.ReadWrite MailboxSettings.Read');
+      expect(
+          await accountManager.hasOutOfOfficeWriteAccess('shared-1'), isFalse);
+      expect(await accountManager.hasOutOfOfficeWriteAccess('owner-1'), isFalse);
+    });
+  });
+
   group('AccountManager Sorting', () {
     test('should sort accounts alphabetically by display name on initialize', () async {
       final accounts = [

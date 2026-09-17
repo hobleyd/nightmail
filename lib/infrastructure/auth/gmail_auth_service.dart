@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 
 import '../../core/error/exceptions.dart';
+import '../../core/utils/consumer_email_domain.dart';
 import 'auth_service.dart';
 import 'auth_token.dart';
 import 'loopback_auth_flow.dart';
@@ -142,13 +143,34 @@ class GmailAuthService implements AuthService {
         .any((s) => s == fullMailScope || s == 'https://mail.google.com');
   }
 
+  /// Write access to the mailbox's settings, which is where Gmail keeps the
+  /// vacation responder — an out-of-office reply. Requested incrementally —
+  /// see [extraScopes].
+  ///
+  /// Reading the responder needs nothing new: `users.settings.getVacation`
+  /// accepts `gmail.modify`, which is already in [_scopes], so the screen can
+  /// show the mailbox's current state before anybody is asked for anything.
+  /// Only `updateVacation` insists on this one, so the consent lands on Save
+  /// rather than in front of *adding a mail account* — the same reasoning as
+  /// [driveReadonlyScope] and [fullMailScope].
+  static const mailSettingsScope =
+      'https://www.googleapis.com/auth/gmail.settings.basic';
+
+  /// Whether a token's granted `scope` lets it write the vacation responder.
+  ///
+  /// [fullMailScope] covers the settings endpoints too, so an account that has
+  /// already granted it for permanently deleting mail is not asked again.
+  static bool grantsMailSettingsAccess(String? scope) {
+    if (scope == null || scope.isEmpty) return false;
+    final granted = scope.split(RegExp(r'\s+')).toSet();
+    return granted.contains(mailSettingsScope) ||
+        granted.contains(fullMailScope) ||
+        granted.contains('https://mail.google.com');
+  }
+
   static const _roomDirectoryScope =
       'https://www.googleapis.com/auth/admin.directory.resource.calendar.readonly';
 
-  /// Google's consumer domains. Anything else is a Workspace (or Cloud Identity)
-  /// domain, where the room scope is at worst refused by the API rather than by
-  /// the authorization endpoint.
-  static const _consumerDomains = {'gmail.com', 'googlemail.com'};
 
   /// The scopes to ask for, which depend on whether we already know who is
   /// signing in.
@@ -174,10 +196,12 @@ class GmailAuthService implements AuthService {
 
   @visibleForTesting
   static List<String> scopesForAccount(String? accountEmail) {
-    final email = accountEmail?.trim().toLowerCase();
-    if (email == null || !email.contains('@')) return _scopes;
-    final domain = email.split('@').last;
-    if (domain.isEmpty || _consumerDomains.contains(domain)) return _scopes;
+    // Anything that is not a consumer domain is a Workspace (or Cloud
+    // Identity) one, where the room scope is at worst refused by the API
+    // rather than by the authorization endpoint. `isConsumerGoogleAddress` is
+    // shared with the Out of Office screen — see its own doc for why there is
+    // only one copy of that list.
+    if (isConsumerGoogleAddress(accountEmail)) return _scopes;
     return [..._scopes, _roomDirectoryScope];
   }
 

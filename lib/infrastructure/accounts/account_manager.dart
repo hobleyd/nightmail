@@ -417,6 +417,106 @@ class AccountManager {
     return GmailAuthService.grantsFullMailAccess(token.scope);
   }
 
+  /// Whether [accountId]'s stored token can *write* the mailbox's automatic
+  /// reply. Reading it needs nothing extra on either provider.
+  ///
+  /// Microsoft and Gmail only — IMAP has no such server setting at all, which
+  /// the repository reports as an [UnsupportedFailure] rather than as a
+  /// missing permission.
+  Future<bool> hasOutOfOfficeWriteAccess(String accountId) async {
+    // A shared mailbox holds no credentials of its own — its token lives under
+    // the signed-in owner's key, and the scope is the owner's to grant. Asking
+    // the shared account directly reads no token at all, which would report
+    // "permission needed" forever and then re-authenticate the wrong mailbox.
+    final account = _credentialOwnerFor(accountById(accountId));
+    final authService = account == null ? null : _buildOAuthServiceForAccount(account);
+    if (authService == null) return false;
+    final token = await authService.getStoredToken();
+    if (token == null) return false;
+    return switch (account) {
+      MicrosoftAccount() =>
+        MicrosoftAuthService.grantsMailboxSettingsWrite(token.scope),
+      GmailAccount() => GmailAuthService.grantsMailSettingsAccess(token.scope),
+      _ => false,
+    };
+  }
+
+  /// The account whose stored credentials [account] actually uses. That is
+  /// itself for everything except a shared Microsoft mailbox, which borrows
+  /// its parent's — the same resolution [_microsoftAuthConfig] makes when it
+  /// picks a token storage key.
+  Account? _credentialOwnerFor(Account? account) {
+    if (account is MicrosoftAccount && account.parentAccountId != null) {
+      return accountById(account.parentAccountId!) ?? account;
+    }
+    return account;
+  }
+
+  /// Runs the interactive sign-in again for [accountId], this time also asking
+  /// for the scope that lets the automatic reply be saved.
+  ///
+  /// Returns whether it came back granted — the user can decline in the
+  /// browser and the flow still "succeeds". Nothing else about the account
+  /// changes: the new token lands under the same per-account key, Google is
+  /// told `include_granted_scopes` and Microsoft re-requests its base set, so
+  /// the scopes already held come back with it. Same shape as
+  /// [requestFullMailAccess]; see that for why neither may move into the base
+  /// scope list.
+  Future<bool> requestOutOfOfficeWriteAccess(String accountId) async {
+    // Re-authenticate the credential *owner*, not the shared mailbox: the
+    // token that needs the extra scope is the owner's, and signing in as a
+    // shared mailbox would land a second token under a key nothing reads.
+    final account = _credentialOwnerFor(accountById(accountId));
+    if (account == null) throw StateError('Unknown account: $accountId');
+
+    // Settings can edit the OAuth client ids; pick up any change first, as the
+    // other interactive paths do.
+    await _loadAndMigrateClientIds();
+
+    final tokenStorage =
+        TokenStorage(_secureStorage, storageKey: 'token_${account.id}');
+    final AuthService authService;
+    switch (account) {
+      case MicrosoftAccount():
+        authService = MicrosoftAuthService(
+          clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
+          tenantId: account.tenantId,
+          redirectUri: AppConfig.microsoftRedirectUri,
+          tokenStorage: tokenStorage,
+          extraScopes: const [MicrosoftAuthService.mailboxSettingsWriteScope],
+        );
+      case GmailAccount():
+        authService = GmailAuthService(
+          clientId: _googleClientId ?? AppConfig.gmailClientId,
+          clientSecret: _googleClientSecret ?? '',
+          redirectUri: AppConfig.gmailRedirectUri,
+          tokenStorage: tokenStorage,
+          accountEmail: account.emailAddress,
+          extraScopes: const [GmailAuthService.mailSettingsScope],
+        );
+      case ImapAccount():
+        return false;
+    }
+
+    final token = await authService.signIn();
+    // The mail datasource holds a client built around this account's token
+    // storage — the key is unchanged, but rebuild for the reason
+    // requestCloudDriveAccess does: so the new token is used now rather than
+    // after the next refresh. Either id can be the active one: the mailbox
+    // being edited, or the owner whose token was just replaced.
+    final activeId = activeAccount?.id;
+    if (accountId == activeId || account.id == activeId) {
+      _buildDatasourcesForActiveAccount();
+    }
+
+    return switch (account) {
+      MicrosoftAccount() =>
+        MicrosoftAuthService.grantsMailboxSettingsWrite(token.scope),
+      GmailAccount() => GmailAuthService.grantsMailSettingsAccess(token.scope),
+      ImapAccount() => false,
+    };
+  }
+
   /// A datasource that can fetch cloud documents as [accountId], or null when
   /// that account belongs to neither drive provider.
   CloudDriveDatasource? cloudDriveDatasourceForAccount(String accountId) {

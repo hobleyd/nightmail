@@ -16,6 +16,7 @@ import '../../../domain/entities/inline_attachment.dart';
 import '../../../domain/entities/calendar_recurrence.dart';
 import '../../../domain/entities/meeting_invite.dart';
 import '../../../domain/entities/meeting_room.dart';
+import '../../../domain/entities/out_of_office_settings.dart';
 import '../../../domain/entities/todo_task.dart';
 import '../../../domain/usecases/create_calendar_event.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
@@ -34,6 +35,7 @@ import 'email_remote_datasource.dart';
 import 'graph_import_parser.dart';
 import 'mail_delta_datasource.dart';
 import 'graph_message_parser.dart';
+import 'out_of_office_datasource.dart';
 import 'tasks_remote_datasource.dart';
 
 /// Path to the calendar event linked to a message.
@@ -99,7 +101,8 @@ class GraphApiDatasourceImpl
         EmailRemoteDatasource,
         CalendarRemoteDatasource,
         TasksRemoteDatasource,
-        MailDeltaDatasource {
+        MailDeltaDatasource,
+        OutOfOfficeDatasource {
   GraphApiDatasourceImpl({required GraphHttpClient client, String? mailboxAddress})
       : _dio = client.dio,
         _base = mailboxAddress == null ? '/me' : '/users/$mailboxAddress';
@@ -3439,6 +3442,147 @@ class GraphApiDatasourceImpl
       throw _mapDioException(e);
     }
   }
+
+  // ─── Out of office (automatic replies) ──────────────────────────────────
+
+  /// Both halves of the mailbox settings this feature reads: the automatic
+  /// reply itself, and the zone its wall-clock bounds are expressed in.
+  static const _outOfOfficeSelect = 'automaticRepliesSetting,timeZone';
+
+  @override
+  Future<OutOfOfficeSettings> getOutOfOffice() async {
+    try {
+      final data = await _fetchMailboxSettings();
+      return _parseAutomaticReplies(data);
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<void> setOutOfOffice(OutOfOfficeSettings settings) async {
+    try {
+      // The zone the wall-clock bounds below are expressed in is the
+      // *mailbox's*, not this device's, so it has to be read before writing.
+      // Sending local field values labelled 'UTC' is how a Sydney user's
+      // "away from the 20th" arrives as mid-morning on the 20th.
+      //
+      // Graph also *replaces* a complex property rather than merging into it,
+      // so every field of automaticRepliesSetting is sent whole: a PATCH
+      // naming only the status and the dates clears the audience and both
+      // messages.
+      final current = await _fetchMailboxSettings();
+      final timeZone = (current['timeZone'] as String?)?.trim();
+
+      await _dio.patch<Map<String, dynamic>>(
+        '$_base/mailboxSettings',
+        data: <String, dynamic>{
+          'automaticRepliesSetting': <String, dynamic>{
+            'status': settings.enabled ? 'scheduled' : 'disabled',
+            'externalAudience': _audienceToGraph(settings.audience),
+            'internalReplyMessage': settings.messageHtml,
+            // What the screen shows is what is stored: with the separate
+            // message switched off both fields carry the one message, so
+            // turning it off cannot leave an old external text behind to be
+            // sent to people the screen said would get something else.
+            'externalReplyMessage': settings.effectiveExternalMessageHtml,
+            if (settings.start != null)
+              'scheduledStartDateTime':
+                  _mailboxDateTime(settings.start!, timeZone),
+            if (settings.end != null)
+              'scheduledEndDateTime': _mailboxDateTime(settings.end!, timeZone),
+          },
+        },
+      );
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> _fetchMailboxSettings() async {
+    final response = await _dio.get<Map<String, dynamic>>(
+      '$_base/mailboxSettings',
+      queryParameters: const {r'$select': _outOfOfficeSelect},
+    );
+    return response.data ?? const <String, dynamic>{};
+  }
+
+  @visibleForTesting
+  static OutOfOfficeSettings parseAutomaticReplies(Map<String, dynamic> data) =>
+      _parseAutomaticReplies(data);
+
+  static OutOfOfficeSettings _parseAutomaticReplies(Map<String, dynamic> data) {
+    final setting = data['automaticRepliesSetting'] as Map<String, dynamic>? ??
+        const <String, dynamic>{};
+    final status = (setting['status'] as String?)?.toLowerCase() ?? 'disabled';
+    final internal = setting['internalReplyMessage'] as String? ?? '';
+    final external = setting['externalReplyMessage'] as String? ?? '';
+
+    // A mailbox that really does hold two different texts opens the screen
+    // with the separate-message option already on, so what is shown matches
+    // what is stored and saving cannot quietly replace one with the other.
+    final separate =
+        internal.isNotEmpty && external.isNotEmpty && internal != external;
+
+    return OutOfOfficeSettings(
+      // `alwaysEnabled` is not reachable from this screen, but a mailbox
+      // already in it is on — and the switch has to be able to turn it off.
+      enabled: status == 'scheduled' || status == 'alwaysenabled',
+      start: _parseMailboxDateTime(setting['scheduledStartDateTime']),
+      end: _parseMailboxDateTime(setting['scheduledEndDateTime']),
+      messageHtml: internal.isNotEmpty ? internal : external,
+      audience: _audienceFromGraph(setting['externalAudience'] as String?),
+      useSeparateExternalMessage: separate,
+      externalMessageHtml: external,
+    );
+  }
+
+  static OutOfOfficeAudience _audienceFromGraph(String? raw) =>
+      switch (raw?.toLowerCase()) {
+        'none' => OutOfOfficeAudience.organisationOnly,
+        'contactsonly' => OutOfOfficeAudience.contacts,
+        // Including an absent value: a mailbox that has never had an automatic
+        // reply reports nothing, and `all` is the answer that reaches the
+        // people the user is trying to tell.
+        _ => OutOfOfficeAudience.everyone,
+      };
+
+  static String _audienceToGraph(OutOfOfficeAudience audience) =>
+      switch (audience) {
+        OutOfOfficeAudience.everyone => 'all',
+        OutOfOfficeAudience.contacts => 'contactsOnly',
+        OutOfOfficeAudience.organisationOnly => 'none',
+      };
+
+  /// Reads a `dateTimeTimeZone` as the wall clock it names, with **no**
+  /// conversion.
+  ///
+  /// The zone it is expressed in is the mailbox's, which need not be this
+  /// device's, and this screen shows whole dates — so parsing the string as an
+  /// instant and converting to local would move the date across midnight for
+  /// anybody whose mailbox zone differs from where they are sitting.
+  static DateTime? _parseMailboxDateTime(Object? raw) {
+    if (raw is! Map) return null;
+    final text = (raw['dateTime'] as String?)?.trim();
+    if (text == null || text.isEmpty) return null;
+    // A trailing Z would make Dart convert to UTC; the field values are
+    // already in the zone the sibling `timeZone` names.
+    final naive = text.replaceFirst(RegExp('Z\$', caseSensitive: false), '');
+    final parsed = DateTime.tryParse(naive);
+    if (parsed == null) return null;
+    // A mailbox with no schedule reports 0001-01-01, which is a null date
+    // wearing a costume — showing it as a year would be worse than nothing.
+    if (parsed.year < 1900) return null;
+    return parsed;
+  }
+
+  Map<String, String> _mailboxDateTime(DateTime dt, String? timeZone) => {
+        // Graph's own examples carry seven fractional digits; it accepts
+        // fewer, but matching the shape it returns keeps a round trip exact.
+        'dateTime': '${_formatLocalDateTime(dt)}.0000000',
+        'timeZone':
+            (timeZone == null || timeZone.isEmpty) ? 'UTC' : timeZone,
+      };
 
   Exception _mapDioException(DioException e) {
     // AuthInterceptor.onRequest can throw AuthException directly (e.g. no

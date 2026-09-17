@@ -11,6 +11,7 @@ import '../../../domain/entities/email.dart';
 import '../../../domain/entities/local_attachment.dart';
 import '../../../domain/entities/inline_attachment.dart';
 import '../../../domain/entities/meeting_invite.dart';
+import '../../../domain/entities/out_of_office_settings.dart';
 import '../../../infrastructure/http/gmail_http_client.dart';
 import '../../models/email_address_model.dart';
 import '../../models/email_folder_model.dart';
@@ -21,12 +22,14 @@ import 'conversation_folder_datasource.dart';
 import 'email_remote_datasource.dart';
 import 'gmail_message_parser.dart';
 import 'mail_delta_datasource.dart';
+import 'out_of_office_datasource.dart';
 
 class GmailDatasourceImpl
     implements
         EmailRemoteDatasource,
         MailDeltaDatasource,
-        ConversationFolderDatasource {
+        ConversationFolderDatasource,
+        OutOfOfficeDatasource {
   GmailDatasourceImpl({required GmailHttpClient client, this.displayName = ''})
       : _dio = client.dio;
 
@@ -1587,6 +1590,147 @@ class GmailDatasourceImpl
     // One compute() for the whole change set rather than one per message: each
     // call spawns an isolate, so per-message would cost more than the parse.
     return compute(parseGmailMetadataMessages, rawBodies);
+  }
+
+  // ─── Out of office (the vacation responder) ─────────────────────────────
+
+  static const _vacationPath = '/users/me/settings/vacation';
+
+  @override
+  Future<OutOfOfficeSettings> getOutOfOffice() async {
+    try {
+      final response =
+          await _dio.get<Map<String, dynamic>>(_vacationPath);
+      return parseVacationSettings(response.data ?? const {});
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  @override
+  Future<void> setOutOfOffice(OutOfOfficeSettings settings) async {
+    try {
+      // Read-modify-write. `updateVacation` is a PUT, so every field left out
+      // is a field *cleared*: writing only the body and the dates would wipe
+      // the reply subject and both restrict-to flags. Those are not ours to
+      // throw away — see OutOfOfficeSettings.repliesRestricted.
+      final current = (await _dio.get<Map<String, dynamic>>(_vacationPath))
+              .data ??
+          const <String, dynamic>{};
+
+      final body = <String, dynamic>{
+        ...current,
+        'enableAutoReply': settings.enabled,
+        'responseBodyHtml': settings.messageHtml,
+        // Gmail sends whichever half the recipient can render, so the plain
+        // alternative has to be kept in step rather than left on the last
+        // message's text.
+        'responseBodyPlainText': stripVacationHtml(settings.messageHtml),
+        // Both flags are written from the one choice, never merged with what
+        // is already there: a user who picks a labelled option has to get
+        // exactly that option, and leaving the other flag where it was lands
+        // them somewhere they never chose by a rule they cannot see.
+        'restrictToDomain':
+            settings.audience == OutOfOfficeAudience.organisationOnly,
+        'restrictToContacts':
+            settings.audience == OutOfOfficeAudience.contacts,
+      };
+
+      // Epoch **milliseconds**, and Google serialises int64 as a JSON string.
+      // Sending a number works, but matching what the API returns keeps the
+      // round trip symmetric.
+      if (settings.start != null) {
+        body['startTime'] = '${settings.start!.millisecondsSinceEpoch}';
+      }
+      if (settings.end != null) {
+        body['endTime'] = '${settings.end!.millisecondsSinceEpoch}';
+      }
+
+      await _dio.put<Map<String, dynamic>>(_vacationPath, data: body);
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  /// Visible for testing: the epoch-millisecond conversion is the half of this
+  /// most likely to be wrong, and it cannot be seen from the outside.
+  @visibleForTesting
+  static OutOfOfficeSettings parseVacationSettings(Map<String, dynamic> data) {
+    final html = data['responseBodyHtml'] as String? ?? '';
+    final plain = data['responseBodyPlainText'] as String? ?? '';
+    return OutOfOfficeSettings(
+      enabled: data['enableAutoReply'] as bool? ?? false,
+      start: _epochMillis(data['startTime']),
+      end: _epochMillis(data['endTime']),
+      // A responder configured from Gmail's own UI carries both; one written
+      // as plain text only still has to show something in an HTML editor.
+      messageHtml: html.isNotEmpty ? html : _plainToVacationHtml(plain),
+      audience: _audienceFromVacation(data),
+      // Gmail has one body, in two renderings — there is no internal/external
+      // split to offer, and the screen does not show the option for it.
+      useSeparateExternalMessage: false,
+    );
+  }
+
+  /// Gmail composes the audience out of two independent booleans; this screen
+  /// offers one three-way choice.
+  ///
+  /// A mailbox with *both* set (Workspace only, and only reachable from
+  /// Gmail's own UI) replies to people who are in the domain **and** in the
+  /// contacts. It reads back as the narrower-sounding of the two, which stays
+  /// true of it; saving then widens it to the whole domain, because a labelled
+  /// option has to mean exactly what it says once chosen.
+  static OutOfOfficeAudience _audienceFromVacation(Map<String, dynamic> data) {
+    if (data['restrictToDomain'] as bool? ?? false) {
+      return OutOfOfficeAudience.organisationOnly;
+    }
+    if (data['restrictToContacts'] as bool? ?? false) {
+      return OutOfOfficeAudience.contacts;
+    }
+    return OutOfOfficeAudience.everyone;
+  }
+
+  /// Gmail reports int64 fields as JSON strings; a client that happened to
+  /// write numbers gets them back as numbers. Accept either.
+  static DateTime? _epochMillis(Object? raw) {
+    final ms = switch (raw) {
+      final int v => v,
+      final num v => v.toInt(),
+      final String v => int.tryParse(v.trim()),
+      _ => null,
+    };
+    // 0 is Gmail's "no bound", not 1 January 1970.
+    if (ms == null || ms <= 0) return null;
+    return DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  /// A plain-text alternative for [html]. Deliberately a local copy of the
+  /// compose editor's stripper rather than a call into it: this is the data
+  /// layer, and `ComposeBodyBuilder` lives in presentation.
+  @visibleForTesting
+  static String stripVacationHtml(String html) => html
+      .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+      .replaceAll(RegExp(r'</(p|div)>', caseSensitive: false), '\n')
+      .replaceAll(RegExp(r'<[^>]+>'), '')
+      .replaceAll('&nbsp;', ' ')
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#39;', "'")
+      .replaceAll('&amp;', '&')
+      .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+      .trim();
+
+  static String _plainToVacationHtml(String text) {
+    if (text.isEmpty) return '';
+    const escape = HtmlEscape();
+    return text
+        .split('\n')
+        .map((line) {
+          final escaped = escape.convert(line);
+          return escaped.isEmpty ? '<div><br></div>' : '<div>$escaped</div>';
+        })
+        .join();
   }
 
   Exception _mapException(DioException e) {

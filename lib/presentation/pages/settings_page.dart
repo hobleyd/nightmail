@@ -14,6 +14,7 @@ import '../../injection_container.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import 'settings/ai_settings_page.dart';
+import 'settings/out_of_office_page.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/mail_poller/mail_poller_cubit.dart';
 import '../blocs/mail_poller/mail_poller_state.dart';
@@ -33,6 +34,7 @@ enum SettingsSection {
   ai('AI'),
   appearance('Appearance'),
   general('General'),
+  outOfOffice('Out of Office'),
   security('Security');
 
   const SettingsSection(this.label);
@@ -189,6 +191,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         SettingsSection.ai => const AiSettingsPage(),
                         SettingsSection.appearance => const _AppearanceSection(),
                         SettingsSection.general => const _GeneralSection(),
+                        SettingsSection.outOfOffice => const OutOfOfficePage(),
                         SettingsSection.security => const _SecuritySection(),
                       },
                     ),
@@ -1845,6 +1848,7 @@ class _MobileSettingsSectionPage extends StatelessWidget {
           SettingsSection.ai => const AiSettingsPage(),
           SettingsSection.appearance => const _AppearanceSection(),
           SettingsSection.general => const _GeneralSection(),
+          SettingsSection.outOfOffice => const OutOfOfficePage(),
           SettingsSection.security => const _SecuritySection(),
         },
       ),

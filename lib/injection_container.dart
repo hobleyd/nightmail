@@ -30,6 +30,7 @@ import 'data/repositories/contact_cache_repository_impl.dart';
 import 'data/repositories/contact_details_repository_impl.dart';
 import 'data/repositories/directory_contacts_repository_impl.dart';
 import 'data/repositories/email_repository_impl.dart';
+import 'data/repositories/out_of_office_repository_impl.dart';
 import 'data/repositories/sender_repository_impl.dart';
 import 'data/repositories/spam_filter_repository_impl.dart';
 import 'data/repositories/system_contacts_repository_impl.dart';
@@ -59,6 +60,7 @@ import 'domain/usecases/ai/run_folder_agent.dart';
 import 'presentation/blocs/ai/ai_compose_cubit.dart';
 import 'presentation/blocs/ai/ai_folder_cubit.dart';
 import 'presentation/blocs/ai/ai_settings_cubit.dart';
+import 'presentation/blocs/out_of_office/out_of_office_cubit.dart';
 import 'domain/repositories/calendar_repository.dart';
 import 'domain/repositories/cloud_drive_repository.dart';
 import 'domain/repositories/contact_details_repository.dart';
@@ -89,6 +91,9 @@ import 'domain/usecases/download_attachment.dart';
 import 'domain/usecases/create_folder.dart';
 import 'domain/usecases/delete_folder.dart';
 import 'domain/usecases/move_folder.dart';
+import 'domain/usecases/get_out_of_office.dart';
+import 'domain/usecases/set_out_of_office.dart';
+import 'domain/repositories/out_of_office_repository.dart';
 import 'domain/usecases/rename_folder.dart';
 import 'domain/usecases/empty_folder.dart';
 import 'domain/usecases/get_calendar_event.dart';
@@ -312,6 +317,12 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton<SenderRepository>(
     () => SenderRepositoryImpl(localDatasource: sl<SenderLocalDatasource>()),
   );
+  sl.registerLazySingleton<OutOfOfficeRepository>(
+    () => OutOfOfficeRepositoryImpl(
+      accountManager: sl<AccountManager>(),
+      connectivityService: sl<ConnectivityService>(),
+    ),
+  );
   sl.registerLazySingleton<SystemContactsRepository>(
     () => SystemContactsRepositoryImpl(),
   );
@@ -386,6 +397,8 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => EmptyFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => CreateFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => RenameFolder(sl<EmailRepository>()));
+  sl.registerLazySingleton(() => GetOutOfOffice(sl<OutOfOfficeRepository>()));
+  sl.registerLazySingleton(() => SetOutOfOffice(sl<OutOfOfficeRepository>()));
   sl.registerLazySingleton(() => MoveFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => DeleteFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => DownloadAttachment(sl<EmailRepository>()));
@@ -689,6 +702,15 @@ Future<void> configureDependencies() async {
   sl.registerFactory(() => AiComposeCubit(composeReply: sl<ComposeReply>()));
   sl.registerFactory(
     () => AiFolderCubit(runFolderAgent: sl<RunFolderAgent>()),
+  );
+  // A factory, not a singleton: the screen is opened, edited and closed, and a
+  // reused cubit would show the previous mailbox's draft on the way back in.
+  sl.registerFactory(
+    () => OutOfOfficeCubit(
+      getOutOfOffice: sl<GetOutOfOffice>(),
+      setOutOfOffice: sl<SetOutOfOffice>(),
+      accountManager: sl<AccountManager>(),
+    ),
   );
   sl.registerFactory(
     () => AiSettingsCubit(

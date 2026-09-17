@@ -167,6 +167,81 @@ input plugin claim it — a button, a chip — clicking the editor no longer run
 webview, so it is cosmetic; it is named here because it is the one case where
 the guard suppresses work that used to happen.
 
+## Formatting From the Keyboard
+
+The compose editor binds the Gmail/Docs/Outlook-web set, because that is the
+muscle memory a mail composer inherits: **B** bold, **I** italic, **U**
+underline, **Shift+X** strikethrough, **Shift+8** bullets, **Shift+7** numbers,
+**]** indent, **[** outdent, **K** insert link, **\** remove formatting — each
+with the platform's own modifier. Tab and Shift+Tab nest and un-nest a list
+item; outside a list Tab is still four spaces, and Shift+Tab, which used to
+insert four *more* (`e.key === 'Tab'` matches both directions), now does
+nothing.
+
+Colour, font family, font size, the format painter and attach are deliberately
+**left mouse-only**. No two mail clients agree on a key for any of them, so a
+binding here would be one this app invented, and a wrong guess is worse than
+reaching for the toolbar.
+
+**Bold/italic/underline are intercepted rather than left to the engine**, even
+though an engine may bind some of them natively inside a contenteditable. A
+native toggle on a collapsed caret changes the typing style *without moving the
+selection* — so no `selectionchange` follows and the toolbar's pressed state
+only catches up on the `keyup` fallback, a frame late at exactly the moment the
+user wants to know what typing will do. Taking the key ourselves is also what
+stops the five engines diverging over which chords they happen to implement.
+Every binding calls the same function the matching toolbar button calls
+(`fmt(cmd)`, `requestLink()`), so a shortcut and a click cannot drift apart.
+Only a recognised combination is `preventDefault`ed; Cmd+A/C/V/Z still reach
+the engine, and the `keyup` listener stays for them — undoing a bold is the
+case it now exists for.
+
+**Measured in WKWebView on macOS only** (a bare harness over
+`assets/editor/editor.html`, the same method the first-responder section below
+used): every binding applies, Ctrl+B / Cmd+A / Cmd+Alt+B fall through
+unprevented, and Cmd+K survives the selection being wiped. WebView2,
+WebKitGTK and the Android WebView are *unverified* — the interception is what
+makes them likely to agree, not evidence that they do. If a chord never
+arrives, the thing to suspect is a layer above the page: on macOS the
+`NSEvent.addLocalMonitorForEvents` in `WebKitView.swift`, which already
+consumes Cmd+P for both webviews; on Windows, WebView2's
+`AreBrowserAcceleratorKeysEnabled` (`]`, `[` and `\` are not among the chords
+it reserves, but that is the switch to look at).
+
+**Letters match on `e.key`, digits and punctuation on `e.code`.** With Shift
+held, `e.key` for the 7 key is `&` on a US layout and something else again on a
+UK or German one, so a `key === '7'` test never fires; `e.code` names the
+physical key regardless of layout. Letters stay on `e.key` so a Dvorak or
+AZERTY user gets the letter printed on the keycap they pressed.
+
+**The modifier test is exclusive, and Alt is never part of one.** Ctrl+B on
+macOS is the system's back-one-character text binding and has to keep working,
+so the Apple branch requires `metaKey && !ctrlKey`; Cmd on Windows and Linux is
+the Super key, which belongs to the desktop, so the other branch requires
+`ctrlKey && !metaKey`. Alt disqualifies every binding: it makes a different
+shortcut, and on macOS it rewrites `e.key` into the character it would type.
+
+**Cmd+K had to fix the selection before it could work.** `_onLinkRequested`
+**hides** the webview while the Insert-link dialog is up, and a WKWebView that
+resigns first responder has WebKit clear the DOM selection outright (the
+section below on first responder measures this) — so `insertLink`'s
+`editor.focus()` was restoring a caret at offset 0, and `createLink` over a
+collapsed caret links nothing. `requestLink` now snapshots the range on the way
+out and `insertLink` puts it back. That was already true of the toolbar's link
+button; the shortcut only made it impossible to ignore.
+
+**Outdent walks out of a structure, not just an indent level.** Two cases are
+worth knowing before either is filed as a bug, because both match Gmail and
+both are newly easy to reach now that a chord does them. Cmd+[ with the caret
+inside a `<blockquote>` strips a quote level — and this app's own quote wrapper
+*is* a styled `<blockquote>` (see the sanitiser section below), so it unquotes
+the reply. Shift+Tab on a top-level `<li>` takes the item out of the list
+altogether rather than doing nothing; on a one-item list, the list goes with
+it. Measured: `<ul><li>one</li><li>two</li></ul>` → `<ul><li>one</li></ul>two`.
+
+`test/presentation/widgets/editor_keyboard_shortcuts_test.dart` pins the
+binding table, since the behaviour itself only exists inside a real engine.
+
 ## A Quoted Reply Is Somebody Else's Markup
 
 The compose editor is a webview with **script enabled** and a method channel to

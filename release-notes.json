@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.25.1",
+  "version": "1.25.2",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "queue a short horizon of alerts, and ask what the OS kept",
-          "title": "reminders"
+          "body": "match the macOS zip's real bundle name",
+          "title": "release"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.25.1",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "queue a short horizon of alerts, and ask what the OS kept",
+              "title": "reminders"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -921,69 +938,6 @@
             {
               "body": "support copying text with standard key combinations",
               "title": "reading-pane"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.12.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "select pasted images to resize them inline",
-              "title": "editor"
-            },
-            {
-              "body": "font-family dropdown + inline image paste",
-              "title": "editor"
-            },
-            {
-              "body": "custom font-colour palette popup that closes on pick",
-              "title": "editor"
-            },
-            {
-              "body": "link source email in notes + expandable task notes",
-              "title": "tasks"
-            },
-            {
-              "body": "add Clear Cache button per account",
-              "title": "settings"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "restore maximized/fullscreen on the correct monitor",
-              "title": "window"
-            },
-            {
-              "body": "stop cross-account cache contamination + doomed outbox retries",
-              "title": "sync"
-            },
-            {
-              "body": "resolve Windows OAuth loopback + Tasks 403 misclassification",
-              "title": "gmail"
-            },
-            {
-              "body": "return plain DateTime from TZID parse so display uses OS zone",
-              "title": "calendar"
-            },
-            {
-              "body": "persist meeting invite through the local email cache",
-              "title": "cache"
-            },
-            {
-              "body": "honor TZID when parsing ICS invite times",
-              "title": "calendar"
             }
           ]
         }

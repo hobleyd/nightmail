@@ -2,7 +2,8 @@
 #
 # Reports why an in-app update on macOS did not install.
 #
-#     tool/diagnose_macos_update.sh
+#     tool/diagnose_macos_update.sh            # report
+#     tool/diagnose_macos_update.sh --reset    # drop a stale pending install
 #
 # "Unable to confirm update installation handoff" is `desktop_updater`'s one
 # message for *every* error the native handoff can raise: `MacInstallHelper`'s
@@ -31,6 +32,36 @@ note() { printf '        %s\n' "$*"; }
 if [ ! -d "$APP" ]; then
   say "No app at $APP. Set NIGHTMAIL_APP=/path/to/NightMail.app and run again."
   exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# --reset: throw the half-finished install away so the next check re-stages.
+#
+# A stage is bound to the descriptor and artifact it was built from by three
+# digests and a full file inventory, and the helper refuses it if any of them
+# has moved. So a stage that was written by one attempt and reused by a later
+# one is a live suspect, and this is the cheapest way to take it off the board.
+# Nothing here is data: the marker records that an install is pending, and the
+# stage is a downloaded copy the app will fetch again.
+# ---------------------------------------------------------------------------
+if [ "${1:-}" = "--reset" ]; then
+  say "Quit NightMail first, then this clears the pending install."
+  if [ -f "$MARKER" ]; then
+    STAGE_ROOT=$(python3 -c 'import json,os,sys;print(os.path.dirname(json.load(open(sys.argv[1])).get("stagingPath","")))' "$MARKER")
+    case "$STAGE_ROOT" in
+      */desktop_updater_stage_*)
+        rm -rf "$STAGE_ROOT" && say "removed stage $STAGE_ROOT" ;;
+      *)
+        say "stage path not recognised, left alone: ${STAGE_ROOT:-<none>}" ;;
+    esac
+    rm -f "$MARKER" && say "removed $MARKER"
+  else
+    say "nothing pending"
+  fi
+  say ""
+  say "Now start NightMail, open Settings > About, press Check for updates,"
+  say "and then Restart and install."
+  exit 0
 fi
 
 # Re-exec once through a pipe rather than `exec > >(tee …)`: a process

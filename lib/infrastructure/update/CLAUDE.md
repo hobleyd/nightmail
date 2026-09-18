@@ -100,42 +100,64 @@ designated requirements, and `/Applications` as the only install root. The build
 phase runs **last** on the Runner target: Xcode seals the bundle after every
 phase, so the helper has to be in `Contents/Helpers` before that.
 
-### Every Privileged-Handoff Failure Reports the Same Sentence
+### macOS Has Two Install Paths, and Which One Runs Is Decided by a File Mode
+
+`PackagedMacInstallHelperTransport.defaultPrivilegeRequired` asks one question
+of a zipped `.app`: is the **parent of the install target writable by this
+user**? `/Applications` is `root:admin drwxrwxr-x` on a stock Mac, so for an
+administrator it *is* — and `MacInstallRequestEvidence.targetClass` is
+`applicationBundle` rather than `protectedApplication` for the same reason.
+
+So on an admin account the whole privileged apparatus — `SMAppService`, the
+`Contents/Library/LaunchDaemons` plist, the Mach service, the Login Items
+approval and [AppUpdatePhase.helperApprovalRequired] — **is never reached**.
+The helper is spawned as an ordinary child process
+(`DesktopUpdaterInstallHelper --one-shot-service`) and talked to over a
+length-prefixed pipe on its stdin/stdout. A standard (non-admin) account takes
+the LaunchDaemon path instead. The embedded daemon plist is still required: it
+is what the *other* path uses, and the app's Info.plist keys are validated
+before either.
+
+Knowing which path is in play is most of the diagnosis, because the evidence
+for the two lives in different places and reading the wrong one is worse than
+reading nothing.
+
+### Every Install Failure Reports the Same Sentence
 
 "Unable to confirm update installation handoff" is
 `MacInstallClientError.installRecoveryRequired`, and `MacInstallHelper`'s
 `prepareInstall` and `commitAfterExit` both end in a bare `catch` that converts
-*everything* to it. So that one sentence covers a LaunchDaemon that was never
-registered, one registered and awaiting approval, one approved but not loaded,
-an XPC endpoint that never came up, and a helper whose signature did not match —
-and the app cannot tell them apart, because the package discards the underlying
-error before the method channel sees it. Nothing in the package logs, either:
-`/Library/Logs/DesktopUpdater/` is written by the privileged helper, so it is
-absent in precisely the case you need it.
+*everything* to it. That one sentence therefore covers a refused stage, a
+caller whose signature did not check out, a daemon awaiting approval, an XPC
+endpoint that never came up and a torn wire frame alike — the package discards
+the underlying error before the method channel sees it.
 
-The three facts that *do* tell them apart are all root-only — `launchctl print
-system/<label>`, `launchctl print-disabled system`, and `sfltool dumpbtm` —
-which is why **`tool/diagnose_macos_update.sh`** exists rather than a wider net
-of in-app reporting. It reads the installed bundle's layout, signature,
-notarization, quarantine and helper Info.plist keys, then asks for a password
-once for the three privileged reads, and writes one report. `--watch` streams
-launchd, `smd` and `backgroundtaskmanagementd` while the update is attempted.
+The helper records nothing either. `MacOneShotServiceRuntime.run` logs
+`helper scheduled` as it starts and then nothing until a commit is *accepted*,
+so a refusal is silent by construction. Two things follow:
 
-Two things worth knowing before reading a report:
+- **`~/Library/Logs/DesktopUpdater/events.jsonl` is the log that exists.**
+  `MacHelperDiagnosticsRecorder.defaultLogURL` only uses
+  `/Library/Logs/DesktopUpdater` when `geteuid() == 0`, and `/Library/Logs` is
+  root-only — so on the unprivileged path that directory can never appear, and
+  its absence says nothing at all. A `helper scheduled` entry in the user-domain
+  log means the helper launched, loaded its sealed policy and authenticated its
+  own signature; nothing after it means it refused the request and exited.
+- **`tool/diagnose_macos_update.sh` re-runs the helper's checks from outside**,
+  in the order the helper runs them, and names the first that does not hold:
+  which path applies, the installed bundle against the sealed policy's
+  application requirement, the helper against its own, the sealed policy's
+  digest and canonical form, the helper log, and the staged update — its
+  provenance digest, its full inventory against that marker, its release
+  manifest and its signature. It asks for a password only on the privileged
+  path, where alone the answer needs one.
 
-- **A first `SMAppService.daemon(…).register()` always fails.** It throws
-  `SMAppServiceErrorDomain` code 1, "Operation not permitted", and leaves
-  `status == .requiresApproval` — installing a LaunchDaemon needs the user to
-  approve the background item. The package checks that status and raises
-  `PrivilegedHelperApprovalRequired`, which is
-  [AppUpdatePhase.helperApprovalRequired] and the "Open Login Items settings"
-  button. So an install that reports the *handoff* sentence rather than the
-  approval one has got past registration — the daemon is registered and the
-  Mach service still is not being vended.
-- **`sudo` declining reads exactly like a clean machine.** Every privileged
-  read in that section greps its output, so an unanswered password prompt would
-  otherwise print "no BTM record" — the most misleading possible answer. The
-  script primes `sudo -v` and says it skipped instead.
+**A first `SMAppService.daemon(…).register()` always fails** — measured, not
+inferred: `SMAppServiceErrorDomain` code 1, "Operation not permitted", leaving
+`status == .requiresApproval`, because installing a LaunchDaemon needs the user
+to approve the background item. The package checks that status and raises
+`PrivilegedHelperApprovalRequired`, which is why that phase exists. It is only
+ever seen on a non-admin account.
 
 ### The service starts at launch, not when Settings opens
 

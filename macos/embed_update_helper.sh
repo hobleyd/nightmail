@@ -94,7 +94,67 @@ policy_sha256=$(/usr/bin/perl -0pe 's/\r?\n\z//' "$policy" |
   /usr/bin/shasum -a 256 | /usr/bin/awk '{print $1}')
 [ -n "$policy_sha256" ] || fail "could not digest $policy"
 
-DESKTOP_UPDATER_HELPER_INFO_TEMPLATE="$helper_dir/Configuration/Helper-Info.plist" \
+# --------------------------------------------------------------------------
+# Build from a copy whose main.swift says *why* it refused.
+#
+# Every way the helper can turn a request down — a caller whose signature did
+# not check out, a stage that no longer matches its provenance, an unsupported
+# strategy — throws a `MacOneShotAuthorizationError` that reaches main.swift's
+# final `catch`, which writes the single word "helperBootstrapFailure" and
+# exits. Nothing is recorded: `MacOneShotServiceRuntime` logs `helper
+# scheduled` when it starts and then nothing until a commit is *accepted*, so
+# a refusal is silent by construction. Meanwhile the app converts every error
+# the handoff can raise into one sentence ("Unable to confirm update
+# installation handoff"), so between the two there is no way at all to learn
+# which check failed — which is exactly how a macOS update failure became
+# unfixable by inspection.
+#
+# The patch is four lines and changes no behaviour: the same error, the same
+# exit code, with the error's own description carried into the diagnostics the
+# helper already writes to ~/Library/Logs/DesktopUpdater/events.jsonl and onto
+# the stderr it already inherits from the app.
+#
+# It is applied to a copy under DERIVED_FILE_DIR rather than to the package in
+# ~/.pub-cache, which is shared and is rebuilt by `flutter pub get`. If the
+# text it rewrites is not found — a package upgrade moved it — the build fails
+# here rather than silently shipping a helper that has gone quiet again.
+# --------------------------------------------------------------------------
+derived=${DERIVED_FILE_DIR:-${TARGET_TEMP_DIR:-}}
+[ -n "$derived" ] || fail "DERIVED_FILE_DIR or TARGET_TEMP_DIR is required"
+build_dir="$derived/install_helper_instrumented"
+rm -rf "$build_dir"
+mkdir -p "$(dirname "$build_dir")"
+cp -R "$helper_dir" "$build_dir"
+
+/usr/bin/python3 - "$build_dir/Sources/DesktopUpdaterInstallHelper/main.swift" <<'PY' \
+  || fail "could not instrument main.swift; check whether desktop_updater moved its error handling"
+import sys
+
+path = sys.argv[1]
+source = open(path, encoding="utf-8").read()
+old = '''} catch {
+    FileHandle.standardError.write(Data("helperBootstrapFailure\\n".utf8))
+    Darwin.exit(70)
+}'''
+new = '''} catch {
+    let reason = "\\(error)"
+    MacHelperDiagnosticsRecorder().record(
+        .helperScheduled,
+        state: "refused",
+        resultCode: "failure",
+        detailCode: reason
+    )
+    FileHandle.standardError.write(
+        Data("helperBootstrapFailure: \\(reason)\\n".utf8)
+    )
+    Darwin.exit(70)
+}'''
+if old not in source:
+    sys.exit(1)
+open(path, "w", encoding="utf-8").write(source.replace(old, new, 1))
+PY
+
+DESKTOP_UPDATER_HELPER_INFO_TEMPLATE="$build_dir/Configuration/Helper-Info.plist" \
 DESKTOP_UPDATER_SEALED_POLICY_PATH="$policy" \
 DESKTOP_UPDATER_SEALED_POLICY_SHA256="$policy_sha256" \
-  "$helper_dir/embed_install_helper.sh"
+  "$build_dir/embed_install_helper.sh"

@@ -165,9 +165,19 @@ if [ -f "$HELPER_LOG" ]; then
   say "$HELPER_LOG:"
   tail -20 "$HELPER_LOG"
   say ""
-  note "'helper scheduled' means the helper launched and authenticated itself."
-  note "Nothing after it means it refused the request and exited: the package"
-  note "records no event for a refusal."
+  if grep -q '"resultCode":"failure"' "$HELPER_LOG"; then
+    say ""
+    bad "the helper refused — detailCode above names the check that failed:"
+    note "invalidHelperIdentity     the helper's own signature or sealed policy"
+    note "targetAuthenticationFailed  the install target against the policy"
+    note "callerAuthenticationFailed  the running app's identity"
+    note "stageAuthenticationFailed   the staged update or its provenance"
+    note "unsupportedStrategy         the artifact kind has no native strategy"
+  else
+    note "'helper scheduled' means the helper launched and authenticated itself."
+    note "Nothing after it means it refused and exited without saying why —"
+    note "that is a build older than the one whose helper records its reason."
+  fi
 else
   note "no log — the helper has never been launched by the app"
 fi

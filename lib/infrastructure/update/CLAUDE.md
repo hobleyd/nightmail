@@ -143,6 +143,20 @@ so a refusal is silent by construction. Two things follow:
   its absence says nothing at all. A `helper scheduled` entry in the user-domain
   log means the helper launched, loaded its sealed policy and authenticated its
   own signature; nothing after it means it refused the request and exited.
+- **The build phase patches `main.swift` so a refusal says which check failed.**
+  `macos/embed_update_helper.sh` builds the helper from a copy under
+  `DERIVED_FILE_DIR` with four lines added to its final `catch`: the thrown
+  error's own description goes into the diagnostics the helper already writes,
+  and onto the stderr it already inherits from the app
+  (`ProcessMacOneShotProcessLauncher` sets
+  `process.standardError = FileHandle.standardError`). Behaviour is otherwise
+  identical — same error, same exit code. The `detailCode` is then one of
+  `invalidHelperIdentity`, `targetAuthenticationFailed`,
+  `callerAuthenticationFailed`, `stageAuthenticationFailed` or
+  `unsupportedStrategy`, which is the whole difference between a fixable
+  failure and an unfixable one. The patch is applied to a *copy*, never to
+  `~/.pub-cache`, and the build **fails loudly** if the text it rewrites has
+  moved — a silently un-instrumented helper would put this back where it was.
 - **`tool/diagnose_macos_update.sh` re-runs the helper's checks from outside**,
   in the order the helper runs them, and names the first that does not hold:
   which path applies, the installed bundle against the sealed policy's

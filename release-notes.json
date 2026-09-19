@@ -1,8 +1,19 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.27.3",
-  "sections": [],
+  "version": "1.27.4",
+  "sections": [
+    {
+      "type": "fixes",
+      "title": "Fixes",
+      "items": [
+        {
+          "body": "stop one group-writable font blocking every macOS update",
+          "title": "update"
+        }
+      ]
+    }
+  ],
   "previous": [
     {
       "schemaVersion": 1,

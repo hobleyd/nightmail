@@ -1,20 +1,26 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.27.2",
-  "sections": [
+  "version": "1.27.3",
+  "sections": [],
+  "previous": [
     {
-      "type": "fixes",
-      "title": "Fixes",
-      "items": [
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.27.2",
+      "sections": [
         {
-          "body": "make the macOS install helper say why it refused",
-          "title": "update"
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "make the macOS install helper say why it refused",
+              "title": "update"
+            }
+          ]
         }
       ]
-    }
-  ],
-  "previous": [
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -577,55 +583,6 @@
             {
               "body": "silence async-alternative warning on contacts requestAccess",
               "title": "macos"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.19.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "forward a meeting somebody else organised",
-              "title": "calendar"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "the hover card covered the Join button it sat over",
-              "title": "calendar"
-            },
-            {
-              "body": "the event window ignored the size it was given",
-              "title": "calendar"
-            },
-            {
-              "body": "an attached invite.ics offered no way onto the calendar",
-              "title": "calendar"
-            },
-            {
-              "body": "show a just-sent message where Sent is looked for",
-              "title": "mail"
-            }
-          ]
-        },
-        {
-          "type": "performance",
-          "title": "Performance",
-          "items": [
-            {
-              "body": "keep message bodies off the folder-listing path",
-              "title": "cache"
             }
           ]
         }

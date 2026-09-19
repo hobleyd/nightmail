@@ -26,6 +26,8 @@
 	</array>
 	<key>NSCalendarsUsageDescription</key>
 	<string>NightMail needs calendar access to show and manage events from your local calendars.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

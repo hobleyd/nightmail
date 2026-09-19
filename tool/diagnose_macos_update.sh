@@ -225,7 +225,50 @@ print(f"        manifest appName={d['appName']!r} version={d['version']} build={
 name_ok = d["appName"] == os.path.basename(stage_app)
 print(f"  {'ok   ' if name_ok else 'FAIL '} manifest appName {'matches' if name_ok else 'does NOT match'} the staged bundle")
 PY
+  # macStageMode, applied to every entry of the staged bundle when the helper
+  # hashes its tree. One group-writable file is enough to refuse the whole
+  # update, and it is invisible in the installed app: Finder normalises
+  # permissions copying from a DMG, so only the zip the updater downloads
+  # keeps the mode the build produced.
   STAGED=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('stagingPath',''))" "$MARKER")
+  if [ -d "$STAGED" ]; then
+    python3 - "$STAGED" <<'MODES'
+import os, stat as st, sys
+root = sys.argv[1]
+bad = []
+def check(path):
+    s = os.lstat(path)
+    if st.S_ISLNK(s.st_mode):
+        return
+    mode = s.st_mode & 0o7777
+    why = []
+    if getattr(s, "st_flags", 0): why.append("st_flags set")
+    if mode & 0o7000: why.append("setuid/setgid/sticky")
+    if mode & 0o022: why.append("group/other writable")
+    if st.S_ISDIR(s.st_mode):
+        if mode & 0o005 != 0o005: why.append("dir not other r-x")
+    elif st.S_ISREG(s.st_mode):
+        if mode & 0o004 != 0o004: why.append("not other-readable")
+        if not (mode & 0o111 == 0 or mode & 0o101 == 0o101):
+            why.append("odd exec bits")
+    else:
+        why.append("not a file, directory or symlink")
+    if why:
+        bad.append((oct(mode), ", ".join(why), os.path.relpath(path, root)))
+check(root)
+for base, dirs, files in os.walk(root):
+    for name in dirs + files:
+        check(os.path.join(base, name))
+if bad:
+    noun = "entry breaks" if len(bad) == 1 else "entries break"
+    print(f"  FAIL  {len(bad)} {noun} the staged-bundle permission rule:")
+    for mode, why, rel in bad[:10]:
+        print(f"        {mode} {why}")
+        print(f"          {rel}")
+else:
+    print("  ok    every entry satisfies the staged-bundle permission rule")
+MODES
+  fi
   if [ -d "$STAGED" ]; then
     codesign -v --strict "$STAGED" 2>/dev/null \
       && ok "staged bundle signature valid" || bad "staged bundle fails codesign --strict"

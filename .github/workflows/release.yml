@@ -172,6 +172,67 @@ jobs:
 
       - run: flutter build macos --release --no-tree-shake-icons --build-number ${{ needs.prepare.outputs.build_number }}
 
+      # The in-app updater refuses a staged app if *any* entry in it is
+      # group- or other-writable. desktop_updater's helper hashes the staged
+      # bundle through macStageMode, which requires `mode & 0o022 == 0` on
+      # every file and directory, and throws stageAuthenticationFailed on the
+      # first one that is not -- reported to the user as the single sentence
+      # "Unable to confirm update installation handoff", with no indication of
+      # which file or even which check.
+      #
+      # Flutter ships MaterialIcons-Regular.otf at 0664 in its own SDK cache
+      # (bin/cache/artifacts/material_fonts/) and copies it into
+      # flutter_assets with the mode intact, so every macOS build carried one
+      # group-writable file and no in-app update could ever install. It was
+      # invisible from the installed app, because Finder normalises permissions
+      # when it copies from a DMG -- the installed copy reads 0644 and only the
+      # zip the updater downloads preserves 0664. That is exactly backwards
+      # from where anyone would look.
+      #
+      # This runs after signing deliberately: permission bits are not part of
+      # what codesign seals, so the signature, the designated requirement and
+      # the stapled ticket all still validate afterwards (checked).
+      - name: Normalise bundle permissions for the updater
+        run: |
+          APP_PATH=$(ls -d build/macos/Build/Products/Release/*.app | head -1)
+          chmod -R go-w "$APP_PATH"
+          find "$APP_PATH" -type d -exec chmod a+rx {} +
+          find "$APP_PATH" -type f -exec chmod a+r {} +
+          # Assert rather than trust: this is the whole of macStageMode, and a
+          # future dependency that ships an odd mode must fail here, where the
+          # file is named, rather than on a user's machine where it is not.
+          python3 - "$APP_PATH" <<'PY'
+          import os, stat as st, sys
+          root = sys.argv[1]
+          bad = []
+          def check(path):
+              s = os.lstat(path)
+              if st.S_ISLNK(s.st_mode):
+                  return
+              mode = s.st_mode & 0o7777
+              why = []
+              if getattr(s, "st_flags", 0): why.append("st_flags set")
+              if mode & 0o7000: why.append("setuid/setgid/sticky")
+              if mode & 0o022: why.append("group/other writable")
+              if st.S_ISDIR(s.st_mode):
+                  if mode & 0o005 != 0o005: why.append("dir not other r-x")
+              elif st.S_ISREG(s.st_mode):
+                  if mode & 0o004 != 0o004: why.append("not other-readable")
+                  if not (mode & 0o111 == 0 or mode & 0o101 == 0o101):
+                      why.append("odd exec bits")
+              else:
+                  why.append("not a file, directory or symlink")
+              if why:
+                  bad.append(f"{oct(mode)} {', '.join(why)}: {os.path.relpath(path, root)}")
+          check(root)
+          for base, dirs, files in os.walk(root):
+              for name in dirs + files:
+                  check(os.path.join(base, name))
+          for line in bad:
+              print(f"::error::staged-bundle permission rule violated: {line}")
+          sys.exit(1 if bad else 0)
+          PY
+
       - name: Notarize and staple
         if: ${{ env.HAS_SIGNING_CERT == 'true' }}
         env:

@@ -122,6 +122,39 @@ Knowing which path is in play is most of the diagnosis, because the evidence
 for the two lives in different places and reading the wrong one is worse than
 reading nothing.
 
+### One Group-Writable File Blocked Every macOS Update
+
+`desktop_updater`'s install helper hashes the staged bundle through
+`macAuthorizedTreeSHA256`, which runs **every** entry past `macStageMode`:
+`st_flags == 0`, no setuid/setgid/sticky, `mode & 0o022 == 0`, other-readable,
+directories other-executable, and a file either non-executable or executable by
+everyone. The first entry that fails throws `stageAuthenticationFailed`.
+
+Flutter ships `MaterialIcons-Regular.otf` at **0664** in its own SDK cache
+(`bin/cache/artifacts/material_fonts/`) and copies it into `flutter_assets`
+with the mode intact. So every macOS build carried exactly one group-writable
+file, and no in-app update could ever install.
+
+Two things made it cost four attempts to find:
+
+- **It is invisible from the installed app.** Finder normalises permissions
+  when it copies from a DMG, so the installed copy reads 0644 and only the zip
+  the updater downloads preserves what the build produced. Every check anyone
+  would run against `/Applications/NightMail.app` passes.
+- **Nothing reported it.** The helper records no event for a refusal and the
+  app converts every handoff error into one sentence, so the symptom was
+  identical to a signing problem, an approval problem and a stale stage.
+
+The fix is the release workflow's "Normalise bundle permissions for the
+updater" step, which runs **after** signing — permission bits are not part of
+what `codesign` seals, and the signature, designated requirement and stapled
+ticket all still validate afterwards. It does not merely `chmod`: it then
+asserts the whole of `macStageMode` over the bundle and **fails the build**,
+naming the file, if anything still breaks the rule. A dependency that starts
+shipping an odd mode has to stop the release, not reach a user as a sentence
+that explains nothing. `tool/diagnose_macos_update.sh` applies the same rule to
+the staged bundle.
+
 ### Every Install Failure Reports the Same Sentence
 
 "Unable to confirm update installation handoff" is

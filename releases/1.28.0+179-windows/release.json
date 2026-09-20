@@ -9,8 +9,8 @@
   "artifact": {
     "kind": "zip",
     "url": "https://hobleyd.github.io/nightmail/releases/1.28.0+179-windows/nightmail-1.28.0-windows.zip",
-    "sha256": "1c4bf1488fa1c38159a874decf145977fa6800a132e736d0b6729c05b12ff01c",
-    "length": 27637188
+    "sha256": "b3658ed0d63528c05a8165603a53f71fde552f8a19582069169c624d4487b502",
+    "length": 27635549
   },
   "install": {
     "strategy": "wholeDirectoryReplace"
@@ -18,8 +18,8 @@
   "signature": {
     "algorithm": "ed25519",
     "publicKeyId": "release-b53948b0e36b895fa047a8f4",
-    "value": "lSTZD4hKgjlzjl3aEGT2InAmlyEE/wPp4LhnkCQtuFLxEtG9b6eMYkSVN1/khjGA1Tx2BHrU3IL1K4L7QhvaDw=="
+    "value": "X835bZXh6cdFSjR3K/94OcRVMe6/ByiHisPG719RxM84CyrPjLrVS09CCzCFYEEoRv/nnB5oOBlFikwbFwjdBg=="
   },
   "minimumUpdaterVersion": "2.0.0",
-  "generatedAt": "2026-09-20T08:09:11.079625Z"
+  "generatedAt": "2026-09-20T09:33:22.877579Z"
 }

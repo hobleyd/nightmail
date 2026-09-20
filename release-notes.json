@@ -8,6 +8,10 @@
       "title": "New features",
       "items": [
         {
+          "body": "Mark Read/Delete/Dismiss actions on mail notifications",
+          "title": "notifications"
+        },
+        {
           "body": "default O365 Tenant ID, editable; Google OAuth values via build config",
           "title": "auth"
         }
@@ -17,6 +21,14 @@
       "type": "fixes",
       "title": "Fixes",
       "items": [
+        {
+          "body": "catch local-notifications plugin init failure",
+          "title": "notifications"
+        },
+        {
+          "body": "left-align the Add Account explanatory text",
+          "title": "auth"
+        },
         {
           "body": "source O365 Tenant ID via build config too, not a source literal",
           "title": "auth"

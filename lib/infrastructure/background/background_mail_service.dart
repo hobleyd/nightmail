@@ -43,9 +43,8 @@ class BackgroundMailService {
   /// On iOS the BGTask handler and initial scheduling request are managed
   /// entirely from AppDelegate.swift to satisfy Apple's requirement that
   /// BGTaskScheduler.register is called before didFinishLaunchingWithOptions
-  /// returns.  Calling registerPeriodicTask from Dart on iOS would invoke
-  /// BGTaskScheduler.register a second time for the same identifier, which
-  /// crashes the app.  On Android, WorkManager honours the interval closely.
+  /// returns — Dart-side registration can't run early enough for that. On
+  /// Android, WorkManager honours the interval closely.
   static Future<void> schedulePeriodicCheck({
     int intervalMinutes = 15,
   }) async {

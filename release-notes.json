@@ -18,6 +18,10 @@
       "title": "Fixes",
       "items": [
         {
+          "body": "source O365 Tenant ID via build config too, not a source literal",
+          "title": "auth"
+        },
+        {
           "body": "synthesize local Ollama catalog entry; route macOS About to Settings",
           "title": "ai"
         }

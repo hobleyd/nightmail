@@ -14,6 +14,16 @@ class AppDelegate: FlutterAppDelegate {
     return true
   }
 
+  // Wired from MainMenu.xib's "About NightMail" item in place of the default
+  // orderFrontStandardAboutPanel: — routes to Settings > About instead, which
+  // shows the actual app version/update status rather than an empty
+  // auto-generated panel.
+  @IBAction func showAboutPanel(_ sender: Any?) {
+    guard let mainWindow = MainFlutterWindow.shared else { return }
+    mainWindow.makeKeyAndOrderFront(nil)
+    mainWindow.showAboutFromMenu()
+  }
+
   // Cmd-Q routes here directly (not through windowShouldClose), so without
   // this override the process would tear down immediately — killing the
   // drift cache database's background isolate mid-query and crashing native

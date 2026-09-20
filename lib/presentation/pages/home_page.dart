@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Platform;
 
 import 'package:app_links/app_links.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 
 import '../../core/platform/window_utils.dart';
 import '../../domain/entities/email.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -50,6 +52,7 @@ import '../widgets/folder_panel.dart';
 import '../widgets/reading_pane.dart';
 import 'calendar_page.dart';
 import 'compose_window.dart';
+import 'settings_page.dart';
 import 'tasks_page.dart';
 
 DateTime _mondayOfWeek(DateTime date) {
@@ -125,6 +128,13 @@ class _HomeViewState extends State<_HomeView> {
   StreamSubscription<Uri>? _mailtoSub;
   StreamSubscription<NotificationAction>? _notifSub;
 
+  // The macOS app menu's "About NightMail" item is wired natively to invoke
+  // this instead of the default orderFrontStandardAboutPanel: box — see
+  // AppDelegate.swift's showAboutPanel(_:). Settings already opens on the
+  // About section by default, so there's no separate about-only UI to build.
+  static const _appMenuChannel =
+      MethodChannel('au.com.sharpblue.nightmail/app_menu');
+
   /// The account whose folder selection is on screen, so a switch can file that
   /// selection under the account being *left* rather than the one arriving —
   /// the listener below is told only where it is going. Every switch comes
@@ -158,6 +168,15 @@ class _HomeViewState extends State<_HomeView> {
       // Defer to allow BLoCs to finish their first build cycle.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _handleNotificationAction(pending);
+      });
+    }
+
+    if (!kIsWeb && Platform.isMacOS) {
+      _appMenuChannel.setMethodCallHandler((call) async {
+        if (call.method == 'showAbout' && mounted) {
+          await SettingsDialog.open(context);
+        }
+        return null;
       });
     }
   }

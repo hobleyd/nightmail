@@ -146,7 +146,30 @@ void main() {
         'garbage': 'not-a-map',
         'also_garbage': 42,
       });
-      expect(result.map((p) => p.id), ['anthropic']);
+      // Plus the synthesized local `ollama` entry (see below), since this
+      // fixture omits a real one.
+      expect(result.map((p) => p.id), ['anthropic', 'ollama']);
+    });
+
+    test(
+        'synthesizes a local "ollama" entry when upstream omits one '
+        '(models.dev now only lists the paid `ollama-cloud`)', () {
+      final result = AiCatalogMapper.parseCatalog(<String, dynamic>{
+        'anthropic': apiJson['anthropic'],
+      });
+      final ollama = result.firstWhere((p) => p.id == 'ollama');
+      expect(ollama.source, AiProviderSource.catalog);
+      expect(ollama.kind, AiProviderKind.local);
+      expect(ollama.wireProtocol, AiWireProtocol.ollama);
+      expect(ollama.requiresApiKey, isFalse);
+      expect(ollama.apiBaseUrl, isNull);
+      expect(ollama.defaultBaseUrl, 'http://localhost:11434/v1');
+    });
+
+    test('does not duplicate a real upstream "ollama" entry', () {
+      // `apiJson` already carries its own `ollama` fixture entry.
+      final matches = providers.where((p) => p.id == 'ollama');
+      expect(matches.length, 1);
     });
 
     group('wireProtocol derivation', () {

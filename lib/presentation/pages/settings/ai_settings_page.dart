@@ -75,6 +75,12 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
   /// (e.g. Ollama). Used to drive the same dropdown catalog providers get.
   List<String> _liveModelIds = const [];
 
+  /// Set when a live `/models` fetch for [_modelsLoadedFor] failed (endpoint
+  /// unreachable, non-2xx, bad shape, …), so the UI can tell "the server
+  /// refused/couldn't be reached" apart from "it has no models" and offer a
+  /// retry instead of silently falling back to a blank free-text field.
+  String? _modelsLoadErrorFor;
+
   @override
   void dispose() {
     _apiKeyController.dispose();
@@ -124,31 +130,45 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
   /// Loads the model list for [provider]: the static catalog for catalog
   /// providers, or a live `/models` fetch for BYO/self-hosted endpoints (Ollama,
   /// LM Studio, …) so they get a real dropdown too.
-  void _ensureModelsLoaded(AiProvider provider) {
-    if (provider.id == _modelsLoadedFor) return;
+  ///
+  /// Pass [retry] to force a re-fetch even though [provider] was already
+  /// (unsuccessfully) attempted this session — the normal guard below only
+  /// dedupes concurrent/repeated calls for the *same* provider, it doesn't
+  /// retry a failed live fetch on its own (a down Ollama server shouldn't be
+  /// hammered on every rebuild).
+  void _ensureModelsLoaded(AiProvider provider, {bool retry = false}) {
+    if (provider.id == _modelsLoadedFor && !retry) return;
     _modelsLoadedFor = provider.id;
     _models = const [];
     _liveModelIds = const [];
+    _modelsLoadErrorFor = null;
     _modelsLoading = true;
 
     final repo = sl<AiCatalogRepository>();
     final cubit = context.read<AiSettingsCubit>();
 
-    // Derive models live for BYO endpoints and for Azure (whose real models are
-    // the user's deployments, not the static catalog list); use the catalog for
-    // ordinary catalog providers.
-    final baseUrl = provider.apiBaseUrl;
+    // Fall back to the computed default (e.g. Ollama's localhost:11434) when no
+    // explicit endpoint was persisted — a catalog pick (including the
+    // synthesized local Ollama entry) never stores one, only a custom endpoint
+    // does.
+    final baseUrl = provider.apiBaseUrl ?? provider.defaultBaseUrl;
     final hasUrl = baseUrl != null && baseUrl.isNotEmpty;
     // Detect Azure by protocol OR endpoint host, so a stale wireProtocol on the
     // persisted row still routes to the deployments listing.
     final isAzure = provider.wireProtocol == AiWireProtocol.azure ||
         (hasUrl && baseUrl.contains('azure.com'));
-    final preferLive =
-        hasUrl && (provider.source == AiProviderSource.user || isAzure);
+    // Local runtimes (Ollama, LM Studio, …) always reflect what's actually
+    // installed on the endpoint, never a static catalog list — whether they
+    // were added as a catalog pick or a custom endpoint.
+    final preferLive = hasUrl &&
+        (provider.source == AiProviderSource.user ||
+            isAzure ||
+            provider.kind == AiProviderKind.local);
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       List<AiModel> catalogModels = const [];
       List<String> liveIds = const [];
+      String? errorMessage;
 
       if (preferLive) {
         final key = await cubit.getApiKey(provider.id);
@@ -157,7 +177,10 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
           apiKey: key,
           azure: isAzure,
         );
-        liveIds = result.getOrElse((_) => const []);
+        result.match(
+          (failure) => errorMessage = failure.message,
+          (ids) => liveIds = ids,
+        );
       } else if (provider.source == AiProviderSource.catalog) {
         final result = await repo.getModelsForProvider(provider.id);
         catalogModels = result.getOrElse((_) => const []);
@@ -167,7 +190,10 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
           baseUrl: provider.apiBaseUrl!,
           apiKey: key,
         );
-        liveIds = result.getOrElse((_) => const []);
+        result.match(
+          (failure) => errorMessage = failure.message,
+          (ids) => liveIds = ids,
+        );
       }
 
       if (!mounted || _modelsLoadedFor != provider.id) return;
@@ -175,7 +201,14 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
         _modelsLoading = false;
         _models = catalogModels;
         _liveModelIds = liveIds;
+        _modelsLoadErrorFor = errorMessage != null ? provider.id : null;
       });
+      if (errorMessage != null) {
+        debugPrint(
+          'AI settings: live model fetch failed for ${provider.id} '
+          '($baseUrl): $errorMessage',
+        );
+      }
     });
   }
 
@@ -553,29 +586,57 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
         : [for (final id in _liveModelIds) (id: id, label: id)];
 
     if (modelIds.isEmpty) {
+      final failed = _modelsLoadErrorFor == provider.id;
       // Endpoint unreachable / advertises nothing: fall back to manual entry.
-      return SizedBox(
-        height: 32,
-        child: TextField(
-          controller: _modelController,
-          onSubmitted: (_) => _commitCompose(provider.id),
-          style: TextStyle(color: c.textSecondary, fontSize: 12),
-          decoration: InputDecoration(
-            isDense: true,
-            hintText: 'model id ⏎',
-            hintStyle: TextStyle(color: c.textMuted, fontSize: 12),
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide(color: c.separatorStrong),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: const BorderSide(color: AppColors.accent),
+      // When a live fetch actually failed (vs. a provider that just has no
+      // models to enumerate), say so and offer a retry rather than leaving an
+      // unexplained blank box — a down/unstarted local server is common.
+      return Row(
+        children: [
+          Expanded(
+            child: SizedBox(
+              height: 32,
+              child: TextField(
+                controller: _modelController,
+                onSubmitted: (_) => _commitCompose(provider.id),
+                style: TextStyle(color: c.textSecondary, fontSize: 12),
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: failed ? 'Couldn\'t reach server' : 'model id ⏎',
+                  hintStyle: TextStyle(color: c.textMuted, fontSize: 12),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(
+                      color: failed ? c.errorBannerBorder : c.separatorStrong,
+                    ),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: const BorderSide(color: AppColors.accent),
+                  ),
+                ),
+              ),
             ),
           ),
-        ),
+          if (failed) ...[
+            const SizedBox(width: 4),
+            SizedBox(
+              width: 32,
+              height: 32,
+              child: IconButton(
+                padding: EdgeInsets.zero,
+                splashRadius: 16,
+                iconSize: 16,
+                tooltip: 'Retry',
+                icon: Icon(Icons.refresh_rounded, color: c.textMuted),
+                onPressed: () =>
+                    setState(() => _ensureModelsLoaded(provider, retry: true)),
+              ),
+            ),
+          ],
+        ],
       );
     }
 
@@ -778,9 +839,9 @@ class _ProviderKeyEditor extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (provider.apiBaseUrl != null) ...[
+        if (provider.defaultBaseUrl != null) ...[
           Text(
-            provider.apiBaseUrl!,
+            provider.defaultBaseUrl!,
             style: TextStyle(color: c.textMuted, fontSize: 11),
           ),
           const SizedBox(height: 12),

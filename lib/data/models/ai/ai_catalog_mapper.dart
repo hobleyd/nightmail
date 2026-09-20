@@ -19,6 +19,13 @@ class AiCatalogMapper {
   /// Parse the full decoded `api.json` object into the catalog's providers,
   /// each carrying its own list of models. All entries are tagged
   /// [AiProviderSource.catalog].
+  ///
+  /// models.dev has dropped the plain local-runtime `ollama` entry this app
+  /// has always assumed exists (it now only lists `ollama-cloud`, Ollama's
+  /// paid hosted API, which needs a key and points at `ollama.com`). Without
+  /// a synthesized fallback, searching "Ollama" in the catalog surfaces only
+  /// that cloud entry, so a user picking it never reaches their local server.
+  /// Inject [_localOllamaProvider] whenever upstream doesn't supply one.
   static List<AiProvider> parseCatalog(Map<String, dynamic> json) {
     final providers = <AiProvider>[];
     for (final entry in json.entries) {
@@ -26,8 +33,28 @@ class AiCatalogMapper {
       if (raw is! Map<String, dynamic>) continue;
       providers.add(_parseProvider(entry.key, raw));
     }
+    if (!providers.any((p) => p.id == _localOllamaId)) {
+      providers.add(_localOllamaProvider);
+    }
     return providers;
   }
+
+  static const String _localOllamaId = 'ollama';
+
+  /// Synthesized local-Ollama-server descriptor (see [parseCatalog]). Keyless,
+  /// with no `apiBaseUrl` — it resolves to `http://localhost:11434/v1` via
+  /// [AiProvider.defaultBaseUrl]'s `ollama` wire-protocol fallback, same as a
+  /// real catalog entry would.
+  static const AiProvider _localOllamaProvider = AiProvider(
+    id: _localOllamaId,
+    name: 'Ollama (local)',
+    npm: 'ollama-ai-provider',
+    doc: 'https://ollama.com',
+    env: [],
+    kind: AiProviderKind.local,
+    wireProtocol: AiWireProtocol.ollama,
+    source: AiProviderSource.catalog,
+  );
 
   static AiProvider _parseProvider(String providerId, Map<String, dynamic> p) {
     final id = (p['id'] as String?) ?? providerId;

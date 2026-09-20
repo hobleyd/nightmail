@@ -18,6 +18,7 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
   private var mainNotificationChannel: FlutterMethodChannel?
   private var systemEventsChannel: FlutterMethodChannel?
   private var appLifecycleChannel: FlutterMethodChannel?
+  private var appMenuChannel: FlutterMethodChannel?
   private let eventStore = EKEventStore()
 
   // Cmd-Q sends -[NSApplication terminate:] straight to the app delegate's
@@ -38,6 +39,14 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     channel.invokeMethod("applicationWillTerminate", arguments: nil) { _ in
       completion()
     }
+  }
+
+  /// Invoked by AppDelegate's "About NightMail" menu action. The default
+  /// orderFrontStandardAboutPanel: box has nothing useful in it (no update
+  /// status, no account info), so the menu routes to Settings > About
+  /// instead, which already opens on that section by default.
+  func showAboutFromMenu() {
+    appMenuChannel?.invokeMethod("showAbout", arguments: nil)
   }
 
   override func awakeFromNib() {
@@ -144,6 +153,13 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
 
     appLifecycleChannel = FlutterMethodChannel(
       name: "au.com.sharpblue.nightmail/app_lifecycle",
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
+
+    // Main window only — the "About" menu action always targets the main
+    // window's Settings dialog, regardless of which window is key.
+    appMenuChannel = FlutterMethodChannel(
+      name: "au.com.sharpblue.nightmail/app_menu",
       binaryMessenger: flutterViewController.engine.binaryMessenger
     )
     MainFlutterWindow.shared = self

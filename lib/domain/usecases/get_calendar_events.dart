@@ -18,6 +18,7 @@ class GetCalendarEvents
     return _repository.getCalendarEvents(
       startDateTime: params.startDateTime,
       endDateTime: params.endDateTime,
+      accountId: params.accountId,
     );
   }
 }
@@ -26,11 +27,16 @@ class GetCalendarEventsParams extends Equatable {
   const GetCalendarEventsParams({
     required this.startDateTime,
     required this.endDateTime,
+    this.accountId,
   });
 
   final DateTime startDateTime;
   final DateTime endDateTime;
 
+  /// The account to fetch for, or null for whichever account is active
+  /// elsewhere in the app. See [CalendarRepository]'s class doc.
+  final String? accountId;
+
   @override
-  List<Object> get props => [startDateTime, endDateTime];
+  List<Object?> get props => [startDateTime, endDateTime, accountId];
 }

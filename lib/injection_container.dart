@@ -723,7 +723,6 @@ Future<void> configureDependencies() async {
       getCalendarEvents: sl<GetCalendarEvents>(),
       declineCalendarEvent: sl<DeclineCalendarEvent>(),
       cancelCalendarEvent: sl<CancelCalendarEvent>(),
-      accountManager: sl<AccountManager>(),
     ),
   );
   sl.registerFactory(

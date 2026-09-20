@@ -26,6 +26,7 @@ import '../../domain/entities/meeting_room.dart';
 import '../../domain/repositories/calendar_repository.dart';
 import '../../domain/usecases/create_calendar_event.dart';
 import '../../domain/usecases/update_calendar_event.dart';
+import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../../infrastructure/sync/calendar_outbox_drain_service.dart';
 import '../../infrastructure/sync/calendar_pending_op_reconciler.dart';
@@ -83,12 +84,42 @@ class CalendarRepositoryImpl implements CalendarRepository {
 
   String? get _accountId => _accountManager.activeAccount?.id;
 
+  /// The account [accountId] names, or the active account when it is null —
+  /// used everywhere an outgoing message or a cache/queue key needs to name a
+  /// real account rather than just a datasource.
+  Account? _resolveAccount(String? accountId) => accountId == null
+      ? _accountManager.activeAccount
+      : _accountManager.accountById(accountId);
+
+  /// Calendar datasource for [accountId], or the active account's when it is
+  /// null.
+  ///
+  /// Unlike [_availabilityDatasource] (used only by [checkAttendeesAvailability]
+  /// and [getMeetingRooms], where falling back to the active account costs
+  /// nothing worse than a wrong free/busy dot), an [accountId] that names no
+  /// signed-in account here returns null rather than silently acting on
+  /// whichever account happens to be active — every caller turns that into a
+  /// [ServerFailure] instead of reading, declining or cancelling a meeting on
+  /// the wrong mailbox. See [MeetingSweepCubit] for why this distinction
+  /// exists: it is the one caller that routinely asks about an account other
+  /// than the active one.
+  CalendarRemoteDatasource? _datasourceFor(String? accountId) {
+    if (accountId == null) return _accountManager.calendarDatasource;
+    if (accountId == _accountManager.activeAccount?.id) {
+      return _accountManager.calendarDatasource;
+    }
+    final account = _accountManager.accountById(accountId);
+    if (account == null) return null;
+    return _accountManager.buildCalendarDatasourceForAccount(account);
+  }
+
   @override
   Future<Either<Failure, List<CalendarEvent>>> getCalendarEvents({
     required DateTime startDateTime,
     required DateTime endDateTime,
+    String? accountId,
   }) async {
-    final ds = _accountManager.calendarDatasource;
+    final ds = _datasourceFor(accountId);
     if (ds == null) {
       return const Left(
         ServerFailure(
@@ -99,14 +130,14 @@ class CalendarRepositoryImpl implements CalendarRepository {
     // Bind the cache write to the account this fetch was issued for, before any
     // await: an account switch landing mid-fetch would otherwise file one
     // calendar's meetings under the other account's id.
-    final accountId = _accountId;
+    final resolvedAccountId = accountId ?? _accountId;
 
     try {
       final fetched = await ds.getCalendarEvents(
         startDateTime: startDateTime,
         endDateTime: endDateTime,
       );
-      if (accountId == null) return Right(fetched);
+      if (resolvedAccountId == null) return Right(fetched);
 
       // Re-apply anything still queued before this snapshot is cached *or*
       // returned. A mutation and this fetch go out together, so the response
@@ -114,7 +145,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
       // back un-reconciled is exactly what makes a just-declined meeting pop
       // back to unanswered on screen.
       final events = await _pendingOpReconciler.reconcile(
-        accountId: accountId,
+        accountId: resolvedAccountId,
         events: fetched,
       );
 
@@ -123,7 +154,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
       // costs a refetch next time, it does not make this result wrong.
       unawaited(_localDatasource
           .cacheEvents(
-            accountId: accountId,
+            accountId: resolvedAccountId,
             windowStart: startDateTime,
             windowEnd: endDateTime,
             events: events,
@@ -146,12 +177,13 @@ class CalendarRepositoryImpl implements CalendarRepository {
   Future<Either<Failure, List<CalendarEvent>>> getCachedCalendarEvents({
     required DateTime startDateTime,
     required DateTime endDateTime,
+    String? accountId,
   }) async {
-    final accountId = _accountId;
-    if (accountId == null) return const Right([]);
+    final resolvedAccountId = accountId ?? _accountId;
+    if (resolvedAccountId == null) return const Right([]);
     try {
       final events = await _localDatasource.getCachedEvents(
-        accountId: accountId,
+        accountId: resolvedAccountId,
         start: startDateTime,
         end: endDateTime,
       );
@@ -164,8 +196,9 @@ class CalendarRepositoryImpl implements CalendarRepository {
   @override
   Future<Either<Failure, CalendarEvent>> getCalendarEvent({
     required String id,
+    String? accountId,
   }) async {
-    final ds = _accountManager.calendarDatasource;
+    final ds = _datasourceFor(accountId);
     if (ds == null) {
       return const Left(
         ServerFailure(
@@ -190,8 +223,9 @@ class CalendarRepositoryImpl implements CalendarRepository {
   @override
   Future<Either<Failure, CalendarEvent>> createCalendarEvent({
     required CreateCalendarEventParams params,
+    String? accountId,
   }) async {
-    final ds = _accountManager.calendarDatasource;
+    final ds = _datasourceFor(accountId);
     if (ds == null) {
       return const Left(
         ServerFailure(
@@ -199,15 +233,16 @@ class CalendarRepositoryImpl implements CalendarRepository {
       );
     }
 
-    final accountId = _accountId;
+    final resolvedAccountId = accountId ?? _accountId;
 
     try {
       final event = await ds.createCalendarEvent(params: params);
       // Network-first by necessity — a cache row is keyed by the id the
       // provider assigns — but the new meeting is folded in straight away so it
       // does not vanish from the week until the next sync.
-      if (accountId != null) {
-        await _localDatasource.upsertEvent(accountId: accountId, event: event);
+      if (resolvedAccountId != null) {
+        await _localDatasource.upsertEvent(
+            accountId: resolvedAccountId, event: event);
       }
       return Right(event);
     } on AuthException catch (e) {
@@ -224,8 +259,9 @@ class CalendarRepositoryImpl implements CalendarRepository {
   @override
   Future<Either<Failure, CalendarEvent>> updateCalendarEvent({
     required UpdateCalendarEventParams params,
+    String? accountId,
   }) async {
-    final ds = _accountManager.calendarDatasource;
+    final ds = _datasourceFor(accountId);
     if (ds == null) {
       return const Left(
         ServerFailure(
@@ -233,7 +269,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
       );
     }
 
-    final accountId = _accountId;
+    final resolvedAccountId = accountId ?? _accountId;
 
     // A save that only changed the guest list, on a provider that would tell
     // every guest about it: this app tells the changed guests instead. That is
@@ -243,25 +279,25 @@ class CalendarRepositoryImpl implements CalendarRepository {
         !ds.notifiesChangedAttendeesItself) {
       return _updateNotifyingChangedGuests(
         ds,
-        accountId: accountId,
+        accountId: resolvedAccountId,
         params: params,
       );
     }
 
-    final cached = accountId == null
+    final cached = resolvedAccountId == null
         ? null
         : await _localDatasource.getCachedEventById(
-            accountId: accountId, eventId: params.id);
+            accountId: resolvedAccountId, eventId: params.id);
 
     // Nothing cached to rewrite (a meeting outside the cached window, or a
     // first run before any sync) — there is no optimistic result to hand back,
     // so wait for the provider as before rather than invent one.
-    if (accountId == null || cached == null) {
+    if (resolvedAccountId == null || cached == null) {
       try {
         final event = await ds.updateCalendarEvent(params: params);
-        if (accountId != null) {
+        if (resolvedAccountId != null) {
           await _localDatasource.upsertEvent(
-              accountId: accountId, event: event);
+              accountId: resolvedAccountId, event: event);
         }
         return Right(event);
       } on AuthException catch (e) {
@@ -278,12 +314,12 @@ class CalendarRepositoryImpl implements CalendarRepository {
 
     final optimistic = applyUpdate(cached, params);
     return _cacheFirst(
-      accountId: accountId,
+      accountId: resolvedAccountId,
       targetId: params.id,
       opType: PendingCalendarOperationType.updateEvent,
       payload: CalendarOutboxDrainService.updateParamsToJson(params),
-      apply: () =>
-          _localDatasource.upsertEvent(accountId: accountId, event: optimistic),
+      apply: () => _localDatasource.upsertEvent(
+          accountId: resolvedAccountId, event: optimistic),
       value: optimistic,
     );
   }
@@ -310,6 +346,14 @@ class CalendarRepositoryImpl implements CalendarRepository {
   /// The cache is written before any mail is sent, so a send that fails still
   /// leaves the saved meeting on screen; the failure names the guest that was
   /// not told.
+  ///
+  /// [accountId] only steers which calendar the update itself is applied to.
+  /// The guest notice is still sent through [AccountManager.emailDatasource],
+  /// which is always the *active* account's outgoing mailbox — there is no
+  /// per-account email datasource to route it through instead. Calling this
+  /// for an [accountId] other than the active one therefore updates the right
+  /// calendar but emails guests from the wrong mailbox; nothing in this
+  /// codebase does that today; MeetingSweepCubit never reaches this path.
   Future<Either<Failure, CalendarEvent>> _updateNotifyingChangedGuests(
     CalendarRemoteDatasource ds, {
     required String? accountId,
@@ -614,17 +658,18 @@ class CalendarRepositoryImpl implements CalendarRepository {
   Future<void> _markCachedMeetingDeclined({
     String? icsData,
     DateTime? meetingStart,
+    String? accountId,
   }) async {
-    final accountId = _accountId;
-    if (accountId == null) return;
+    final resolvedAccountId = accountId ?? _accountId;
+    if (resolvedAccountId == null) return;
     final cached = await _findCachedMeeting(
-      accountId: accountId,
+      accountId: resolvedAccountId,
       icsData: icsData,
       meetingStart: meetingStart,
     );
     if (cached == null) return;
     await _localDatasource.upsertEvent(
-      accountId: accountId,
+      accountId: resolvedAccountId,
       event: applyRsvp(cached, MeetingInviteResponseType.decline),
     );
   }
@@ -686,8 +731,9 @@ class CalendarRepositoryImpl implements CalendarRepository {
     String? icsData,
     DateTime? meetingStart,
     String? message,
+    String? accountId,
   }) async {
-    final ds = _accountManager.calendarDatasource;
+    final ds = _datasourceFor(accountId);
     if (ds == null) {
       return const Left(
         ServerFailure(
@@ -695,18 +741,18 @@ class CalendarRepositoryImpl implements CalendarRepository {
       );
     }
 
-    final accountId = _accountId;
-    final cached = accountId == null
+    final resolvedAccountId = accountId ?? _accountId;
+    final cached = resolvedAccountId == null
         ? null
         : await _findCachedMeeting(
-            accountId: accountId,
+            accountId: resolvedAccountId,
             icsData: icsData,
             meetingStart: meetingStart,
           );
 
-    if (accountId != null && cached != null) {
+    if (resolvedAccountId != null && cached != null) {
       return _cacheFirstVoid(
-        accountId: accountId,
+        accountId: resolvedAccountId,
         targetId: emailId,
         opType: PendingCalendarOperationType.respondToInvite,
         payload: {
@@ -716,7 +762,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
           'message': message,
         },
         apply: () => _localDatasource.upsertEvent(
-          accountId: accountId,
+          accountId: resolvedAccountId,
           event: applyRsvp(cached, response),
         ),
       );
@@ -725,7 +771,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
     // No cached copy of the meeting to move — most often an invitation the
     // provider has not put on the calendar yet. There is nothing to show
     // optimistically, so wait for the provider and report what it says.
-    final userEmail = _accountManager.activeAccount?.emailAddress;
+    final userEmail = _resolveAccount(accountId)?.emailAddress;
 
     try {
       await ds.respondToMeetingInvite(
@@ -756,15 +802,17 @@ class CalendarRepositoryImpl implements CalendarRepository {
     String? icsData,
     DateTime? meetingStart,
     String? message,
+    String? accountId,
   }) async {
-    final ds = _accountManager.calendarDatasource;
+    final ds = _datasourceFor(accountId);
     if (ds == null) {
       return const Left(
         ServerFailure(message: 'Calendar is not available for this account type'),
       );
     }
 
-    final userEmail = _accountManager.activeAccount?.emailAddress;
+    final resolvedAccount = _resolveAccount(accountId);
+    final userEmail = resolvedAccount?.emailAddress;
 
     try {
       await ds.proposeNewTimeFromEmail(
@@ -794,6 +842,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
       await _markCachedMeetingDeclined(
         icsData: icsData,
         meetingStart: meetingStart,
+        accountId: accountId,
       );
       return const Right(null);
     } on AuthException catch (e) {
@@ -916,26 +965,27 @@ class CalendarRepositoryImpl implements CalendarRepository {
     required String emailId,
     String? icsData,
     DateTime? meetingStart,
+    String? accountId,
   }) async {
-    final ds = _accountManager.calendarDatasource;
+    final ds = _datasourceFor(accountId);
     if (ds == null) {
       return const Left(
         ServerFailure(message: 'Calendar is not available for this account type'),
       );
     }
 
-    final accountId = _accountId;
-    final cached = accountId == null
+    final resolvedAccountId = accountId ?? _accountId;
+    final cached = resolvedAccountId == null
         ? null
         : await _findCachedMeeting(
-            accountId: accountId,
+            accountId: resolvedAccountId,
             icsData: icsData,
             meetingStart: meetingStart,
           );
 
-    if (accountId != null && cached != null) {
+    if (resolvedAccountId != null && cached != null) {
       return _cacheFirstVoid(
-        accountId: accountId,
+        accountId: resolvedAccountId,
         targetId: emailId,
         opType: PendingCalendarOperationType.removeMeetingFromCalendar,
         payload: {
@@ -943,7 +993,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
           'meetingStart': meetingStart?.toIso8601String(),
         },
         apply: () => _localDatasource.deleteEvent(
-          accountId: accountId,
+          accountId: resolvedAccountId,
           eventId: cached.id,
         ),
       );
@@ -971,15 +1021,16 @@ class CalendarRepositoryImpl implements CalendarRepository {
   Future<Either<Failure, void>> cancelMeetingFromEmail({
     required String emailId,
     DateTime? meetingStart,
+    String? accountId,
   }) async {
-    final ds = _accountManager.calendarDatasource;
+    final ds = _datasourceFor(accountId);
     if (ds == null) {
       return const Left(
         ServerFailure(message: 'Calendar is not available for this account type'),
       );
     }
 
-    final accountId = _accountId;
+    final resolvedAccountId = accountId ?? _accountId;
 
     try {
       await ds.cancelMeetingFromEmail(
@@ -989,14 +1040,14 @@ class CalendarRepositoryImpl implements CalendarRepository {
       // Network-first: with no ICS on this path there is no UID to identify the
       // meeting by ahead of time, so the cached copy is dropped afterwards
       // instead — still soon enough that the week repaints without it.
-      if (accountId != null) {
+      if (resolvedAccountId != null) {
         final cached = await _findCachedMeeting(
-          accountId: accountId,
+          accountId: resolvedAccountId,
           meetingStart: meetingStart,
         );
         if (cached != null) {
           await _localDatasource.deleteEvent(
-            accountId: accountId,
+            accountId: resolvedAccountId,
             eventId: cached.id,
           );
         }
@@ -1020,15 +1071,16 @@ class CalendarRepositoryImpl implements CalendarRepository {
     required DateTime newEnd,
     String? icsData,
     DateTime? meetingStart,
+    String? accountId,
   }) async {
-    final ds = _accountManager.calendarDatasource;
+    final ds = _datasourceFor(accountId);
     if (ds == null) {
       return const Left(
         ServerFailure(message: 'Calendar is not available for this account type'),
       );
     }
 
-    final accountId = _accountId;
+    final resolvedAccountId = accountId ?? _accountId;
 
     try {
       await ds.acceptProposedTimeFromEmail(
@@ -1042,15 +1094,15 @@ class CalendarRepositoryImpl implements CalendarRepository {
       // its new time. After the fact rather than before, because this re-issues
       // the invitation to every attendee and so is not queued (see
       // [PendingCalendarOperationType]).
-      if (accountId != null) {
+      if (resolvedAccountId != null) {
         final cached = await _findCachedMeeting(
-          accountId: accountId,
+          accountId: resolvedAccountId,
           icsData: icsData,
           meetingStart: meetingStart,
         );
         if (cached != null) {
           await _localDatasource.upsertEvent(
-            accountId: accountId,
+            accountId: resolvedAccountId,
             event: cached.copyWith(start: newStart, end: newEnd),
           );
         }
@@ -1074,6 +1126,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
     String? icsData,
     DateTime? meetingStart,
     String? comment,
+    String? accountId,
   }) async {
     final recipients = _cleanAddresses(toAddresses);
     if (recipients.isEmpty) {
@@ -1081,6 +1134,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
           ServerFailure(message: 'No one to forward this meeting to'));
     }
     return _forward(
+      accountId: accountId,
       recipients: recipients,
       comment: comment,
       viaProvider: (ds) => ds.forwardMeetingFromEmail(
@@ -1090,8 +1144,11 @@ class CalendarRepositoryImpl implements CalendarRepository {
         meetingStart: meetingStart,
         comment: comment,
       ),
-      describeMeeting: () =>
-          _forwardableFromInvitation(icsData: icsData, meetingStart: meetingStart),
+      describeMeeting: () => _forwardableFromInvitation(
+        icsData: icsData,
+        meetingStart: meetingStart,
+        accountId: accountId,
+      ),
     );
   }
 
@@ -1100,6 +1157,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
     required String eventId,
     required List<String> toAddresses,
     String? comment,
+    String? accountId,
   }) async {
     final recipients = _cleanAddresses(toAddresses);
     if (recipients.isEmpty) {
@@ -1107,6 +1165,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
           ServerFailure(message: 'No one to forward this meeting to'));
     }
     return _forward(
+      accountId: accountId,
       recipients: recipients,
       comment: comment,
       viaProvider: (ds) => ds.forwardCalendarEvent(
@@ -1114,7 +1173,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
         toAddresses: recipients,
         comment: comment,
       ),
-      describeMeeting: () => _forwardableFromEvent(eventId),
+      describeMeeting: () => _forwardableFromEvent(eventId, accountId: accountId),
     );
   }
 
@@ -1128,12 +1187,13 @@ class CalendarRepositoryImpl implements CalendarRepository {
   /// twice. Only [MeetingForwardUnsupportedException] — a settled "this cannot
   /// be forwarded" — means nothing was sent and the fallback is safe.
   Future<Either<Failure, MeetingForwardMode>> _forward({
+    required String? accountId,
     required List<String> recipients,
     required String? comment,
     required Future<void> Function(CalendarRemoteDatasource ds) viaProvider,
     required Future<_ForwardableMeeting?> Function() describeMeeting,
   }) async {
-    final ds = _accountManager.calendarDatasource;
+    final ds = _datasourceFor(accountId);
     if (ds != null) {
       try {
         await viaProvider(ds);
@@ -1201,6 +1261,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
   Future<_ForwardableMeeting?> _forwardableFromInvitation({
     String? icsData,
     DateTime? meetingStart,
+    String? accountId,
   }) async {
     if (icsData != null) {
       try {
@@ -1232,10 +1293,10 @@ class CalendarRepositoryImpl implements CalendarRepository {
       }
     }
 
-    final accountId = _accountId;
-    if (accountId == null) return null;
+    final resolvedAccountId = accountId ?? _accountId;
+    if (resolvedAccountId == null) return null;
     final cached = await _findCachedMeeting(
-      accountId: accountId,
+      accountId: resolvedAccountId,
       icsData: icsData,
       meetingStart: meetingStart,
     );
@@ -1245,17 +1306,20 @@ class CalendarRepositoryImpl implements CalendarRepository {
   /// The meeting behind an event id — from the cache when it is there, else
   /// from the provider, since the calendar only keeps a few weeks warm and a
   /// meeting further out is exactly the kind somebody forwards.
-  Future<_ForwardableMeeting?> _forwardableFromEvent(String eventId) async {
-    final accountId = _accountId;
-    if (accountId != null) {
+  Future<_ForwardableMeeting?> _forwardableFromEvent(
+    String eventId, {
+    String? accountId,
+  }) async {
+    final resolvedAccountId = accountId ?? _accountId;
+    if (resolvedAccountId != null) {
       final cached = await _localDatasource.getCachedEventById(
-        accountId: accountId,
+        accountId: resolvedAccountId,
         eventId: eventId,
       );
       if (cached != null) return _forwardableFromCalendarEvent(cached);
     }
 
-    final ds = _accountManager.calendarDatasource;
+    final ds = _datasourceFor(accountId);
     if (ds == null) return null;
     final fetched = await ds.getCalendarEvent(id: eventId);
     return _forwardableFromCalendarEvent(fetched);
@@ -1368,23 +1432,24 @@ class CalendarRepositoryImpl implements CalendarRepository {
   @override
   Future<Either<Failure, void>> cancelCalendarEvent({
     required String eventId,
+    String? accountId,
   }) async {
-    final ds = _accountManager.calendarDatasource;
+    final ds = _datasourceFor(accountId);
     if (ds == null) {
       return const Left(
         ServerFailure(message: 'Calendar is not available for this account type'),
       );
     }
 
-    final accountId = _accountId;
-    if (accountId != null) {
+    final resolvedAccountId = accountId ?? _accountId;
+    if (resolvedAccountId != null) {
       return _cacheFirstVoid(
-        accountId: accountId,
+        accountId: resolvedAccountId,
         targetId: eventId,
         opType: PendingCalendarOperationType.cancelEvent,
         payload: const {},
         apply: () => _localDatasource.deleteEvent(
-            accountId: accountId, eventId: eventId),
+            accountId: resolvedAccountId, eventId: eventId),
       );
     }
 
@@ -1407,18 +1472,19 @@ class CalendarRepositoryImpl implements CalendarRepository {
     required String eventId,
     String? seriesMasterId,
     required DateTime occurrenceStart,
+    String? accountId,
   }) async {
-    final ds = _accountManager.calendarDatasource;
+    final ds = _datasourceFor(accountId);
     if (ds == null) {
       return const Left(
         ServerFailure(message: 'Calendar is not available for this account type'),
       );
     }
 
-    final accountId = _accountId;
-    if (accountId != null) {
+    final resolvedAccountId = accountId ?? _accountId;
+    if (resolvedAccountId != null) {
       return _cacheFirstVoid(
-        accountId: accountId,
+        accountId: resolvedAccountId,
         targetId: eventId,
         opType: PendingCalendarOperationType.cancelSeries,
         payload: {
@@ -1428,7 +1494,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
         // Every cached occurrence goes, not just the clicked one — cancelling a
         // series that left its other weeks on screen would read as a failure.
         apply: () => _localDatasource.deleteSeries(
-          accountId: accountId,
+          accountId: resolvedAccountId,
           eventId: eventId,
           seriesMasterId: seriesMasterId,
         ),
@@ -1456,29 +1522,34 @@ class CalendarRepositoryImpl implements CalendarRepository {
   @override
   Future<Either<Failure, void>> declineCalendarEvent({
     required String eventId,
+    String? accountId,
   }) async {
-    final ds = _accountManager.calendarDatasource;
+    final ds = _datasourceFor(accountId);
     if (ds == null) {
       return const Left(
         ServerFailure(message: 'Calendar is not available for this account type'),
       );
     }
 
-    final userEmail = _accountManager.activeAccount?.emailAddress;
-    final accountId = _accountId;
-    final cached = accountId == null
+    // The resolved account's own address, not necessarily the active one's —
+    // Google's decline PATCHes `{'email': userEmail, ...}`, and sending the
+    // active account's address on a decline issued for a different account
+    // would answer the RSVP as the wrong person.
+    final userEmail = _resolveAccount(accountId)?.emailAddress;
+    final resolvedAccountId = accountId ?? _accountId;
+    final cached = resolvedAccountId == null
         ? null
         : await _localDatasource.getCachedEventById(
-            accountId: accountId, eventId: eventId);
+            accountId: resolvedAccountId, eventId: eventId);
 
-    if (accountId != null && cached != null) {
+    if (resolvedAccountId != null && cached != null) {
       return _cacheFirstVoid(
-        accountId: accountId,
+        accountId: resolvedAccountId,
         targetId: eventId,
         opType: PendingCalendarOperationType.declineEvent,
         payload: const {},
         apply: () => _localDatasource.upsertEvent(
-          accountId: accountId,
+          accountId: resolvedAccountId,
           event: applyRsvp(cached, MeetingInviteResponseType.decline),
         ),
       );
@@ -1505,24 +1576,25 @@ class CalendarRepositoryImpl implements CalendarRepository {
     required DateTime newEnd,
     String? timezone,
     String? message,
+    String? accountId,
   }) async {
-    final ds = _accountManager.calendarDatasource;
+    final ds = _datasourceFor(accountId);
     if (ds == null) {
       return const Left(
         ServerFailure(message: 'Calendar is not available for this account type'),
       );
     }
 
-    final userEmail = _accountManager.activeAccount?.emailAddress;
-    final accountId = _accountId;
-    final cached = accountId == null
+    final userEmail = _resolveAccount(accountId)?.emailAddress;
+    final resolvedAccountId = accountId ?? _accountId;
+    final cached = resolvedAccountId == null
         ? null
         : await _localDatasource.getCachedEventById(
-            accountId: accountId, eventId: eventId);
+            accountId: resolvedAccountId, eventId: eventId);
 
-    if (accountId != null && cached != null) {
+    if (resolvedAccountId != null && cached != null) {
       return _cacheFirstVoid(
-        accountId: accountId,
+        accountId: resolvedAccountId,
         targetId: eventId,
         opType: PendingCalendarOperationType.proposeNewTime,
         payload: {
@@ -1535,7 +1607,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
         // by accepting. What it does do is decline our copy, which is what the
         // cache reflects until they answer.
         apply: () => _localDatasource.upsertEvent(
-          accountId: accountId,
+          accountId: resolvedAccountId,
           event: applyRsvp(cached, MeetingInviteResponseType.decline),
         ),
       );

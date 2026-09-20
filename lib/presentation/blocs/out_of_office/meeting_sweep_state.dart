@@ -23,10 +23,6 @@ enum MeetingSweepStatus {
   /// [MeetingSweepState.results] holds a per-meeting outcome.
   done,
 
-  /// The account being edited is not the account currently active elsewhere
-  /// in the app — see [meeting_sweep_cubit.dart]. Nothing was fetched.
-  accountMismatch,
-
   error,
 }
 

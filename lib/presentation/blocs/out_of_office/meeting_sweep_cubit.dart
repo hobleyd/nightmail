@@ -4,7 +4,6 @@ import '../../../domain/entities/calendar_event.dart';
 import '../../../domain/usecases/cancel_calendar_event.dart';
 import '../../../domain/usecases/decline_calendar_event.dart';
 import '../../../domain/usecases/get_calendar_events.dart';
-import '../../../infrastructure/accounts/account_manager.dart';
 import 'meeting_sweep_state.dart';
 
 /// Finds the meetings an account is on the hook for during an Out of Office
@@ -18,30 +17,29 @@ import 'meeting_sweep_state.dart';
 /// pre-selected — rather than offering one "clear my calendar" action that
 /// would cancel other people's meetings on the strength of a single toggle.
 ///
-/// [CalendarRepository] is bound entirely to whatever account is currently
-/// *active* elsewhere in the app (`AccountManager.activeAccount`) — it has no
-/// per-call account parameter, unlike [OutOfOfficeRepository], which is
-/// genuinely account-scoped. So this cubit refuses to run at all when the
-/// account the Out of Office screen is editing is not the active one: there
-/// is no safe way to fetch or mutate a *different* account's calendar through
-/// this repository, and silently acting on the wrong mailbox's meetings is
-/// worse than not offering the feature that save.
+/// [load] passes its `accountId` straight through to `CalendarRepository` on
+/// every call, so this works for whichever account Out of Office is being
+/// edited for — not just the one active elsewhere in the app. An id that
+/// names no signed-in account (the mailbox was removed between opening
+/// Settings and saving, say) comes back from the repository as a
+/// [ServerFailure], which [load] reports the same as any other fetch error.
 class MeetingSweepCubit extends Cubit<MeetingSweepState> {
   MeetingSweepCubit({
     required GetCalendarEvents getCalendarEvents,
     required DeclineCalendarEvent declineCalendarEvent,
     required CancelCalendarEvent cancelCalendarEvent,
-    required AccountManager accountManager,
   }) : _getEvents = getCalendarEvents,
        _decline = declineCalendarEvent,
        _cancel = cancelCalendarEvent,
-       _accountManager = accountManager,
        super(const MeetingSweepState());
 
   final GetCalendarEvents _getEvents;
   final DeclineCalendarEvent _decline;
   final CancelCalendarEvent _cancel;
-  final AccountManager _accountManager;
+
+  /// Set by [load] and reused by [confirm] — every decline/cancel in a sweep
+  /// targets the same account the meetings were fetched for.
+  String? _accountId;
 
   /// Fetches the meetings in [start, end] that need a decision: accepted
   /// invites and meetings the user organizes. Occurrences of a recurring
@@ -53,17 +51,7 @@ class MeetingSweepCubit extends Cubit<MeetingSweepState> {
     required DateTime start,
     required DateTime end,
   }) async {
-    if (_accountManager.activeAccount?.id != accountId) {
-      emit(
-        MeetingSweepState(
-          status: MeetingSweepStatus.accountMismatch,
-          windowStart: start,
-          windowEnd: end,
-        ),
-      );
-      return;
-    }
-
+    _accountId = accountId;
     emit(
       MeetingSweepState(
         status: MeetingSweepStatus.loading,
@@ -73,7 +61,11 @@ class MeetingSweepCubit extends Cubit<MeetingSweepState> {
     );
 
     final result = await _getEvents(
-      GetCalendarEventsParams(startDateTime: start, endDateTime: end),
+      GetCalendarEventsParams(
+        startDateTime: start,
+        endDateTime: end,
+        accountId: accountId,
+      ),
     );
     if (isClosed) return;
 
@@ -143,6 +135,7 @@ class MeetingSweepCubit extends Cubit<MeetingSweepState> {
   /// what actually happened to each meeting so the confirmation can say so.
   Future<void> confirm() async {
     if (state.status != MeetingSweepStatus.ready) return;
+    final accountId = _accountId;
     final toDecline = state.accepted.where(
       (e) => state.selectedIds.contains(e.id),
     );
@@ -159,7 +152,7 @@ class MeetingSweepCubit extends Cubit<MeetingSweepState> {
     final results = <MeetingSweepResult>[];
     for (final event in toDecline) {
       final result = await _decline(
-        DeclineCalendarEventParams(eventId: event.id),
+        DeclineCalendarEventParams(eventId: event.id, accountId: accountId),
       );
       results.add(
         result.fold(
@@ -181,7 +174,7 @@ class MeetingSweepCubit extends Cubit<MeetingSweepState> {
     }
     for (final event in toCancel) {
       final result = await _cancel(
-        CancelCalendarEventParams(eventId: event.id),
+        CancelCalendarEventParams(eventId: event.id, accountId: accountId),
       );
       results.add(
         result.fold(

@@ -11,10 +11,6 @@ import '../../blocs/out_of_office/meeting_sweep_state.dart';
 /// Offered right after Out of Office is switched on and saved: lists the
 /// meetings the account is either attending or running during that window and
 /// lets the user decline/cancel the ones they pick before anything is sent.
-///
-/// Only ever shown when the account being edited is the one currently active
-/// elsewhere in the app — see [MeetingSweepCubit] for why the calendar side
-/// cannot safely act on any other account.
 Future<void> showMeetingSweepDialog(
   BuildContext context, {
   required String accountId,
@@ -55,14 +51,6 @@ class _MeetingSweepDialog extends StatelessWidget {
         return const SizedBox(
           height: 120,
           child: Center(child: CircularProgressIndicator()),
-        );
-      case MeetingSweepStatus.accountMismatch:
-        return const _Message(
-          icon: Icons.info_outline_rounded,
-          text:
-              'This account is not the one currently active in the app, so '
-              'meetings cannot be checked from here. Switch to this account '
-              'first and turn Out of Office on again to use this.',
         );
       case MeetingSweepStatus.error:
         return _Message(
@@ -219,7 +207,6 @@ class _MeetingSweepDialog extends StatelessWidget {
               );
             case MeetingSweepStatus.done:
             case MeetingSweepStatus.empty:
-            case MeetingSweepStatus.accountMismatch:
             case MeetingSweepStatus.error:
               return TextButton(
                 onPressed: () => Navigator.of(context).pop(),

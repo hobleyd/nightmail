@@ -12,15 +12,22 @@ class DeclineCalendarEvent implements UseCase<void, DeclineCalendarEventParams> 
 
   @override
   Future<Either<Failure, void>> call(DeclineCalendarEventParams params) {
-    return _repository.declineCalendarEvent(eventId: params.eventId);
+    return _repository.declineCalendarEvent(
+      eventId: params.eventId,
+      accountId: params.accountId,
+    );
   }
 }
 
 class DeclineCalendarEventParams extends Equatable {
-  const DeclineCalendarEventParams({required this.eventId});
+  const DeclineCalendarEventParams({required this.eventId, this.accountId});
 
   final String eventId;
 
+  /// The account this event belongs to, or null for whichever account is
+  /// active elsewhere in the app. See [CalendarRepository]'s class doc.
+  final String? accountId;
+
   @override
-  List<Object?> get props => [eventId];
+  List<Object?> get props => [eventId, accountId];
 }

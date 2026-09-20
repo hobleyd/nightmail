@@ -12,17 +12,24 @@ class CancelCalendarEvent implements UseCase<void, CancelCalendarEventParams> {
 
   @override
   Future<Either<Failure, void>> call(CancelCalendarEventParams params) {
-    return _repository.cancelCalendarEvent(eventId: params.eventId);
+    return _repository.cancelCalendarEvent(
+      eventId: params.eventId,
+      accountId: params.accountId,
+    );
   }
 }
 
 class CancelCalendarEventParams extends Equatable {
-  const CancelCalendarEventParams({required this.eventId});
+  const CancelCalendarEventParams({required this.eventId, this.accountId});
 
   final String eventId;
 
+  /// The account this event belongs to, or null for whichever account is
+  /// active elsewhere in the app. See [CalendarRepository]'s class doc.
+  final String? accountId;
+
   @override
-  List<Object?> get props => [eventId];
+  List<Object?> get props => [eventId, accountId];
 }
 
 class CancelCalendarEventSeries

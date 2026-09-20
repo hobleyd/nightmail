@@ -276,6 +276,68 @@ void main() {
       expect(result.isRight(), isTrue);
       result.fold((_) => fail('Expected Right'), (events) => expect(events, isEmpty));
     });
+
+    test('fetches and caches a non-active account under its own id',
+        () async {
+      const other = GmailAccount(
+        id: 'acct-2',
+        displayName: 'Other',
+        emailAddress: 'other@example.com',
+      );
+      when(mockAccountManager.activeAccount).thenReturn(const GmailAccount(
+        id: 'acct-1',
+        displayName: 'Test',
+        emailAddress: 'me@example.com',
+      ));
+      when(mockAccountManager.accountById('acct-2')).thenReturn(other);
+      when(mockAccountManager.buildCalendarDatasourceForAccount(other))
+          .thenReturn(mockDatasource);
+      when(mockDatasource.getCalendarEvents(
+        startDateTime: anyNamed('startDateTime'),
+        endDateTime: anyNamed('endDateTime'),
+      )).thenAnswer((_) async => [_tEventModel]);
+
+      final result = await repository.getCalendarEvents(
+        startDateTime: _tStart,
+        endDateTime: _tEnd,
+        accountId: 'acct-2',
+      );
+
+      expect(result.isRight(), isTrue);
+      verify(mockLocal.cacheEvents(
+        accountId: 'acct-2',
+        windowStart: anyNamed('windowStart'),
+        windowEnd: anyNamed('windowEnd'),
+        events: anyNamed('events'),
+      )).called(1);
+      verify(mockReconciler.reconcile(
+        accountId: 'acct-2',
+        events: anyNamed('events'),
+      )).called(1);
+    });
+
+    test('an unknown account id fails rather than falling back to the '
+        'active account', () async {
+      when(mockAccountManager.activeAccount).thenReturn(const GmailAccount(
+        id: 'acct-1',
+        displayName: 'Test',
+        emailAddress: 'me@example.com',
+      ));
+      when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+      when(mockAccountManager.accountById('gone')).thenReturn(null);
+
+      final result = await repository.getCalendarEvents(
+        startDateTime: _tStart,
+        endDateTime: _tEnd,
+        accountId: 'gone',
+      );
+
+      expect(result.isLeft(), isTrue);
+      verifyNever(mockDatasource.getCalendarEvents(
+        startDateTime: anyNamed('startDateTime'),
+        endDateTime: anyNamed('endDateTime'),
+      ));
+    });
   });
 
   group('CalendarRepositoryImpl.checkAttendeesAvailability', () {
@@ -1153,6 +1215,116 @@ END:VCALENDAR''';
         payload: anyNamed('payload'),
       ));
     });
+
+    test('targets a non-active account, caching and queueing under its id',
+        () async {
+      // The Out of Office meeting sweep edits whichever account Settings has
+      // open, independent of the one active in the mail list — this is the
+      // path that lets it decline that account's meeting rather than the
+      // active account's.
+      const other = GmailAccount(
+        id: 'acct-2',
+        displayName: 'Other',
+        emailAddress: 'other@example.com',
+      );
+      when(mockAccountManager.activeAccount).thenReturn(const GmailAccount(
+        id: 'acct-1',
+        displayName: 'Test',
+        emailAddress: 'me@example.com',
+      ));
+      when(mockAccountManager.accountById('acct-2')).thenReturn(other);
+      when(mockAccountManager.buildCalendarDatasourceForAccount(other))
+          .thenReturn(mockDatasource);
+      when(mockLocal.getCachedEventById(
+        accountId: 'acct-2',
+        eventId: 'event-1',
+      )).thenAnswer((_) async => _tEventModel);
+
+      final result = await repository.declineCalendarEvent(
+        eventId: 'event-1',
+        accountId: 'acct-2',
+      );
+
+      expect(result.isRight(), isTrue);
+      verify(mockLocal.upsertEvent(
+        accountId: 'acct-2',
+        event: anyNamed('event'),
+      )).called(1);
+      verify(mockPendingOps.enqueueCalendarOperation(
+        accountId: 'acct-2',
+        targetId: 'event-1',
+        opType: PendingCalendarOperationType.declineEvent,
+        payload: anyNamed('payload'),
+      )).called(1);
+      // Never touches the active account's cache or queue.
+      verifyNever(mockLocal.upsertEvent(
+        accountId: 'acct-1',
+        event: anyNamed('event'),
+      ));
+    });
+
+    test('uses the resolved account\'s own address, not the active one\'s',
+        () async {
+      // Google's decline PATCHes {'email': userEmail, ...} — sending the
+      // active account's address on a cross-account decline would answer the
+      // RSVP as the wrong person.
+      const other = GmailAccount(
+        id: 'acct-2',
+        displayName: 'Other',
+        emailAddress: 'other@example.com',
+      );
+      when(mockAccountManager.activeAccount).thenReturn(const GmailAccount(
+        id: 'acct-1',
+        displayName: 'Test',
+        emailAddress: 'me@example.com',
+      ));
+      when(mockAccountManager.accountById('acct-2')).thenReturn(other);
+      when(mockAccountManager.buildCalendarDatasourceForAccount(other))
+          .thenReturn(mockDatasource);
+      when(mockLocal.getCachedEventById(
+        accountId: 'acct-2',
+        eventId: 'nope',
+      )).thenAnswer((_) async => null);
+      when(mockDatasource.declineCalendarEvent(
+        eventId: anyNamed('eventId'),
+        userEmail: anyNamed('userEmail'),
+      )).thenAnswer((_) async {});
+
+      await repository.declineCalendarEvent(
+        eventId: 'nope',
+        accountId: 'acct-2',
+      );
+
+      verify(mockDatasource.declineCalendarEvent(
+              eventId: 'nope', userEmail: 'other@example.com'))
+          .called(1);
+    });
+
+    test('an unknown account id fails rather than falling back to the '
+        'active account', () async {
+      when(mockAccountManager.activeAccount).thenReturn(const GmailAccount(
+        id: 'acct-1',
+        displayName: 'Test',
+        emailAddress: 'me@example.com',
+      ));
+      when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+      when(mockAccountManager.accountById('gone')).thenReturn(null);
+
+      final result = await repository.declineCalendarEvent(
+        eventId: 'event-1',
+        accountId: 'gone',
+      );
+
+      expect(result.isLeft(), isTrue);
+      result.fold(
+        (failure) => expect(failure, isA<ServerFailure>()),
+        (_) => fail('Expected Left'),
+      );
+      verifyNever(mockDatasource.declineCalendarEvent(
+        eventId: anyNamed('eventId'),
+        userEmail: anyNamed('userEmail'),
+      ));
+    });
   });
 
   group('CalendarRepositoryImpl.cancelCalendarEvent', () {
@@ -1190,6 +1362,64 @@ END:VCALENDAR''';
         eventId: 'event-1',
         seriesMasterId: 'master-1',
       )).called(1);
+    });
+
+    test('targets a non-active account, caching and queueing under its id',
+        () async {
+      const other = GmailAccount(
+        id: 'acct-2',
+        displayName: 'Other',
+        emailAddress: 'other@example.com',
+      );
+      when(mockAccountManager.activeAccount).thenReturn(const GmailAccount(
+        id: 'acct-1',
+        displayName: 'Test',
+        emailAddress: 'me@example.com',
+      ));
+      when(mockAccountManager.accountById('acct-2')).thenReturn(other);
+      when(mockAccountManager.buildCalendarDatasourceForAccount(other))
+          .thenReturn(mockDatasource);
+
+      final result = await repository.cancelCalendarEvent(
+        eventId: 'event-1',
+        accountId: 'acct-2',
+      );
+
+      expect(result.isRight(), isTrue);
+      verify(mockLocal.deleteEvent(accountId: 'acct-2', eventId: 'event-1'))
+          .called(1);
+      verify(mockPendingOps.enqueueCalendarOperation(
+        accountId: 'acct-2',
+        targetId: 'event-1',
+        opType: PendingCalendarOperationType.cancelEvent,
+        payload: anyNamed('payload'),
+      )).called(1);
+      verifyNever(mockLocal.deleteEvent(
+          accountId: 'acct-1', eventId: anyNamed('eventId')));
+    });
+
+    test('an unknown account id fails rather than falling back to the '
+        'active account', () async {
+      when(mockAccountManager.activeAccount).thenReturn(const GmailAccount(
+        id: 'acct-1',
+        displayName: 'Test',
+        emailAddress: 'me@example.com',
+      ));
+      when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+      when(mockAccountManager.accountById('gone')).thenReturn(null);
+
+      final result = await repository.cancelCalendarEvent(
+        eventId: 'event-1',
+        accountId: 'gone',
+      );
+
+      expect(result.isLeft(), isTrue);
+      verifyNever(mockDatasource.cancelCalendarEvent(
+          eventId: anyNamed('eventId')));
+      verifyNever(mockLocal.deleteEvent(
+        accountId: anyNamed('accountId'),
+        eventId: anyNamed('eventId'),
+      ));
     });
   });
 

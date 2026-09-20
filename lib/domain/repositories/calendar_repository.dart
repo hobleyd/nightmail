@@ -9,12 +9,35 @@ import '../entities/meeting_room.dart';
 import '../usecases/create_calendar_event.dart';
 import '../usecases/update_calendar_event.dart';
 
+/// Every method here takes an optional [String] `accountId`. Null (the
+/// default on every call site but one) means "whichever account is active
+/// elsewhere in the app" — unchanged from before this parameter existed, and
+/// still how almost everything in the app calls this repository. Passing an
+/// explicit id targets a specific signed-in account instead, independent of
+/// which one happens to be active; an id that names no signed-in account
+/// fails with a [ServerFailure] rather than silently falling back to the
+/// active one.
+///
+/// `MeetingSweepCubit` (the Out of Office "decline/cancel my meetings"
+/// sweep) is the one caller that routinely passes an explicit id: it acts on
+/// whichever account Out of Office is being edited for, which the Settings
+/// screen lets you pick independently of the account active in the mail
+/// list.
+///
+/// The one thing an [accountId] does *not* steer is outgoing mail sent as a
+/// side effect of a mutation (a changed-guest notice, a counter-proposal, a
+/// forwarded invitation) — those still go out through the *active* account's
+/// mailbox, because there is no per-account email datasource to route them
+/// through instead. See the doc comments on [updateCalendarEvent],
+/// [proposeNewTimeFromEmail], [forwardMeetingFromEmail] and
+/// [forwardCalendarEvent] for where that applies.
 abstract interface class CalendarRepository {
   /// Fetches events from the provider and refreshes the local cache for the
   /// same range, so the next launch can paint that range from disk.
   Future<Either<Failure, List<CalendarEvent>>> getCalendarEvents({
     required DateTime startDateTime,
     required DateTime endDateTime,
+    String? accountId,
   });
 
   /// Locally cached events overlapping the range, without touching the network.
@@ -26,6 +49,7 @@ abstract interface class CalendarRepository {
   Future<Either<Failure, List<CalendarEvent>>> getCachedCalendarEvents({
     required DateTime startDateTime,
     required DateTime endDateTime,
+    String? accountId,
   });
 
   /// Fetches a single event by id. Used to load a recurring series' master
@@ -33,14 +57,22 @@ abstract interface class CalendarRepository {
   /// series from a clicked occurrence.
   Future<Either<Failure, CalendarEvent>> getCalendarEvent({
     required String id,
+    String? accountId,
   });
 
   Future<Either<Failure, CalendarEvent>> createCalendarEvent({
     required CreateCalendarEventParams params,
+    String? accountId,
   });
 
+  /// [accountId] only steers which calendar the update is applied to. A save
+  /// that notifies only the changed guests on a provider that cannot do that
+  /// natively (see [MeetingNotifyScope.changedAttendeesOnly]) still emails
+  /// them through the *active* account's mailbox regardless of [accountId] —
+  /// there is no per-account email datasource to send them through instead.
   Future<Either<Failure, CalendarEvent>> updateCalendarEvent({
     required UpdateCalendarEventParams params,
+    String? accountId,
   });
 
   Future<Either<Failure, void>> respondToMeetingInvite({
@@ -49,8 +81,13 @@ abstract interface class CalendarRepository {
     String? icsData,
     DateTime? meetingStart,
     String? message,
+    String? accountId,
   });
 
+  /// [accountId] steers which calendar this is applied to. The counter
+  /// proposal itself, when the provider needs one emailed rather than sent
+  /// natively, still goes out through the *active* account's mailbox — see
+  /// the class doc.
   Future<Either<Failure, void>> proposeNewTimeFromEmail({
     required String emailId,
     required DateTime newStart,
@@ -58,17 +95,20 @@ abstract interface class CalendarRepository {
     String? icsData,
     DateTime? meetingStart,
     String? message,
+    String? accountId,
   });
 
   Future<Either<Failure, void>> removeMeetingFromCalendar({
     required String emailId,
     String? icsData,
     DateTime? meetingStart,
+    String? accountId,
   });
 
   Future<Either<Failure, void>> cancelMeetingFromEmail({
     required String emailId,
     DateTime? meetingStart,
+    String? accountId,
   });
 
   /// Moves a meeting we organize to the time an attendee proposed, re-issuing
@@ -79,6 +119,7 @@ abstract interface class CalendarRepository {
     required DateTime newEnd,
     String? icsData,
     DateTime? meetingStart,
+    String? accountId,
   });
 
   /// Forwards a meeting the user was invited to on to [toAddresses].
@@ -92,12 +133,17 @@ abstract interface class CalendarRepository {
   /// Network-first and never queued: it emails people, and a blind replay would
   /// invite them twice. Offline it fails rather than waiting, like every other
   /// mutation here that sends mail.
+  ///
+  /// [accountId] steers which calendar/provider forward is attempted first.
+  /// The emailed fallback, when it is reached, still goes out through the
+  /// *active* account's mailbox — see the class doc.
   Future<Either<Failure, MeetingForwardMode>> forwardMeetingFromEmail({
     required String emailId,
     required List<String> toAddresses,
     String? icsData,
     DateTime? meetingStart,
     String? comment,
+    String? accountId,
   });
 
   /// [forwardMeetingFromEmail] for a meeting opened from the calendar rather
@@ -106,20 +152,24 @@ abstract interface class CalendarRepository {
     required String eventId,
     required List<String> toAddresses,
     String? comment,
+    String? accountId,
   });
 
   Future<Either<Failure, void>> cancelCalendarEvent({
     required String eventId,
+    String? accountId,
   });
 
   Future<Either<Failure, void>> cancelCalendarEventSeries({
     required String eventId,
     String? seriesMasterId,
     required DateTime occurrenceStart,
+    String? accountId,
   });
 
   Future<Either<Failure, void>> declineCalendarEvent({
     required String eventId,
+    String? accountId,
   });
 
   Future<Either<Failure, void>> proposeNewTime({
@@ -128,6 +178,7 @@ abstract interface class CalendarRepository {
     required DateTime newEnd,
     String? timezone,
     String? message,
+    String? accountId,
   });
 
   /// Free/busy for [emails] over the day containing [start].

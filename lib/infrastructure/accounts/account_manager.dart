@@ -43,9 +43,9 @@ class AccountManager {
     required AccountStorage accountStorage,
     required FlutterSecureStorage secureStorage,
     required OAuthClientIdStorage clientIdStorage,
-  })  : _accountStorage = accountStorage,
-        _secureStorage = secureStorage,
-        _clientIdStorage = clientIdStorage;
+  }) : _accountStorage = accountStorage,
+       _secureStorage = secureStorage,
+       _clientIdStorage = clientIdStorage;
 
   final AccountStorage _accountStorage;
   final FlutterSecureStorage _secureStorage;
@@ -212,14 +212,16 @@ class AccountManager {
     String tenantId,
     String credentialOwnerId,
     String? mailboxAddress,
-  }) _microsoftAuthConfig(MicrosoftAccount account) {
+  })
+  _microsoftAuthConfig(MicrosoftAccount account) {
     final ownerId = account.parentAccountId ?? account.id;
     return (
       tokenStorage: TokenStorage(_secureStorage, storageKey: 'token_$ownerId'),
       tenantId: account.tenantId,
       credentialOwnerId: ownerId,
-      mailboxAddress:
-          account.parentAccountId != null ? account.emailAddress : null,
+      mailboxAddress: account.parentAccountId != null
+          ? account.emailAddress
+          : null,
     );
   }
 
@@ -233,13 +235,15 @@ class AccountManager {
   /// Settings "Profile" section. Returns null for IMAP accounts, an unknown
   /// account ID, or if the underlying API call fails (e.g. scope not granted).
   Future<
-      ({
-        String firstName,
-        String lastName,
-        String jobTitle,
-        String phone,
-        String mobile
-      })?> fetchOwnProfileFields(String accountId) async {
+    ({
+      String firstName,
+      String lastName,
+      String jobTitle,
+      String phone,
+      String mobile,
+    })?
+  >
+  fetchOwnProfileFields(String accountId) async {
     final account = _accounts.cast<Account?>().firstWhere(
       (a) => a?.id == accountId,
       orElse: () => null,
@@ -247,11 +251,13 @@ class AccountManager {
     try {
       switch (account) {
         case MicrosoftAccount():
-          return await directoryDatasourceForAccount(accountId)
-              ?.fetchOwnSignatureProfile();
+          return await directoryDatasourceForAccount(
+            accountId,
+          )?.fetchOwnSignatureProfile();
         case GmailAccount():
-          return await contactsDatasourceForAccount(accountId)
-              ?.fetchOwnSignatureProfile();
+          return await contactsDatasourceForAccount(
+            accountId,
+          )?.fetchOwnSignatureProfile();
         case ImapAccount():
         case null:
           return null;
@@ -279,10 +285,10 @@ class AccountManager {
   /// own, and the parent account is already in the list.
   List<Account> cloudDriveCandidates(CloudDriveProvider provider) {
     bool matches(Account a) => switch (provider) {
-          CloudDriveProvider.microsoft =>
-            a is MicrosoftAccount && a.parentAccountId == null,
-          CloudDriveProvider.google => a is GmailAccount,
-        };
+      CloudDriveProvider.microsoft =>
+        a is MicrosoftAccount && a.parentAccountId == null,
+      CloudDriveProvider.google => a is GmailAccount,
+    };
     final active = activeAccount;
     return [
       if (active != null && matches(active)) active,
@@ -298,7 +304,9 @@ class AccountManager {
   /// no separate flag here to drift out of step with the real grant.
   Future<bool> hasCloudDriveAccess(String accountId) async {
     final account = accountById(accountId);
-    final authService = account == null ? null : _buildOAuthServiceForAccount(account);
+    final authService = account == null
+        ? null
+        : _buildOAuthServiceForAccount(account);
     if (authService == null) return false;
     final token = await authService.getStoredToken();
     if (token == null) return false;
@@ -325,8 +333,10 @@ class AccountManager {
     // other interactive paths do.
     await _loadAndMigrateClientIds();
 
-    final tokenStorage =
-        TokenStorage(_secureStorage, storageKey: 'token_${account.id}');
+    final tokenStorage = TokenStorage(
+      _secureStorage,
+      storageKey: 'token_${account.id}',
+    );
     final AuthService authService;
     switch (account) {
       case MicrosoftAccount():
@@ -401,8 +411,10 @@ class AccountManager {
       clientId: _googleClientId ?? AppConfig.gmailClientId,
       clientSecret: _googleClientSecret ?? '',
       redirectUri: AppConfig.gmailRedirectUri,
-      tokenStorage:
-          TokenStorage(_secureStorage, storageKey: 'token_${account.id}'),
+      tokenStorage: TokenStorage(
+        _secureStorage,
+        storageKey: 'token_${account.id}',
+      ),
       accountEmail: account.emailAddress,
       extraScopes: const [GmailAuthService.fullMailScope],
     );
@@ -429,13 +441,16 @@ class AccountManager {
     // the shared account directly reads no token at all, which would report
     // "permission needed" forever and then re-authenticate the wrong mailbox.
     final account = _credentialOwnerFor(accountById(accountId));
-    final authService = account == null ? null : _buildOAuthServiceForAccount(account);
+    final authService = account == null
+        ? null
+        : _buildOAuthServiceForAccount(account);
     if (authService == null) return false;
     final token = await authService.getStoredToken();
     if (token == null) return false;
     return switch (account) {
-      MicrosoftAccount() =>
-        MicrosoftAuthService.grantsMailboxSettingsWrite(token.scope),
+      MicrosoftAccount() => MicrosoftAuthService.grantsMailboxSettingsWrite(
+        token.scope,
+      ),
       GmailAccount() => GmailAuthService.grantsMailSettingsAccess(token.scope),
       _ => false,
     };
@@ -473,8 +488,10 @@ class AccountManager {
     // other interactive paths do.
     await _loadAndMigrateClientIds();
 
-    final tokenStorage =
-        TokenStorage(_secureStorage, storageKey: 'token_${account.id}');
+    final tokenStorage = TokenStorage(
+      _secureStorage,
+      storageKey: 'token_${account.id}',
+    );
     final AuthService authService;
     switch (account) {
       case MicrosoftAccount():
@@ -510,8 +527,9 @@ class AccountManager {
     }
 
     return switch (account) {
-      MicrosoftAccount() =>
-        MicrosoftAuthService.grantsMailboxSettingsWrite(token.scope),
+      MicrosoftAccount() => MicrosoftAuthService.grantsMailboxSettingsWrite(
+        token.scope,
+      ),
       GmailAccount() => GmailAuthService.grantsMailSettingsAccess(token.scope),
       ImapAccount() => false,
     };
@@ -551,8 +569,10 @@ class AccountManager {
               clientId: _googleClientId ?? AppConfig.gmailClientId,
               clientSecret: _googleClientSecret ?? '',
               redirectUri: AppConfig.gmailRedirectUri,
-              tokenStorage: TokenStorage(_secureStorage,
-                  storageKey: 'token_${account.id}'),
+              tokenStorage: TokenStorage(
+                _secureStorage,
+                storageKey: 'token_${account.id}',
+              ),
               accountEmail: account.emailAddress,
             ),
             onAuthFailure: () => _authFailureController.add(account.id),
@@ -597,8 +617,10 @@ class AccountManager {
     final account = activeAccount;
     if (account is! MicrosoftAccount) return;
     try {
-      final perAccount =
-          TokenStorage(_secureStorage, storageKey: 'token_${account.id}');
+      final perAccount = TokenStorage(
+        _secureStorage,
+        storageKey: 'token_${account.id}',
+      );
       if (await perAccount.loadToken() != null) return;
 
       // Per-account token missing — try the old single-account key.
@@ -632,6 +654,11 @@ class AccountManager {
       }
     }
     _googleClientSecret = await _clientIdStorage.loadGoogleClientSecret();
+    if (_googleClientSecret == null) {
+      const compiled = AppConfig.gmailClientSecret;
+      await _clientIdStorage.saveGoogleClientSecret(compiled);
+      _googleClientSecret = compiled;
+    }
   }
 
   /// Add a new account and make it the active account.
@@ -669,10 +696,7 @@ class AccountManager {
   /// found in the directory", which is fine, since re-authenticating is
   /// required either way before anything here can work.
   Future<({String displayName, bool hasAccess, bool needsReauth})?>
-      resolveSharedMailboxCandidate(
-    String parentAccountId,
-    String email,
-  ) async {
+  resolveSharedMailboxCandidate(String parentAccountId, String email) async {
     final ds = directoryDatasourceForAccount(parentAccountId);
     if (ds == null) return null;
 
@@ -744,7 +768,8 @@ class AccountManager {
 
   /// Cycle to the next account. Returns the newly active account.
   Future<Account> cycleToNextAccount() async {
-    if (_accounts.length < 2) throw StateError('Need at least 2 accounts to cycle');
+    if (_accounts.length < 2)
+      throw StateError('Need at least 2 accounts to cycle');
     _activeIndex = (_activeIndex + 1) % _accounts.length;
     await _accountStorage.saveActiveIndex(_activeIndex);
     _buildDatasourcesForActiveAccount();
@@ -880,27 +905,29 @@ class AccountManager {
     );
     return switch (account) {
       MicrosoftAccount() => MicrosoftAuthService(
-          clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
-          tenantId: account.tenantId,
-          redirectUri: AppConfig.microsoftRedirectUri,
-          tokenStorage: tokenStorage,
-        ),
+        clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
+        tenantId: account.tenantId,
+        redirectUri: AppConfig.microsoftRedirectUri,
+        tokenStorage: tokenStorage,
+      ),
       // The email is what lets a Workspace account pick up the room-directory
       // scope on re-auth; see GmailAuthService._requestedScopes.
       GmailAccount() => GmailAuthService(
-          clientId: _googleClientId ?? AppConfig.gmailClientId,
-          clientSecret: _googleClientSecret ?? '',
-          redirectUri: AppConfig.gmailRedirectUri,
-          tokenStorage: tokenStorage,
-          accountEmail: account.emailAddress,
-        ),
+        clientId: _googleClientId ?? AppConfig.gmailClientId,
+        clientSecret: _googleClientSecret ?? '',
+        redirectUri: AppConfig.gmailRedirectUri,
+        tokenStorage: tokenStorage,
+        accountEmail: account.emailAddress,
+      ),
       ImapAccount() => null,
     };
   }
 
   /// Re-authenticate an IMAP account by saving the supplied password.
   Future<void> reauthenticateImapAccount(
-      String accountId, String password) async {
+    String accountId,
+    String password,
+  ) async {
     final credStorage = ImapCredentialStorage(_secureStorage);
     await credStorage.savePassword(accountId, password);
     if (activeAccount?.id == accountId) {
@@ -920,12 +947,15 @@ class AccountManager {
           tokenStorage: cfg.tokenStorage,
         );
         return GraphApiDatasourceImpl(
-            mailboxAddress: cfg.mailboxAddress,
-            client: GraphHttpClient(
-          authService: authSvc,
-          onAuthFailure: () => _authFailureController.add(cfg.credentialOwnerId),
-          onAuthSuccess: () => _authSuccessController.add(cfg.credentialOwnerId),
-        ));
+          mailboxAddress: cfg.mailboxAddress,
+          client: GraphHttpClient(
+            authService: authSvc,
+            onAuthFailure: () =>
+                _authFailureController.add(cfg.credentialOwnerId),
+            onAuthSuccess: () =>
+                _authSuccessController.add(cfg.credentialOwnerId),
+          ),
+        );
 
       case GmailAccount():
         final tokenStorage = TokenStorage(
@@ -1015,8 +1045,10 @@ class AccountManager {
         );
         final httpClient = GraphHttpClient(
           authService: authSvc,
-          onAuthFailure: () => _authFailureController.add(cfg.credentialOwnerId),
-          onAuthSuccess: () => _authSuccessController.add(cfg.credentialOwnerId),
+          onAuthFailure: () =>
+              _authFailureController.add(cfg.credentialOwnerId),
+          onAuthSuccess: () =>
+              _authSuccessController.add(cfg.credentialOwnerId),
         );
         final ds = GraphApiDatasourceImpl(
           client: httpClient,
@@ -1104,8 +1136,10 @@ class AccountManager {
           mailboxAddress: cfg.mailboxAddress,
           client: GraphHttpClient(
             authService: authSvc,
-            onAuthFailure: () => _authFailureController.add(cfg.credentialOwnerId),
-            onAuthSuccess: () => _authSuccessController.add(cfg.credentialOwnerId),
+            onAuthFailure: () =>
+                _authFailureController.add(cfg.credentialOwnerId),
+            onAuthSuccess: () =>
+                _authSuccessController.add(cfg.credentialOwnerId),
           ),
         );
       case GmailAccount():
@@ -1154,8 +1188,10 @@ class AccountManager {
           mailboxAddress: cfg.mailboxAddress,
           client: GraphHttpClient(
             authService: authSvc,
-            onAuthFailure: () => _authFailureController.add(cfg.credentialOwnerId),
-            onAuthSuccess: () => _authSuccessController.add(cfg.credentialOwnerId),
+            onAuthFailure: () =>
+                _authFailureController.add(cfg.credentialOwnerId),
+            onAuthSuccess: () =>
+                _authSuccessController.add(cfg.credentialOwnerId),
           ),
         );
       case GmailAccount():
@@ -1219,8 +1255,10 @@ class AccountManager {
         final parent = accountById(parentId);
         return parent != null && await _hasCredentials(parent);
       case MicrosoftAccount() || GmailAccount():
-        final ts = TokenStorage(_secureStorage,
-            storageKey: 'token_${account.id}');
+        final ts = TokenStorage(
+          _secureStorage,
+          storageKey: 'token_${account.id}',
+        );
         final token = await ts.loadToken();
         if (token == null) return false;
         // An expired token with no refresh token cannot be renewed silently;

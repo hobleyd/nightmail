@@ -43,23 +43,30 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
 
     final storage = sl<OAuthClientIdStorage>();
     final storedId = await storage.loadMicrosoftClientId();
-    final initialId = storedId ??
+    final initialId =
+        storedId ??
         (AppConfig.microsoftClientId != 'YOUR_CLIENT_ID'
             ? AppConfig.microsoftClientId
             : null);
+    final storedTenantId = await storage.loadMicrosoftTenantId();
+    final initialTenantId = storedTenantId ?? AppConfig.microsoftTenantId;
 
     if (!mounted) return;
     final credentials = await showClientIdDialog(
       context,
       provider: 'Microsoft',
       helpText:
-          'Enter the Application (Client) ID from your Azure app registration (portal.azure.com).',
+          'Enter the Tenant ID and Application (Client) ID from your Azure app registration (portal.azure.com).',
       initialValue: initialId,
+      requireTenant: true,
+      initialTenant: initialTenantId,
     );
     if (credentials == null || !mounted) return;
 
     final clientId = credentials.clientId;
+    final tenantId = credentials.tenantId ?? AppConfig.microsoftTenantId;
     await storage.saveMicrosoftClientId(clientId);
+    await storage.saveMicrosoftTenantId(tenantId);
 
     setState(() {
       _isLoading = true;
@@ -70,13 +77,10 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
       const uuid = Uuid();
       final id = uuid.v4();
       final secureStorage = sl<FlutterSecureStorage>();
-      final tokenStorage = TokenStorage(
-        secureStorage,
-        storageKey: 'token_$id',
-      );
+      final tokenStorage = TokenStorage(secureStorage, storageKey: 'token_$id');
       final authService = MicrosoftAuthService(
         clientId: clientId,
-        tenantId: AppConfig.microsoftTenantId,
+        tenantId: tenantId,
         redirectUri: AppConfig.microsoftRedirectUri,
         tokenStorage: tokenStorage,
       );
@@ -84,14 +88,15 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
       await authService.signIn();
 
       final ds = GraphApiDatasourceImpl(
-          client: GraphHttpClient(authService: authService));
+        client: GraphHttpClient(authService: authService),
+      );
       final profile = await ds.fetchUserProfile();
 
       final account = MicrosoftAccount(
         id: id,
         displayName: profile.displayName,
         emailAddress: profile.email,
-        tenantId: AppConfig.microsoftTenantId,
+        tenantId: tenantId,
       );
 
       if (mounted) {
@@ -112,10 +117,12 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
     final storage = sl<OAuthClientIdStorage>();
     final storedId = await storage.loadGoogleClientId();
     final storedSecret = await storage.loadGoogleClientSecret();
-    final initialId = storedId ??
+    final initialId =
+        storedId ??
         (AppConfig.gmailClientId != 'YOUR_GOOGLE_CLIENT_ID'
             ? AppConfig.gmailClientId
             : null);
+    final initialSecret = storedSecret ?? AppConfig.gmailClientSecret;
 
     if (!mounted) return;
     final credentials = await showClientIdDialog(
@@ -125,7 +132,7 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
           'Enter the Client ID and Client Secret from your Google Cloud Console OAuth 2.0 app (console.cloud.google.com).',
       initialValue: initialId,
       requireSecret: true,
-      initialSecret: storedSecret,
+      initialSecret: initialSecret,
     );
     if (credentials == null || !mounted) return;
 
@@ -141,10 +148,7 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
       const uuid = Uuid();
       final id = uuid.v4();
       final secureStorage = sl<FlutterSecureStorage>();
-      final tokenStorage = TokenStorage(
-        secureStorage,
-        storageKey: 'token_$id',
-      );
+      final tokenStorage = TokenStorage(secureStorage, storageKey: 'token_$id');
       final authService = GmailAuthService(
         clientId: credentials.clientId,
         clientSecret: credentials.clientSecret!,
@@ -240,8 +244,11 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
                     const SizedBox(height: 12),
                     _ProviderButton(
                       label: 'IMAP / Other',
-                      icon: const Icon(Icons.email_outlined,
-                          color: Colors.white, size: 20),
+                      icon: const Icon(
+                        Icons.email_outlined,
+                        color: Colors.white,
+                        size: 20,
+                      ),
                       color: const Color(0xFF4B5563),
                       onTap: _showImapDialog,
                     ),
@@ -250,7 +257,9 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
                   if (_error != null)
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 10),
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
                       decoration: BoxDecoration(
                         color: c.errorBannerBg,
                         borderRadius: BorderRadius.circular(8),
@@ -258,8 +267,11 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
                       ),
                       child: Row(
                         children: [
-                          const Icon(Icons.error_outline_rounded,
-                              size: 16, color: Color(0xFFEF4444)),
+                          const Icon(
+                            Icons.error_outline_rounded,
+                            size: 16,
+                            color: Color(0xFFEF4444),
+                          ),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
@@ -351,7 +363,10 @@ class _ProviderButton extends StatelessWidget {
           children: [
             SizedBox(width: 20, height: 20, child: icon),
             const SizedBox(width: 12),
-            Text(label, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+            Text(
+              label,
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+            ),
           ],
         ),
       ),
@@ -499,7 +514,8 @@ class _ImapSetupDialogState extends State<_ImapSetupDialog> {
         TextFormField(
           controller: hostCtrl,
           decoration: InputDecoration(labelText: hostLabel),
-          validator: hostValidator ??
+          validator:
+              hostValidator ??
               (v) => v == null || v.isEmpty ? 'Enter $hostLabel' : null,
         ),
         const SizedBox(height: 8),
@@ -542,16 +558,16 @@ class _ImapSetupDialogState extends State<_ImapSetupDialog> {
               children: [
                 TextFormField(
                   controller: _emailCtrl,
-                  decoration:
-                      const InputDecoration(labelText: 'Email address'),
+                  decoration: const InputDecoration(labelText: 'Email address'),
                   keyboardType: TextInputType.emailAddress,
                   validator: (v) =>
                       v == null || v.isEmpty ? 'Enter your email' : null,
                 ),
                 const SizedBox(height: 16),
-                const Text('Incoming (IMAP)',
-                    style: TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w600)),
+                const Text(
+                  'Incoming (IMAP)',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
                 const SizedBox(height: 8),
                 _serverRow(
                   hostCtrl: _imapHostCtrl,
@@ -563,9 +579,10 @@ class _ImapSetupDialogState extends State<_ImapSetupDialog> {
                       v == null || v.isEmpty ? 'Enter IMAP server' : null,
                 ),
                 const SizedBox(height: 16),
-                const Text('Outgoing (SMTP)',
-                    style: TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w600)),
+                const Text(
+                  'Outgoing (SMTP)',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
                 const SizedBox(height: 8),
                 _serverRow(
                   hostCtrl: _smtpHostCtrl,
@@ -579,19 +596,19 @@ class _ImapSetupDialogState extends State<_ImapSetupDialog> {
                 const SizedBox(height: 16),
                 TextFormField(
                   controller: _passwordCtrl,
-                  decoration:
-                      const InputDecoration(labelText: 'App password'),
+                  decoration: const InputDecoration(labelText: 'App password'),
                   obscureText: true,
-                  validator: (v) => v == null || v.isEmpty
-                      ? 'Enter your app password'
-                      : null,
+                  validator: (v) =>
+                      v == null || v.isEmpty ? 'Enter your app password' : null,
                 ),
                 if (_error != null) ...[
                   const SizedBox(height: 12),
                   Text(
                     _error!,
                     style: const TextStyle(
-                        color: Color(0xFFEF4444), fontSize: 12),
+                      color: Color(0xFFEF4444),
+                      fontSize: 12,
+                    ),
                   ),
                 ],
               ],

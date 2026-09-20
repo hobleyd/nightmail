@@ -107,6 +107,9 @@ abstract interface class EmailRepository {
   /// Reports [id] as junk/spam.
   Future<Either<Failure, Unit>> reportJunk(String id);
 
+  /// Reports [id] as not junk (moves it back to the inbox).
+  Future<Either<Failure, Unit>> notJunk(String id);
+
   /// Deletes (moves to Deleted Items) an email by [id].
   ///
   /// [accountId] targets a specific, possibly-non-active account — see

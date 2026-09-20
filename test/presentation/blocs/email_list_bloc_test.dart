@@ -18,6 +18,7 @@ import 'package:nightmail/domain/usecases/get_email.dart';
 import 'package:nightmail/domain/usecases/get_emails.dart';
 import 'package:nightmail/domain/usecases/mark_email_as_read.dart';
 import 'package:nightmail/domain/usecases/move_email.dart';
+import 'package:nightmail/domain/usecases/not_junk.dart';
 import 'package:nightmail/domain/usecases/remove_conversation_from_folder.dart';
 import 'package:nightmail/domain/usecases/record_known_senders.dart';
 import 'package:nightmail/domain/usecases/report_junk.dart';
@@ -101,6 +102,7 @@ const _otherAccount = MicrosoftAccount(
   MoveEmail,
   RemoveConversationFromFolder,
   ReportJunk,
+  NotJunk,
   DeleteEmail,
   EmptyFolder,
   RecordKnownSenders,
@@ -165,6 +167,7 @@ void main() {
       moveEmail: mockMoveEmail,
       removeConversationFromFolder: mockRemoveConversationFromFolder,
       reportJunk: MockReportJunk(),
+      notJunk: MockNotJunk(),
       deleteEmail: mockDeleteEmail,
       emptyFolder: mockEmptyFolder,
       accountManager: fakeAccountManager,
@@ -1493,6 +1496,7 @@ void main() {
         moveEmail: mockMoveEmail,
         removeConversationFromFolder: mockRemoveConversationFromFolder,
         reportJunk: MockReportJunk(),
+        notJunk: MockNotJunk(),
         deleteEmail: MockDeleteEmail(),
         emptyFolder: mockEmptyFolder,
         accountManager: _FakeActiveAccountManager(),
@@ -1552,6 +1556,7 @@ void main() {
         moveEmail: mockMoveEmail,
         removeConversationFromFolder: mockRemoveConversationFromFolder,
         reportJunk: MockReportJunk(),
+        notJunk: MockNotJunk(),
         deleteEmail: MockDeleteEmail(),
         emptyFolder: mockEmptyFolder,
         accountManager: _FakeActiveAccountManager(),

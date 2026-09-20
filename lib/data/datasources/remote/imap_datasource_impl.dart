@@ -1900,6 +1900,41 @@ class ImapDatasourceImpl
     }
   }
 
+  @override
+  Future<String?> notJunk(String id) =>
+      withConnection(() => _notJunkInner(id));
+
+  /// The source mailbox is whatever [id] encodes — the Junk folder, in
+  /// practice, since this is only ever called on a message sitting there —
+  /// and the destination is always literally `INBOX`: unlike Junk/Trash/etc,
+  /// that name is guaranteed by the IMAP spec to exist on every server, so
+  /// there is no folder to look up first the way [_reportJunkInner] must for
+  /// Junk.
+  Future<String?> _notJunkInner(String id) async {
+    final separatorIdx = id.lastIndexOf(':');
+    final mailboxPath =
+        separatorIdx > 0 ? id.substring(0, separatorIdx) : 'INBOX';
+    final uid = int.tryParse(id.substring(separatorIdx + 1)) ?? 0;
+
+    try {
+      final client = await _getConnectedClient();
+      await _selectMailboxPath(client, mailboxPath);
+      final sequence = MessageSequence.fromId(uid, isUid: true);
+      await client.uidCopy(sequence, targetMailboxPath: 'INBOX');
+      await client.uidStore(
+        sequence,
+        [MessageFlags.deleted],
+        action: StoreAction.add,
+      );
+      await client.expunge();
+      return null;
+    } on ServerException {
+      rethrow;
+    } on ImapException catch (e) {
+      throw ServerException(message: e.message ?? 'IMAP error');
+    }
+  }
+
   Future<String?> _findDraftsPath(ImapClient client) async {
     try {
       final mailboxes = await client.listMailboxes(recursive: true);

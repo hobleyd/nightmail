@@ -139,6 +139,16 @@ final class EmailListJunkReported extends EmailListEvent {
   List<Object?> get props => [emailIds];
 }
 
+/// The Junk-folder counterpart to [EmailListJunkReported]: reports each of
+/// [emailIds] as not junk, moving it back to the inbox.
+final class EmailListNotJunkReported extends EmailListEvent {
+  const EmailListNotJunkReported({required this.emailIds});
+  final List<String> emailIds;
+
+  @override
+  List<Object?> get props => [emailIds];
+}
+
 final class EmailListCleared extends EmailListEvent {
   const EmailListCleared();
 }

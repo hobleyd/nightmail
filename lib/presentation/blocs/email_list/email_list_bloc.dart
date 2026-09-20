@@ -12,6 +12,7 @@ import '../../../domain/usecases/delete_email.dart';
 import '../../../domain/usecases/forget_cached_emails.dart';
 import '../../../domain/usecases/get_conversation_thread.dart';
 import '../../../domain/usecases/get_email.dart';
+import '../../../domain/usecases/not_junk.dart';
 import '../../../domain/usecases/report_junk.dart';
 import '../../../domain/usecases/search_emails.dart';
 import '../../../domain/usecases/train_spam_filter.dart';
@@ -42,6 +43,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     required MoveEmail moveEmail,
     required RemoveConversationFromFolder removeConversationFromFolder,
     required ReportJunk reportJunk,
+    required NotJunk notJunk,
     required DeleteEmail deleteEmail,
     required EmptyFolder emptyFolder,
     required AccountManager accountManager,
@@ -63,6 +65,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         _moveEmail = moveEmail,
         _removeConversationFromFolder = removeConversationFromFolder,
         _reportJunk = reportJunk,
+        _notJunk = notJunk,
         _deleteEmail = deleteEmail,
         _emptyFolder = emptyFolder,
         _accountManager = accountManager,
@@ -87,6 +90,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     on<EmailListEmailsBulkDeleted>(_onEmailsBulkDeleted);
     on<EmailListConversationDeleted>(_onConversationDeleted);
     on<EmailListJunkReported>(_onJunkReported);
+    on<EmailListNotJunkReported>(_onNotJunkReported);
     on<EmailListFolderEmptied>(_onFolderEmptied);
     on<EmailListCleared>(_onCleared);
     on<EmailListSearchModeActivated>(_onSearchModeActivated);
@@ -104,6 +108,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   final MoveEmail _moveEmail;
   final RemoveConversationFromFolder _removeConversationFromFolder;
   final ReportJunk _reportJunk;
+  final NotJunk _notJunk;
   final DeleteEmail _deleteEmail;
   final EmptyFolder _emptyFolder;
   final AccountManager _accountManager;
@@ -932,6 +937,67 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
           accountId: accountId,
           emails: junkEmails,
           isSpam: true,
+        ));
+        await _spamDbSyncService.enqueuePush(accountId);
+        unawaited(_outboxDrainService.drainForAccount(accountId));
+      }
+    }
+  }
+
+  /// Mirrors [_onJunkReported], but — unlike that direction — must filter to
+  /// messages the folder on screen actually holds first. Viewing Junk means
+  /// [EmailListEmailsMoved]'s cross-folder expansion is switched off (Junk is
+  /// itself one of the excluded folders), so a *conversation's* row here can
+  /// still carry the thread's Inbox/Sent copies alongside its Junk one; without
+  /// this guard `conv.allEmailIds` would hand a Sent message straight to
+  /// `notJunk`, which — being a move to the inbox — happily obliges.
+  Future<void> _onNotJunkReported(
+    EmailListNotJunkReported event,
+    Emitter<EmailListState> emit,
+  ) async {
+    final current = state;
+    if (current is! EmailListLoaded) return;
+    final folderId = current.currentFolderId;
+    final byId = {for (final e in current.emails) e.id: e};
+    final idsToNotJunk = event.emailIds
+        .where((id) => byId[id]?.isMovableFrom(folderId) ?? true)
+        .toList();
+    if (idsToNotJunk.isEmpty) return;
+
+    final ids = idsToNotJunk.toSet();
+    final notJunkEmails =
+        current.emails.where((e) => ids.contains(e.id)).toList();
+    emit(current.copyWith(
+      emails: current.emails.where((e) => !ids.contains(e.id)).toList(),
+    ));
+    final results = await Future.wait(
+      idsToNotJunk.map((id) => _notJunk(NotJunkParams(id: id))),
+    );
+    final failedIds = {
+      for (var i = 0; i < idsToNotJunk.length; i++)
+        if (results[i].isLeft()) idsToNotJunk[i],
+    };
+    if (failedIds.isNotEmpty) {
+      final after = state;
+      if (after is EmailListLoaded) {
+        final failedEmails =
+            notJunkEmails.where((e) => failedIds.contains(e.id)).toList();
+        emit(after.copyWith(
+          emails: [...after.emails, ...failedEmails],
+        ));
+      }
+    }
+    if (_accountManager.activeAccount is ImapAccount) {
+      final accountId = _accountManager.activeAccount?.id;
+      if (accountId != null && notJunkEmails.isNotEmpty) {
+        // Same ordering constraint as the junk direction: training must finish
+        // writing before enqueuePush's next read of it, and the push itself
+        // runs through the drain rather than directly, for the same one-live-
+        // connection reason documented on [_onJunkReported].
+        await _trainSpamFilter(TrainSpamFilterParams(
+          accountId: accountId,
+          emails: notJunkEmails,
+          isSpam: false,
         ));
         await _spamDbSyncService.enqueuePush(accountId);
         unawaited(_outboxDrainService.drainForAccount(accountId));

@@ -145,7 +145,8 @@ class EmailRepositoryImpl implements EmailRepository {
       for (final op in pendingOps)
         if (op.opType == PendingOperationType.delete ||
             op.opType == PendingOperationType.move ||
-            op.opType == PendingOperationType.junk)
+            op.opType == PendingOperationType.junk ||
+            op.opType == PendingOperationType.notJunk)
           op.emailId,
       ..._recentMutations.recentlyRemovedIds(accountId),
     };
@@ -557,6 +558,32 @@ class EmailRepositoryImpl implements EmailRepository {
         accountId: accountId,
         emailId: id,
         opType: PendingOperationType.junk,
+        payload: '{}',
+      );
+      _tombstoneRemoval(accountId, id);
+      await _localDatasource.deleteEmailFromCache(
+        accountId: accountId,
+        emailId: id,
+      );
+      unawaited(_outboxDrainService.drainForAccount(accountId));
+      return unit;
+    });
+  }
+
+  @override
+  Future<Either<Failure, Unit>> notJunk(String id) async {
+    final accountId = _accountManager.activeAccount?.id;
+    if (accountId == null) {
+      return _execute(() async {
+        await _accountManager.emailDatasource.notJunk(id);
+        return unit;
+      });
+    }
+    return _executeLocal(() async {
+      await _pendingOperations.enqueue(
+        accountId: accountId,
+        emailId: id,
+        opType: PendingOperationType.notJunk,
         payload: '{}',
       );
       _tombstoneRemoval(accountId, id);

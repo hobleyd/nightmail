@@ -1296,7 +1296,8 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
         for (final op in pendingOps)
           if (op.opType == PendingOperationType.delete ||
               op.opType == PendingOperationType.move ||
-              op.opType == PendingOperationType.junk)
+              op.opType == PendingOperationType.junk ||
+              op.opType == PendingOperationType.notJunk)
             op.emailId,
         ..._recentMutations.recentlyRemovedIds(accountId),
       },

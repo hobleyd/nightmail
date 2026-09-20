@@ -67,6 +67,10 @@ abstract interface class EmailRemoteDatasource {
   /// semantics as [moveEmail].
   Future<String?> reportJunk(String id);
 
+  /// Reports [id] as not junk (moves it back to the inbox). Same new-id
+  /// semantics as [moveEmail].
+  Future<String?> notJunk(String id);
+
   Future<void> deleteEmail(String id);
 
   /// Empties all emails from [folderId].

@@ -82,6 +82,7 @@ import 'domain/usecases/create_calendar_event.dart';
 import 'domain/usecases/decline_calendar_event.dart';
 import 'domain/usecases/create_task.dart';
 import 'domain/usecases/delete_email.dart';
+import 'domain/usecases/not_junk.dart';
 import 'domain/usecases/report_junk.dart';
 import 'domain/usecases/classify_emails.dart';
 import 'domain/usecases/train_spam_filter.dart';
@@ -391,6 +392,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(
       () => RemoveConversationFromFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => ReportJunk(sl<EmailRepository>()));
+  sl.registerLazySingleton(() => NotJunk(sl<EmailRepository>()));
   sl.registerLazySingleton(() => ClassifyEmails(sl<SpamFilterRepository>()));
   sl.registerLazySingleton(() => TrainSpamFilter(sl<SpamFilterRepository>()));
   sl.registerLazySingleton(() => DeleteEmail(sl<EmailRepository>()));
@@ -540,6 +542,7 @@ Future<void> configureDependencies() async {
         moveEmail: sl<MoveEmail>(),
         removeConversationFromFolder: sl<RemoveConversationFromFolder>(),
         reportJunk: sl<ReportJunk>(),
+        notJunk: sl<NotJunk>(),
         deleteEmail: sl<DeleteEmail>(),
         emptyFolder: sl<EmptyFolder>(),
         accountManager: sl<AccountManager>(),

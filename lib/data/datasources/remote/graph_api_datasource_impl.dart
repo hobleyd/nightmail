@@ -2508,6 +2508,19 @@ class GraphApiDatasourceImpl
   }
 
   @override
+  Future<String?> notJunk(String id) async {
+    try {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '$_base/messages/$id/move',
+        data: {'destinationId': 'inbox'},
+      );
+      return response.data?['id'] as String?;
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
   Future<void> deleteEmail(String id) async {
     try {
       await _dio.post<void>(

@@ -8,6 +8,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../core/platform/touch_metrics.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/business_days.dart';
+import '../../core/utils/junk_folder.dart';
 import '../../core/utils/outgoing_folder.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_address.dart';
@@ -366,8 +367,10 @@ class _EmailListPanelState extends State<EmailListPanel> {
   bool get _isInboxFolder =>
       widget.folder?.displayName.toLowerCase() == 'inbox';
 
+  bool get _isJunkFolder => isJunkMailFolder(widget.folder);
+
   /// Applies the folder-panel and badge deltas for emails leaving
-  /// [widget.folder] (delete, bulk delete, report junk).
+  /// [widget.folder] (delete, bulk delete, report/not junk).
   void _applyRemovalCountChange(List<Email> removed) {
     if (removed.isEmpty || widget.folder == null) return;
     final unreadRemoved = removed.where((e) => !e.isRead).length;
@@ -433,7 +436,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
     }
   }
 
-  void _reportJunkSelection() {
+  void _toggleJunkSelection() {
     final ids = _selectedEmailIds.isNotEmpty
         ? List.of(_selectedEmailIds)
         : [if (widget.selectedEmailId != null) widget.selectedEmailId!];
@@ -443,9 +446,11 @@ class _EmailListPanelState extends State<EmailListPanel> {
       context.read<EmailDetailBloc>().add(const EmailDetailCleared());
       context.read<HomeCubit>().clearEmail();
     }
-    context
-        .read<EmailListBloc>()
-        .add(EmailListJunkReported(emailIds: ids));
+    context.read<EmailListBloc>().add(
+          _isJunkFolder
+              ? EmailListNotJunkReported(emailIds: ids)
+              : EmailListJunkReported(emailIds: ids),
+        );
     _applyRemovalCountChange(removed);
     _clearSelection();
   }
@@ -558,7 +563,8 @@ class _EmailListPanelState extends State<EmailListPanel> {
                         .add(const FolderListLoadRequested());
                   },
                   onDelete: hasSelection ? _deleteSelection : null,
-                  onReportJunk: hasSelection ? _reportJunkSelection : null,
+                  onReportJunk: hasSelection ? _toggleJunkSelection : null,
+                  isJunkFolder: _isJunkFolder,
                   onMarkUnread: hasSelection ? _markUnreadSelection : null,
                 );
               },
@@ -841,6 +847,7 @@ class _ListHeader extends StatelessWidget {
     this.onBack,
     this.onDelete,
     this.onReportJunk,
+    this.isJunkFolder = false,
     this.onMarkUnread,
   });
 
@@ -855,6 +862,7 @@ class _ListHeader extends StatelessWidget {
   final VoidCallback? onBack;
   final VoidCallback? onDelete;
   final VoidCallback? onReportJunk;
+  final bool isJunkFolder;
   final VoidCallback? onMarkUnread;
 
   @override
@@ -1002,9 +1010,9 @@ class _ListHeader extends StatelessWidget {
             ),
           if (onReportJunk != null)
             IconButton(
-              icon: Icon(Icons.report_outlined,
+              icon: Icon(isJunkFolder ? Icons.report_off_outlined : Icons.report_outlined,
                   size: touchIcon(20), color: c.textMuted),
-              tooltip: 'Report junk',
+              tooltip: isJunkFolder ? 'Not junk' : 'Report junk',
               padding: EdgeInsets.zero,
               constraints: BoxConstraints(
                 minWidth: touchTarget(32),
@@ -1226,8 +1234,11 @@ class _EmailListView extends StatelessWidget {
             onMarkUnread: () => context.read<EmailListBloc>().add(
                   EmailListMarkReadRequested(emailId: email.id, isRead: false),
                 ),
+            isJunkFolder: isJunkMailFolder(currentFolder),
             onMarkJunk: () => context.read<EmailListBloc>().add(
-                  EmailListJunkReported(emailIds: [email.id]),
+                  isJunkMailFolder(currentFolder)
+                      ? EmailListNotJunkReported(emailIds: [email.id])
+                      : EmailListJunkReported(emailIds: [email.id]),
                 ),
             child: child,
           );
@@ -1293,8 +1304,11 @@ class _EmailListView extends StatelessWidget {
                 EmailListMarkReadRequested(
                     emailId: conv.anchorEmail.id, isRead: false),
               ),
+          isJunkFolder: isJunkMailFolder(currentFolder),
           onMarkJunk: () => context.read<EmailListBloc>().add(
-                EmailListJunkReported(emailIds: conv.allEmailIds),
+                isJunkMailFolder(currentFolder)
+                    ? EmailListNotJunkReported(emailIds: conv.allEmailIds)
+                    : EmailListJunkReported(emailIds: conv.allEmailIds),
               ),
           child: convChild,
         );
@@ -1746,6 +1760,7 @@ class _SwipeableEmailItem extends StatefulWidget {
     required this.onFlag,
     required this.onMarkUnread,
     required this.onMarkJunk,
+    this.isJunkFolder = false,
   });
 
   final Widget child;
@@ -1753,6 +1768,7 @@ class _SwipeableEmailItem extends StatefulWidget {
   final void Function(DateTime?) onFlag;
   final VoidCallback onMarkUnread;
   final VoidCallback onMarkJunk;
+  final bool isJunkFolder;
 
   @override
   State<_SwipeableEmailItem> createState() => _SwipeableEmailItemState();
@@ -1858,8 +1874,12 @@ class _SwipeableEmailItemState extends State<_SwipeableEmailItem>
             child: Container(
               color: Colors.orange.shade700,
               alignment: Alignment.center,
-              child: Icon(Icons.report_outlined,
-                  color: Colors.white, size: touchIcon(22)),
+              child: Icon(
+                  widget.isJunkFolder
+                      ? Icons.report_off_outlined
+                      : Icons.report_outlined,
+                  color: Colors.white,
+                  size: touchIcon(22)),
             ),
           ),
         ),

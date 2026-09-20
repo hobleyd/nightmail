@@ -885,6 +885,18 @@ class GmailDatasourceImpl
     return id;
   }
 
+  @override
+  Future<String?> notJunk(String id) async {
+    await _dio.post<void>(
+      '/users/me/messages/$id/modify',
+      data: {
+        'addLabelIds': ['INBOX'],
+        'removeLabelIds': ['SPAM'],
+      },
+    );
+    return id;
+  }
+
   Future<void> deleteEmail(String id) async {
     await _dio.post<void>('/users/me/messages/$id/trash');
   }

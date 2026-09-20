@@ -165,6 +165,11 @@ class OutboxDrainService {
               await _remapIfNeeded(accountId, emailId, newId, 'junkemail');
               if (newId != null && newId != emailId) idRemap[op.emailId] = newId;
 
+            case PendingOperationType.notJunk:
+              final newId = await ds.notJunk(emailId);
+              await _remapIfNeeded(accountId, emailId, newId, 'inbox');
+              if (newId != null && newId != emailId) idRemap[op.emailId] = newId;
+
             case PendingOperationType.markRead:
               final payload = jsonDecode(op.payload) as Map<String, dynamic>;
               await ds.updateEmailReadStatus(
@@ -208,6 +213,8 @@ class OutboxDrainService {
         // and returned success, so the message vanishes locally and comes back
         // on the next folder sync with nothing queued to explain it. Leaving it
         // queued preserves last_error and lets the retry budget be what ends it.
+        // **notJunk** is a move (back to the inbox) wearing junk's clothes, and
+        // follows move's reasoning rather than junk's for the same reason.
         final targetGone = e is ServerException &&
             e.statusCode == 404 &&
             (op.opType == PendingOperationType.delete ||

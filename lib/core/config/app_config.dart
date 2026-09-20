@@ -5,9 +5,14 @@ class AppConfig {
     'AZURE_CLIENT_ID',
     defaultValue: 'YOUR_CLIENT_ID',
   );
+  // No org-specific literal default here either, for the same reason as the
+  // Google credentials below: supply our tenant via --dart-define at build
+  // time rather than committing it to source. 'common' (any tenant/personal
+  // account) is the generic, provider-agnostic fallback for anyone else
+  // building this app.
   static const microsoftTenantId = String.fromEnvironment(
     'AZURE_TENANT_ID',
-    defaultValue: '5a4c10f6-4474-4f1a-99db-8cecac7c3099',
+    defaultValue: 'common',
   );
   static const microsoftRedirectUri = String.fromEnvironment(
     'AZURE_REDIRECT_URI',

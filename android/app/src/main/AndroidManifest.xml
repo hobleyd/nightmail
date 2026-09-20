@@ -57,7 +57,13 @@
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
+                <!-- "nightmail" is Microsoft's redirect scheme (unaffected by
+                     Google's reverse-DNS requirement below). Google's Gmail
+                     redirect uses the app's own reverse-DNS bundle ID instead
+                     of a bare scheme — see AppConfig.gmailRedirectUri and
+                     lib/infrastructure/auth/CLAUDE.md. -->
                 <data android:scheme="nightmail"/>
+                <data android:scheme="au.com.sharpblue.nightmail"/>
             </intent-filter>
         </activity>
         <!-- Grants the package installer read access to the downloaded APK. -->

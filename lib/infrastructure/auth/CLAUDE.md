@@ -112,23 +112,27 @@ The fix needed two more OAuth clients in the same GCP project, not just
 different builds of the same client:
 
 - **iOS-type client** (Bundle ID `au.com.sharpblue.nightmail`) — but a bare
-  scheme is *still* rejected even under this client type. Google requires an
-  iOS custom-scheme redirect to be reverse-DNS shaped: a period in the scheme,
-  and a single-slash path (`scheme:/path`, not `scheme://path`). `AppConfig
-  .gmailRedirectUri` (`lib/core/config/app_config.dart`) branches on
-  `Platform.isIOS` for exactly this reason — iOS gets
-  `au.com.sharpblue.nightmail:/google-auth-callback`, everything else keeps
-  the original `nightmail://google-auth-callback`. The iOS console form has no
-  redirect-URI field to fill in either way; Google validates the shape, not a
-  registered list.
+  scheme is *still* rejected even under this client type. Google requires a
+  custom-scheme redirect to be reverse-DNS shaped: a period in the scheme, and
+  a single-slash path (`scheme:/path`, not `scheme://path`). The iOS console
+  form has no redirect-URI field to fill in either way; Google validates the
+  shape, not a registered list.
 - **Android-type client** (package name + SHA-1 fingerprint, one client per
-  keystore since Console takes a single fingerprint each) — Android's app-side
-  wiring (`flutter_web_auth_2.CallbackActivity`, scheme `nightmail`, in
-  `AndroidManifest.xml`) was already correct; only the client registration was
-  missing. One more thing not to skip: Google disables custom URI scheme
-  redirects **by default** for newly-created Android clients — it has to be
-  turned back on under the client's Advanced settings, or Android hits the
-  same `invalid_request` iOS did.
+  keystore since Console takes a single fingerprint each) — Google also
+  disables custom URI scheme redirects **by default** for newly-created
+  Android clients; it has to be turned back on under the client's Advanced
+  settings. That alone was not enough, though: verified directly against the
+  real client that Android enforces the *same* reverse-DNS shape requirement
+  as iOS — the bare `nightmail://google-auth-callback` still got
+  `invalid_request` with the custom-URI-scheme setting on, and only
+  `au.com.sharpblue.nightmail:/google-auth-callback` was accepted. So
+  `AppConfig.gmailRedirectUri` (`lib/core/config/app_config.dart`) uses the
+  dotted scheme for iOS *and* Android — only the loopback desktop platforms
+  keep the original `nightmail://google-auth-callback` (and they ignore this
+  value entirely; see `_effectiveRedirectUri` above). Android's app-side
+  wiring (`flutter_web_auth_2.CallbackActivity` in `AndroidManifest.xml`) now
+  registers both schemes — `nightmail` is still Microsoft's, unaffected by any
+  of this.
 
 Neither client type is issued a client secret. `showClientIdDialog`'s Gmail
 call sites (`add_account_page.dart`, `account_selection_page.dart`) set

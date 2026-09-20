@@ -575,8 +575,7 @@ jobs:
           flutter build apk --release --no-tree-shake-icons
           --build-number ${{ needs.prepare.outputs.build_number }}
           --dart-define=AZURE_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}
-          --dart-define=GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
-          --dart-define=GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+          --dart-define=GOOGLE_CLIENT_ID_ANDROID_RELEASE=${{ secrets.GOOGLE_CLIENT_ID_ANDROID_RELEASE }}
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v0.1.15
@@ -709,8 +708,7 @@ jobs:
           --build-number ${{ needs.prepare.outputs.build_number }}
           --export-options-plist=ios/ExportOptions.plist
           --dart-define=AZURE_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}
-          --dart-define=GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
-          --dart-define=GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+          --dart-define=GOOGLE_CLIENT_ID_IOS=${{ secrets.GOOGLE_CLIENT_ID_IOS }}
 
       # altool reads the API key from this fixed path by Key ID -- there is
       # no flag for it. `--upload-app` maps the .ipa's bundle ID onto an

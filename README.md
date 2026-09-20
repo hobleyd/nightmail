@@ -244,7 +244,7 @@ NightMail connects to Google via the Gmail API, Google Calendar API, Google Task
 4. A **redirect URI** added to the Desktop client:
    - macOS / Windows / Linux: `http://localhost` (loopback) — macOS runs its own loopback listener rather than a bare custom scheme; see [`lib/infrastructure/auth/CLAUDE.md`](lib/infrastructure/auth/CLAUDE.md).
 
-   iOS and Android don't take a registered redirect URI — Google validates by Bundle ID / package name instead. The app requests `au.com.sharpblue.nightmail:/google-auth-callback` on iOS (a bare scheme like `nightmail://` is rejected — Google requires a period in the scheme) and `nightmail://google-auth-callback` on Android.
+   iOS and Android don't take a registered redirect URI — Google validates by Bundle ID / package name instead. Both request `au.com.sharpblue.nightmail:/google-auth-callback` — a bare scheme like `nightmail://` is rejected on either platform, verified directly against both OAuth clients, even with Android's custom-URI-scheme setting enabled (see below).
 
 5. For Google Workspace organisations, a Workspace admin may need to mark the app as trusted under **Security → API Controls → App Access Control** if the scopes require verification or if the app is not published to the Google Workspace Marketplace.
 

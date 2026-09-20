@@ -164,17 +164,25 @@ class NotificationService {
       guid: '6e452e7a-3c45-4b9e-8f1d-2a7b8c3d9e1f',
     );
 
-    await _plugin?.initialize(
-      settings: InitializationSettings(
-        android: android,
-        iOS: darwin,
-        linux: linux,
-        windows: windows,
-      ),
-      onDidReceiveNotificationResponse: _onNotificationResponse,
-      onDidReceiveBackgroundNotificationResponse:
-          _onBackgroundNotificationResponse,
-    );
+    // Unawaited from the constructor (see _initLocalNotifications), so a
+    // failure here — no platform plugin registered, as under `flutter test`,
+    // where nothing invokes GeneratedPluginRegistrant — would otherwise
+    // surface as an unhandled async error with no caller to catch it.
+    try {
+      await _plugin?.initialize(
+        settings: InitializationSettings(
+          android: android,
+          iOS: darwin,
+          linux: linux,
+          windows: windows,
+        ),
+        onDidReceiveNotificationResponse: _onNotificationResponse,
+        onDidReceiveBackgroundNotificationResponse:
+            _onBackgroundNotificationResponse,
+      );
+    } catch (e) {
+      debugPrint('NotificationService._doInitLocalNotifications failed: $e');
+    }
   }
 
   /// Hands a reminder change made in a sub-window to the main window, which is

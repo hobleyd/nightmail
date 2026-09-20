@@ -49,11 +49,13 @@ void main() {
   Finder fieldLabelled(String label) =>
       find.ancestor(of: find.text(label), matching: find.byType(TextFormField));
 
+  const advancedToggle = 'Use a custom app registration';
+
   group('showClientIdDialog', () {
     testWidgets('names the provider and shows its help text', (tester) async {
       await open(tester);
 
-      expect(find.text('Gmail — OAuth Credentials'), findsOneWidget);
+      expect(find.text('Sign in with Gmail'), findsOneWidget);
       expect(
         find.text('Paste the client ID from the Google console.'),
         findsOneWidget,
@@ -89,13 +91,6 @@ void main() {
       expect(result()!.clientId, 'abc-123');
     });
 
-    testWidgets('pre-fills the client id when editing an existing one',
-        (tester) async {
-      await open(tester, initialValue: 'existing-id');
-
-      expect(find.text('existing-id'), findsOneWidget);
-    });
-
     testWidgets('refuses to continue with a blank client id', (tester) async {
       await open(tester);
 
@@ -103,7 +98,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Enter a Client ID'), findsOneWidget);
-      expect(find.text('Gmail — OAuth Credentials'), findsOneWidget,
+      expect(find.text('Sign in with Gmail'), findsOneWidget,
           reason: 'the dialog should stay open');
     });
 
@@ -126,11 +121,77 @@ void main() {
       await tester.tapAt(const Offset(5, 5));
       await tester.pumpAndSettle();
 
-      expect(find.text('Gmail — OAuth Credentials'), findsOneWidget);
+      expect(find.text('Sign in with Gmail'), findsOneWidget);
 
       await tester.tap(find.text('Cancel'));
       await tester.pumpAndSettle();
       expect(result(), isNull);
+    });
+  });
+
+  // BYOA fields (Client ID/Secret) are hidden behind a toggle whenever there
+  // is an actual default to hide them behind — i.e. whenever the caller
+  // passes a non-null initialValue. With no default at all (initialValue:
+  // null, the case exercised by the group above) there is nothing to hide
+  // behind, so the fields show immediately instead.
+  group('showClientIdDialog — hides BYOA fields when a default exists', () {
+    testWidgets('shows a toggle instead of the client id field', (tester) async {
+      await open(tester, initialValue: 'default-id');
+
+      expect(fieldLabelled('Client ID'), findsNothing);
+      expect(find.text(advancedToggle), findsOneWidget);
+    });
+
+    testWidgets('continuing without opening the toggle uses the default id',
+        (tester) async {
+      final result = await open(tester, initialValue: 'default-id');
+
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+
+      expect(result()!.clientId, 'default-id');
+    });
+
+    testWidgets('the toggle reveals the client id field pre-filled with the default',
+        (tester) async {
+      await open(tester, initialValue: 'default-id');
+
+      await tester.tap(find.text(advancedToggle));
+      await tester.pumpAndSettle();
+
+      expect(fieldLabelled('Client ID'), findsOneWidget);
+      expect(find.text('default-id'), findsOneWidget);
+    });
+
+    testWidgets('editing the field after opening the toggle overrides the default',
+        (tester) async {
+      final result = await open(tester, initialValue: 'default-id');
+
+      await tester.tap(find.text(advancedToggle));
+      await tester.pumpAndSettle();
+      await tester.enterText(fieldLabelled('Client ID'), 'custom-id');
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+
+      expect(result()!.clientId, 'custom-id');
+    });
+
+    testWidgets('a required secret also stays hidden until the toggle is opened',
+        (tester) async {
+      final result = await open(
+        tester,
+        initialValue: 'default-id',
+        requireSecret: true,
+        initialSecret: 'default-secret',
+      );
+
+      expect(fieldLabelled('Client Secret'), findsNothing);
+
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+
+      expect(result()!.clientId, 'default-id');
+      expect(result()!.clientSecret, 'default-secret');
     });
   });
 

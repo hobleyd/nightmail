@@ -6,7 +6,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
-import '../../core/config/oauth_client_id_storage.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
@@ -820,9 +819,6 @@ class _AccountsSectionState extends State<_AccountsSection> {
   late TextEditingController _caldavPasswordController;
   bool _nextcloudEnabled = false;
 
-  late TextEditingController _msClientIdController;
-  late TextEditingController _googleClientIdController;
-
   // Profile fields, used as email signature merge tags.
   late TextEditingController _firstNameController;
   late TextEditingController _lastNameController;
@@ -845,15 +841,12 @@ class _AccountsSectionState extends State<_AccountsSection> {
     _caldavUrlController = TextEditingController();
     _caldavUsernameController = TextEditingController();
     _caldavPasswordController = TextEditingController();
-    _msClientIdController = TextEditingController();
-    _googleClientIdController = TextEditingController();
     _firstNameController = TextEditingController();
     _lastNameController = TextEditingController();
     _jobTitleController = TextEditingController();
     _phoneController = TextEditingController();
     _mobileController = TextEditingController();
     _addressController = TextEditingController();
-    _loadClientIds();
     sl<AppSettings>().loadDefaultComposeFormat().then((format) {
       if (mounted) setState(() => _composeFormat = format);
     });
@@ -870,8 +863,6 @@ class _AccountsSectionState extends State<_AccountsSection> {
     _caldavUrlController.dispose();
     _caldavUsernameController.dispose();
     _caldavPasswordController.dispose();
-    _msClientIdController.dispose();
-    _googleClientIdController.dispose();
     _firstNameController.dispose();
     _lastNameController.dispose();
     _jobTitleController.dispose();
@@ -942,16 +933,6 @@ class _AccountsSectionState extends State<_AccountsSection> {
   void _loadCalDavPassword(String accountId) {
     sl<AccountManager>().loadCalDavPassword(accountId).then((p) {
       if (mounted) setState(() => _caldavPasswordController.text = p ?? '');
-    });
-  }
-
-  void _loadClientIds() {
-    final storage = sl<OAuthClientIdStorage>();
-    storage.loadMicrosoftClientId().then((id) {
-      if (mounted) setState(() => _msClientIdController.text = id ?? '');
-    });
-    storage.loadGoogleClientId().then((id) {
-      if (mounted) setState(() => _googleClientIdController.text = id ?? '');
     });
   }
 
@@ -1074,6 +1055,9 @@ class _AccountsSectionState extends State<_AccountsSection> {
     }
 
     final updated = switch (_selectedAccount!) {
+      // Client ID/Secret/Tenant ID are not editable here — they're set once
+      // at sign-in and pinned to whatever token was actually issued under
+      // them; copyWith leaves clientId untouched by not passing it.
       MicrosoftAccount a => a.copyWith(
           displayName: _nameController.text,
           emailAddress: _emailController.text,
@@ -1112,16 +1096,6 @@ class _AccountsSectionState extends State<_AccountsSection> {
           nextcloudCalendarConfig: caldavConfig,
         ),
     };
-
-    // Persist Client ID changes for OAuth accounts
-    final storage = sl<OAuthClientIdStorage>();
-    if (updated is MicrosoftAccount) {
-      final id = _msClientIdController.text.trim();
-      if (id.isNotEmpty) storage.saveMicrosoftClientId(id);
-    } else if (updated is GmailAccount) {
-      final id = _googleClientIdController.text.trim();
-      if (id.isNotEmpty) storage.saveGoogleClientId(id);
-    }
 
     // Persist CalDAV password if provided
     if (updated is ImapAccount) {
@@ -1334,23 +1308,24 @@ class _AccountsSectionState extends State<_AccountsSection> {
                           ImapAccount() => 'IMAP',
                         },
                       ),
+                      // Not editable: Client ID is pinned to whatever the
+                      // account actually signed in with (see AccountManager
+                      // and MicrosoftAccount.clientId) — changing it here
+                      // without a fresh sign-in would break this account's
+                      // own token refresh.
                       if (_selectedAccount is MicrosoftAccount)
                         _AccountDetailRow(
                           label: 'Client ID',
-                          value: _msClientIdController.text.isEmpty
-                              ? '—'
-                              : _msClientIdController.text,
-                          isEditing: _isEditing,
-                          controller: _msClientIdController,
+                          value: (_selectedAccount as MicrosoftAccount)
+                                  .clientId ??
+                              '(default)',
                         ),
                       if (_selectedAccount is GmailAccount)
                         _AccountDetailRow(
                           label: 'Client ID',
-                          value: _googleClientIdController.text.isEmpty
-                              ? '—'
-                              : _googleClientIdController.text,
-                          isEditing: _isEditing,
-                          controller: _googleClientIdController,
+                          value:
+                              (_selectedAccount as GmailAccount).clientId ??
+                                  '(default)',
                         ),
                       if (_selectedAccount is ImapAccount) ...[
                         _SectionSubheader(label: 'Incoming (IMAP)'),

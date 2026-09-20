@@ -100,6 +100,7 @@ final class MicrosoftAccount extends Account {
     required super.displayName,
     required super.emailAddress,
     required this.tenantId,
+    this.clientId,
     this.parentAccountId,
     super.firstName,
     super.lastName,
@@ -111,6 +112,18 @@ final class MicrosoftAccount extends Account {
   });
 
   final String tenantId;
+
+  /// This account's own Azure app registration Client ID (BYOA), or null to
+  /// use the compiled default (`AppConfig.microsoftClientId`).
+  ///
+  /// Deliberately per-account rather than a single value shared across every
+  /// Microsoft account: a refresh token is minted against the client ID it
+  /// was signed in with, so presenting a *different* client ID on refresh
+  /// gets `invalid_client` from Azure — which AuthInterceptor reads as
+  /// "credentials are bad" and flags the account for re-auth even though
+  /// nothing was actually revoked. See AccountManager._migrateSharedClientIdsToAccounts
+  /// for the one-time backfill from the previous shared-storage design.
+  final String? clientId;
 
   /// Non-null when this account is a shared mailbox rather than a directly
   /// signed-in identity: it has no OAuth credentials of its own and every
@@ -133,6 +146,7 @@ final class MicrosoftAccount extends Account {
     String? address,
     String? signatureHtml,
     String? tenantId,
+    Object? clientId = _sentinel,
   }) {
     return MicrosoftAccount(
       id: id,
@@ -146,6 +160,7 @@ final class MicrosoftAccount extends Account {
       address: address ?? this.address,
       signatureHtml: signatureHtml ?? this.signatureHtml,
       tenantId: tenantId ?? this.tenantId,
+      clientId: clientId == _sentinel ? this.clientId : clientId as String?,
       parentAccountId: parentAccountId,
     );
   }
@@ -156,6 +171,7 @@ final class MicrosoftAccount extends Account {
       displayName: json['displayName'] as String,
       emailAddress: json['emailAddress'] as String,
       tenantId: json['tenantId'] as String? ?? 'common',
+      clientId: json['clientId'] as String?,
       parentAccountId: json['parentAccountId'] as String?,
       firstName: json['firstName'] as String? ?? '',
       lastName: json['lastName'] as String? ?? '',
@@ -174,6 +190,7 @@ final class MicrosoftAccount extends Account {
         'displayName': displayName,
         'emailAddress': emailAddress,
         'tenantId': tenantId,
+        if (clientId != null) 'clientId': clientId,
         if (parentAccountId != null) 'parentAccountId': parentAccountId,
         'firstName': firstName,
         'lastName': lastName,
@@ -190,6 +207,7 @@ final class MicrosoftAccount extends Account {
         displayName,
         emailAddress,
         tenantId,
+        clientId,
         parentAccountId,
         firstName,
         lastName,
@@ -206,6 +224,8 @@ final class MicrosoftAccount extends Account {
     required super.id,
     required super.displayName,
     required super.emailAddress,
+    this.clientId,
+    this.clientSecret,
     super.firstName,
     super.lastName,
     super.jobTitle,
@@ -214,6 +234,15 @@ final class MicrosoftAccount extends Account {
     super.address,
     super.signatureHtml,
   });
+
+  /// This account's own Google Cloud OAuth Client ID/Secret (BYOA), or null
+  /// to use the compiled default (`AppConfig.gmailClientId`/`gmailClientSecret`).
+  ///
+  /// Deliberately per-account rather than a single pair shared across every
+  /// Gmail account — see [MicrosoftAccount.clientId] for why a shared value
+  /// silently breaks other accounts' token refresh.
+  final String? clientId;
+  final String? clientSecret;
 
   @override
   GmailAccount copyWith({
@@ -226,6 +255,8 @@ final class MicrosoftAccount extends Account {
     String? mobile,
     String? address,
     String? signatureHtml,
+    Object? clientId = _sentinel,
+    Object? clientSecret = _sentinel,
   }) {
     return GmailAccount(
       id: id,
@@ -238,6 +269,10 @@ final class MicrosoftAccount extends Account {
       mobile: mobile ?? this.mobile,
       address: address ?? this.address,
       signatureHtml: signatureHtml ?? this.signatureHtml,
+      clientId: clientId == _sentinel ? this.clientId : clientId as String?,
+      clientSecret: clientSecret == _sentinel
+          ? this.clientSecret
+          : clientSecret as String?,
     );
   }
 
@@ -246,6 +281,8 @@ final class MicrosoftAccount extends Account {
       id: json['id'] as String,
       displayName: json['displayName'] as String,
       emailAddress: json['emailAddress'] as String,
+      clientId: json['clientId'] as String?,
+      clientSecret: json['clientSecret'] as String?,
       firstName: json['firstName'] as String? ?? '',
       lastName: json['lastName'] as String? ?? '',
       jobTitle: json['jobTitle'] as String? ?? '',
@@ -262,6 +299,8 @@ final class MicrosoftAccount extends Account {
         'id': id,
         'displayName': displayName,
         'emailAddress': emailAddress,
+        if (clientId != null) 'clientId': clientId,
+        if (clientSecret != null) 'clientSecret': clientSecret,
         'firstName': firstName,
         'lastName': lastName,
         'jobTitle': jobTitle,
@@ -276,6 +315,8 @@ final class MicrosoftAccount extends Account {
         id,
         displayName,
         emailAddress,
+        clientId,
+        clientSecret,
         firstName,
         lastName,
         jobTitle,

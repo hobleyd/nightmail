@@ -96,3 +96,43 @@ providers answer with a query (`response_mode: query` is explicit for Microsoft,
 and the default for Google's `response_type=code`), and nothing in that path
 rewrites the URL.
 
+## Gmail Never Worked on iOS or Android — the OAuth Client Type Was Wrong
+
+Confirmed by loading the authorization URL directly and reading Google's
+decoded error: the app's one Google OAuth client is **Desktop application**
+type, and Google removed custom-scheme redirect support from Desktop-type
+clients in 2022 (`Error 400: invalid_request`, citing the "secure response
+handling" policy, echoing back the exact `redirect_uri` sent). This was never
+platform-specific breakage — mobile Gmail sign-in had no working path before
+this was diagnosed, since `_effectiveRedirectUri` falls through to the raw
+`redirectUri` (`nightmail://google-auth-callback`) on every platform except
+the loopback ones (macOS, Windows, Linux — see above).
+
+The fix needed two more OAuth clients in the same GCP project, not just
+different builds of the same client:
+
+- **iOS-type client** (Bundle ID `au.com.sharpblue.nightmail`) — but a bare
+  scheme is *still* rejected even under this client type. Google requires an
+  iOS custom-scheme redirect to be reverse-DNS shaped: a period in the scheme,
+  and a single-slash path (`scheme:/path`, not `scheme://path`). `AppConfig
+  .gmailRedirectUri` (`lib/core/config/app_config.dart`) branches on
+  `Platform.isIOS` for exactly this reason — iOS gets
+  `au.com.sharpblue.nightmail:/google-auth-callback`, everything else keeps
+  the original `nightmail://google-auth-callback`. The iOS console form has no
+  redirect-URI field to fill in either way; Google validates the shape, not a
+  registered list.
+- **Android-type client** (package name + SHA-1 fingerprint, one client per
+  keystore since Console takes a single fingerprint each) — Android's app-side
+  wiring (`flutter_web_auth_2.CallbackActivity`, scheme `nightmail`, in
+  `AndroidManifest.xml`) was already correct; only the client registration was
+  missing. One more thing not to skip: Google disables custom URI scheme
+  redirects **by default** for newly-created Android clients — it has to be
+  turned back on under the client's Advanced settings, or Android hits the
+  same `invalid_request` iOS did.
+
+Neither client type is issued a client secret. `showClientIdDialog`'s Gmail
+call sites (`add_account_page.dart`, `account_selection_page.dart`) set
+`requireSecret: !isMobile` for this reason — the dialog can't demand a secret
+Google never gives out on those platforms, and the downstream `GmailAuthService`
+call sends `credentials.clientSecret ?? ''` rather than force-unwrapping.
+

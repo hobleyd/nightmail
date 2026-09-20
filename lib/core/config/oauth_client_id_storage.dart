@@ -1,32 +1,26 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
-/// Persists the OAuth application Client IDs for Microsoft and Google.
-/// These are app-level credentials (one per provider, shared across all
-/// accounts of that provider) entered by the user on first sign-in.
+/// Legacy storage for the OAuth application Client IDs/Secret/Tenant ID that
+/// used to be shared app-wide across every account of a provider.
+///
+/// No longer written to: Client ID/Secret/Tenant ID now live on the Account
+/// itself (`MicrosoftAccount.clientId`, `GmailAccount.clientId`/
+/// `clientSecret`) — a value shared across every account of a provider meant
+/// signing in to, or editing, ANY account could silently swap the
+/// credentials every OTHER account's token refresh depended on. This class
+/// only still exists so `AccountManager._migrateSharedClientIdsToAccounts`
+/// can do a one-time read of whatever was last saved here and back it onto
+/// any account created before that change.
 class OAuthClientIdStorage {
   const OAuthClientIdStorage(this._storage);
   final FlutterSecureStorage _storage;
 
   static const _msKey = 'oauth_ms_client_id';
-  static const _msTenantKey = 'oauth_ms_tenant_id';
   static const _googleKey = 'oauth_google_client_id';
   static const _googleSecretKey = 'oauth_google_client_secret';
 
   Future<String?> loadMicrosoftClientId() => _storage.read(key: _msKey);
-  Future<String?> loadMicrosoftTenantId() => _storage.read(key: _msTenantKey);
   Future<String?> loadGoogleClientId() => _storage.read(key: _googleKey);
   Future<String?> loadGoogleClientSecret() =>
       _storage.read(key: _googleSecretKey);
-
-  Future<void> saveMicrosoftClientId(String id) =>
-      _storage.write(key: _msKey, value: id);
-
-  Future<void> saveMicrosoftTenantId(String id) =>
-      _storage.write(key: _msTenantKey, value: id);
-
-  Future<void> saveGoogleClientId(String id) =>
-      _storage.write(key: _googleKey, value: id);
-
-  Future<void> saveGoogleClientSecret(String secret) =>
-      _storage.write(key: _googleSecretKey, value: secret);
 }

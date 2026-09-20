@@ -49,12 +49,11 @@ class AccountManager {
 
   final AccountStorage _accountStorage;
   final FlutterSecureStorage _secureStorage;
+  // Only read once, in initialize()'s one-time migration — see
+  // _migrateSharedClientIdsToAccounts. Client ID/Secret/Tenant ID otherwise
+  // live on the Account itself (MicrosoftAccount.clientId, GmailAccount.
+  // clientId/clientSecret) now, not here.
   final OAuthClientIdStorage _clientIdStorage;
-
-  // Cached client IDs/secrets loaded (and migrated) in initialize().
-  String? _microsoftClientId;
-  String? _googleClientId;
-  String? _googleClientSecret;
 
   List<Account> _accounts = [];
   int _activeIndex = 0;
@@ -152,8 +151,8 @@ class AccountManager {
       storageKey: 'token_${account.id}',
     );
     final authSvc = GmailAuthService(
-      clientId: _googleClientId ?? AppConfig.gmailClientId,
-      clientSecret: _googleClientSecret ?? '',
+      clientId: account.clientId ?? AppConfig.gmailClientId,
+      clientSecret: account.clientSecret ?? AppConfig.gmailClientSecret,
       redirectUri: AppConfig.gmailRedirectUri,
       tokenStorage: tokenStorage,
       accountEmail: account.emailAddress,
@@ -180,7 +179,7 @@ class AccountManager {
     if (account is! MicrosoftAccount) return null;
     final cfg = _microsoftAuthConfig(account);
     final authSvc = MicrosoftAuthService(
-      clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
+      clientId: cfg.clientId ?? AppConfig.microsoftClientId,
       tenantId: cfg.tenantId,
       redirectUri: AppConfig.microsoftRedirectUri,
       tokenStorage: cfg.tokenStorage,
@@ -210,6 +209,7 @@ class AccountManager {
   ({
     TokenStorage tokenStorage,
     String tenantId,
+    String? clientId,
     String credentialOwnerId,
     String? mailboxAddress,
   })
@@ -218,6 +218,7 @@ class AccountManager {
     return (
       tokenStorage: TokenStorage(_secureStorage, storageKey: 'token_$ownerId'),
       tenantId: account.tenantId,
+      clientId: account.clientId,
       credentialOwnerId: ownerId,
       mailboxAddress: account.parentAccountId != null
           ? account.emailAddress
@@ -329,10 +330,6 @@ class AccountManager {
     final account = accountById(accountId);
     if (account == null) throw StateError('Unknown account: $accountId');
 
-    // Settings can edit the OAuth client IDs; pick up any change first, as the
-    // other interactive paths do.
-    await _loadAndMigrateClientIds();
-
     final tokenStorage = TokenStorage(
       _secureStorage,
       storageKey: 'token_${account.id}',
@@ -341,7 +338,7 @@ class AccountManager {
     switch (account) {
       case MicrosoftAccount():
         authService = MicrosoftAuthService(
-          clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
+          clientId: account.clientId ?? AppConfig.microsoftClientId,
           tenantId: account.tenantId,
           redirectUri: AppConfig.microsoftRedirectUri,
           tokenStorage: tokenStorage,
@@ -349,8 +346,8 @@ class AccountManager {
         );
       case GmailAccount():
         authService = GmailAuthService(
-          clientId: _googleClientId ?? AppConfig.gmailClientId,
-          clientSecret: _googleClientSecret ?? '',
+          clientId: account.clientId ?? AppConfig.gmailClientId,
+          clientSecret: account.clientSecret ?? AppConfig.gmailClientSecret,
           redirectUri: AppConfig.gmailRedirectUri,
           tokenStorage: tokenStorage,
           accountEmail: account.emailAddress,
@@ -403,13 +400,9 @@ class AccountManager {
     if (account == null) throw StateError('Unknown account: $accountId');
     if (account is! GmailAccount) return false;
 
-    // Settings can edit the OAuth client ids; pick up any change first, as the
-    // other interactive paths do.
-    await _loadAndMigrateClientIds();
-
     final authService = GmailAuthService(
-      clientId: _googleClientId ?? AppConfig.gmailClientId,
-      clientSecret: _googleClientSecret ?? '',
+      clientId: account.clientId ?? AppConfig.gmailClientId,
+      clientSecret: account.clientSecret ?? AppConfig.gmailClientSecret,
       redirectUri: AppConfig.gmailRedirectUri,
       tokenStorage: TokenStorage(
         _secureStorage,
@@ -484,10 +477,6 @@ class AccountManager {
     final account = _credentialOwnerFor(accountById(accountId));
     if (account == null) throw StateError('Unknown account: $accountId');
 
-    // Settings can edit the OAuth client ids; pick up any change first, as the
-    // other interactive paths do.
-    await _loadAndMigrateClientIds();
-
     final tokenStorage = TokenStorage(
       _secureStorage,
       storageKey: 'token_${account.id}',
@@ -496,7 +485,7 @@ class AccountManager {
     switch (account) {
       case MicrosoftAccount():
         authService = MicrosoftAuthService(
-          clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
+          clientId: account.clientId ?? AppConfig.microsoftClientId,
           tenantId: account.tenantId,
           redirectUri: AppConfig.microsoftRedirectUri,
           tokenStorage: tokenStorage,
@@ -504,8 +493,8 @@ class AccountManager {
         );
       case GmailAccount():
         authService = GmailAuthService(
-          clientId: _googleClientId ?? AppConfig.gmailClientId,
-          clientSecret: _googleClientSecret ?? '',
+          clientId: account.clientId ?? AppConfig.gmailClientId,
+          clientSecret: account.clientSecret ?? AppConfig.gmailClientSecret,
           redirectUri: AppConfig.gmailRedirectUri,
           tokenStorage: tokenStorage,
           accountEmail: account.emailAddress,
@@ -551,7 +540,7 @@ class AccountManager {
         datasource = GraphDriveDatasourceImpl(
           client: GraphHttpClient(
             authService: MicrosoftAuthService(
-              clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
+              clientId: cfg.clientId ?? AppConfig.microsoftClientId,
               tenantId: cfg.tenantId,
               redirectUri: AppConfig.microsoftRedirectUri,
               tokenStorage: cfg.tokenStorage,
@@ -566,8 +555,8 @@ class AccountManager {
         datasource = GoogleDriveDatasourceImpl(
           client: GoogleDriveHttpClient(
             authService: GmailAuthService(
-              clientId: _googleClientId ?? AppConfig.gmailClientId,
-              clientSecret: _googleClientSecret ?? '',
+              clientId: account.clientId ?? AppConfig.gmailClientId,
+              clientSecret: account.clientSecret ?? AppConfig.gmailClientSecret,
               redirectUri: AppConfig.gmailRedirectUri,
               tokenStorage: TokenStorage(
                 _secureStorage,
@@ -588,12 +577,12 @@ class AccountManager {
 
   /// Load persisted accounts and run legacy token migration if needed.
   Future<void> initialize() async {
-    await _loadAndMigrateClientIds();
     _accounts = await _accountStorage.loadAccounts();
     if (_accounts.isEmpty) {
       await _migrateLegacyAccount();
       _accounts = await _accountStorage.loadAccounts();
     }
+    await _migrateSharedClientIdsToAccounts();
     _activeIndex = await _accountStorage.loadActiveIndex();
     if (_activeIndex >= _accounts.length) _activeIndex = 0;
     _sortAccounts();
@@ -633,38 +622,56 @@ class AccountManager {
     } catch (_) {}
   }
 
-  /// Reload client IDs from storage (picks up values saved by the sign-in
-  /// screen after the last initialize() call).
-  Future<void> _loadAndMigrateClientIds() async {
-    _microsoftClientId = await _clientIdStorage.loadMicrosoftClientId();
-    if (_microsoftClientId == null) {
-      const compiled = AppConfig.microsoftClientId;
-      if (compiled != 'YOUR_CLIENT_ID') {
-        await _clientIdStorage.saveMicrosoftClientId(compiled);
-        _microsoftClientId = compiled;
-      }
-    }
+  /// One-time migration off the previous design, where Client ID/Secret were
+  /// a single value shared across every account of a provider
+  /// (`OAuthClientIdStorage`, written by the sign-in dialog and Settings).
+  /// That let signing in to, or editing, ANY account silently swap the
+  /// credentials every OTHER account's token refresh depended on — see
+  /// [MicrosoftAccount.clientId]. Backfills whatever was last saved there
+  /// onto every account that predates having its own clientId, then never
+  /// needs to touch that legacy storage again for an account once migrated.
+  Future<void> _migrateSharedClientIdsToAccounts() async {
+    if (_accounts.isEmpty) return;
+    final needsMs = _accounts.whereType<MicrosoftAccount>().any(
+      (a) => a.clientId == null,
+    );
+    final needsGoogle = _accounts.whereType<GmailAccount>().any(
+      (a) => a.clientId == null,
+    );
+    if (!needsMs && !needsGoogle) return;
 
-    _googleClientId = await _clientIdStorage.loadGoogleClientId();
-    if (_googleClientId == null) {
-      const compiled = AppConfig.gmailClientId;
-      if (compiled != 'YOUR_GOOGLE_CLIENT_ID') {
-        await _clientIdStorage.saveGoogleClientId(compiled);
-        _googleClientId = compiled;
+    final legacyMsClientId =
+        needsMs ? await _clientIdStorage.loadMicrosoftClientId() : null;
+    final legacyGoogleClientId =
+        needsGoogle ? await _clientIdStorage.loadGoogleClientId() : null;
+    final legacyGoogleClientSecret =
+        needsGoogle ? await _clientIdStorage.loadGoogleClientSecret() : null;
+    if (legacyMsClientId == null && legacyGoogleClientId == null) return;
+
+    var changed = false;
+    final migrated = _accounts.map((a) {
+      if (a is MicrosoftAccount && a.clientId == null && legacyMsClientId != null) {
+        changed = true;
+        return a.copyWith(clientId: legacyMsClientId);
       }
-    }
-    _googleClientSecret = await _clientIdStorage.loadGoogleClientSecret();
-    if (_googleClientSecret == null) {
-      const compiled = AppConfig.gmailClientSecret;
-      await _clientIdStorage.saveGoogleClientSecret(compiled);
-      _googleClientSecret = compiled;
+      if (a is GmailAccount && a.clientId == null && legacyGoogleClientId != null) {
+        changed = true;
+        return a.copyWith(
+          clientId: legacyGoogleClientId,
+          clientSecret: legacyGoogleClientSecret,
+        );
+      }
+      return a;
+    }).toList();
+
+    if (changed) {
+      _accounts = migrated;
+      await _accountStorage.saveAccounts(_accounts);
     }
   }
 
   /// Add a new account and make it the active account.
   Future<void> addAccount(Account account) async {
-    // Reload in case the sign-in screen just saved a new client ID.
-    await _loadAndMigrateClientIds();
     _accounts = [..._accounts, account];
     _activeIndex = _accounts.length - 1;
     _sortAccounts();
@@ -741,6 +748,7 @@ class AccountManager {
       displayName: displayName,
       emailAddress: email,
       tenantId: parent.tenantId,
+      clientId: parent.clientId,
       parentAccountId: parentAccountId,
     );
     await addAccount(account);
@@ -880,10 +888,6 @@ class AccountManager {
       return reauthenticateOAuthAccount(account.parentAccountId!);
     }
 
-    // Settings can edit the OAuth client IDs, so pick up any change made since
-    // the last load before building the service (as addAccount does).
-    await _loadAndMigrateClientIds();
-
     final authService = _buildOAuthServiceForAccount(account);
     if (authService == null) {
       throw StateError('${account.emailAddress} does not sign in with OAuth');
@@ -905,7 +909,7 @@ class AccountManager {
     );
     return switch (account) {
       MicrosoftAccount() => MicrosoftAuthService(
-        clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
+        clientId: account.clientId ?? AppConfig.microsoftClientId,
         tenantId: account.tenantId,
         redirectUri: AppConfig.microsoftRedirectUri,
         tokenStorage: tokenStorage,
@@ -913,8 +917,8 @@ class AccountManager {
       // The email is what lets a Workspace account pick up the room-directory
       // scope on re-auth; see GmailAuthService._requestedScopes.
       GmailAccount() => GmailAuthService(
-        clientId: _googleClientId ?? AppConfig.gmailClientId,
-        clientSecret: _googleClientSecret ?? '',
+        clientId: account.clientId ?? AppConfig.gmailClientId,
+        clientSecret: account.clientSecret ?? AppConfig.gmailClientSecret,
         redirectUri: AppConfig.gmailRedirectUri,
         tokenStorage: tokenStorage,
         accountEmail: account.emailAddress,
@@ -941,7 +945,7 @@ class AccountManager {
       case MicrosoftAccount():
         final cfg = _microsoftAuthConfig(account);
         final authSvc = MicrosoftAuthService(
-          clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
+          clientId: cfg.clientId ?? AppConfig.microsoftClientId,
           tenantId: cfg.tenantId,
           redirectUri: AppConfig.microsoftRedirectUri,
           tokenStorage: cfg.tokenStorage,
@@ -963,8 +967,8 @@ class AccountManager {
           storageKey: 'token_${account.id}',
         );
         final authSvc = GmailAuthService(
-          clientId: _googleClientId ?? AppConfig.gmailClientId,
-          clientSecret: _googleClientSecret ?? '',
+          clientId: account.clientId ?? AppConfig.gmailClientId,
+          clientSecret: account.clientSecret ?? AppConfig.gmailClientSecret,
           redirectUri: AppConfig.gmailRedirectUri,
           tokenStorage: tokenStorage,
           accountEmail: account.emailAddress,
@@ -1038,7 +1042,7 @@ class AccountManager {
       case MicrosoftAccount():
         final cfg = _microsoftAuthConfig(account);
         final authSvc = MicrosoftAuthService(
-          clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
+          clientId: cfg.clientId ?? AppConfig.microsoftClientId,
           tenantId: cfg.tenantId,
           redirectUri: AppConfig.microsoftRedirectUri,
           tokenStorage: cfg.tokenStorage,
@@ -1064,8 +1068,8 @@ class AccountManager {
           storageKey: 'token_${account.id}',
         );
         final authSvc = GmailAuthService(
-          clientId: _googleClientId ?? AppConfig.gmailClientId,
-          clientSecret: _googleClientSecret ?? '',
+          clientId: account.clientId ?? AppConfig.gmailClientId,
+          clientSecret: account.clientSecret ?? AppConfig.gmailClientSecret,
           redirectUri: AppConfig.gmailRedirectUri,
           tokenStorage: tokenStorage,
           accountEmail: account.emailAddress,
@@ -1127,7 +1131,7 @@ class AccountManager {
       case MicrosoftAccount():
         final cfg = _microsoftAuthConfig(account);
         final authSvc = MicrosoftAuthService(
-          clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
+          clientId: cfg.clientId ?? AppConfig.microsoftClientId,
           tenantId: cfg.tenantId,
           redirectUri: AppConfig.microsoftRedirectUri,
           tokenStorage: cfg.tokenStorage,
@@ -1148,8 +1152,8 @@ class AccountManager {
           storageKey: 'token_${account.id}',
         );
         final authSvc = GmailAuthService(
-          clientId: _googleClientId ?? AppConfig.gmailClientId,
-          clientSecret: _googleClientSecret ?? '',
+          clientId: account.clientId ?? AppConfig.gmailClientId,
+          clientSecret: account.clientSecret ?? AppConfig.gmailClientSecret,
           redirectUri: AppConfig.gmailRedirectUri,
           tokenStorage: tokenStorage,
           accountEmail: account.emailAddress,
@@ -1179,7 +1183,7 @@ class AccountManager {
       case MicrosoftAccount():
         final cfg = _microsoftAuthConfig(account);
         final authSvc = MicrosoftAuthService(
-          clientId: _microsoftClientId ?? AppConfig.microsoftClientId,
+          clientId: cfg.clientId ?? AppConfig.microsoftClientId,
           tenantId: cfg.tenantId,
           redirectUri: AppConfig.microsoftRedirectUri,
           tokenStorage: cfg.tokenStorage,
@@ -1200,8 +1204,8 @@ class AccountManager {
           storageKey: 'token_${account.id}',
         );
         final authSvc = GmailAuthService(
-          clientId: _googleClientId ?? AppConfig.gmailClientId,
-          clientSecret: _googleClientSecret ?? '',
+          clientId: account.clientId ?? AppConfig.gmailClientId,
+          clientSecret: account.clientSecret ?? AppConfig.gmailClientSecret,
           redirectUri: AppConfig.gmailRedirectUri,
           tokenStorage: tokenStorage,
           accountEmail: account.emailAddress,

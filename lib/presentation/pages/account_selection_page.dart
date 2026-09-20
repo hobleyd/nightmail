@@ -1,10 +1,12 @@
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/config/app_config.dart';
-import '../../core/config/oauth_client_id_storage.dart';
 import '../../core/error/exceptions.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/datasources/remote/graph_api_datasource_impl.dart';
@@ -41,22 +43,19 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
   Future<void> _signInMicrosoft() async {
     final accountCubit = context.read<AccountCubit>();
 
-    final storage = sl<OAuthClientIdStorage>();
-    final storedId = await storage.loadMicrosoftClientId();
-    final initialId =
-        storedId ??
-        (AppConfig.microsoftClientId != 'YOUR_CLIENT_ID'
-            ? AppConfig.microsoftClientId
-            : null);
-    final storedTenantId = await storage.loadMicrosoftTenantId();
-    final initialTenantId = storedTenantId ?? AppConfig.microsoftTenantId;
+    final initialId = AppConfig.microsoftClientId != 'YOUR_CLIENT_ID'
+        ? AppConfig.microsoftClientId
+        : null;
+    final initialTenantId = AppConfig.microsoftTenantId;
 
     if (!mounted) return;
     final credentials = await showClientIdDialog(
       context,
       provider: 'Microsoft',
       helpText:
-          'Enter the Tenant ID and Application (Client) ID from your Azure app registration (portal.azure.com).',
+          'Confirm the Tenant ID for your Microsoft 365 organisation — use '
+          '"common" for a personal Microsoft account. Only enter a Client ID '
+          'if your organisation requires its own Azure app registration.',
       initialValue: initialId,
       requireTenant: true,
       initialTenant: initialTenantId,
@@ -65,8 +64,6 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
 
     final clientId = credentials.clientId;
     final tenantId = credentials.tenantId ?? AppConfig.microsoftTenantId;
-    await storage.saveMicrosoftClientId(clientId);
-    await storage.saveMicrosoftTenantId(tenantId);
 
     setState(() {
       _isLoading = true;
@@ -97,6 +94,7 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
         displayName: profile.displayName,
         emailAddress: profile.email,
         tenantId: tenantId,
+        clientId: clientId,
       );
 
       if (mounted) {
@@ -114,30 +112,30 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
   Future<void> _signInGmail() async {
     final accountCubit = context.read<AccountCubit>();
 
-    final storage = sl<OAuthClientIdStorage>();
-    final storedId = await storage.loadGoogleClientId();
-    final storedSecret = await storage.loadGoogleClientSecret();
-    final initialId =
-        storedId ??
-        (AppConfig.gmailClientId != 'YOUR_GOOGLE_CLIENT_ID'
-            ? AppConfig.gmailClientId
-            : null);
-    final initialSecret = storedSecret ?? AppConfig.gmailClientSecret;
+    final initialId = AppConfig.gmailClientId != 'YOUR_GOOGLE_CLIENT_ID'
+        ? AppConfig.gmailClientId
+        : null;
+    final initialSecret = AppConfig.gmailClientSecret;
+    // iOS and Android OAuth clients don't get a client secret from Google —
+    // only the Desktop-type client used on macOS/Windows/Linux/Web does.
+    final isMobile = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
     if (!mounted) return;
     final credentials = await showClientIdDialog(
       context,
       provider: 'Gmail',
-      helpText:
-          'Enter the Client ID and Client Secret from your Google Cloud Console OAuth 2.0 app (console.cloud.google.com).',
+      helpText: isMobile
+          ? 'Continue to sign in with Google. Only enter a Client ID if your '
+              'organisation requires its own Google Cloud app registration — '
+              'Android/iOS apps have no Client Secret.'
+          : 'Continue to sign in with Google. Only enter a Client ID and '
+              'Secret if your organisation requires its own Google Cloud app '
+              'registration.',
       initialValue: initialId,
-      requireSecret: true,
+      requireSecret: !isMobile,
       initialSecret: initialSecret,
     );
     if (credentials == null || !mounted) return;
-
-    await storage.saveGoogleClientId(credentials.clientId);
-    await storage.saveGoogleClientSecret(credentials.clientSecret!);
 
     setState(() {
       _isLoading = true;
@@ -151,7 +149,7 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
       final tokenStorage = TokenStorage(secureStorage, storageKey: 'token_$id');
       final authService = GmailAuthService(
         clientId: credentials.clientId,
-        clientSecret: credentials.clientSecret!,
+        clientSecret: credentials.clientSecret ?? '',
         redirectUri: AppConfig.gmailRedirectUri,
         tokenStorage: tokenStorage,
       );
@@ -162,6 +160,8 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
         id: id,
         displayName: 'Gmail Account',
         emailAddress: '',
+        clientId: credentials.clientId,
+        clientSecret: credentials.clientSecret,
       );
 
       if (mounted) {

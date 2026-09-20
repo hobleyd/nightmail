@@ -221,7 +221,10 @@ NightMail connects to Google via the Gmail API, Google Calendar API, Google Task
    - Google People API
    - Google Drive API (optional — only to preview a linked Drive document)
 
-2. An **OAuth 2.0 Client ID** of type **Desktop application**.
+2. Three **OAuth 2.0 Client ID**s in the same project, one per platform family — Google removed custom-scheme redirect support from Desktop-type clients in 2022, so a single client can no longer cover desktop and mobile:
+   - **Desktop application** — covers macOS, Windows, Linux, and web.
+   - **iOS** — Bundle ID `au.com.sharpblue.nightmail`. No redirect URI field to fill in.
+   - **Android** — package name `au.com.sharpblue.nightmail`, plus the SHA-1 certificate fingerprint of your signing key (register a separate client per keystore — debug and release have different fingerprints). Enable **custom URI scheme** under this client's Advanced settings; Google disables it by default for new Android clients.
 
 3. The following OAuth scopes authorised:
 
@@ -238,9 +241,10 @@ NightMail connects to Google via the Gmail API, Google Calendar API, Google Task
    | `gmail.settings.basic` | Set an out-of-office reply (optional — asked for separately, the first time you save one) |
    | `https://mail.google.com/` | Permanently delete mail (optional — asked for separately, the first time you empty the trash) |
 
-4. A **redirect URI** added to the OAuth client:
-   - macOS / iOS: `nightmail://google-auth-callback`
-   - Windows / Linux: `http://localhost` (loopback)
+4. A **redirect URI** added to the Desktop client:
+   - macOS / Windows / Linux: `http://localhost` (loopback) — macOS runs its own loopback listener rather than a bare custom scheme; see [`lib/infrastructure/auth/CLAUDE.md`](lib/infrastructure/auth/CLAUDE.md).
+
+   iOS and Android don't take a registered redirect URI — Google validates by Bundle ID / package name instead. The app requests `au.com.sharpblue.nightmail:/google-auth-callback` on iOS (a bare scheme like `nightmail://` is rejected — Google requires a period in the scheme) and `nightmail://google-auth-callback` on Android.
 
 5. For Google Workspace organisations, a Workspace admin may need to mark the app as trusted under **Security → API Controls → App Access Control** if the scopes require verification or if the app is not published to the Google Workspace Marketplace.
 

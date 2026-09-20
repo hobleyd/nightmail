@@ -1,3 +1,7 @@
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 class AppConfig {
   const AppConfig._();
 
@@ -32,8 +36,20 @@ class AppConfig {
     'GOOGLE_CLIENT_SECRET',
     defaultValue: '',
   );
-  static const gmailRedirectUri = String.fromEnvironment(
+  static const _gmailRedirectUriOverride = String.fromEnvironment(
     'GOOGLE_REDIRECT_URI',
-    defaultValue: 'nightmail://google-auth-callback',
   );
+
+  // Google requires a custom-scheme redirect on iOS to be reverse-DNS shaped
+  // (a period in the scheme, a single-slash path) — a bare scheme like
+  // `nightmail://...` is rejected outright. Android and the loopback-based
+  // desktop platforms keep the plain scheme. See
+  // lib/infrastructure/auth/CLAUDE.md for how this was diagnosed.
+  static String get gmailRedirectUri {
+    if (_gmailRedirectUriOverride.isNotEmpty) return _gmailRedirectUriOverride;
+    if (!kIsWeb && Platform.isIOS) {
+      return 'au.com.sharpblue.nightmail:/google-auth-callback';
+    }
+    return 'nightmail://google-auth-callback';
+  }
 }

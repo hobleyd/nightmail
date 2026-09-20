@@ -34,6 +34,7 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - An email attached to another message opens as a preview in the reading pane, with its own attachments available to open or save
 - A markdown attachment or a `.md` document link renders as formatted text in the reading pane's preview, rather than showing its raw source
 - The compose window reopens at the size and position it was last closed at
+- New-mail notifications on iOS/macOS carry Mark Read, Delete, and Dismiss actions that act without opening the app, and appear on a paired Apple Watch automatically
 
 ### Folders
 - Full folder hierarchy with unread counts

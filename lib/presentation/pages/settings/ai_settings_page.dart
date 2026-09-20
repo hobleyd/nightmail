@@ -81,6 +81,12 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
   /// retry instead of silently falling back to a blank free-text field.
   String? _modelsLoadErrorFor;
 
+  /// The actual failure message for [_modelsLoadErrorFor], shown in the UI —
+  /// a generic "couldn't reach it" label hides whether the real problem was a
+  /// connection failure, a timeout, or the endpoint returning something this
+  /// app doesn't understand, all of which need different fixes.
+  String? _modelsLoadErrorMessage;
+
   @override
   void dispose() {
     _apiKeyController.dispose();
@@ -142,16 +148,18 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
     _models = const [];
     _liveModelIds = const [];
     _modelsLoadErrorFor = null;
+    _modelsLoadErrorMessage = null;
     _modelsLoading = true;
 
     final repo = sl<AiCatalogRepository>();
     final cubit = context.read<AiSettingsCubit>();
 
-    // Fall back to the computed default (e.g. Ollama's localhost:11434) when no
-    // explicit endpoint was persisted — a catalog pick (including the
-    // synthesized local Ollama entry) never stores one, only a custom endpoint
-    // does.
-    final baseUrl = provider.apiBaseUrl ?? provider.defaultBaseUrl;
+    // `defaultBaseUrl` already returns `apiBaseUrl` when one is persisted
+    // (normalizing an Ollama endpoint to end in `/v1`) and only computes a
+    // true default otherwise (e.g. a catalog pick that stores none) — the same
+    // getter the inference path uses, so listing and inference always agree on
+    // where a provider actually lives.
+    final baseUrl = provider.defaultBaseUrl;
     final hasUrl = baseUrl != null && baseUrl.isNotEmpty;
     // Detect Azure by protocol OR endpoint host, so a stale wireProtocol on the
     // persisted row still routes to the deployments listing.
@@ -184,16 +192,6 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
       } else if (provider.source == AiProviderSource.catalog) {
         final result = await repo.getModelsForProvider(provider.id);
         catalogModels = result.getOrElse((_) => const []);
-      } else if (hasUrl) {
-        final key = await cubit.getApiKey(provider.id);
-        final result = await repo.listLiveModels(
-          baseUrl: provider.apiBaseUrl!,
-          apiKey: key,
-        );
-        result.match(
-          (failure) => errorMessage = failure.message,
-          (ids) => liveIds = ids,
-        );
       }
 
       if (!mounted || _modelsLoadedFor != provider.id) return;
@@ -202,6 +200,7 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
         _models = catalogModels;
         _liveModelIds = liveIds;
         _modelsLoadErrorFor = errorMessage != null ? provider.id : null;
+        _modelsLoadErrorMessage = errorMessage;
       });
       if (errorMessage != null) {
         debugPrint(
@@ -589,38 +588,67 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
       final failed = _modelsLoadErrorFor == provider.id;
       // Endpoint unreachable / advertises nothing: fall back to manual entry.
       // When a live fetch actually failed (vs. a provider that just has no
-      // models to enumerate), say so and offer a retry rather than leaving an
-      // unexplained blank box — a down/unstarted local server is common.
+      // models to enumerate), show the real failure reason and offer a retry
+      // rather than a generic "unreachable" guess — a down/unstarted local
+      // server is only one of several ways this can fail, and each needs a
+      // different fix.
+      final errorHint = _modelsLoadErrorMessage;
       return Row(
         children: [
           Expanded(
-            child: SizedBox(
-              height: 32,
-              child: TextField(
-                controller: _modelController,
-                onSubmitted: (_) => _commitCompose(provider.id),
-                style: TextStyle(color: c.textSecondary, fontSize: 12),
-                decoration: InputDecoration(
-                  isDense: true,
-                  hintText: failed ? 'Couldn\'t reach server' : 'model id ⏎',
-                  hintStyle: TextStyle(color: c.textMuted, fontSize: 12),
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide(
-                      color: failed ? c.errorBannerBorder : c.separatorStrong,
+            child: Tooltip(
+              message: failed && errorHint != null ? errorHint : '',
+              child: SizedBox(
+                height: 32,
+                child: TextField(
+                  controller: _modelController,
+                  onSubmitted: (_) => _commitCompose(provider.id),
+                  style: TextStyle(color: c.textSecondary, fontSize: 12),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: failed
+                        ? (errorHint ?? 'Couldn\'t load models')
+                        : 'model id ⏎',
+                    hintStyle: TextStyle(color: c.textMuted, fontSize: 12),
+                    hintMaxLines: 1,
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(
+                        color: failed ? c.errorBannerBorder : c.separatorStrong,
+                      ),
                     ),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: AppColors.accent),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: AppColors.accent),
+                    ),
                   ),
                 ),
               ),
             ),
           ),
           if (failed) ...[
+            if (errorHint != null) ...[
+              const SizedBox(width: 4),
+              SizedBox(
+                width: 32,
+                height: 32,
+                // Hint text and tooltips aren't selectable, so this is the only
+                // way to get the actual error text out of this compact row.
+                child: IconButton(
+                  padding: EdgeInsets.zero,
+                  splashRadius: 16,
+                  iconSize: 16,
+                  tooltip: 'Copy error',
+                  icon: Icon(Icons.copy_rounded, color: c.textMuted),
+                  onPressed: () async {
+                    await Clipboard.setData(ClipboardData(text: errorHint));
+                    _snack('Error copied to clipboard');
+                  },
+                ),
+              ),
+            ],
             const SizedBox(width: 4),
             SizedBox(
               width: 32,

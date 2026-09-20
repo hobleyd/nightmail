@@ -85,6 +85,45 @@ void main() {
     });
 
     test(
+        'an ollama apiBaseUrl missing /v1 is normalized to it (Ollama\'s own '
+        'docs give the bare host, which 404s on every OpenAI-compatible '
+        'route this app uses)', () {
+      final p = provider(
+        id: 'byo-ollama',
+        wireProtocol: AiWireProtocol.ollama,
+        apiBaseUrl: 'http://localhost:11434',
+      );
+      expect(p.defaultBaseUrl, 'http://localhost:11434/v1');
+    });
+
+    test('an ollama apiBaseUrl with a trailing slash is normalized too', () {
+      final p = provider(
+        id: 'byo-ollama',
+        wireProtocol: AiWireProtocol.ollama,
+        apiBaseUrl: 'http://localhost:11434/',
+      );
+      expect(p.defaultBaseUrl, 'http://localhost:11434/v1');
+    });
+
+    test('an ollama apiBaseUrl that already ends in /v1 is left as-is', () {
+      final p = provider(
+        id: 'byo-ollama',
+        wireProtocol: AiWireProtocol.ollama,
+        apiBaseUrl: 'http://localhost:11434/v1',
+      );
+      expect(p.defaultBaseUrl, 'http://localhost:11434/v1');
+    });
+
+    test('a non-ollama apiBaseUrl is never normalized', () {
+      final p = provider(
+        id: 'byo-proxy',
+        wireProtocol: AiWireProtocol.openai,
+        apiBaseUrl: 'http://localhost:8080',
+      );
+      expect(p.defaultBaseUrl, 'http://localhost:8080');
+    });
+
+    test(
         'a google-family but non-first-party id (google-vertex) with no '
         'apiBaseUrl resolves to null [M2]', () {
       final p = provider(

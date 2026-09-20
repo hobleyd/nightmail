@@ -87,7 +87,16 @@ class AiProvider extends Equatable {
   /// Used both by inference resolution and to decide whether the settings UI
   /// needs to prompt for a base URL.
   String? get defaultBaseUrl {
-    if (apiBaseUrl != null && apiBaseUrl!.isNotEmpty) return apiBaseUrl;
+    if (apiBaseUrl != null && apiBaseUrl!.isNotEmpty) {
+      // Ollama's own docs/default address is the bare host (no `/v1`) — that's
+      // its *native* API, not the OpenAI-compatible surface every Ollama
+      // request in this app targets. Normalize here so a user-typed bare host
+      // (or one with a trailing slash) still resolves correctly, instead of
+      // 404ing on every request that needs `/v1/...`.
+      return wireProtocol == AiWireProtocol.ollama
+          ? _withV1Suffix(apiBaseUrl!)
+          : apiBaseUrl;
+    }
     const byId = <String, String>{
       'openai': 'https://api.openai.com/v1',
       'anthropic': 'https://api.anthropic.com',
@@ -118,6 +127,13 @@ class AiProvider extends Equatable {
         // there is no safe default; the user must configure the base URL.
         return null;
     }
+  }
+
+  /// Ensures [url] ends in `/v1` (once, no double slash), for a base URL that
+  /// may or may not already carry it.
+  static String _withV1Suffix(String url) {
+    final trimmed = url.endsWith('/') ? url.substring(0, url.length - 1) : url;
+    return trimmed.endsWith('/v1') ? trimmed : '$trimmed/v1';
   }
 
   AiProvider copyWith({

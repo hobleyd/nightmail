@@ -236,6 +236,17 @@ class _AddAccountPageState extends State<AddAccountPage> {
                       color: const Color(0xFF4B5563),
                       onTap: _showImapDialog,
                     ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'NightMail is preconfigured to work for everyone by '
+                      'default. If your organisation needs to connect through '
+                      'its own Microsoft 365 tenant or Google Workspace '
+                      'project for security reasons, ask your Domain '
+                      'Administrator to create the app there — you can then '
+                      'enter its Tenant ID and Client ID when connecting.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: c.textMuted, fontSize: 11.5),
+                    ),
                   ],
                   if (_error != null) ...[
                     const SizedBox(height: 16),

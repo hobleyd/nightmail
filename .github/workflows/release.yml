@@ -233,12 +233,20 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
+      # Reuses the same App Store Connect API key the iOS job uploads TestFlight
+      # builds with (ASC_KEY_P8/ASC_KEY_ID/ASC_ISSUER_ID) rather than the
+      # dedicated NOTARY_* key this step used to use. That key started
+      # returning 401 Unauthenticated with no visible cause -- revoked or
+      # expired on Apple's side, nothing changed here -- while ASC_* is known
+      # good: it's the credential the iOS job just used successfully in the
+      # same run. Notarization and App Store uploads both authenticate
+      # through the same App Store Connect API, so one key covers both.
       - name: Notarize and staple
         if: ${{ env.HAS_SIGNING_CERT == 'true' }}
         env:
-          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
-          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
-          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          NOTARY_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
           APP_PATH="build/macos/Build/Products/Release/nightmail.app"
           echo "$NOTARY_KEY_P8" > "$RUNNER_TEMP/notary_key.p8"

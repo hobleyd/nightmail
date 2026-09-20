@@ -1,34 +1,55 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.29.0",
+  "version": "1.29.1",
   "sections": [
-    {
-      "type": "features",
-      "title": "New features",
-      "items": [
-        {
-          "body": "add Not Junk action when viewing the Junk folder",
-          "title": "mail"
-        }
-      ]
-    },
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "stop double-registering the BGTaskScheduler mail-check handler",
-          "title": "ios"
+          "body": "register iOS/Android Gmail OAuth clients and their redirect scheme",
+          "title": "auth"
         },
         {
-          "body": "normalize Ollama base URL to always carry /v1",
-          "title": "ai"
+          "body": "scope OAuth Client ID/Secret/Tenant ID per account, not shared",
+          "title": "auth"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.29.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "add Not Junk action when viewing the Junk folder",
+              "title": "mail"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "stop double-registering the BGTaskScheduler mail-check handler",
+              "title": "ios"
+            },
+            {
+              "body": "normalize Ollama base URL to always carry /v1",
+              "title": "ai"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -507,31 +528,6 @@
             {
               "body": "preview an email attached in Outlook",
               "title": "reading-pane"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.22.3",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "stop the spinner when there is nothing to update to",
-              "title": "update"
-            },
-            {
-              "body": "name a waiting release by its build number too",
-              "title": "update"
-            },
-            {
-              "body": "take the build number from pubspec, not the CI run counter",
-              "title": "update"
             }
           ]
         }

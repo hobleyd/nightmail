@@ -1082,6 +1082,51 @@ void main() {
         isRead: anyNamed('isRead'),
       ));
     });
+
+    // A notification action can target an account other than whichever is
+    // active in the foreground UI (or none, if nothing is foregrounded at
+    // all) — accountId must be honored over activeAccount when given.
+    test('targets the given accountId, not the active account', () async {
+      const otherAccount = MicrosoftAccount(
+        id: 'account-2',
+        displayName: 'Other',
+        emailAddress: 'other@example.com',
+        tenantId: 'common',
+      );
+      final otherRemoteDatasource = MockEmailRemoteDatasource();
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      when(mockAccountManager.accounts).thenReturn([tAccount, otherAccount]);
+      when(mockAccountManager.buildEmailDatasourceForAccount(otherAccount))
+          .thenReturn(otherRemoteDatasource);
+      when(mockLocalDatasource.getCachedEmailById(
+        accountId: 'account-2',
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => tEmailModel);
+      when(mockLocalDatasource.updateEmailReadStatusInCache(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+        isRead: anyNamed('isRead'),
+      )).thenAnswer((_) async {});
+
+      final result = await repository.markAsRead(
+        id: 'email-1',
+        isRead: true,
+        accountId: 'account-2',
+      );
+
+      expect(result.isRight(), isTrue);
+      verify(mockPendingOperations.enqueue(
+        accountId: 'account-2',
+        emailId: 'email-1',
+        opType: PendingOperationType.markRead,
+        payload: anyNamed('payload'),
+      )).called(1);
+      verify(mockLocalDatasource.updateEmailReadStatusInCache(
+        accountId: 'account-2',
+        emailId: 'email-1',
+        isRead: true,
+      )).called(1);
+    });
   });
 
   group('deleteEmail', () {
@@ -1144,6 +1189,41 @@ void main() {
         accountId: anyNamed('accountId'),
         emailId: anyNamed('emailId'),
       ));
+    });
+
+    // Same shape as markAsRead's equivalent test above.
+    test('targets the given accountId, not the active account', () async {
+      const otherAccount = MicrosoftAccount(
+        id: 'account-2',
+        displayName: 'Other',
+        emailAddress: 'other@example.com',
+        tenantId: 'common',
+      );
+      final otherRemoteDatasource = MockEmailRemoteDatasource();
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      when(mockAccountManager.accounts).thenReturn([tAccount, otherAccount]);
+      when(mockAccountManager.buildEmailDatasourceForAccount(otherAccount))
+          .thenReturn(otherRemoteDatasource);
+      when(mockLocalDatasource.deleteEmailFromCache(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async {});
+
+      final result =
+          await repository.deleteEmail('email-1', accountId: 'account-2');
+
+      expect(result.isRight(), isTrue);
+      verifyNever(mockRemoteDatasource.deleteEmail(any));
+      verify(mockPendingOperations.enqueue(
+        accountId: 'account-2',
+        emailId: 'email-1',
+        opType: PendingOperationType.delete,
+        payload: anyNamed('payload'),
+      )).called(1);
+      verify(mockLocalDatasource.deleteEmailFromCache(
+        accountId: 'account-2',
+        emailId: 'email-1',
+      )).called(1);
     });
   });
 

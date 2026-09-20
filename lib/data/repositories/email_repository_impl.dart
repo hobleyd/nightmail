@@ -298,17 +298,18 @@ class EmailRepositoryImpl implements EmailRepository {
   Future<Either<Failure, Email>> markAsRead({
     required String id,
     required bool isRead,
+    String? accountId,
   }) async {
-    final accountId = _accountManager.activeAccount?.id;
-    final cached = accountId == null
+    final resolvedAccountId = accountId ?? _accountManager.activeAccount?.id;
+    final cached = resolvedAccountId == null
         ? null
         : await _localDatasource.getCachedEmailById(
-            accountId: accountId, emailId: id);
+            accountId: resolvedAccountId, emailId: id);
     // No cached copy to update in place (e.g. acting on a search result that
     // was never cached) — fall back to the old network-first path rather
     // than fabricate a return value.
-    if (accountId == null || cached == null) {
-      return _execute(() => _accountManager.emailDatasource
+    if (resolvedAccountId == null || cached == null) {
+      return _execute(() => _datasourceFor(resolvedAccountId)
           .updateEmailReadStatus(id: id, isRead: isRead));
     }
 
@@ -319,7 +320,7 @@ class EmailRepositoryImpl implements EmailRepository {
       // (a cache change with nothing queued to replay) would silently lose
       // the mutation forever.
       await _pendingOperations.enqueue(
-        accountId: accountId,
+        accountId: resolvedAccountId,
         emailId: id,
         opType: PendingOperationType.markRead,
         payload: jsonEncode({'isRead': isRead}),
@@ -329,11 +330,11 @@ class EmailRepositoryImpl implements EmailRepository {
       // every cache read with it for the window — including the lookups the
       // reconciliation above makes.
       await _localDatasource.updateEmailReadStatusInCache(
-        accountId: accountId,
+        accountId: resolvedAccountId,
         emailId: id,
         isRead: isRead,
       );
-      unawaited(_outboxDrainService.drainForAccount(accountId));
+      unawaited(_outboxDrainService.drainForAccount(resolvedAccountId));
       return updated;
     });
   }
@@ -569,27 +570,27 @@ class EmailRepositoryImpl implements EmailRepository {
   }
 
   @override
-  Future<Either<Failure, Unit>> deleteEmail(String id) async {
-    final accountId = _accountManager.activeAccount?.id;
-    if (accountId == null) {
+  Future<Either<Failure, Unit>> deleteEmail(String id, {String? accountId}) async {
+    final resolvedAccountId = accountId ?? _accountManager.activeAccount?.id;
+    if (resolvedAccountId == null) {
       return _execute(() async {
-        await _accountManager.emailDatasource.deleteEmail(id);
+        await _datasourceFor(resolvedAccountId).deleteEmail(id);
         return unit;
       });
     }
     return _executeLocal(() async {
       await _pendingOperations.enqueue(
-        accountId: accountId,
+        accountId: resolvedAccountId,
         emailId: id,
         opType: PendingOperationType.delete,
         payload: '{}',
       );
-      _tombstoneRemoval(accountId, id);
+      _tombstoneRemoval(resolvedAccountId, id);
       await _localDatasource.deleteEmailFromCache(
-        accountId: accountId,
+        accountId: resolvedAccountId,
         emailId: id,
       );
-      unawaited(_outboxDrainService.drainForAccount(accountId));
+      unawaited(_outboxDrainService.drainForAccount(resolvedAccountId));
       return unit;
     });
   }

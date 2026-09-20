@@ -98,6 +98,28 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     // foreground and tap callbacks.
     UNUserNotificationCenter.current().delegate = self
 
+    // Same category/action identifiers as NotificationService's Darwin
+    // registration on iOS (mailCategoryIdentifier / dismissActionId /
+    // markReadActionId / deleteActionId) — this is the macOS desktop half of
+    // the mail-notification actions; iOS's own registration is what a paired
+    // Apple Watch mirrors, no watchOS app needed for that side.
+    let markReadAction = UNNotificationAction(
+      identifier: "MAIL_MARK_READ", title: "Mark Read", options: []
+    )
+    let deleteAction = UNNotificationAction(
+      identifier: "MAIL_DELETE", title: "Delete", options: [.destructive]
+    )
+    let dismissAction = UNNotificationAction(
+      identifier: "MAIL_DISMISS", title: "Dismiss", options: []
+    )
+    let mailCategory = UNNotificationCategory(
+      identifier: "MAIL_CATEGORY",
+      actions: [dismissAction, markReadAction, deleteAction],
+      intentIdentifiers: [],
+      options: []
+    )
+    UNUserNotificationCenter.current().setNotificationCategories([mailCategory])
+
     // The main window gets the same relay as every secondary window, not just a
     // channel to broadcast *into*: the calendar pane lives in this window, so a
     // cancel or reschedule made here invokes notifyEventSaved on this
@@ -182,11 +204,12 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     let emailId   = args["emailId"]   as? String ?? id
     let accountId = args["accountId"] as? String ?? ""
 
-    let content       = UNMutableNotificationContent()
-    content.title     = title
-    content.body      = body
-    content.sound     = .default
-    content.userInfo  = ["type": "email", "emailId": emailId, "accountId": accountId]
+    let content            = UNMutableNotificationContent()
+    content.title          = title
+    content.body           = body
+    content.sound          = .default
+    content.categoryIdentifier = "MAIL_CATEGORY"
+    content.userInfo       = ["type": "email", "emailId": emailId, "accountId": accountId]
 
     // Use a time-interval trigger of 0.1s — UNUserNotificationCenter requires
     // a trigger; immediate display is not supported.
@@ -384,9 +407,40 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     didReceive response: UNNotificationResponse,
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
-    NSApp.activate(ignoringOtherApps: true)
     let userInfo = response.notification.request.content.userInfo
     let type = userInfo["type"] as? String
+
+    // Mark Read / Delete mutate in place and must not steal focus — the
+    // point of an action button is not opening the app. Dismiss needs no
+    // native call at all; the OS already removes the banner for any action
+    // tap. Falls through to the open-on-tap branches below only for the
+    // default tap (and any other userInfo type), which still activates.
+    if type == "email", response.actionIdentifier == "MAIL_MARK_READ" {
+      let emailId   = userInfo["emailId"]   as? String ?? ""
+      let accountId = userInfo["accountId"] as? String ?? ""
+      mainNotificationChannel?.invokeMethod(
+        "markEmailRead",
+        arguments: ["emailId": emailId, "accountId": accountId]
+      )
+      completionHandler()
+      return
+    }
+    if type == "email", response.actionIdentifier == "MAIL_DELETE" {
+      let emailId   = userInfo["emailId"]   as? String ?? ""
+      let accountId = userInfo["accountId"] as? String ?? ""
+      mainNotificationChannel?.invokeMethod(
+        "deleteEmailNotification",
+        arguments: ["emailId": emailId, "accountId": accountId]
+      )
+      completionHandler()
+      return
+    }
+    if response.actionIdentifier == "MAIL_DISMISS" {
+      completionHandler()
+      return
+    }
+
+    NSApp.activate(ignoringOtherApps: true)
 
     if type == "email" {
       let emailId   = userInfo["emailId"]   as? String ?? ""

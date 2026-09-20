@@ -6,9 +6,23 @@
 // covered as deliberately as the ladder is.
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fpdart/fpdart.dart';
+import 'package:mockito/annotations.dart';
+import 'package:mockito/mockito.dart';
+import 'package:nightmail/core/error/failures.dart';
+import 'package:nightmail/domain/entities/email.dart';
+import 'package:nightmail/domain/entities/email_address.dart';
+import 'package:nightmail/domain/usecases/delete_email.dart';
+import 'package:nightmail/domain/usecases/mark_email_as_read.dart';
 import 'package:nightmail/infrastructure/notifications/notification_service.dart';
+import 'package:nightmail/injection_container.dart';
 
+import 'notification_service_test.mocks.dart';
+
+@GenerateMocks([MarkEmailAsRead, DeleteEmail])
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('reminderOffsets', () {
     test('counts down in five-minute steps and ends at the start', () {
       expect(NotificationService.reminderOffsets(15), [15, 10, 5, 0]);
@@ -52,6 +66,87 @@ void main() {
         expect(offsets.length, lessThanOrEqualTo(5),
             reason: 'lead time $leadTime would flood the OS scheduler');
       }
+    });
+  });
+
+  group('handleMailAction', () {
+    late NotificationService service;
+    late MockMarkEmailAsRead mockMarkEmailAsRead;
+    late MockDeleteEmail mockDeleteEmail;
+
+    final tEmail = Email(
+      id: 'email-1',
+      subject: 'Test',
+      from: EmailAddress(address: 'a@b.com'),
+      toRecipients: [],
+      ccRecipients: [],
+      bodyPreview: '',
+      body: '',
+      bodyType: EmailBodyType.text,
+      isRead: true,
+      receivedDateTime: DateTime.utc(2026, 1, 1),
+      importance: EmailImportance.normal,
+    );
+
+    setUp(() {
+      provideDummy<Either<Failure, Email>>(Right(tEmail));
+      provideDummy<Either<Failure, Unit>>(const Right(unit));
+      mockMarkEmailAsRead = MockMarkEmailAsRead();
+      mockDeleteEmail = MockDeleteEmail();
+      sl.registerLazySingleton<MarkEmailAsRead>(() => mockMarkEmailAsRead);
+      sl.registerLazySingleton<DeleteEmail>(() => mockDeleteEmail);
+      service = NotificationService();
+    });
+
+    tearDown(() async => sl.reset());
+
+    test('MARK_READ calls MarkEmailAsRead with the notification\'s '
+        'account, not the active one', () async {
+      when(mockMarkEmailAsRead(any))
+          .thenAnswer((_) async => Right(tEmail));
+
+      await service.handleMailAction(
+        actionId: NotificationService.markReadActionId,
+        emailId: 'email-1',
+        accountId: 'account-2',
+      );
+
+      final params =
+          verify(mockMarkEmailAsRead(captureAny)).captured.single
+              as MarkEmailAsReadParams;
+      expect(params.id, 'email-1');
+      expect(params.isRead, isTrue);
+      expect(params.accountId, 'account-2');
+      verifyNever(mockDeleteEmail(any));
+    });
+
+    test('DELETE calls DeleteEmail with the notification\'s account',
+        () async {
+      when(mockDeleteEmail(any)).thenAnswer((_) async => const Right(unit));
+
+      await service.handleMailAction(
+        actionId: NotificationService.deleteActionId,
+        emailId: 'email-1',
+        accountId: 'account-2',
+      );
+
+      final params =
+          verify(mockDeleteEmail(captureAny)).captured.single
+              as DeleteEmailParams;
+      expect(params.id, 'email-1');
+      expect(params.accountId, 'account-2');
+      verifyNever(mockMarkEmailAsRead(any));
+    });
+
+    test('DISMISS calls neither use case', () async {
+      await service.handleMailAction(
+        actionId: NotificationService.dismissActionId,
+        emailId: 'email-1',
+        accountId: 'account-2',
+      );
+
+      verifyNever(mockMarkEmailAsRead(any));
+      verifyNever(mockDeleteEmail(any));
     });
   });
 }

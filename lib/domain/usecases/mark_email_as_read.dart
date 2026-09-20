@@ -13,16 +13,28 @@ class MarkEmailAsRead implements UseCase<Email, MarkEmailAsReadParams> {
 
   @override
   Future<Either<Failure, Email>> call(MarkEmailAsReadParams params) {
-    return _repository.markAsRead(id: params.id, isRead: params.isRead);
+    return _repository.markAsRead(
+      id: params.id,
+      isRead: params.isRead,
+      accountId: params.accountId,
+    );
   }
 }
 
 class MarkEmailAsReadParams extends Equatable {
-  const MarkEmailAsReadParams({required this.id, required this.isRead});
+  const MarkEmailAsReadParams({
+    required this.id,
+    required this.isRead,
+    this.accountId,
+  });
 
   final String id;
   final bool isRead;
 
+  /// Targets a specific, possibly-non-active account — see
+  /// [EmailRepository.markAsRead]. Null falls back to the active account.
+  final String? accountId;
+
   @override
-  List<Object?> get props => [id, isRead];
+  List<Object?> get props => [id, isRead, accountId];
 }

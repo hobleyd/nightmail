@@ -21,9 +21,14 @@ abstract interface class EmailRepository {
   Future<Either<Failure, Email>> getEmail(String id);
 
   /// Marks an email as read or unread.
+  ///
+  /// [accountId] targets a specific, possibly-non-active account (a
+  /// notification action arriving for an account other than the foreground
+  /// one). Null falls back to the active account, matching prior behavior.
   Future<Either<Failure, Email>> markAsRead({
     required String id,
     required bool isRead,
+    String? accountId,
   });
 
   /// Lists all mail folders for the current user.
@@ -103,7 +108,10 @@ abstract interface class EmailRepository {
   Future<Either<Failure, Unit>> reportJunk(String id);
 
   /// Deletes (moves to Deleted Items) an email by [id].
-  Future<Either<Failure, Unit>> deleteEmail(String id);
+  ///
+  /// [accountId] targets a specific, possibly-non-active account — see
+  /// [markAsRead]. Null falls back to the active account.
+  Future<Either<Failure, Unit>> deleteEmail(String id, {String? accountId});
 
   /// Empties all emails from [folderId].
   /// If [permanentDelete] is true, messages are irrecoverably deleted;

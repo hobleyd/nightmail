@@ -3,27 +3,67 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
 import '../../core/platform/window_utils.dart';
+import '../../domain/usecases/delete_email.dart';
+import '../../domain/usecases/mark_email_as_read.dart';
+import '../../injection_container.dart';
 import 'notification_action.dart';
 import 'reminder_reconcile_channel.dart';
 
 // Top-level callback — required for background isolate on Android when the
-// app is killed and the user taps a notification.
+// app is killed and the user taps a notification, and reached on iOS too:
+// flutter_local_notifications' iOS side spins up its own headless Flutter
+// engine for a background action tap (FlutterEngineManager), the same shape
+// WorkManager's _callbackDispatcher (background_mail_service.dart) already
+// uses. "async" with a declared void return is deliberate: the callback
+// typedef is `void Function(NotificationResponse)`, and this is the
+// standard fire-and-forget shape for it — there is no caller awaiting this.
 @pragma('vm:entry-point')
-void _onBackgroundNotificationResponse(NotificationResponse details) {
-  // Background isolate: no DI, no UI. Nothing to do here — the action will
-  // be picked up via getNotificationAppLaunchDetails when the app restarts.
+void _onBackgroundNotificationResponse(NotificationResponse details) async {
+  final actionId = details.actionId;
+  if (actionId != NotificationService.markReadActionId &&
+      actionId != NotificationService.deleteActionId) {
+    // A plain tap (open) or Dismiss: nothing to do off-UI. A cold-launch
+    // open is picked up via getNotificationAppLaunchDetails when the app
+    // starts; Dismiss needs no handling — the OS already removes it.
+    return;
+  }
+  WidgetsFlutterBinding.ensureInitialized();
+  await configureDependencies();
+  final service = sl<NotificationService>();
+  final action = service._parsePayload(details.payload);
+  if (action is OpenEmailAction) {
+    await service.handleMailAction(
+      actionId: actionId!,
+      emailId: action.emailId,
+      accountId: action.accountId,
+    );
+  }
 }
 
 class NotificationService {
   static const _macChannel =
       MethodChannel('au.com.sharpblue.nightmail/notifications');
+
+  /// The category a mail notification is shown under, and its three action
+  /// identifiers, in the order they're declared (Dismiss, Mark Read,
+  /// Delete) — Apple shows action buttons in declaration order on both iOS
+  /// and, since watchOS mirrors a category's actions from the iPhone app
+  /// with no watchOS app/extension of NightMail's own required, on an
+  /// Apple Watch too. macOS registers the same identifiers natively (see
+  /// MainFlutterWindow.swift) so [handleMailAction] is the one place that
+  /// owns what each action actually does, regardless of which native side
+  /// dispatched it.
+  static const mailCategoryIdentifier = 'MAIL_CATEGORY';
+  static const dismissActionId = 'MAIL_DISMISS';
+  static const markReadActionId = 'MAIL_MARK_READ';
+  static const deleteActionId = 'MAIL_DELETE';
 
   static final _localPlugin = FlutterLocalNotificationsPlugin();
   static Future<void>? _localInitFuture;
@@ -96,10 +136,26 @@ class NotificationService {
     }
 
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const darwin = DarwinInitializationSettings(
+    // Not const: DarwinNotificationAction.plain is a factory constructor,
+    // so the notificationCategories list below isn't a compile-time constant.
+    final darwin = DarwinInitializationSettings(
       requestAlertPermission: false,
       requestBadgePermission: false,
       requestSoundPermission: false,
+      notificationCategories: [
+        DarwinNotificationCategory(
+          mailCategoryIdentifier,
+          actions: [
+            DarwinNotificationAction.plain(dismissActionId, 'Dismiss'),
+            DarwinNotificationAction.plain(markReadActionId, 'Mark Read'),
+            DarwinNotificationAction.plain(
+              deleteActionId,
+              'Delete',
+              options: {DarwinNotificationActionOption.destructive},
+            ),
+          ],
+        ),
+      ],
     );
     const linux = LinuxInitializationSettings(defaultActionName: 'View');
     const windows = WindowsInitializationSettings(
@@ -109,7 +165,7 @@ class NotificationService {
     );
 
     await _plugin?.initialize(
-      settings: const InitializationSettings(
+      settings: InitializationSettings(
         android: android,
         iOS: darwin,
         linux: linux,
@@ -139,9 +195,54 @@ class NotificationService {
   }
 
   void _onNotificationResponse(NotificationResponse details) {
+    final actionId = details.actionId;
+    if (actionId == markReadActionId || actionId == deleteActionId) {
+      final action = _parsePayload(details.payload);
+      if (action is OpenEmailAction) {
+        unawaited(handleMailAction(
+          actionId: actionId!,
+          emailId: action.emailId,
+          accountId: action.accountId,
+        ));
+      }
+      return;
+    }
+    if (actionId == dismissActionId) return; // OS already removes it.
+
     final action = _parsePayload(details.payload);
     if (action == null) return;
     _setAction(action);
+  }
+
+  /// What Mark Read/Delete actually do, called from every native side that
+  /// can raise one of the mail category's actions: this class's own iOS/
+  /// Android/Linux/Windows foreground and background handlers above, and
+  /// macOS's native channel (`_handleNativeCall` below). One place, so
+  /// "what does Mark Read/Delete mean" can't drift between platforms.
+  ///
+  /// Deliberately routes through the same use cases the rest of the app
+  /// uses (not a bespoke notification-only mutation): that's what gives
+  /// this the outbox's offline durability and optimistic cache update for
+  /// free. [accountId] is passed explicitly rather than relying on
+  /// AccountManager.activeAccount — the account a notification is for is
+  /// routinely not the foreground account, especially from a background
+  /// isolate where there is no foreground at all.
+  Future<void> handleMailAction({
+    required String actionId,
+    required String emailId,
+    required String accountId,
+  }) async {
+    if (actionId == markReadActionId) {
+      await sl<MarkEmailAsRead>()(MarkEmailAsReadParams(
+        id: emailId,
+        isRead: true,
+        accountId: accountId,
+      ));
+    } else if (actionId == deleteActionId) {
+      await sl<DeleteEmail>()(
+        DeleteEmailParams(id: emailId, accountId: accountId),
+      );
+    }
   }
 
   NotificationAction? _parsePayload(String? payload) {
@@ -211,6 +312,28 @@ class NotificationService {
         final accountId = args['accountId'] as String?;
         if (emailId != null && accountId != null) {
           _setAction(OpenEmailAction(emailId: emailId, accountId: accountId));
+        }
+      case 'markEmailRead':
+        final args = Map<String, dynamic>.from(call.arguments as Map);
+        final emailId = args['emailId'] as String?;
+        final accountId = args['accountId'] as String?;
+        if (emailId != null && accountId != null) {
+          await handleMailAction(
+            actionId: markReadActionId,
+            emailId: emailId,
+            accountId: accountId,
+          );
+        }
+      case 'deleteEmailNotification':
+        final args = Map<String, dynamic>.from(call.arguments as Map);
+        final emailId = args['emailId'] as String?;
+        final accountId = args['accountId'] as String?;
+        if (emailId != null && accountId != null) {
+          await handleMailAction(
+            actionId: deleteActionId,
+            emailId: emailId,
+            accountId: accountId,
+          );
         }
       case 'openCalendarEvent':
         final args = Map<String, dynamic>.from(call.arguments as Map);
@@ -308,7 +431,10 @@ class NotificationService {
             importance: Importance.high,
             priority: Priority.high,
           ),
-          iOS: DarwinNotificationDetails(sound: 'default'),
+          iOS: DarwinNotificationDetails(
+            sound: 'default',
+            categoryIdentifier: mailCategoryIdentifier,
+          ),
           linux: LinuxNotificationDetails(),
           windows: WindowsNotificationDetails(),
         ),

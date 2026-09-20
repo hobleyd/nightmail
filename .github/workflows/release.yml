@@ -618,6 +618,65 @@ jobs:
           PROFILE_UUID=$(security cms -D -i "$RUNNER_TEMP/NightMail_App_Store.mobileprovision" | plutil -extract UUID xml1 -o - - | sed -n 's/.*<string>\(.*\)<\/string>.*/\1/p')
           cp "$RUNNER_TEMP/NightMail_App_Store.mobileprovision" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
 
+      # ExportOptions.plist only governs the *export* step (.xcarchive -> .ipa).
+      # The *archive* step (xcodebuild archive, which is what flutter build ipa
+      # runs first) still signs using the project's own settings, and those
+      # default to CODE_SIGN_STYLE=Automatic -- which needs a live Apple ID
+      # session in Xcode to auto-provision, exactly what CI doesn't have. Left
+      # unpatched, archiving fails with "No valid code signing certificates
+      # were found" before ExportOptions.plist is ever consulted. Same fix
+      # build-macos already applies to its own project for the same reason.
+      - name: Configure manual code signing for Release
+        run: |
+          python3 - <<'EOF'
+          import pathlib
+          path = pathlib.Path("ios/Runner.xcodeproj/project.pbxproj")
+          text = path.read_text()
+
+          # TargetAttributes.ProvisioningStyle is a separate, higher-precedence
+          # setting Xcode's own UI maintains; per-config CODE_SIGN_STYLE alone
+          # doesn't override it. Runner currently carries neither key at all
+          # (implicit Automatic), unlike macOS's project which had an explicit
+          # Automatic to flip.
+          old_attrs = "\t\t\t\t\t97C146ED1CF9000F007C117D = {\n\t\t\t\t\t\tCreatedOnToolsVersion = 7.3.1;\n\t\t\t\t\t\tLastSwiftMigration = 1100;\n\t\t\t\t\t};\n"
+          assert text.count(old_attrs) == 1, "Runner TargetAttributes anchor not found or not unique -- pbxproj layout changed, update this patch"
+          new_attrs = "\t\t\t\t\t97C146ED1CF9000F007C117D = {\n\t\t\t\t\t\tCreatedOnToolsVersion = 7.3.1;\n\t\t\t\t\t\tDevelopmentTeam = 69XRMYD9XG;\n\t\t\t\t\t\tLastSwiftMigration = 1100;\n\t\t\t\t\t\tProvisioningStyle = Manual;\n\t\t\t\t\t};\n"
+          text = text.replace(old_attrs, new_attrs)
+
+          # Runner target's Release build settings: names the Apple
+          # Distribution identity and the "NightMail App Store" profile the
+          # previous step imported by UUID -- profiles are matched by content,
+          # not filename, but Xcode wants the human name here.
+          old_release = (
+              "\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = au.com.sharpblue.nightmail;\n"
+              "\t\t\t\tPRODUCT_NAME = \"$(TARGET_NAME)\";\n"
+              "\t\t\t\tSWIFT_OBJC_BRIDGING_HEADER = \"Runner/Runner-Bridging-Header.h\";\n"
+              "\t\t\t\tSWIFT_VERSION = 5.0;\n"
+              "\t\t\t\tVERSIONING_SYSTEM = \"apple-generic\";\n"
+              "\t\t\t};\n"
+              "\t\t\tname = Release;\n"
+              "\t\t};\n"
+          )
+          assert text.count(old_release) == 1, "Runner Release build-settings anchor not found or not unique -- pbxproj layout changed, update this patch"
+          new_release = (
+              "\t\t\t\tCODE_SIGN_IDENTITY = \"Apple Distribution\";\n"
+              "\t\t\t\tCODE_SIGN_STYLE = Manual;\n"
+              "\t\t\t\tDEVELOPMENT_TEAM = 69XRMYD9XG;\n"
+              "\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = au.com.sharpblue.nightmail;\n"
+              "\t\t\t\tPRODUCT_NAME = \"$(TARGET_NAME)\";\n"
+              "\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = \"NightMail App Store\";\n"
+              "\t\t\t\tSWIFT_OBJC_BRIDGING_HEADER = \"Runner/Runner-Bridging-Header.h\";\n"
+              "\t\t\t\tSWIFT_VERSION = 5.0;\n"
+              "\t\t\t\tVERSIONING_SYSTEM = \"apple-generic\";\n"
+              "\t\t\t};\n"
+              "\t\t\tname = Release;\n"
+              "\t\t};\n"
+          )
+          text = text.replace(old_release, new_release)
+
+          path.write_text(text)
+          EOF
+
       - run: flutter build ipa --release --no-tree-shake-icons --build-number ${{ needs.prepare.outputs.build_number }} --export-options-plist=ios/ExportOptions.plist
 
       # altool reads the API key from this fixed path by Key ID -- there is

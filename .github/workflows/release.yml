@@ -170,7 +170,12 @@ jobs:
           path.write_text(text)
           EOF
 
-      - run: flutter build macos --release --no-tree-shake-icons --build-number ${{ needs.prepare.outputs.build_number }}
+      - run: >
+          flutter build macos --release --no-tree-shake-icons
+          --build-number ${{ needs.prepare.outputs.build_number }}
+          --dart-define=AZURE_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}
+          --dart-define=GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+          --dart-define=GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
 
       # The in-app updater refuses a staged app if *any* entry in it is
       # group- or other-writable. desktop_updater's helper hashes the staged
@@ -416,7 +421,12 @@ jobs:
         working-directory: packages/enough_mail
         run: dart pub get && dart run build_runner build --delete-conflicting-outputs
       - run: dart run flutter_launcher_icons
-      - run: flutter build windows --release --no-tree-shake-icons --build-number ${{ needs.prepare.outputs.build_number }}
+      - run: >
+          flutter build windows --release --no-tree-shake-icons
+          --build-number ${{ needs.prepare.outputs.build_number }}
+          --dart-define=AZURE_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}
+          --dart-define=GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+          --dart-define=GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
       - run: dart run windows.dart
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -505,7 +515,11 @@ jobs:
         working-directory: packages/enough_mail
         run: dart pub get && dart run build_runner build --delete-conflicting-outputs
       - run: dart run flutter_launcher_icons
-      - run: flutter build linux --release --no-tree-shake-icons
+      - run: >
+          flutter build linux --release --no-tree-shake-icons
+          --dart-define=AZURE_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}
+          --dart-define=GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+          --dart-define=GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
 
       - name: Prepare bundle assets
         run: convert assets/logo.png -resize 512x512 build/linux/x64/release/bundle/nightmail.png
@@ -557,7 +571,12 @@ jobs:
           ENCODED_STRING: ${{ secrets.KEY_BASE_64 }}
         run: printf '%s' "$ENCODED_STRING" | base64 -di > android/app/keystore.jks
 
-      - run: flutter build apk --release --no-tree-shake-icons --build-number ${{ needs.prepare.outputs.build_number }}
+      - run: >
+          flutter build apk --release --no-tree-shake-icons
+          --build-number ${{ needs.prepare.outputs.build_number }}
+          --dart-define=AZURE_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}
+          --dart-define=GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+          --dart-define=GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v0.1.15
@@ -685,7 +704,13 @@ jobs:
           path.write_text(text)
           EOF
 
-      - run: flutter build ipa --release --no-tree-shake-icons --build-number ${{ needs.prepare.outputs.build_number }} --export-options-plist=ios/ExportOptions.plist
+      - run: >
+          flutter build ipa --release --no-tree-shake-icons
+          --build-number ${{ needs.prepare.outputs.build_number }}
+          --export-options-plist=ios/ExportOptions.plist
+          --dart-define=AZURE_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}
+          --dart-define=GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+          --dart-define=GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
 
       # altool reads the API key from this fixed path by Key ID -- there is
       # no flag for it. `--upload-app` maps the .ipa's bundle ID onto an

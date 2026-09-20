@@ -244,7 +244,7 @@ class _AddAccountPageState extends State<AddAccountPage> {
                       'project for security reasons, ask your Domain '
                       'Administrator to create the app there — you can then '
                       'enter its Tenant ID and Client ID when connecting.',
-                      textAlign: TextAlign.center,
+                      textAlign: TextAlign.left,
                       style: TextStyle(color: c.textMuted, fontSize: 11.5),
                     ),
                   ],

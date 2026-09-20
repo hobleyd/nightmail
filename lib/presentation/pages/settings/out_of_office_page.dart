@@ -15,6 +15,7 @@ import '../../widgets/compose_body_builder.dart';
 import '../../widgets/date_time_fields.dart';
 import '../../widgets/html_email_editor.dart';
 import '../../widgets/insert_link_dialog.dart';
+import 'meeting_sweep_dialog.dart';
 
 /// The Out of Office settings section.
 ///
@@ -183,7 +184,34 @@ class _OutOfOfficeViewState extends State<_OutOfOfficeView> {
       // there is nothing to report and nothing to save.
       if (!granted) return;
     }
+
+    // Captured before the save so the sweep only offers itself on the save
+    // that actually *turns on* automatic replies — not on every later save
+    // that only edits the message or audience while it is already on, which
+    // would otherwise reopen the dialog for meetings already handled.
+    final wasEnabled = cubit.state.saved?.enabled ?? false;
+    final willEnable = cubit.state.draft?.enabled ?? false;
+    final accountId = cubit.state.accountId;
+    final window = cubit.state.draft;
+    final savedAtBefore = cubit.state.savedAt;
+
     await cubit.save();
+    if (!mounted) return;
+
+    final saveSucceeded = cubit.state.savedAt != savedAtBefore;
+    if (saveSucceeded &&
+        !wasEnabled &&
+        willEnable &&
+        accountId != null &&
+        window?.start != null &&
+        window?.end != null) {
+      await showMeetingSweepDialog(
+        context,
+        accountId: accountId,
+        start: window!.start!,
+        end: window.end!,
+      );
+    }
   }
 
   Future<bool?> _confirmPermission() {

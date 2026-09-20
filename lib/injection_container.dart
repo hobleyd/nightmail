@@ -60,6 +60,7 @@ import 'domain/usecases/ai/run_folder_agent.dart';
 import 'presentation/blocs/ai/ai_compose_cubit.dart';
 import 'presentation/blocs/ai/ai_folder_cubit.dart';
 import 'presentation/blocs/ai/ai_settings_cubit.dart';
+import 'presentation/blocs/out_of_office/meeting_sweep_cubit.dart';
 import 'presentation/blocs/out_of_office/out_of_office_cubit.dart';
 import 'domain/repositories/calendar_repository.dart';
 import 'domain/repositories/cloud_drive_repository.dart';
@@ -712,6 +713,16 @@ Future<void> configureDependencies() async {
     () => OutOfOfficeCubit(
       getOutOfOffice: sl<GetOutOfOffice>(),
       setOutOfOffice: sl<SetOutOfOffice>(),
+      accountManager: sl<AccountManager>(),
+    ),
+  );
+  // A factory, not a singleton: opened once per sweep dialog, over whichever
+  // account's Out of Office window prompted it.
+  sl.registerFactory(
+    () => MeetingSweepCubit(
+      getCalendarEvents: sl<GetCalendarEvents>(),
+      declineCalendarEvent: sl<DeclineCalendarEvent>(),
+      cancelCalendarEvent: sl<CancelCalendarEvent>(),
       accountManager: sl<AccountManager>(),
     ),
   );

@@ -83,12 +83,20 @@ class OutOfOfficeCubit extends Cubit<OutOfOfficeState> {
         );
       },
       (settings) {
+        // Computed once and given to both saved and draft: a mailbox with
+        // nothing scheduled comes back with no dates at all, and a form whose
+        // date buttons read "—" cannot be pressed into shape without two
+        // extra taps. Both sides get the same defaults — not just the draft —
+        // so they start out equal and OutOfOfficeState.isDirty reads false
+        // until the user actually changes something, rather than the Save
+        // button reading as already-dirty on first load.
+        final withDefaults = _withDefaultDates(settings);
         emit(
           OutOfOfficeState(
             accountId: id,
             status: OutOfOfficeStatus.ready,
-            saved: settings,
-            draft: _withDefaultDates(settings),
+            saved: withDefaults,
+            draft: withDefaults,
             needsPermission: !canWrite,
             savedAt: savedAt,
           ),
@@ -99,8 +107,7 @@ class OutOfOfficeCubit extends Cubit<OutOfOfficeState> {
 
   /// A mailbox with nothing scheduled comes back with no dates at all, and a
   /// form whose date buttons read "—" cannot be pressed into shape without
-  /// two extra taps. Only the *draft* gets them, so [OutOfOfficeState.isDirty]
-  /// still reads false until the user actually changes something.
+  /// two extra taps.
   OutOfOfficeSettings _withDefaultDates(OutOfOfficeSettings settings) {
     if (settings.start != null && settings.end != null) return settings;
     final now = DateTime.now();

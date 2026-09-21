@@ -95,12 +95,10 @@ void main() {
       expect(draft.end, isNotNull);
       // A week out by default.
       expect(draft.end!.difference(draft.start!).inDays, 7);
-      // NOTE: OutOfOfficeCubit._withDefaultDates's doc comment claims isDirty
-      // stays false here, but `load` emits `saved: settings` (the raw,
-      // date-less response) alongside `draft: _withDefaultDates(settings)`,
-      // so the two differ immediately and isDirty reads true. Asserting the
-      // actual behaviour rather than the documented intent.
-      expect(cubit.state.isDirty, isTrue);
+      // saved gets the same defaults as draft, so isDirty stays false until
+      // the user actually changes something — the Save button doesn't read
+      // as already-dirty on first load.
+      expect(cubit.state.isDirty, isFalse);
     });
 
     test('keeps the mailbox\'s own dates when it already has a schedule',

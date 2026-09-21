@@ -157,6 +157,10 @@ Settings → Accounts.
   organisation
 - Saving asks the provider for one extra permission the first time; reading
   your current setting needs nothing new
+- **Turning it on offers to clear your calendar** for the dates you set:
+  decline meetings you're attending and cancel ones you're organising (which
+  emails attendees, so those are never pre-selected). Only offered for the
+  account that's currently active elsewhere in the app
 
 ### Updates
 - Checks for a new version at launch and every 6 hours, with a dot on the

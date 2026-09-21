@@ -15,7 +15,15 @@ confinement: classic
 apps:
   nightmail:
     command: nightmail
-    desktop: meta/gui/nightmail.desktop
+    # A path under the prime directory, supplied by the desktop-entry part
+    # below. snapcraft 9.0 resolved this key against prime/ after copying
+    # snap/gui/ into prime/meta/gui/, so `meta/gui/nightmail.desktop` worked;
+    # 9.1 renders app desktop files in the same pass as that copy and falls
+    # back to the project's snap/ directory, so the same value became
+    # `snap/meta/gui/nightmail.desktop` and the Linux release job failed with
+    # "Failed to generate desktop file ... file does not exist". Only a file
+    # that a part actually primes resolves the same way in both.
+    desktop: usr/share/applications/nightmail.desktop
 
 parts:
   nightmail:
@@ -29,3 +37,13 @@ parts:
       find "$CRAFT_PRIME/lib" -name "*.so*" -type f | while read lib; do
         patchelf --set-rpath '$ORIGIN' "$lib" 2>/dev/null || true
       done
+  # Primes the desktop entry where `apps.nightmail.desktop` points. Only the
+  # .desktop is staged: snap/gui/nightmail.png would otherwise collide with the
+  # nightmail.png the release workflow writes into the Flutter bundle.
+  desktop-entry:
+    plugin: dump
+    source: snap/gui
+    organize:
+      nightmail.desktop: usr/share/applications/nightmail.desktop
+    stage:
+      - usr/share/applications/nightmail.desktop

@@ -137,6 +137,21 @@ class WebKitView: NSObject, WKScriptMessageHandler, FlutterStreamHandler, WKNavi
     webView.navigationDelegate = self
     contentController.add(self, name: "HtmlView")
     parentView.addSubview(webView)
+    // FlutterView paints through a CALayer it adds to its own layer on the
+    // first frame it commits, and this WKWebView's backing layer becomes a
+    // sibling of that layer the moment it is added as a subview. Both sit at
+    // zPosition 0, so whichever arrives later is drawn on top. A webview
+    // created while the window's first frame is still being rasterised — the
+    // compose editor of a reply, mounted in the first build — can therefore
+    // end up underneath Flutter's surface and show nothing at all, toolbar
+    // included, while its page loads and lays out normally. Measured in the
+    // compose sub-window: FlutterView.layer.sublayers is [CALayer, WEBVIEW],
+    // both z=0, order decided by timing. Lifting the webview above Flutter's
+    // surfaces (zIndex 0 and, with platform views, small integers) makes the
+    // order deterministic; Flutter content that must appear over the webview
+    // already asks for it to be hidden (HtmlViewOverlayGuard, ModalRoute).
+    webView.wantsLayer = true
+    webView.layer?.zPosition = 1000
 
     webView.onClickFocus = { [weak self] in
       self?.emitEvent(type: "onClickFocus", value: "")

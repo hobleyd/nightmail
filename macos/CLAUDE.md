@@ -59,6 +59,48 @@ The Dart callers are best-effort regardless: only macOS and Windows implement
 these relays at all, so Linux, Android and iOS raise `MissingPluginException`
 every time as a matter of course.
 
+## The Editor Webview Sits Above Flutter's Surface by zPosition, Not by Luck
+
+`html_view`'s WKWebView (`packages/html_view/macos/Classes/WebKitView.swift`)
+is a plain subview of the engine's `FlutterView`, and `FlutterView` paints
+through a `CALayer` that `FlutterSurfaceManager` adds to the view's own layer
+on the first frame it commits. Both end up as sibling sublayers of
+`FlutterView.layer`, both at zPosition 0 — so whichever is added *later* is
+drawn on top.
+
+That order used to be decided by timing. The reading pane and a new-email
+editor are created long after their window's first frame, so the webview
+always landed on top. A **reply** mounts `HtmlEmailEditor` in the compose
+sub-window's first build: `createView` runs while the first frame is still
+being rasterised, and when Flutter's surface layer arrived second it covered
+the webview. The page loaded, `setContent` ran, the DOM reported itself
+visible with the right size — and the user saw the window background where
+the toolbar and body should be, intermittently, only for replies, and only
+in normal use (a debug run with probes attached happened to win the race).
+
+Measured with a native probe in the compose sub-window:
+`FlutterView.layer.sublayers == [CALayer z=0 (Flutter), WEBVIEW z=0]`.
+
+The webview's layer now gets `zPosition = 1000`, above Flutter's surfaces
+(`zIndex` 0, and small integers when platform views are present). Being above
+Flutter is the intended relationship: Flutter content that must appear over
+the webview — a `ModalRoute`, a typeahead dropdown, a hover card — already
+asks for it to be hidden through `HtmlViewOverlayGuard` /
+`HtmlViewWidget._applyVisibility`, because on Windows the WebView2 HWND is
+always on top and the same rule was needed there.
+
+Two things worth knowing before touching this:
+
+- **`webView.layer` is only safe to address once `wantsLayer` is true** and the
+  view is in the hierarchy it is ordered within, hence the placement right
+  after `addSubview`.
+- **Do not "fix" the order by re-adding the subview.** `FlutterSurfaceManager`
+  removes and re-adds its layers whenever the surface count changes, so any
+  insertion-order remedy is the same race again. zPosition is what Core
+  Animation actually sorts by.
+
+`test/presentation/widgets/editor_layer_order_test.dart` pins the line.
+
 ## macOS Privacy Permissions (TCC)
 
 ### Contacts

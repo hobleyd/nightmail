@@ -48,9 +48,9 @@ class _AddAccountPageState extends State<AddAccountPage> {
       context,
       provider: 'Microsoft',
       helpText:
-          'Confirm the Tenant ID for your Microsoft 365 organisation — use '
-          '"common" for a personal Microsoft account. Only enter a Client ID '
-          'if your organisation requires its own Azure app registration.',
+          'Continue to sign in with Microsoft 365. Only enter a Tenant ID '
+          'and Client ID if your organisation requires its own Azure app '
+          'registration.',
       initialValue: initialId,
       requireTenant: true,
       initialTenant: initialTenantId,

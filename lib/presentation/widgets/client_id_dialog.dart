@@ -15,14 +15,12 @@ class OAuthCredentials {
 /// Shows a dialog asking the user to enter (or confirm) OAuth credentials.
 /// Returns the entered credentials, or null if the user cancelled.
 ///
-/// Client ID/Secret are BYOA (bring-your-own-Azure-app/Google-project)
-/// fields — most users never need to see them, since [initialValue] is
-/// normally the compiled default NightMail already signs in with. They stay
-/// hidden behind a "custom app registration" toggle unless [initialValue] is
-/// null, meaning there is no usable compiled default to fall back to.
-/// [initialTenant] (Microsoft only) has no such default-free case — Azure
-/// tenants are genuinely per-organisation — so the Tenant ID field, when
-/// [requireTenant] is set, is always visible.
+/// Client ID/Secret/Tenant ID are all BYOA (bring-your-own-Azure-app/
+/// Google-project) fields — most users never need to see any of them, since
+/// [initialValue] (and, for Microsoft, [initialTenant]) are normally the
+/// compiled defaults NightMail already signs in with. They all stay hidden
+/// behind a single "custom app registration" toggle unless there is no
+/// usable compiled default to fall back to silently.
 Future<OAuthCredentials?> showClientIdDialog(
   BuildContext context, {
   required String provider,
@@ -77,9 +75,9 @@ class _ClientIdDialogState extends State<_ClientIdDialog> {
   late final TextEditingController _secretCtrl;
   late final TextEditingController _tenantCtrl;
 
-  // Client ID/Secret start hidden unless there is no compiled default to use
-  // silently — in that case there's nothing to hide behind, so the fields
-  // must be shown immediately.
+  // Client ID/Secret/Tenant ID all start hidden unless there is no compiled
+  // default to use silently — in that case there's nothing to hide behind,
+  // so the fields must be shown immediately.
   late bool _advanced;
 
   @override
@@ -88,7 +86,8 @@ class _ClientIdDialogState extends State<_ClientIdDialog> {
     _idCtrl = TextEditingController(text: widget.initialValue ?? '');
     _secretCtrl = TextEditingController(text: widget.initialSecret ?? '');
     _tenantCtrl = TextEditingController(text: widget.initialTenant ?? '');
-    _advanced = widget.initialValue == null;
+    _advanced = widget.initialValue == null ||
+        (widget.requireTenant && widget.initialTenant == null);
   }
 
   @override
@@ -113,18 +112,18 @@ class _ClientIdDialogState extends State<_ClientIdDialog> {
             children: [
               Text(widget.helpText, style: const TextStyle(fontSize: 13)),
               const SizedBox(height: 16),
-              if (widget.requireTenant) ...[
-                TextFormField(
-                  controller: _tenantCtrl,
-                  autofocus: true,
-                  decoration: const InputDecoration(labelText: 'Tenant ID'),
-                  validator: (v) => v == null || v.trim().isEmpty
-                      ? 'Enter a Tenant ID'
-                      : null,
-                ),
-                const SizedBox(height: 12),
-              ],
               if (_advanced) ...[
+                if (widget.requireTenant) ...[
+                  TextFormField(
+                    controller: _tenantCtrl,
+                    autofocus: true,
+                    decoration: const InputDecoration(labelText: 'Tenant ID'),
+                    validator: (v) => v == null || v.trim().isEmpty
+                        ? 'Enter a Tenant ID'
+                        : null,
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 TextFormField(
                   controller: _idCtrl,
                   autofocus: !widget.requireTenant,
@@ -182,7 +181,7 @@ class _ClientIdDialogState extends State<_ClientIdDialog> {
                           : widget.initialSecret)
                       : null,
                   tenantId: widget.requireTenant
-                      ? _tenantCtrl.text.trim()
+                      ? (_advanced ? _tenantCtrl.text.trim() : widget.initialTenant)
                       : null,
                 ),
               );

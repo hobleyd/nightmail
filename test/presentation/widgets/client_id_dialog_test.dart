@@ -12,6 +12,8 @@ void main() {
     String? initialValue,
     bool requireSecret = false,
     String? initialSecret,
+    bool requireTenant = false,
+    String? initialTenant,
   }) async {
     OAuthCredentials? result;
     var completed = false;
@@ -28,6 +30,8 @@ void main() {
                 initialValue: initialValue,
                 requireSecret: requireSecret,
                 initialSecret: initialSecret,
+                requireTenant: requireTenant,
+                initialTenant: initialTenant,
               );
               completed = true;
             },
@@ -192,6 +196,98 @@ void main() {
 
       expect(result()!.clientId, 'default-id');
       expect(result()!.clientSecret, 'default-secret');
+    });
+  });
+
+  // Tenant ID (Microsoft only) hides behind the same toggle as Client ID —
+  // and only when there's a compiled default for *both*, since continuing
+  // without opening the toggle sends both silently.
+  group('showClientIdDialog — hides Tenant ID when a default exists', () {
+    testWidgets('shows a toggle instead of the tenant id field', (tester) async {
+      await open(
+        tester,
+        initialValue: 'default-id',
+        requireTenant: true,
+        initialTenant: 'default-tenant',
+      );
+
+      expect(fieldLabelled('Tenant ID'), findsNothing);
+      expect(fieldLabelled('Client ID'), findsNothing);
+      expect(find.text(advancedToggle), findsOneWidget);
+    });
+
+    testWidgets('continuing without opening the toggle uses both defaults',
+        (tester) async {
+      final result = await open(
+        tester,
+        initialValue: 'default-id',
+        requireTenant: true,
+        initialTenant: 'default-tenant',
+      );
+
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+
+      expect(result()!.clientId, 'default-id');
+      expect(result()!.tenantId, 'default-tenant');
+    });
+
+    testWidgets(
+        'the toggle reveals the tenant id field pre-filled with the default',
+        (tester) async {
+      await open(
+        tester,
+        initialValue: 'default-id',
+        requireTenant: true,
+        initialTenant: 'default-tenant',
+      );
+
+      await tester.tap(find.text(advancedToggle));
+      await tester.pumpAndSettle();
+
+      expect(fieldLabelled('Tenant ID'), findsOneWidget);
+      expect(find.text('default-tenant'), findsOneWidget);
+    });
+
+    testWidgets('editing the tenant field after opening the toggle overrides the default',
+        (tester) async {
+      final result = await open(
+        tester,
+        initialValue: 'default-id',
+        requireTenant: true,
+        initialTenant: 'default-tenant',
+      );
+
+      await tester.tap(find.text(advancedToggle));
+      await tester.pumpAndSettle();
+      await tester.enterText(fieldLabelled('Tenant ID'), 'custom-tenant');
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+
+      expect(result()!.tenantId, 'custom-tenant');
+    });
+
+    testWidgets(
+        'no compiled tenant default shows the tenant field immediately, '
+        'even with a client id default', (tester) async {
+      await open(
+        tester,
+        initialValue: 'default-id',
+        requireTenant: true,
+      );
+
+      expect(fieldLabelled('Tenant ID'), findsOneWidget);
+      expect(find.text(advancedToggle), findsNothing);
+    });
+
+    testWidgets('refuses to continue with a blank tenant id', (tester) async {
+      await open(tester, requireTenant: true);
+
+      await tester.enterText(fieldLabelled('Client ID'), 'abc-123');
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Enter a Tenant ID'), findsOneWidget);
     });
   });
 

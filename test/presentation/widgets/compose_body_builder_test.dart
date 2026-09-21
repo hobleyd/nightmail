@@ -404,6 +404,28 @@ void main() {
         expect(result, contains('<div>---------- Original Message ----------</div>'));
       });
     });
+
+    // content-visibility:auto leaves the quote's subtree unrendered until the
+    // engine's intersection check declares it relevant, and in the compose
+    // window's WKWebView that check ran seconds late or — once WebKit judged
+    // the page hidden — not at all, so a reply opened onto a blank 500px box
+    // where the original message should be. Containment alone never withholds
+    // rendering. See docs/claude/webviews.md.
+    group('quote wrapper', () {
+      for (final mode in [ComposeMode.reply, ComposeMode.replyAll, ComposeMode.forward]) {
+        test('${mode.name} isolates the quote with contain, never content-visibility', () {
+          final result = ComposeBodyBuilder.buildInitialHtmlBody(
+            originalEmail: _makeEmail(bodyType: EmailBodyType.html, body: '<p>quoted</p>'),
+            draftEmail: null,
+            mode: mode,
+          );
+
+          expect(result, contains('contain:layout style'));
+          expect(result, isNot(contains('content-visibility')));
+          expect(result, isNot(contains('contain-intrinsic-size')));
+        });
+      }
+    });
   });
 
   group('ComposeBodyBuilder.formatAddress', () {

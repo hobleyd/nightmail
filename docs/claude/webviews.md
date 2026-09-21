@@ -242,6 +242,42 @@ it. Measured: `<ul><li>one</li><li>two</li></ul>` → `<ul><li>one</li></ul>two`
 `test/presentation/widgets/editor_keyboard_shortcuts_test.dart` pins the
 binding table, since the behaviour itself only exists inside a real engine.
 
+## The Quote Wrapper Is Contained, Never `content-visibility: auto`
+
+`ComposeBodyBuilder` wraps the quoted original in a `<blockquote>` (reply) or
+`<div>` (forward) styled `contain:layout style`, so the editor's layout work
+for a keystroke stops at the quote's boundary. For a while that was
+`content-visibility:auto; contain-intrinsic-size:500px` instead — a superset
+that also skips layout and paint for the part of the quote scrolled out of
+view — and it made the reply look empty: the compose window opened onto a
+blank 500px box where the original message should be, while the plain-text
+editor showed the same message fine.
+
+`content-visibility: auto` withholds rendering of the subtree until the
+engine's intersection check declares it "relevant to the user", and that check
+only runs in a rendering update. Measured in the compose window's WKWebView
+with a DOM probe after `setContent` (the quote's `innerText.length` and
+`offsetHeight`):
+
+- **The quote was present in the DOM from the start** (`innerHTML` complete)
+  but its `innerText` was empty and it stood 500px tall — the placeholder — at
+  0s and 1s, and only filled in somewhere between 1s and 3s.
+- **`document.visibilityState` later flipped to `hidden`** with the window
+  still on screen. WebKit stops rendering updates for a page it judges hidden,
+  and with them the relevance check, so a quote that had not yet been revealed
+  stays a blank box for as long as that lasts.
+- In a bare WKWebView over the same asset the reveal took under a second,
+  which is why the perf commit looked fine and why this is recorded here: the
+  Flutter-hosted view is the environment that matters, and the harness does
+  not reproduce it.
+
+With `contain:layout style` the same probe reports the quote rendered at 0s.
+Containment isolates; it never withholds. `innerHTML` was unaffected either
+way, so drafts, send and copy never lost the quote — only the reader did.
+
+`test/presentation/widgets/compose_body_builder_test.dart` pins the wrapper's
+style.
+
 ## A Quoted Reply Is Somebody Else's Markup
 
 The compose editor is a webview with **script enabled** and a method channel to

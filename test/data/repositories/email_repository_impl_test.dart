@@ -753,6 +753,129 @@ void main() {
 
       expect(result.isLeft(), isTrue);
     });
+
+    // Regression: a folder listing's cross-folder conversation expansion
+    // caches a copy of a message under a folder that isn't its home (e.g. a
+    // Drafts autosave that shares a thread with something in the Inbox). If
+    // that message is later deleted/sent from its actual home, the expanded
+    // row is a ghost the folder's own delta/poll sync never learns to evict —
+    // it keeps reappearing on every repaint and 404ing on every click, until
+    // opening it evicts the row that sent us here.
+    test('evicts the cached row across every folder when the fetch 404s',
+        () async {
+      final ghostCached = EmailModel(
+        id: 'email-1',
+        subject: 'Fwd: Quote',
+        from: const EmailAddressModel(address: 'a@b.com'),
+        toRecipients: const [],
+        ccRecipients: const [],
+        bodyPreview: 'preview',
+        body: '',
+        bodyType: EmailBodyType.text,
+        isRead: false,
+        receivedDateTime: DateTime(2026, 6, 1),
+        importance: EmailImportance.normal,
+      );
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      when(mockLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => ghostCached);
+      when(mockRemoteDatasource.getEmail(any)).thenThrow(
+        const ServerException(message: 'not found', statusCode: 404),
+      );
+      when(mockLocalDatasource.deleteEmailFromCache(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async {});
+
+      final result = await repository.getEmail('email-1');
+
+      expect(result.isLeft(), isTrue);
+      verify(mockLocalDatasource.deleteEmailFromCache(
+        accountId: tAccount.id,
+        emailId: 'email-1',
+      )).called(1);
+    });
+
+    test('does not evict the cached row on a non-404 failure', () async {
+      final thinCached = EmailModel(
+        id: 'email-1',
+        subject: 'Quote',
+        from: const EmailAddressModel(address: 'a@b.com'),
+        toRecipients: const [],
+        ccRecipients: const [],
+        bodyPreview: 'preview',
+        body: '',
+        bodyType: EmailBodyType.text,
+        isRead: false,
+        receivedDateTime: DateTime(2026, 6, 1),
+        importance: EmailImportance.normal,
+      );
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      when(mockLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => thinCached);
+      when(mockRemoteDatasource.getEmail(any)).thenThrow(
+        const ServerException(message: 'boom', statusCode: 500),
+      );
+
+      final result = await repository.getEmail('email-1');
+
+      expect(result.isLeft(), isTrue);
+      verifyNever(mockLocalDatasource.deleteEmailFromCache(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      ));
+    });
+
+    // Regression: the fallback a few lines up exists for a refetch gone wrong
+    // (offline, a server hiccup) while a full copy is already on hand — it
+    // must not also catch a confirmed 404, which means the message is gone
+    // for good. Falling back there would hand the caller a "successful" read
+    // of a row the line above just evicted from the cache, then have it
+    // silently vanish on the next repaint with nothing to explain why.
+    test('a 404 bypasses the stale-copy fallback even with a full body '
+        'cached', () async {
+      final fullCached = EmailModel(
+        id: 'email-1',
+        subject: 'Quote',
+        from: const EmailAddressModel(address: 'a@b.com'),
+        toRecipients: const [],
+        ccRecipients: const [],
+        bodyPreview: 'preview',
+        body: '<p>still readable, but the server says gone</p>',
+        bodyType: EmailBodyType.html,
+        isRead: false,
+        receivedDateTime: DateTime(2026, 6, 1),
+        importance: EmailImportance.normal,
+      );
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      when(mockLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => fullCached);
+      when(mockLocalDatasource.hasStaleAttachmentParse(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => true); // forces the refetch despite a full body
+      when(mockRemoteDatasource.getEmail(any)).thenThrow(
+        const ServerException(message: 'not found', statusCode: 404),
+      );
+      when(mockLocalDatasource.deleteEmailFromCache(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async {});
+
+      final result = await repository.getEmail('email-1');
+
+      expect(result.isLeft(), isTrue);
+      verify(mockLocalDatasource.deleteEmailFromCache(
+        accountId: tAccount.id,
+        emailId: 'email-1',
+      )).called(1);
+    });
   });
 
   group('getMailFolders', () {

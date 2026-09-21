@@ -75,6 +75,22 @@ final class EmailListEmailDeleted extends EmailListEvent {
   List<Object?> get props => [emailId];
 }
 
+/// A row the user just tried to open turned out to 404 — its message is
+/// already gone server-side (a cross-folder conversation expansion cached a
+/// copy of an autosave draft, or a since-deleted message, that its own home
+/// folder never told this one about). The cache row is gone by the time this
+/// fires (see [EmailRepositoryImpl.getEmail]); this only drops it from the
+/// list already on screen, so the ghost doesn't sit there until the next
+/// navigation repaints from cache. No network call — there is nothing left to
+/// delete.
+final class EmailListGhostRemoved extends EmailListEvent {
+  const EmailListGhostRemoved({required this.emailId});
+  final String emailId;
+
+  @override
+  List<Object?> get props => [emailId];
+}
+
 final class EmailListEmailsBulkDeleted extends EmailListEvent {
   const EmailListEmailsBulkDeleted({required this.emailIds});
   final List<String> emailIds;

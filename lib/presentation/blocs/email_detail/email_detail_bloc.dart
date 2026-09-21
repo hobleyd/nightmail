@@ -1,5 +1,6 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../core/error/failures.dart';
 import '../../../data/services/eml_parser.dart';
 import '../../../domain/usecases/check_sender_anomaly.dart';
 import '../../../domain/usecases/get_email.dart';
@@ -52,7 +53,11 @@ class EmailDetailBloc extends Bloc<EmailDetailEvent, EmailDetailState> {
     final result = await _getEmail(GetEmailParams(id: event.emailId));
     if (_latestRequestedEmailId != event.emailId) return;
     await result.fold(
-      (failure) async => emit(EmailDetailError(message: failure.message)),
+      (failure) async => emit(EmailDetailError(
+        message: failure.message,
+        emailId: event.emailId,
+        notFound: failure is ServerFailure && failure.statusCode == 404,
+      )),
       (email) async {
         final name = email.from.name;
         final activeAccount = _accountManager.activeAccount;
@@ -117,7 +122,10 @@ class EmailDetailBloc extends Bloc<EmailDetailEvent, EmailDetailState> {
       );
       emit(EmailDetailLoaded(email: email, emlSource: event.bytes));
     } catch (e) {
-      emit(EmailDetailError(message: 'Failed to parse email: $e'));
+      emit(EmailDetailError(
+        message: 'Failed to parse email: $e',
+        emailId: event.sourceId ?? 'task-attachment',
+      ));
     }
   }
 

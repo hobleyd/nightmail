@@ -44,9 +44,19 @@ final class EmailDetailLoaded extends EmailDetailState {
 }
 
 final class EmailDetailError extends EmailDetailState {
-  const EmailDetailError({required this.message});
+  const EmailDetailError({
+    required this.message,
+    required this.emailId,
+    this.notFound = false,
+  });
   final String message;
+  final String emailId;
+
+  /// The server confirmed [emailId] no longer exists (a 404), rather than a
+  /// transient failure — the signal `HomePage` uses to drop the row from the
+  /// email list it was clicked from, since it is otherwise never coming back.
+  final bool notFound;
 
   @override
-  List<Object?> get props => [message];
+  List<Object?> get props => [message, emailId, notFound];
 }

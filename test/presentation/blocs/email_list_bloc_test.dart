@@ -581,6 +581,34 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
+  // EmailListGhostRemoved
+  // ---------------------------------------------------------------------------
+
+  group('EmailListGhostRemoved', () {
+    // Regression: a cross-folder conversation expansion can cache a copy of a
+    // message under a folder that isn't its home (an autosave draft, a
+    // since-deleted message's old id). When that message 404s on open,
+    // EmailRepositoryImpl.getEmail has already evicted the cache row — this
+    // event only has to drop it from the list already on screen.
+    test('drops the email from the list with no network call', () async {
+      await _loadEmails([
+        _email('id1', conversationId: 'conv-a'),
+        _email('id2', conversationId: 'conv-b'),
+      ]);
+
+      bloc.add(const EmailListGhostRemoved(emailId: 'id1'));
+
+      final state = await bloc.stream
+          .firstWhere((s) => s is EmailListLoaded) as EmailListLoaded;
+      final ids = state.emails.map((e) => e.id).toSet();
+
+      expect(ids, isNot(contains('id1')));
+      expect(ids, contains('id2'));
+      verifyNever(mockDeleteEmail(any));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // EmailListMarkThreadReadRequested
   // ---------------------------------------------------------------------------
 

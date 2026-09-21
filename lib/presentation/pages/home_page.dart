@@ -501,6 +501,21 @@ class _HomeViewState extends State<_HomeView> {
                 : const EmailListRefreshRequested());
           },
         ),
+        // A click that 404s means the row was a ghost: a cross-folder
+        // conversation expansion cached a copy of a message whose home
+        // folder has since dropped it (see EmailRepositoryImpl.getEmail,
+        // which has already evicted it from the cache by the time this
+        // fires). Drop it from the list on screen too, or it sits there
+        // until the folder happens to repaint from a fresh network fetch.
+        BlocListener<EmailDetailBloc, EmailDetailState>(
+          listenWhen: (_, curr) => curr is EmailDetailError && curr.notFound,
+          listener: (context, state) {
+            final error = state as EmailDetailError;
+            context
+                .read<EmailListBloc>()
+                .add(EmailListGhostRemoved(emailId: error.emailId));
+          },
+        ),
       ],
       child: Scaffold(
         backgroundColor: context.colors.surfaceBase,

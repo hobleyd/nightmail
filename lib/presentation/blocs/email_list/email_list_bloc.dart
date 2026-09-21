@@ -87,6 +87,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     on<EmailListToggleConversation>(_onToggleConversation);
     on<EmailListEmailsMoved>(_onEmailsMoved);
     on<EmailListEmailDeleted>(_onEmailDeleted);
+    on<EmailListGhostRemoved>(_onGhostRemoved);
     on<EmailListEmailsBulkDeleted>(_onEmailsBulkDeleted);
     on<EmailListConversationDeleted>(_onConversationDeleted);
     on<EmailListJunkReported>(_onJunkReported);
@@ -810,6 +811,21 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       emails: current.emails.where((e) => e.id != event.emailId).toList(),
     ));
     await _deleteEmail(DeleteEmailParams(id: event.emailId));
+  }
+
+  // No network call, unlike [_onEmailDeleted]: the message is already gone
+  // server-side (that is why this fired) and the cache row named it before
+  // GetEmail evicted it — issuing a delete against an id the server has never
+  // heard of would just 404 again for nothing.
+  void _onGhostRemoved(
+    EmailListGhostRemoved event,
+    Emitter<EmailListState> emit,
+  ) {
+    final current = state;
+    if (current is! EmailListLoaded) return;
+    emit(current.copyWith(
+      emails: current.emails.where((e) => e.id != event.emailId).toList(),
+    ));
   }
 
   Future<void> _onEmailsBulkDeleted(

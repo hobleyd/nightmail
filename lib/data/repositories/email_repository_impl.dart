@@ -242,6 +242,33 @@ class EmailRepositoryImpl implements EmailRepository {
 
     return result.fold(
       (failure) async {
+        // A 404 is the server confirming the id is gone for good — not a
+        // transient hiccup — so the cached row that sent us here is a ghost:
+        // one folder's cross-folder conversation expansion (getEmails) cached
+        // a copy of a message whose *home* folder later dropped it (an
+        // autosave draft deleted on send, a forward's transient server-side
+        // draft, a delete that moved the message to a new id). That folder's
+        // own delta/poll sync never notices, because the message was never
+        // really its own — so without this the row sits in `cached_emails`
+        // forever, reappearing every repaint and 404ing on every click.
+        // Evicting it here, at the point the dead id is confirmed, is what
+        // finally lets the folder listing stop offering it.
+        if (failure is ServerFailure && failure.statusCode == 404) {
+          unawaited(_localDatasource.deleteEmailFromCache(
+            accountId: accountId,
+            emailId: id,
+          ));
+          // The fallback below exists for a refetch gone wrong (offline, a
+          // server hiccup) while composing this reply from the last known
+          // copy — a 404 is neither: the server has just confirmed the copy
+          // is gone for good, so showing it as if it were merely stale would
+          // have the reader believe a dead message still exists. Bypassing
+          // the fallback here is also what keeps this outcome in step with
+          // the eviction above — a row that no longer exists in the cache but
+          // is still handed back as a success would print, then vanish on
+          // the next repaint with nothing to explain why.
+          return Left<Failure, Email>(failure);
+        }
         // A refetch we chose to make — for inline images or a stale attachment
         // parse — must not cost the user a readable message when it fails.
         // The cached copy is imperfect, not useless: show it and repair on a

@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.30.2",
+  "version": "1.30.3",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "prime the snap desktop entry so snapcraft 9.1 can find it",
-          "title": "release"
+          "body": "keep the compose editor's webview above Flutter's surface layer",
+          "title": "macos"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.30.2",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "prime the snap desktop entry so snapcraft 9.1 can find it",
+              "title": "release"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -496,31 +513,6 @@
             },
             {
               "body": "stop a Gmail reply falling out of its own thread",
-              "title": "mail"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.23.2",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "drop the vestigial WPE bundle that breaks the snap on newer hosts",
-              "title": "linux"
-            },
-            {
-              "body": "stop a stale tree fetch putting back an unread count",
-              "title": "folders"
-            },
-            {
-              "body": "show a body Apple Mail split across several parts",
               "title": "mail"
             }
           ]

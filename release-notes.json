@@ -1,42 +1,59 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.30.0",
+  "version": "1.30.1",
   "sections": [
-    {
-      "type": "features",
-      "title": "New features",
-      "items": [
-        {
-          "body": "thread accountId through CalendarRepository",
-          "title": "calendar"
-        },
-        {
-          "body": "offer to decline/cancel meetings when Out of Office turns on",
-          "title": "calendar"
-        }
-      ]
-    },
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "evict ghost rows a cross-folder conversation expansion leaves behind",
-          "title": "email"
-        },
-        {
-          "body": "give saved and draft the same default dates on load",
-          "title": "out_of_office"
-        },
-        {
-          "body": "await result.fold in TasksBloc's status/due-date revert paths",
-          "title": "tasks"
+          "body": "render the quoted original in the rich text editor",
+          "title": "compose"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.30.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "thread accountId through CalendarRepository",
+              "title": "calendar"
+            },
+            {
+              "body": "offer to decline/cancel meetings when Out of Office turns on",
+              "title": "calendar"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "evict ghost rows a cross-folder conversation expansion leaves behind",
+              "title": "email"
+            },
+            {
+              "body": "give saved and draft the same default dates on load",
+              "title": "out_of_office"
+            },
+            {
+              "body": "await result.fold in TasksBloc's status/due-date revert paths",
+              "title": "tasks"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -509,37 +526,6 @@
             {
               "body": "tell only the changed guests when a Gmail meeting's roster changes",
               "title": "calendar"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.23.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "show the release notes for every version since yours",
-              "title": "update"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "put the organiser in a Gmail meeting's guest list",
-              "title": "calendar"
-            },
-            {
-              "body": "re-read the release notes on every check",
-              "title": "update"
             }
           ]
         }

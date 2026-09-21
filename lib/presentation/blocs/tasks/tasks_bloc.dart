@@ -193,14 +193,14 @@ class TasksBloc extends Bloc<TasksBlocEvent, TasksState> {
       status: newStatus,
     ));
 
-    result.fold(
+    await result.fold(
       (failure) async {
         final reloaded = await _getTasks(
           GetTasksParams(listId: current.selectedListId),
         );
         reloaded.fold((_) {}, (tasks) => emit(current.copyWith(tasks: tasks)));
       },
-      (_) {},
+      (_) async {},
     );
   }
 
@@ -281,7 +281,7 @@ class TasksBloc extends Bloc<TasksBlocEvent, TasksState> {
       dueDate: event.dueDate,
     ));
 
-    result.fold(
+    await result.fold(
       (_) async {
         // Revert on failure.
         final reloaded = await _getTasks(
@@ -292,7 +292,7 @@ class TasksBloc extends Bloc<TasksBlocEvent, TasksState> {
           if (s is TasksLoaded) emit(s.copyWith(tasks: tasks));
         });
       },
-      (updated) {
+      (updated) async {
         final s = state;
         if (s is TasksLoaded) {
           emit(s.copyWith(

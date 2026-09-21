@@ -1,24 +1,63 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.29.1",
+  "version": "1.30.0",
   "sections": [
+    {
+      "type": "features",
+      "title": "New features",
+      "items": [
+        {
+          "body": "thread accountId through CalendarRepository",
+          "title": "calendar"
+        },
+        {
+          "body": "offer to decline/cancel meetings when Out of Office turns on",
+          "title": "calendar"
+        }
+      ]
+    },
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "register iOS/Android Gmail OAuth clients and their redirect scheme",
-          "title": "auth"
+          "body": "evict ghost rows a cross-folder conversation expansion leaves behind",
+          "title": "email"
         },
         {
-          "body": "scope OAuth Client ID/Secret/Tenant ID per account, not shared",
-          "title": "auth"
+          "body": "give saved and draft the same default dates on load",
+          "title": "out_of_office"
+        },
+        {
+          "body": "await result.fold in TasksBloc's status/due-date revert paths",
+          "title": "tasks"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.29.1",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "register iOS/Android Gmail OAuth clients and their redirect scheme",
+              "title": "auth"
+            },
+            {
+              "body": "scope OAuth Client ID/Secret/Tenant ID per account, not shared",
+              "title": "auth"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -501,33 +540,6 @@
             {
               "body": "re-read the release notes on every check",
               "title": "update"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.22.4",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "offer the attachments inside a previewed email",
-              "title": "reading-pane"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "preview an email attached in Outlook",
-              "title": "reading-pane"
             }
           ]
         }

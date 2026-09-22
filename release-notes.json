@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.31.0",
+  "version": "1.31.1",
   "sections": [
     {
-      "type": "features",
-      "title": "New features",
+      "type": "fixes",
+      "title": "Fixes",
       "items": [
         {
-          "body": "in-app updates for the Linux snap",
-          "title": "update"
+          "body": "cancel alerts left behind by an account this process does not have",
+          "title": "reminders"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.31.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "in-app updates for the Linux snap",
+              "title": "update"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -427,65 +444,6 @@
             {
               "body": "queue a short horizon of alerts, and ask what the OS kept",
               "title": "reminders"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.25.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "sign and notarize macOS release builds",
-              "title": "release"
-            },
-            {
-              "body": "empty the trash, asking Google for the delete scope first",
-              "title": "gmail"
-            },
-            {
-              "body": "delete a folder from its context menu",
-              "title": "folders"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "add a secure timestamp to the Developer ID signature",
-              "title": "release"
-            },
-            {
-              "body": "surface the notarytool rejection reason",
-              "title": "release"
-            },
-            {
-              "body": "wire in the real Developer ID provisioning profile",
-              "title": "release"
-            },
-            {
-              "body": "route signing gate through env, not secrets in if:",
-              "title": "release"
-            },
-            {
-              "body": "empty a folder, and stop a failed empty painting mail elsewhere",
-              "title": "gmail"
-            },
-            {
-              "body": "stop a Gmail category naming the folder a row is in",
-              "title": "list"
-            },
-            {
-              "body": "scroll a new folder into view, and focus the editor that names it",
-              "title": "folders"
             }
           ]
         }

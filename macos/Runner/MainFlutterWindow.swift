@@ -133,6 +133,7 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
 
     // Register contacts + plugins for every secondary window too.
     FlutterMultiWindowPlugin.setOnWindowCreatedCallback { [weak self] controller in
+      let channelsBefore = self?.allChannels.count ?? 0
       RegisterGeneratedPlugins(registry: controller)
       self?.registerContactsChannel(messenger: controller.engine.binaryMessenger)
       self?.registerEventKitChannel(messenger: controller.engine.binaryMessenger)
@@ -145,6 +146,10 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       )
       self?.registerBrowserLauncherChannel(messenger: controller.engine.binaryMessenger)
       self?.registerDesktopDrop(on: controller)
+      if let self {
+        self.tearDownEngineWhenClosed(
+          controller, channels: Array(self.allChannels[channelsBefore...]))
+      }
     }
 
     badgeChannel = FlutterMethodChannel(
@@ -931,6 +936,50 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
   }
 
   // MARK: - desktop_drop secondary window fix
+
+  // MARK: - Secondary window teardown
+
+  /// desktop_multi_window ends a secondary window's engine by letting the
+  /// NSWindow deallocate: its `willCloseNotification` observer only drops the
+  /// window from the plugin's registry. That never happened here. window_manager
+  /// keeps a strong reference to the NSWindow from inside the engine's own plugin
+  /// registry, so window -> contentViewController -> engine -> plugins -> window
+  /// is a cycle, and every closed compose, email-view, event-edit and reminder
+  /// window kept its engine, isolate and WKWebView alive and running: the compose
+  /// window logged "ignored 3 close requests" after every close, because the
+  /// engine it expected to die inside the wait was still there to print it, and
+  /// FlutterWindow's "Child window deinit" never appeared.
+  ///
+  /// So the engine is shut down explicitly when its window closes, the channels
+  /// this window registered on that messenger are forgotten (a broadcast to a
+  /// dead engine only logs "Invalid engine handle"), and the controller is
+  /// detached so the cycle can unwind.
+  private func tearDownEngineWhenClosed(
+    _ controller: FlutterViewController, channels: [FlutterMethodChannel]
+  ) {
+    guard let window = controller.view.window else { return }
+    var token: NSObjectProtocol?
+    token = NotificationCenter.default.addObserver(
+      forName: NSWindow.willCloseNotification, object: window, queue: .main
+    ) { [weak self, weak controller, weak window] _ in
+      if let token { NotificationCenter.default.removeObserver(token) }
+      // The notification fires from inside window_manager's `close` handler,
+      // which still has to answer the Dart call that asked for the close, so the
+      // engine must outlive the current turn of the run loop.
+      DispatchQueue.main.async {
+        controller?.engine.shutDownEngine()
+        self?.forgetChannels(channels)
+        window?.contentViewController = nil
+      }
+    }
+  }
+
+  private func forgetChannels(_ channels: [FlutterMethodChannel]) {
+    let isGone = { (c: FlutterMethodChannel) in channels.contains { $0 === c } }
+    allChannels.removeAll(where: isGone)
+    calendarNotifyChannels.removeAll(where: isGone)
+    draftsRefreshChannels.removeAll(where: isGone)
+  }
 
   private func registerDesktopDrop(on viewController: FlutterViewController) {
     let channel = FlutterMethodChannel(

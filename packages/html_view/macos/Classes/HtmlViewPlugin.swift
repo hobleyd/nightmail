@@ -42,6 +42,9 @@ public class HtmlViewPlugin: NSObject, FlutterPlugin {
       let id = nextId
       nextId += 1
       let view = WebKitView(id: id, parentView: parent, messenger: messenger)
+      view.onWindowClosed = { [weak self] in
+        self?.views.removeValue(forKey: id)?.dispose()
+      }
       views[id] = view
       result(id)
 

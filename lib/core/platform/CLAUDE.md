@@ -56,7 +56,8 @@ unchanged.
 `desktop_multi_window` re-enters `main()` with a fresh `FlutterEngine` for every
 sub-window, so each one gets its own isolate, service locator and statics.
 FFI plugins hand the native side a `NativeCallable` trampoline **owned by the
-isolate that registered it**. When a sub-window closes, its isolate dies and the
+isolate that registered it**. When a sub-window closes, its isolate dies (on
+macOS because `MainFlutterWindow` shuts the engine down — see below) and the
 trampoline is deleted — but the native library keeps the pointer. The next time
 native code fires it, the VM aborts:
 
@@ -82,6 +83,46 @@ Check `windows/flutter/generated_plugins.cmake` for what is affected —
 which engine it is in. It is set from `main()` **before**
 `configureDependencies()`, because lazy singletons decide at construction time
 whether they may touch process-wide native resources.
+
+### On macOS the engine is shut down when the window closes — by us
+
+`desktop_multi_window` never shuts a secondary engine down. Its only close-time
+work is a `willCloseNotification` observer that drops the window from its
+registry; the engine is meant to go when the `NSWindow` deallocates. In this
+app it never did: `window_manager` keeps a strong reference to the window from
+inside the engine's own plugin registry (window → contentViewController →
+engine → plugins → window), so every closed compose, email-view, event-edit and
+reminder window kept its engine, isolate and WKWebView alive and running.
+Visible as `[Compose] window ignored 3 close requests` after *every* close —
+the engine `_close` expected to die inside its wait was still there to print
+it — and `FlutterWindow`'s "Child window deinit" never appearing.
+
+`MainFlutterWindow.tearDownEngineWhenClosed` observes the same notification
+and, one run-loop turn later (the notification fires inside `window_manager`'s
+`close` handler, which still has to answer the Dart call), calls
+`shutDownEngine()`, forgets the relay channels registered on that messenger,
+and detaches the controller so the cycle unwinds. Two consequences:
+
+- **The FFI rule above is now enforced by reality.** With engines leaking, a
+  sub-window's `NativeCallable` trampolines lived forever and the hazard was
+  masked on macOS. They die with the isolate now, as they always did on
+  Windows.
+- **The sqlite finalizer path runs at every sub-window close**, not only at
+  quit. It is inert because `Database.leak()` detaches the closing finalizer at
+  open time (see `lib/data/database/CLAUDE.md`); a change there would now
+  crash on closing a compose window, not just on quitting.
+
+`shutDownEngine()` does not release the engine *object*: its message handlers
+still hold every plugin, and every plugin's channels hold the engine, so the
+shell stays until the process exits and `FlutterWindow`'s "Child window deinit"
+still never prints. What matters is what the shell keeps alive. The Dart heap,
+the raster surfaces and the FlutterView go with the controller; the one heavy
+thing left was `html_view`'s WKWebView — a WebContent process per closed
+window — so `WebKitView` watches its own window's `willCloseNotification` and
+`HtmlViewPlugin` drops it from its registry then (the Dart `destroyView` that
+normally does this can never arrive from a dead isolate).
+
+`test/core/platform/secondary_window_teardown_test.dart` pins the shape.
 
 ### Closing a sub-window is a request, not an act
 

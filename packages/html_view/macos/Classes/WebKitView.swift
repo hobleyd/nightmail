@@ -104,6 +104,12 @@ class WebKitView: NSObject, WKScriptMessageHandler, FlutterStreamHandler, WKNavi
   private let eventChannel: FlutterEventChannel
   private var eventSink: FlutterEventSink?
   private var printKeyMonitor: Any?
+  private var windowCloseObserver: NSObjectProtocol?
+  private var disposed = false
+  /// Set by HtmlViewPlugin: drops this view from its registry once the hosting
+  /// window has closed, so the WKWebView (and its WebContent process) go with
+  /// the window instead of outliving it inside a shut-down engine.
+  var onWindowClosed: (() -> Void)?
 
   // Logical-pixel position/size from Dart (AppKit uses points = logical pixels).
   private var posX: CGFloat = 0
@@ -152,6 +158,18 @@ class WebKitView: NSObject, WKScriptMessageHandler, FlutterStreamHandler, WKNavi
     // already asks for it to be hidden (HtmlViewOverlayGuard, ModalRoute).
     webView.wantsLayer = true
     webView.layer?.zPosition = 1000
+    // A secondary window's engine is shut down when the window closes
+    // (MainFlutterWindow.tearDownEngineWhenClosed), so the Dart side never gets
+    // to call destroyView for the views it held — and a shut-down engine keeps
+    // its plugins, so this object would keep the WKWebView and its WebContent
+    // process alive indefinitely. The window closing is the signal to go.
+    if let window = parentView.window {
+      windowCloseObserver = NotificationCenter.default.addObserver(
+        forName: NSWindow.willCloseNotification, object: window, queue: .main
+      ) { [weak self] _ in
+        self?.onWindowClosed?()
+      }
+    }
 
     webView.onClickFocus = { [weak self] in
       self?.emitEvent(type: "onClickFocus", value: "")
@@ -346,7 +364,18 @@ class WebKitView: NSObject, WKScriptMessageHandler, FlutterStreamHandler, WKNavi
     eventSink?(["type": type, "value": value])
   }
 
+  // The Dart side's destroyView never arrives once the window's engine has been
+  // shut down (MainFlutterWindow.tearDownEngineWhenClosed), so the key monitor —
+  // which NSEvent holds for as long as it is registered — is released here too.
+  deinit { dispose() }
+
   func dispose() {
+    if disposed { return }
+    disposed = true
+    if let observer = windowCloseObserver {
+      NotificationCenter.default.removeObserver(observer)
+      windowCloseObserver = nil
+    }
     if let monitor = printKeyMonitor {
       NSEvent.removeMonitor(monitor)
       printKeyMonitor = nil

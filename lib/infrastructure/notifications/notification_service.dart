@@ -1034,6 +1034,51 @@ class PendingReminders {
   final Set<String>? _keys;
   final Set<int>? _ids;
 
+  /// The meetings the OS is holding alerts for under an account id that is
+  /// not in [knownAccountIds], as (account, event) pairs — one per series,
+  /// however many of its alerts are queued.
+  ///
+  /// An alert keyed to an account this process does not have is one nothing
+  /// in this process will ever cancel or move: the reconciler only visits the
+  /// accounts it has, and `clearAccount` only runs for a removal it saw. Such
+  /// alerts come from another build of the app sharing this bundle id — a
+  /// debug run adds the same mailboxes under fresh ids, because the Keychain
+  /// is per code signature — or from accounts removed while the app was not
+  /// running. Left alone they fire on their original schedule, which is how a
+  /// meeting moved to tomorrow still announced itself today.
+  ///
+  /// Only the macOS shape can answer: hashed ids carry no account. The
+  /// persisted rows cover the other platforms.
+  Set<({String accountId, String eventId})> orphanedEvents(
+      Set<String> knownAccountIds) {
+    final keys = _keys;
+    if (keys == null) return const {};
+    final orphans = <({String accountId, String eventId})>{};
+    for (final key in keys) {
+      final parsed = _parseEventKey(key);
+      if (parsed == null || knownAccountIds.contains(parsed.accountId)) {
+        continue;
+      }
+      orphans.add(parsed);
+    }
+    return orphans;
+  }
+
+  /// Inverts `NotificationService._key`/`_followUpKey`:
+  /// `accountId::eventId` or `accountId::eventId::offset`.
+  static ({String accountId, String eventId})? _parseEventKey(String key) {
+    final sep = key.indexOf('::');
+    if (sep <= 0 || sep + 2 >= key.length) return null;
+    final accountId = key.substring(0, sep);
+    var eventId = key.substring(sep + 2);
+    final followUp = _followUpSuffix.firstMatch(eventId);
+    if (followUp != null) eventId = eventId.substring(0, followUp.start);
+    if (eventId.isEmpty) return null;
+    return (accountId: accountId, eventId: eventId);
+  }
+
+  static final _followUpSuffix = RegExp(r'::\d+$');
+
   /// Whether every alert that *should* still be pending for this meeting is.
   ///
   /// Offsets already gone by are not expected — `scheduleEventReminder` skips

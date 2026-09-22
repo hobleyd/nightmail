@@ -469,4 +469,52 @@ void main() {
       expect(await db.getScheduledTaskReminders('acct-1'), isEmpty);
     });
   });
+
+  group('an account this app does not have', () {
+    // Rows written by another build sharing this database (a debug run adds
+    // the same mailbox under a fresh id) or by an account removed while the
+    // app was not running. Nothing in the per-account loop would ever visit
+    // them, so their alerts would fire on the schedule they were given.
+    const gone = 'acct-gone';
+
+    test('has its rows cleared and their alerts cancelled', () async {
+      await db.upsertScheduledTaskReminder(
+        accountId: gone,
+        listId: 'list-9',
+        taskId: 't9',
+        triggerAtMs: DateTime.now()
+            .add(const Duration(hours: 2))
+            .millisecondsSinceEpoch,
+        dueAtMs: DateTime.now()
+            .add(const Duration(hours: 2))
+            .millisecondsSinceEpoch,
+        osScheduled: true,
+      );
+      stubTasks([]);
+
+      await service.reconcileAll();
+
+      verify(notifications.cancelTaskReminder(accountId: gone, taskId: 't9'))
+          .called(1);
+      expect(await db.getScheduledTaskReminders(gone), isEmpty);
+    });
+
+    test('is left alone while no account is configured at all', () async {
+      await db.upsertScheduledTaskReminder(
+        accountId: gone,
+        listId: 'list-9',
+        taskId: 't9',
+        triggerAtMs: 1000,
+        dueAtMs: 2000,
+        osScheduled: true,
+      );
+      when(accountManager.accounts).thenReturn([]);
+
+      await service.reconcileAll();
+
+      expect(await db.getScheduledTaskReminders(gone), hasLength(1));
+      verifyNever(notifications.cancelTaskReminder(
+          accountId: gone, taskId: anyNamed('taskId')));
+    });
+  });
 }

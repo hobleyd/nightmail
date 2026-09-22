@@ -48,4 +48,8 @@ abstract interface class TaskReminderScheduleLocalDatasource {
   Future<void> deleteScheduledTaskReminder(String accountId, String taskId);
 
   Future<void> clearScheduledTaskRemindersForAccount(String accountId);
+
+  /// Every account id that has at least one row, configured or not — see
+  /// `ReminderScheduleLocalDatasource.getScheduledReminderAccountIds`.
+  Future<Set<String>> getScheduledTaskReminderAccountIds();
 }

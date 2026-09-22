@@ -382,6 +382,107 @@ void main() {
   // account's meetings were — and David's own install is Google beside Graph,
   // so this is the shape it ships into.
 
+  group('an account this app does not have', () {
+    // Both shapes the orphan takes. A debug build sharing this database adds
+    // the same mailbox under a fresh id (the Keychain is per code signature)
+    // and its reconciler writes rows and queues alerts nothing in the release
+    // build's account list will ever revisit — which is how a meeting moved to
+    // tomorrow still announced itself at today's time. A build with its own
+    // data directory leaves only the alerts, so the OS's pending list is
+    // checked as well.
+    const gone = 'acct-gone';
+
+    test('has its rows cleared and their alerts cancelled', () async {
+      final start = DateTime.now().toUtc().add(const Duration(hours: 2));
+      await db.upsertScheduledReminder(
+        accountId: gone,
+        eventId: 'e9',
+        triggerAtMs:
+            start.subtract(const Duration(minutes: 15)).millisecondsSinceEpoch,
+        reminderMinutes: 15,
+        eventStartMs: start.millisecondsSinceEpoch,
+      );
+      stubEvents([event('e1', start: start)]);
+
+      await service.reconcileAll();
+
+      verify(notifications.cancelEventReminder(accountId: gone, eventId: 'e9'))
+          .called(1);
+      expect(await db.getScheduledReminders(gone), isEmpty);
+      // The configured account is reconciled as usual.
+      expect(
+        (await db.getScheduledReminders(account.id)).map((r) => r.eventId),
+        ['e1'],
+      );
+    });
+
+    test('has the alerts the OS holds for it cancelled, once per series',
+        () async {
+      final start = DateTime.now().toUtc().add(const Duration(hours: 2));
+      when(notifications.pendingReminders()).thenAnswer(
+        (_) async => PendingReminders.fromKeys({
+          '$gone::e9',
+          '$gone::e9::10',
+          '$gone::e9::5',
+          '$gone::e9::0',
+          '${account.id}::e1',
+        }),
+      );
+      stubEvents([event('e1', start: start)]);
+
+      await service.reconcileAll();
+
+      // cancelEventReminder clears a whole series, so the four keys collapse
+      // into one call.
+      final cancelled = verify(notifications.cancelEventReminder(
+              accountId: gone, eventId: captureAnyNamed('eventId')))
+          .captured;
+      expect(cancelled, ['e9']);
+    });
+
+    test('is left alone while no account is configured at all', () async {
+      // An empty account list is more likely the moment before they load than
+      // a user who removed every one — clearAccount covers removal.
+      await db.upsertScheduledReminder(
+        accountId: gone,
+        eventId: 'e9',
+        triggerAtMs: 1000,
+        reminderMinutes: 15,
+        eventStartMs: 2000,
+      );
+      when(accountManager.accounts).thenReturn([]);
+
+      await service.reconcileAll();
+
+      expect(await db.getScheduledReminders(gone), hasLength(1));
+      verifyNever(notifications.cancelEventReminder(
+          accountId: gone, eventId: anyNamed('eventId')));
+    });
+  });
+
+  group('PendingReminders.orphanedEvents', () {
+    test('reads the account and event out of each key shape', () {
+      const graphId =
+          'AAMkAGMwOGJjZDQxLTRiMTctNDFiMS1hMzJhLTkzMWRmMDA3Yjc0ZAFRAAgI3xg8cgYAAEYAAAAAgn8OQYauCUOzHRg8eF5nJAcA7OVcF7-rJ0eKP7R3mFy9qQAAAAABDQAA7OVcF7-rJ0eKP7R3mFy9qQACtSGmqgAAEA==';
+      const googleInstance = 'uep8t1rs2afu5djsl4rjrfpkkk_20260922T040000Z';
+      final pending = PendingReminders.fromKeys({
+        'known::$googleInstance',
+        'known::$googleInstance::5',
+        'gone-1::$googleInstance',
+        'gone-1::$googleInstance::10',
+        'gone-1::$googleInstance::0',
+        'gone-2::$graphId::15',
+        'malformed',
+      });
+
+      expect(pending.orphanedEvents({'known'}), {
+        (accountId: 'gone-1', eventId: googleInstance),
+        (accountId: 'gone-2', eventId: graphId),
+      });
+      expect(pending.orphanedEvents({'known', 'gone-1', 'gone-2'}), isEmpty);
+    });
+  });
+
   group('across two accounts', () {
     const second = GmailAccount(
       id: 'acct-2',

@@ -28,4 +28,9 @@ abstract interface class ReminderScheduleLocalDatasource {
   Future<void> deleteScheduledReminder(String accountId, String eventId);
 
   Future<void> clearScheduledRemindersForAccount(String accountId);
+
+  /// Every account id that has at least one row, configured or not — the
+  /// reconciler compares this against the accounts it actually has to find
+  /// rows nothing will ever revisit.
+  Future<Set<String>> getScheduledReminderAccountIds();
 }

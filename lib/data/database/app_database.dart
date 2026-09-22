@@ -695,6 +695,14 @@ class AppDatabase extends _$AppDatabase
             ..where((t) => t.accountId.equals(accountId)))
           .go();
 
+  @override
+  Future<Set<String>> getScheduledReminderAccountIds() async {
+    final query = selectOnly(scheduledReminders, distinct: true)
+      ..addColumns([scheduledReminders.accountId]);
+    final rows = await query.get();
+    return rows.map((r) => r.read(scheduledReminders.accountId)!).toSet();
+  }
+
   // TaskReminderScheduleLocalDatasource implementation
 
   @override
@@ -763,6 +771,14 @@ class AppDatabase extends _$AppDatabase
       (delete(scheduledTaskReminders)
             ..where((t) => t.accountId.equals(accountId)))
           .go();
+
+  @override
+  Future<Set<String>> getScheduledTaskReminderAccountIds() async {
+    final query = selectOnly(scheduledTaskReminders, distinct: true)
+      ..addColumns([scheduledTaskReminders.accountId]);
+    final rows = await query.get();
+    return rows.map((r) => r.read(scheduledTaskReminders.accountId)!).toSet();
+  }
 
   // PendingOperationsDatasource implementation (the mutation outbox)
 

@@ -161,6 +161,53 @@ class CalendarReminderService {
             'CalendarReminderService: reconcile failed for account ${entry.key}: $e');
       }
     }
+
+    await _clearOrphans(
+      known: {for (final a in _accountManager.accounts) a.id},
+      pending: pending,
+    );
+  }
+
+  /// Cancels every alert, and deletes every row, keyed to an account this
+  /// process does not have.
+  ///
+  /// The loop above only ever visits configured accounts, and
+  /// [clearAccount] only runs for a removal this process saw — so an alert
+  /// under any other account id is one nothing here will ever cancel or move,
+  /// and it fires on whatever schedule it was given. Two things leave such
+  /// alerts behind: another build of the app sharing this bundle id (a debug
+  /// run adds the same mailboxes under fresh ids, since the Keychain is per
+  /// code signature, and queues into the same OS notification pool), and an
+  /// account removed while the app was not running. Observed as a meeting
+  /// moved to tomorrow still announcing itself at today's time, from the
+  /// debug build's copy of the series.
+  ///
+  /// Both sources are checked: the rows, which is what a shared database
+  /// leaves, and the OS's own pending list, which is what a build with its
+  /// own data directory leaves. Skipped while no account is configured — an
+  /// empty account list is more likely a moment before they load than a user
+  /// who removed every one, and [clearAccount] has the removal case anyway.
+  Future<void> _clearOrphans({
+    required Set<String> known,
+    required PendingReminders? pending,
+  }) async {
+    if (known.isEmpty) return;
+    try {
+      final onDisk = await _database.getScheduledReminderAccountIds();
+      for (final accountId in onDisk.difference(known)) {
+        for (final r in await _database.getScheduledReminders(accountId)) {
+          await _notificationService.cancelEventReminder(
+              accountId: accountId, eventId: r.eventId);
+        }
+        await _database.clearScheduledRemindersForAccount(accountId);
+      }
+      for (final orphan in pending?.orphanedEvents(known) ?? const {}) {
+        await _notificationService.cancelEventReminder(
+            accountId: orphan.accountId, eventId: orphan.eventId);
+      }
+    } catch (e) {
+      debugPrint('CalendarReminderService: orphan cleanup failed: $e');
+    }
   }
 
   Future<List<CalendarEvent>> _fetchEvents(Account account, DateTime now) async {

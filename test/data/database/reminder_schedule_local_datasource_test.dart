@@ -131,5 +131,19 @@ void main() {
       expect(await db.getScheduledReminders('acct1'), isEmpty);
       expect(await db.getScheduledReminders('acct2'), hasLength(1));
     });
+
+    test('getScheduledReminderAccountIds lists each account once', () async {
+      expect(await db.getScheduledReminderAccountIds(), isEmpty);
+      for (final (acct, evt) in [('acct1', 'a'), ('acct1', 'b'), ('acct2', 'c')]) {
+        await db.upsertScheduledReminder(
+          accountId: acct,
+          eventId: evt,
+          triggerAtMs: 1000,
+          reminderMinutes: 15,
+          eventStartMs: 2000,
+        );
+      }
+      expect(await db.getScheduledReminderAccountIds(), {'acct1', 'acct2'});
+    });
   });
 }

@@ -134,6 +134,29 @@ class TaskReminderService {
             'TaskReminderService: reconcile failed for account ${account.id}: $e');
       }
     }
+
+    await _clearOrphanRows({for (final a in _accountManager.accounts) a.id});
+  }
+
+  /// Cancels the alerts, and deletes the rows, of any account this process
+  /// does not have — see `CalendarReminderService._clearOrphans` for where
+  /// they come from. Only the rows are consulted here: the pending snapshot
+  /// [NotificationService.pendingReminders] takes is of calendar alerts, and a
+  /// shared database is the case that has actually been observed.
+  Future<void> _clearOrphanRows(Set<String> known) async {
+    if (known.isEmpty) return;
+    try {
+      final onDisk = await _database.getScheduledTaskReminderAccountIds();
+      for (final accountId in onDisk.difference(known)) {
+        for (final r in await _database.getScheduledTaskReminders(accountId)) {
+          await _notificationService.cancelTaskReminder(
+              accountId: accountId, taskId: r.taskId);
+        }
+        await _database.clearScheduledTaskRemindersForAccount(accountId);
+      }
+    } catch (e) {
+      debugPrint('TaskReminderService: orphan cleanup failed: $e');
+    }
   }
 
   Future<void> _reconcileAccount(Account account) async {

@@ -173,8 +173,15 @@ flutter_launcher_icons:
     theme_color: "#0a0a2e"
 
 dependency_overrides:
-  # Local patch: fixes StatusParser regex to handle unquoted atom mailbox names
-  # (e.g. Dovecot returns "STATUS INBOX ..." not "STATUS \"INBOX\" ...").
-  # Remove once upstream enough_mail releases a fix.
+  # Locally patched copy of enough_mail 2.1.7. Every patch has been raised
+  # against Enough-Software/enough_mail; drop this override once all of these
+  # have merged and shipped in a release:
+  #   #287 quoted-printable attachments decoded to bytes
+  #   #288 pending IMAP commands fail when the connection is lost
+  #   #289 mailbox names containing parentheses (LIST parser + quoting)
+  #   #290 STATUS with an unquoted mailbox name (Dovecot)
+  #   #291 STATUS records HIGHESTMODSEQ
+  #   #292 APPEND internalDate + appendMessageBytes (stacked on #289)
+  #   #293 bare-LF line endings in a fetched BODY[] literal
   enough_mail:
     path: packages/enough_mail

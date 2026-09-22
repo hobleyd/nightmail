@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.30.3",
+  "version": "1.30.4",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "keep the compose editor's webview above Flutter's surface layer",
+          "body": "shut a secondary window's engine down when the window closes",
           "title": "macos"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.30.3",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "keep the compose editor's webview above Flutter's surface layer",
+              "title": "macos"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -483,37 +500,6 @@
             {
               "body": "stop a Gmail RSVP inviting everyone to a meeting of its own",
               "title": "calendar"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.23.3",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "clear rows filed under another account's folder at launch",
-              "title": "cache"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "stop an account switch fetching one mailbox by the other's folder id",
-              "title": "mail"
-            },
-            {
-              "body": "stop a Gmail reply falling out of its own thread",
-              "title": "mail"
             }
           ]
         }

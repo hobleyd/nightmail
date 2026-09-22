@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.30.4",
+  "version": "1.31.0",
   "sections": [
     {
-      "type": "fixes",
-      "title": "Fixes",
+      "type": "features",
+      "title": "New features",
       "items": [
         {
-          "body": "shut a secondary window's engine down when the window closes",
-          "title": "macos"
+          "body": "in-app updates for the Linux snap",
+          "title": "update"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.30.4",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "shut a secondary window's engine down when the window closes",
+              "title": "macos"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -469,37 +486,6 @@
             {
               "body": "scroll a new folder into view, and focus the editor that names it",
               "title": "folders"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.24.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "render a markdown attachment instead of showing its source",
-              "title": "preview"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "answer an invitation to one occurrence on that occurrence",
-              "title": "calendar"
-            },
-            {
-              "body": "stop a Gmail RSVP inviting everyone to a meeting of its own",
-              "title": "calendar"
             }
           ]
         }

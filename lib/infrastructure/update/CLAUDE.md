@@ -206,6 +206,16 @@ to approve the background item. The package checks that status and raises
 `PrivilegedHelperApprovalRequired`, which is why that phase exists. It is only
 ever seen on a non-admin account.
 
+**Opening About also checks** (`UpdateCubit.checkOnOpen`, from
+`_AboutSection.initState`), fire-and-forget so the page paints first and the
+update block redraws as the check reports. A user who has gone to About wants
+to know *now*, not what the last 6-hourly cycle found. It re-checks even from
+`available` — the timer never looks again once an update is actionable, so a
+newer release shipped since would otherwise go unseen — but leaves a *staged*
+update (`readyToInstall`, `helperApprovalRequired`) and any busy phase alone:
+on the snap path `_checkSnap` nulls `_snapFile`, so a check there would throw
+away the verified download and put the user back to "Download update".
+
 ### The service starts at launch, not when Settings opens
 
 `../inkworm` — which this is modelled on — builds its `DesktopUpdaterController`

@@ -223,6 +223,11 @@ class _AboutSectionState extends State<_AboutSection> {
         setState(() => _version = '${info.version}+${info.buildNumber}');
       }
     });
+    // Every visit to About re-checks for updates, in the background: the
+    // service's own check is at launch and every 6 h, and a user who opens
+    // this page wants to know *now*. Nothing is awaited — the page paints and
+    // the update block below redraws as the check reports.
+    context.read<UpdateCubit>().checkOnOpen();
   }
 
   @override

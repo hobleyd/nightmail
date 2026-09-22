@@ -39,6 +39,26 @@ class UpdateCubit extends Cubit<AppUpdateStatus> {
 
   Future<void> check() => _service.checkForUpdate();
 
+  /// Fired by the About panel each time it is opened, so the status it shows
+  /// is fresh rather than however old the last 6-hourly check happens to be.
+  ///
+  /// Not awaited: the panel paints at once and the check reports through
+  /// [state] as it goes, exactly as the timer's does. Skipped while a check,
+  /// download or install is already running, and while an update is staged
+  /// ([AppUpdatePhase.readyToInstall], [AppUpdatePhase.helperApprovalRequired])
+  /// — on the snap path a fresh check discards the downloaded file, and there
+  /// is nothing a check could add to "press Restart and install". An update
+  /// that is merely [AppUpdatePhase.available] *is* re-checked: a newer release
+  /// may have shipped since it was found, and the timer never looks again.
+  void checkOnOpen() {
+    if (state.isBusy ||
+        state.phase == AppUpdatePhase.readyToInstall ||
+        state.phase == AppUpdatePhase.helperApprovalRequired) {
+      return;
+    }
+    unawaited(_service.checkForUpdate());
+  }
+
   Future<void> download() => _service.downloadUpdate();
 
   /// The only action a fresh-install-only release supports.

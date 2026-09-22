@@ -131,6 +131,57 @@ void main() {
     });
   });
 
+  group('checkOnOpen', () {
+    UpdateCubit cubitAt(AppUpdatePhase phase) {
+      when(mockService.status).thenReturn(AppUpdateStatus(phase: phase));
+      when(mockService.checkForUpdate()).thenAnswer((_) async {});
+      final cubit = UpdateCubit(service: mockService);
+      addTearDown(cubit.close);
+      return cubit;
+    }
+
+    for (final phase in [
+      AppUpdatePhase.idle,
+      AppUpdatePhase.upToDate,
+      AppUpdatePhase.failed,
+      // A newer release may have shipped since this one was found, and the
+      // periodic timer skips its cycle while an update is actionable.
+      AppUpdatePhase.available,
+      AppUpdatePhase.freshInstallRequired,
+    ]) {
+      test('re-checks from $phase without blocking the caller', () {
+        final cubit = cubitAt(phase);
+        cubit.checkOnOpen();
+        verify(mockService.checkForUpdate()).called(1);
+      });
+    }
+
+    for (final phase in [
+      AppUpdatePhase.checking,
+      AppUpdatePhase.downloading,
+      AppUpdatePhase.installing,
+      // A staged update is left alone: on the snap path a fresh check drops the
+      // downloaded file, and nothing a check finds changes what to press.
+      AppUpdatePhase.readyToInstall,
+      AppUpdatePhase.helperApprovalRequired,
+    ]) {
+      test('leaves $phase alone', () {
+        final cubit = cubitAt(phase);
+        cubit.checkOnOpen();
+        verifyNever(mockService.checkForUpdate());
+      });
+    }
+
+    test('an unsupported platform is still asked, and the service declines',
+        () {
+      // The service already answers "unsupported" with a no-op; the cubit does
+      // not need to know which platforms those are.
+      final cubit = cubitAt(AppUpdatePhase.unsupported);
+      cubit.checkOnOpen();
+      verify(mockService.checkForUpdate()).called(1);
+    });
+  });
+
   test('close cancels the subscription so a later publish is not emitted',
       () async {
     when(mockService.status).thenReturn(_idle);

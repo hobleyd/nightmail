@@ -169,7 +169,7 @@ Settings → Accounts.
 - **macOS and Windows** download, verify and install the update in place, from
   a signed release archive
 - **Android** installs the newest release's APK through the system installer
-- **Linux** ships as a snap, which updates itself
+- **Linux** downloads the newest release's snap, checks it against the published checksum, and installs it over the running one (you'll be asked for your password), then relaunches
 - Release notes for every version published since the one you are running,
   grouped by change type, shown whether or not an update is pending
 

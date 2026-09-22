@@ -11,6 +11,7 @@ import '../../core/platform/app_data_directory.dart';
 import 'android_apk_updater.dart';
 import 'app_update_status.dart';
 import 'release_notes_fetcher.dart';
+import 'snap_updater.dart';
 import 'update_recovery_store.dart';
 
 /// Where the signed app-archive and the release notes are published. The
@@ -55,6 +56,7 @@ String formatReleaseVersion(String version, int? buildNumber) =>
 /// The message shown for a failed check, download or install.
 String _describeUpdateError(Object error) {
   if (error is AndroidInstallException) return error.message;
+  if (error is SnapInstallException) return error.message;
   if (error is StateError) return error.message;
   // `desktop_updater`'s native side reports through the method channel, so an
   // install failure arrives as a PlatformException whose toString() is a wall
@@ -131,6 +133,11 @@ AppUpdateStatus? desktopStatusFor(UpdateState state, AppUpdateStatus current) {
   };
 }
 
+/// Which of the three update paths a platform takes. Decided once, from the
+/// platform, and overridable in tests because every path is otherwise chosen
+/// by `Platform.is*`, which a test cannot change.
+enum UpdateMechanism { desktop, android, snap }
+
 /// Owns in-app updating, and is the one place that knows which mechanism this
 /// platform uses.
 ///
@@ -138,8 +145,8 @@ AppUpdateStatus? desktopStatusFor(UpdateState state, AppUpdateStatus current) {
 /// |---|---|
 /// | macOS, Windows | `desktop_updater` — a signed app-archive on GitHub Pages, downloaded, verified, staged, then handed to a native installer |
 /// | Android | An APK from the newest GitHub release, handed to the system package installer ([AndroidApkUpdater]) |
-/// | Linux | None — NightMail ships as a snap, and snapd updates it |
-/// | iOS, web | None |
+/// | Linux, inside the snap | The newest GitHub release's `.snap`, installed by snapd from the downloaded file, then relaunched ([SnapUpdater]) |
+/// | Linux, outside the snap; iOS, web | None |
 ///
 /// **This is constructed and started at launch, not when Settings opens.** The
 /// dot on the Settings icon has to be able to appear before the user has gone
@@ -158,16 +165,22 @@ AppUpdateStatus? desktopStatusFor(UpdateState state, AppUpdateStatus current) {
 class AppUpdateService {
   AppUpdateService({
     AndroidApkUpdater? androidUpdater,
+    SnapUpdater? snapUpdater,
     ReleaseNotesFetcher? releaseNotesFetcher,
     @visibleForTesting bool? isSupportedOverride,
+    @visibleForTesting UpdateMechanism? mechanismOverride,
   })  : _androidUpdater = androidUpdater ?? AndroidApkUpdater(),
+        _snapUpdater = snapUpdater ?? SnapUpdater(),
         _releaseNotesFetcher =
             releaseNotesFetcher ?? ReleaseNotesFetcher(url: kReleaseNotesUrl),
-        _isSupported = isSupportedOverride ?? _platformIsSupported();
+        _isSupported = isSupportedOverride ?? _platformIsSupported(),
+        _mechanism = mechanismOverride ?? _platformMechanism();
 
   final AndroidApkUpdater _androidUpdater;
+  final SnapUpdater _snapUpdater;
   final ReleaseNotesFetcher _releaseNotesFetcher;
   final bool _isSupported;
+  final UpdateMechanism _mechanism;
 
   final _controller = StreamController<AppUpdateStatus>.broadcast();
 
@@ -190,17 +203,27 @@ class AppUpdateService {
 
   DesktopUpdaterController? _desktop;
   AndroidReleaseCheck? _androidCheck;
+  SnapReleaseCheck? _snapCheck;
+  File? _snapFile;
   Timer? _recheckTimer;
   bool _started = false;
 
   static bool _platformIsSupported() {
     if (kIsWeb || !AppWindow.isMain) return false;
-    // Linux is excluded on purpose: the Linux build is distributed as a snap,
-    // which snapd refreshes on its own, and there is no Linux entry in the
-    // app-archive for the controller to find — it would sit in a permanent
-    // "no update" state and the About panel would be lying about what is
-    // managing updates.
-    return Platform.isMacOS || Platform.isWindows || Platform.isAndroid;
+    // Linux only counts inside the snap: that is the one Linux build snapd can
+    // install a downloaded release over. A `flutter run` or plain-bundle Linux
+    // build has no such thing, and the About panel says so rather than sitting
+    // on a check that can never lead anywhere.
+    return Platform.isMacOS ||
+        Platform.isWindows ||
+        Platform.isAndroid ||
+        SnapUpdater.isRunningInSnap;
+  }
+
+  static UpdateMechanism _platformMechanism() {
+    if (!kIsWeb && Platform.isAndroid) return UpdateMechanism.android;
+    if (!kIsWeb && Platform.isLinux) return UpdateMechanism.snap;
+    return UpdateMechanism.desktop;
   }
 
   /// Reads the running version and starts the first check. Safe to call
@@ -263,10 +286,13 @@ class AppUpdateService {
     ));
 
     try {
-      if (Platform.isAndroid) {
-        await _checkAndroid();
-      } else {
-        await _checkDesktop();
+      switch (_mechanism) {
+        case UpdateMechanism.android:
+          await _checkAndroid();
+        case UpdateMechanism.snap:
+          await _checkSnap();
+        case UpdateMechanism.desktop:
+          await _checkDesktop();
       }
     } catch (error) {
       _emit(_status.copyWith(
@@ -294,6 +320,23 @@ class AppUpdateService {
       // No build number to add: Android compares the GitHub tag, which the
       // release workflow strips to the semver part, so the semver is the whole
       // of what is known about the release here.
+      phase: AppUpdatePhase.available,
+      availableVersion: check.releaseVersion.toString(),
+    ));
+  }
+
+  Future<void> _checkSnap() async {
+    final check = await _snapUpdater.check();
+    _snapCheck = check;
+    _snapFile = null;
+
+    if (check == null || !check.hasUpdate) {
+      _emit(_status.copyWith(phase: AppUpdatePhase.upToDate));
+      return;
+    }
+    _emit(_status.copyWith(
+      // The GitHub tag is the semver alone, as on Android: that is all that is
+      // known about the release here.
       phase: AppUpdatePhase.available,
       availableVersion: check.releaseVersion.toString(),
     ));
@@ -343,9 +386,11 @@ class AppUpdateService {
   ///
   /// On desktop this stages it and leaves the status at
   /// [AppUpdatePhase.readyToInstall] — installing is a second, explicit step,
-  /// because it restarts the app. On Android the system installer takes over as
-  /// soon as the APK lands, so there is no such pause and the status runs
-  /// straight through to [AppUpdatePhase.installing].
+  /// because it restarts the app. The snap does the same: the file is on disk
+  /// and verified, and [installUpdate] is where the password prompt and the
+  /// relaunch happen. On Android the system installer takes over as soon as
+  /// the APK lands, so there is no such pause and the status runs straight
+  /// through to [AppUpdatePhase.installing].
   Future<void> downloadUpdate() async {
     if (!_isSupported || _status.phase != AppUpdatePhase.available) return;
 
@@ -357,25 +402,40 @@ class AppUpdateService {
     ));
 
     try {
-      if (Platform.isAndroid) {
-        final check = _androidCheck;
-        if (check == null) {
-          throw StateError('No Android release has been checked for.');
-        }
-        await _androidUpdater.downloadAndInstall(
-          check,
-          onProgress: (received, total) => _emit(_status.copyWith(
-            phase: AppUpdatePhase.downloading,
-            receivedBytes: received,
-            totalBytes: total,
-          )),
-        );
-        _emit(_status.copyWith(phase: AppUpdatePhase.installing));
-      } else {
-        final controller = await _desktopController();
-        // The controller notifies through _readDesktopState as progress
-        // arrives, so the download's own states need no handling here.
-        await controller.downloadUpdate();
+      switch (_mechanism) {
+        case UpdateMechanism.android:
+          final check = _androidCheck;
+          if (check == null) {
+            throw StateError('No Android release has been checked for.');
+          }
+          await _androidUpdater.downloadAndInstall(
+            check,
+            onProgress: (received, total) => _emit(_status.copyWith(
+              phase: AppUpdatePhase.downloading,
+              receivedBytes: received,
+              totalBytes: total,
+            )),
+          );
+          _emit(_status.copyWith(phase: AppUpdatePhase.installing));
+        case UpdateMechanism.snap:
+          final check = _snapCheck;
+          if (check == null) {
+            throw StateError('No snap release has been checked for.');
+          }
+          _snapFile = await _snapUpdater.download(
+            check,
+            onProgress: (received, total) => _emit(_status.copyWith(
+              phase: AppUpdatePhase.downloading,
+              receivedBytes: received,
+              totalBytes: total,
+            )),
+          );
+          _emit(_status.copyWith(phase: AppUpdatePhase.readyToInstall));
+        case UpdateMechanism.desktop:
+          final controller = await _desktopController();
+          // The controller notifies through _readDesktopState as progress
+          // arrives, so the download's own states need no handling here.
+          await controller.downloadUpdate();
       }
     } catch (error) {
       _emit(_status.copyWith(
@@ -392,7 +452,7 @@ class AppUpdateService {
   /// updater to stage and `downloadUpdate()` would throw.
   Future<void> openFreshInstallDownload() async {
     if (!_isSupported ||
-        Platform.isAndroid ||
+        _mechanism != UpdateMechanism.desktop ||
         _status.phase != AppUpdatePhase.freshInstallRequired) {
       return;
     }
@@ -407,15 +467,40 @@ class AppUpdateService {
     }
   }
 
-  /// Desktop only: hands the staged update to the native installer, which
+  /// Desktop and snap only: hands the staged update to the installer, which
   /// replaces the app and relaunches it. Does not return in the normal case.
+  ///
+  /// On the snap that is `snap install` over the running revision — the
+  /// desktop asks for the user's password on the way — followed by
+  /// [SnapUpdater.relaunch], which exits this process once a helper is waiting
+  /// to start the new one. A cancelled prompt lands in [AppUpdatePhase.failed]
+  /// with the file still on disk, so the same button tries again.
   Future<void> installUpdate() async {
     if (!_isSupported ||
-        Platform.isAndroid ||
+        _mechanism == UpdateMechanism.android ||
         _status.phase != AppUpdatePhase.readyToInstall) {
       return;
     }
     _emit(_status.copyWith(phase: AppUpdatePhase.installing, clearError: true));
+    if (_mechanism == UpdateMechanism.snap) {
+      try {
+        final file = _snapFile;
+        if (file == null) {
+          throw StateError('No snap has been downloaded.');
+        }
+        await _snapUpdater.install(file);
+        await _snapUpdater.relaunch();
+      } catch (error) {
+        // Back to readyToInstall, not failed: the verified file is still on
+        // disk, and a cancelled password prompt is the common case here. The
+        // panel prints the error under the same Restart and install button.
+        _emit(_status.copyWith(
+          phase: AppUpdatePhase.readyToInstall,
+          error: _describeUpdateError(error),
+        ));
+      }
+      return;
+    }
     try {
       final controller = await _desktopController();
       await controller.restartApp();
@@ -446,7 +531,11 @@ class AppUpdateService {
   /// The staged update is still staged, so the user comes back to
   /// [AppUpdatePhase.readyToInstall] and presses Restart and install again.
   Future<void> openHelperApprovalSettings() async {
-    if (!_isSupported || !Platform.isMacOS) return;
+    if (!_isSupported ||
+        _mechanism != UpdateMechanism.desktop ||
+        !Platform.isMacOS) {
+      return;
+    }
     try {
       final controller = await _desktopController();
       await controller.openMacOSBackgroundItemsSettings();

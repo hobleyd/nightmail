@@ -1,19 +1,24 @@
+import 'dart:io';
+
 import 'package:desktop_updater/desktop_updater.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/infrastructure/update/app_update_service.dart';
 import 'package:nightmail/infrastructure/update/app_update_status.dart';
 import 'package:nightmail/infrastructure/update/release_notes_fetcher.dart';
+import 'package:nightmail/infrastructure/update/snap_updater.dart';
+import 'package:version/version.dart';
 import 'package:nightmail/presentation/blocs/update/update_cubit.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  group('an unsupported platform — a sub-window, or Linux', () {
+  group('an unsupported platform — a sub-window, or Linux outside the snap', () {
     late AppUpdateService service;
 
     setUp(() {
       // The same answer _platformIsSupported() gives inside a
-      // desktop_multi_window sub-window, and on Linux where snapd owns updates.
+      // desktop_multi_window sub-window, and on a Linux build that snapd did
+      // not launch.
       service = AppUpdateService(isSupportedOverride: false);
     });
 
@@ -40,6 +45,113 @@ void main() {
     test('the dot stays dark', () async {
       await service.start();
       expect(service.status.hasActionableUpdate, isFalse);
+    });
+  });
+
+
+  group('Linux inside the snap', () {
+    late _FakeSnapUpdater snap;
+    late AppUpdateService service;
+
+    setUp(() {
+      snap = _FakeSnapUpdater();
+      service = AppUpdateService(
+        snapUpdater: snap,
+        releaseNotesFetcher: _NoNotes(),
+        isSupportedOverride: true,
+        mechanismOverride: UpdateMechanism.snap,
+      );
+    });
+
+    tearDown(() => service.dispose());
+
+    test('a newer release is offered by its semver, as on Android', () async {
+      snap.next = _check(installed: '1.30.4', release: '1.31.0');
+      await service.checkForUpdate();
+      expect(service.status.phase, AppUpdatePhase.available);
+      expect(service.status.availableVersion, '1.31.0');
+      expect(service.status.hasActionableUpdate, isTrue);
+    });
+
+    test('level with the release is up to date', () async {
+      snap.next = _check(installed: '1.31.0', release: '1.31.0');
+      await service.checkForUpdate();
+      expect(service.status.phase, AppUpdatePhase.upToDate);
+    });
+
+    test('a release with no snap asset is up to date', () async {
+      snap.next = null;
+      await service.checkForUpdate();
+      expect(service.status.phase, AppUpdatePhase.upToDate);
+    });
+
+    test('download stages the file and pauses at ready to install', () async {
+      snap.next = _check(installed: '1.30.4', release: '1.31.0');
+      await service.checkForUpdate();
+
+      final phases = <AppUpdatePhase>[];
+      final sub = service.changes.listen((s) => phases.add(s.phase));
+      addTearDown(sub.cancel);
+
+      await service.downloadUpdate();
+
+      expect(phases, contains(AppUpdatePhase.downloading));
+      expect(service.status.phase, AppUpdatePhase.readyToInstall,
+          reason: 'installing asks for a password and relaunches, so it is a '
+              'second explicit step, exactly as on desktop');
+      expect(snap.installed, isEmpty);
+    });
+
+    test('install hands the staged file to snapd, then relaunches', () async {
+      snap.next = _check(installed: '1.30.4', release: '1.31.0');
+      await service.checkForUpdate();
+      await service.downloadUpdate();
+
+      await service.installUpdate();
+
+      expect(snap.installed.single.path, endsWith('nightmail_1.31.0_amd64.snap'));
+      expect(snap.relaunched, 1);
+      expect(service.status.phase, AppUpdatePhase.installing);
+    });
+
+    test('a cancelled password prompt returns to ready to install', () async {
+      snap.next = _check(installed: '1.30.4', release: '1.31.0');
+      snap.installError = const SnapInstallException(
+        'NightMail needs your password to install the update, and the prompt '
+        'was cancelled or refused. Press Restart and install to try again.',
+      );
+      await service.checkForUpdate();
+      await service.downloadUpdate();
+
+      await service.installUpdate();
+
+      expect(service.status.phase, AppUpdatePhase.readyToInstall,
+          reason: 'the verified file is still on disk; the same button is '
+              'the remedy');
+      expect(service.status.error, contains('password'));
+      expect(snap.relaunched, 0);
+      expect(service.status.hasActionableUpdate, isTrue);
+    });
+
+    test('a failed checksum reports and goes back to available', () async {
+      snap.next = _check(installed: '1.30.4', release: '1.31.0');
+      snap.downloadError = const SnapInstallException(
+        'The downloaded update did not match the published checksum, so it '
+        'was discarded. Try again.',
+      );
+      await service.checkForUpdate();
+      await service.downloadUpdate();
+
+      expect(service.status.phase, AppUpdatePhase.failed);
+      expect(service.status.error, contains('checksum'));
+    });
+
+    test('desktop-only actions are no-ops', () async {
+      snap.next = _check(installed: '1.30.4', release: '1.31.0');
+      await service.checkForUpdate();
+      await service.openFreshInstallDownload();
+      await service.openHelperApprovalSettings();
+      expect(service.status.phase, AppUpdatePhase.available);
     });
   });
 
@@ -248,3 +360,59 @@ ReleaseDescriptor _descriptor() => ReleaseDescriptor(
       minimumUpdaterVersion: '3.0.0',
       generatedAt: DateTime.utc(2026, 9, 2),
     );
+
+
+SnapReleaseCheck _check({required String installed, required String release}) =>
+    SnapReleaseCheck(
+      installedVersion: Version.parse(installed),
+      releaseVersion: Version.parse(release),
+      downloadUrl: 'https://example.test/nightmail_${release}_amd64.snap',
+      fileName: 'nightmail_${release}_amd64.snap',
+    );
+
+class _FakeSnapUpdater extends SnapUpdater {
+  _FakeSnapUpdater()
+      : super(
+          runProcess: (_, _) async => ProcessResult(0, 0, '', ''),
+          startDetached: (_, _, _) async {},
+          exitProcess: (_) {},
+        );
+
+  SnapReleaseCheck? next;
+  SnapInstallException? downloadError;
+  SnapInstallException? installError;
+  final installed = <File>[];
+  int relaunched = 0;
+
+  @override
+  Future<SnapReleaseCheck?> check() async => next;
+
+  @override
+  Future<File> download(
+    SnapReleaseCheck check, {
+    void Function(int received, int total)? onProgress,
+  }) async {
+    onProgress?.call(1, 2);
+    onProgress?.call(2, 2);
+    if (downloadError != null) throw downloadError!;
+    return File('/tmp/updates/${check.fileName}');
+  }
+
+  @override
+  Future<void> install(File snap) async {
+    if (installError != null) throw installError!;
+    installed.add(snap);
+  }
+
+  @override
+  Future<void> relaunch({int? processId}) async {
+    relaunched++;
+  }
+}
+
+class _NoNotes extends ReleaseNotesFetcher {
+  _NoNotes() : super(url: Uri.parse('https://example.test/none.json'));
+
+  @override
+  Future<List<UpdateReleaseNotes>> fetch() async => const [];
+}

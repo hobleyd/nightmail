@@ -1,26 +1,26 @@
 # In-App Updates
 
-The macOS/Windows/Android update mechanisms behind one `AppUpdateStatus`. See [../../../CLAUDE.md](../../../CLAUDE.md) for architecture-wide rules.
+The macOS/Windows/Android/Linux update mechanisms behind one `AppUpdateStatus`. See [../../../CLAUDE.md](../../../CLAUDE.md) for architecture-wide rules.
 
 ## In-App Updates
 
-Two mechanisms behind one status, because no single one covers the platforms.
+Three mechanisms behind one status, because no single one covers the platforms.
 
 | Platform | Mechanism | Where it comes from |
 |---|---|---|
 | macOS, Windows | `desktop_updater` — download, verify, stage, hand to a native installer | signed `app-archive.json` on GitHub Pages |
 | Android | APK handed to the system package installer | newest GitHub release's `.apk` asset |
-| Linux | none — the snap self-updates | |
-| iOS, web | none | |
+| Linux, inside the snap | `.snap` downloaded, checksummed, `snap install`ed over the running revision, app relaunched | newest GitHub release's `.snap` asset |
+| Linux outside the snap, iOS, web | none | |
 
 `AppUpdateService` (`infrastructure/update/`) is the only place that knows
 which; everything above it reads one `AppUpdateStatus`. `UpdateCubit` is the
 bloc-shaped window onto it, the same shape as `OverdueTasksCubit` over
 `TaskReminderService`.
 
-**Linux is excluded deliberately, not overlooked.** The Linux build ships as a
-snap and there is no Linux entry in the app-archive, so a controller there would
-sit in a permanent no-update state while snapd did the actual work.
+`UpdateMechanism` is that choice made once, from the platform, and overridable
+in tests — every branch is otherwise picked by `Platform.is*`, which a test
+cannot change.
 
 Checking is automatic — at launch and every 6 h after, since a mail client is
 left open for days and a launch-only check would mean never. **Only the check
@@ -394,6 +394,50 @@ is also the whole of the comparison, so on a same-semver release it is the only
 part that explains why an update is being offered. Android is the exception and
 reports the semver alone: it compares the GitHub tag, which the workflow strips
 to its semver part, so there is no build number to report.
+
+### Linux: The Sideloaded Snap Installs Itself
+
+The snap is **not** in the Snap Store. It is built by the Linux release job,
+attached to the GitHub release and installed with `snap install --dangerous`,
+so snapd never refreshes it — the store's auto-refresh, delta downloads and
+assertion checks are all unavailable, and for a long while Linux was "excluded
+deliberately" because of exactly that. `SnapUpdater` is what stands in for
+them, and `desktop_updater` could not: its Linux lane replaces an installed
+bundle directory in place, and a snap's files are a read-only squashfs.
+
+- **Newest release** — the GitHub releases API, the tag compared as a semver
+  against `PackageInfo.version`, as on Android. Bumping `pubspec.yaml`
+  publishes; a re-push at the same version is invisible. A release with no
+  `.snap` asset (the Linux job failed) is not an update.
+- **Integrity** — the asset's `digest` (`sha256:…`) from the same API, checked
+  after the download; a mismatch deletes the file and reports it. Weaker than
+  the desktop path's pinned key, the same trust Android places in its APK.
+- **Install** — `snap install --dangerous --classic --ignore-running <file>`,
+  run as the user. snapd's polkit policy (`io.snapcraft.snapd.manage`,
+  `auth_admin_keep` for an active session) means the desktop asks for the
+  password, so there is no `sudo` and no helper of ours. **`--ignore-running`
+  is load-bearing**: a sideload of an installed snap is a refresh, and snapd
+  refuses a manual refresh of a snap with running apps — the app doing the
+  installing is one. The flag is hidden from `snap install --help` but present
+  (`cmd/snapd/cli/cmd_snap_op.go`, honoured by the sideload endpoint).
+- **Relaunch** — the new revision cannot be started beside the running one, so
+  `relaunch()` leaves a detached `sh` waiting on this pid and then `exec`ing
+  `/snap/bin/nightmail`, and calls `exit(0)`. Its environment is this process's
+  minus `SNAP*`: those describe the revision being left, and `snap run` has to
+  compute the new one itself. Nothing single-instance exists to fall back on.
+- **A cancelled prompt returns to `readyToInstall`, not `failed`**, with the
+  error under the same button: the verified file is still in
+  `~/.nightmail/updates` and a second press is the remedy. That directory is
+  emptied before each download, since a snap is tens of megabytes and only the
+  one about to be installed is ever wanted.
+- **Only inside the snap.** `SnapUpdater.isRunningInSnap` is `SNAP_NAME ==
+  nightmail`; a `flutter run` or plain-bundle Linux build has nothing snapd
+  could install over and stays `unsupported`.
+
+Unverified on a real snap install at the time of writing — the Linux job is
+CI-only and this machine is a Mac — which is why every external touch point
+(process runner, detached start, exit, download directory, installed version,
+environment) is injected and pinned in `snap_updater_test.dart`.
 
 ### Where the Android APK Goes
 

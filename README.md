@@ -52,7 +52,7 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - Accept, tentatively accept, or decline meeting invitations
 - Check attendee availability, with a side-by-side schedule pane for finding a
   free slot (see below)
-- Propose new meeting times, and accept a proposed time as the organizer (moves the meeting and re-invites attendees)
+- Propose new meeting times from the full event form, with the guests' availability shown while you pick the slot; accept a proposed time as the organizer (moves the meeting and re-invites attendees)
 - New meetings default to a 15-minute reminder
 - Recurring event support, with per-occurrence or whole-series edit and cancel
 - Editing a meeting you organize notifies attendees of the change
@@ -135,12 +135,14 @@ Settings → Accounts.
 - Message list and message are real screens: edge-swipe back on iOS, predictive back on Android
 - Pull to refresh, long-press to multi-select, swipe right to mark unread, swipe left for actions, long-press for context menus
 - Calendar cycles Day → Week → Full Week → Month, with the same month view as the desktop
+- Swipe left or right on the calendar to step forward or back by a day, week or month
 - Swipe left or right on the mobile calendar to step to the next or previous period
 - iOS: system-style alerts and switches, links open in an in-app Safari view, dark and tinted app icons on iOS 18
 
 ### Accounts
 - Multiple accounts from different providers simultaneously
 - Per-account folder, calendar, and task views
+- Profile fields (name, title, phone) are filled from the Microsoft or Google directory when an account is added, so signature merge tags start out populated
 - Secure token storage (system Keychain / encrypted preferences)
 - Clear an account's local cache without removing the account
 - **Sign In Again** (Settings → Accounts) re-runs the OAuth consent flow for a

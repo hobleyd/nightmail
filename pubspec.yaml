@@ -82,8 +82,8 @@ dependencies:
   timezone: ^0.11.1
 
   # Printing support
-  printing: ^5.14.3
-  pdf: ^3.12.0
+  printing: ^5.15.1
+  pdf: ^3.13.1
 
   # In-app updates. desktop_updater drives macOS/Windows (a signed app-archive
   # on GitHub Pages); Android installs an APK straight from the GitHub release.
@@ -185,3 +185,8 @@ dependency_overrides:
   #   #293 bare-LF line endings in a fetched BODY[] literal
   enough_mail:
     path: packages/enough_mail
+  # printing >=5.15 (Swift Package Manager support) needs pdf >=3.13, which
+  # needs xml 7. caldav 1.5.0 still declares `xml: ^6.6.1` although it only
+  # uses the high-level DOM API that xml 7 kept unchanged. Drop this override
+  # once ssyuk/caldav ships a release with the widened constraint (PR ssyuk/caldav#3).
+  xml: ^7.0.1

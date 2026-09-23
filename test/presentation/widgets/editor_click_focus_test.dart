@@ -17,15 +17,23 @@ import 'package:flutter_test/flutter_test.dart';
 /// signal is still guarded at all.
 void main() {
   final webKitView = File(
-    'packages/html_view/macos/Classes/WebKitView.swift',
+    'packages/html_view/macos/html_view/Sources/html_view/WebKitView.swift',
   ).readAsStringSync();
 
   test('a click only signals for focus when the webview has none', () {
-    expect(webKitView, contains('if !isFirstResponder { onClickFocus?() }'),
-        reason: 'there is nothing to steal focus from when we already hold it, '
-            'and asking costs the caret');
-    expect(webKitView, contains('private var isFirstResponder: Bool'),
-        reason: 'the guard walks up from window.firstResponder, so a field '
-            'editor or an internal content view still counts as ours');
+    expect(
+      webKitView,
+      contains('if !isFirstResponder { onClickFocus?() }'),
+      reason:
+          'there is nothing to steal focus from when we already hold it, '
+          'and asking costs the caret',
+    );
+    expect(
+      webKitView,
+      contains('private var isFirstResponder: Bool'),
+      reason:
+          'the guard walks up from window.firstResponder, so a field '
+          'editor or an internal content view still counts as ours',
+    );
   });
 }

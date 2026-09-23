@@ -18,19 +18,29 @@ import 'package:flutter_test/flutter_test.dart';
 /// what is pinned here is that the webview is still lifted at all.
 void main() {
   final webKitView = File(
-    'packages/html_view/macos/Classes/WebKitView.swift',
+    'packages/html_view/macos/html_view/Sources/html_view/WebKitView.swift',
   ).readAsStringSync();
 
   test('the webview layer is ordered above Flutter surface layers', () {
-    expect(webKitView, contains('webView.layer?.zPosition = 1000'),
-        reason: 'at equal zPosition the later-added sibling layer wins, and '
-            "in a reply Flutter's first surface can arrive after the webview");
-    expect(webKitView, contains('webView.wantsLayer = true'),
-        reason: 'zPosition only exists on a layer-backed view');
+    expect(
+      webKitView,
+      contains('webView.layer?.zPosition = 1000'),
+      reason:
+          'at equal zPosition the later-added sibling layer wins, and '
+          "in a reply Flutter's first surface can arrive after the webview",
+    );
+    expect(
+      webKitView,
+      contains('webView.wantsLayer = true'),
+      reason: 'zPosition only exists on a layer-backed view',
+    );
     final addSubview = webKitView.indexOf('parentView.addSubview(webView)');
     final zPosition = webKitView.indexOf('webView.layer?.zPosition');
     expect(addSubview, greaterThanOrEqualTo(0));
-    expect(zPosition, greaterThan(addSubview),
-        reason: 'set once the view is in the hierarchy it is ordered within');
+    expect(
+      zPosition,
+      greaterThan(addSubview),
+      reason: 'set once the view is in the hierarchy it is ordered within',
+    );
   });
 }

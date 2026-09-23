@@ -85,13 +85,13 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
     CalendarWeekLoadRequested event,
     Emitter<CalendarState> emit,
   ) =>
-      _fetchWeek(event.weekStart, emit);
+      _fetchWeek(event.weekStart, emit, spanDays: event.spanDays);
 
   Future<void> _onWeekNavigated(
     CalendarWeekNavigated event,
     Emitter<CalendarState> emit,
   ) =>
-      _fetchWeek(event.weekStart, emit);
+      _fetchWeek(event.weekStart, emit, spanDays: event.spanDays);
 
   Future<void> _onCancelRequested(
     CalendarEventCancelRequested event,
@@ -102,7 +102,10 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
       CancelCalendarEventParams(eventId: event.eventId),
     );
     result.fold(
-      (failure) => emit(CalendarError(weekStart: weekStart, message: failure.message)),
+      (failure) => emit(CalendarError(
+          weekStart: weekStart,
+          spanDays: state.spanDays,
+          message: failure.message)),
       (_) {},
     );
     if (result.isRight()) {
@@ -125,7 +128,10 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
       ),
     );
     result.fold(
-      (failure) => emit(CalendarError(weekStart: weekStart, message: failure.message)),
+      (failure) => emit(CalendarError(
+          weekStart: weekStart,
+          spanDays: state.spanDays,
+          message: failure.message)),
       (_) {},
     );
     if (result.isRight()) {
@@ -144,7 +150,10 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
       DeclineCalendarEventParams(eventId: event.eventId),
     );
     result.fold(
-      (failure) => emit(CalendarError(weekStart: weekStart, message: failure.message)),
+      (failure) => emit(CalendarError(
+          weekStart: weekStart,
+          spanDays: state.spanDays,
+          message: failure.message)),
       (_) {},
     );
     if (result.isRight()) {
@@ -169,7 +178,10 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
       ),
     );
     result.fold(
-      (failure) => emit(CalendarError(weekStart: weekStart, message: failure.message)),
+      (failure) => emit(CalendarError(
+          weekStart: weekStart,
+          spanDays: state.spanDays,
+          message: failure.message)),
       (_) {},
     );
     if (result.isRight()) {
@@ -217,7 +229,10 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
       );
     }
     result.fold(
-      (failure) => emit(CalendarError(weekStart: weekStart, message: failure.message)),
+      (failure) => emit(CalendarError(
+          weekStart: weekStart,
+          spanDays: state.spanDays,
+          message: failure.message)),
       (_) {},
     );
     if (result.isRight()) {
@@ -295,12 +310,18 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
   /// A spinner is only shown when the cache had nothing for this week: replacing
   /// a drawn week with one is a worse trade than letting it sit a moment longer
   /// while [CalendarLoaded.isSyncing] says a refresh is in flight.
+  ///
+  /// [spanDays] widens the range for the month grid; left null it keeps the
+  /// span already on screen, which is what every re-fetch after a mutation and
+  /// every refresh relayed from another window wants.
   Future<void> _fetchWeek(
     DateTime weekStart,
-    Emitter<CalendarState> emit,
-  ) async {
+    Emitter<CalendarState> emit, {
+    int? spanDays,
+  }) async {
+    final span = spanDays ?? state.spanDays;
     final start = weekStart.toUtc();
-    final end = start.add(const Duration(days: 7));
+    final end = start.add(Duration(days: span));
     final params = GetCalendarEventsParams(startDateTime: start, endDateTime: end);
 
     final selected = state is CalendarLoaded
@@ -312,10 +333,11 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
     cacheResult.fold((_) {}, (events) => cached = events);
 
     if (cached.isEmpty) {
-      emit(CalendarLoading(weekStart: weekStart));
+      emit(CalendarLoading(weekStart: weekStart, spanDays: span));
     } else {
       emit(CalendarLoaded(
         weekStart: weekStart,
+        spanDays: span,
         events: cached,
         // Keep a multi-select alive across the repaint, but only for events the
         // cache still has — a selection pointing at a cancelled meeting would
@@ -335,16 +357,19 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
         if (cached.isNotEmpty) {
           emit(CalendarLoaded(
             weekStart: weekStart,
+            spanDays: span,
             events: cached,
             selectedEventIds: _retained(selected, cached),
             syncError: failure.message,
           ));
         } else {
-          emit(CalendarError(weekStart: weekStart, message: failure.message));
+          emit(CalendarError(
+              weekStart: weekStart, spanDays: span, message: failure.message));
         }
       },
       (events) => emit(CalendarLoaded(
         weekStart: weekStart,
+        spanDays: span,
         events: events,
         selectedEventIds: _retained(selected, events),
       )),

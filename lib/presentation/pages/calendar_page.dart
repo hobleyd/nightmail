@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/platform/touch_metrics.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/meeting_load.dart';
 import '../../core/utils/timezone_utils.dart';
 import '../../domain/entities/calendar_event.dart';
 import '../../domain/usecases/get_calendar_event.dart';
@@ -28,11 +29,80 @@ class CalendarPage extends StatefulWidget {
   State<CalendarPage> createState() => _CalendarPageState();
 }
 
-class _CalendarPageState extends State<CalendarPage> {
-  /// The window opens on the working week (Mon–Fri); the nav bar toggles it.
-  bool _workWeek = true;
+/// What the calendar window is showing. The nav bar's toggle cycles through
+/// these in order — Working Week → Full Week → Month → Working Week.
+enum _CalendarSpan {
+  workWeek(label: 'Working Week', icon: Icons.view_week_rounded, dayCount: 5),
+  fullWeek(
+      label: 'Full Week', icon: Icons.calendar_view_week_rounded, dayCount: 7),
+  month(label: 'Month', icon: Icons.calendar_view_month_rounded, dayCount: 42);
 
-  int get _dayCount => _workWeek ? 5 : 7;
+  const _CalendarSpan(
+      {required this.label, required this.icon, required this.dayCount});
+
+  final String label;
+  final IconData icon;
+
+  /// Days drawn from the range start: five or seven for a week, six full weeks
+  /// for the month grid so every month fits and the rows never jump.
+  final int dayCount;
+
+  _CalendarSpan get next =>
+      _CalendarSpan.values[(index + 1) % _CalendarSpan.values.length];
+
+  bool get isMonth => this == _CalendarSpan.month;
+
+  /// What the bloc is asked to load. Both week views load the full seven days,
+  /// which is what every other consumer of the bloc expects; the month view
+  /// needs the whole grid.
+  int get fetchDays => isMonth ? dayCount : 7;
+}
+
+/// The Monday on or before the first of [anyDay]'s month — the first cell of
+/// that month's grid.
+DateTime _monthGridStart(DateTime anyDay) =>
+    _mondayOfWeek(DateTime(anyDay.year, anyDay.month, 1));
+
+/// The month a grid starting at [gridStart] is for. The first of the month
+/// falls within the first row, so any day of that row after the Monday is in
+/// it; the Sunday is the safe choice.
+DateTime _monthShown(DateTime gridStart) {
+  final inMonth = gridStart.add(const Duration(days: 6));
+  return DateTime(inMonth.year, inMonth.month, 1);
+}
+
+class _CalendarPageState extends State<CalendarPage> {
+  /// The window opens on the working week (Mon–Fri); the nav bar cycles it.
+  _CalendarSpan _span = _CalendarSpan.workWeek;
+
+  /// Moves to the next span and re-points the bloc at the range it needs:
+  /// entering the month view widens the fetch to the grid around the week
+  /// being shown, and leaving it narrows back to one week — today's if the
+  /// month contains it, otherwise the month's first.
+  void _cycleSpan(BuildContext context) {
+    final bloc = context.read<CalendarBloc>();
+    final current = bloc.state.weekStart;
+    final next = _span.next;
+    setState(() => _span = next);
+    if (next.isMonth) {
+      bloc.add(CalendarWeekNavigated(
+        weekStart: _monthGridStart(current),
+        spanDays: next.fetchDays,
+      ));
+    } else if (_span == _CalendarSpan.workWeek) {
+      // Only the month → working-week step changes the range; full week and
+      // working week draw from the same seven days.
+      final today = DateTime.now();
+      final month = _monthShown(current);
+      final target = (today.year == month.year && today.month == month.month)
+          ? _mondayOfWeek(today)
+          : current;
+      bloc.add(CalendarWeekNavigated(
+        weekStart: target,
+        spanDays: next.fetchDays,
+      ));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -47,8 +117,8 @@ class _CalendarPageState extends State<CalendarPage> {
             children: [
               _WeekNavBar(
                 state: state,
-                workWeek: _workWeek,
-                onToggleWorkWeek: () => setState(() => _workWeek = !_workWeek),
+                span: _span,
+                onCycleSpan: () => _cycleSpan(context),
               ),
               Divider(height: 1, color: c.separatorStrong),
               Expanded(
@@ -67,17 +137,9 @@ class _CalendarPageState extends State<CalendarPage> {
                     :final weekStart,
                     :final syncError
                   ) =>
-                    _WeekView(
-                        weekStart: weekStart,
-                        events: events,
-                        dayCount: _dayCount,
-                        errorMessage: syncError),
+                    _buildBody(weekStart, events, syncError),
                   CalendarError(:final message, :final weekStart) =>
-                    _WeekView(
-                        weekStart: weekStart,
-                        events: const [],
-                        dayCount: _dayCount,
-                        errorMessage: message),
+                    _buildBody(weekStart, const [], message),
                   CalendarInitial() => const SizedBox.shrink(),
                 },
               ),
@@ -88,17 +150,37 @@ class _CalendarPageState extends State<CalendarPage> {
       ),
     );
   }
+
+  Widget _buildBody(
+    DateTime weekStart,
+    List<CalendarEvent> events,
+    String? errorMessage,
+  ) {
+    if (_span.isMonth) {
+      return _MonthView(
+        gridStart: weekStart,
+        events: events,
+        errorMessage: errorMessage,
+      );
+    }
+    return _WeekView(
+      weekStart: weekStart,
+      events: events,
+      dayCount: _span.dayCount,
+      errorMessage: errorMessage,
+    );
+  }
 }
 
 class _WeekNavBar extends StatefulWidget {
   const _WeekNavBar({
     required this.state,
-    required this.workWeek,
-    required this.onToggleWorkWeek,
+    required this.span,
+    required this.onCycleSpan,
   });
   final CalendarState state;
-  final bool workWeek;
-  final VoidCallback onToggleWorkWeek;
+  final _CalendarSpan span;
+  final VoidCallback onCycleSpan;
 
   @override
   State<_WeekNavBar> createState() => _WeekNavBarState();
@@ -140,15 +222,30 @@ class _WeekNavBarState extends State<_WeekNavBar> {
   Widget build(BuildContext context) {
     final c = context.colors;
     final weekStart = widget.state.weekStart;
-    final weekEnd = weekStart.add(Duration(days: widget.workWeek ? 4 : 6));
-    final isCurrentWeek = _isCurrentWeek(weekStart);
+    final isMonth = widget.span.isMonth;
+    final showingToday =
+        isMonth ? _isCurrentMonth(weekStart) : _isCurrentWeek(weekStart);
 
-    final rangeLabel = _buildRangeLabel(weekStart, weekEnd);
+    final rangeLabel = isMonth
+        ? DateFormat('MMMM yyyy').format(_monthShown(weekStart))
+        : _buildRangeLabel(
+            weekStart,
+            weekStart.add(Duration(days: widget.span.dayCount - 1)),
+          );
+    final unit = isMonth ? 'month' : 'week';
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       child: Row(
         children: [
+          // The arrows bracket the range they move, the way the day panel's
+          // bracket its date, rather than sitting off by the New Event button.
+          _IconNavButton(
+            icon: Icons.chevron_left_rounded,
+            tooltip: 'Previous $unit',
+            onTap: () => _navigate(context, -1),
+          ),
+          const SizedBox(width: 4),
           Text(
             rangeLabel,
             style: TextStyle(
@@ -158,8 +255,14 @@ class _WeekNavBarState extends State<_WeekNavBar> {
               letterSpacing: -0.3,
             ),
           ),
-          const SizedBox(width: 12),
-          if (!isCurrentWeek)
+          const SizedBox(width: 4),
+          _IconNavButton(
+            icon: Icons.chevron_right_rounded,
+            tooltip: 'Next $unit',
+            onTap: () => _navigate(context, 1),
+          ),
+          const SizedBox(width: 8),
+          if (!showingToday)
             _NavChip(
               label: 'Today',
               onTap: () => _goToToday(context),
@@ -194,20 +297,8 @@ class _WeekNavBarState extends State<_WeekNavBar> {
             const SizedBox(width: 4),
           ],
           _WeekSpanToggle(
-            workWeek: widget.workWeek,
-            onTap: widget.onToggleWorkWeek,
-          ),
-          const SizedBox(width: 8),
-          _IconNavButton(
-            icon: Icons.chevron_left_rounded,
-            tooltip: 'Previous week',
-            onTap: () => _navigate(context, -7),
-          ),
-          const SizedBox(width: 4),
-          _IconNavButton(
-            icon: Icons.chevron_right_rounded,
-            tooltip: 'Next week',
-            onTap: () => _navigate(context, 7),
+            current: widget.span,
+            onTap: widget.onCycleSpan,
           ),
           const SizedBox(width: 8),
           _NewEventButton(calendarBloc: context.read<CalendarBloc>()),
@@ -233,21 +324,43 @@ class _WeekNavBarState extends State<_WeekNavBar> {
         weekStart.day == currentMonday.day;
   }
 
-  DateTime _mondayOfWeek(DateTime date) {
-    final daysFromMonday = (date.weekday - 1) % 7;
-    return DateTime(date.year, date.month, date.day - daysFromMonday);
+  bool _isCurrentMonth(DateTime gridStart) {
+    final today = DateTime.now();
+    final shown = _monthShown(gridStart);
+    return shown.year == today.year && shown.month == today.month;
   }
 
   void _goToToday(BuildContext context) {
     final today = DateTime.now();
-    final monday = _mondayOfWeek(today);
-    context.read<CalendarBloc>().add(CalendarWeekNavigated(weekStart: monday));
+    final target = widget.span.isMonth
+        ? _monthGridStart(today)
+        : _mondayOfWeek(today);
+    context.read<CalendarBloc>().add(CalendarWeekNavigated(
+      weekStart: target,
+      spanDays: widget.span.fetchDays,
+    ));
   }
 
-  void _navigate(BuildContext context, int days) {
-    final newWeekStart = widget.state.weekStart.add(Duration(days: days));
-    context.read<CalendarBloc>().add(CalendarWeekNavigated(weekStart: newWeekStart));
+  /// Steps [count] weeks, or [count] months in the month view.
+  void _navigate(BuildContext context, int count) {
+    final current = widget.state.weekStart;
+    final DateTime target;
+    if (widget.span.isMonth) {
+      final shown = _monthShown(current);
+      target = _monthGridStart(DateTime(shown.year, shown.month + count, 1));
+    } else {
+      target = current.add(Duration(days: 7 * count));
+    }
+    context.read<CalendarBloc>().add(CalendarWeekNavigated(
+      weekStart: target,
+      spanDays: widget.span.fetchDays,
+    ));
   }
+}
+
+DateTime _mondayOfWeek(DateTime date) {
+  final daysFromMonday = (date.weekday - 1) % 7;
+  return DateTime(date.year, date.month, date.day - daysFromMonday);
 }
 
 class _NavChip extends StatelessWidget {
@@ -279,19 +392,21 @@ class _NavChip extends StatelessWidget {
   }
 }
 
-/// Switches the week view between Mon–Fri and the full seven days. Shows the
-/// span it will switch *to*, so the label doubles as the action.
+/// Cycles the calendar through Working Week → Full Week → Month. The label
+/// spells out the step it will take — "Working Week → Full Week" — so both
+/// what is showing and what comes next are readable at a glance.
 class _WeekSpanToggle extends StatelessWidget {
-  const _WeekSpanToggle({required this.workWeek, required this.onTap});
-  final bool workWeek;
+  const _WeekSpanToggle({required this.current, required this.onTap});
+  final _CalendarSpan current;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final label = workWeek ? 'Full Week' : 'Working Week';
+    final next = current.next;
+    final label = '${current.label} → ${next.label}';
     return Tooltip(
-      message: 'Show $label',
+      message: 'Switch to ${next.label}',
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(6),
@@ -305,9 +420,7 @@ class _WeekSpanToggle extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
-                workWeek
-                    ? Icons.calendar_view_week_rounded
-                    : Icons.calendar_view_month_rounded,
+                next.icon,
                 size: 14,
                 color: c.textMuted,
               ),
@@ -473,11 +586,6 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
     final la = a.toLocal();
     final lb = b.toLocal();
     return la.year == lb.year && la.month == lb.month && la.day == lb.day;
-  }
-
-  DateTime _mondayOfWeek(DateTime date) {
-    final daysFromMonday = (date.weekday - 1) % 7;
-    return DateTime(date.year, date.month, date.day - daysFromMonday);
   }
 
   void _navigateDay(BuildContext context, int delta) {
@@ -956,6 +1064,201 @@ class _WeekViewState extends State<_WeekView> {
         widget.weekStart.year, widget.weekStart.month, widget.weekStart.day);
     final lastDay = firstDay.add(Duration(days: widget.dayCount - 1));
     return !day.isBefore(firstDay) && !day.isAfter(lastDay);
+  }
+}
+
+// ─── Month view ──────────────────────────────────────────────────────────────
+
+/// Six weeks of days, each carrying a bar for how much of its 9–5 is already
+/// in meetings. Deliberately no event tiles: the question this view answers is
+/// "which days have room", and the week views answer the rest.
+class _MonthView extends StatelessWidget {
+  const _MonthView({
+    required this.gridStart,
+    required this.events,
+    this.errorMessage,
+  });
+
+  /// The Monday the grid starts on; see [_monthGridStart].
+  final DateTime gridStart;
+  final List<CalendarEvent> events;
+  final String? errorMessage;
+
+  static const _rows = 6;
+  static const _columns = 7;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final month = _monthShown(gridStart);
+    final today = DateTime.now();
+
+    return Column(
+      children: [
+        Container(
+          color: c.surfacePanel,
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(
+            children: List.generate(_columns, (i) {
+              final day = gridStart.add(Duration(days: i));
+              return Expanded(
+                child: Text(
+                  DateFormat('EEE').format(day).toUpperCase(),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: c.textMuted,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              );
+            }),
+          ),
+        ),
+        Divider(height: 1, color: c.separatorStrong),
+        if (errorMessage != null) _ErrorBanner(message: errorMessage!),
+        Expanded(
+          child: Column(
+            children: List.generate(_rows, (row) {
+              return Expanded(
+                child: Row(
+                  children: List.generate(_columns, (col) {
+                    final day = gridStart
+                        .add(Duration(days: row * _columns + col));
+                    return Expanded(
+                      child: _MonthDayCell(
+                        day: day,
+                        inMonth: day.month == month.month,
+                        isToday: _isSameDay(day, today),
+                        load: workingDayMeetingLoad(events, day),
+                      ),
+                    );
+                  }),
+                ),
+              );
+            }),
+          ),
+        ),
+      ],
+    );
+  }
+
+  static bool _isSameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+}
+
+class _MonthDayCell extends StatelessWidget {
+  const _MonthDayCell({
+    required this.day,
+    required this.inMonth,
+    required this.isToday,
+    required this.load,
+  });
+
+  final DateTime day;
+
+  /// False for the days padding the grid out to whole weeks, which are drawn
+  /// dimmed so the month's own shape still reads.
+  final bool inMonth;
+  final bool isToday;
+
+  /// Fraction of 9–5 committed to meetings, `0.0..1.0`.
+  final double load;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final percent = (load * 100).round();
+    final dayLabel = day.day == 1 && !isToday
+        ? DateFormat('MMM d').format(day)
+        : '${day.day}';
+
+    return Container(
+      decoration: BoxDecoration(
+        color: inMonth ? null : c.surfacePanel.withAlpha(120),
+        border: Border(
+          left: BorderSide(color: c.separator, width: 0.5),
+          bottom: BorderSide(color: c.separator, width: 0.5),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+      child: Opacity(
+        opacity: inMonth ? 1 : 0.45,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Align(
+              alignment: Alignment.topRight,
+              child: Container(
+                height: 24,
+                padding: EdgeInsets.symmetric(horizontal: isToday ? 0 : 4),
+                constraints: const BoxConstraints(minWidth: 24),
+                decoration: isToday
+                    ? const BoxDecoration(
+                        color: AppColors.accent,
+                        shape: BoxShape.circle,
+                      )
+                    : null,
+                child: Center(
+                  child: Text(
+                    dayLabel,
+                    style: TextStyle(
+                      color: isToday ? Colors.white : c.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const Spacer(),
+            Row(
+              children: [
+                Expanded(
+                  child: Tooltip(
+                    message: '$percent% of 9am–5pm in meetings',
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(3),
+                      child: SizedBox(
+                        height: 6,
+                        child: Stack(
+                          children: [
+                            Positioned.fill(
+                              child: ColoredBox(color: c.separator),
+                            ),
+                            FractionallySizedBox(
+                              widthFactor: load,
+                              heightFactor: 1,
+                              alignment: Alignment.centerLeft,
+                              child: const ColoredBox(color: AppColors.accent),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                SizedBox(
+                  width: 32,
+                  child: Text(
+                    '$percent%',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      color: percent == 0 ? c.textMuted : c.textSecondary,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w500,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

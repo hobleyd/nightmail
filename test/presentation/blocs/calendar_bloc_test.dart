@@ -184,6 +184,36 @@ void main() {
       expect((states[1] as CalendarLoaded).events, _tEvents);
     });
 
+    test('a widened span is fetched, kept by a plain refresh, and narrowed '
+        'back on request', () async {
+      when(mockGetCalendarEvents(any))
+          .thenAnswer((_) async => Right(_tEvents));
+
+      final bloc = makeBloc();
+      // The month grid: six weeks from its first Monday.
+      bloc.add(CalendarWeekNavigated(weekStart: _tMonday, spanDays: 42));
+      await bloc.stream.firstWhere((s) => s is CalendarLoaded);
+      expect(bloc.state.spanDays, 42);
+
+      // A refresh after a mutation, or one relayed from another window, names
+      // no span and must not collapse the month back to a week.
+      bloc.add(CalendarWeekNavigated(weekStart: _tMonday));
+      await bloc.stream.firstWhere((s) => s is CalendarLoaded);
+      expect(bloc.state.spanDays, 42);
+
+      bloc.add(CalendarWeekNavigated(weekStart: _tMonday, spanDays: 7));
+      await bloc.stream.firstWhere((s) => s is CalendarLoaded);
+      expect(bloc.state.spanDays, 7);
+      await bloc.close();
+
+      final ranges = verify(mockGetCalendarEvents(captureAny))
+          .captured
+          .cast<GetCalendarEventsParams>()
+          .map((p) => p.endDateTime.difference(p.startDateTime).inDays)
+          .toList();
+      expect(ranges, [42, 42, 7]);
+    });
+
     test('passes a 7-day UTC date range to use case', () async {
       when(mockGetCalendarEvents(any))
           .thenAnswer((_) async => Right(_tEvents));

@@ -3,24 +3,35 @@ import 'package:equatable/equatable.dart';
 import '../../../domain/entities/calendar_event.dart';
 
 sealed class CalendarState extends Equatable {
-  const CalendarState({required this.weekStart});
+  const CalendarState({required this.weekStart, this.spanDays = 7});
+
+  /// The Monday the loaded range starts on.
   final DateTime weekStart;
 
+  /// How many days from [weekStart] the loaded range covers: 7 for a week view,
+  /// 42 (six weeks) for the month grid. A refresh that does not say otherwise
+  /// keeps whatever span is showing, so a mutation or a relay from another
+  /// window does not collapse a month back to its first week.
+  final int spanDays;
+
+  DateTime get rangeEnd => weekStart.add(Duration(days: spanDays));
+
   @override
-  List<Object?> get props => [weekStart];
+  List<Object?> get props => [weekStart, spanDays];
 }
 
 final class CalendarInitial extends CalendarState {
-  const CalendarInitial({required super.weekStart});
+  const CalendarInitial({required super.weekStart, super.spanDays});
 }
 
 final class CalendarLoading extends CalendarState {
-  const CalendarLoading({required super.weekStart});
+  const CalendarLoading({required super.weekStart, super.spanDays});
 }
 
 final class CalendarLoaded extends CalendarState {
   const CalendarLoaded({
     required super.weekStart,
+    super.spanDays,
     required this.events,
     this.selectedEventIds = const {},
     this.isSyncing = false,
@@ -44,6 +55,7 @@ final class CalendarLoaded extends CalendarState {
 
   CalendarLoaded copyWithSelection(Set<String> ids) => CalendarLoaded(
         weekStart: weekStart,
+        spanDays: spanDays,
         events: events,
         selectedEventIds: ids,
         isSyncing: isSyncing,
@@ -52,17 +64,18 @@ final class CalendarLoaded extends CalendarState {
 
   @override
   List<Object?> get props =>
-      [weekStart, events, selectedEventIds, isSyncing, syncError];
+      [weekStart, spanDays, events, selectedEventIds, isSyncing, syncError];
 }
 
 final class CalendarError extends CalendarState {
   const CalendarError({
     required super.weekStart,
+    super.spanDays,
     required this.message,
   });
 
   final String message;
 
   @override
-  List<Object?> get props => [weekStart, message];
+  List<Object?> get props => [weekStart, spanDays, message];
 }

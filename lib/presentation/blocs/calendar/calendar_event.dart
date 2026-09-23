@@ -10,19 +10,25 @@ sealed class CalendarBlocEvent extends Equatable {
 }
 
 final class CalendarWeekLoadRequested extends CalendarBlocEvent {
-  const CalendarWeekLoadRequested({required this.weekStart});
+  const CalendarWeekLoadRequested({required this.weekStart, this.spanDays});
   final DateTime weekStart;
 
+  /// Days to load from [weekStart]; null keeps the span the bloc is showing.
+  final int? spanDays;
+
   @override
-  List<Object?> get props => [weekStart];
+  List<Object?> get props => [weekStart, spanDays];
 }
 
 final class CalendarWeekNavigated extends CalendarBlocEvent {
-  const CalendarWeekNavigated({required this.weekStart});
+  const CalendarWeekNavigated({required this.weekStart, this.spanDays});
   final DateTime weekStart;
 
+  /// Days to load from [weekStart]; null keeps the span the bloc is showing.
+  final int? spanDays;
+
   @override
-  List<Object?> get props => [weekStart];
+  List<Object?> get props => [weekStart, spanDays];
 }
 
 final class CalendarEventCancelRequested extends CalendarBlocEvent {

@@ -135,6 +135,7 @@ Settings → Accounts.
 - Message list and message are real screens: edge-swipe back on iOS, predictive back on Android
 - Pull to refresh, long-press to multi-select, swipe right to mark unread, swipe left for actions, long-press for context menus
 - Calendar cycles Day → Week → Full Week → Month, with the same month view as the desktop
+- Swipe left or right on the mobile calendar to step to the next or previous period
 - iOS: system-style alerts and switches, links open in an in-app Safari view, dark and tinted app icons on iOS 18
 
 ### Accounts

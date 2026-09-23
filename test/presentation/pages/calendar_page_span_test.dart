@@ -56,7 +56,7 @@ void main() {
     await pumpPage(tester);
 
     final prev = tester.getCenter(find.byTooltip('Previous week'));
-    final label = tester.getCenter(find.text('September 21 – 25, 2026'));
+    final label = tester.getCenter(find.text('Sep 21 – 25, 2026'));
     final next = tester.getCenter(find.byTooltip('Next week'));
     final newEvent = tester.getCenter(find.text('New Event'));
 
@@ -78,13 +78,13 @@ void main() {
     await tapToggle(tester, 'Working Week → Full Week');
     expect(find.text('Full Week → Month'), findsOneWidget);
     expect(find.text('SAT'), findsOneWidget);
-    expect(find.text('September 21 – 27, 2026'), findsOneWidget);
+    expect(find.text('Sep 21 – 27, 2026'), findsOneWidget);
     // Full week and working week draw from the same seven days.
     expect(bloc.navigated, isEmpty);
 
     await tapToggle(tester, 'Full Week → Month');
     expect(find.text('Month → Working Week'), findsOneWidget);
-    expect(find.text('September 2026'), findsOneWidget);
+    expect(find.text('Sep 2026'), findsOneWidget);
     expect(bloc.navigated.single.spanDays, 42);
     // The Monday on or before 1 September 2026 (a Tuesday).
     expect(bloc.navigated.single.weekStart, DateTime(2026, 8, 31));
@@ -119,7 +119,7 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(find.text('October 2026'), findsOneWidget);
+    expect(find.text('Oct 2026'), findsOneWidget);
     final last = bloc.navigated.last;
     expect(last.spanDays, 42);
     // 1 October 2026 is a Thursday; its grid starts on Monday 28 September.

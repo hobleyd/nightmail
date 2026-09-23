@@ -117,7 +117,7 @@ void main() {
     // Month: asks for the six-week grid around the selected day.
     await tapToggle(tester, 'Full Week → Month');
     expect(find.text('Month → Day'), findsOneWidget);
-    expect(find.text(DateFormat('MMMM yyyy').format(today)), findsOneWidget);
+    expect(find.text(DateFormat('MMM yyyy').format(today)), findsOneWidget);
     expect(find.byTooltip('Previous month'), findsOneWidget);
     expect(bloc.navigated.single.spanDays, 42);
     expect(bloc.navigated.single.weekStart.weekday, DateTime.monday);

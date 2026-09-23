@@ -227,7 +227,7 @@ class _WeekNavBarState extends State<_WeekNavBar> {
         isMonth ? _isCurrentMonth(weekStart) : _isCurrentWeek(weekStart);
 
     final rangeLabel = isMonth
-        ? DateFormat('MMMM yyyy').format(_monthShown(weekStart))
+        ? DateFormat('MMM yyyy').format(_monthShown(weekStart))
         : _rangeLabel(
             weekStart,
             weekStart.add(Duration(days: widget.span.dayCount - 1)),
@@ -356,7 +356,7 @@ DateTime _mondayOfWeek(DateTime date) {
 
 String _rangeLabel(DateTime start, DateTime end) {
   if (start.month == end.month) {
-    return '${DateFormat('MMMM d').format(start)} – ${DateFormat('d, yyyy').format(end)}';
+    return '${DateFormat('MMM d').format(start)} – ${DateFormat('d, yyyy').format(end)}';
   } else if (start.year == end.year) {
     return '${DateFormat('MMM d').format(start)} – ${DateFormat('MMM d, yyyy').format(end)}';
   }
@@ -968,7 +968,7 @@ class _DayPanelHeader extends StatelessWidget {
   (String, String) _titles() => switch (span) {
         _PanelSpan.day => (
             DateFormat('EEEE').format(selectedDay),
-            DateFormat('MMMM y').format(selectedDay),
+            DateFormat('MMM y').format(selectedDay),
           ),
         _PanelSpan.week || _PanelSpan.fullWeek => (
             _rangeLabel(
@@ -979,7 +979,7 @@ class _DayPanelHeader extends StatelessWidget {
             span.label,
           ),
         _PanelSpan.month => (
-            DateFormat('MMMM yyyy').format(selectedDay),
+            DateFormat('MMM yyyy').format(selectedDay),
             span.label,
           ),
       };

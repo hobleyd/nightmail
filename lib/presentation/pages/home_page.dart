@@ -538,8 +538,34 @@ class _HomeViewState extends State<_HomeView> {
 // Mobile single-pane navigation
 // ---------------------------------------------------------------------------
 
-enum _MobileStep { folders, emailList, readingPane }
+/// Android or iOS: no sub-windows, touch input. Distinct from the width test
+/// that picks `_MobileLayout` — an iPad is a mobile platform drawing the
+/// three-panel layout.
+bool get _isMobilePlatform =>
+    !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
+/// The routes of the phone shell's own navigator, by name.
+abstract final class _MobileRoute {
+  static const folders = 'folders';
+  static const emailList = 'emailList';
+  static const readingPane = 'readingPane';
+}
+
+/// The phone shell: folder list, email list and reading pane as routes on a
+/// navigator of its own.
+///
+/// A nested navigator rather than the app's root one because every bloc the
+/// panels read is provided by [HomePage], *below* the root navigator — a route
+/// pushed there would not see them. Routes rather than a hand-rolled step
+/// state because that is what gives the platform its due: the page transition,
+/// the iOS edge swipe back, Android's predictive back, all for free, and all
+/// three panels keep the same `Navigator.of(context)` idiom compose and
+/// settings already use.
+///
+/// The shell opens with `[folders, emailList]` on the stack, so the phone
+/// lands on the mail — the active account is the one persisted from last time
+/// and its Inbox is auto-selected the moment its folders land
+/// (`folderToAutoSelect`) — and Back from the list is the folder list.
 class _MobileLayout extends StatefulWidget {
   const _MobileLayout();
 
@@ -548,24 +574,56 @@ class _MobileLayout extends StatefulWidget {
 }
 
 class _MobileLayoutState extends State<_MobileLayout> {
-  /// Opens on the email list, not the folder list: the active account is the
-  /// one persisted from last time, and its Inbox is auto-selected the moment
-  /// its folders land (`folderToAutoSelect`), so the phone lands on the mail
-  /// rather than a menu. The folder list is one Back away.
-  _MobileStep _step = _MobileStep.emailList;
+  final _navigatorKey = GlobalKey<NavigatorState>();
+  late final _observer = _ShellRouteObserver(onChanged: _onRoutesChanged);
+
+  /// Names of the routes on the shell navigator, bottom first. Unnamed routes
+  /// (compose, calendar, tasks pushed from inside the shell) are null entries.
+  List<String?> _routeNames = const [
+    _MobileRoute.folders,
+    _MobileRoute.emailList,
+  ];
   Timer? _emailListForegroundTimer;
+
+  String? get _topRoute => _routeNames.isEmpty ? null : _routeNames.last;
+  bool get _shellCanPop => _routeNames.length > 1;
+
+  NavigatorState? get _nav => _navigatorKey.currentState;
 
   @override
   void initState() {
     super.initState();
-    _setStep(_step);
+    _syncForegroundTimer();
   }
 
-  /// Sets [_step] and maintains the foreground refresh timer so the email list
-  /// stays current while the user is actively viewing it. Call inside setState.
-  void _setStep(_MobileStep newStep) {
-    if (newStep == _MobileStep.emailList) {
-      _emailListForegroundTimer?.cancel();
+  @override
+  void dispose() {
+    _emailListForegroundTimer?.cancel();
+    super.dispose();
+  }
+
+  /// Observer callback. Fires from inside the navigator's own push/pop, which
+  /// may be mid-build, so the state change is deferred a frame.
+  void _onRoutesChanged(List<Route<dynamic>> stack, Route<dynamic>? popped) {
+    final names = [for (final r in stack) r.settings.name];
+    // Backing out of a message — by button, edge swipe or system back — is
+    // what unselects it. A pop caused by the selection clearing (a delete
+    // from the reading pane) re-clears an already clear state, which emits
+    // nothing.
+    final leftMessage = popped?.settings.name == _MobileRoute.readingPane;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() => _routeNames = names);
+      _syncForegroundTimer();
+      if (leftMessage) context.read<HomeCubit>().clearEmail();
+    });
+  }
+
+  /// Keeps the email list current while it is the screen being looked at,
+  /// and only then — not under a message, a compose or the folder list.
+  void _syncForegroundTimer() {
+    final wanted = _topRoute == _MobileRoute.emailList;
+    if (wanted && _emailListForegroundTimer == null) {
       _emailListForegroundTimer = Timer.periodic(
         const Duration(seconds: 15),
         (_) {
@@ -577,21 +635,42 @@ class _MobileLayoutState extends State<_MobileLayout> {
           context.read<FolderListBloc>().add(const FolderListLoadRequested());
         },
       );
-    } else {
+    } else if (!wanted) {
       _emailListForegroundTimer?.cancel();
       _emailListForegroundTimer = null;
     }
-    _step = newStep;
   }
 
-  @override
-  void dispose() {
-    _emailListForegroundTimer?.cancel();
-    super.dispose();
+  void _back() => _nav?.maybePop();
+
+  /// Brings the email list to the top: from the folder list it is a push,
+  /// from anywhere above it a pop back down.
+  void _showEmailList() {
+    switch (_topRoute) {
+      case _MobileRoute.emailList:
+        return;
+      case _MobileRoute.folders:
+        _nav?.pushNamed(_MobileRoute.emailList);
+      default:
+        _nav?.popUntil(
+            (r) => r.settings.name == _MobileRoute.emailList || r.isFirst);
+        if (_topRoute == _MobileRoute.folders) {
+          _nav?.pushNamed(_MobileRoute.emailList);
+        }
+    }
+  }
+
+  /// Opens the reading pane over the email list, putting the list under it if
+  /// it is not there yet (a notification tapped while on the folder list), so
+  /// Back from the message lands on the list either way.
+  void _showReadingPane() {
+    if (_topRoute == _MobileRoute.readingPane) return;
+    if (_topRoute != _MobileRoute.emailList) _showEmailList();
+    _nav?.pushNamed(_MobileRoute.readingPane);
   }
 
   // The Calendar, Tasks and AI views, each pushed as a full-screen route over
-  // whichever step is showing. Shared by the folder panel's foot and the
+  // whichever screen is showing. Shared by the folder panel's foot and the
   // email list's, so the two cannot open them differently.
 
   void _openCalendar() {
@@ -599,7 +678,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
     calendarBloc.add(CalendarWeekLoadRequested(
       weekStart: _mondayOfWeek(DateTime.now()),
     ));
-    Navigator.of(context).push<void>(
+    _nav?.push<void>(
       MaterialPageRoute(
         fullscreenDialog: true,
         builder: (ctx) => Scaffold(
@@ -621,7 +700,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
     final tasksBloc = context.read<TasksBloc>();
     final emailDetailBloc = context.read<EmailDetailBloc>();
     final accountCubit = context.read<AccountCubit>();
-    Navigator.of(context).push<void>(
+    _nav?.push<void>(
       MaterialPageRoute(
         fullscreenDialog: true,
         builder: (ctx) => Scaffold(
@@ -646,7 +725,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
   void _openAi() {
     final aiFolderCubit = context.read<AiFolderCubit>();
     final emailListBloc = context.read<EmailListBloc>();
-    Navigator.of(context).push<void>(
+    _nav?.push<void>(
       MaterialPageRoute(
         fullscreenDialog: true,
         builder: (ctx) => Scaffold(
@@ -673,26 +752,35 @@ class _MobileLayoutState extends State<_MobileLayout> {
     );
   }
 
-  void _back() {
-    setState(() {
-      switch (_step) {
-        case _MobileStep.folders:
-          break;
-        case _MobileStep.emailList:
-          _setStep(_MobileStep.folders);
-        case _MobileStep.readingPane:
-          _setStep(_MobileStep.emailList);
-          context.read<HomeCubit>().clearEmail();
-      }
-    });
+  Route<void> _buildRoute(RouteSettings settings) {
+    final Widget page = switch (settings.name) {
+      _MobileRoute.folders => _FoldersScreen(
+          onCalendarTapped: _openCalendar,
+          onTasksTapped: _openTasks,
+          onAiTapped: _openAi,
+          onFolderChosen: _showEmailList,
+        ),
+      _MobileRoute.emailList => _EmailListScreen(
+          onBack: _back,
+          onCalendarTapped: _openCalendar,
+          onTasksTapped: _openTasks,
+          onAiTapped: _openAi,
+          onEmailOpened: _showReadingPane,
+        ),
+      _MobileRoute.readingPane => ReadingPane(onBack: _back),
+      _ => throw ArgumentError.value(settings.name, 'name', 'unknown route'),
+    };
+    return MaterialPageRoute<void>(settings: settings, builder: (_) => page);
   }
 
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: _step == _MobileStep.folders,
+      // System back walks the shell's own stack first; only with the folder
+      // list alone on it does a back leave the app.
+      canPop: !_shellCanPop,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _back();
+        if (!didPop) _nav?.maybePop();
       },
       child: MultiBlocListener(
         listeners: [
@@ -700,9 +788,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
             listenWhen: (prev, curr) =>
                 prev.selectedEmailId != null && curr.selectedEmailId == null,
             listener: (context, _) {
-              if (_step == _MobileStep.readingPane) {
-                setState(() => _setStep(_MobileStep.emailList));
-              }
+              if (_topRoute == _MobileRoute.readingPane) _nav?.pop();
             },
           ),
           BlocListener<HomeCubit, HomeState>(
@@ -711,23 +797,145 @@ class _MobileLayoutState extends State<_MobileLayout> {
                 prev.notificationEmailId != curr.notificationEmailId,
             listener: (context, state) {
               context.read<HomeCubit>().clearNotificationNavigation();
-              setState(() => _setStep(_MobileStep.readingPane));
+              _showReadingPane();
             },
           ),
         ],
-        child: BlocBuilder<HomeCubit, HomeState>(
-        builder: (context, homeState) {
-          return BlocBuilder<FolderListBloc, FolderListState>(
-            builder: (context, folderState) {
-              final selectedFolder = _resolveFolder(homeState, folderState);
-              final accountState = context.read<AccountCubit>().state;
-              final accountId = accountState is AccountsLoaded
-                  ? accountState.activeAccount.id
-                  : '';
-              final homeCubit = context.read<HomeCubit>();
+        child: Navigator(
+          key: _navigatorKey,
+          observers: [_observer],
+          initialRoute: _MobileRoute.emailList,
+          onGenerateInitialRoutes: (_, _) => [
+            _buildRoute(const RouteSettings(name: _MobileRoute.folders)),
+            _buildRoute(const RouteSettings(name: _MobileRoute.emailList)),
+          ],
+          onGenerateRoute: _buildRoute,
+        ),
+      ),
+    );
+  }
+}
 
-              void onEmailSelected(Email email) {
-                homeCubit.selectEmail(email.id);
+/// Reports the shell navigator's stack after every change, with the route a
+/// pop removed so the shell can tell leaving a message from arriving at one.
+class _ShellRouteObserver extends NavigatorObserver {
+  _ShellRouteObserver({required this.onChanged});
+
+  final void Function(List<Route<dynamic>> stack, Route<dynamic>? popped)
+      onChanged;
+  final List<Route<dynamic>> _stack = [];
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _stack.add(route);
+    onChanged(_stack, null);
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _stack.remove(route);
+    onChanged(_stack, route);
+  }
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _stack.remove(route);
+    onChanged(_stack, null);
+  }
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
+    final i = oldRoute == null ? -1 : _stack.indexOf(oldRoute);
+    if (i >= 0 && newRoute != null) {
+      _stack[i] = newRoute;
+    } else if (newRoute != null) {
+      _stack.add(newRoute);
+    }
+    onChanged(_stack, null);
+  }
+}
+
+/// The folder list as a shell route.
+class _FoldersScreen extends StatelessWidget {
+  const _FoldersScreen({
+    required this.onCalendarTapped,
+    required this.onTasksTapped,
+    required this.onAiTapped,
+    required this.onFolderChosen,
+  });
+
+  final VoidCallback onCalendarTapped;
+  final VoidCallback onTasksTapped;
+  final VoidCallback onAiTapped;
+  final VoidCallback onFolderChosen;
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<HomeCubit, HomeState>(
+      builder: (context, homeState) {
+        final accountState = context.read<AccountCubit>().state;
+        final accountId =
+            accountState is AccountsLoaded ? accountState.activeAccount.id : '';
+        final homeCubit = context.read<HomeCubit>();
+        return FolderPanel(
+          key: ValueKey(accountId),
+          selectedFolderId: homeState.selectedFolderId,
+          initialExpandedIds: homeCubit.savedExpandedForAccount(accountId),
+          onExpandedIdsChanged: (ids) {
+            final s = context.read<AccountCubit>().state;
+            if (s is AccountsLoaded) {
+              homeCubit.rememberExpandedForAccount(s.activeAccount.id, ids);
+            }
+          },
+          onFolderSelected: (folder) {
+            homeCubit.selectFolder(folder.id);
+            context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+            context.read<EmailListBloc>().add(
+                  EmailListLoadRequested(
+                    folderId: folder.id,
+                    folderDisplayName: folder.displayName,
+                  ),
+                );
+            onFolderChosen();
+          },
+          onCalendarTapped: onCalendarTapped,
+          onTasksTapped: onTasksTapped,
+          onAiTapped: onAiTapped,
+        );
+      },
+    );
+  }
+}
+
+/// The email list as a shell route.
+class _EmailListScreen extends StatelessWidget {
+  const _EmailListScreen({
+    required this.onBack,
+    required this.onCalendarTapped,
+    required this.onTasksTapped,
+    required this.onAiTapped,
+    required this.onEmailOpened,
+  });
+
+  final VoidCallback onBack;
+  final VoidCallback onCalendarTapped;
+  final VoidCallback onTasksTapped;
+  final VoidCallback onAiTapped;
+  final VoidCallback onEmailOpened;
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<HomeCubit, HomeState>(
+      builder: (context, homeState) {
+        return BlocBuilder<FolderListBloc, FolderListState>(
+          builder: (context, folderState) {
+            final selectedFolder = _resolveFolder(homeState, folderState);
+            return EmailListPanel(
+              folderName: selectedFolder?.displayName ?? 'Inbox',
+              folder: selectedFolder,
+              selectedEmailId: homeState.selectedEmailId,
+              onEmailSelected: (email) {
+                context.read<HomeCubit>().selectEmail(email.id);
                 context.read<EmailDetailBloc>().add(
                       EmailDetailLoadRequested(emailId: email.id),
                     );
@@ -735,62 +943,22 @@ class _MobileLayoutState extends State<_MobileLayout> {
                 if (unreadIds.isNotEmpty) {
                   _markReadOnceLoaded(context, email, unreadIds, selectedFolder);
                 }
-                setState(() => _setStep(_MobileStep.readingPane));
-              }
-
-              return switch (_step) {
-                _MobileStep.folders => FolderPanel(
-                    key: ValueKey(accountId),
-                    selectedFolderId: homeState.selectedFolderId,
-                    initialExpandedIds:
-                        homeCubit.savedExpandedForAccount(accountId),
-                    onExpandedIdsChanged: (ids) {
-                      final s = context.read<AccountCubit>().state;
-                      if (s is AccountsLoaded) {
-                        homeCubit.rememberExpandedForAccount(
-                            s.activeAccount.id, ids);
-                      }
-                    },
-                    onFolderSelected: (folder) {
-                      homeCubit.selectFolder(folder.id);
-                      context
-                          .read<EmailDetailBloc>()
-                          .add(const EmailDetailCleared());
-                      context.read<EmailListBloc>().add(
-                            EmailListLoadRequested(
-                              folderId: folder.id,
-                              folderDisplayName: folder.displayName,
-                            ),
-                          );
-                      setState(() => _setStep(_MobileStep.emailList));
-                    },
-                    onCalendarTapped: _openCalendar,
-                    onTasksTapped: _openTasks,
-                    onAiTapped: _openAi,
-                  ),
-                _MobileStep.emailList => EmailListPanel(
-                    folderName: selectedFolder?.displayName ?? 'Inbox',
-                    folder: selectedFolder,
-                    selectedEmailId: homeState.selectedEmailId,
-                    onEmailSelected: onEmailSelected,
-                    onBack: _back,
-                    // The phone opens here, so the three views the folder
-                    // panel's foot offers are offered here too.
-                    onCalendarTapped: _openCalendar,
-                    onTasksTapped: _openTasks,
-                    onAiTapped: _openAi,
-                  ),
-                _MobileStep.readingPane => ReadingPane(onBack: _back),
-              };
-            },
-          );
-        },
-        ),
-      ),
+                onEmailOpened();
+              },
+              onBack: onBack,
+              // The phone opens here, so the three views the folder panel's
+              // foot offers are offered here too.
+              onCalendarTapped: onCalendarTapped,
+              onTasksTapped: onTasksTapped,
+              onAiTapped: onAiTapped,
+            );
+          },
+        );
+      },
     );
   }
 
-  EmailFolder? _resolveFolder(
+  static EmailFolder? _resolveFolder(
       HomeState homeState, FolderListState folderListState) {
     if (homeState.selectedFolderId == null) return null;
     if (folderListState is FolderListLoaded) {
@@ -887,7 +1055,12 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
     final isDraftsFolder =
         selectedFolder?.displayName.toLowerCase() == 'drafts';
 
-    void onEmailDoubleTapped(Email email) async {
+    // A double-tap pops the message out into its own window. There are no
+    // sub-windows on a phone or an iPad — `desktop_multi_window` has no
+    // Android or iOS implementation and would throw — and a tap already opens
+    // the message in the reading pane there, so the gesture is simply absent
+    // (`_isMobilePlatform ? null : openEmailInWindow` at every call site).
+    void openEmailInWindow(Email email) async {
       // Fetch the full email body (list items only carry the preview).
       final result =
           await sl<GetEmail>()(GetEmailParams(id: email.id));
@@ -1041,7 +1214,8 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                       folder: selectedFolder,
                       selectedEmailId: homeState.selectedEmailId,
                       onEmailSelected: onEmailSelected,
-                      onEmailDoubleTapped: onEmailDoubleTapped,
+                      onEmailDoubleTapped:
+                          _isMobilePlatform ? null : openEmailInWindow,
                     ),
                   ),
                   _ResizeHandle(
@@ -1121,7 +1295,8 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                       folder: selectedFolder,
                       selectedEmailId: homeState.selectedEmailId,
                       onEmailSelected: onEmailSelected,
-                      onEmailDoubleTapped: onEmailDoubleTapped,
+                      onEmailDoubleTapped:
+                          _isMobilePlatform ? null : openEmailInWindow,
                     ),
                   ),
                   _ResizeHandle(
@@ -1185,7 +1360,8 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                       folder: selectedFolder,
                       selectedEmailId: homeState.selectedEmailId,
                       onEmailSelected: onEmailSelected,
-                      onEmailDoubleTapped: onEmailDoubleTapped,
+                      onEmailDoubleTapped:
+                          _isMobilePlatform ? null : openEmailInWindow,
                     ),
                   ),
                   _ResizeHandle(
@@ -1248,7 +1424,8 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                     folder: selectedFolder,
                     selectedEmailId: homeState.selectedEmailId,
                     onEmailSelected: onEmailSelected,
-                    onEmailDoubleTapped: onEmailDoubleTapped,
+                    onEmailDoubleTapped:
+                          _isMobilePlatform ? null : openEmailInWindow,
                   ),
                 ),
                 _ResizeHandle(

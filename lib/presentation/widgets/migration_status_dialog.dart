@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'adaptive_alert_dialog.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../data/datasources/local/migration_local_datasource.dart';
@@ -24,7 +25,7 @@ class MigrationStatusDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
+    return AdaptiveAlertDialog(
       title: Text('Migrating $sourceAccountLabel → $targetAccountLabel'),
       content: SizedBox(
         width: 420,

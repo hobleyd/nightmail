@@ -493,9 +493,12 @@ class _RowIconButton extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         customBorder: const CircleBorder(),
-        child: Padding(
-          padding: const EdgeInsets.all(2),
-          child: Icon(icon, size: touchIcon(14), color: AppColors.accent),
+        child: SizedBox(
+          width: touchTarget(18),
+          height: touchTarget(18),
+          child: Center(
+            child: Icon(icon, size: touchIcon(14), color: AppColors.accent),
+          ),
         ),
       ),
     );

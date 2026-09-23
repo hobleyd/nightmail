@@ -1,3 +1,6 @@
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/widgets.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -40,5 +43,22 @@ Future<void> openBodyLink(BuildContext context, String url) async {
     if (host != null && await host(document)) return;
   }
 
-  await launchUrl(uri, mode: LaunchMode.externalApplication);
+  await launchWebUrl(uri);
+}
+
+/// Opens a web page the way the platform expects: in the in-app browser view
+/// on a phone or tablet (Safari View Controller on iOS, a Custom Tab on
+/// Android), so the reader comes straight back to the message when they are
+/// done, and in the default browser on the desktop, where a separate browser
+/// window is the norm. Anything that is not http(s) goes to whatever the OS
+/// has registered for it.
+Future<void> launchWebUrl(Uri uri) {
+  final mobile = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+  final web = uri.isScheme('http') || uri.isScheme('https');
+  return launchUrl(
+    uri,
+    mode: mobile && web
+        ? LaunchMode.inAppBrowserView
+        : LaunchMode.externalApplication,
+  );
 }

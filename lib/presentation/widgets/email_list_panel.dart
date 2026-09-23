@@ -92,7 +92,9 @@ class _EmailListPanelState extends State<EmailListPanel> {
   int? _lastSelectedIndex;
   bool _isMultiSelectMode = false;
 
-  late final bool _isAndroid;
+  /// Android or iOS. Long-press multi-select and the checkboxes that go with
+  /// it are for touch, where there is no Shift or Cmd to range-select with.
+  late final bool _isTouch;
   late final bool _isDesktop;
   late final bool _isMac;
 
@@ -106,7 +108,8 @@ class _EmailListPanelState extends State<EmailListPanel> {
     _scrollController.addListener(_onScroll);
     _folderNames = _folderNamesOf(context.read<FolderListBloc>().state);
     final platform = defaultTargetPlatform;
-    _isAndroid = platform == TargetPlatform.android;
+    _isTouch = platform == TargetPlatform.android ||
+        platform == TargetPlatform.iOS;
     _isMac = platform == TargetPlatform.macOS;
     _isDesktop = platform == TargetPlatform.macOS ||
         platform == TargetPlatform.windows ||
@@ -258,7 +261,44 @@ class _EmailListPanelState extends State<EmailListPanel> {
     return current >= max - 300;
   }
 
-  bool get _showCheckboxes => _isAndroid && _isMultiSelectMode;
+  /// Pull-to-refresh: the same refresh the header button runs, held open
+  /// until the fresh list has landed so the indicator means something. A
+  /// refresh the bloc declines (a load already running) emits nothing, hence
+  /// the timeout rather than a spinner that never goes away.
+  Future<void> _refreshAndSettle() async {
+    final bloc = context.read<EmailListBloc>();
+    bloc.add(const EmailListRefreshRequested());
+    context.read<FolderListBloc>().add(const FolderListLoadRequested());
+    try {
+      await bloc.stream
+          .firstWhere((s) =>
+              (s is EmailListLoaded && !s.isLoadingFresh) ||
+              s is EmailListError)
+          .timeout(const Duration(seconds: 8));
+    } catch (_) {}
+  }
+
+  /// Wraps a non-scrolling view (the empty state) so it can still be pulled
+  /// to refresh on touch; on the desktop it is returned untouched.
+  Widget _pullToRefresh(Widget child) {
+    if (!_isTouch) return child;
+    return RefreshIndicator.adaptive(
+      onRefresh: _refreshAndSettle,
+      color: AppColors.accent,
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: SizedBox(
+            height: constraints.maxHeight,
+            width: constraints.maxWidth,
+            child: child,
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool get _showCheckboxes => _isTouch && _isMultiSelectMode;
 
   bool get _shiftPressed => HardwareKeyboard.instance.logicalKeysPressed
       .any((k) => k == LogicalKeyboardKey.shiftLeft || k == LogicalKeyboardKey.shiftRight);
@@ -295,8 +335,8 @@ class _EmailListPanelState extends State<EmailListPanel> {
   }
 
   void _handleEmailTap(Email email, int index) {
-    // Android multi-select mode: tap toggles selection
-    if (_isAndroid && _isMultiSelectMode) {
+    // Touch multi-select mode: tap toggles selection
+    if (_isTouch && _isMultiSelectMode) {
       setState(() {
         final ids = Set.of(_selectedEmailIds);
         if (ids.contains(email.id)) {
@@ -356,7 +396,8 @@ class _EmailListPanelState extends State<EmailListPanel> {
   }
 
   void _handleEmailLongPress(Email email, int index) {
-    if (!_isAndroid) return;
+    if (!_isTouch) return;
+    HapticFeedback.selectionClick();
     setState(() {
       _isMultiSelectMode = true;
       _selectedEmailIds = {email.id};
@@ -610,11 +651,11 @@ class _EmailListPanelState extends State<EmailListPanel> {
                         :final activeSearchQuery,
                       ) =>
                         emails.isEmpty
-                            ? _EmptyStateView(
+                            ? _pullToRefresh(_EmptyStateView(
                                 message: activeSearchQuery != null
                                     ? 'No results found'
                                     : 'No emails here',
-                              )
+                              ))
                             : _EmailListView(
                                 emails: emails,
                                 folderNames: _folderNames,
@@ -630,6 +671,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
                                 selfAddress: _selfAddress,
                                 anchorOnSelf: _anchorOnSelf,
                                 isLoadingMore: isLoadingMore,
+                                onRefresh: _isTouch ? _refreshAndSettle : null,
                                 selectedEmailId: widget.selectedEmailId,
                                 selectedEmailIds: _selectedEmailIds,
                                 showCheckboxes: _showCheckboxes,
@@ -932,8 +974,10 @@ class _ListHeader extends StatelessWidget {
               onPressed: onSearchClear,
               style: TextButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 8),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                minimumSize: Size(0, touchTarget(0)),
+                tapTargetSize: isTouchPlatform
+                    ? MaterialTapTargetSize.padded
+                    : MaterialTapTargetSize.shrinkWrap,
               ),
               child: Text(
                 'Cancel',
@@ -1129,9 +1173,13 @@ class _EmailListView extends StatelessWidget {
     this.onAutoSelectEmail,
     this.flagFocusNode,
     this.deleteFocusNode,
+    this.onRefresh,
   });
 
   final List<Email> emails;
+
+  /// Set on touch platforms: the list can be pulled down to refresh.
+  final Future<void> Function()? onRefresh;
 
   /// The account's own address — see [_EmailListPanelState._selfAddress].
   final String? selfAddress;
@@ -1170,8 +1218,12 @@ class _EmailListView extends StatelessWidget {
       selfAddress: selfAddress,
       anchorOnSelf: anchorOnSelf,
     );
-    return ListView.builder(
+    final list = ListView.builder(
       controller: scrollController,
+      // Always scrollable so a short list can still be pulled to refresh.
+      physics: onRefresh != null
+          ? const AlwaysScrollableScrollPhysics()
+          : null,
       padding: const EdgeInsets.symmetric(vertical: 6),
       itemCount: items.length + (isLoadingMore ? 1 : 0),
       itemBuilder: (context, i) {
@@ -1339,6 +1391,13 @@ class _EmailListView extends StatelessWidget {
           child: convChild,
         );
       },
+    );
+    final refresh = onRefresh;
+    if (refresh == null) return list;
+    return RefreshIndicator.adaptive(
+      onRefresh: refresh,
+      color: AppColors.accent,
+      child: list,
     );
   }
 }
@@ -1613,7 +1672,8 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
               behavior: HitTestBehavior.opaque,
               onTap: widget.onToggleExpand,
               child: SizedBox(
-                width: touchIcon(12),
+                // A finger needs the whole strip; a pointer only the glyph.
+                width: touchTarget(12),
                 child: Center(
                   child: Icon(
                     widget.isExpanded
@@ -1806,9 +1866,23 @@ class _SwipeableEmailItemState extends State<_SwipeableEmailItem>
   /// glyph in each without cramping it.
   double get _actionWidth => isTouchPlatform ? 4 * kTouchTargetSize : 160.0;
 
+  /// The leading tray holds one cell.
+  double get _leadingWidth => isTouchPlatform ? 2 * kTouchTargetSize : 80.0;
+
+  /// Positive: the trailing tray is showing and the row has moved left.
+  /// Negative: the leading tray is showing and the row has moved right.
   double _offset = 0.0;
+  double _width = 0.0;
+  bool _hapticFired = false;
   late AnimationController _snapController;
   late Animation<double> _snapAnim;
+
+  /// How far a leading swipe has to travel to commit its action outright, as
+  /// iOS Mail's does. Only the leading side commits: its one action is
+  /// reversible. The trailing side, which carries Delete, always stops at the
+  /// tray and waits for a tap — a full swipe there would be a destructive act
+  /// with no undo behind it.
+  double get _commitOffset => _width * 0.55;
 
   @override
   void initState() {
@@ -1827,17 +1901,41 @@ class _SwipeableEmailItemState extends State<_SwipeableEmailItem>
 
   void _onDragUpdate(DragUpdateDetails d) {
     _snapController.stop();
-    setState(() => _offset = (_offset - d.delta.dx).clamp(0.0, _actionWidth));
+    final next = (_offset - d.delta.dx).clamp(-_commitOffset, _actionWidth);
+    // One tick as the leading swipe crosses into commit territory, so the
+    // thumb knows the release will act rather than reveal.
+    final inCommit = next <= -_commitOffset + 1;
+    if (inCommit && !_hapticFired) {
+      _hapticFired = true;
+      HapticFeedback.mediumImpact();
+    } else if (!inCommit) {
+      _hapticFired = false;
+    }
+    setState(() => _offset = next);
   }
 
   void _onDragEnd(DragEndDetails d) {
     final velocity = -(d.primaryVelocity ?? 0);
-    final target =
-        (velocity > 300 || _offset > _actionWidth / 2) ? _actionWidth : 0.0;
+    if (_offset <= -_commitOffset + 1) {
+      widget.onMarkUnread();
+      _snapTo(0);
+      return;
+    }
+    final double target;
+    if (_offset < 0) {
+      target = (velocity < -300 || _offset < -_leadingWidth / 2)
+          ? -_leadingWidth
+          : 0.0;
+    } else {
+      target =
+          (velocity > 300 || _offset > _actionWidth / 2) ? _actionWidth : 0.0;
+    }
+    if (target != 0 && isTouchPlatform) HapticFeedback.selectionClick();
     _snapTo(target);
   }
 
   void _snapTo(double target) {
+    _hapticFired = false;
     _snapAnim = Tween<double>(begin: _offset, end: target)
         .animate(CurvedAnimation(parent: _snapController, curve: Curves.easeOut));
     _snapController
@@ -1853,6 +1951,7 @@ class _SwipeableEmailItemState extends State<_SwipeableEmailItem>
       child: LayoutBuilder(
         builder: (context, constraints) {
           final w = constraints.maxWidth;
+          _width = w;
           return Stack(
             clipBehavior: Clip.hardEdge,
             children: [
@@ -1860,16 +1959,44 @@ class _SwipeableEmailItemState extends State<_SwipeableEmailItem>
                 offset: Offset(-_offset, 0),
                 child: SizedBox(width: w, child: widget.child),
               ),
-              Positioned(
-                left: w - _offset,
-                top: 0,
-                bottom: 0,
-                width: _actionWidth,
-                child: _buildActions(context),
-              ),
+              if (_offset > 0)
+                Positioned(
+                  left: w - _offset,
+                  top: 0,
+                  bottom: 0,
+                  width: _actionWidth,
+                  child: _buildActions(context),
+                ),
+              if (_offset < 0)
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  // Stretches with the swipe past the tray, so the cell reads
+                  // as the thing about to happen rather than a fixed button.
+                  width: math.max(_leadingWidth, -_offset),
+                  child: _buildLeadingAction(context),
+                ),
             ],
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildLeadingAction(BuildContext context) {
+    final committing = _offset <= -_commitOffset + 1;
+    return GestureDetector(
+      onTap: () {
+        widget.onMarkUnread();
+        _snapTo(0);
+      },
+      child: Container(
+        color: committing ? Colors.blue.shade800 : Colors.blue.shade600,
+        alignment: Alignment.centerRight,
+        padding: EdgeInsets.symmetric(horizontal: (_leadingWidth - touchIcon(22)) / 2),
+        child: Icon(Icons.mark_email_unread_outlined,
+            color: Colors.white, size: touchIcon(22)),
       ),
     );
   }

@@ -2,6 +2,8 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import '../widgets/adaptive_switch.dart';
+import '../widgets/adaptive_alert_dialog.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:uuid/uuid.dart';
@@ -545,7 +547,7 @@ class _ImapSetupDialogState extends State<_ImapSetupDialog> {
             Column(
               children: [
                 const Text('SSL', style: TextStyle(fontSize: 12)),
-                Switch(value: useSsl, onChanged: onSslChanged),
+                AdaptiveSwitch(value: useSsl, onChanged: onSslChanged),
               ],
             ),
           ],
@@ -556,7 +558,7 @@ class _ImapSetupDialogState extends State<_ImapSetupDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
+    return AdaptiveAlertDialog(
       title: const Text('Add IMAP Account'),
       content: SizedBox(
         width: 400,

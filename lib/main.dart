@@ -544,9 +544,15 @@ class _NightMailAppState extends State<NightMailApp> with WindowListener {
               builder: (context, child) {
                 final scale = themeState.fontScale;
                 if (scale == 1.0) return child!;
+                // Multiply the app's own font scale onto the system's rather
+                // than replacing it: a phone user with Dynamic Type turned up
+                // who also nudges the in-app slider should get both, not lose
+                // the accessibility setting the moment they touch ours. On the
+                // desktop the system scaler is 1, so this is the plain factor.
+                final system = MediaQuery.textScalerOf(context);
                 return MediaQuery(
                   data: MediaQuery.of(context).copyWith(
-                    textScaler: TextScaler.linear(scale),
+                    textScaler: TextScaler.linear(system.scale(14) / 14 * scale),
                   ),
                   child: child!,
                 );

@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 
 import '../../core/platform/touch_metrics.dart';
 import 'package:flutter/material.dart';
+import 'adaptive_alert_dialog.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -556,7 +557,7 @@ class _FolderPanelState extends State<FolderPanel> {
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => AdaptiveAlertDialog(
         title: const Text('Delete Folder?'),
         content: Text([
           if (subfolders > 0)
@@ -1591,6 +1592,13 @@ class _FolderItemState extends State<_FolderItem>
     return GestureDetector(
       onSecondaryTapUp: (details) =>
           _showContextMenu(context, details.globalPosition),
+      // Touch has no secondary button: a long press is the context menu.
+      onLongPressStart: isTouchPlatform
+          ? (details) {
+              HapticFeedback.selectionClick();
+              _showContextMenu(context, details.globalPosition);
+            }
+          : null,
       child: Material(
         color: Colors.transparent,
         child: InkWell(
@@ -1687,7 +1695,7 @@ class _FolderItemState extends State<_FolderItem>
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => AdaptiveAlertDialog(
         title: Text(
             isPermanent ? 'Permanently Delete All?' : 'Delete All?'),
         content: Text(
@@ -1881,7 +1889,7 @@ class _ImapReauthDialogState extends State<_ImapReauthDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
+    return AdaptiveAlertDialog(
       title: const Text('Sign In'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
@@ -2154,14 +2162,32 @@ class _FolderPendingRow extends StatelessWidget {
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: Text(
-                pending.displayName,
-                style: TextStyle(
-                  color: failed ? c.errorBannerText : c.textMuted,
-                  fontSize: 13,
-                  fontStyle: failed ? FontStyle.normal : FontStyle.italic,
-                ),
-                overflow: TextOverflow.ellipsis,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    pending.displayName,
+                    style: TextStyle(
+                      color: failed ? c.errorBannerText : c.textMuted,
+                      fontSize: 13,
+                      fontStyle: failed ? FontStyle.normal : FontStyle.italic,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  // A tooltip never shows on a touch screen, so the reason
+                  // goes under the name there instead.
+                  if (failed && isTouchPlatform && pending.error != null)
+                    Text(
+                      pending.error!,
+                      style: TextStyle(
+                        color: c.errorBannerText,
+                        fontSize: 11,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                ],
               ),
             ),
             if (failed) ...[
@@ -2209,10 +2235,13 @@ class _PendingAction extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(4),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 2),
-          child: Icon(icon,
-              size: touchIcon(14), color: context.colors.textMuted),
+        child: SizedBox(
+          width: touchTarget(18),
+          height: touchTarget(18),
+          child: Center(
+            child: Icon(icon,
+                size: touchIcon(14), color: context.colors.textMuted),
+          ),
         ),
       ),
     );

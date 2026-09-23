@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../widgets/adaptive_alert_dialog.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
@@ -727,7 +728,14 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
     final isToday = _isSameDay(_selectedDay, now);
 
     return MediaQuery(
-      data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
+      // The hour grid is fixed-height, so text here cannot scale freely; on a
+      // phone or tablet it follows Dynamic Type up to a cap the rows can hold,
+      // while the docked desktop panel keeps the fixed size it has always had.
+      data: MediaQuery.of(context).copyWith(
+        textScaler: isTouchPlatform
+            ? MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.3)
+            : TextScaler.noScaling,
+      ),
       child: BlocBuilder<CalendarBloc, CalendarState>(
       builder: (context, state) {
         final header = _DayPanelHeader(
@@ -2237,6 +2245,12 @@ class _PositionedEventState extends State<_PositionedEvent> {
         onSecondaryTapUp: _isDragging
             ? null
             : (details) => _showContextMenu(context, details.globalPosition),
+        // Touch has no hover: a long press shows the details the card shows
+        // a pointer, as a sheet. Holding still is what distinguishes it from
+        // the pan that drags the meeting to a new time.
+        onLongPress: isTouchPlatform && !_isDragging
+            ? () => _showDetailsSheet(context)
+            : null,
         onPanStart: _onPanStart,
         onPanUpdate: _onPanUpdate,
         onPanEnd: _onPanEnd,
@@ -2250,6 +2264,21 @@ class _PositionedEventState extends State<_PositionedEvent> {
             isDragging: _isDragging,
             isSelected: isSelected,
           ),
+        ),
+      ),
+    );
+  }
+
+  void _showDetailsSheet(BuildContext context) {
+    HapticFeedback.selectionClick();
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: context.colors.surfacePanel,
+      builder: (_) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: Center(child: EventDetailsCard(event: widget.event)),
         ),
       ),
     );
@@ -2486,7 +2515,7 @@ Future<void> _confirmAndCancel(
 
   final confirmed = await showDialog<bool>(
     context: context,
-    builder: (ctx) => AlertDialog(
+    builder: (ctx) => AdaptiveAlertDialog(
       title: Text(title),
       content: Text(content),
       actions: [
@@ -2551,7 +2580,7 @@ Future<void> _confirmAndDeleteSelected(
 
   final confirmed = await showDialog<bool>(
     context: context,
-    builder: (ctx) => AlertDialog(
+    builder: (ctx) => AdaptiveAlertDialog(
       title: Text(count == 1 ? 'Remove Event' : 'Remove $count Events'),
       content: Text(content),
       actions: [
@@ -2785,7 +2814,7 @@ class _ProposeNewTimeDialogState extends State<_ProposeNewTimeDialog> {
     final c = context.colors;
     final fmt = DateFormat('EEE, d MMM yyyy');
 
-    return AlertDialog(
+    return AdaptiveAlertDialog(
       backgroundColor: c.surfacePanel,
       title: Text(
         'Propose New Time',
@@ -2918,7 +2947,7 @@ class _DragProposeConfirmDialogState extends State<_DragProposeConfirmDialog> {
     final timeLabel =
         '${dateFmt.format(localStart)} · ${timeFmt.format(localStart)} – ${timeFmt.format(localEnd)}';
 
-    return AlertDialog(
+    return AdaptiveAlertDialog(
       backgroundColor: c.surfacePanel,
       title: Text(
         'Propose New Time',

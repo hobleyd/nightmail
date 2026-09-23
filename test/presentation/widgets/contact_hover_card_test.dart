@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -27,6 +28,21 @@ class _FakeGetContactDetails extends Fake implements GetContactDetails {
     calls++;
     return gate?.future ?? Future.value(_details);
   }
+}
+
+/// Hover is a pointer affair. Widget tests run as Android by default, where
+/// [ContactHoverTarget] answers a tap with a sheet instead, so every hover
+/// test here runs as macOS. Reset inside the body: the binding checks the
+/// override is back to null before any tearDown runs.
+void testHover(String description, WidgetTesterCallback body) {
+  testWidgets(description, (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    try {
+      await body(tester);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
 }
 
 void main() {
@@ -90,7 +106,7 @@ void main() {
       (w) => w is Material && w.elevation == 8);
 
   group('ContactHoverTarget — opening', () {
-    testWidgets('shows nothing until hovered', (tester) async {
+    testHover('shows nothing until hovered', (tester) async {
       register(details);
       await pumpTarget(tester);
 
@@ -98,7 +114,7 @@ void main() {
       expect(lookup.calls, 0);
     });
 
-    testWidgets('waits out the hover delay before opening', (tester) async {
+    testHover('waits out the hover delay before opening', (tester) async {
       // 400ms of dwell, so brushing past a chip does not flash a card.
       register(details);
       await pumpTarget(tester);
@@ -116,7 +132,7 @@ void main() {
       expect(card(), findsOneWidget);
     });
 
-    testWidgets('leaving before the delay cancels the card', (tester) async {
+    testHover('leaving before the delay cancels the card', (tester) async {
       register(details);
       await pumpTarget(tester);
       final gesture = await mouse(tester);
@@ -130,7 +146,7 @@ void main() {
       expect(lookup.calls, 0, reason: 'no dwell, no lookup');
     });
 
-    testWidgets('shows a spinner while the lookup is in flight',
+    testHover('shows a spinner while the lookup is in flight',
         (tester) async {
       register(details);
       lookup.gate = Completer<ContactDetails?>();
@@ -160,7 +176,7 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('labels every populated field', (tester) async {
+    testHover('labels every populated field', (tester) async {
       register(details);
       await openCard(tester);
 
@@ -175,7 +191,7 @@ void main() {
       expect(find.text('+61 2 5550 1234'), findsOneWidget);
     });
 
-    testWidgets('omits fields the directory did not return', (tester) async {
+    testHover('omits fields the directory did not return', (tester) async {
       register(const ContactDetails(
         address: 'ada@example.com',
         name: 'Ada Lovelace',
@@ -188,7 +204,7 @@ void main() {
       expect(find.text('Phone'), findsNothing);
     });
 
-    testWidgets('numbers multiple phone numbers', (tester) async {
+    testHover('numbers multiple phone numbers', (tester) async {
       register(const ContactDetails(
         address: 'ada@example.com',
         phoneNumbers: ['+61 2 5550 1234', '+61 400 000 000'],
@@ -200,7 +216,7 @@ void main() {
       expect(find.text('Phone'), findsNothing);
     });
 
-    testWidgets('falls back to the hovered address for an unknown contact',
+    testHover('falls back to the hovered address for an unknown contact',
         (tester) async {
       // No details to show (an IMAP account, or someone not in the directory),
       // but the card still has to carry the address and the compose button.
@@ -214,7 +230,7 @@ void main() {
       expect(find.text('Name'), findsNothing);
     });
 
-    testWidgets('copies a field to the clipboard', (tester) async {
+    testHover('copies a field to the clipboard', (tester) async {
       final copied = <String>[];
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
         SystemChannels.platform,
@@ -248,7 +264,7 @@ void main() {
       return gesture;
     }
 
-    testWidgets('closes shortly after the pointer leaves', (tester) async {
+    testHover('closes shortly after the pointer leaves', (tester) async {
       register(details);
       final gesture = await openCard(tester);
 
@@ -260,7 +276,7 @@ void main() {
       expect(card(), findsNothing);
     });
 
-    testWidgets('stays open when the pointer moves onto the card itself',
+    testHover('stays open when the pointer moves onto the card itself',
         (tester) async {
       // The 150ms grace is what makes the card reachable at all — the pointer
       // has to cross a gap to get from the chip to it.
@@ -275,7 +291,7 @@ void main() {
       expect(card(), findsOneWidget);
     });
 
-    testWidgets('does not look the contact up again on a second hover',
+    testHover('does not look the contact up again on a second hover',
         (tester) async {
       register(details);
       final gesture = await openCard(tester);
@@ -301,7 +317,7 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('offers the button even when there are no details',
+    testHover('offers the button even when there are no details',
         (tester) async {
       register(null);
       await openCard(tester);
@@ -309,7 +325,7 @@ void main() {
       expect(find.byIcon(Icons.mail_outline_rounded), findsOneWidget);
     });
 
-    testWidgets('tapping it calls back and closes the card', (tester) async {
+    testHover('tapping it calls back and closes the card', (tester) async {
       // The card is dismissed before the callback runs, so the compose window
       // does not open behind a stranded overlay.
       //
@@ -326,6 +342,25 @@ void main() {
 
       expect(composeCalls, 1);
       expect(card(), findsNothing);
+    });
+  });
+
+  group('ContactHoverTarget — touch', () {
+    setUp(() => register(details));
+
+    testWidgets('on iOS a tap opens the card as a sheet', (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      try {
+        await pumpTarget(tester);
+        expect(find.byType(BottomSheet), findsNothing);
+
+        await tester.tap(find.byType(ContactHoverTarget));
+        await tester.pumpAndSettle();
+
+        expect(find.byType(BottomSheet), findsOneWidget);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
     });
   });
 }

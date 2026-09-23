@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:html_view/html_view.dart';
 
+import '../../core/platform/touch_metrics.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/contact_details.dart';
 import '../../domain/usecases/get_contact_details.dart';
@@ -95,8 +96,47 @@ class _ContactHoverTargetState extends State<ContactHoverTarget> {
     }
   }
 
+  /// The touch equivalent of hovering: a tap opens the same card as a sheet.
+  /// No overlay guard — the mobile reading pane draws its body in a Flutter
+  /// webview, which a route covers like any other widget.
+  Future<void> _showSheet() {
+    _future ??= sl<GetContactDetails>().call(
+      address: widget.address,
+      accountId: widget.accountId,
+    );
+    return showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: context.colors.surfacePanel,
+      // Scrolls: a directory contact with every field filled in is taller
+      // than the sheet's share of a phone screen.
+      builder: (sheetContext) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: Center(
+            child: _ContactDetailsCard(
+              future: _future,
+              address: widget.address,
+              onCompose: () {
+                Navigator.of(sheetContext).pop();
+                widget.onCompose();
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (isTouchPlatform) {
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _showSheet,
+        child: widget.child,
+      );
+    }
     return CompositedTransformTarget(
       link: _layerLink,
       child: OverlayPortal(

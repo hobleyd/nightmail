@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'adaptive_alert_dialog.dart';
 
 class OAuthCredentials {
   const OAuthCredentials({
@@ -100,7 +101,7 @@ class _ClientIdDialogState extends State<_ClientIdDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
+    return AdaptiveAlertDialog(
       title: Text('Sign in with ${widget.provider}'),
       content: SizedBox(
         width: 420,

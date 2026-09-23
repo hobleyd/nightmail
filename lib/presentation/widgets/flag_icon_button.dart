@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../../core/platform/touch_metrics.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/business_days.dart';
 
 /// A flag icon that shows a due-date context menu on right-click (secondary
-/// tap) and calls [onTap] on a plain left-click.
+/// tap), or on a long press on touch, and calls [onTap] on a plain tap.
 ///
 /// [onSchedule] is called with the chosen [DateTime] when the user picks an
 /// option from the context menu (Today / Tomorrow / 3 Days / This Week /
@@ -30,6 +32,12 @@ class FlagIconButton extends StatelessWidget {
     return GestureDetector(
       onSecondaryTapUp: (details) =>
           _showMenu(context, details.globalPosition),
+      onLongPressStart: isTouchPlatform
+          ? (details) {
+              HapticFeedback.selectionClick();
+              _showMenu(context, details.globalPosition);
+            }
+          : null,
       child: IconButton(
         focusNode: focusNode,
         icon: Icon(
@@ -38,7 +46,10 @@ class FlagIconButton extends StatelessWidget {
           color: color ?? AppColors.accent.withValues(alpha: 0.7),
         ),
         padding: EdgeInsets.zero,
-        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+        constraints: BoxConstraints(
+          minWidth: touchTarget(28),
+          minHeight: touchTarget(28),
+        ),
         onPressed: onTap,
       ),
     );

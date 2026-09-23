@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:html_view/html_view.dart';
 import 'package:flutter/material.dart';
+import 'adaptive_alert_dialog.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:file_selector/file_selector.dart';
@@ -545,7 +546,7 @@ class _EmailViewState extends State<_EmailView> {
     final c = context.colors;
     final agreed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => AdaptiveAlertDialog(
         backgroundColor: c.surfacePanel,
         title: const Text('Preview cloud documents?'),
         content: Text(
@@ -802,7 +803,7 @@ class _ReadingPaneToolbar extends StatelessWidget {
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (ctx) => StatefulBuilder(
-          builder: (ctx, setDialogState) => AlertDialog(
+          builder: (ctx, setDialogState) => AdaptiveAlertDialog(
             title: const Text('Delete email', style: TextStyle(fontSize: 15)),
             content: Column(
               mainAxisSize: MainAxisSize.min,
@@ -2295,9 +2296,9 @@ class _AnomalousFromRow extends StatelessWidget {
                   icon: const Icon(Icons.merge_rounded, size: 16),
                   tooltip: 'Same person — don\'t warn again',
                   padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 32,
-                    minHeight: 32,
+                  constraints: BoxConstraints(
+                    minWidth: touchTarget(32),
+                    minHeight: touchTarget(32),
                   ),
                   onPressed: () {
                     Navigator.of(context, rootNavigator: true).pop();
@@ -2341,6 +2342,9 @@ class _AnomalousFromRow extends StatelessWidget {
       if (matches != null && matches.isNotEmpty) {
         sender = GestureDetector(
           onSecondaryTapUp: (d) => _showMatchesMenu(context, d.globalPosition),
+          onLongPressStart: isTouchPlatform
+              ? (d) => _showMatchesMenu(context, d.globalPosition)
+              : null,
           child: sender,
         );
       }
@@ -2450,12 +2454,29 @@ class _RecipientRow extends StatelessWidget {
   Widget _buildChip(BuildContext context, EmailAddress r,
       {required bool isLast}) {
     final c = context.colors;
-    Widget label = Text(
-      isLast ? r.displayName : '${r.displayName}, ',
-      style: TextStyle(color: c.textTertiary, fontSize: 12),
-    );
+    final hasName = r.name?.isNotEmpty == true;
+    // A pointer gets the address as a tooltip; a finger never sees tooltips,
+    // so on touch the address follows the name in the line itself.
+    Widget label = hasName && isTouchPlatform
+        ? Text.rich(
+            TextSpan(
+              text: r.displayName,
+              children: [
+                TextSpan(
+                  text: ' ${r.address}',
+                  style: TextStyle(color: c.textMuted, fontSize: 11),
+                ),
+                if (!isLast) const TextSpan(text: ', '),
+              ],
+            ),
+            style: TextStyle(color: c.textTertiary, fontSize: 12),
+          )
+        : Text(
+            isLast ? r.displayName : '${r.displayName}, ',
+            style: TextStyle(color: c.textTertiary, fontSize: 12),
+          );
 
-    if (r.name?.isNotEmpty == true) {
+    if (hasName && !isTouchPlatform) {
       label = Tooltip(message: r.address, child: label);
     }
 
@@ -3227,7 +3248,7 @@ class _WebFilePreviewState extends State<_WebFilePreview> {
 void _openExternally(String url) {
   final uri = Uri.tryParse(url);
   if (uri == null) return;
-  unawaited(launchUrl(uri, mode: LaunchMode.externalApplication));
+  unawaited(launchWebUrl(uri));
 }
 
 /// The bar above a preview: what is being shown, and the way out of it.

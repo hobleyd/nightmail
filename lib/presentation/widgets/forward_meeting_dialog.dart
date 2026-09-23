@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'adaptive_alert_dialog.dart';
 // fpdart declares its own `State` monad, which collides with Flutter's.
 import 'package:fpdart/fpdart.dart' hide State;
 
@@ -111,7 +112,7 @@ class _ForwardMeetingDialogState extends State<ForwardMeetingDialog> {
     final c = context.colors;
     final account = sl<AccountManager>().activeAccount;
 
-    return AlertDialog(
+    return AdaptiveAlertDialog(
       backgroundColor: c.surfacePanel,
       title: Text(
         'Forward meeting',

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../widgets/adaptive_alert_dialog.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
@@ -32,7 +33,7 @@ class _MeetingSweepDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
+    return AdaptiveAlertDialog(
       title: const Text('Meetings while you are away'),
       content: SizedBox(
         width: 480,

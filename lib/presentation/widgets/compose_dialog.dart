@@ -6,10 +6,12 @@ import 'dart:typed_data';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'adaptive_alert_dialog.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../injection_container.dart';
+import '../../core/platform/touch_metrics.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/signature/signature_merge_engine.dart';
 import '../../core/theme/app_colors.dart';
@@ -760,7 +762,7 @@ class ComposeFormState extends State<ComposeForm> {
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (_) => AdaptiveAlertDialog(
         backgroundColor: context.colors.surfacePanel,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         title: Text(
@@ -874,7 +876,7 @@ class ComposeFormState extends State<ComposeForm> {
     return showDialog<String>(
       context: context,
       builder: (dialogContext) {
-        return AlertDialog(
+        return AdaptiveAlertDialog(
           backgroundColor: c.surfacePanel,
           title: Text(
             'Draft with AI',
@@ -1307,7 +1309,7 @@ class ComposeFormState extends State<ComposeForm> {
   Future<bool?> _confirmSendWithBrokenImages(BuildContext context) {
     return showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (_) => AdaptiveAlertDialog(
         backgroundColor: context.colors.surfacePanel,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         title: Text(
@@ -1716,9 +1718,12 @@ class _TitleBar extends StatelessWidget {
             ),
           ),
           IconButton(
-            icon: Icon(Icons.close, size: 16, color: c.textMuted),
+            icon: Icon(Icons.close, size: touchIcon(16), color: c.textMuted),
             padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            constraints: BoxConstraints(
+              minWidth: touchTarget(32),
+              minHeight: touchTarget(32),
+            ),
             onPressed: onClose,
           ),
         ],
@@ -1950,7 +1955,7 @@ class _CloseDraftDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return AlertDialog(
+    return AdaptiveAlertDialog(
       backgroundColor: c.surfacePanel,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       title: Text(
@@ -2185,7 +2190,7 @@ class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
           child: Row(
             children: [
               Container(
-                height: 26,
+                height: touchRowHeight(26),
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 decoration: BoxDecoration(
                   color: c.surfaceBase,
@@ -2232,8 +2237,10 @@ class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
                   foregroundColor: AppColors.accent,
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  minimumSize: Size(0, touchTarget(0)),
+                  tapTargetSize: isTouchPlatform
+                      ? MaterialTapTargetSize.padded
+                      : MaterialTapTargetSize.shrinkWrap,
                 ),
               ),
               const SizedBox(width: 8),
@@ -2312,8 +2319,10 @@ class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
                     backgroundColor: AppColors.accent,
                     padding: const EdgeInsets.symmetric(
                         horizontal: 16, vertical: 8),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    minimumSize: Size(0, touchTarget(0)),
+                    tapTargetSize: isTouchPlatform
+                        ? MaterialTapTargetSize.padded
+                        : MaterialTapTargetSize.shrinkWrap,
                   ),
                   icon: const Icon(Icons.send_rounded, size: 14),
                   label: const Text(

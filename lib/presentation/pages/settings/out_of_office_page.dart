@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../../widgets/adaptive_switch.dart';
+import '../../widgets/adaptive_alert_dialog.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/settings/app_settings.dart';
@@ -219,7 +221,7 @@ class _OutOfOfficeViewState extends State<_OutOfOfficeView> {
     final provider = isGoogle ? 'Google' : 'Microsoft';
     return showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => AdaptiveAlertDialog(
         title: const Text('Permission needed'),
         content: Text(
           'Saving an out-of-office reply needs one extra permission on this '
@@ -369,7 +371,7 @@ class _OutOfOfficeViewState extends State<_OutOfOfficeView> {
                       style: TextStyle(color: c.textSecondary, fontSize: 13),
                     ),
                     const Spacer(),
-                    Switch(
+                    AdaptiveSwitch(
                       value: enabled,
                       onChanged: state.saving ? null : cubit.setEnabled,
                     ),

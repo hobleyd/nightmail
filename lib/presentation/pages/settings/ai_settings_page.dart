@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../widgets/adaptive_switch.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -1592,7 +1593,7 @@ class _CloudBodiesToggle extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Switch(
+          AdaptiveSwitch(
             value: value,
             onChanged: onChanged,
             activeThumbColor: Colors.white,

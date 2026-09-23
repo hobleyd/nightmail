@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'adaptive_alert_dialog.dart';
 
 import '../../core/theme/app_colors.dart';
 
@@ -38,7 +39,7 @@ class _InsertLinkDialogState extends State<_InsertLinkDialog> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return AlertDialog(
+    return AdaptiveAlertDialog(
       backgroundColor: c.surfacePanel,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       title: Text(

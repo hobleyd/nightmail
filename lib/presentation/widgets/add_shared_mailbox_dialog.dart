@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'adaptive_alert_dialog.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/app_colors.dart';
@@ -153,7 +154,7 @@ class _AddSharedMailboxDialogState extends State<AddSharedMailboxDialog> {
           (s) => s.address.toLowerCase() == query.toLowerCase(),
         );
 
-    return AlertDialog(
+    return AdaptiveAlertDialog(
       title: const Text('Add Shared Mailbox'),
       content: SizedBox(
         width: 400,

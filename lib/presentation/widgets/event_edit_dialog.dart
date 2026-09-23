@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:math' as math;
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 
 import '../../core/platform/window_utils.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'adaptive_switch.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
@@ -22,14 +25,20 @@ import '../../domain/entities/calendar_recurrence.dart';
 import '../../domain/entities/meeting_notify_scope.dart';
 import '../../domain/entities/meeting_room.dart';
 import '../../domain/usecases/check_attendees_availability.dart';
+import '../../domain/usecases/create_calendar_event.dart';
 import '../../domain/usecases/forward_calendar_event.dart';
 import '../../domain/usecases/get_meeting_rooms.dart';
+import '../../domain/usecases/update_calendar_event.dart';
 import '../../infrastructure/accounts/account_manager.dart';
+import '../../infrastructure/notifications/notification_service.dart';
 import '../../injection_container.dart';
+import '../blocs/calendar/calendar_bloc.dart';
+import '../blocs/calendar/calendar_event.dart' as calendar;
 import '../blocs/event_edit/event_edit_bloc.dart';
 import '../blocs/event_edit/event_edit_event.dart';
 import '../blocs/event_edit/event_edit_state.dart';
 import 'availability_status_style.dart';
+import 'body_link_opener.dart';
 import 'date_time_fields.dart';
 import 'forward_meeting_dialog.dart';
 import 'recipient_input_field.dart';
@@ -53,6 +62,11 @@ class EventEditDialog extends StatelessWidget {
   final bool isO365Account;
   final bool isGmailAccount;
 
+  /// Opens the event form: a full-screen page on a phone or tablet, its own
+  /// window on the desktop. `desktop_multi_window` has no Android or iOS
+  /// implementation, so the sub-window path there is not a degraded
+  /// experience but a `MissingPluginException` — New Event on the mobile
+  /// calendar did nothing until this branch existed.
   static Future<void> show(
     BuildContext context, {
     CalendarEvent? event,
@@ -61,6 +75,31 @@ class EventEditDialog extends StatelessWidget {
     bool isO365Account = false,
     bool isGmailAccount = false,
   }) async {
+    if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+      // The calendar that opened the form is the one to repaint on save. Read
+      // here, while the caller's context is still the calendar's; the pushed
+      // route's context is not under the same providers.
+      CalendarBloc? calendarBloc;
+      try {
+        calendarBloc = context.read<CalendarBloc>();
+      } catch (_) {
+        calendarBloc = null;
+      }
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => _MobileEventEditPage(
+            event: event,
+            initialStart: initialStart,
+            accountId: accountId,
+            isO365Account: isO365Account,
+            isGmailAccount: isGmailAccount,
+            calendarBloc: calendarBloc,
+          ),
+        ),
+      );
+      return;
+    }
     await createSubWindow(
       WindowConfiguration(
         arguments: jsonEncode({
@@ -148,6 +187,73 @@ class EventEditDialog extends StatelessWidget {
             onClose: () => Navigator.of(context).pop(false),
             checkAttendeesAvailability: sl<CheckAttendeesAvailability>(),
             getMeetingRooms: sl<GetMeetingRooms>(),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The event form as a route, for platforms without sub-windows. Same bloc
+/// wiring as `_EventEditWindowPage`, minus the window geometry it has no use
+/// for; on save it pops and asks the calendar that opened it to refetch.
+class _MobileEventEditPage extends StatelessWidget {
+  const _MobileEventEditPage({
+    this.event,
+    this.initialStart,
+    this.accountId,
+    this.isO365Account = false,
+    this.isGmailAccount = false,
+    this.calendarBloc,
+  });
+
+  final CalendarEvent? event;
+  final DateTime? initialStart;
+  final String? accountId;
+  final bool isO365Account;
+  final bool isGmailAccount;
+  final CalendarBloc? calendarBloc;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return BlocProvider(
+      create: (_) => EventEditBloc(
+        createCalendarEvent: sl<CreateCalendarEvent>(),
+        updateCalendarEvent: sl<UpdateCalendarEvent>(),
+        notificationService: sl<NotificationService>(),
+        accountId: accountId,
+      ),
+      child: Scaffold(
+        backgroundColor: c.surfacePanel,
+        body: SafeArea(
+          child: BlocListener<EventEditBloc, EventEditState>(
+            listener: (context, state) {
+              if (state is EventEditSaved) {
+                final bloc = calendarBloc;
+                if (bloc != null) {
+                  bloc.add(calendar.CalendarWeekNavigated(
+                      weekStart: bloc.state.weekStart));
+                }
+                Navigator.of(context).pop();
+              } else if (state is EventEditError) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text(state.message),
+                  backgroundColor: Colors.red.shade700,
+                ));
+              }
+            },
+            child: EventEditForm(
+              event: event,
+              initialStart: initialStart,
+              accountId: accountId,
+              isO365Account: isO365Account,
+              isGmailAccount: isGmailAccount,
+              onClose: () => Navigator.of(context).pop(),
+              checkAttendeesAvailability: sl<CheckAttendeesAvailability>(),
+              getMeetingRooms: sl<GetMeetingRooms>(),
+              fillsWindow: true,
+            ),
           ),
         ),
       ),
@@ -1355,7 +1461,7 @@ class _AllDayToggle extends StatelessWidget {
           style: TextStyle(color: c.textDimmed, fontSize: 12),
         ),
         const SizedBox(width: 4),
-        Switch(
+        AdaptiveSwitch(
           value: value,
           onChanged: onChanged,
           activeThumbColor: AppColors.accent,
@@ -2540,10 +2646,7 @@ class _LinkifiedTextState extends State<_LinkifiedText> {
       }
       final url = match.group(0)!;
       final recognizer = TapGestureRecognizer()
-        ..onTap = () => launchUrl(
-              Uri.parse(url),
-              mode: LaunchMode.externalApplication,
-            );
+        ..onTap = () => launchWebUrl(Uri.parse(url));
       _recognizers.add(recognizer);
       spans.add(TextSpan(
         text: _displayUrl(url),

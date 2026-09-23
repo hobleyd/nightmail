@@ -2,10 +2,13 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import '../widgets/adaptive_switch.dart';
+import '../widgets/adaptive_alert_dialog.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../core/platform/touch_metrics.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
@@ -275,7 +278,7 @@ class _AboutSectionState extends State<_AboutSection> {
           Text(
             'NightMail is a fast, focused email client for Microsoft 365, Gmail, and IMAP accounts. '
             'It brings together your inbox, calendar, and tasks in a clean, native interface '
-            'designed for professionals who value clarity and keyboard-friendly workflows.',
+            'designed for professionals who value clarity and focus.',
             textAlign: TextAlign.center,
             style: TextStyle(
               color: c.textSecondary,
@@ -293,8 +296,12 @@ class _AboutSectionState extends State<_AboutSection> {
               height: 1.5,
             ),
           ),
-          const SizedBox(height: 24),
-          const AppUpdateSection(),
+          // The App Store owns updates on iOS; an updater section there could
+          // only ever say "managed outside the app", which reads as a fault.
+          if (!(!kIsWeb && Platform.isIOS)) ...[
+            const SizedBox(height: 24),
+            const AppUpdateSection(),
+          ],
           const SizedBox(height: 8),
         ],
       ),
@@ -949,7 +956,7 @@ class _AccountsSectionState extends State<_AccountsSection> {
         : account.displayName;
     showDialog<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => AdaptiveAlertDialog(
         title: const Text('Delete Account'),
         content: Text(
           'Remove "$name" and all its cached data? This cannot be undone.',
@@ -1012,7 +1019,7 @@ class _AccountsSectionState extends State<_AccountsSection> {
         : account.displayName;
     showDialog<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => AdaptiveAlertDialog(
         title: const Text('Clear Cache'),
         content: Text(
           'Clear the locally cached mail for "$name"? The account stays '
@@ -1564,7 +1571,7 @@ class _SslRow extends StatelessWidget {
             ),
           ),
           if (isEditing)
-            Switch(
+            AdaptiveSwitch(
               value: editingValue,
               onChanged: onChanged,
               activeThumbColor: Colors.white,
@@ -1762,7 +1769,10 @@ class _MobileSettingsPage extends StatelessWidget {
         elevation: 0,
         iconTheme: IconThemeData(color: c.textMuted),
       ),
-      body: ListView.separated(
+      // The AppBar covers the top inset; this covers the home indicator.
+      body: SafeArea(
+        top: false,
+        child: ListView.separated(
         itemCount: sections.length,
         separatorBuilder: (_, _) => Divider(height: 1, color: c.separator),
         itemBuilder: (context, index) {
@@ -1792,6 +1802,7 @@ class _MobileSettingsPage extends StatelessWidget {
             },
           );
         },
+        ),
       ),
     );
   }
@@ -1820,17 +1831,20 @@ class _MobileSettingsSectionPage extends StatelessWidget {
         elevation: 0,
         iconTheme: IconThemeData(color: c.textMuted),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: switch (section) {
-          SettingsSection.about => const _AboutSection(),
-          SettingsSection.accounts => const _AccountsSection(),
-          SettingsSection.ai => const AiSettingsPage(),
-          SettingsSection.appearance => const _AppearanceSection(),
-          SettingsSection.general => const _GeneralSection(),
-          SettingsSection.outOfOffice => const OutOfOfficePage(),
-          SettingsSection.security => const _SecuritySection(),
-        },
+      body: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: switch (section) {
+            SettingsSection.about => const _AboutSection(),
+            SettingsSection.accounts => const _AccountsSection(),
+            SettingsSection.ai => const AiSettingsPage(),
+            SettingsSection.appearance => const _AppearanceSection(),
+            SettingsSection.general => const _GeneralSection(),
+            SettingsSection.outOfOffice => const OutOfOfficePage(),
+            SettingsSection.security => const _SecuritySection(),
+          },
+        ),
       ),
     );
   }
@@ -1876,7 +1890,7 @@ class _AccountDetailRow extends StatelessWidget {
           Expanded(
             child: isEditing && controller != null
                 ? SizedBox(
-                    height: 36,
+                    height: touchRowHeight(36),
                     child: TextField(
                       controller: controller,
                       keyboardType: keyboardType,

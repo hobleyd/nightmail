@@ -1,20 +1,51 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.33.0",
+  "version": "1.34.0",
   "sections": [
+    {
+      "type": "features",
+      "title": "New features",
+      "items": [
+        {
+          "body": "propose a new time from the full event form",
+          "title": "calendar"
+        },
+        {
+          "body": "prefill profile fields automatically on account add",
+          "title": "accounts"
+        }
+      ]
+    },
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "hide Tenant ID behind the custom-app-registration toggle too",
-          "title": "auth"
+          "body": "swipe scrolls the folder list; hold then drag moves a folder",
+          "title": "mobile"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.33.0",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "hide Tenant ID behind the custom-app-registration toggle too",
+              "title": "auth"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -469,23 +500,6 @@
             {
               "body": "show a style button's state before anything is typed",
               "title": "editor"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.26.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "out of office replies for Microsoft 365 and Gmail",
-              "title": "settings"
             }
           ]
         }

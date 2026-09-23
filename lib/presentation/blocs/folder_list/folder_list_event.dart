@@ -68,6 +68,9 @@ final class FolderListMoveFolderRequested extends FolderListEvent {
   });
 
   final String folderId;
+
+  /// The folder to move under — or the empty string for the top level of the
+  /// mailbox, the same root sentinel `createFolder` takes.
   final String newParentFolderId;
 
   @override

@@ -742,6 +742,53 @@ void main() {
       expect(folderById(bloc, 'archive-id')?.childFolderCount, 1);
     });
 
+    test('moving to the top level clears the parent, and the empty string is '
+        'what asks for it', () async {
+      final withSub = [
+        EmailFolder(
+          id: 'inbox-id',
+          displayName: 'Inbox',
+          totalItemCount: 0,
+          unreadItemCount: 0,
+          childFolderCount: 1,
+        ),
+        EmailFolder(
+          id: 'sub-id',
+          displayName: 'Sub',
+          totalItemCount: 0,
+          unreadItemCount: 0,
+          parentFolderId: 'inbox-id',
+        ),
+      ];
+      when(mockGetMailFolders(any)).thenAnswer((_) async => Right(withSub));
+      when(mockMoveFolder(any)).thenAnswer((_) async => const Right('sub-id'));
+      final bloc = await loadedBloc();
+
+      // Held open: the row has to reach the root without the fetch.
+      final slowFetch = Completer<Either<Failure, List<EmailFolder>>>();
+      when(mockGetMailFolders(any)).thenAnswer((_) => slowFetch.future);
+
+      bloc.add(const FolderListMoveFolderRequested(
+        folderId: 'sub-id',
+        newParentFolderId: '',
+      ));
+      await pumpEventQueue();
+
+      // The same root sentinel a create takes reaches the provider as is.
+      final params =
+          verify(mockMoveFolder(captureAny)).captured.single as MoveFolderParams;
+      expect(params.newParentFolderId, '');
+      // copyWith's null-means-keep would have left Sub under the Inbox.
+      expect(folderById(bloc, 'sub-id')?.parentFolderId, isNull);
+      expect(folderById(bloc, 'inbox-id')?.childFolderCount, 0);
+
+      // A fetch that agrees confirms it; one that still shows the old parent
+      // (built before the move applied) does not undo it.
+      slowFetch.complete(Right(withSub));
+      await pumpEventQueue();
+      expect(folderById(bloc, 'sub-id')?.parentFolderId, isNull);
+    });
+
     test('a fetch that still shows the old parent does not undo the move',
         () async {
       when(mockMoveFolder(any)).thenAnswer((_) async => const Right('projects-id'));

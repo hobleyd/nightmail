@@ -376,13 +376,25 @@ class _FolderPanelState extends State<FolderPanel> {
     final items = _buildDisplayList(folders, pendingCreate);
     final folderById = {for (final f in folders) f.id: f};
 
+    // The parent a row is drawn under: null at the top level, which is also
+    // where a folder whose parent is not in the list is drawn (see
+    // _buildDisplayList) — so "sibling of that row" means the root there too.
+    String? parentOf(EmailFolder f) {
+      final parentId = f.parentFolderId;
+      return parentId != null && folderById.containsKey(parentId)
+          ? parentId
+          : null;
+    }
+
     // A folder may be dropped onto [targetId] unless it would create a cycle
     // (target is the dragged folder itself or one of its descendants) or be a
-    // no-op (target is already the dragged folder's parent).
-    bool canDrop(String draggedId, String targetId) {
+    // no-op (target is already the dragged folder's parent). A null [targetId]
+    // is the top level of the mailbox.
+    bool canDrop(String draggedId, String? targetId) {
       if (draggedId == targetId) return false;
       final dragged = folderById[draggedId];
       if (dragged == null) return false;
+      if (targetId == null) return parentOf(dragged) != null;
       if (dragged.parentFolderId == targetId) return false;
       String? cursor = targetId;
       final seen = <String>{};
@@ -468,6 +480,7 @@ class _FolderPanelState extends State<FolderPanel> {
         isDraggable: !_isSystemFolder(item.folder),
         onDragMove: _handleFolderListDragMove,
         onDragLeave: _stopAutoScroll,
+        pointerPosition: () => _lastPointerGlobalPosition,
         canAcceptFolderDrop: (draggedId) =>
             canDrop(draggedId, item.folder.id),
         onFolderDropped: (draggedId) {
@@ -484,6 +497,18 @@ class _FolderPanelState extends State<FolderPanel> {
             setState(() {});
             widget.onExpandedIdsChanged?.call(_expandedIds);
           }
+        },
+        // Dropping on the line under a row makes the dragged folder that
+        // row's sibling — which is the only way to reach the top level, where
+        // there is no folder to drop onto.
+        canAcceptFolderDropAsSibling: (draggedId) =>
+            canDrop(draggedId, parentOf(item.folder)),
+        onFolderDroppedAsSibling: (draggedId) {
+          context.read<FolderListBloc>().add(FolderListMoveFolderRequested(
+                folderId: draggedId,
+                // The empty string is the root sentinel, as for a create.
+                newParentFolderId: parentOf(item.folder) ?? '',
+              ));
         },
         onTap: () => widget.onFolderSelected(item.folder),
         onExpandTap: () {
@@ -1217,6 +1242,9 @@ class _FolderItem extends StatefulWidget {
     required this.isDraggable,
     required this.canAcceptFolderDrop,
     required this.onFolderDropped,
+    required this.canAcceptFolderDropAsSibling,
+    required this.onFolderDroppedAsSibling,
+    required this.pointerPosition,
     this.showUnreadCount = true,
     this.onDragMove,
     this.onDragLeave,
@@ -1229,8 +1257,20 @@ class _FolderItem extends StatefulWidget {
   final bool hasChildren;
   final bool showUnreadCount;
   final bool isDraggable;
+  /// Dropping *onto* the row: the dragged folder becomes this folder's child.
   final bool Function(String draggedFolderId) canAcceptFolderDrop;
   final void Function(String draggedFolderId) onFolderDropped;
+
+  /// Dropping on the line *under* the row: the dragged folder becomes this
+  /// folder's sibling — the Outlook gesture, and the only way to the root.
+  final bool Function(String draggedFolderId) canAcceptFolderDropAsSibling;
+  final void Function(String draggedFolderId) onFolderDroppedAsSibling;
+
+  /// Where the pointer is, in global coordinates. `DragTargetDetails.offset`
+  /// is the feedback's anchored corner, not the pointer (see the panel), and
+  /// which of the two drop zones the drag is over is a question about the
+  /// pointer.
+  final Offset? Function() pointerPosition;
   final VoidCallback onTap;
   final VoidCallback onExpandTap;
   final VoidCallback onAddFolder;
@@ -1250,12 +1290,18 @@ class _FolderItem extends StatefulWidget {
   State<_FolderItem> createState() => _FolderItemState();
 }
 
+/// Which of a row's two folder-drop zones a drag is over. [none] is also what
+/// a zone whose move would be refused reads as, so nothing lights up for a
+/// drop that would do nothing.
+enum _FolderDropZone { none, into, sibling }
+
 class _FolderItemState extends State<_FolderItem>
     with SingleTickerProviderStateMixin {
   late final AnimationController _shimmer;
   StreamSubscription<EmailListState>? _sub;
   bool _isEmptying = false;
   Timer? _hoverExpandTimer;
+  _FolderDropZone _folderDropZone = _FolderDropZone.none;
   // Touch only: where the finger went down, and whether it then travelled far
   // enough to count as a drag rather than a press-and-release (see [build]).
   Offset? _pressPosition;
@@ -1331,22 +1377,76 @@ class _FolderItemState extends State<_FolderItem>
     _hoverExpandTimer = null;
   }
 
+  /// The fraction of the row's height, from the bottom, that reads as "under
+  /// this row" rather than "onto it" — what Outlook does: the row highlights,
+  /// and easing the drag down a little swaps that for a line beneath it.
+  static const _siblingZoneFraction = 0.3;
+
+  /// Which zone the pointer is over now, for the folder being dragged.
+  _FolderDropZone _zoneFor(String draggedId) {
+    final pointer = widget.pointerPosition();
+    final box = context.findRenderObject();
+    if (pointer == null || box is! RenderBox || !box.hasSize) {
+      return widget.canAcceptFolderDrop(draggedId)
+          ? _FolderDropZone.into
+          : _FolderDropZone.none;
+    }
+    final local = box.globalToLocal(pointer);
+    final underRow = local.dy > box.size.height * (1 - _siblingZoneFraction);
+    if (underRow) {
+      return widget.canAcceptFolderDropAsSibling(draggedId)
+          ? _FolderDropZone.sibling
+          : _FolderDropZone.none;
+    }
+    return widget.canAcceptFolderDrop(draggedId)
+        ? _FolderDropZone.into
+        : _FolderDropZone.none;
+  }
+
+  void _setFolderDropZone(_FolderDropZone zone) {
+    if (zone == _folderDropZone) return;
+    setState(() => _folderDropZone = zone);
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Outer target accepts folders dragged onto this row (reparent); the inner
-    // target keeps the existing email-move behaviour. Nested DragTargets of
-    // different payload types coexist without interfering.
+    // Outer target accepts folders dragged onto this row (reparent) or onto
+    // the line under it (make it a sibling); the inner target keeps the
+    // existing email-move behaviour. Nested DragTargets of different payload
+    // types coexist without interfering.
+    //
+    // A drag is accepted if *either* zone would take it — a folder's own
+    // parent, say, refuses "into" (a no-op) but takes "sibling" — and which
+    // one applies is decided from the pointer's position at the drop.
     Widget row = DragTarget<FolderDragData>(
       onWillAcceptWithDetails: (d) =>
-          widget.canAcceptFolderDrop(d.data.folderId),
-      onMove: (_) => widget.onDragMove?.call(),
-      onLeave: (_) => widget.onDragLeave?.call(),
+          widget.canAcceptFolderDrop(d.data.folderId) ||
+          widget.canAcceptFolderDropAsSibling(d.data.folderId),
+      onMove: (d) {
+        widget.onDragMove?.call();
+        _setFolderDropZone(_zoneFor(d.data.folderId));
+      },
+      onLeave: (_) {
+        widget.onDragLeave?.call();
+        _setFolderDropZone(_FolderDropZone.none);
+      },
       onAcceptWithDetails: (d) {
         widget.onDragLeave?.call();
-        widget.onFolderDropped(d.data.folderId);
+        final zone = _zoneFor(d.data.folderId);
+        _setFolderDropZone(_FolderDropZone.none);
+        switch (zone) {
+          case _FolderDropZone.into:
+            widget.onFolderDropped(d.data.folderId);
+          case _FolderDropZone.sibling:
+            widget.onFolderDroppedAsSibling(d.data.folderId);
+          case _FolderDropZone.none:
+            break;
+        }
       },
-      builder: (context, folderCandidates, _) =>
-          _buildEmailDropTarget(context, folderCandidates.isNotEmpty),
+      builder: (context, folderCandidates, _) => _buildEmailDropTarget(
+        context,
+        folderCandidates.isNotEmpty ? _folderDropZone : _FolderDropZone.none,
+      ),
     );
 
     if (!widget.isDraggable) return row;
@@ -1402,7 +1502,10 @@ class _FolderItemState extends State<_FolderItem>
     );
   }
 
-  Widget _buildEmailDropTarget(BuildContext context, bool folderHovering) {
+  Widget _buildEmailDropTarget(
+    BuildContext context,
+    _FolderDropZone folderZone,
+  ) {
     return DragTarget<EmailDragData>(
       onWillAcceptWithDetails: (_) => true,
       onMove: (_) {
@@ -1470,8 +1573,11 @@ class _FolderItemState extends State<_FolderItem>
           }
         }
       },
-      builder: (context, candidateData, _) =>
-          _buildContent(context, candidateData.isNotEmpty || folderHovering),
+      builder: (context, candidateData, _) => _buildContent(
+        context,
+        candidateData.isNotEmpty || folderZone == _FolderDropZone.into,
+        showSiblingLine: folderZone == _FolderDropZone.sibling,
+      ),
     );
   }
 
@@ -1513,7 +1619,11 @@ class _FolderItemState extends State<_FolderItem>
     );
   }
 
-  Widget _buildContent(BuildContext context, bool isDragHovering) {
+  Widget _buildContent(
+    BuildContext context,
+    bool isDragHovering, {
+    bool showSiblingLine = false,
+  }) {
     final c = context.colors;
     final indentWidth = widget.depth * 16.0;
 
@@ -1630,6 +1740,39 @@ class _FolderItemState extends State<_FolderItem>
               : null,
         ),
         child: rowContent,
+      );
+    }
+
+    if (showSiblingLine) {
+      // The insertion line Outlook draws: along the row's bottom edge, starting
+      // at this row's own indent so it reads as "at this level" — the dragged
+      // folder sorts in among the siblings by name, so the line says where in
+      // the tree, not where in the list.
+      container = Stack(
+        clipBehavior: Clip.none,
+        children: [
+          container,
+          Positioned(
+            left: margin.left + padding.left,
+            right: margin.right,
+            bottom: 0,
+            child: Row(
+              children: [
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: const BoxDecoration(
+                    color: AppColors.accent,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                Expanded(
+                  child: Container(height: 2, color: AppColors.accent),
+                ),
+              ],
+            ),
+          ),
+        ],
       );
     }
 

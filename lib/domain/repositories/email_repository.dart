@@ -202,8 +202,10 @@ abstract interface class EmailRepository {
   /// IMAP delete a container and its contents go with it.
   Future<Either<Failure, Unit>> deleteFolder({required String folderId});
 
-  /// Reparents [folderId] so it becomes a child of [newParentFolderId].
-  /// Any sub-folders of [folderId] move with it.
+  /// Reparents [folderId] so it becomes a child of [newParentFolderId] — or a
+  /// top-level folder, when [newParentFolderId] is the empty string (the root
+  /// sentinel [createFolder] takes). Any sub-folders of [folderId] move with
+  /// it.
   ///
   /// Returns the folder's id **after** the move — usually the one that went
   /// in, but not always: an id that encodes a path (IMAP mailbox, Gmail

@@ -2553,7 +2553,12 @@ class ImapDatasourceImpl
       final lastSep = folderId.lastIndexOf(sep);
       final leafName =
           lastSep >= 0 ? folderId.substring(lastSep + sep.length) : folderId;
-      final newPath = '$newParentFolderId$sep$leafName';
+      // The empty string is the root sentinel (as for createFolder). On a
+      // server that files everything under INBOX (Courier's "INBOX.Sent"),
+      // the root the user sees *is* that prefix, so it goes back on here.
+      final newPath = newParentFolderId.isEmpty
+          ? '$_inboxFolderPrefix$leafName'
+          : '$newParentFolderId$sep$leafName';
       final mailbox = Mailbox(
         encodedName: leafName,
         encodedPath: folderId,

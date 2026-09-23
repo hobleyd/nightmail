@@ -887,6 +887,97 @@ void main() {
       expect(find.text('Projects'), findsOneWidget);
     }));
 
+    /// Drags [from] to the line under [to] — the lower part of the row, where
+    /// the drop makes the folder a sibling instead of a child.
+    Future<void> dragFolderUnder(
+      WidgetTester tester, {
+      required String from,
+      required String to,
+    }) async {
+      final gesture =
+          await tester.startGesture(tester.getCenter(find.text(from)));
+      await tester.pump(const Duration(milliseconds: 100));
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+      final row = tester.getRect(
+        find.ancestor(of: find.text(to), matching: find.byType(InkWell)).first,
+      );
+      await gesture.moveTo(Offset(row.center.dx, row.bottom - 3));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+    }
+
+    // Regression: a folder could only ever be dropped *onto* another folder,
+    // so a mailbox whose top level held nothing but system folders (a
+    // SharpBlue account) had no way to get a folder back to the top level.
+    // Outlook's answer is the gesture here — onto the row highlights it, a
+    // little lower shows a line under it and drops in as a sibling.
+    testWidgets('dropping on the line under a top-level folder moves the '
+        'folder to the top level', (tester) => onDesktop(() async {
+      serverFolders = [
+        _folder('inbox-id', 'Inbox'),
+        _folder('archive-id', 'Archive', childFolderCount: 1),
+        _folder('projects-id', 'Projects', parentFolderId: 'archive-id'),
+      ];
+      await pumpPanel(tester, expanded: {'archive-id'});
+      final rootIndent = tester.getTopLeft(find.text('Archive')).dx;
+      expect(tester.getTopLeft(find.text('Projects')).dx,
+          greaterThan(rootIndent));
+
+      // The fetch is held open: the move has to be on screen without it.
+      final slowFetch = Completer<Either<Failure, List<EmailFolder>>>();
+      getMailFolders.answer = () => slowFetch.future;
+
+      await dragFolderUnder(tester, from: 'Projects', to: 'Inbox');
+
+      // The empty string is the root sentinel, the same one a create takes.
+      expect(moveFolder.calls.single.folderId, 'projects-id');
+      expect(moveFolder.calls.single.newParentFolderId, '');
+      // Drawn at the root indent straight away; and Archive, now childless,
+      // has lost its disclosure arrow.
+      expect(tester.getTopLeft(find.text('Projects')).dx, rootIndent);
+      expect(find.byIcon(Icons.expand_more_rounded), findsNothing);
+
+      slowFetch.complete(Right([
+        _folder('inbox-id', 'Inbox'),
+        _folder('archive-id', 'Archive'),
+        _folder('projects-id', 'Projects'),
+      ]));
+      await tester.pumpAndSettle();
+      expect(tester.getTopLeft(find.text('Projects')).dx, rootIndent);
+    }));
+
+    testWidgets('the line under a nested folder makes the drop its sibling',
+        (tester) => onDesktop(() async {
+      serverFolders = [
+        _folder('inbox-id', 'Inbox'),
+        _folder('archive-id', 'Archive', childFolderCount: 1),
+        _folder('old-id', 'Old', parentFolderId: 'archive-id'),
+        _folder('projects-id', 'Projects'),
+      ];
+      await pumpPanel(tester, expanded: {'archive-id'});
+
+      await dragFolderUnder(tester, from: 'Projects', to: 'Old');
+
+      // Old's parent, not Old itself: the line means "at this level".
+      expect(moveFolder.calls.single.newParentFolderId, 'archive-id');
+      expect(tester.getTopLeft(find.text('Projects')).dx,
+          tester.getTopLeft(find.text('Old')).dx);
+    }));
+
+    testWidgets('the line under a folder that is already a sibling is not a '
+        'drop', (tester) => onDesktop(() async {
+      await pumpPanel(tester);
+
+      // Projects and Archive are both at the top level already, so this
+      // would move Projects to where it is. Onto Archive would still be a
+      // real move — the zone, not the row, is what is refused.
+      await dragFolderUnder(tester, from: 'Projects', to: 'Archive');
+
+      expect(moveFolder.calls, isEmpty);
+    }));
+
     testWidgets('a fetch that still shows the old place does not undo it',
         (tester) => onDesktop(() async {
       await pumpPanel(tester);

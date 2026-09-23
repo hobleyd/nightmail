@@ -1246,14 +1246,18 @@ class GmailDatasourceImpl
           : nameById[id];
 
       final oldName = nameFor(folderId);
-      final destName = nameFor(newParentFolderId);
+      // The empty string is the root sentinel (as for createFolder): a
+      // top-level label is just the leaf name, with no parent path to
+      // prefix it with.
+      final destName =
+          newParentFolderId.isEmpty ? '' : nameFor(newParentFolderId);
       if (oldName == null || destName == null) {
         throw ServerException(message: 'Folder not found.');
       }
       final leaf = oldName.contains('/')
           ? oldName.substring(oldName.lastIndexOf('/') + 1)
           : oldName;
-      final newName = '$destName/$leaf';
+      final newName = destName.isEmpty ? leaf : '$destName/$leaf';
 
       // Rename the moved label (if it is a real one) and every descendant
       // label, replacing the old path prefix with the new one.

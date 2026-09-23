@@ -84,6 +84,42 @@ is already on screen where it started, so moving it early would mean putting it
 back on a failure. A refused move leaves the folder where it was and changes
 nothing else.
 
+**A row has two folder-drop zones, and the lower one is the only way to the
+top level.** Dropping *onto* a row makes the dragged folder its child, so a
+mailbox whose top level is nothing but system folders (a SharpBlue account)
+had no folder to drop onto that meant "back to the root". Outlook's gesture is
+what `_FolderItem` does now: over the upper part of the row it highlights
+(child); ease the drag into the bottom `_siblingZoneFraction` of the row and a
+line is drawn under it instead, starting at that row's own indent, and the
+drop makes the folder the row's *sibling* — under the row's parent, or the
+root when the row has none. The line says which level, not which position:
+siblings sort by name, so the folder lands wherever its name puts it.
+
+Four things are load-bearing:
+
+- **The root is the empty string, end to end.** The same sentinel
+  `createFolder` already takes, so `MoveFolderParams.newParentFolderId` stays
+  a non-null `String` and each datasource maps it itself: Graph to its
+  `msgfolderroot` well-known name, Gmail to the bare leaf label, IMAP to the
+  leaf under `_inboxFolderPrefix` — on a Courier-style server everything the
+  user sees as top level really lives under `INBOX`, and a bare leaf would land
+  outside the namespace the folder list reads.
+- **`EmailFolder.copyWith` cannot clear a parent with `null`** (null means
+  keep, as for every other field), so it takes `toRoot: true`. Without it the
+  bloc's optimistic reparent silently left the folder where it was, and the
+  reconcile then took the server's list as *disagreeing* with a move that had
+  in fact applied.
+- **The zone is read from the pointer, not from `DragTargetDetails.offset`.**
+  That offset is the feedback's anchored corner, which with
+  `childDragAnchorStrategy` is wherever in the row the user grabbed it. The
+  panel already tracks the pointer through a global route for auto-scroll, and
+  hands the row a getter.
+- **A zone whose move would be a no-op or a cycle draws nothing and drops
+  nothing**, while the other zone on the same row still works: a folder's own
+  parent refuses "into" but takes "sibling", and a folder's sibling the other
+  way round. So `onWillAcceptWithDetails` says yes if *either* zone would, and
+  the zone is decided again at the drop.
+
 **On a touch screen the row is a `LongPressDraggable`, not a `Draggable`.** A
 `Draggable` claims the touch the moment it moves, so on a phone every swipe
 that began on a user folder picked the folder up and a list longer than the

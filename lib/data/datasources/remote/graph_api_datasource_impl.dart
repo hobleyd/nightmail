@@ -3429,11 +3429,15 @@ class GraphApiDatasourceImpl
     required String folderId,
     required String newParentFolderId,
   }) async {
+    // Same root sentinel as createFolder: Graph's well-known name for the
+    // mailbox root, so a move to the top level is still just a move.
+    final destinationId =
+        newParentFolderId.isEmpty ? 'msgfolderroot' : newParentFolderId;
     try {
       // Graph's native move preserves the folder id and moves all sub-folders.
       await _dio.post<void>(
         '$_base/mailFolders/$folderId/move',
-        data: {'destinationId': newParentFolderId},
+        data: {'destinationId': destinationId},
       );
       return folderId;
     } on DioException catch (e) {

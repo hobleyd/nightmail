@@ -404,7 +404,9 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
     final out = <EmailFolder>[];
     for (final f in folders) {
       if (f.id == moved.id) {
-        out.add(f.copyWith(parentFolderId: joinedParentId));
+        out.add(joinedParentId == null
+            ? f.copyWith(toRoot: true)
+            : f.copyWith(parentFolderId: joinedParentId));
         continue;
       }
       var g = f;
@@ -605,8 +607,9 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
         if (current is FolderListLoaded &&
             moving != null &&
             newId == event.folderId) {
-          final moved =
-              moving.copyWith(parentFolderId: event.newParentFolderId);
+          final moved = event.newParentFolderId.isEmpty
+              ? moving.copyWith(toRoot: true)
+              : moving.copyWith(parentFolderId: event.newParentFolderId);
           _unconfirmedFolders[newId] = (folder: moved, isMove: true, misses: 0);
           emit(current.copyWith(
             folders: _sorted(_applyMove(current.folders, moved)),

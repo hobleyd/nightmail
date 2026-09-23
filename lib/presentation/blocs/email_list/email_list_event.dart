@@ -83,6 +83,10 @@ final class EmailListEmailDeleted extends EmailListEvent {
 /// list already on screen, so the ghost doesn't sit there until the next
 /// navigation repaints from cache. No network call — there is nothing left to
 /// delete.
+///
+/// Also raised for a message something else has already deleted through the
+/// repository — the superseded invitations the reading pane tidies away after
+/// an RSVP — for the same reason: the row is the only thing left to remove.
 final class EmailListGhostRemoved extends EmailListEvent {
   const EmailListGhostRemoved({required this.emailId});
   final String emailId;

@@ -101,6 +101,42 @@ message or event id, and it has never had anything that could create.
 `test/data/datasources/remote/google_calendar_rsvp_test.dart` pins it — chiefly
 that an accept whose lookups come up empty issues **no** POST.
 
+## Answering an Invitation Deletes the Ones It Supersedes
+
+A rescheduled or otherwise updated meeting arrives as a fresh invitation each
+time, and the reading pane deleted only the one that was answered — every
+earlier "Invitation:" for the same meeting stayed in the Inbox, still offering
+Accept. After an RSVP, a counter-proposal or a processed cancellation, the pane
+now runs `DeleteSupersededMeetingInvites` (`domain/usecases/`) against the
+answered message's folder and drops what it removed from the list
+(`EmailListGhostRemoved` — the use case has already deleted through the
+repository, so the row is all that is left to remove).
+
+Three things here are load-bearing:
+
+- **Gmail does not thread an update with its original.** Checked against a
+  real mailbox: an "Updated invitation: …" is a one-message thread of its own,
+  so matching on `conversationId` finds nothing there. The ICS `UID` is the
+  test where both messages carry one, normalised through `isSameMeetingUid`
+  because Google files an instance under `<uid>_<start>@google.com`. Graph's
+  event messages carry no ICS, so there — and only there — the conversation
+  decides, which Exchange does keep per meeting.
+- **A list row does not know its invite.** `meetingInvite` lives in the detail
+  row with the body (`_detailJson`), because a thin list fetch has no ICS and
+  must not overwrite one. So candidates are narrowed on list fields first —
+  older, physically in the folder (`Email.isInFolder`), and in the same
+  conversation or from the same sender — and each survivor is read through
+  `getEmail`, cache-first, capped at `maxCandidates`. The cap is what stops a
+  prolific organizer turning one Accept into a folder-wide fetch.
+- **Only `MeetingEmailType.invitation` is ever removed, and only older ones.**
+  A cancellation or a reply in the same thread is a different message with its
+  own banner. Answering an older invitation while a newer one is unread deletes
+  nothing: the newer one is the one that still wants an answer.
+
+It runs after the answered message's own delete, so that delete is first in the
+outbox behind the RSVP (see below on drain order), and a failure anywhere in it
+is swallowed — the RSVP succeeded, and housekeeping may not say otherwise.
+
 ## Calendar Cache
 
 The calendar is offline-first: it paints from `cached_calendar_events` and then

@@ -42,6 +42,7 @@ import '../../domain/entities/email_attachment.dart';
 import '../../domain/entities/meeting_invite.dart';
 import '../../domain/usecases/check_sender_anomaly.dart';
 import '../../domain/usecases/delete_email.dart';
+import '../../domain/usecases/delete_superseded_meeting_invites.dart';
 import '../../domain/usecases/download_attachment.dart';
 import '../../domain/usecases/fetch_cloud_document.dart';
 import '../../domain/usecases/cancel_meeting_from_email.dart';
@@ -981,6 +982,43 @@ class _ReadingPaneToolbar extends StatelessWidget {
 
 enum _InviteState { idle, loading, done, error, proposing }
 
+/// Tidies away the earlier invitations to a meeting the user has just
+/// answered (or whose cancellation they have just processed) — see
+/// [DeleteSupersededMeetingInvites] for what counts as the same meeting.
+///
+/// Takes the blocs rather than a [BuildContext]: by the time this runs the
+/// answered message has been cleared from the pane and the banner that called
+/// it may already be gone. Failures are swallowed — the RSVP has succeeded and
+/// this is housekeeping, so nothing here may make it look otherwise.
+Future<void> _deleteSupersededInvites({
+  required Email answered,
+  required EmailListBloc emailListBloc,
+  required FolderListBloc folderListBloc,
+}) async {
+  final account = sl<AccountManager>().activeAccount;
+  if (account == null) return;
+
+  final result = await sl<DeleteSupersededMeetingInvites>()(
+    DeleteSupersededMeetingInvitesParams(
+      answered: answered,
+      accountId: account.id,
+    ),
+  );
+  result.fold((_) {}, (deleted) {
+    for (final email in deleted) {
+      emailListBloc.add(EmailListGhostRemoved(emailId: email.id));
+      final folderId = email.parentFolderId;
+      if (folderId != null) {
+        folderListBloc.add(FolderListUnreadCountChanged(
+          folderId: folderId,
+          unreadCountDelta: email.isRead ? 0 : -1,
+          totalCountDelta: -1,
+        ));
+      }
+    }
+  });
+}
+
 class _MeetingInviteBanner extends StatefulWidget {
   const _MeetingInviteBanner({required this.email});
   final Email email;
@@ -1074,27 +1112,37 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
           );
 
       final email = widget.email;
+      final emailListBloc = context.read<EmailListBloc>();
+      final folderListBloc = context.read<FolderListBloc>();
       final deleteResult =
           await sl<DeleteEmail>()(DeleteEmailParams(id: email.id));
-      if (!mounted) return;
-      deleteResult.fold(
-        (_) {},
-        (_) {
-          context.read<EmailDetailBloc>().add(const EmailDetailCleared());
-          context.read<HomeCubit>().clearEmail();
-          context
-              .read<EmailListBloc>()
-              .add(EmailListEmailDeleted(emailId: email.id));
-          if (email.parentFolderId != null) {
-            context.read<FolderListBloc>().add(
-                  FolderListUnreadCountChanged(
-                    folderId: email.parentFolderId!,
-                    unreadCountDelta: email.isRead ? 0 : -1,
-                    totalCountDelta: -1,
-                  ),
-                );
-          }
-        },
+      if (mounted) {
+        deleteResult.fold(
+          (_) {},
+          (_) {
+            context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+            context.read<HomeCubit>().clearEmail();
+            emailListBloc.add(EmailListEmailDeleted(emailId: email.id));
+            if (email.parentFolderId != null) {
+              folderListBloc.add(
+                FolderListUnreadCountChanged(
+                  folderId: email.parentFolderId!,
+                  unreadCountDelta: email.isRead ? 0 : -1,
+                  totalCountDelta: -1,
+                ),
+              );
+            }
+          },
+        );
+      }
+
+      // Whatever became of the message just answered, the earlier invitations
+      // to the same meeting are now superseded. After the delete above, so the
+      // answered message's own delete is first in the outbox.
+      await _deleteSupersededInvites(
+        answered: email,
+        emailListBloc: emailListBloc,
+        folderListBloc: folderListBloc,
       );
     }
   }
@@ -1164,27 +1212,37 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
           );
 
       final email = widget.email;
+      final emailListBloc = context.read<EmailListBloc>();
+      final folderListBloc = context.read<FolderListBloc>();
       final deleteResult =
           await sl<DeleteEmail>()(DeleteEmailParams(id: email.id));
-      if (!mounted) return;
-      deleteResult.fold(
-        (_) {},
-        (_) {
-          context.read<EmailDetailBloc>().add(const EmailDetailCleared());
-          context.read<HomeCubit>().clearEmail();
-          context
-              .read<EmailListBloc>()
-              .add(EmailListEmailDeleted(emailId: email.id));
-          if (email.parentFolderId != null) {
-            context.read<FolderListBloc>().add(
-                  FolderListUnreadCountChanged(
-                    folderId: email.parentFolderId!,
-                    unreadCountDelta: email.isRead ? 0 : -1,
-                    totalCountDelta: -1,
-                  ),
-                );
-          }
-        },
+      if (mounted) {
+        deleteResult.fold(
+          (_) {},
+          (_) {
+            context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+            context.read<HomeCubit>().clearEmail();
+            emailListBloc.add(EmailListEmailDeleted(emailId: email.id));
+            if (email.parentFolderId != null) {
+              folderListBloc.add(
+                FolderListUnreadCountChanged(
+                  folderId: email.parentFolderId!,
+                  unreadCountDelta: email.isRead ? 0 : -1,
+                  totalCountDelta: -1,
+                ),
+              );
+            }
+          },
+        );
+      }
+
+      // Whatever became of the message just answered, the earlier invitations
+      // to the same meeting are now superseded. After the delete above, so the
+      // answered message's own delete is first in the outbox.
+      await _deleteSupersededInvites(
+        answered: email,
+        emailListBloc: emailListBloc,
+        folderListBloc: folderListBloc,
       );
     }
   }
@@ -1600,27 +1658,37 @@ class _MeetingCancellationBannerState
           );
 
       final email = widget.email;
+      final emailListBloc = context.read<EmailListBloc>();
+      final folderListBloc = context.read<FolderListBloc>();
       final deleteResult =
           await sl<DeleteEmail>()(DeleteEmailParams(id: email.id));
-      if (!mounted) return;
-      deleteResult.fold(
-        (_) {},
-        (_) {
-          context.read<EmailDetailBloc>().add(const EmailDetailCleared());
-          context.read<HomeCubit>().clearEmail();
-          context
-              .read<EmailListBloc>()
-              .add(EmailListEmailDeleted(emailId: email.id));
-          if (email.parentFolderId != null) {
-            context.read<FolderListBloc>().add(
-                  FolderListUnreadCountChanged(
-                    folderId: email.parentFolderId!,
-                    unreadCountDelta: email.isRead ? 0 : -1,
-                    totalCountDelta: -1,
-                  ),
-                );
-          }
-        },
+      if (mounted) {
+        deleteResult.fold(
+          (_) {},
+          (_) {
+            context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+            context.read<HomeCubit>().clearEmail();
+            emailListBloc.add(EmailListEmailDeleted(emailId: email.id));
+            if (email.parentFolderId != null) {
+              folderListBloc.add(
+                FolderListUnreadCountChanged(
+                  folderId: email.parentFolderId!,
+                  unreadCountDelta: email.isRead ? 0 : -1,
+                  totalCountDelta: -1,
+                ),
+              );
+            }
+          },
+        );
+      }
+
+      // Whatever became of the message just answered, the earlier invitations
+      // to the same meeting are now superseded. After the delete above, so the
+      // answered message's own delete is first in the outbox.
+      await _deleteSupersededInvites(
+        answered: email,
+        emailListBloc: emailListBloc,
+        folderListBloc: folderListBloc,
       );
     }
   }

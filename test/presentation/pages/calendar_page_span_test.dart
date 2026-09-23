@@ -3,48 +3,15 @@
 // the week steps ask for one. The month grid draws a 9–5 meeting-load bar per
 // day. Pinned here because a slip in the cycle order or the fetch span is
 // invisible to the analyzer and the bloc tests alone.
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/domain/entities/calendar_event.dart';
 import 'package:nightmail/presentation/blocs/calendar/calendar_bloc.dart';
-import 'package:nightmail/presentation/blocs/calendar/calendar_event.dart';
 import 'package:nightmail/presentation/blocs/calendar/calendar_state.dart';
 import 'package:nightmail/presentation/pages/calendar_page.dart';
 
-/// Answers a navigation the way the real bloc would once the fetch lands: the
-/// same events, re-keyed to the requested range.
-class _FakeCalendarBloc extends Fake implements CalendarBloc {
-  _FakeCalendarBloc(this._state);
-
-  CalendarLoaded _state;
-  final _controller = StreamController<CalendarState>.broadcast();
-  final navigated = <CalendarWeekNavigated>[];
-
-  @override
-  CalendarState get state => _state;
-
-  @override
-  Stream<CalendarState> get stream => _controller.stream;
-
-  @override
-  void add(CalendarBlocEvent event) {
-    if (event is CalendarWeekNavigated) {
-      navigated.add(event);
-      _state = CalendarLoaded(
-        weekStart: event.weekStart,
-        spanDays: event.spanDays ?? _state.spanDays,
-        events: _state.events,
-      );
-      _controller.add(_state);
-    }
-  }
-
-  @override
-  Future<void> close() async => _controller.close();
-}
+import 'fake_calendar_bloc.dart';
 
 final _monday = DateTime(2026, 9, 21);
 
@@ -60,13 +27,13 @@ final _events = [
 ];
 
 void main() {
-  late _FakeCalendarBloc bloc;
+  late FakeCalendarBloc bloc;
 
   Future<void> pumpPage(WidgetTester tester) async {
     tester.view.physicalSize = const Size(1400, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    bloc = _FakeCalendarBloc(
+    bloc = FakeCalendarBloc(
         CalendarLoaded(weekStart: _monday, events: _events));
     addTearDown(bloc.close);
     await tester.pumpWidget(MaterialApp(

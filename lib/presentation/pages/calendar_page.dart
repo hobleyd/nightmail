@@ -228,7 +228,7 @@ class _WeekNavBarState extends State<_WeekNavBar> {
 
     final rangeLabel = isMonth
         ? DateFormat('MMMM yyyy').format(_monthShown(weekStart))
-        : _buildRangeLabel(
+        : _rangeLabel(
             weekStart,
             weekStart.add(Duration(days: widget.span.dayCount - 1)),
           );
@@ -307,15 +307,6 @@ class _WeekNavBarState extends State<_WeekNavBar> {
     );
   }
 
-  String _buildRangeLabel(DateTime start, DateTime end) {
-    if (start.month == end.month) {
-      return '${DateFormat('MMMM d').format(start)} – ${DateFormat('d, yyyy').format(end)}';
-    } else if (start.year == end.year) {
-      return '${DateFormat('MMM d').format(start)} – ${DateFormat('MMM d, yyyy').format(end)}';
-    }
-    return '${DateFormat('MMM d, yyyy').format(start)} – ${DateFormat('MMM d, yyyy').format(end)}';
-  }
-
   bool _isCurrentWeek(DateTime weekStart) {
     final today = DateTime.now();
     final currentMonday = _mondayOfWeek(today);
@@ -361,6 +352,63 @@ class _WeekNavBarState extends State<_WeekNavBar> {
 DateTime _mondayOfWeek(DateTime date) {
   final daysFromMonday = (date.weekday - 1) % 7;
   return DateTime(date.year, date.month, date.day - daysFromMonday);
+}
+
+String _rangeLabel(DateTime start, DateTime end) {
+  if (start.month == end.month) {
+    return '${DateFormat('MMMM d').format(start)} – ${DateFormat('d, yyyy').format(end)}';
+  } else if (start.year == end.year) {
+    return '${DateFormat('MMM d').format(start)} – ${DateFormat('MMM d, yyyy').format(end)}';
+  }
+  return '${DateFormat('MMM d, yyyy').format(start)} – ${DateFormat('MMM d, yyyy').format(end)}';
+}
+
+/// What the mobile calendar shows. Its toggle cycles Day → Week → Full Week →
+/// Month → Day; the three wider spans reuse the calendar window's views.
+enum _PanelSpan {
+  day(label: 'Day', icon: Icons.calendar_view_day_rounded, calendarSpan: null),
+  week(
+      label: 'Week',
+      icon: Icons.view_week_rounded,
+      calendarSpan: _CalendarSpan.workWeek),
+  fullWeek(
+      label: 'Full Week',
+      icon: Icons.calendar_view_week_rounded,
+      calendarSpan: _CalendarSpan.fullWeek),
+  month(
+      label: 'Month',
+      icon: Icons.calendar_view_month_rounded,
+      calendarSpan: _CalendarSpan.month);
+
+  const _PanelSpan(
+      {required this.label, required this.icon, required this.calendarSpan});
+
+  final String label;
+  final IconData icon;
+
+  /// The calendar-window span this draws with; null for the day view, which
+  /// is the panel's own.
+  final _CalendarSpan? calendarSpan;
+
+  _PanelSpan get next => _PanelSpan.values[(index + 1) % _PanelSpan.values.length];
+
+  bool get isDay => this == _PanelSpan.day;
+  bool get isMonth => this == _PanelSpan.month;
+
+  /// First day drawn for an anchor day: the day itself, its Monday, or the
+  /// Monday its month's grid starts on.
+  DateTime rangeStart(DateTime anchor) => switch (this) {
+        day => DateTime(anchor.year, anchor.month, anchor.day),
+        week || fullWeek => _mondayOfWeek(anchor),
+        month => _monthGridStart(anchor),
+      };
+
+  /// Days drawn from [rangeStart].
+  int get dayCount => calendarSpan?.dayCount ?? 1;
+
+  /// What the bloc is asked to load: a week for anything up to a week, the
+  /// six-week grid for the month.
+  int get fetchDays => calendarSpan?.fetchDays ?? 7;
 }
 
 class _NavChip extends StatelessWidget {
@@ -556,6 +604,20 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
   late DateTime _selectedDay;
   Timer? _timer;
 
+  /// Only the mobile shell offers the wider spans: docked beside the mail list
+  /// the panel is too narrow for a week, and the desktop has its own calendar
+  /// window for that.
+  _PanelSpan _span = _PanelSpan.day;
+
+  /// Held for [dispose], where the tree can no longer be asked for it.
+  CalendarBloc? _bloc;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _bloc = context.read<CalendarBloc>();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -567,7 +629,7 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
       final yesterday = today.subtract(const Duration(days: 1));
-      if (_isSameDay(_selectedDay, yesterday)) {
+      if (_span.isDay && _isSameDay(_selectedDay, yesterday)) {
         _goToToday(context);
       } else {
         setState(() {});
@@ -579,6 +641,10 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
   void dispose() {
     _timer?.cancel();
     _scrollController.dispose();
+    // The bloc outlives the panel and every other consumer wants a week, so a
+    // six-week span must not be left behind for them to keep re-fetching.
+    final bloc = _bloc;
+    if (_span.isMonth && bloc != null) _resetToWeek(bloc);
     super.dispose();
   }
 
@@ -588,34 +654,71 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
     return la.year == lb.year && la.month == lb.month && la.day == lb.day;
   }
 
-  void _navigateDay(BuildContext context, int delta) {
-    final newDay = _selectedDay.add(Duration(days: delta));
-    setState(() => _selectedDay = newDay);
-    final state = context.read<CalendarBloc>().state;
-    final weekStart = state.weekStart;
-    final weekEnd = weekStart.add(const Duration(days: 6));
-    final inRange = !newDay.isBefore(weekStart) && !newDay.isAfter(weekEnd);
-    if (!inRange) {
-      context.read<CalendarBloc>().add(
-            CalendarWeekNavigated(weekStart: _mondayOfWeek(newDay)),
-          );
-    }
+  void _resetToWeek(CalendarBloc bloc) {
+    bloc.add(CalendarWeekNavigated(
+      weekStart: _mondayOfWeek(_selectedDay),
+      spanDays: 7,
+    ));
+  }
+
+  /// Steps [delta] days, weeks or months, whichever the span moves in.
+  void _navigate(BuildContext context, int delta) {
+    final d = _selectedDay;
+    final target = switch (_span) {
+      _PanelSpan.day => d.add(Duration(days: delta)),
+      _PanelSpan.week || _PanelSpan.fullWeek => d.add(Duration(days: 7 * delta)),
+      _PanelSpan.month => DateTime(d.year, d.month + delta, 1),
+    };
+    _select(context, target);
   }
 
   void _goToToday(BuildContext context) {
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    setState(() => _selectedDay = today);
-    final state = context.read<CalendarBloc>().state;
-    final weekStart = state.weekStart;
-    final weekEnd = weekStart.add(const Duration(days: 6));
-    final inRange = !today.isBefore(weekStart) && !today.isAfter(weekEnd);
-    if (!inRange) {
-      context.read<CalendarBloc>().add(
-            CalendarWeekNavigated(weekStart: _mondayOfWeek(today)),
-          );
+    _select(context, DateTime(now.year, now.month, now.day));
+  }
+
+  void _select(BuildContext context, DateTime day) {
+    setState(() => _selectedDay = day);
+    _ensureLoaded(context.read<CalendarBloc>());
+  }
+
+  void _cycleSpan(BuildContext context) {
+    final leavingMonth = _span.isMonth;
+    setState(() => _span = _span.next);
+    final bloc = context.read<CalendarBloc>();
+    if (leavingMonth) {
+      _resetToWeek(bloc);
+    } else {
+      _ensureLoaded(bloc);
     }
   }
+
+  /// Asks the bloc for the range the panel draws, unless what it holds already
+  /// covers it — the day view in particular is usually inside the loaded week
+  /// and steps through it without a fetch.
+  void _ensureLoaded(CalendarBloc bloc) {
+    final state = bloc.state;
+    final start = _span.rangeStart(_selectedDay);
+    final end = start.add(Duration(days: _span.dayCount));
+    final covered =
+        !start.isBefore(state.weekStart) && !end.isAfter(state.rangeEnd);
+    if (covered) return;
+    bloc.add(CalendarWeekNavigated(
+      weekStart:
+          _span.isMonth ? _monthGridStart(_selectedDay) : _mondayOfWeek(_selectedDay),
+      spanDays: _span.fetchDays,
+    ));
+  }
+
+  /// Whether the span on screen contains today, which is what greys the Today
+  /// button out.
+  bool _showsToday(DateTime now) => switch (_span) {
+        _PanelSpan.day => _isSameDay(_selectedDay, now),
+        _PanelSpan.week || _PanelSpan.fullWeek =>
+          _isSameDay(_mondayOfWeek(_selectedDay), _mondayOfWeek(now)),
+        _PanelSpan.month =>
+          _selectedDay.year == now.year && _selectedDay.month == now.month,
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -627,6 +730,33 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
       data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
       child: BlocBuilder<CalendarBloc, CalendarState>(
       builder: (context, state) {
+        final header = _DayPanelHeader(
+          selectedDay: _selectedDay,
+          span: _span,
+          isToday: _showsToday(now),
+          onPrev: () => _navigate(context, -1),
+          onNext: () => _navigate(context, 1),
+          onToday: () => _goToToday(context),
+          onClose: widget.onClose,
+          onCycleSpan:
+              widget.useBackNavigation ? () => _cycleSpan(context) : null,
+          useBackNavigation: widget.useBackNavigation,
+        );
+
+        final calendarSpan = _span.calendarSpan;
+        if (calendarSpan != null) {
+          return ColoredBox(
+            color: c.surfaceBase,
+            child: Column(
+              children: [
+                header,
+                Divider(height: 1, color: c.separatorStrong),
+                Expanded(child: _buildSpanBody(state, calendarSpan)),
+              ],
+            ),
+          );
+        }
+
         final isLoading = state is CalendarLoading;
         final errorMessage = switch (state) {
           CalendarError(:final message) => message,
@@ -650,15 +780,7 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
           color: c.surfaceBase,
           child: Column(
             children: [
-              _DayPanelHeader(
-                selectedDay: _selectedDay,
-                isToday: isToday,
-                onPrev: () => _navigateDay(context, -1),
-                onNext: () => _navigateDay(context, 1),
-                onToday: () => _goToToday(context),
-                onClose: widget.onClose,
-                useBackNavigation: widget.useBackNavigation,
-              ),
+              header,
               Divider(height: 1, color: c.separatorStrong),
               if (errorMessage != null) _ErrorBanner(message: errorMessage),
               if (allDayEvents.isNotEmpty) ...[
@@ -770,6 +892,49 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
       ),
     );
   }
+
+  /// The week or month view for the span, drawn from the panel's own anchor
+  /// rather than the bloc's range start: the loaded range may be wider than
+  /// what is shown (a six-week fetch behind a week), and the views filter to
+  /// their visible days regardless.
+  Widget _buildSpanBody(CalendarState state, _CalendarSpan span) {
+    final start = _span.rangeStart(_selectedDay);
+    return switch (state) {
+      CalendarLoading() => const Center(
+          child: CircularProgressIndicator(
+            color: AppColors.accent,
+            strokeWidth: 2,
+          ),
+        ),
+      CalendarLoaded(:final events, :final syncError) =>
+        _spanView(span, start, events, syncError),
+      CalendarError(:final message) =>
+        _spanView(span, start, const [], message),
+      CalendarInitial() => const SizedBox.shrink(),
+    };
+  }
+
+  Widget _spanView(
+    _CalendarSpan span,
+    DateTime start,
+    List<CalendarEvent> events,
+    String? errorMessage,
+  ) {
+    if (span.isMonth) {
+      return _MonthView(
+        gridStart: start,
+        events: events,
+        errorMessage: errorMessage,
+      );
+    }
+    return _WeekView(
+      weekStart: start,
+      events: events,
+      dayCount: span.dayCount,
+      errorMessage: errorMessage,
+      compact: true,
+    );
+  }
 }
 
 class _DayPanelHeader extends StatelessWidget {
@@ -780,160 +945,276 @@ class _DayPanelHeader extends StatelessWidget {
     required this.onNext,
     required this.onToday,
     required this.onClose,
+    this.span = _PanelSpan.day,
+    this.onCycleSpan,
     this.useBackNavigation = false,
   });
   final DateTime selectedDay;
+
+  /// Whether what is showing contains today: the day itself, its week, or
+  /// its month.
   final bool isToday;
   final VoidCallback onPrev;
   final VoidCallback onNext;
   final VoidCallback onToday;
   final VoidCallback onClose;
+  final _PanelSpan span;
+
+  /// Cycles the span; null hides the toggle (the docked desktop panel).
+  final VoidCallback? onCycleSpan;
   final bool useBackNavigation;
+
+  /// Two lines: what is showing, and either the month or the span's name.
+  (String, String) _titles() => switch (span) {
+        _PanelSpan.day => (
+            DateFormat('EEEE').format(selectedDay),
+            DateFormat('MMMM y').format(selectedDay),
+          ),
+        _PanelSpan.week || _PanelSpan.fullWeek => (
+            _rangeLabel(
+              _mondayOfWeek(selectedDay),
+              _mondayOfWeek(selectedDay)
+                  .add(Duration(days: span.dayCount - 1)),
+            ),
+            span.label,
+          ),
+        _PanelSpan.month => (
+            DateFormat('MMMM yyyy').format(selectedDay),
+            span.label,
+          ),
+      };
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return SizedBox(
-      height: touchRowHeight(48),
-      child: Padding(
-      padding: useBackNavigation
-          ? const EdgeInsets.fromLTRB(4, 0, 8, 0)
-          : const EdgeInsets.fromLTRB(12, 0, 8, 0),
-      child: Row(
-        children: [
-          if (useBackNavigation)
-            IconButton(
-              icon: Icon(Icons.arrow_back_ios_new_rounded,
-                  size: touchIcon(16), color: c.textMuted),
-              tooltip: 'Back',
-              padding: EdgeInsets.zero,
-              constraints: BoxConstraints(
-                minWidth: touchTarget(28),
-                minHeight: touchTarget(28),
-              ),
-              onPressed: onClose,
-            ),
-          Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-              color: isToday ? AppColors.accent : c.surfacePanel,
-              shape: BoxShape.circle,
-              border: isToday ? null : Border.all(color: c.separator),
-            ),
-            child: Center(
-              child: Text(
-                '${selectedDay.day}',
-                style: TextStyle(
-                  color: isToday ? Colors.white : c.textPrimary,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
+    final (title, subtitle) = _titles();
+    final unit = switch (span) {
+      _PanelSpan.day => 'day',
+      _PanelSpan.week || _PanelSpan.fullWeek => 'week',
+      _PanelSpan.month => 'month',
+    };
+
+    final leading = <Widget>[
+      if (useBackNavigation)
+        IconButton(
+          icon: Icon(Icons.arrow_back_ios_new_rounded,
+              size: touchIcon(16), color: c.textMuted),
+          tooltip: 'Back',
+          padding: EdgeInsets.zero,
+          constraints: BoxConstraints(
+            minWidth: touchTarget(28),
+            minHeight: touchTarget(28),
+          ),
+          onPressed: onClose,
+        ),
+      // The day badge only means something when one day is showing.
+      if (span.isDay) ...[
+        Container(
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+            color: isToday ? AppColors.accent : c.surfacePanel,
+            shape: BoxShape.circle,
+            border: isToday ? null : Border.all(color: c.separator),
+          ),
+          child: Center(
+            child: Text(
+              '${selectedDay.day}',
+              style: TextStyle(
+                color: isToday ? Colors.white : c.textPrimary,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
-          const SizedBox(width: 8),
-          // Expanded (in place of a trailing Spacer) so the date label, not the
-          // day-navigation buttons, is what gives way when the header runs out
-          // of room on a narrow phone.
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  DateFormat('EEEE').format(selectedDay),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: c.textPrimary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -0.2,
+        ),
+        const SizedBox(width: 8),
+      ] else if (!useBackNavigation)
+        const SizedBox(width: 4),
+      // Expanded (in place of a trailing Spacer) so the date label, not the
+      // day-navigation buttons, is what gives way when the header runs out
+      // of room on a narrow phone.
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: c.textPrimary,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.2,
+              ),
+            ),
+            Text(
+              subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: c.textMuted, fontSize: 10),
+            ),
+          ],
+        ),
+      ),
+    ];
+
+    final navCluster = <Widget>[
+      _IconNavButton(
+        icon: Icons.chevron_left_rounded,
+        tooltip: 'Previous $unit',
+        onTap: onPrev,
+      ),
+      const SizedBox(width: 2),
+      Tooltip(
+        message: 'Go to today',
+        child: InkWell(
+          onTap: isToday ? null : onToday,
+          borderRadius: BorderRadius.circular(4),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+            child: Text(
+              'Today',
+              style: TextStyle(
+                color: isToday ? c.textMuted : AppColors.accent,
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ),
+      ),
+      const SizedBox(width: 2),
+      _IconNavButton(
+        icon: Icons.chevron_right_rounded,
+        tooltip: 'Next $unit',
+        onTap: onNext,
+      ),
+    ];
+
+    final trailing = <Widget>[
+      const SizedBox(width: 4),
+      BlocBuilder<CalendarBloc, CalendarState>(
+        buildWhen: (prev, next) {
+          final prevIds = prev is CalendarLoaded ? prev.selectedEventIds : const <String>{};
+          final nextIds = next is CalendarLoaded ? next.selectedEventIds : const <String>{};
+          return prevIds.isEmpty != nextIds.isEmpty || prevIds.length != nextIds.length;
+        },
+        builder: (context, state) {
+          if (state is! CalendarLoaded || state.selectedEventIds.isEmpty) {
+            return const SizedBox.shrink();
+          }
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Tooltip(
+                message: 'Remove selected event${state.selectedEventIds.length > 1 ? 's' : ''}',
+                child: InkWell(
+                  onTap: () => _confirmAndDeleteSelected(context, state),
+                  borderRadius: BorderRadius.circular(6),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(Icons.delete_outline_rounded,
+                        size: touchIcon(16), color: Colors.red.shade400),
                   ),
                 ),
-                Text(
-                  DateFormat('MMMM y').format(selectedDay),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: c.textMuted, fontSize: 10),
+              ),
+              const SizedBox(width: 2),
+            ],
+          );
+        },
+      ),
+      if (!useBackNavigation)
+        InkWell(
+          onTap: onClose,
+          borderRadius: BorderRadius.circular(6),
+          child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: Icon(Icons.close_rounded,
+                size: touchIcon(16), color: c.textMuted),
+          ),
+        ),
+    ];
+
+    final padding = useBackNavigation
+        ? const EdgeInsets.fromLTRB(4, 0, 8, 0)
+        : const EdgeInsets.fromLTRB(12, 0, 8, 0);
+
+    final cycle = onCycleSpan;
+    if (cycle == null) {
+      // Docked beside the mail list: one row, as it has always been.
+      return SizedBox(
+        height: touchRowHeight(48),
+        child: Padding(
+          padding: padding,
+          child: Row(children: [...leading, ...navCluster, ...trailing]),
+        ),
+      );
+    }
+
+    // A phone is too narrow for the title, the nav cluster and the span
+    // toggle in one row — the title would be the first thing to disappear —
+    // so the controls take a second row under it, laid out like the calendar
+    // window's bar: navigation on the left, the span toggle on the right.
+    return Padding(
+      padding: padding,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            height: touchRowHeight(48),
+            child: Row(children: [...leading, ...trailing]),
+          ),
+          SizedBox(
+            height: touchRowHeight(36),
+            child: Row(
+              children: [
+                ...navCluster,
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    // Spelt out as the step it takes, like the calendar
+                    // window's toggle; a tooltip alone is invisible on a phone.
+                    child: Tooltip(
+                      message: 'Switch to ${span.next.label}',
+                      child: InkWell(
+                        onTap: cycle,
+                        borderRadius: BorderRadius.circular(4),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 3),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(span.next.icon,
+                                  size: touchIcon(12), color: c.textMuted),
+                              const SizedBox(width: 3),
+                              Flexible(
+                                child: Text(
+                                  '${span.label} → ${span.next.label}',
+                                  maxLines: 1,
+                                  softWrap: false,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: c.textSecondary,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ],
             ),
           ),
-          _IconNavButton(
-            icon: Icons.chevron_left_rounded,
-            tooltip: 'Previous day',
-            onTap: onPrev,
-          ),
-          const SizedBox(width: 2),
-          Tooltip(
-            message: 'Go to today',
-            child: InkWell(
-              onTap: isToday ? null : onToday,
-              borderRadius: BorderRadius.circular(4),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                child: Text(
-                  'Today',
-                  style: TextStyle(
-                    color: isToday ? c.textMuted : AppColors.accent,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 2),
-          _IconNavButton(
-            icon: Icons.chevron_right_rounded,
-            tooltip: 'Next day',
-            onTap: onNext,
-          ),
-          const SizedBox(width: 4),
-          BlocBuilder<CalendarBloc, CalendarState>(
-            buildWhen: (prev, next) {
-              final prevIds = prev is CalendarLoaded ? prev.selectedEventIds : const <String>{};
-              final nextIds = next is CalendarLoaded ? next.selectedEventIds : const <String>{};
-              return prevIds.isEmpty != nextIds.isEmpty || prevIds.length != nextIds.length;
-            },
-            builder: (context, state) {
-              if (state is! CalendarLoaded || state.selectedEventIds.isEmpty) {
-                return const SizedBox.shrink();
-              }
-              return Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Tooltip(
-                    message: 'Remove selected event${state.selectedEventIds.length > 1 ? 's' : ''}',
-                    child: InkWell(
-                      onTap: () => _confirmAndDeleteSelected(context, state),
-                      borderRadius: BorderRadius.circular(6),
-                      child: Padding(
-                        padding: const EdgeInsets.all(4),
-                        child: Icon(Icons.delete_outline_rounded,
-                            size: touchIcon(16), color: Colors.red.shade400),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 2),
-                ],
-              );
-            },
-          ),
-          if (!useBackNavigation)
-            InkWell(
-              onTap: onClose,
-              borderRadius: BorderRadius.circular(6),
-              child: Padding(
-                padding: const EdgeInsets.all(4),
-                child: Icon(Icons.close_rounded,
-                    size: touchIcon(16), color: c.textMuted),
-              ),
-            ),
         ],
-      ),
       ),
     );
   }
@@ -964,6 +1245,7 @@ class _WeekView extends StatefulWidget {
     required this.events,
     required this.dayCount,
     this.errorMessage,
+    this.compact = false,
   });
 
   final DateTime weekStart;
@@ -973,14 +1255,19 @@ class _WeekView extends StatefulWidget {
   final int dayCount;
   final String? errorMessage;
 
+  /// Phone width: a narrower hour gutter and no mirrored one on the right, so
+  /// seven columns get the room they need.
+  final bool compact;
+
   @override
   State<_WeekView> createState() => _WeekViewState();
 }
 
 class _WeekViewState extends State<_WeekView> {
   static const double _hourHeight = 64.0;
-  static const double _timeColumnWidth = 56.0;
   static const int _totalHours = 24;
+
+  double get _timeColumnWidth => widget.compact ? 44.0 : 56.0;
 
   late final ScrollController _scrollController;
 
@@ -1014,6 +1301,7 @@ class _WeekViewState extends State<_WeekView> {
           weekStart: widget.weekStart,
           dayCount: widget.dayCount,
           timeColumnWidth: _timeColumnWidth,
+          mirrorGutter: !widget.compact,
         ),
         if (allDayEvents.isNotEmpty)
           _AllDayStrip(
@@ -1021,6 +1309,7 @@ class _WeekViewState extends State<_WeekView> {
             dayCount: widget.dayCount,
             events: allDayEvents,
             timeColumnWidth: _timeColumnWidth,
+            mirrorGutter: !widget.compact,
           ),
         Divider(height: 1, color: c.separatorStrong),
         if (widget.errorMessage != null)
@@ -1046,8 +1335,10 @@ class _WeekViewState extends State<_WeekView> {
                   ),
                   // Mirrored gutter, so the hour a tile sits at is readable
                   // without tracking all the way back to the left edge.
-                  VerticalDivider(width: 1, color: c.separatorStrong),
-                  _TimeColumn(hourHeight: _hourHeight, totalHours: _totalHours, width: _timeColumnWidth),
+                  if (!widget.compact) ...[
+                    VerticalDivider(width: 1, color: c.separatorStrong),
+                    _TimeColumn(hourHeight: _hourHeight, totalHours: _totalHours, width: _timeColumnWidth),
+                  ],
                 ],
               ),
             ),
@@ -1213,47 +1504,57 @@ class _MonthDayCell extends StatelessWidget {
               ),
             ),
             const Spacer(),
-            Row(
-              children: [
-                Expanded(
-                  child: Tooltip(
-                    message: '$percent% of 9am–5pm in meetings',
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(3),
-                      child: SizedBox(
-                        height: 6,
-                        child: Stack(
-                          children: [
-                            Positioned.fill(
-                              child: ColoredBox(color: c.separator),
-                            ),
-                            FractionallySizedBox(
-                              widthFactor: load,
-                              heightFactor: 1,
-                              alignment: Alignment.centerLeft,
-                              child: const ColoredBox(color: AppColors.accent),
-                            ),
-                          ],
-                        ),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final bar = Tooltip(
+                  message: '$percent% of 9am–5pm in meetings',
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: SizedBox(
+                      height: 6,
+                      child: Stack(
+                        children: [
+                          Positioned.fill(
+                            child: ColoredBox(color: c.separator),
+                          ),
+                          FractionallySizedBox(
+                            widthFactor: load,
+                            heightFactor: 1,
+                            alignment: Alignment.centerLeft,
+                            child: const ColoredBox(color: AppColors.accent),
+                          ),
+                        ],
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 6),
-                SizedBox(
-                  width: 32,
-                  child: Text(
-                    '$percent%',
-                    textAlign: TextAlign.right,
-                    style: TextStyle(
-                      color: percent == 0 ? c.textMuted : c.textSecondary,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w500,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
+                );
+                final label = Text(
+                  '$percent%',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    color: percent == 0 ? c.textMuted : c.textSecondary,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w500,
+                    fontFeatures: const [FontFeature.tabularFigures()],
                   ),
-                ),
-              ],
+                );
+                // A phone-width cell has no room for the bar and the figure
+                // side by side, so the figure sits above a full-width bar.
+                if (constraints.maxWidth < 72) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [label, const SizedBox(height: 3), bar],
+                  );
+                }
+                return Row(
+                  children: [
+                    Expanded(child: bar),
+                    const SizedBox(width: 6),
+                    SizedBox(width: 32, child: label),
+                  ],
+                );
+              },
             ),
           ],
         ),
@@ -1267,11 +1568,16 @@ class _DayHeader extends StatelessWidget {
     required this.weekStart,
     required this.dayCount,
     required this.timeColumnWidth,
+    this.mirrorGutter = true,
   });
 
   final DateTime weekStart;
   final int dayCount;
   final double timeColumnWidth;
+
+  /// Whether the body draws an hour gutter on the right as well, which this
+  /// header then leaves room for.
+  final bool mirrorGutter;
 
   @override
   Widget build(BuildContext context) {
@@ -1333,7 +1639,7 @@ class _DayHeader extends StatelessWidget {
             );
           }),
           // Matches the right-hand hour gutter (+1 for its divider).
-          SizedBox(width: timeColumnWidth + 1),
+          if (mirrorGutter) SizedBox(width: timeColumnWidth + 1),
         ],
       ),
     );
@@ -1349,12 +1655,14 @@ class _AllDayStrip extends StatelessWidget {
     required this.dayCount,
     required this.events,
     required this.timeColumnWidth,
+    this.mirrorGutter = true,
   });
 
   final DateTime weekStart;
   final int dayCount;
   final List<CalendarEvent> events;
   final double timeColumnWidth;
+  final bool mirrorGutter;
 
   @override
   Widget build(BuildContext context) {
@@ -1405,8 +1713,10 @@ class _AllDayStrip extends StatelessWidget {
             ),
           ),
           // Matches the right-hand hour gutter.
-          Container(width: 1, color: c.separatorStrong),
-          SizedBox(width: timeColumnWidth),
+          if (mirrorGutter) ...[
+            Container(width: 1, color: c.separatorStrong),
+            SizedBox(width: timeColumnWidth),
+          ],
         ],
       ),
     );

@@ -18,20 +18,21 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>
-		<string>processing</string>
 	</array>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>au.com.sharpblue.nightmail.mailCheck</string>
 	</array>
 	<key>NSCalendarsUsageDescription</key>
-	<string>NightMail needs calendar access to show and manage events from your local calendars.</string>
+	<string>NightMail shows the calendars on this device alongside your mail accounts&apos; calendars, and adds events you accept from an invitation.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>NightMail shows the calendars on this device alongside your mail accounts&apos; calendars, and adds events you accept from an invitation.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Nightmail</string>
+	<string>NightMail</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

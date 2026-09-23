@@ -41,6 +41,9 @@ would re-break.
 
 - [`macos/CLAUDE.md`](macos/CLAUDE.md) — native platform channels, TCC
   (Contacts) permissions, code-signing for permission dialogs
+- [`ios/CLAUDE.md`](ios/CLAUDE.md) — App Store requirements: privacy
+  manifest and usage strings, launch screen, the Xcode-automatic /
+  CI-manual signing split, iPad as the desktop layout
 - [`lib/core/platform/CLAUDE.md`](lib/core/platform/CLAUDE.md) —
   `desktop_multi_window` sub-windows, the FFI-plugin isolate hazard, window
   bounds persistence

@@ -5,7 +5,7 @@ Pod::Spec.new do |s|
   s.description      = 'WKWebView-backed HTML widget for iOS.'
   s.homepage         = 'https://github.com/nightmail/html_view'
   s.license          = { :type => 'MIT' }
-  s.author           = { 'Nightmail' => 'dev@nightmail.com.au' }
+  s.author           = { 'NightMail' => 'dev@nightmail.com.au' }
   s.source           = { :path => '.' }
   s.source_files     = 'html_view/Sources/html_view/**/*.swift'
   s.dependency 'Flutter'

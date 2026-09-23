@@ -126,9 +126,9 @@ jobs:
           # else. Xcode reads profiles by content, not filename, but names
           # them by UUID by convention.
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
-          echo "$PROVISIONING_PROFILE_B64" | base64 --decode > "$RUNNER_TEMP/Nightmail.provisionprofile"
-          PROFILE_UUID=$(security cms -D -i "$RUNNER_TEMP/Nightmail.provisionprofile" | plutil -extract UUID xml1 -o - - | sed -n 's/.*<string>\(.*\)<\/string>.*/\1/p')
-          cp "$RUNNER_TEMP/Nightmail.provisionprofile" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.provisionprofile"
+          echo "$PROVISIONING_PROFILE_B64" | base64 --decode > "$RUNNER_TEMP/NightMail.provisionprofile"
+          PROFILE_UUID=$(security cms -D -i "$RUNNER_TEMP/NightMail.provisionprofile" | plutil -extract UUID xml1 -o - - | sed -n 's/.*<string>\(.*\)<\/string>.*/\1/p')
+          cp "$RUNNER_TEMP/NightMail.provisionprofile" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.provisionprofile"
 
           # Patch the checked-out (not committed) pbxproj so Release actually
           # signs with the Developer ID identity just imported. Left alone,
@@ -650,9 +650,10 @@ jobs:
 
       # ExportOptions.plist only governs the *export* step (.xcarchive -> .ipa).
       # The *archive* step (xcodebuild archive, which is what flutter build ipa
-      # runs first) still signs using the project's own settings, and those
-      # default to CODE_SIGN_STYLE=Automatic -- which needs a live Apple ID
-      # session in Xcode to auto-provision, exactly what CI doesn't have. Left
+      # runs first) still signs using the project's own settings, and the
+      # committed project uses CODE_SIGN_STYLE=Automatic with the team set --
+      # the right thing for day-to-day builds in Xcode, but auto-provisioning
+      # needs a live Apple ID session, exactly what CI doesn't have. Left
       # unpatched, archiving fails with "No valid code signing certificates
       # were found" before ExportOptions.plist is ever consulted. Same fix
       # build-macos already applies to its own project for the same reason.
@@ -673,36 +674,33 @@ jobs:
           new_attrs = "\t\t\t\t\t97C146ED1CF9000F007C117D = {\n\t\t\t\t\t\tCreatedOnToolsVersion = 7.3.1;\n\t\t\t\t\t\tDevelopmentTeam = 69XRMYD9XG;\n\t\t\t\t\t\tLastSwiftMigration = 1100;\n\t\t\t\t\t\tProvisioningStyle = Manual;\n\t\t\t\t\t};\n"
           text = text.replace(old_attrs, new_attrs)
 
-          # Runner target's Release build settings: names the Apple
-          # Distribution identity and the "NightMail App Store" profile the
-          # previous step imported by UUID -- profiles are matched by content,
-          # not filename, but Xcode wants the human name here.
-          old_release = (
+          # Runner target's Release build settings. The block already carries
+          # CODE_SIGN_STYLE = Automatic and DEVELOPMENT_TEAM (Xcode's
+          # "Automatically manage signing" write-back, kept on purpose), so
+          # flip the style in place rather than adding a second key -- a
+          # duplicate key in a pbxproj dict is undefined behaviour -- and name
+          # the Apple Distribution identity and the "NightMail App Store"
+          # profile the previous step imported by UUID. Profiles are matched by
+          # content, not filename, but Xcode wants the human name here.
+          start = text.index("97C147071CF9000F007C117D /* Release */ = {")
+          end = text.index("name = Release;", start)
+          block = text[start:end]
+          assert block.count("CODE_SIGN_STYLE = Automatic;") == 1, "Runner Release CODE_SIGN_STYLE anchor not found or not unique -- pbxproj layout changed, update this patch"
+          assert block.count("DEVELOPMENT_TEAM = 69XRMYD9XG;") == 1, "Runner Release DEVELOPMENT_TEAM anchor not found or not unique -- pbxproj layout changed, update this patch"
+          block = block.replace("CODE_SIGN_STYLE = Automatic;", "CODE_SIGN_STYLE = Manual;")
+          old_tail = (
               "\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = au.com.sharpblue.nightmail;\n"
               "\t\t\t\tPRODUCT_NAME = \"$(TARGET_NAME)\";\n"
-              "\t\t\t\tSWIFT_OBJC_BRIDGING_HEADER = \"Runner/Runner-Bridging-Header.h\";\n"
-              "\t\t\t\tSWIFT_VERSION = 5.0;\n"
-              "\t\t\t\tVERSIONING_SYSTEM = \"apple-generic\";\n"
-              "\t\t\t};\n"
-              "\t\t\tname = Release;\n"
-              "\t\t};\n"
           )
-          assert text.count(old_release) == 1, "Runner Release build-settings anchor not found or not unique -- pbxproj layout changed, update this patch"
-          new_release = (
+          assert block.count(old_tail) == 1, "Runner Release PRODUCT_BUNDLE_IDENTIFIER anchor not found or not unique -- pbxproj layout changed, update this patch"
+          new_tail = (
               "\t\t\t\tCODE_SIGN_IDENTITY = \"Apple Distribution\";\n"
-              "\t\t\t\tCODE_SIGN_STYLE = Manual;\n"
-              "\t\t\t\tDEVELOPMENT_TEAM = 69XRMYD9XG;\n"
               "\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = au.com.sharpblue.nightmail;\n"
               "\t\t\t\tPRODUCT_NAME = \"$(TARGET_NAME)\";\n"
               "\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = \"NightMail App Store\";\n"
-              "\t\t\t\tSWIFT_OBJC_BRIDGING_HEADER = \"Runner/Runner-Bridging-Header.h\";\n"
-              "\t\t\t\tSWIFT_VERSION = 5.0;\n"
-              "\t\t\t\tVERSIONING_SYSTEM = \"apple-generic\";\n"
-              "\t\t\t};\n"
-              "\t\t\tname = Release;\n"
-              "\t\t};\n"
           )
-          text = text.replace(old_release, new_release)
+          block = block.replace(old_tail, new_tail)
+          text = text[:start] + block + text[end:]
 
           path.write_text(text)
           EOF

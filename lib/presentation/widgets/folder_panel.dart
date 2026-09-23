@@ -1,13 +1,8 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
 
-import 'package:desktop_multi_window/desktop_multi_window.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 
 import '../../core/platform/touch_metrics.dart';
-import '../../core/platform/window_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -35,9 +30,9 @@ import '../blocs/folder_list/folder_list_state.dart';
 import '../blocs/home/home_cubit.dart';
 import '../blocs/mail_poller/mail_poller_cubit.dart';
 import '../blocs/migration/migration_cubit.dart';
-import '../blocs/tasks/overdue_tasks_cubit.dart';
 import '../blocs/update/update_cubit.dart';
 import '../blocs/theme/theme_cubit.dart';
+import 'view_shortcut_buttons.dart';
 import '../pages/settings_page.dart';
 import '../pages/add_account_page.dart';
 import 'migration_status_dialog.dart';
@@ -1939,9 +1934,6 @@ class _SettingsFooter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    // Red dot on the Tasks icon: the active account has something already past
-    // due, in any of its lists — not only the one the pane last showed.
-    final overdueTasks = context.watch<OverdueTasksCubit>().state;
     // Red dot on the Settings icon: a newer release has been found and is
     // waiting to be downloaded, or has been downloaded and is waiting to be
     // installed. A download already in flight does not light it — see
@@ -1955,76 +1947,10 @@ class _SettingsFooter extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 8),
         child: Row(
         children: [
-          GestureDetector(
-            onDoubleTap: !kIsWeb && (Platform.isAndroid || Platform.isIOS)
-                ? null
-                : () => createSubWindow(
-                      WindowConfiguration(
-                        arguments: jsonEncode({'type': 'calendar'}),
-                      ),
-                    ),
-            child: IconButton(
-              icon: Icon(Icons.calendar_month_outlined,
-                  size: touchIcon(16), color: c.textMuted),
-              tooltip: 'Calendar',
-              padding: EdgeInsets.zero,
-              constraints: BoxConstraints(
-                minWidth: touchTarget(28),
-                minHeight: touchTarget(28),
-              ),
-              onPressed: onCalendarTapped,
-            ),
-          ),
-          GestureDetector(
-            onDoubleTap: !kIsWeb && (Platform.isAndroid || Platform.isIOS)
-                ? null
-                : () => createSubWindow(
-                      WindowConfiguration(
-                        arguments: jsonEncode({'type': 'tasks'}),
-                      ),
-                    ),
-            child: IconButton(
-              icon: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Icon(Icons.checklist_rounded,
-                      size: touchIcon(16), color: c.textMuted),
-                  if (overdueTasks > 0)
-                    Positioned(
-                      top: -2,
-                      right: -2,
-                      child: Container(
-                        width: 7,
-                        height: 7,
-                        decoration: const BoxDecoration(
-                          color: AppColors.notification,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-              tooltip: overdueTasks > 0
-                  ? 'Tasks ($overdueTasks overdue)'
-                  : 'Tasks',
-              padding: EdgeInsets.zero,
-              constraints: BoxConstraints(
-                minWidth: touchTarget(28),
-                minHeight: touchTarget(28),
-              ),
-              onPressed: onTasksTapped,
-            ),
-          ),
-          IconButton(
-            icon: Icon(Icons.auto_awesome_rounded,
-                size: touchIcon(16), color: c.textMuted),
-            tooltip: 'AI',
-            padding: EdgeInsets.zero,
-            constraints: BoxConstraints(
-              minWidth: touchTarget(28),
-              minHeight: touchTarget(28),
-            ),
-            onPressed: onAiTapped,
+          ViewShortcutButtons(
+            onCalendarTapped: onCalendarTapped,
+            onTasksTapped: onTasksTapped,
+            onAiTapped: onAiTapped,
           ),
           const Spacer(),
           IconButton(

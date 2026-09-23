@@ -548,8 +548,18 @@ class _MobileLayout extends StatefulWidget {
 }
 
 class _MobileLayoutState extends State<_MobileLayout> {
-  _MobileStep _step = _MobileStep.folders;
+  /// Opens on the email list, not the folder list: the active account is the
+  /// one persisted from last time, and its Inbox is auto-selected the moment
+  /// its folders land (`folderToAutoSelect`), so the phone lands on the mail
+  /// rather than a menu. The folder list is one Back away.
+  _MobileStep _step = _MobileStep.emailList;
   Timer? _emailListForegroundTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _setStep(_step);
+  }
 
   /// Sets [_step] and maintains the foreground refresh timer so the email list
   /// stays current while the user is actively viewing it. Call inside setState.
@@ -560,6 +570,9 @@ class _MobileLayoutState extends State<_MobileLayout> {
         const Duration(seconds: 15),
         (_) {
           if (!mounted) return;
+          // Before the Inbox has been selected there is nothing to refresh, and
+          // a refresh with no folder fetches the whole mailbox's newest mail.
+          if (context.read<HomeCubit>().state.selectedFolderId == null) return;
           context.read<EmailListBloc>().add(const EmailListRefreshRequested());
           context.read<FolderListBloc>().add(const FolderListLoadRequested());
         },
@@ -575,6 +588,89 @@ class _MobileLayoutState extends State<_MobileLayout> {
   void dispose() {
     _emailListForegroundTimer?.cancel();
     super.dispose();
+  }
+
+  // The Calendar, Tasks and AI views, each pushed as a full-screen route over
+  // whichever step is showing. Shared by the folder panel's foot and the
+  // email list's, so the two cannot open them differently.
+
+  void _openCalendar() {
+    final calendarBloc = context.read<CalendarBloc>();
+    calendarBloc.add(CalendarWeekLoadRequested(
+      weekStart: _mondayOfWeek(DateTime.now()),
+    ));
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (ctx) => Scaffold(
+          body: SafeArea(
+            child: BlocProvider.value(
+              value: calendarBloc,
+              child: CalendarDayPanel(
+                onClose: () => Navigator.of(ctx).pop(),
+                useBackNavigation: true,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openTasks() {
+    final tasksBloc = context.read<TasksBloc>();
+    final emailDetailBloc = context.read<EmailDetailBloc>();
+    final accountCubit = context.read<AccountCubit>();
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (ctx) => Scaffold(
+          body: SafeArea(
+            child: MultiBlocProvider(
+              providers: [
+                BlocProvider.value(value: tasksBloc),
+                BlocProvider.value(value: emailDetailBloc),
+                BlocProvider.value(value: accountCubit),
+              ],
+              child: TasksDayPanel(
+                onClose: () => Navigator.of(ctx).pop(),
+                useBackNavigation: true,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openAi() {
+    final aiFolderCubit = context.read<AiFolderCubit>();
+    final emailListBloc = context.read<EmailListBloc>();
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (ctx) => Scaffold(
+          body: SafeArea(
+            child: BlocProvider.value(
+              value: aiFolderCubit,
+              child: AiDayPanel(
+                onClose: () => Navigator.of(ctx).pop(),
+                useBackNavigation: true,
+                folderIdProvider: () {
+                  final s = emailListBloc.state;
+                  return s is EmailListLoaded ? s.currentFolderId : null;
+                },
+                contextProvider: () {
+                  final s = emailListBloc.state;
+                  if (s is! EmailListLoaded || s.emails.isEmpty) return null;
+                  return _formatFolderEmailsForAi(s.emails);
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   void _back() {
@@ -668,85 +764,9 @@ class _MobileLayoutState extends State<_MobileLayout> {
                           );
                       setState(() => _setStep(_MobileStep.emailList));
                     },
-                    onCalendarTapped: () {
-                      final calendarBloc = context.read<CalendarBloc>();
-                      calendarBloc.add(CalendarWeekLoadRequested(
-                        weekStart: _mondayOfWeek(DateTime.now()),
-                      ));
-                      Navigator.of(context).push<void>(
-                        MaterialPageRoute(
-                          fullscreenDialog: true,
-                          builder: (ctx) => Scaffold(
-                            body: SafeArea(
-                              child: BlocProvider.value(
-                                value: calendarBloc,
-                                child: CalendarDayPanel(
-                                  onClose: () => Navigator.of(ctx).pop(),
-                                  useBackNavigation: true,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                    onTasksTapped: () {
-                      final tasksBloc = context.read<TasksBloc>();
-                      final emailDetailBloc = context.read<EmailDetailBloc>();
-                      final accountCubit = context.read<AccountCubit>();
-                      Navigator.of(context).push<void>(
-                        MaterialPageRoute(
-                          fullscreenDialog: true,
-                          builder: (ctx) => Scaffold(
-                            body: SafeArea(
-                              child: MultiBlocProvider(
-                                providers: [
-                                  BlocProvider.value(value: tasksBloc),
-                                  BlocProvider.value(value: emailDetailBloc),
-                                  BlocProvider.value(value: accountCubit),
-                                ],
-                                child: TasksDayPanel(
-                                  onClose: () => Navigator.of(ctx).pop(),
-                                  useBackNavigation: true,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                    onAiTapped: () {
-                      final aiFolderCubit = context.read<AiFolderCubit>();
-                      final emailListBloc = context.read<EmailListBloc>();
-                      Navigator.of(context).push<void>(
-                        MaterialPageRoute(
-                          fullscreenDialog: true,
-                          builder: (ctx) => Scaffold(
-                            body: SafeArea(
-                              child: BlocProvider.value(
-                                value: aiFolderCubit,
-                                child: AiDayPanel(
-                                  onClose: () => Navigator.of(ctx).pop(),
-                                  useBackNavigation: true,
-                                  folderIdProvider: () {
-                                    final s = emailListBloc.state;
-                                    return s is EmailListLoaded
-                                        ? s.currentFolderId
-                                        : null;
-                                  },
-                                  contextProvider: () {
-                                    final s = emailListBloc.state;
-                                    if (s is! EmailListLoaded ||
-                                        s.emails.isEmpty) { return null; }
-                                    return _formatFolderEmailsForAi(s.emails);
-                                  },
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    },
+                    onCalendarTapped: _openCalendar,
+                    onTasksTapped: _openTasks,
+                    onAiTapped: _openAi,
                   ),
                 _MobileStep.emailList => EmailListPanel(
                     folderName: selectedFolder?.displayName ?? 'Inbox',
@@ -754,6 +774,11 @@ class _MobileLayoutState extends State<_MobileLayout> {
                     selectedEmailId: homeState.selectedEmailId,
                     onEmailSelected: onEmailSelected,
                     onBack: _back,
+                    // The phone opens here, so the three views the folder
+                    // panel's foot offers are offered here too.
+                    onCalendarTapped: _openCalendar,
+                    onTasksTapped: _openTasks,
+                    onAiTapped: _openAi,
                   ),
                 _MobileStep.readingPane => ReadingPane(onBack: _back),
               };

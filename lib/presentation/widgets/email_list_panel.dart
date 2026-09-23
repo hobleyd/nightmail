@@ -35,6 +35,7 @@ import '../blocs/tasks/tasks_event.dart';
 import '../blocs/tasks/tasks_state.dart';
 import 'error_snack_bar.dart';
 import 'email_date_formatter.dart';
+import 'view_shortcut_buttons.dart';
 import 'email_list_conversations.dart';
 import 'email_list_item.dart';
 import 'flag_icon_button.dart';
@@ -48,6 +49,9 @@ class EmailListPanel extends StatefulWidget {
     this.folder,
     this.onEmailDoubleTapped,
     this.onBack,
+    this.onCalendarTapped,
+    this.onTasksTapped,
+    this.onAiTapped,
   });
 
   final String folderName;
@@ -56,6 +60,17 @@ class EmailListPanel extends StatefulWidget {
   final ValueChanged<Email> onEmailSelected;
   final ValueChanged<Email>? onEmailDoubleTapped;
   final VoidCallback? onBack;
+
+  /// Set together, on a phone only, to put the Calendar / Tasks / AI buttons
+  /// in the footer beside the counts: the phone opens on this list, so the
+  /// three views need a way in that does not go back through the folders. The
+  /// desktop leaves them null — its folder panel is always on screen.
+  final VoidCallback? onCalendarTapped;
+  final VoidCallback? onTasksTapped;
+  final VoidCallback? onAiTapped;
+
+  bool get _hasViewShortcuts =>
+      onCalendarTapped != null && onTasksTapped != null && onAiTapped != null;
 
   @override
   State<EmailListPanel> createState() => _EmailListPanelState();
@@ -639,9 +654,20 @@ class _EmailListPanelState extends State<EmailListPanel> {
                 ),
               ),
             ),
-            if (widget.folder != null) ...[
+            // The counts need a folder; the shortcuts are wanted before one
+            // has loaded too, so the footer stays for as long as either does.
+            if (widget.folder != null || widget._hasViewShortcuts) ...[
               Divider(height: 1, color: c.separator),
-              _FolderCountFooter(folder: widget.folder!),
+              _FolderCountFooter(
+                folder: widget.folder,
+                shortcuts: widget._hasViewShortcuts
+                    ? ViewShortcutButtons(
+                        onCalendarTapped: widget.onCalendarTapped!,
+                        onTasksTapped: widget.onTasksTapped!,
+                        onAiTapped: widget.onAiTapped!,
+                      )
+                    : null,
+              ),
             ],
           ],
         ),
@@ -1917,27 +1943,51 @@ class _SwipeableEmailItemState extends State<_SwipeableEmailItem>
 }
 
 class _FolderCountFooter extends StatelessWidget {
-  const _FolderCountFooter({required this.folder});
-  final EmailFolder folder;
+  const _FolderCountFooter({required this.folder, this.shortcuts});
+
+  /// Null until the folder has loaded, when only [shortcuts] draw.
+  final EmailFolder? folder;
+
+  /// The Calendar / Tasks / AI buttons, leading, on a phone.
+  final Widget? shortcuts;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final unread = folder.unreadItemCount;
-    final total = folder.totalItemCount;
-    final label = unread > 0 ? '$unread unread · $total total' : '$total total';
+    final folder = this.folder;
+    final label = folder == null
+        ? ''
+        : folder.unreadItemCount > 0
+            ? '${folder.unreadItemCount} unread · ${folder.totalItemCount} total'
+            : '${folder.totalItemCount} total';
+    final counts = Text(
+      label,
+      style: TextStyle(
+        color: c.textBody,
+        fontSize: 11,
+      ),
+    );
+    final shortcuts = this.shortcuts;
+    if (shortcuts == null) {
+      return SizedBox(
+        height: 28,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Center(child: counts),
+        ),
+      );
+    }
+    // The buttons lead, and the counts keep the centre of what is left so the
+    // footer still reads as the count line it was, with the buttons alongside.
     return SizedBox(
-      height: 28,
+      height: touchRowHeight(28),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: Center(
-          child: Text(
-            label,
-            style: TextStyle(
-              color: c.textBody,
-              fontSize: 11,
-            ),
-          ),
+        padding: const EdgeInsets.only(left: 8, right: 16),
+        child: Row(
+          children: [
+            shortcuts,
+            Expanded(child: Center(child: counts)),
+          ],
         ),
       ),
     );

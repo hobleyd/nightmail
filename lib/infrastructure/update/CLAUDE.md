@@ -76,8 +76,17 @@ the one it replaced.
 build phase. It wraps the package's own `embed_install_helper.sh` and does the
 three things that script leaves to the host project:
 
-- **Finds the package** through `Flutter/ephemeral/.symlinks/plugins/`, which
-  `flutter pub get` rebuilds, so a version bump needs no path edited here.
+- **Finds the package** through the Swift Package Manager plugin links under
+  `Flutter/ephemeral/Packages/.packages/` (the helper sources sit beside the
+  linked package directory), falling back to the CocoaPods symlink farm on a
+  checkout that still has one and then to `.dart_tool/package_config.json`
+  read as JSON. All three are rebuilt by `flutter pub get`, so a version bump
+  needs no path edited here. `embed_update_helper.sh --locate` prints what it
+  found without building. The lookup used to be the symlink farm plus a
+  one-line grep of the package config; when CocoaPods was removed the farm
+  went with it and the grep had never matched pub's pretty-printed output,
+  so the first CI build afterwards failed with "cannot locate
+  desktop_updater's install_helper".
 - **Derives `DESKTOP_UPDATER_SEALED_POLICY_SHA256` from the policy file.** The
   example project hardcodes that digest in `project.pbxproj`, where it silently
   drifts the first time anyone edits the policy.

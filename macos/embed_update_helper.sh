@@ -25,6 +25,12 @@ fail() {
   exit 1
 }
 
+# `--locate` prints where the helper sources were found and stops, so the
+# lookup below can be checked from a shell (or CI) without a signed build.
+locate_only=false
+[ "${1:-}" = "--locate" ] && locate_only=true
+
+if [ "$locate_only" = false ]; then
 # Release only. The helper is what *installs* an update, and nothing installs
 # one from a `flutter run` build — while a per-architecture `swift build` on
 # every debug build is a large tax on the edit loop. It also keeps the helper's
@@ -50,25 +56,65 @@ case "$identity" in
     exit 0
     ;;
 esac
+fi
 
 project_dir=${PROJECT_DIR:?PROJECT_DIR is required}
 policy="$project_dir/Runner/DesktopUpdaterHelperPolicy.json"
-[ -f "$policy" ] || fail "sealed policy is missing: $policy"
+[ "$locate_only" = true ] || [ -f "$policy" ] || fail "sealed policy is missing: $policy"
 
-# The CocoaPods symlink farm is the stable way to the package from inside a
-# build: it is rebuilt from pubspec on every `flutter pub get`, so it follows a
-# version bump without this path being touched.
-helper_dir="$project_dir/Flutter/ephemeral/.symlinks/plugins/desktop_updater/macos/install_helper"
-if [ ! -d "$helper_dir" ]; then
-  # Fall back to whatever package_config.json resolved, for a build that has not
-  # gone through pod install.
-  root=$(/usr/bin/sed -n 's/.*"name":"desktop_updater","rootUri":"\([^"]*\)".*/\1/p' \
-    "$project_dir/../.dart_tool/package_config.json" 2>/dev/null | /usr/bin/head -1)
-  case "$root" in
-    file://*) helper_dir="${root#file://}/macos/install_helper" ;;
-  esac
+# Where pub put the package. Three ways in, tried in order; each is rebuilt by
+# `flutter pub get`, so all of them follow a version bump without this file
+# being touched.
+#
+#  1. Flutter's Swift Package Manager integration links every plugin's package
+#     directory under Flutter/ephemeral/Packages/.packages/<name>-<version> —
+#     for desktop_updater that is <pkg>/macos/desktop_updater, and the helper
+#     sources are its sibling <pkg>/macos/install_helper. This is the live path
+#     now that the project has no CocoaPods integration.
+#  2. The CocoaPods symlink farm, for a checkout that still carries one.
+#  3. .dart_tool/package_config.json, which pub writes pretty-printed — read
+#     as JSON, not grepped for a single-line shape that has not been written
+#     for years. The CI build after CocoaPods was removed failed on exactly
+#     that: the symlink farm was gone and the one-line regex never matched.
+helper_dir=""
+for link in "$project_dir"/Flutter/ephemeral/Packages/.packages/desktop_updater-*; do
+  [ -d "$link" ] || continue
+  package_dir=$(cd "$link" 2>/dev/null && pwd -P) || continue
+  candidate="$(dirname "$package_dir")/install_helper"
+  if [ -d "$candidate" ]; then
+    helper_dir=$candidate
+    break
+  fi
+done
+if [ -z "$helper_dir" ]; then
+  legacy="$project_dir/Flutter/ephemeral/.symlinks/plugins/desktop_updater/macos/install_helper"
+  [ -d "$legacy" ] && helper_dir=$legacy
 fi
-[ -d "$helper_dir" ] || fail "cannot locate desktop_updater's install_helper; run flutter pub get"
+if [ -z "$helper_dir" ] && [ -x /usr/bin/python3 ]; then
+  config="$project_dir/../.dart_tool/package_config.json"
+  root=$(/usr/bin/python3 - "$config" 2>/dev/null <<'PY' || true
+import json, os, sys
+path = sys.argv[1]
+for p in json.load(open(path, encoding="utf-8"))["packages"]:
+    if p["name"] == "desktop_updater":
+        uri = p["rootUri"]
+        if uri.startswith("file://"):
+            print(uri[len("file://"):])
+        else:
+            # Relative roots are relative to the config file's directory.
+            print(os.path.normpath(os.path.join(os.path.dirname(path), uri)))
+        break
+PY
+  )
+  [ -n "$root" ] && [ -d "$root/macos/install_helper" ] && helper_dir="$root/macos/install_helper"
+fi
+[ -n "$helper_dir" ] && [ -d "$helper_dir" ] ||
+  fail "cannot locate desktop_updater's install_helper; run flutter pub get"
+
+if [ "$locate_only" = true ]; then
+  echo "$helper_dir"
+  exit 0
+fi
 
 # The digest the package script checks against, and the digest the *app* checks
 # at install time, are computed differently: the script hashes the file with one

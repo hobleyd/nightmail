@@ -25,6 +25,17 @@ final class EventEditSaved extends EventEditState {
   List<Object?> get props => [event];
 }
 
+/// A counter-proposal went out. Distinct from [EventEditSaved] because there is
+/// no saved event to report: the meeting stays where the organizer put it
+/// until they answer.
+final class EventEditProposed extends EventEditState {
+  const EventEditProposed({required this.eventId});
+  final String eventId;
+
+  @override
+  List<Object?> get props => [eventId];
+}
+
 final class EventEditError extends EventEditState {
   const EventEditError({required this.message});
   final String message;

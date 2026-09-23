@@ -9,7 +9,6 @@ import 'package:nightmail/domain/usecases/cancel_calendar_event.dart';
 import 'package:nightmail/domain/usecases/decline_calendar_event.dart';
 import 'package:nightmail/domain/usecases/get_cached_calendar_events.dart';
 import 'package:nightmail/domain/usecases/get_calendar_events.dart';
-import 'package:nightmail/domain/usecases/propose_new_time.dart';
 import 'package:nightmail/domain/usecases/update_calendar_event.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
@@ -42,7 +41,6 @@ final _tEvents = <CalendarEvent>[
   CancelCalendarEvent,
   CancelCalendarEventSeries,
   DeclineCalendarEvent,
-  ProposeNewTime,
   UpdateCalendarEvent,
   NotificationService,
   AccountManager,
@@ -55,7 +53,6 @@ void main() {
   late MockCancelCalendarEvent mockCancelCalendarEvent;
   late MockCancelCalendarEventSeries mockCancelCalendarEventSeries;
   late MockDeclineCalendarEvent mockDeclineCalendarEvent;
-  late MockProposeNewTime mockProposeNewTime;
   late MockUpdateCalendarEvent mockUpdateCalendarEvent;
   late MockNotificationService mockNotificationService;
   late MockAccountManager mockAccountManager;
@@ -66,7 +63,6 @@ void main() {
         cancelCalendarEvent: mockCancelCalendarEvent,
         cancelCalendarEventSeries: mockCancelCalendarEventSeries,
         declineCalendarEvent: mockDeclineCalendarEvent,
-        proposeNewTime: mockProposeNewTime,
         updateCalendarEvent: mockUpdateCalendarEvent,
         notificationService: mockNotificationService,
         accountManager: mockAccountManager,
@@ -78,7 +74,6 @@ void main() {
     mockCancelCalendarEvent = MockCancelCalendarEvent();
     mockCancelCalendarEventSeries = MockCancelCalendarEventSeries();
     mockDeclineCalendarEvent = MockDeclineCalendarEvent();
-    mockProposeNewTime = MockProposeNewTime();
     mockUpdateCalendarEvent = MockUpdateCalendarEvent();
     mockNotificationService = MockNotificationService();
     mockAccountManager = MockAccountManager();
@@ -290,28 +285,6 @@ void main() {
       verify(mockGetCalendarEvents(any)).called(1);
     });
 
-    test('propose new time reloads week on success', () async {
-      final newStart = DateTime(2026, 6, 15, 10, 0);
-      final newEnd = DateTime(2026, 6, 15, 11, 0);
-
-      when(mockProposeNewTime(any))
-          .thenAnswer((_) async => Right(null));
-      when(mockGetCalendarEvents(any))
-          .thenAnswer((_) async => Right(_tEvents));
-
-      final bloc = makeBloc();
-      bloc.add(CalendarEventNewTimeProposed(
-        eventId: 'e1',
-        newStart: newStart,
-        newEnd: newEnd,
-      ));
-      await bloc.stream
-          .firstWhere((s) => s is CalendarLoaded || s is CalendarError);
-      await bloc.close();
-
-      verify(mockProposeNewTime(any)).called(1);
-      verify(mockGetCalendarEvents(any)).called(1);
-    });
   });
 
   group('CalendarBloc cache-first loading', () {

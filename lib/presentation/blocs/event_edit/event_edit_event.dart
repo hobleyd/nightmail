@@ -74,3 +74,28 @@ final class EventEditSubmitted extends EventEditBlocEvent {
         notifyScope,
       ];
 }
+
+/// An attendee proposing a different slot for somebody else's meeting. Sent
+/// from the event form's propose mode; see `EventEditForm.proposeNewTime`.
+final class EventEditProposeSubmitted extends EventEditBlocEvent {
+  const EventEditProposeSubmitted({
+    required this.eventId,
+    required this.newStart,
+    required this.newEnd,
+    this.timezone,
+    this.message,
+  });
+
+  final String eventId;
+  final DateTime newStart;
+  final DateTime newEnd;
+
+  /// IANA zone the wall-clock [newStart]/[newEnd] are expressed in.
+  final String? timezone;
+
+  /// Optional note to the organizer, sent with the counter-proposal.
+  final String? message;
+
+  @override
+  List<Object?> get props => [eventId, newStart, newEnd, timezone, message];
+}

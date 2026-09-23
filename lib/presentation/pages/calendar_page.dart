@@ -10,7 +10,6 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/platform/touch_metrics.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/meeting_load.dart';
-import '../../core/utils/timezone_utils.dart';
 import '../../domain/entities/calendar_event.dart';
 import '../../domain/usecases/get_calendar_event.dart';
 import '../../infrastructure/accounts/account.dart';
@@ -2207,20 +2206,15 @@ class _PositionedEventState extends State<_PositionedEvent> {
         newEnd: newEnd,
       ));
     } else {
-      final result = await _DragProposeConfirmDialog.show(
+      // Somebody else's meeting: dragging proposes rather than moves, and the
+      // proposal is made from the full event form so the drop slot can be
+      // checked against everyone's calendar before it is sent.
+      await _openProposeNewTime(
         context,
-        event: widget.event,
+        widget.event,
         newStart: newStart,
         newEnd: newEnd,
       );
-      if (result == null || !mounted) return;
-      context.read<CalendarBloc>().add(CalendarEventNewTimeProposed(
-        eventId: widget.event.id,
-        newStart: newStart,
-        newEnd: newEnd,
-        timezone: localIanaTimezone(),
-        message: result.isEmpty ? null : result,
-      ));
     }
   }
 
@@ -2761,16 +2755,30 @@ void _showEventContextMenu(
             .read<CalendarBloc>()
             .add(CalendarEventDeclineRequested(eventId: event.id));
       case _EventMenuAction.proposeNewTime:
-        final proposed = await _ProposeNewTimeDialog.show(context, event);
-        if (proposed == null || !context.mounted) return;
-        context.read<CalendarBloc>().add(CalendarEventNewTimeProposed(
-              eventId: event.id,
-              newStart: proposed.newStart,
-              newEnd: proposed.newEnd,
-              timezone: localIanaTimezone(),
-            ));
+        await _openProposeNewTime(context, event);
     }
   });
+}
+
+/// Opens the event form in counter-proposal mode for somebody else's meeting.
+/// A dragged tile passes the slot it was dropped on; the menu item passes
+/// neither and the form opens on the meeting's current time.
+Future<void> _openProposeNewTime(
+  BuildContext context,
+  CalendarEvent event, {
+  DateTime? newStart,
+  DateTime? newEnd,
+}) {
+  return EventEditDialog.show(
+    context,
+    event: event,
+    proposeNewTime: true,
+    initialStart: newStart,
+    initialEnd: newEnd,
+    accountId: _accountId(context),
+    isO365Account: _isO365Account(context),
+    isGmailAccount: _isGmailAccount(context),
+  );
 }
 
 enum _EventMenuAction {
@@ -2784,297 +2792,3 @@ enum _EventMenuAction {
   proposeNewTime,
 }
 
-// ─── Propose New Time dialog ──────────────────────────────────────────────────
-
-typedef _ProposedTime = ({DateTime newStart, DateTime newEnd});
-
-class _ProposeNewTimeDialog extends StatefulWidget {
-  const _ProposeNewTimeDialog({required this.event});
-
-  final CalendarEvent event;
-
-  static Future<_ProposedTime?> show(
-    BuildContext context,
-    CalendarEvent event,
-  ) {
-    return showDialog<_ProposedTime>(
-      context: context,
-      builder: (_) => _ProposeNewTimeDialog(event: event),
-    );
-  }
-
-  @override
-  State<_ProposeNewTimeDialog> createState() => _ProposeNewTimeDialogState();
-}
-
-class _ProposeNewTimeDialogState extends State<_ProposeNewTimeDialog> {
-  late DateTime _date;
-  late TimeOfDay _startTime;
-  late TimeOfDay _endTime;
-
-  @override
-  void initState() {
-    super.initState();
-    final localStart = widget.event.start.toLocal();
-    final localEnd = widget.event.end.toLocal();
-    _date = DateTime(localStart.year, localStart.month, localStart.day);
-    _startTime = TimeOfDay.fromDateTime(localStart);
-    _endTime = TimeOfDay.fromDateTime(localEnd);
-  }
-
-  DateTime _combine(DateTime date, TimeOfDay time) =>
-      DateTime(date.year, date.month, date.day, time.hour, time.minute);
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final fmt = DateFormat('EEE, d MMM yyyy');
-
-    return AdaptiveAlertDialog(
-      backgroundColor: c.surfacePanel,
-      title: Text(
-        'Propose New Time',
-        style: TextStyle(color: c.textPrimary, fontSize: 15, fontWeight: FontWeight.w600),
-      ),
-      content: SizedBox(
-        width: 320,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              widget.event.subject,
-              style: TextStyle(color: c.textMuted, fontSize: 12),
-            ),
-            const SizedBox(height: 16),
-            _PickerRow(
-              label: 'Date',
-              value: fmt.format(_date),
-              onTap: () async {
-                final picked = await showDatePicker(
-                  context: context,
-                  initialDate: _date,
-                  firstDate: DateTime.now().subtract(const Duration(days: 365)),
-                  lastDate: DateTime.now().add(const Duration(days: 365 * 2)),
-                );
-                if (picked != null) setState(() => _date = picked);
-              },
-            ),
-            const SizedBox(height: 8),
-            _PickerRow(
-              label: 'Start',
-              value: _startTime.format(context),
-              onTap: () async {
-                final picked = await showTimePicker(
-                  context: context,
-                  initialTime: _startTime,
-                  initialEntryMode: TimePickerEntryMode.input,
-                );
-                if (picked != null) setState(() => _startTime = picked);
-              },
-            ),
-            const SizedBox(height: 8),
-            _PickerRow(
-              label: 'End',
-              value: _endTime.format(context),
-              onTap: () async {
-                final picked = await showTimePicker(
-                  context: context,
-                  initialTime: _endTime,
-                  initialEntryMode: TimePickerEntryMode.input,
-                );
-                if (picked != null) setState(() => _endTime = picked);
-              },
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text('Cancel', style: TextStyle(color: c.textMuted)),
-        ),
-        FilledButton(
-          style: FilledButton.styleFrom(backgroundColor: AppColors.accent),
-          onPressed: () {
-            Navigator.of(context).pop<_ProposedTime>((
-              newStart: _combine(_date, _startTime),
-              newEnd: _combine(_date, _endTime),
-            ));
-          },
-          child: const Text('Propose', style: TextStyle(color: Colors.white)),
-        ),
-      ],
-    );
-  }
-}
-
-// ─── Drag-to-propose confirm dialog ──────────────────────────────────────────
-
-class _DragProposeConfirmDialog extends StatefulWidget {
-  const _DragProposeConfirmDialog({
-    required this.event,
-    required this.newStart,
-    required this.newEnd,
-  });
-
-  final CalendarEvent event;
-  final DateTime newStart;
-  final DateTime newEnd;
-
-  /// Returns the message string if the user confirms, or null if cancelled.
-  static Future<String?> show(
-    BuildContext context, {
-    required CalendarEvent event,
-    required DateTime newStart,
-    required DateTime newEnd,
-  }) {
-    return showDialog<String>(
-      context: context,
-      builder: (_) => _DragProposeConfirmDialog(
-        event: event,
-        newStart: newStart,
-        newEnd: newEnd,
-      ),
-    );
-  }
-
-  @override
-  State<_DragProposeConfirmDialog> createState() =>
-      _DragProposeConfirmDialogState();
-}
-
-class _DragProposeConfirmDialogState extends State<_DragProposeConfirmDialog> {
-  final _messageController = TextEditingController();
-
-  @override
-  void dispose() {
-    _messageController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final localStart = widget.newStart.toLocal();
-    final localEnd = widget.newEnd.toLocal();
-    final dateFmt = DateFormat('EEE, d MMM yyyy');
-    final timeFmt = DateFormat('h:mm a');
-    final timeLabel =
-        '${dateFmt.format(localStart)} · ${timeFmt.format(localStart)} – ${timeFmt.format(localEnd)}';
-
-    return AdaptiveAlertDialog(
-      backgroundColor: c.surfacePanel,
-      title: Text(
-        'Propose New Time',
-        style: TextStyle(
-          color: c.textPrimary,
-          fontSize: 15,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-      content: SizedBox(
-        width: 360,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              height: 56,
-              child: _EventTile(event: widget.event, compact: false),
-            ),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                Icon(Icons.schedule_outlined, size: 14, color: c.textTertiary),
-                const SizedBox(width: 6),
-                Text(
-                  timeLabel,
-                  style: TextStyle(color: c.textTertiary, fontSize: 12),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _messageController,
-              maxLines: 3,
-              autofocus: true,
-              style: TextStyle(color: c.textPrimary, fontSize: 13),
-              decoration: InputDecoration(
-                hintText: 'Message to organizer (optional)',
-                hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
-                filled: true,
-                fillColor: c.surfaceBase,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6),
-                  borderSide: BorderSide(color: c.separator),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6),
-                  borderSide: BorderSide(color: c.separator),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(6),
-                  borderSide: BorderSide(color: AppColors.accent, width: 1.5),
-                ),
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              ),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text('Cancel', style: TextStyle(color: c.textMuted)),
-        ),
-        FilledButton(
-          style: FilledButton.styleFrom(backgroundColor: AppColors.accent),
-          onPressed: () =>
-              Navigator.of(context).pop(_messageController.text),
-          child: const Text('Send', style: TextStyle(color: Colors.white)),
-        ),
-      ],
-    );
-  }
-}
-
-class _PickerRow extends StatelessWidget {
-  const _PickerRow({required this.label, required this.value, required this.onTap});
-
-  final String label;
-  final String value;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Row(
-      children: [
-        SizedBox(
-          width: 48,
-          child: Text(
-            label,
-            style: TextStyle(color: c.textMuted, fontSize: 12),
-          ),
-        ),
-        InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(4),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              border: Border.all(color: c.separator),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              value,
-              style: TextStyle(color: c.textPrimary, fontSize: 13),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}

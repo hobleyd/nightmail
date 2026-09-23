@@ -12,7 +12,6 @@ import '../../../domain/entities/calendar_event.dart' as domain;
 import '../../../domain/usecases/decline_calendar_event.dart';
 import '../../../domain/usecases/get_cached_calendar_events.dart';
 import '../../../domain/usecases/get_calendar_events.dart';
-import '../../../domain/usecases/propose_new_time.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
 import '../../../infrastructure/notifications/notification_service.dart';
@@ -26,7 +25,6 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
     required CancelCalendarEvent cancelCalendarEvent,
     required CancelCalendarEventSeries cancelCalendarEventSeries,
     required DeclineCalendarEvent declineCalendarEvent,
-    required ProposeNewTime proposeNewTime,
     required UpdateCalendarEvent updateCalendarEvent,
     required NotificationService notificationService,
     required AccountManager accountManager,
@@ -35,7 +33,6 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
         _cancelCalendarEvent = cancelCalendarEvent,
         _cancelCalendarEventSeries = cancelCalendarEventSeries,
         _declineCalendarEvent = declineCalendarEvent,
-        _proposeNewTime = proposeNewTime,
         _updateCalendarEvent = updateCalendarEvent,
         _notificationService = notificationService,
         _accountManager = accountManager,
@@ -45,7 +42,6 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
     on<CalendarEventCancelRequested>(_onCancelRequested);
     on<CalendarEventCancelSeriesRequested>(_onCancelSeriesRequested);
     on<CalendarEventDeclineRequested>(_onDeclineRequested);
-    on<CalendarEventNewTimeProposed>(_onNewTimeProposed);
     on<CalendarEventRescheduleRequested>(_onRescheduleRequested);
     on<CalendarEventSelectionToggled>(_onSelectionToggled);
     on<CalendarSelectionCleared>(_onSelectionCleared);
@@ -58,7 +54,6 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
   final CancelCalendarEvent _cancelCalendarEvent;
   final CancelCalendarEventSeries _cancelCalendarEventSeries;
   final DeclineCalendarEvent _declineCalendarEvent;
-  final ProposeNewTime _proposeNewTime;
   final UpdateCalendarEvent _updateCalendarEvent;
   final NotificationService _notificationService;
   final AccountManager _accountManager;
@@ -158,33 +153,6 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
     );
     if (result.isRight()) {
       await _cancelReminder(event.eventId);
-      await _notifyOtherWindows();
-      await _fetchWeek(weekStart, emit);
-    }
-  }
-
-  Future<void> _onNewTimeProposed(
-    CalendarEventNewTimeProposed event,
-    Emitter<CalendarState> emit,
-  ) async {
-    final weekStart = state.weekStart;
-    final result = await _proposeNewTime(
-      ProposeNewTimeParams(
-        eventId: event.eventId,
-        newStart: event.newStart,
-        newEnd: event.newEnd,
-        timezone: event.timezone,
-        message: event.message,
-      ),
-    );
-    result.fold(
-      (failure) => emit(CalendarError(
-          weekStart: weekStart,
-          spanDays: state.spanDays,
-          message: failure.message)),
-      (_) {},
-    );
-    if (result.isRight()) {
       await _notifyOtherWindows();
       await _fetchWeek(weekStart, emit);
     }

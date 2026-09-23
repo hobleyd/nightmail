@@ -5,6 +5,7 @@ import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/domain/entities/calendar_event.dart';
 import 'package:nightmail/domain/usecases/create_calendar_event.dart';
+import 'package:nightmail/domain/usecases/propose_new_time.dart';
 import 'package:nightmail/domain/usecases/update_calendar_event.dart';
 import 'package:nightmail/infrastructure/notifications/notification_service.dart';
 import 'package:nightmail/presentation/blocs/event_edit/event_edit_bloc.dart';
@@ -45,16 +46,24 @@ EventEditSubmitted _updateSubmitted({int? reminderMinutes}) =>
       reminderMinutes: reminderMinutes,
     );
 
-@GenerateMocks([CreateCalendarEvent, UpdateCalendarEvent, NotificationService])
+@GenerateMocks([
+  CreateCalendarEvent,
+  UpdateCalendarEvent,
+  ProposeNewTime,
+  NotificationService,
+])
 void main() {
   late MockCreateCalendarEvent mockCreate;
   late MockUpdateCalendarEvent mockUpdate;
+  late MockProposeNewTime mockPropose;
   late MockNotificationService mockNotifications;
 
   setUp(() {
     provideDummy<Either<Failure, CalendarEvent>>(Right(_savedEvent('x')));
+    provideDummy<Either<Failure, void>>(const Right(null));
     mockCreate = MockCreateCalendarEvent();
     mockUpdate = MockUpdateCalendarEvent();
+    mockPropose = MockProposeNewTime();
     mockNotifications = MockNotificationService();
     // Fire-and-forget calls from _onSubmitted — stub unconditionally so an
     // unstubbed call doesn't throw MissingStubError; tests verify() the ones
@@ -76,6 +85,7 @@ void main() {
   EventEditBloc makeBloc({String? accountId = 'acct-1'}) => EventEditBloc(
         createCalendarEvent: mockCreate,
         updateCalendarEvent: mockUpdate,
+        proposeNewTime: mockPropose,
         notificationService: mockNotifications,
         accountId: accountId,
       );
@@ -261,6 +271,65 @@ void main() {
         emitsInOrder([
           const EventEditSaving(),
           const EventEditError(message: 'nope'),
+        ]),
+      );
+    });
+  });
+
+  group('a counter-proposal', () {
+    final proposal = EventEditProposeSubmitted(
+      eventId: 'event-1',
+      newStart: _start,
+      newEnd: _end,
+      timezone: 'Australia/Sydney',
+      message: 'Any chance of the afternoon?',
+    );
+
+    test('sends it and moves through Saving to Proposed, saving nothing',
+        () async {
+      final bloc = makeBloc();
+      addTearDown(bloc.close);
+      when(mockPropose(any)).thenAnswer((_) async => const Right(null));
+
+      bloc.add(proposal);
+
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          const EventEditSaving(),
+          const EventEditProposed(eventId: 'event-1'),
+        ]),
+      );
+      verify(mockPropose(ProposeNewTimeParams(
+        eventId: 'event-1',
+        newStart: _start,
+        newEnd: _end,
+        timezone: 'Australia/Sydney',
+        message: 'Any chance of the afternoon?',
+      ))).called(1);
+      verifyNever(mockCreate(any));
+      verifyNever(mockUpdate(any));
+      // Only the organizer can move the meeting, so there is no reminder to
+      // move either.
+      verifyNever(mockNotifications.cancelEventReminder(
+        accountId: anyNamed('accountId'),
+        eventId: anyNamed('eventId'),
+      ));
+    });
+
+    test('reports a failure', () async {
+      final bloc = makeBloc();
+      addTearDown(bloc.close);
+      when(mockPropose(any)).thenAnswer(
+          (_) async => const Left(ServerFailure(message: 'boom')));
+
+      bloc.add(proposal);
+
+      await expectLater(
+        bloc.stream,
+        emitsInOrder([
+          const EventEditSaving(),
+          const EventEditError(message: 'boom'),
         ]),
       );
     });

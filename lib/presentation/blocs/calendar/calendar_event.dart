@@ -62,25 +62,6 @@ final class CalendarEventDeclineRequested extends CalendarBlocEvent {
   List<Object?> get props => [eventId];
 }
 
-final class CalendarEventNewTimeProposed extends CalendarBlocEvent {
-  const CalendarEventNewTimeProposed({
-    required this.eventId,
-    required this.newStart,
-    required this.newEnd,
-    this.timezone,
-    this.message,
-  });
-
-  final String eventId;
-  final DateTime newStart;
-  final DateTime newEnd;
-  final String? timezone;
-  final String? message;
-
-  @override
-  List<Object?> get props => [eventId, newStart, newEnd, timezone, message];
-}
-
 final class CalendarEventRescheduleRequested extends CalendarBlocEvent {
   const CalendarEventRescheduleRequested({
     required this.event,

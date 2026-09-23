@@ -573,7 +573,6 @@ Future<void> configureDependencies() async {
           cancelCalendarEvent: sl<CancelCalendarEvent>(),
           cancelCalendarEventSeries: sl<CancelCalendarEventSeries>(),
           declineCalendarEvent: sl<DeclineCalendarEvent>(),
-          proposeNewTime: sl<ProposeNewTime>(),
           updateCalendarEvent: sl<UpdateCalendarEvent>(),
           notificationService: sl<NotificationService>(),
           accountManager: sl<AccountManager>(),
@@ -594,6 +593,7 @@ Future<void> configureDependencies() async {
   sl.registerFactory(() => EventEditBloc(
         createCalendarEvent: sl<CreateCalendarEvent>(),
         updateCalendarEvent: sl<UpdateCalendarEvent>(),
+        proposeNewTime: sl<ProposeNewTime>(),
         notificationService: sl<NotificationService>(),
       ));
 

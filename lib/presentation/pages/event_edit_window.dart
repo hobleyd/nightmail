@@ -14,6 +14,7 @@ import '../../domain/entities/calendar_recurrence.dart';
 import '../../domain/usecases/check_attendees_availability.dart';
 import '../../domain/usecases/get_meeting_rooms.dart';
 import '../../domain/usecases/create_calendar_event.dart';
+import '../../domain/usecases/propose_new_time.dart';
 import '../../domain/usecases/update_calendar_event.dart';
 import '../../infrastructure/notifications/notification_service.dart';
 import '../../injection_container.dart';
@@ -58,6 +59,10 @@ class EventEditWindowApp extends StatelessWidget {
     final initialStartStr = arguments['initialStart'] as String?;
     final initialStart =
         initialStartStr != null ? DateTime.parse(initialStartStr).toLocal() : null;
+    final initialEndStr = arguments['initialEnd'] as String?;
+    final initialEnd =
+        initialEndStr != null ? DateTime.parse(initialEndStr).toLocal() : null;
+    final proposeNewTime = arguments['proposeNewTime'] as bool? ?? false;
     final accountId = arguments['accountId'] as String?;
     final isO365Account = arguments['isO365Account'] as bool? ?? false;
     final isGmailAccount = arguments['isGmailAccount'] as bool? ?? false;
@@ -81,6 +86,8 @@ class EventEditWindowApp extends StatelessWidget {
             home: _EventEditWindowPage(
               event: event,
               initialStart: initialStart,
+              initialEnd: initialEnd,
+              proposeNewTime: proposeNewTime,
               accountId: accountId,
               isO365Account: isO365Account,
               isGmailAccount: isGmailAccount,
@@ -100,6 +107,8 @@ class EventEditWindowApp extends StatelessWidget {
       end: DateTime.parse(raw['end'] as String).toLocal(),
       isAllDay: raw['isAllDay'] as bool? ?? false,
       isOrganizer: raw['isOrganizer'] as bool? ?? false,
+      organizerEmail: raw['organizerEmail'] as String?,
+      organizerName: raw['organizerName'] as String?,
       location: raw['location'] as String?,
       onlineMeetingUrl: raw['onlineMeetingUrl'] as String?,
       bodyPreview: raw['bodyPreview'] as String?,
@@ -157,6 +166,8 @@ class _EventEditWindowPage extends StatefulWidget {
   const _EventEditWindowPage({
     this.event,
     this.initialStart,
+    this.initialEnd,
+    this.proposeNewTime = false,
     this.accountId,
     this.isO365Account = false,
     this.isGmailAccount = false,
@@ -164,6 +175,8 @@ class _EventEditWindowPage extends StatefulWidget {
 
   final CalendarEvent? event;
   final DateTime? initialStart;
+  final DateTime? initialEnd;
+  final bool proposeNewTime;
   final String? accountId;
   final bool isO365Account;
   final bool isGmailAccount;
@@ -325,13 +338,16 @@ class _EventEditWindowPageState extends State<_EventEditWindowPage>
       create: (_) => EventEditBloc(
         createCalendarEvent: sl<CreateCalendarEvent>(),
         updateCalendarEvent: sl<UpdateCalendarEvent>(),
+        proposeNewTime: sl<ProposeNewTime>(),
         notificationService: sl<NotificationService>(),
         accountId: widget.accountId,
       ),
       child: Scaffold(
         body: BlocListener<EventEditBloc, EventEditState>(
           listener: (context, state) async {
-            if (state is EventEditSaved) {
+            // A proposal declines this account's copy until the organizer
+            // answers, so the calendar windows repaint for it as for a save.
+            if (state is EventEditSaved || state is EventEditProposed) {
               // Best-effort — no relay exists on Linux, Android or iOS. An
               // uncaught MissingPluginException here would skip _close() and
               // with it the geometry save below.
@@ -353,6 +369,8 @@ class _EventEditWindowPageState extends State<_EventEditWindowPage>
           child: EventEditForm(
             event: widget.event,
             initialStart: widget.initialStart,
+            initialEnd: widget.initialEnd,
+            proposeNewTime: widget.proposeNewTime,
             accountId: widget.accountId,
             isO365Account: widget.isO365Account,
             isGmailAccount: widget.isGmailAccount,

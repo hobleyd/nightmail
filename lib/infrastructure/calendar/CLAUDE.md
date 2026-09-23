@@ -137,6 +137,33 @@ It runs after the answered message's own delete, so that delete is first in the
 outbox behind the RSVP (see below on drain order), and a failure anywhere in it
 is swallowed — the RSVP succeeded, and housekeeping may not say otherwise.
 
+## Proposing a New Time Is the Event Form, Not a Dialog
+
+"Propose New Time…" on a calendar tile, and dragging somebody else's meeting
+to another slot, both open the **event form** in counter-proposal mode
+(`EventEditForm.proposeNewTime`): the meeting is read-only apart from its
+date and time, the guests' availability rows and the schedule grid are shown,
+and the footer sends the proposal with an optional message to the organizer.
+They used to open two small pickers-only dialogs in `calendar_page.dart`, which
+could not answer the only question worth asking before proposing — is anyone
+free then? Those are gone; do not bring them back.
+
+Two consequences of where the form runs:
+
+- **The proposal goes through `EventEditBloc`, not `CalendarBloc`.** On the
+  desktop the form is its own window with its own engine, which has no
+  `CalendarBloc` to dispatch to. `EventEditProposeSubmitted` calls the
+  `ProposeNewTime` use case and emits `EventEditProposed`; both hosts treat
+  that like `EventEditSaved` (notify the other windows, close), since a
+  proposal declines this account's copy until the organizer answers.
+- **The organizer is added to the availability roster by the form**
+  (`_availabilityRoster`). Graph keeps the organizer out of `attendees`, and
+  theirs is the one calendar a counter-proposal most has to suit, so
+  `organizerEmail` travels in the sub-window's arguments for this.
+
+An organizer dragging their *own* meeting still reschedules it directly
+(`CalendarEventRescheduleRequested`); only the attendee path opens the form.
+
 ## Calendar Cache
 
 The calendar is offline-first: it paints from `cached_calendar_events` and then

@@ -28,6 +28,7 @@ import '../../domain/usecases/check_attendees_availability.dart';
 import '../../domain/usecases/create_calendar_event.dart';
 import '../../domain/usecases/forward_calendar_event.dart';
 import '../../domain/usecases/get_meeting_rooms.dart';
+import '../../domain/usecases/propose_new_time.dart';
 import '../../domain/usecases/update_calendar_event.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../../infrastructure/notifications/notification_service.dart';
@@ -51,6 +52,8 @@ class EventEditDialog extends StatelessWidget {
     super.key,
     this.event,
     this.initialStart,
+    this.initialEnd,
+    this.proposeNewTime = false,
     this.accountId,
     this.isO365Account = false,
     this.isGmailAccount = false,
@@ -58,6 +61,11 @@ class EventEditDialog extends StatelessWidget {
 
   final CalendarEvent? event;
   final DateTime? initialStart;
+  final DateTime? initialEnd;
+
+  /// Opens the form as an attendee's counter-proposal for [event] — see
+  /// [EventEditForm.proposeNewTime].
+  final bool proposeNewTime;
   final String? accountId;
   final bool isO365Account;
   final bool isGmailAccount;
@@ -67,10 +75,19 @@ class EventEditDialog extends StatelessWidget {
   /// implementation, so the sub-window path there is not a degraded
   /// experience but a `MissingPluginException` — New Event on the mobile
   /// calendar did nothing until this branch existed.
+  ///
+  /// [proposeNewTime] opens [event] — somebody else's meeting — as a
+  /// counter-proposal rather than a view: the times are editable, everything
+  /// else is not, and the footer sends the proposal instead of saving. A
+  /// dragged tile passes the slot it was dropped on as
+  /// [initialStart]/[initialEnd]; the menu item passes neither and the form
+  /// starts at the meeting's current time.
   static Future<void> show(
     BuildContext context, {
     CalendarEvent? event,
     DateTime? initialStart,
+    DateTime? initialEnd,
+    bool proposeNewTime = false,
     String? accountId,
     bool isO365Account = false,
     bool isGmailAccount = false,
@@ -91,6 +108,8 @@ class EventEditDialog extends StatelessWidget {
           builder: (_) => _MobileEventEditPage(
             event: event,
             initialStart: initialStart,
+            initialEnd: initialEnd,
+            proposeNewTime: proposeNewTime,
             accountId: accountId,
             isO365Account: isO365Account,
             isGmailAccount: isGmailAccount,
@@ -106,6 +125,8 @@ class EventEditDialog extends StatelessWidget {
           'type': 'eventEdit',
           if (event != null) 'event': _eventToArgs(event),
           if (initialStart != null) 'initialStart': initialStart.toIso8601String(),
+          if (initialEnd != null) 'initialEnd': initialEnd.toIso8601String(),
+          if (proposeNewTime) 'proposeNewTime': true,
           if (accountId != null) 'accountId': accountId,
           if (isO365Account) 'isO365Account': true,
           if (isGmailAccount) 'isGmailAccount': true,
@@ -121,6 +142,10 @@ class EventEditDialog extends StatelessWidget {
         'end': e.end.toUtc().toIso8601String(),
         'isAllDay': e.isAllDay,
         'isOrganizer': e.isOrganizer,
+        // Somebody else's meeting: the propose-mode schedule grid gives the
+        // organizer a column, and Graph keeps them out of `attendees`.
+        if (e.organizerEmail != null) 'organizerEmail': e.organizerEmail,
+        if (e.organizerName != null) 'organizerName': e.organizerName,
         if (e.location != null) 'location': e.location,
         if (e.onlineMeetingUrl != null)
           'onlineMeetingUrl': e.onlineMeetingUrl,
@@ -166,6 +191,14 @@ class EventEditDialog extends StatelessWidget {
               duration: const Duration(seconds: 2),
             ),
           );
+        } else if (state is EventEditProposed) {
+          Navigator.of(context).pop(true);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('New time proposed: ${event?.subject ?? ''}'),
+              duration: const Duration(seconds: 2),
+            ),
+          );
         } else if (state is EventEditError) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -183,6 +216,8 @@ class EventEditDialog extends StatelessWidget {
           child: EventEditForm(
             event: event,
             initialStart: initialStart,
+            initialEnd: initialEnd,
+            proposeNewTime: proposeNewTime,
             accountId: accountId,
             onClose: () => Navigator.of(context).pop(false),
             checkAttendeesAvailability: sl<CheckAttendeesAvailability>(),
@@ -201,6 +236,8 @@ class _MobileEventEditPage extends StatelessWidget {
   const _MobileEventEditPage({
     this.event,
     this.initialStart,
+    this.initialEnd,
+    this.proposeNewTime = false,
     this.accountId,
     this.isO365Account = false,
     this.isGmailAccount = false,
@@ -209,6 +246,8 @@ class _MobileEventEditPage extends StatelessWidget {
 
   final CalendarEvent? event;
   final DateTime? initialStart;
+  final DateTime? initialEnd;
+  final bool proposeNewTime;
   final String? accountId;
   final bool isO365Account;
   final bool isGmailAccount;
@@ -221,6 +260,7 @@ class _MobileEventEditPage extends StatelessWidget {
       create: (_) => EventEditBloc(
         createCalendarEvent: sl<CreateCalendarEvent>(),
         updateCalendarEvent: sl<UpdateCalendarEvent>(),
+        proposeNewTime: sl<ProposeNewTime>(),
         notificationService: sl<NotificationService>(),
         accountId: accountId,
       ),
@@ -229,7 +269,9 @@ class _MobileEventEditPage extends StatelessWidget {
         body: SafeArea(
           child: BlocListener<EventEditBloc, EventEditState>(
             listener: (context, state) {
-              if (state is EventEditSaved) {
+              // A proposal changes this account's copy (it is declined until
+              // the organizer answers), so the calendar repaints for it too.
+              if (state is EventEditSaved || state is EventEditProposed) {
                 final bloc = calendarBloc;
                 if (bloc != null) {
                   bloc.add(calendar.CalendarWeekNavigated(
@@ -246,6 +288,8 @@ class _MobileEventEditPage extends StatelessWidget {
             child: EventEditForm(
               event: event,
               initialStart: initialStart,
+              initialEnd: initialEnd,
+              proposeNewTime: proposeNewTime,
               accountId: accountId,
               isO365Account: isO365Account,
               isGmailAccount: isGmailAccount,
@@ -286,6 +330,8 @@ class EventEditForm extends StatefulWidget {
     super.key,
     this.event,
     this.initialStart,
+    this.initialEnd,
+    this.proposeNewTime = false,
     this.accountId,
     this.isO365Account = false,
     this.isGmailAccount = false,
@@ -295,9 +341,28 @@ class EventEditForm extends StatefulWidget {
     this.getMeetingRooms,
     this.onSchedulePaneToggled,
     this.fillsWindow = false,
-  });
+  }) : assert(!proposeNewTime || event != null,
+            'A counter-proposal needs the meeting it is about');
   final CalendarEvent? event;
+
+  /// Where a new event starts; in [proposeNewTime] mode, the slot the form
+  /// opens on instead of the meeting's own (a dragged tile's drop position).
   final DateTime? initialStart;
+
+  /// Only read in [proposeNewTime] mode, alongside [initialStart]. Left null,
+  /// the meeting keeps its duration from the new start.
+  final DateTime? initialEnd;
+
+  /// Opens [event] — somebody else's meeting — as a counter-proposal.
+  ///
+  /// Everything about the meeting stays read-only, as it would for a viewer,
+  /// except the date and time; the guests' availability rows and the schedule
+  /// grid are shown so the slot proposed is one people are actually free for;
+  /// a message field goes to the organizer; and the footer sends the proposal
+  /// through [EventEditBloc] rather than saving anything. Replaced the two
+  /// pickers-only dialogs the calendar used to show here, which had no way of
+  /// answering "is anyone free then?".
+  final bool proposeNewTime;
   final String? accountId;
   final bool isO365Account;
   final bool isGmailAccount;
@@ -326,6 +391,9 @@ class _EventEditFormState extends State<EventEditForm> {
   late final TextEditingController _titleController;
   late final TextEditingController _locationController;
   late final TextEditingController _descriptionController;
+
+  /// Note to the organizer, propose mode only.
+  final TextEditingController _messageController = TextEditingController();
 
   late DateTime _startDate;
   late TimeOfDay _startTime;
@@ -426,8 +494,16 @@ class _EventEditFormState extends State<EventEditForm> {
     final defaultStart = widget.initialStart ?? nextHalfHour;
     final defaultEnd = defaultStart.add(const Duration(minutes: 30));
 
-    final startLocal = (e?.start ?? defaultStart).toLocal();
-    final endLocal = (e?.end ?? defaultEnd).toLocal();
+    // A counter-proposal opened by dragging starts on the slot the tile was
+    // dropped on, not where the meeting is.
+    final proposedStart = _proposing ? widget.initialStart : null;
+    final proposedEnd = proposedStart == null
+        ? null
+        : widget.initialEnd ??
+            proposedStart.add(e!.end.difference(e.start));
+
+    final startLocal = (proposedStart ?? e?.start ?? defaultStart).toLocal();
+    final endLocal = (proposedEnd ?? e?.end ?? defaultEnd).toLocal();
 
     _startDate = DateTime(startLocal.year, startLocal.month, startLocal.day);
     _startTime = TimeOfDay(hour: startLocal.hour, minute: startLocal.minute);
@@ -500,7 +576,7 @@ class _EventEditFormState extends State<EventEditForm> {
     // user edit, which means an organizer who opens a meeting and reads the
     // availability rows — or clicks "Find a time" — without touching anything
     // would otherwise see nothing at all.
-    if (!_readOnly && !_isAllDay && _attendees.isNotEmpty) {
+    if (_showsAvailability && !_isAllDay && _availabilityRoster.isNotEmpty) {
       _scheduleAvailabilityCheck();
     }
 
@@ -575,10 +651,37 @@ class _EventEditFormState extends State<EventEditForm> {
     _titleController.dispose();
     _locationController.dispose();
     _descriptionController.dispose();
+    _messageController.dispose();
     super.dispose();
   }
 
   bool get _readOnly => widget.event != null && !widget.event!.isOrganizer;
+
+  /// Counter-proposal mode; see [EventEditForm.proposeNewTime]. Only ever true
+  /// for somebody else's meeting — an organizer moves their meeting by saving.
+  bool get _proposing => widget.proposeNewTime && _readOnly;
+
+  /// The one thing a proposer may change on a meeting that is otherwise
+  /// [_readOnly].
+  bool get _timeLocked => _readOnly && !_proposing;
+
+  /// Whether free/busy is fetched and the schedule pane offered. A plain viewer
+  /// gets neither; an organizer and a proposer both need to know who is free.
+  bool get _showsAvailability => !_readOnly || _proposing;
+
+  /// Whose schedules to fetch and draw. The guests as listed, plus — when
+  /// proposing — the organizer, whom Graph keeps out of `attendees` but who is
+  /// the one person a counter-proposal most needs to suit.
+  List<String> get _availabilityRoster {
+    final emails = _attendees.map(_extractEmail).toList();
+    final organizer = _proposing ? widget.event?.organizerEmail : null;
+    if (organizer != null &&
+        organizer.isNotEmpty &&
+        !emails.any((e) => e.toLowerCase() == organizer.toLowerCase())) {
+      emails.insert(0, organizer);
+    }
+    return emails;
+  }
 
   /// True when editing a single occurrence of a recurring series. The
   /// recurrence rule belongs to the series master, so here it's shown as a
@@ -588,6 +691,7 @@ class _EventEditFormState extends State<EventEditForm> {
 
   String get _baseTitle {
     if (widget.event == null) return 'New Event';
+    if (_proposing) return 'Propose New Time';
     return widget.event!.isOrganizer ? 'Edit Event' : 'View Event';
   }
 
@@ -658,7 +762,8 @@ class _EventEditFormState extends State<EventEditForm> {
 
   Future<void> _checkAvailability() async {
     final checker = widget.checkAttendeesAvailability;
-    if (checker == null || _attendees.isEmpty || _isAllDay) {
+    final attendeeEmails = _availabilityRoster;
+    if (checker == null || attendeeEmails.isEmpty || _isAllDay) {
       if (mounted) setState(() => _availabilities = null);
       return;
     }
@@ -669,7 +774,6 @@ class _EventEditFormState extends State<EventEditForm> {
 
     if (mounted) setState(() => _checkingAvailability = true);
 
-    final attendeeEmails = _attendees.map(_extractEmail).toList();
     // A meeting must not be reported as a clash with itself. The exclusion uses
     // the event's *stored* slot rather than the form's current one: the guests'
     // copies stay where the server put them until this edit is saved, so after
@@ -845,6 +949,10 @@ class _EventEditFormState extends State<EventEditForm> {
   }
 
   void _submit() {
+    if (_proposing) {
+      _submitProposal();
+      return;
+    }
     final title = _titleController.text.trim();
     if (title.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -904,6 +1012,28 @@ class _EventEditFormState extends State<EventEditForm> {
             description: description,
             attendeeEmails: attendeeEmails,
           ),
+        ));
+  }
+
+  /// Sends the counter-proposal. The times are local wall-clock, as the whole
+  /// form's are, so the zone sent with them is the device's — the same pairing
+  /// the drag-to-propose path always used.
+  void _submitProposal() {
+    final event = widget.event!;
+    final start = _computedStart;
+    final end = _computedEnd;
+    if (!end.isAfter(start)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('End time must be after start time')),
+      );
+      return;
+    }
+    context.read<EventEditBloc>().add(EventEditProposeSubmitted(
+          eventId: event.id,
+          newStart: start,
+          newEnd: end,
+          timezone: _localIanaTimezone(),
+          message: _nullIfBlank(_messageController.text),
         ));
   }
 
@@ -989,18 +1119,18 @@ class _EventEditFormState extends State<EventEditForm> {
                 const SizedBox(height: 10),
                 Divider(height: 1, color: c.separator),
                 const SizedBox(height: 10),
-                AbsorbPointer(
-                  absorbing: _readOnly,
-                  child: Row(
-                    children: [
-                      Expanded(
+                Row(
+                  children: [
+                    Expanded(
+                      child: AbsorbPointer(
+                        absorbing: _timeLocked,
                         child: _DateTimeSection(
                           startDate: _startDate,
                           startTime: _startTime,
                           endDate: _endDate,
                           endTime: _endTime,
                           isAllDay: _isAllDay,
-                          readOnly: _readOnly,
+                          readOnly: _timeLocked,
                           onStartDateChanged: (d) {
                             setState(() {
                               _startDate = d;
@@ -1044,8 +1174,13 @@ class _EventEditFormState extends State<EventEditForm> {
                           },
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      _AllDayToggle(
+                    ),
+                    const SizedBox(width: 12),
+                    // A proposer suggests a time, not that the meeting become
+                    // all-day, so this stays locked with the rest of the form.
+                    AbsorbPointer(
+                      absorbing: _readOnly,
+                      child: _AllDayToggle(
                         value: _isAllDay,
                         onChanged: (v) {
                           setState(() => _isAllDay = v);
@@ -1056,8 +1191,8 @@ class _EventEditFormState extends State<EventEditForm> {
                           _onSlotEdited();
                         },
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 10),
                 AbsorbPointer(
@@ -1149,11 +1284,11 @@ class _EventEditFormState extends State<EventEditForm> {
                 ),
                 // All-day events have no time to negotiate, so the availability
                 // readout and the schedule pane are both meaningless for them.
-                if (!_readOnly &&
+                if (_showsAvailability &&
                     !_isAllDay &&
                     widget.checkAttendeesAvailability != null)
                   _AvailabilitySection(
-                    attendees: _attendees,
+                    attendees: _availabilityRoster,
                     availabilities: _availabilities,
                     checking: _checkingAvailability,
                     onShowSchedule: _toggleSchedulePane,
@@ -1211,6 +1346,26 @@ class _EventEditFormState extends State<EventEditForm> {
                           ),
                         ),
                 ),
+                if (_proposing) ...[
+                  const SizedBox(height: 10),
+                  Divider(height: 1, color: c.separator),
+                  const SizedBox(height: 10),
+                  _LabeledField(
+                    label: 'Message',
+                    child: TextField(
+                      controller: _messageController,
+                      maxLines: 3,
+                      style: TextStyle(color: c.textPrimary, fontSize: 13),
+                      decoration: InputDecoration(
+                        hintText: 'Message to organizer (optional)',
+                        hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.zero,
+                        isDense: true,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -1218,7 +1373,8 @@ class _EventEditFormState extends State<EventEditForm> {
         Divider(height: 1, color: c.border),
         _Footer(
           isEditing: widget.event != null,
-          readOnly: _readOnly,
+          readOnly: _readOnly && !_proposing,
+          proposing: _proposing,
           onSave: _submit,
           onForward: _forward,
           onClose: widget.onClose,
@@ -1228,12 +1384,12 @@ class _EventEditFormState extends State<EventEditForm> {
     );
 
     if (_showSchedulePane) {
+      final roster = _availabilityRoster;
       final grid = _ScheduleGrid(
         attendees: [
-          if (_organizerEmail != null &&
-              !_attendees.map(_extractEmail).contains(_organizerEmail))
+          if (_organizerEmail != null && !roster.contains(_organizerEmail))
             _organizerEmail!,
-          ..._attendees.map(_extractEmail),
+          ...roster,
         ],
         availabilities: _availabilities ?? [],
         meetingStart: _computedStart,
@@ -2916,11 +3072,15 @@ class _Footer extends StatelessWidget {
     required this.onClose,
     this.onForward,
     this.readOnly = false,
+    this.proposing = false,
     this.hoveredUrl,
   });
   final bool isEditing;
   final VoidCallback onSave;
   final VoidCallback onClose;
+
+  /// The primary action sends a counter-proposal rather than saving.
+  final bool proposing;
 
   /// Offered only in [readOnly] — forwarding is what an attendee does with
   /// somebody else's meeting. The organizer adds a guest by typing them into
@@ -3004,12 +3164,18 @@ class _Footer extends StatelessWidget {
                             strokeWidth: 1.5, color: Colors.white),
                       )
                     : Icon(
-                        isEditing ? Icons.check_rounded : Icons.add_rounded,
+                        proposing
+                            ? Icons.schedule_send_rounded
+                            : isEditing
+                                ? Icons.check_rounded
+                                : Icons.add_rounded,
                         size: 14),
                 label: Text(
                   isSaving
-                      ? 'Saving…'
-                      : (isEditing ? 'Save changes' : 'Save Event'),
+                      ? (proposing ? 'Sending…' : 'Saving…')
+                      : proposing
+                          ? 'Propose New Time'
+                          : (isEditing ? 'Save changes' : 'Save Event'),
                   style: const TextStyle(fontSize: 13),
                 ),
               ),

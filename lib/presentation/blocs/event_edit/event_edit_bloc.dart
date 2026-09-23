@@ -1,6 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../domain/usecases/create_calendar_event.dart';
+import '../../../domain/usecases/propose_new_time.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
 import '../../../infrastructure/notifications/notification_service.dart';
 import 'event_edit_event.dart';
@@ -10,17 +11,21 @@ class EventEditBloc extends Bloc<EventEditBlocEvent, EventEditState> {
   EventEditBloc({
     required CreateCalendarEvent createCalendarEvent,
     required UpdateCalendarEvent updateCalendarEvent,
+    required ProposeNewTime proposeNewTime,
     required NotificationService notificationService,
     this.accountId,
   })  : _createCalendarEvent = createCalendarEvent,
         _updateCalendarEvent = updateCalendarEvent,
+        _proposeNewTime = proposeNewTime,
         _notificationService = notificationService,
         super(const EventEditInitial()) {
     on<EventEditSubmitted>(_onSubmitted);
+    on<EventEditProposeSubmitted>(_onProposeSubmitted);
   }
 
   final CreateCalendarEvent _createCalendarEvent;
   final UpdateCalendarEvent _updateCalendarEvent;
+  final ProposeNewTime _proposeNewTime;
   final NotificationService _notificationService;
 
   /// The account this event belongs to. Needed to namespace scheduled
@@ -108,5 +113,28 @@ class EventEditBloc extends Bloc<EventEditBlocEvent, EventEditState> {
         },
       );
     }
+  }
+
+  /// An attendee's counter-proposal. Nothing about the meeting is saved — only
+  /// the organizer can move it, by accepting — so this bypasses the create/
+  /// update path entirely and there is no reminder to reschedule.
+  Future<void> _onProposeSubmitted(
+    EventEditProposeSubmitted event,
+    Emitter<EventEditState> emit,
+  ) async {
+    emit(const EventEditSaving());
+    final result = await _proposeNewTime(
+      ProposeNewTimeParams(
+        eventId: event.eventId,
+        newStart: event.newStart,
+        newEnd: event.newEnd,
+        timezone: event.timezone,
+        message: event.message,
+      ),
+    );
+    result.fold(
+      (f) => emit(EventEditError(message: f.message)),
+      (_) => emit(EventEditProposed(eventId: event.eventId)),
+    );
   }
 }

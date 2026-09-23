@@ -12,6 +12,7 @@ import 'package:nightmail/domain/repositories/calendar_repository.dart';
 import 'package:nightmail/domain/repositories/system_contacts_repository.dart';
 import 'package:nightmail/domain/usecases/check_attendees_availability.dart';
 import 'package:nightmail/domain/usecases/create_calendar_event.dart';
+import 'package:nightmail/domain/usecases/propose_new_time.dart';
 import 'package:nightmail/domain/usecases/get_meeting_rooms.dart';
 import 'package:nightmail/domain/usecases/update_calendar_event.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
@@ -45,11 +46,14 @@ class _FakeCreateCalendarEvent extends Fake implements CreateCalendarEvent {}
 
 class _FakeUpdateCalendarEvent extends Fake implements UpdateCalendarEvent {}
 
+class _FakeProposeNewTime extends Fake implements ProposeNewTime {}
+
 class _FakeNotificationService extends Fake implements NotificationService {}
 
 EventEditBloc _stubBloc() => EventEditBloc(
       createCalendarEvent: _FakeCreateCalendarEvent(),
       updateCalendarEvent: _FakeUpdateCalendarEvent(),
+      proposeNewTime: _FakeProposeNewTime(),
       notificationService: _FakeNotificationService(),
     );
 

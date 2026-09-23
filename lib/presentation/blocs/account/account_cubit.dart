@@ -236,6 +236,15 @@ class AccountCubit extends Cubit<AccountState> {
     // shows meetings rather than an empty week.
     unawaited(_backgroundRefresh(
         'Calendar', () => _calendarCacheSync.syncAccount(account.id)));
+    // And its Profile fields (name, job title, phones), so Settings > Accounts
+    // and the signature merge tags are prefilled without the user having to
+    // press "Fetch from Microsoft/Google" themselves.
+    unawaited(_backgroundRefresh('Profile', () async {
+      if (await _accountManager.prefillOwnProfileFields(account.id) &&
+          !isClosed) {
+        await _emitLoaded();
+      }
+    }));
   }
 
   /// Looks up [email] in [parentAccountId]'s directory and probes whether its

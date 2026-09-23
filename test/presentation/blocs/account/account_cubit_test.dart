@@ -279,6 +279,11 @@ void main() {
   });
 
   group('addAccount', () {
+    setUp(() {
+      when(mockAccountManager.prefillOwnProfileFields(any))
+          .thenAnswer((_) async => false);
+    });
+
     test('adds the account, reloads, and kicks off background contact/'
         'calendar syncs', () async {
       when(mockAccountManager.addAccount(any)).thenAnswer((_) async {});
@@ -298,6 +303,55 @@ void main() {
       when(mockAccountManager.addAccount(any)).thenAnswer((_) async {});
       when(mockContactCacheSync.syncAccount(any, force: anyNamed('force')))
           .thenThrow(Exception('network down'));
+
+      await cubit.addAccount(_account1);
+      await pumpEventQueue();
+
+      expect(cubit.state, isA<AccountsLoaded>());
+    });
+
+    test('prefills the new account\'s profile fields automatically and '
+        're-emits once they are saved', () async {
+      when(mockAccountManager.addAccount(any)).thenAnswer((_) async {});
+      final prefilled = _account1.copyWith(firstName: 'Ada', lastName: 'L');
+      when(mockAccountManager.prefillOwnProfileFields('acct-1'))
+          .thenAnswer((_) async {
+        // The manager has persisted the fetched fields by the time it
+        // answers; subsequent reads see the prefilled account.
+        when(mockAccountManager.accounts).thenReturn([prefilled, _account2]);
+        return true;
+      });
+
+      final states = <AccountState>[];
+      final sub = cubit.stream.listen(states.add);
+      await cubit.addAccount(_account1);
+      await pumpEventQueue();
+      await sub.cancel();
+
+      verify(mockAccountManager.prefillOwnProfileFields('acct-1')).called(1);
+      // One AccountsLoaded from addAccount itself, a second once the
+      // prefilled profile has been persisted so Settings picks it up.
+      final loaded = states.whereType<AccountsLoaded>().toList();
+      expect(loaded.length, 2);
+      expect(loaded.last.accounts.first.firstName, 'Ada');
+    });
+
+    test('does not re-emit when there was nothing to prefill', () async {
+      when(mockAccountManager.addAccount(any)).thenAnswer((_) async {});
+
+      final states = <AccountState>[];
+      final sub = cubit.stream.listen(states.add);
+      await cubit.addAccount(_account1);
+      await pumpEventQueue();
+      await sub.cancel();
+
+      expect(states.whereType<AccountsLoaded>().length, 1);
+    });
+
+    test('a failing profile prefill does not surface as an error', () async {
+      when(mockAccountManager.addAccount(any)).thenAnswer((_) async {});
+      when(mockAccountManager.prefillOwnProfileFields(any))
+          .thenThrow(Exception('scope not granted'));
 
       await cubit.addAccount(_account1);
       await pumpEventQueue();

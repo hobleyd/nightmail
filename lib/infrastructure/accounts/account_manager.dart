@@ -268,6 +268,43 @@ class AccountManager {
     }
   }
 
+  /// Runs Settings' "Fetch from Microsoft/Google" for [accountId] without the
+  /// user asking: fetches the account holder's directory profile and persists
+  /// any field that is still blank on the stored account. Meant for a freshly
+  /// added account, so the Profile section (and the signature merge tags it
+  /// feeds) start out populated rather than empty.
+  ///
+  /// Only blank fields are filled — a value the user has already typed is
+  /// never overwritten — and the stored account is re-read after the network
+  /// round trip so a concurrent edit is not clobbered. Returns whether
+  /// anything was saved; false for IMAP accounts, shared mailboxes (whose
+  /// token belongs to someone else's profile), and any fetch failure.
+  Future<bool> prefillOwnProfileFields(String accountId) async {
+    final account = accountById(accountId);
+    if (account is MicrosoftAccount && account.parentAccountId != null) {
+      return false;
+    }
+    final profile = await fetchOwnProfileFields(accountId);
+    if (profile == null) return false;
+
+    final current = accountById(accountId);
+    if (current == null) return false;
+
+    String fill(String existing, String fetched) =>
+        existing.isEmpty && fetched.isNotEmpty ? fetched : existing;
+    final updated = current.copyWith(
+      firstName: fill(current.firstName, profile.firstName),
+      lastName: fill(current.lastName, profile.lastName),
+      jobTitle: fill(current.jobTitle, profile.jobTitle),
+      phone: fill(current.phone, profile.phone),
+      mobile: fill(current.mobile, profile.mobile),
+    );
+    if (updated == current) return false;
+
+    await updateAccount(updated);
+    return true;
+  }
+
   // ---------------------------------------------------------------------------
   // Cloud document preview (SharePoint/OneDrive and Google Drive body links)
   // ---------------------------------------------------------------------------

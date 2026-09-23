@@ -95,6 +95,64 @@ void main() {
     });
   });
 
+  /// The automatic post-sign-in profile prefill must never touch an account
+  /// that has no profile of its own to fetch: IMAP has no directory API, and
+  /// a shared mailbox's token is the owner's — `/me` there would write the
+  /// owner's name and phone onto the shared account.
+  group('prefillOwnProfileFields skips accounts without an own profile', () {
+    const owner = MicrosoftAccount(
+      id: 'owner-1',
+      displayName: 'Owner',
+      emailAddress: 'owner@contoso.com',
+      tenantId: 'common',
+    );
+    const shared = MicrosoftAccount(
+      id: 'shared-1',
+      displayName: 'Support',
+      emailAddress: 'support@contoso.com',
+      tenantId: 'common',
+      parentAccountId: 'owner-1',
+    );
+    const imap = ImapAccount(
+      id: 'imap-1',
+      displayName: 'IMAP',
+      emailAddress: 'me@example.com',
+      host: 'imap.example.com',
+      port: 993,
+      useSsl: true,
+      smtpHost: 'smtp.example.com',
+      smtpPort: 587,
+      smtpUseSsl: false,
+    );
+
+    setUp(() async {
+      when(mockAccountStorage.loadAccounts())
+          .thenAnswer((_) async => [owner, shared, imap]);
+      when(mockAccountStorage.loadActiveIndex()).thenAnswer((_) async => 0);
+      when(mockAccountStorage.saveAccounts(any)).thenAnswer((_) async {});
+      when(mockAccountStorage.saveActiveIndex(any)).thenAnswer((_) async {});
+      when(mockSecureStorage.read(key: anyNamed('key')))
+          .thenAnswer((_) async => null);
+      await accountManager.initialize();
+      clearInteractions(mockAccountStorage);
+    });
+
+    test('IMAP account: nothing fetched, nothing saved', () async {
+      expect(await accountManager.prefillOwnProfileFields('imap-1'), isFalse);
+      verifyNever(mockAccountStorage.saveAccounts(any));
+    });
+
+    test('shared mailbox: nothing fetched, nothing saved', () async {
+      expect(await accountManager.prefillOwnProfileFields('shared-1'), isFalse);
+      verifyNever(mockAccountStorage.saveAccounts(any));
+    });
+
+    test('unknown account id: nothing saved', () async {
+      expect(await accountManager.prefillOwnProfileFields('nope'), isFalse);
+      verifyNever(mockAccountStorage.saveAccounts(any));
+    });
+  });
+
   group('AccountManager Sorting', () {
     test('should sort accounts alphabetically by display name on initialize', () async {
       final accounts = [

@@ -58,6 +58,8 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - Editing a meeting you organize notifies attendees of the change
 - Inline **Join** button on a meeting tile from 3 minutes before it starts until it ends, for meetings with a video-call link
 - Guest RSVP status (accepted / declined / tentative) shown on each guest chip
+- Calendar window cycles Working Week → Full Week → Month; the month view shows each day's share of 9am–5pm already committed to meetings
+- Answering an invitation deletes the older invitation emails for that meeting it supersedes
 - Timezone-aware scheduling
 - Google Meet toggle for Gmail meetings
 - Book meeting rooms directly from the event's Location field — booking invites the room as a resource, and only the invitation reserves it
@@ -129,6 +131,11 @@ Settings → Accounts.
 
 ### Mobile
 - Touch-sized icons and back-button navigation between panels on Android and iOS
+- Opens on the Inbox of the last active account, with Calendar, Tasks and AI one tap away at the foot of the list
+- Message list and message are real screens: edge-swipe back on iOS, predictive back on Android
+- Pull to refresh, long-press to multi-select, swipe right to mark unread, swipe left for actions, long-press for context menus
+- Calendar cycles Day → Week → Full Week → Month, with the same month view as the desktop
+- iOS: system-style alerts and switches, links open in an in-app Safari view, dark and tinted app icons on iOS 18
 
 ### Accounts
 - Multiple accounts from different providers simultaneously
@@ -166,6 +173,7 @@ Settings → Accounts.
 - Checks for a new version at launch and every 6 hours, with a dot on the
   Settings icon when one is waiting; nothing downloads or installs until you
   press the button
+- Opening Settings → About re-checks for a new version straight away
 - **macOS and Windows** download, verify and install the update in place, from
   a signed release archive
 - **Android** installs the newest release's APK through the system installer

@@ -1,62 +1,79 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.32.0",
+  "version": "1.33.0",
   "sections": [
-    {
-      "type": "features",
-      "title": "New features",
-      "items": [
-        {
-          "body": "swipe left and right to step the mobile calendar",
-          "title": "calendar"
-        },
-        {
-          "body": "native interaction patterns for iOS, shared with Android",
-          "title": "mobile"
-        },
-        {
-          "body": "open on the Inbox, with Calendar/Tasks/AI at the list's foot",
-          "title": "mobile"
-        },
-        {
-          "body": "Day → Week → Full Week → Month cycle on the mobile calendar",
-          "title": "calendar"
-        },
-        {
-          "body": "month view with 9–5 meeting load, arrows bracket the range",
-          "title": "calendar"
-        },
-        {
-          "body": "delete the older invitations a meeting answer supersedes",
-          "title": "calendar"
-        },
-        {
-          "body": "re-check for updates every time the About page opens",
-          "title": "update"
-        }
-      ]
-    },
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "find desktop_updater's install helper without CocoaPods",
-          "title": "macos"
-        },
-        {
-          "body": "mobile header keeps one row unless the width runs short",
-          "title": "calendar"
-        },
-        {
-          "body": "open every cache connection in WAL mode with a busy timeout",
-          "title": "database"
+          "body": "hide Tenant ID behind the custom-app-registration toggle too",
+          "title": "auth"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.32.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "swipe left and right to step the mobile calendar",
+              "title": "calendar"
+            },
+            {
+              "body": "native interaction patterns for iOS, shared with Android",
+              "title": "mobile"
+            },
+            {
+              "body": "open on the Inbox, with Calendar/Tasks/AI at the list's foot",
+              "title": "mobile"
+            },
+            {
+              "body": "Day → Week → Full Week → Month cycle on the mobile calendar",
+              "title": "calendar"
+            },
+            {
+              "body": "month view with 9–5 meeting load, arrows bracket the range",
+              "title": "calendar"
+            },
+            {
+              "body": "delete the older invitations a meeting answer supersedes",
+              "title": "calendar"
+            },
+            {
+              "body": "re-check for updates every time the About page opens",
+              "title": "update"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "find desktop_updater's install helper without CocoaPods",
+              "title": "macos"
+            },
+            {
+              "body": "mobile header keeps one row unless the width runs short",
+              "title": "calendar"
+            },
+            {
+              "body": "open every cache connection in WAL mode with a busy timeout",
+              "title": "database"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -469,23 +486,6 @@
             {
               "body": "out of office replies for Microsoft 365 and Gmail",
               "title": "settings"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.25.2",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "match the macOS zip's real bundle name",
-              "title": "release"
             }
           ]
         }

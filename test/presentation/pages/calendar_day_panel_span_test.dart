@@ -149,6 +149,34 @@ void main() {
     expect(find.text('Today'), findsOneWidget);
   });
 
+  testWidgets('swiping left goes forward and right goes back, like the arrows',
+      (tester) async {
+    await pumpPanel(tester);
+    final tomorrow = today.add(const Duration(days: 1));
+
+    // Day view: a day at a time.
+    await tester.fling(find.byType(CalendarDayPanel), const Offset(-300, 0), 1000);
+    await tester.pumpAndSettle();
+    expect(find.text(DateFormat('EEEE').format(tomorrow)), findsOneWidget);
+
+    await tester.fling(find.byType(CalendarDayPanel), const Offset(300, 0), 1000);
+    await tester.pumpAndSettle();
+    expect(find.text(DateFormat('EEEE').format(today)), findsOneWidget);
+
+    // Week view: a week at a time, which here leaves the loaded week.
+    await tapToggle(tester, 'Day → Week');
+    await tester.fling(find.byType(CalendarDayPanel), const Offset(-300, 0), 1000);
+    await tester.pumpAndSettle();
+    expect(bloc.navigated.last.weekStart,
+        _mondayOf(today).add(const Duration(days: 7)));
+
+    // A slow sideways drift is not a swipe.
+    final before = bloc.navigated.length;
+    await tester.drag(find.byType(CalendarDayPanel), const Offset(-40, 0));
+    await tester.pumpAndSettle();
+    expect(bloc.navigated.length, before);
+  });
+
   testWidgets('closing the panel in the month view resets the span',
       (tester) async {
     await pumpPanel(tester);

@@ -736,7 +736,13 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
             ? MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.3)
             : TextScaler.noScaling,
       ),
-      child: BlocBuilder<CalendarBloc, CalendarState>(
+      // On touch a horizontal swipe does what the header's arrows do: left
+      // for forward, right for back, by whatever the span steps in. Vertical
+      // drags still scroll the hour grid, and a drag that starts on a meeting
+      // tile is still the tile's own (its pan recognizer claims it first).
+      child: GestureDetector(
+        onHorizontalDragEnd: isTouchPlatform ? _onSwipe : null,
+        child: BlocBuilder<CalendarBloc, CalendarState>(
       builder: (context, state) {
         final header = _DayPanelHeader(
           selectedDay: _selectedDay,
@@ -897,8 +903,18 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
           ),
         );
       },
+        ),
       ),
     );
+  }
+
+  /// A quick horizontal swipe, either way. Slow drags are ignored so a finger
+  /// wandering sideways while scrolling does not change the day.
+  void _onSwipe(DragEndDetails details) {
+    final velocity = details.primaryVelocity ?? 0;
+    if (velocity.abs() < 300) return;
+    HapticFeedback.selectionClick();
+    _navigate(context, velocity < 0 ? 1 : -1);
   }
 
   /// The week or month view for the span, drawn from the panel's own anchor

@@ -1043,12 +1043,7 @@ class _DayPanelHeader extends StatelessWidget {
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: c.textPrimary,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                letterSpacing: -0.2,
-              ),
+              style: _titleStyle.copyWith(color: c.textPrimary),
             ),
             Text(
               subtitle,
@@ -1077,10 +1072,8 @@ class _DayPanelHeader extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
             child: Text(
               'Today',
-              style: TextStyle(
+              style: _todayStyle.copyWith(
                 color: isToday ? c.textMuted : AppColors.accent,
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
               ),
             ),
           ),
@@ -1154,69 +1147,123 @@ class _DayPanelHeader extends StatelessWidget {
       );
     }
 
-    // A phone is too narrow for the title, the nav cluster and the span
-    // toggle in one row — the title would be the first thing to disappear —
-    // so the controls take a second row under it, laid out like the calendar
-    // window's bar: navigation on the left, the span toggle on the right.
-    return Padding(
-      padding: padding,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox(
-            height: touchRowHeight(48),
-            child: Row(children: [...leading, ...trailing]),
-          ),
-          SizedBox(
-            height: touchRowHeight(36),
-            child: Row(
-              children: [
-                ...navCluster,
-                Expanded(
-                  child: Align(
-                    alignment: Alignment.centerRight,
-                    // Spelt out as the step it takes, like the calendar
-                    // window's toggle; a tooltip alone is invisible on a phone.
-                    child: Tooltip(
-                      message: 'Switch to ${span.next.label}',
-                      child: InkWell(
-                        onTap: cycle,
-                        borderRadius: BorderRadius.circular(4),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 3),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(span.next.icon,
-                                  size: touchIcon(12), color: c.textMuted),
-                              const SizedBox(width: 3),
-                              Flexible(
-                                child: Text(
-                                  '${span.label} → ${span.next.label}',
-                                  maxLines: 1,
-                                  softWrap: false,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: c.textSecondary,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
+    final toggleLabel = '${span.label} → ${span.next.label}';
+    // Spelt out as the step it takes, like the calendar window's toggle; a
+    // tooltip alone is invisible on a phone.
+    final toggle = Tooltip(
+      message: 'Switch to ${span.next.label}',
+      child: InkWell(
+        onTap: cycle,
+        borderRadius: BorderRadius.circular(4),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(span.next.icon, size: touchIcon(12), color: c.textMuted),
+              const SizedBox(width: 3),
+              Flexible(
+                child: Text(
+                  toggleLabel,
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                  style: _toggleStyle.copyWith(color: c.textSecondary),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // One row when the title, the nav cluster and the toggle all fit with
+        // the title unabbreviated; a phone that cannot manage that gets the
+        // controls on a second row, laid out like the calendar window's bar:
+        // navigation on the left, the span toggle on the right.
+        final needed = padding.horizontal +
+            (useBackNavigation ? touchTarget(28) : 4) +
+            (span.isDay ? 28 + 8 : 0) +
+            _textWidth(context, title, _titleStyle) +
+            _navClusterWidth(context) +
+            12 + touchIcon(12) + 3 + _textWidth(context, toggleLabel, _toggleStyle) +
+            4;
+        if (constraints.maxWidth >= needed) {
+          return SizedBox(
+            height: touchRowHeight(48),
+            child: Padding(
+              padding: padding,
+              child: Row(children: [
+                ...leading,
+                ...navCluster,
+                const SizedBox(width: 4),
+                toggle,
+                ...trailing,
+              ]),
+            ),
+          );
+        }
+        return Padding(
+          padding: padding,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                height: touchRowHeight(48),
+                child: Row(children: [...leading, ...trailing]),
+              ),
+              SizedBox(
+                height: touchRowHeight(36),
+                child: Row(
+                  children: [
+                    ...navCluster,
+                    Expanded(
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: toggle,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  static const _titleStyle = TextStyle(
+    fontSize: 13,
+    fontWeight: FontWeight.w600,
+    letterSpacing: -0.2,
+  );
+  static const _todayStyle =
+      TextStyle(fontSize: 11, fontWeight: FontWeight.w500);
+  static const _toggleStyle =
+      TextStyle(fontSize: 11, fontWeight: FontWeight.w500);
+
+  /// The previous / Today / next cluster's natural width, mirroring how it is
+  /// built above: two icon buttons with 4px padding each side, the Today
+  /// label with 6px each side, and the 2px gaps.
+  double _navClusterWidth(BuildContext context) =>
+      2 * (touchIcon(20) + 8) +
+      2 * 2 +
+      _textWidth(context, 'Today', _todayStyle) +
+      12;
+
+  static double _textWidth(BuildContext context, String text, TextStyle style) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    final width = painter.width;
+    painter.dispose();
+    return width;
   }
 }
 

@@ -23,8 +23,8 @@ void main() {
   final today = DateTime(now.year, now.month, now.day);
 
   Future<void> pumpPanel(WidgetTester tester,
-      {bool useBackNavigation = true}) async {
-    tester.view.physicalSize = const Size(400, 800);
+      {bool useBackNavigation = true, double width = 400}) async {
+    tester.view.physicalSize = Size(width, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     // A meeting today, 10am–2pm: half of 9–5.
@@ -64,6 +64,34 @@ void main() {
   testWidgets('the docked desktop panel has no span toggle', (tester) async {
     await pumpPanel(tester, useBackNavigation: false);
     expect(find.textContaining('→'), findsNothing);
+  });
+
+  // The test font draws every glyph a full em wide, so a 400px phone is well
+  // short of what a single row needs and the controls drop under the title.
+  testWidgets('too narrow for one row, the controls take a second row',
+      (tester) async {
+    await pumpPanel(tester);
+
+    final toggle = tester.getCenter(find.text('Day → Week'));
+    final prev = tester.getCenter(find.byTooltip('Previous day'));
+    // Below the 48px title row, and on the same row as the nav cluster.
+    expect(toggle.dy, greaterThan(48));
+    expect(prev.dy, toggle.dy);
+  });
+
+  testWidgets('with room for everything the header stays on one row',
+      (tester) async {
+    await pumpPanel(tester, width: 900);
+
+    final title = tester.getCenter(find.text(DateFormat('EEEE').format(today)));
+    final toggle = tester.getCenter(find.text('Day → Week'));
+    final prev = tester.getCenter(find.byTooltip('Previous day'));
+    // Everything inside the single 48px row.
+    expect(toggle.dy, lessThan(48));
+    expect(prev.dy, toggle.dy);
+    // Left to right: title, nav cluster, toggle.
+    expect(title.dx, lessThan(prev.dx));
+    expect(prev.dx, lessThan(toggle.dx));
   });
 
   testWidgets('cycles Day → Week → Full Week → Month → Day', (tester) async {

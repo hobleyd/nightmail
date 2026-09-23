@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -800,6 +801,30 @@ void main() {
   // is a folder you have not expanded, so it arrived out of sight inside it.
   // -------------------------------------------------------------------------
 
+  /// Runs [body] with [defaultTargetPlatform] pinned to [platform].
+  ///
+  /// The test binding's default is Android, where a folder row is a long-press
+  /// drag; the desktop's pointer drag has to ask for a desktop. Pinned around
+  /// the whole body because the row reads the platform when it is built, and
+  /// put back before the body ends — the binding checks — so a tearDown would
+  /// be too late.
+  Future<void> asPlatform(
+    TargetPlatform platform,
+    Future<void> Function() body,
+  ) async {
+    debugDefaultTargetPlatformOverride = platform;
+    try {
+      await body();
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  }
+
+  Future<void> onDesktop(Future<void> Function() body) =>
+      asPlatform(TargetPlatform.macOS, body);
+  Future<void> onIOS(Future<void> Function() body) =>
+      asPlatform(TargetPlatform.iOS, body);
+
   group('FolderPanel — moving a folder', () {
     setUp(() {
       serverFolders = [
@@ -809,14 +834,16 @@ void main() {
       ];
     });
 
-    /// Drags [from] onto [to]. The sideways nudge first is deliberate: a
-    /// straight vertical drag is claimed by the enclosing ListView.
+    /// Drags [from] onto [to] with a pointer. The sideways nudge first is
+    /// deliberate: a straight vertical drag is claimed by the enclosing
+    /// ListView.
     Future<void> dragFolder(
       WidgetTester tester, {
       required String from,
       required String to,
     }) async {
-      final gesture = await tester.startGesture(tester.getCenter(find.text(from)));
+      final gesture =
+          await tester.startGesture(tester.getCenter(find.text(from)));
       await tester.pump(const Duration(milliseconds: 100));
       await gesture.moveBy(const Offset(30, 0));
       await tester.pump();
@@ -827,7 +854,7 @@ void main() {
     }
 
     testWidgets('reparents the row into the folder it was dropped on, and '
-        'opens it so the row is visible there', (tester) async {
+        'opens it so the row is visible there', (tester) => onDesktop(() async {
       await pumpPanel(tester);
       final rootIndent = tester.getTopLeft(find.text('Projects')).dx;
 
@@ -858,10 +885,10 @@ void main() {
       ]));
       await tester.pumpAndSettle();
       expect(find.text('Projects'), findsOneWidget);
-    });
+    }));
 
     testWidgets('a fetch that still shows the old place does not undo it',
-        (tester) async {
+        (tester) => onDesktop(() async {
       await pumpPanel(tester);
 
       // serverFolders is left as it was: the provider has taken the move but
@@ -873,10 +900,10 @@ void main() {
       expect(find.text('Projects'), findsOneWidget);
       expect(tester.getTopLeft(find.text('Projects')).dx,
           greaterThan(tester.getTopLeft(find.text('Archive')).dx));
-    });
+    }));
 
     testWidgets('a failed move leaves the folder where it was',
-        (tester) async {
+        (tester) => onDesktop(() async {
       await pumpPanel(tester);
       final rootIndent = tester.getTopLeft(find.text('Projects')).dx;
       moveFolder.failure = const ServerFailure(message: 'nope');
@@ -888,7 +915,82 @@ void main() {
       expect(moveFolder.calls, hasLength(1));
       expect(find.text('Projects'), findsOneWidget);
       expect(tester.getTopLeft(find.text('Projects')).dx, rootIndent);
+    }));
+  });
+
+  // -------------------------------------------------------------------------
+  // Moving a folder on a touch screen.
+  //
+  // Regression: the row was a plain Draggable, which claims the touch as soon
+  // as it moves — so on a phone every swipe that began on a user folder
+  // picked the folder up, and a list longer than the screen could never be
+  // scrolled. On touch a swipe scrolls; holding still lifts the folder and
+  // dragging on from there moves it; holding and letting go opens the menu.
+  // -------------------------------------------------------------------------
+
+  group('FolderPanel — moving a folder on a touch screen', () {
+    setUp(() {
+      serverFolders = [
+        _folder('inbox-id', 'Inbox'),
+        _folder('archive-id', 'Archive'),
+        _folder('projects-id', 'Projects'),
+        // Sorted by name, so these fall below the three the tests act on and
+        // make the list longer than the panel.
+        for (var i = 0; i < 40; i++) _folder('f$i', 'Zz Folder $i'),
+      ];
     });
+
+    /// Runs [body] as iOS. The override has to be back to null before the
+    /// test body ends — the binding checks — so a tearDown would be too late.
+    testWidgets('a swipe that starts on a folder scrolls the list',
+        (tester) => onIOS(() async {
+      await pumpPanel(tester);
+      final before = tester.getTopLeft(find.text('Projects')).dy;
+
+      // A swipe, as a finger makes one: several moves over several frames.
+      final gesture =
+          await tester.startGesture(tester.getCenter(find.text('Projects')));
+      await tester.pump(const Duration(milliseconds: 50));
+      for (var i = 0; i < 5; i++) {
+        await gesture.moveBy(const Offset(0, -30));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(tester.getTopLeft(find.text('Projects')).dy, lessThan(before));
+      expect(moveFolder.calls, isEmpty);
+    }));
+
+    testWidgets('holding a folder and then dragging it moves it',
+        (tester) => onIOS(() async {
+      await pumpPanel(tester);
+
+      final gesture =
+          await tester.startGesture(tester.getCenter(find.text('Projects')));
+      await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
+      await gesture.moveTo(tester.getCenter(find.text('Archive')));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(moveFolder.calls.single.folderId, 'projects-id');
+      expect(moveFolder.calls.single.newParentFolderId, 'archive-id');
+    }));
+
+    testWidgets('holding a folder and letting go opens its menu',
+        (tester) => onIOS(() async {
+      await pumpPanel(tester);
+
+      final gesture =
+          await tester.startGesture(tester.getCenter(find.text('Projects')));
+      await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Rename Folder'), findsOneWidget);
+      expect(moveFolder.calls, isEmpty);
+    }));
   });
 
   // -------------------------------------------------------------------------

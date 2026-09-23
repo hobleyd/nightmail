@@ -466,8 +466,8 @@ class _FolderPanelState extends State<FolderPanel> {
         hasChildren: item.folder.childFolderCount > 0,
         showUnreadCount: showUnreadCounts,
         isDraggable: !_isSystemFolder(item.folder),
-        onEmailDragMove: _handleFolderListDragMove,
-        onEmailDragLeave: _stopAutoScroll,
+        onDragMove: _handleFolderListDragMove,
+        onDragLeave: _stopAutoScroll,
         canAcceptFolderDrop: (draggedId) =>
             canDrop(draggedId, item.folder.id),
         onFolderDropped: (draggedId) {
@@ -1218,8 +1218,8 @@ class _FolderItem extends StatefulWidget {
     required this.canAcceptFolderDrop,
     required this.onFolderDropped,
     this.showUnreadCount = true,
-    this.onEmailDragMove,
-    this.onEmailDragLeave,
+    this.onDragMove,
+    this.onDragLeave,
   });
 
   final EmailFolder folder;
@@ -1240,11 +1240,11 @@ class _FolderItem extends StatefulWidget {
   /// when this is non-null, so "can it be deleted" is asked once, here.
   final VoidCallback? onDelete;
   final VoidCallback onRename;
-  // Notifies the panel while an email drag hovers this row, so it can
-  // re-check the (independently tracked) pointer position against the
+  // Notifies the panel while an email or folder drag hovers this row, so it
+  // can re-check the (independently tracked) pointer position against the
   // list's top/bottom edge and auto-scroll if needed.
-  final VoidCallback? onEmailDragMove;
-  final VoidCallback? onEmailDragLeave;
+  final VoidCallback? onDragMove;
+  final VoidCallback? onDragLeave;
 
   @override
   State<_FolderItem> createState() => _FolderItemState();
@@ -1256,6 +1256,10 @@ class _FolderItemState extends State<_FolderItem>
   StreamSubscription<EmailListState>? _sub;
   bool _isEmptying = false;
   Timer? _hoverExpandTimer;
+  // Touch only: where the finger went down, and whether it then travelled far
+  // enough to count as a drag rather than a press-and-release (see [build]).
+  Offset? _pressPosition;
+  bool _dragMoved = false;
 
   bool get _isTrashFolder => ['deleted items', 'trash']
       .contains(widget.folder.displayName.toLowerCase());
@@ -1335,42 +1339,82 @@ class _FolderItemState extends State<_FolderItem>
     Widget row = DragTarget<FolderDragData>(
       onWillAcceptWithDetails: (d) =>
           widget.canAcceptFolderDrop(d.data.folderId),
-      onAcceptWithDetails: (d) => widget.onFolderDropped(d.data.folderId),
+      onMove: (_) => widget.onDragMove?.call(),
+      onLeave: (_) => widget.onDragLeave?.call(),
+      onAcceptWithDetails: (d) {
+        widget.onDragLeave?.call();
+        widget.onFolderDropped(d.data.folderId);
+      },
       builder: (context, folderCandidates, _) =>
           _buildEmailDropTarget(context, folderCandidates.isNotEmpty),
     );
 
-    if (widget.isDraggable) {
-      row = Draggable<FolderDragData>(
-        data: FolderDragData(
-          folderId: widget.folder.id,
-          displayName: widget.folder.displayName,
-        ),
+    if (!widget.isDraggable) return row;
+
+    final data = FolderDragData(
+      folderId: widget.folder.id,
+      displayName: widget.folder.displayName,
+    );
+    final childWhenDragging = Opacity(
+      opacity: 0.4,
+      child: _buildContent(context, false),
+    );
+    if (!isTouchPlatform) {
+      return Draggable<FolderDragData>(
+        data: data,
         dragAnchorStrategy: childDragAnchorStrategy,
         feedback: _folderDragFeedback(context),
-        childWhenDragging: Opacity(
-          opacity: 0.4,
-          child: _buildContent(context, false),
-        ),
+        childWhenDragging: childWhenDragging,
         child: row,
       );
     }
-    return row;
+
+    // A plain Draggable claims the touch the moment it moves, so on a phone
+    // the list of folders could not be scrolled at all: every swipe that
+    // began on a user folder picked the folder up instead. On touch the row
+    // is a LongPressDraggable — a swipe scrolls, holding still lifts the
+    // folder (with a haptic) and dragging on from there moves it. That also
+    // takes the long press the context menu used on touch, and the two
+    // recognisers race on the same timer, so the menu moves to what iOS does
+    // natively: hold, and let go without moving.
+    return Listener(
+      onPointerDown: (e) => _pressPosition = e.position,
+      child: LongPressDraggable<FolderDragData>(
+        data: data,
+        dragAnchorStrategy: childDragAnchorStrategy,
+        feedback: _folderDragFeedback(context),
+        childWhenDragging: childWhenDragging,
+        onDragStarted: () => _dragMoved = false,
+        onDragUpdate: (d) {
+          final start = _pressPosition;
+          if (start != null &&
+              (d.globalPosition - start).distance > kTouchSlop) {
+            _dragMoved = true;
+          }
+        },
+        onDraggableCanceled: (_, _) {
+          final position = _pressPosition;
+          if (_dragMoved || position == null || !mounted) return;
+          _showContextMenu(context, position);
+        },
+        child: row,
+      ),
+    );
   }
 
   Widget _buildEmailDropTarget(BuildContext context, bool folderHovering) {
     return DragTarget<EmailDragData>(
       onWillAcceptWithDetails: (_) => true,
       onMove: (_) {
-        widget.onEmailDragMove?.call();
+        widget.onDragMove?.call();
         _scheduleHoverExpand();
       },
       onLeave: (_) {
-        widget.onEmailDragLeave?.call();
+        widget.onDragLeave?.call();
         _cancelHoverExpand();
       },
       onAcceptWithDetails: (details) {
-        widget.onEmailDragLeave?.call();
+        widget.onDragLeave?.call();
         _cancelHoverExpand();
         final listState = context.read<EmailListBloc>().state;
         final sourceFolderId =
@@ -1592,8 +1636,10 @@ class _FolderItemState extends State<_FolderItem>
     return GestureDetector(
       onSecondaryTapUp: (details) =>
           _showContextMenu(context, details.globalPosition),
-      // Touch has no secondary button: a long press is the context menu.
-      onLongPressStart: isTouchPlatform
+      // Touch has no secondary button: a long press is the context menu. A
+      // draggable row on touch is a LongPressDraggable, which owns the long
+      // press and opens the menu itself when the finger lifts in place.
+      onLongPressStart: isTouchPlatform && !widget.isDraggable
           ? (details) {
               HapticFeedback.selectionClick();
               _showContextMenu(context, details.globalPosition);

@@ -84,6 +84,20 @@ is already on screen where it started, so moving it early would mean putting it
 back on a failure. A refused move leaves the folder where it was and changes
 nothing else.
 
+**On a touch screen the row is a `LongPressDraggable`, not a `Draggable`.** A
+`Draggable` claims the touch the moment it moves, so on a phone every swipe
+that began on a user folder picked the folder up and a list longer than the
+screen could not be scrolled at all. On touch a swipe scrolls; holding still
+lifts the folder (with a haptic) and dragging on from there moves it. That
+takes the long press the context menu used on touch, and the two recognisers
+race on the same 500 ms timer — whichever fires first wins the arena, so a row
+must not carry both. The menu on a draggable row is therefore what iOS does
+natively: hold, then let go without moving (`onDraggableCanceled` with the
+finger still within touch slop of where it went down). System folders are not
+draggable and keep the plain long-press menu. `folder_panel_test.dart` pins
+`debugDefaultTargetPlatformOverride` around each drag test because the test
+binding's default platform is Android.
+
 **A move can change the folder's id, and then the optimism is off.** IMAP
 mailbox paths and Gmail *virtual* folder ids (`__virtual__<path>`) are paths, so
 moving one mints a new id — and every descendant's id changed with it. Nothing

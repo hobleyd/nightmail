@@ -2,7 +2,8 @@ import 'dart:io' show Directory, Platform;
 
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
-import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
+import 'package:flutter/foundation.dart'
+    show debugPrint, kIsWeb, visibleForTesting;
 import 'package:sqlite3/common.dart' show CommonDatabase;
 import 'package:sqlite3/sqlite3.dart' show Database;
 
@@ -1130,6 +1131,52 @@ class AppDatabase extends _$AppDatabase
     (db as Database).leak();
   }
 
+  /// How long a connection waits for another connection's lock before giving
+  /// up with `database is locked`. The longest write anything here holds is a
+  /// calendar window's cache rewrite — a delete and a batch insert of a few
+  /// hundred rows — so this is headroom, not a budget.
+  static const busyTimeout = Duration(seconds: 5);
+
+  /// Every connection's open-time setup: [_keepHandleUntilProcessExit], then
+  /// the two pragmas that let more than one connection share the file.
+  ///
+  /// There is always more than one. Each `desktop_multi_window` sub-window is
+  /// its own engine with its own service locator, so the calendar window opens
+  /// a second connection to the same file the main window is writing mail and
+  /// calendar rows into (and on Android the background mail service is a
+  /// third). `package:sqlite3` sets no busy handler, so out of the box a
+  /// connection that meets another's lock fails *immediately* — which surfaced
+  /// as "Could not load events: SqliteException(5): database is locked" in
+  /// the calendar window while the main window was mid-write.
+  ///
+  /// - **`journal_mode = WAL`** lets readers proceed while another connection
+  ///   writes, and a writer proceed while others read. In the default rollback
+  ///   journal a committing writer takes an exclusive lock that fails every
+  ///   concurrent read. The mode is stored in the file, so setting it on every
+  ///   open is idempotent; the migration in `macos_app_data_migration.dart`
+  ///   already carries the `-wal` sidecar for this.
+  /// - **`busy_timeout`** covers what WAL cannot: two writers. The second waits
+  ///   up to [busyTimeout] for the first to commit instead of throwing. It is a
+  ///   per-connection setting, which is why it lives here and not in a
+  ///   migration.
+  ///
+  /// Neither failing may fail the open. Switching the journal mode itself needs
+  /// a moment with no other connection mid-transaction and can report busy;
+  /// the next open tries again, and until then the connection simply behaves
+  /// as every connection did before this existed.
+  ///
+  /// Must stay a static tear-off: drift sends it to the background isolate.
+  @visibleForTesting
+  static void configureConnection(CommonDatabase db) {
+    _keepHandleUntilProcessExit(db);
+    try {
+      db.execute('PRAGMA busy_timeout = ${busyTimeout.inMilliseconds}');
+      db.execute('PRAGMA journal_mode = WAL');
+    } catch (e) {
+      debugPrint('AppDatabase: connection pragmas not applied: $e');
+    }
+  }
+
   /// Where the cache file lives on macOS: [appDataDirectory], not the
   /// documents directory drift defaults to.
   ///
@@ -1156,7 +1203,7 @@ class AppDatabase extends _$AppDatabase
     return driftDatabase(
       name: 'nightmail_cache',
       native: DriftNativeOptions(
-        setup: _keepHandleUntilProcessExit,
+        setup: configureConnection,
         databaseDirectory:
             !kIsWeb && Platform.isMacOS ? _databaseDirectory : null,
       ),

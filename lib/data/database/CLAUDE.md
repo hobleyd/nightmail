@@ -1,6 +1,38 @@
 # Local Cache Database (sqlite / drift)
 
-Why `nightmail_cache.sqlite` is never explicitly closed via `sqlite3_close_v2`. See [../../../CLAUDE.md](../../../CLAUDE.md) for architecture-wide rules.
+Why `nightmail_cache.sqlite` is never explicitly closed via `sqlite3_close_v2`,
+and why every connection to it is opened in WAL mode with a busy timeout. See
+[../../../CLAUDE.md](../../../CLAUDE.md) for architecture-wide rules.
+
+## More Than One Connection Always Shares the File
+
+Each `desktop_multi_window` sub-window is its own engine with its own service
+locator, so a calendar or compose window holds a **second** drift connection to
+the file the main window is writing mail and calendar rows into; on Android the
+background mail service is a third. Neither drift nor `package:sqlite3` sets a
+busy handler, so out of the box a connection that meets another's lock fails at
+once with `SqliteException(5): database is locked`. It surfaced as "Could not
+load events" in the calendar window: its fetch reads the pending-op queue while
+the main window is mid-commit, and in the default rollback journal a committing
+writer holds an exclusive lock that fails every concurrent *read*.
+
+`AppDatabase.configureConnection` — the `setup` hook drift runs on every
+connection, alongside the `leak()` below — therefore sets two pragmas:
+
+- **`journal_mode = WAL`**: readers never wait on a writer, nor a writer on
+  readers. Stored in the file, so applying it on every open is idempotent, and
+  `macos_app_data_migration.dart` already copies the `-wal` sidecar with the
+  database.
+- **`busy_timeout`** (`AppDatabase.busyTimeout`): what WAL cannot cover — two
+  writers — waits for the first commit instead of throwing. Per connection, so
+  it has to be set at open time rather than in a migration.
+
+Both are best-effort: a failure is logged and the open proceeds, since the
+mode switch itself can report busy if another connection is mid-transaction,
+and the next open will try again.
+
+`test/data/database/connection_setup_test.dart` pins both pragmas and the
+read-during-write behaviour against a real file.
 
 ## Nothing May Close the Cache Database
 

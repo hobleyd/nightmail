@@ -44,7 +44,7 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - Empty folder (with permanent delete option), on every provider — emptying a Gmail trash asks Google for permission to delete mail the first time
 - Incremental sync with delta tokens (Microsoft 365)
 - Incremental sync for Gmail (history API) and IMAP (UID-based) accounts too
-- Drag folders in the list to reparent them
+- Drag folders in the list to reparent them: drop onto a folder to nest inside it, or on the line under a folder to make it a sibling, including at the top level
 - Dragging an email near the top/bottom edge of the folder list auto-scrolls it, and dwelling over a collapsed folder auto-expands it as a drop target
 
 ### Calendar

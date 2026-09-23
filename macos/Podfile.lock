@@ -1,26 +1,20 @@
 PODS:
   - FlutterMacOS (1.0.0)
-  - html_view (0.1.0):
-    - FlutterMacOS
   - printing (1.0.0):
     - FlutterMacOS
 
 DEPENDENCIES:
   - FlutterMacOS (from `Flutter/ephemeral`)
-  - html_view (from `Flutter/ephemeral/.symlinks/plugins/html_view/macos`)
   - printing (from `Flutter/ephemeral/.symlinks/plugins/printing/macos`)
 
 EXTERNAL SOURCES:
   FlutterMacOS:
     :path: Flutter/ephemeral
-  html_view:
-    :path: Flutter/ephemeral/.symlinks/plugins/html_view/macos
   printing:
     :path: Flutter/ephemeral/.symlinks/plugins/printing/macos
 
 SPEC CHECKSUMS:
   FlutterMacOS: c232990155153907050900a2e175c7773903ba4e
-  html_view: 1376e269413b6ecca59529943dfed88290ea8cb4
   printing: c4cf83c78fd684f9bc318e6aadc18972aa48f617
 
 PODFILE CHECKSUM: 1e95c36afbfd1cb6423ceca4de7a8e1b256fb6ac

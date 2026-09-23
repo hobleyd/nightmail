@@ -7,9 +7,9 @@ Pod::Spec.new do |s|
   s.license          = { :type => 'MIT' }
   s.author           = { 'Nightmail' => 'dev@nightmail.com.au' }
   s.source           = { :path => '.' }
-  s.source_files     = 'Classes/**/*'
+  s.source_files     = 'html_view/Sources/html_view/**/*.swift'
   s.dependency 'FlutterMacOS'
-  s.platform = :osx, '10.14'
+  s.platform = :osx, '10.15'
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES' }
   s.swift_version = '5.0'
 end

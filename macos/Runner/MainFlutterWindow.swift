@@ -323,6 +323,11 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
         userInfo["minutesUntilStart"] = mins.intValue
       }
       userInfo["popup"] = (args["popup"] as? Bool) ?? true
+      // One thread per meeting. A reminder is a countdown of several alerts;
+      // threading them makes Notification Center stack them as one group,
+      // which is the only tidying that also happens when the app is not
+      // running to do it itself (see `removeEarlierAlerts`).
+      content.threadIdentifier = "\(kind)_reminder_\(Self.reminderSeriesKey(id))"
     }
     content.userInfo  = userInfo
 
@@ -340,6 +345,41 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
         } else {
           result(nil)
         }
+      }
+    }
+  }
+
+  /// The key a whole reminder series shares: `acct::event::5` → `acct::event`.
+  /// The first alert of a series carries the bare key already, so it is
+  /// returned unchanged. Mirrors `_followUpKey` on the Dart side.
+  private static func reminderSeriesKey(_ key: String) -> String {
+    guard let range = key.range(of: #"::\d+$"#, options: .regularExpression) else {
+      return key
+    }
+    return String(key[..<range.lowerBound])
+  }
+
+  /// Clears the delivered alerts that precede `identifier` in its meeting's
+  /// countdown, so Notification Center shows only the latest — "Starting in
+  /// 5 minutes" replaces "Starting in 10 minutes", and "Starting now" replaces
+  /// everything before it. Only the alerts of *this* series go: the identifier
+  /// namespace is `event_reminder_<acct>::<event>[::<offset>]`, event ids
+  /// never contain `::`, and the alert being presented is excluded by id.
+  ///
+  /// Runs from `willPresent`, which fires only while the app is running; a
+  /// countdown delivered with NightMail closed is left to the thread grouping
+  /// set at scheduling time.
+  private func removeEarlierAlerts(inSeriesOf identifier: String) {
+    let prefix = "event_reminder_"
+    guard identifier.hasPrefix(prefix) else { return }
+    let series = prefix + Self.reminderSeriesKey(String(identifier.dropFirst(prefix.count)))
+    let center = UNUserNotificationCenter.current()
+    center.getDeliveredNotifications { delivered in
+      let stale = delivered.map { $0.request.identifier }.filter {
+        $0 != identifier && ($0 == series || $0.hasPrefix(series + "::"))
+      }
+      if !stale.isEmpty {
+        center.removeDeliveredNotifications(withIdentifiers: stale)
       }
     }
   }
@@ -382,6 +422,10 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
   ) {
     let userInfo = notification.request.content.userInfo
     let type = userInfo["type"] as? String
+
+    if type == "reminder" {
+      removeEarlierAlerts(inSeriesOf: notification.request.identifier)
+    }
 
     if type == "reminder", (userInfo["popup"] as? Bool) ?? true {
       // For calendar reminders fired in-app, show the existing popup so the

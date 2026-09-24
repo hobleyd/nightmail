@@ -592,6 +592,7 @@ class NotificationService {
       if (Platform.isLinux) {
         _scheduleLinux(
           key: key,
+          displayKey: base,
           eventTitle: eventTitle,
           triggerTime: triggerTime,
           body: body,
@@ -610,7 +611,12 @@ class NotificationService {
           body: body,
           scheduledDate: scheduled,
           payload: payload,
-          notificationDetails: _reminderDetails(),
+          notificationDetails: _reminderDetails(
+            seriesKey: base,
+            eventTitle: eventTitle,
+            payload: payload,
+            isLeadAlert: i == 0,
+          ),
           androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         );
       } catch (e) {
@@ -619,8 +625,18 @@ class NotificationService {
     }
   }
 
+  /// Arms one alert of a series as an in-process timer.
+  ///
+  /// The timer is filed under the alert's own [key], so a cancel can reach each
+  /// one; what it *shows* is filed under [displayKey], the series key shared by
+  /// every alert of the meeting. The Linux plugin passes a repeated id to the
+  /// daemon as `replaces_id`, so "Starting in 5 minutes" takes the place of
+  /// "Starting in 10 minutes" rather than joining it — and cancelling the
+  /// series clears the one that is showing, since the bare series key is among
+  /// the ids [cancelEventReminder] cancels.
   void _scheduleLinux({
     required String key,
+    required String displayKey,
     required String eventTitle,
     required DateTime triggerTime,
     required String body,
@@ -630,7 +646,7 @@ class NotificationService {
     _linuxTimers[key] = Timer(delay, () {
       _linuxTimers.remove(key);
       _plugin?.show(
-        id: _idFor(key),
+        id: _idFor(displayKey),
         title: eventTitle,
         body: body,
         notificationDetails: const NotificationDetails(
@@ -970,17 +986,54 @@ class NotificationService {
         windows: WindowsNotificationDetails(),
       );
 
-  static NotificationDetails _reminderDetails() => const NotificationDetails(
+  /// The per-platform details for one alert of a meeting's reminder series.
+  ///
+  /// A reminder is a countdown of up to five alerts, and left to themselves
+  /// they pile up. Only macOS gives the app a hook at delivery time (its Swift
+  /// side removes the earlier delivered alerts of the series there), so on the
+  /// plugin platforms the series is *grouped* under [seriesKey] instead, each in
+  /// the platform's own idiom:
+  ///
+  /// - iOS: a thread identifier — Notification Center stacks the thread with
+  ///   the latest alert on top.
+  /// - Android: a group key. An explicit group is only displayed as one when
+  ///   it has a summary, so the lead alert is the summary and the countdown
+  ///   nests under it; a series whose lead time has already passed when it is
+  ///   scheduled has no summary and shows individually.
+  /// - Windows: a header — Action Center collapses the toasts under it, latest
+  ///   first. Pressing the header carries the same [payload] as the toasts, so
+  ///   it opens the meeting like they do.
+  ///
+  /// Linux is not here: its alerts are shown by in-process timers, which reuse
+  /// one display id for the whole series so each alert replaces the last.
+  static NotificationDetails _reminderDetails({
+    required String seriesKey,
+    required String eventTitle,
+    required String payload,
+    required bool isLeadAlert,
+  }) =>
+      NotificationDetails(
         android: AndroidNotificationDetails(
           'event_reminders',
           'Event Reminders',
           channelDescription: 'Reminders for upcoming calendar events',
           importance: Importance.high,
           priority: Priority.high,
+          groupKey: seriesKey,
+          setAsGroupSummary: isLeadAlert,
         ),
-        iOS: DarwinNotificationDetails(sound: 'default'),
-        linux: LinuxNotificationDetails(),
-        windows: WindowsNotificationDetails(),
+        iOS: DarwinNotificationDetails(
+          sound: 'default',
+          threadIdentifier: seriesKey,
+        ),
+        linux: const LinuxNotificationDetails(),
+        windows: WindowsNotificationDetails(
+          header: WindowsHeader(
+            id: seriesKey,
+            title: eventTitle,
+            arguments: payload,
+          ),
+        ),
       );
 
   /// How far apart the follow-up alerts in a reminder series are.

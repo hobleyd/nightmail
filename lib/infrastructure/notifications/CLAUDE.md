@@ -88,6 +88,39 @@ No migration is needed for rows written by earlier builds: the first pass finds
 them outside the horizon and clears them, or finds the OS holding nothing and
 re-arms.
 
+## The Countdown Tidies Itself
+
+A 15-minute reminder delivers four banners. Left alone they pile up, so each
+platform is asked to fold the series into one thing, in its own idiom. Every
+mechanism keys off the *series key* — `<acct>::<event>`, the alert key with
+the `::offset` stripped — so all of them depend on the key format pinned by
+`calendar_reminder_service_test.dart`; change one, change all.
+
+- **macOS** does both halves in Swift. At scheduling, every alert gets
+  `threadIdentifier = event_reminder_<series>`, so Notification Center stacks
+  the countdown even when it lands with NightMail not running. At delivery,
+  `willPresent` calls `removeEarlierAlerts`, which reads the delivered list and
+  removes the other alerts of the same series — the one being presented is
+  excluded by identifier, and nothing outside the
+  `event_reminder_<series>[::offset]` namespace is touched. "Starting now"
+  therefore stands alone. This is the only platform with a delivery hook.
+- **Linux** replaces outright: the in-process timers all `show` under one
+  display id, the series key's, and the plugin hands a repeated id to the
+  daemon as `replaces_id`. The timers themselves stay filed under each alert's
+  own key so a cancel can reach them.
+- **iOS** groups by `threadIdentifier`, which stacks with the latest on top.
+- **Android** groups by `groupKey`, with the lead alert as the group summary —
+  Android only *displays* an explicit group as one when it has a summary. A
+  series scheduled after its lead time has passed has none and shows singly.
+- **Windows** groups under a `WindowsHeader` per series; Action Center collapses
+  the toasts under it, latest first. The header's `arguments` carry the same
+  payload as the toasts so pressing it opens the meeting.
+
+None of the plugin platforms remove earlier alerts: there is no callback at
+delivery time, and a scheduled notification's id is also its alarm/toast
+identity, so a shared id would replace the *pending* alerts rather than the
+delivered ones.
+
 ## Two Builds of the App Cannot See Each Other's Alerts
 
 Observed twice on a real machine: a meeting the organiser had moved still

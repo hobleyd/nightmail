@@ -1405,6 +1405,7 @@ class ComposeFormState extends State<ComposeForm> {
         RecipientInputField(
           key: _toFieldKey,
           label: 'To',
+          labelWidth: composeLabelWidth(context),
           fieldId: 'to',
           recipients: _toRecipients,
           onChanged: (r) {
@@ -1423,6 +1424,7 @@ class ComposeFormState extends State<ComposeForm> {
         RecipientInputField(
           key: _ccFieldKey,
           label: 'Cc',
+          labelWidth: composeLabelWidth(context),
           fieldId: 'cc',
           recipients: _ccRecipients,
           onChanged: (r) {
@@ -1662,6 +1664,33 @@ class ComposeFormState extends State<ComposeForm> {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// The style every compose field label ("From", "To", "Cc", "Subject") is
+/// drawn in; the colour is added where it is drawn.
+const composeLabelStyle = TextStyle(fontSize: 12, fontWeight: FontWeight.w500);
+
+/// The width of the label column beside every compose field: the widest label
+/// as this device will actually draw it, plus the gap to the field.
+///
+/// A fixed 52 fit "Subject" at 12px in the desktop fonts at scale 1.0 and
+/// nowhere else: on a phone, with its own font and a larger system text size
+/// or the app's font scale up, the label wrapped to "Subje / ct". Measuring
+/// keeps the fields aligned with one another at every size.
+double composeLabelWidth(BuildContext context) {
+  final style = DefaultTextStyle.of(context).style.merge(composeLabelStyle);
+  final scaler = MediaQuery.textScalerOf(context);
+  var widest = 0.0;
+  for (final label in const ['From', 'To', 'Cc', 'Subject']) {
+    final painter = TextPainter(
+      text: TextSpan(text: label, style: style),
+      textDirection: TextDirection.ltr,
+      textScaler: scaler,
+    )..layout();
+    if (painter.width > widest) widest = painter.width;
+    painter.dispose();
+  }
+  return widest + 8;
+}
+
 String _stripHtml(String html) {
   return html
       .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
@@ -1755,7 +1784,7 @@ class _FromFieldRow extends StatelessWidget {
     final label = Padding(
       padding: const EdgeInsets.only(top: 2),
       child: SizedBox(
-        width: 52,
+        width: composeLabelWidth(context),
         child: Text(
           'From',
           style: TextStyle(
@@ -1836,7 +1865,7 @@ class _FieldRow extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.only(top: 2),
           child: SizedBox(
-            width: 52,
+            width: composeLabelWidth(context),
             child: Text(
               label,
               style: TextStyle(
@@ -2185,152 +2214,175 @@ class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
         // to do, and it is the only way out if the window failed to close
         // itself.
         final isLocked = isSending || isSent;
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          child: Row(
-            children: [
-              Container(
-                height: touchRowHeight(26),
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  color: c.surfaceBase,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: c.border),
+        final format = Container(
+          height: touchRowHeight(26),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: c.surfaceBase,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: c.border),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<EmailBodyType>(
+              value: widget.bodyType,
+              isDense: true,
+              dropdownColor: c.surfacePanel,
+              style: TextStyle(color: c.textSecondary, fontSize: 11),
+              items: const [
+                DropdownMenuItem(
+                  value: EmailBodyType.html,
+                  child: Text('Rich Text'),
                 ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<EmailBodyType>(
-                    value: widget.bodyType,
-                    isDense: true,
-                    dropdownColor: c.surfacePanel,
-                    style: TextStyle(color: c.textSecondary, fontSize: 11),
-                    items: const [
-                      DropdownMenuItem(
-                        value: EmailBodyType.html,
-                        child: Text('Rich Text'),
-                      ),
-                      DropdownMenuItem(
-                        value: EmailBodyType.text,
-                        child: Text('Plain Text'),
-                      ),
-                    ],
-                    onChanged: isLocked
-                        ? null
-                        : (val) {
-                            if (val != null) widget.onBodyTypeChanged(val);
-                          },
-                  ),
-                ),
-              ),
-              if (widget.draftSavedAt != null) ...[
-                const SizedBox(width: 8),
-                Text(
-                  'Draft saved',
-                  style: TextStyle(color: c.textMuted, fontSize: 11),
+                DropdownMenuItem(
+                  value: EmailBodyType.text,
+                  child: Text('Plain Text'),
                 ),
               ],
-              const Spacer(),
-              TextButton.icon(
-                onPressed: isLocked ? null : widget.onAiCompose,
-                icon: const Icon(Icons.auto_awesome_rounded, size: 16),
-                label: const Text('AI', style: TextStyle(fontSize: 13)),
-                style: TextButton.styleFrom(
-                  foregroundColor: AppColors.accent,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  minimumSize: Size(0, touchTarget(0)),
-                  tapTargetSize: isTouchPlatform
-                      ? MaterialTapTargetSize.padded
-                      : MaterialTapTargetSize.shrinkWrap,
-                ),
-              ),
-              const SizedBox(width: 8),
-              TextButton(
-                onPressed: isSending ? null : widget.onClose,
-                child: Text(
-                  'Cancel',
-                  style: TextStyle(color: c.textMuted, fontSize: 13),
-                ),
-              ),
-              const SizedBox(width: 8),
-              if (isSending)
-                AnimatedBuilder(
-                  animation: _shimmer,
-                  builder: (context, child) {
-                    final t = _shimmer.value;
-                    return Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 8),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment(-2 + t * 4, 0),
-                          end: Alignment(-1 + t * 4, 0),
-                          colors: [
-                            AppColors.accent,
-                            Colors.white.withValues(alpha: 0.30),
-                            AppColors.accent,
-                          ],
-                        ),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: child,
-                    );
-                  },
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.send_rounded, size: 14, color: Colors.white),
-                      SizedBox(width: 8),
-                      Text(
-                        'Sending…',
-                        style: TextStyle(fontSize: 13, color: Colors.white),
-                      ),
-                    ],
-                  ),
-                )
-              // Normally never seen: the window closes, or the dialog pops,
-              // within a frame of the send landing. It is what is left on
-              // screen when that close doesn't happen, and it has to read as
-              // "gone", never as a send still in progress.
-              else if (isSent)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              onChanged: isLocked
+                  ? null
+                  : (val) {
+                      if (val != null) widget.onBodyTypeChanged(val);
+                    },
+            ),
+          ),
+        );
+        final draftSaved = <Widget>[
+          if (widget.draftSavedAt != null) ...[
+            const SizedBox(width: 8),
+            Text(
+              'Draft saved',
+              style: TextStyle(color: c.textMuted, fontSize: 11),
+            ),
+          ],
+        ];
+        final actions = <Widget>[
+          TextButton.icon(
+            onPressed: isLocked ? null : widget.onAiCompose,
+            icon: const Icon(Icons.auto_awesome_rounded, size: 16),
+            label: const Text('AI', style: TextStyle(fontSize: 13)),
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.accent,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              minimumSize: Size(0, touchTarget(0)),
+              tapTargetSize: isTouchPlatform
+                  ? MaterialTapTargetSize.padded
+                  : MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
+          const SizedBox(width: 8),
+          TextButton(
+            onPressed: isSending ? null : widget.onClose,
+            child: Text(
+              'Cancel',
+              style: TextStyle(color: c.textMuted, fontSize: 13),
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (isSending)
+            AnimatedBuilder(
+              animation: _shimmer,
+              builder: (context, child) {
+                final t = _shimmer.value;
+                return Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(
-                    color: AppColors.accent.withValues(alpha: 0.20),
+                    gradient: LinearGradient(
+                      begin: Alignment(-2 + t * 4, 0),
+                      end: Alignment(-1 + t * 4, 0),
+                      colors: [
+                        AppColors.accent,
+                        Colors.white.withValues(alpha: 0.30),
+                        AppColors.accent,
+                      ],
+                    ),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.check_rounded,
-                          size: 14, color: AppColors.accent),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Sent',
-                        style: TextStyle(fontSize: 13, color: c.textSecondary),
-                      ),
-                    ],
+                  child: child,
+                );
+              },
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.send_rounded, size: 14, color: Colors.white),
+                  SizedBox(width: 8),
+                  Text(
+                    'Sending…',
+                    style: TextStyle(fontSize: 13, color: Colors.white),
                   ),
-                )
-              else
-                FilledButton.icon(
-                  onPressed: widget.onSend,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppColors.accent,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 8),
-                    minimumSize: Size(0, touchTarget(0)),
-                    tapTargetSize: isTouchPlatform
-                        ? MaterialTapTargetSize.padded
-                        : MaterialTapTargetSize.shrinkWrap,
+                ],
+              ),
+            )
+          // Normally never seen: the window closes, or the dialog pops,
+          // within a frame of the send landing. It is what is left on
+          // screen when that close doesn't happen, and it has to read as
+          // "gone", never as a send still in progress.
+          else if (isSent)
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.accent.withValues(alpha: 0.20),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.check_rounded,
+                      size: 14, color: AppColors.accent),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Sent',
+                    style: TextStyle(fontSize: 13, color: c.textSecondary),
                   ),
-                  icon: const Icon(Icons.send_rounded, size: 14),
-                  label: const Text(
-                    'Send',
-                    style: TextStyle(fontSize: 13),
-                  ),
-                ),
-            ],
+                ],
+              ),
+            )
+          else
+            FilledButton.icon(
+              onPressed: widget.onSend,
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.accent,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 8),
+                minimumSize: Size(0, touchTarget(0)),
+                tapTargetSize: isTouchPlatform
+                    ? MaterialTapTargetSize.padded
+                    : MaterialTapTargetSize.shrinkWrap,
+              ),
+              icon: const Icon(Icons.send_rounded, size: 14),
+              label: const Text(
+                'Send',
+                style: TextStyle(fontSize: 13),
+              ),
+            ),
+        ];
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // The desktop compose window is 600 wide and holds all of this
+              // on one line. A phone does not — at a larger text size the
+              // buttons alone are wider than the screen, and the Row used to
+              // overflow with Send half off the right edge — so there the
+              // actions take a line of their own, right-aligned.
+              final oneLine = constraints.maxWidth >=
+                  MediaQuery.textScalerOf(context).scale(460);
+              if (oneLine) {
+                return Row(
+                  children: [format, ...draftSaved, const Spacer(), ...actions],
+                );
+              }
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(children: [format, ...draftSaved, const Spacer()]),
+                  const SizedBox(height: 8),
+                  Row(children: [const Spacer(), ...actions]),
+                ],
+              );
+            },
           ),
         );
       },

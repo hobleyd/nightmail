@@ -125,6 +125,42 @@ Only `http`/`https` and `www.`-prefixed hosts are linked. Guessing at bare
 addresses and `mailto:` URLs are linked too, but the last label must be
 alphabetic, or `package@1.2.3` becomes a way to mail somebody.
 
+## The Compose Editor Is a Platform View on a Phone
+
+`html_view` draws its webview as a **native sibling view laid over the Flutter
+surface**, placed by hand from `localToGlobal` on the frame it was built. That
+is fine for a desktop window, where the editor is the window, and wrong on a
+phone in three ways at once: the position is read during the page's slide-in
+transition and never again, so the view lands off to the right; the view sits
+above every dialog and sheet Flutter draws, which is what `setVisible` exists
+to paper over; and the iOS half loaded `assets/…` from
+`Bundle.main.resourcePath/flutter_assets`, which is not where an iOS app keeps
+Flutter assets (`App.framework`). On an iPhone that was a reply with no
+toolbar, nothing to tap into, and a blank white box where the body should be.
+
+`HtmlEmailEditor` therefore has two backends behind one interface, split on
+`Platform.is*` the same way `HtmlBodyView` splits: the `html_view` overlay on
+desktop, and **`webview_flutter`'s `WebViewWidget` on Android and iOS**, a real
+platform view composited into the Flutter tree — it moves with its route,
+sits under dialogs, and needs no `hide()`/`show()` (those are no-ops there).
+The page is shared unchanged: `editor.html` reports through
+`window[name].postMessage`, and `addJavaScriptChannel(name)` defines exactly
+that object, which is what the desktop bridges inject by hand. Two things a
+mobile backend has to get right:
+
+- **`runJavaScript`, not `runJavaScriptReturningResult`, for statements.**
+  WKWebView reports a result of `undefined` as an error, and every editor
+  call but `getContent()` returns nothing.
+- **`getContent()` comes back bare from WKWebView and JSON-quoted from
+  Android and the desktop bridges.** `HtmlEmailEditorState.getContent`
+  decodes when that succeeds and takes the string as-is otherwise.
+
+The page also carries a `viewport` meta (without it a phone lays it out 980px
+wide and shrinks it, toolbar included, to a third of its size) and a
+`pointer: coarse` rule that grows the toolbar buttons to 36px. The `ios/` and
+`android/` halves of `packages/html_view` are now unused by the app; nothing
+in `lib/` reaches `HtmlViewWidget` on a phone.
+
 ## Resigning First Responder Costs the Caret
 
 On macOS the editor and reading-pane webviews are plain sibling `NSView`s, so

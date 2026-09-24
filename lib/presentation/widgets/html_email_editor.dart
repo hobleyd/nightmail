@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:html_view/html_view.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 class HtmlEmailEditor extends StatefulWidget {
   const HtmlEmailEditor({
@@ -43,39 +45,44 @@ class HtmlEmailEditor extends StatefulWidget {
 }
 
 class HtmlEmailEditorState extends State<HtmlEmailEditor> {
-  late final HtmlViewController _controller;
-  StreamSubscription<String>? _contentSub;
-  StreamSubscription<void>?   _linkSub;
-  StreamSubscription<void>?   _loadedSub;
-  StreamSubscription<void>?   _attachSub;
-  StreamSubscription<String>? _imagePastedSub;
-  StreamSubscription<void>?   _clickFocusSub;
+  late final _EditorHost _host;
 
   String _pendingHtml = '';
   bool   _disposed    = false;
+
+  /// The desktop editor is `html_view`'s native webview, a sibling view laid
+  /// over the Flutter surface and positioned by hand; a phone gets
+  /// `webview_flutter`'s platform view instead, which is composited into the
+  /// Flutter tree like any other widget — the same split as `HtmlBodyView`.
+  /// The overlay cannot work on mobile: it is placed once, from a position
+  /// read mid page-transition, and sits above every dialog and sheet.
+  static bool get _isDesktop =>
+      Platform.isLinux || Platform.isMacOS || Platform.isWindows;
 
   @override
   void initState() {
     super.initState();
     _pendingHtml = widget.initialHtml;
+    _host = _isDesktop
+        ? _NativeOverlayHost(onEvent: _onHostEvent)
+        : _PlatformViewHost(onEvent: _onHostEvent);
+    _host.load('assets/editor/editor.html');
+  }
 
-    _controller = HtmlViewController();
-    _controller.initialize().then((_) {
-      if (_disposed) return;
-      _contentSub = _controller.onContentChanged.listen((html) {
-        if (mounted) widget.onContentChanged(html);
-      });
-      _linkSub = _controller.onLinkRequest.listen((_) {
-        if (mounted) widget.onLinkRequested();
-      });
-      _attachSub = _controller.onAttachRequested.listen((_) {
-        if (mounted) widget.onAttachRequested();
-      });
-      _imagePastedSub = _controller.onImagePasted.listen((dataUri) {
-        if (mounted) widget.onImagePasted?.call(dataUri);
-      });
-      _clickFocusSub = _controller.onClickFocus.listen((_) {
-        if (!mounted) return;
+  /// Every event either backend can raise, named as the page raises them —
+  /// `editor.html`'s `_flutterNotify(name, value)` posts to `window[name]`.
+  void _onHostEvent(String type, String value) {
+    if (_disposed || !mounted) return;
+    switch (type) {
+      case 'onContentChanged':
+        widget.onContentChanged(value);
+      case 'onLinkRequest':
+        widget.onLinkRequested();
+      case 'onAttachRequest':
+        widget.onAttachRequested();
+      case 'onImagePasted':
+        widget.onImagePasted?.call(value);
+      case 'onClickFocus':
         // Unfocus the Flutter side first — calling focus() (native
         // makeFirstResponder) before this can otherwise be undone when
         // Flutter's text input plugin reasserts itself as firstResponder
@@ -84,30 +91,24 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) focus();
         });
-      });
-      _loadedSub = _controller.onPageLoaded.listen((_) async {
-        if (_disposed) return;
-        if (_pendingHtml.isNotEmpty) {
-          await _controller.eval('setContent(${jsonEncode(_pendingHtml)})');
-        }
-        if (widget.autofocus && !_disposed) {
-          await focus();
-        }
-      });
-      _controller.loadAsset('assets/editor/editor.html');
-    });
+      case 'pageLoaded':
+        unawaited(_onPageLoaded());
+    }
+  }
+
+  Future<void> _onPageLoaded() async {
+    if (_pendingHtml.isNotEmpty) {
+      await _host.run('setContent(${jsonEncode(_pendingHtml)})');
+    }
+    if (widget.autofocus && !_disposed) {
+      await focus();
+    }
   }
 
   @override
   void dispose() {
     _disposed = true;
-    _contentSub?.cancel();
-    _linkSub?.cancel();
-    _loadedSub?.cancel();
-    _attachSub?.cancel();
-    _imagePastedSub?.cancel();
-    _clickFocusSub?.cancel();
-    _controller.dispose();
+    _host.dispose();
     super.dispose();
   }
 
@@ -115,48 +116,50 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
   // Public API (called by compose_dialog.dart)
   // -------------------------------------------------------------------------
 
-  Future<void> hide() => _controller.setVisible(false);
-  Future<void> show() => _controller.setVisible(true);
+  Future<void> hide() => _host.setVisible(false);
+  Future<void> show() => _host.setVisible(true);
 
   Future<void> setContent(String html) async {
     _pendingHtml = html;
-    await _controller.eval('setContent(${jsonEncode(html)})');
+    await _host.run('setContent(${jsonEncode(html)})');
   }
 
   Future<String> getContent() async {
-    // Returns JSON-encoded string from JS; strip outer quotes.
-    final raw = await _controller.eval('getContent()');
+    final raw = await _host.evalString('getContent()');
     if (raw == null || raw == 'null') return _pendingHtml;
-    // JS result is JSON: "\"<html>\"" — decode it.
+    // The desktop bridge and Android hand a string back JSON-encoded
+    // ("\"<div>…\"") and WKWebView hands it back bare, so decode when that
+    // works and take it as it is when it doesn't.
     try {
-      return jsonDecode(raw) as String;
+      final decoded = jsonDecode(raw);
+      return decoded is String ? decoded : raw;
     } catch (_) {
       return raw;
     }
   }
 
   Future<void> insertImage(String dataUri, String contentId) async {
-    await _controller.eval(
+    await _host.run(
         'insertImage(${jsonEncode(dataUri)}, ${jsonEncode(contentId)})');
   }
 
   Future<void> insertLink(String url) async {
-    await _controller.eval('insertLink(${jsonEncode(url)})');
+    await _host.run('insertLink(${jsonEncode(url)})');
   }
 
   Future<void> saveSelection() async {
-    await _controller.eval('saveSelection()');
+    await _host.run('saveSelection()');
   }
 
   Future<void> insertAtCursor(String text) async {
-    await _controller.eval('insertAtSaved(${jsonEncode(text)})');
+    await _host.run('insertAtSaved(${jsonEncode(text)})');
   }
 
   Future<void> focus() async {
     // OS focus first (so the WebView2 HWND actually receives keystrokes),
     // then the DOM-level focus that places the caret in the editor.
-    await _controller.focus();
-    await _controller.eval('focusEditor()');
+    await _host.focus();
+    await _host.run('focusEditor()');
   }
 
   // -------------------------------------------------------------------------
@@ -164,7 +167,172 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
   // -------------------------------------------------------------------------
 
   @override
-  Widget build(BuildContext context) {
-    return HtmlViewWidget(controller: _controller);
+  Widget build(BuildContext context) => _host.build(context);
+}
+
+// ---------------------------------------------------------------------------
+// Backends
+// ---------------------------------------------------------------------------
+
+typedef _HostEvent = void Function(String type, String value);
+
+/// What the editor needs from whichever webview is drawing it.
+abstract class _EditorHost {
+  /// Loads the editor page. Events, including `pageLoaded`, arrive through
+  /// the callback the host was built with.
+  void load(String assetKey);
+
+  /// Runs [js] for its effect.
+  Future<void> run(String js);
+
+  /// Runs [js] and returns what it evaluated to, as the backend spells it.
+  Future<String?> evalString(String js);
+
+  /// Gives the webview OS-level keyboard focus, where that is a separate step
+  /// from focusing an element in the page.
+  Future<void> focus();
+
+  /// Hides the webview while something Flutter draws has to appear above it.
+  /// A no-op where the webview is composited into the Flutter tree.
+  Future<void> setVisible(bool visible);
+
+  Widget build(BuildContext context);
+  void dispose();
+}
+
+/// Desktop: `html_view`'s native webview, laid over the Flutter surface.
+class _NativeOverlayHost implements _EditorHost {
+  _NativeOverlayHost({required this.onEvent});
+
+  final _HostEvent onEvent;
+  final HtmlViewController _controller = HtmlViewController();
+  final List<StreamSubscription<dynamic>> _subs = [];
+  bool _disposed = false;
+
+  @override
+  void load(String assetKey) {
+    _controller.initialize().then((_) {
+      if (_disposed) return;
+      _subs.addAll([
+        _controller.onContentChanged
+            .listen((html) => onEvent('onContentChanged', html)),
+        _controller.onLinkRequest.listen((_) => onEvent('onLinkRequest', '')),
+        _controller.onAttachRequested
+            .listen((_) => onEvent('onAttachRequest', '')),
+        _controller.onImagePasted
+            .listen((uri) => onEvent('onImagePasted', uri)),
+        _controller.onClickFocus.listen((_) => onEvent('onClickFocus', '')),
+        _controller.onPageLoaded.listen((_) => onEvent('pageLoaded', '')),
+      ]);
+      _controller.loadAsset(assetKey);
+    });
   }
+
+  @override
+  Future<void> run(String js) async {
+    await _controller.eval(js);
+  }
+
+  @override
+  Future<String?> evalString(String js) => _controller.eval(js);
+
+  @override
+  Future<void> focus() => _controller.focus();
+
+  @override
+  Future<void> setVisible(bool visible) => _controller.setVisible(visible);
+
+  @override
+  Widget build(BuildContext context) =>
+      HtmlViewWidget(controller: _controller);
+
+  @override
+  void dispose() {
+    _disposed = true;
+    for (final sub in _subs) {
+      sub.cancel();
+    }
+    _controller.dispose();
+  }
+}
+
+/// Android and iOS: `webview_flutter`'s platform view.
+///
+/// The page is unchanged between backends because `addJavaScriptChannel`
+/// defines exactly the `window[name].postMessage` objects the desktop bridge
+/// injects by hand.
+class _PlatformViewHost implements _EditorHost {
+  _PlatformViewHost({required this.onEvent}) {
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(const Color(0x00000000))
+      ..setNavigationDelegate(NavigationDelegate(
+        onPageFinished: (_) => onEvent('pageLoaded', ''),
+        // A link tapped inside the message being written must not navigate
+        // the editor away from itself.
+        onNavigationRequest: (request) {
+          final scheme =
+              Uri.tryParse(request.url)?.scheme.toLowerCase() ?? '';
+          return scheme == 'http' || scheme == 'https' || scheme == 'mailto'
+              ? NavigationDecision.prevent
+              : NavigationDecision.navigate;
+        },
+      ));
+    for (final name in const [
+      'onContentChanged',
+      'onLinkRequest',
+      'onAttachRequest',
+      'onImagePasted',
+    ]) {
+      _controller.addJavaScriptChannel(
+        name,
+        onMessageReceived: (message) => onEvent(name, message.message),
+      );
+    }
+  }
+
+  final _HostEvent onEvent;
+  late final WebViewController _controller;
+
+  @override
+  void load(String assetKey) {
+    unawaited(_controller.loadFlutterAsset(assetKey));
+  }
+
+  @override
+  Future<void> run(String js) async {
+    // Not `runJavaScriptReturningResult`: WKWebView reports a statement that
+    // evaluates to `undefined` as an error there.
+    try {
+      await _controller.runJavaScript(js);
+    } catch (_) {}
+  }
+
+  @override
+  Future<String?> evalString(String js) async {
+    try {
+      final result = await _controller.runJavaScriptReturningResult(js);
+      return result.toString();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// A tap in the page is what raises the keyboard on a phone; there is no
+  /// separate OS focus to take, and iOS will not show the keyboard for a
+  /// programmatic focus anyway.
+  @override
+  Future<void> focus() async {}
+
+  /// The platform view is part of the Flutter tree, so a dialog or sheet
+  /// pushed above it simply draws on top.
+  @override
+  Future<void> setVisible(bool visible) async {}
+
+  @override
+  Widget build(BuildContext context) =>
+      WebViewWidget(controller: _controller);
+
+  @override
+  void dispose() {}
 }

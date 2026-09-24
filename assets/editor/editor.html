@@ -2,6 +2,11 @@
 <html>
 <head>
 <meta charset="utf-8">
+<!-- Without this a phone's webview lays the page out 980px wide and shrinks
+     it to fit, which is the toolbar at a third of its size. Zoom is off
+     because WebKit otherwise zooms into any field whose text is under 16px
+     when it takes focus, and the editor is 13px. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <!-- The editor runs script and holds a bridge to the host, so it cannot use
      the reading pane's `script-src 'none'`. This policy's job is therefore not
      to stop script — `_parseSanitizedBody` does that — but to cap what a
@@ -84,6 +89,13 @@ body { display: flex; flex-direction: column; }
 .toolbar button:hover { background: var(--btn-hover); }
 .toolbar button:active { background: var(--btn-active); }
 .toolbar button.active { background: var(--btn-active); }
+
+/* A fingertip needs more than the 26px button a pointer is happy with. */
+@media (pointer: coarse) {
+  .toolbar { gap: 2px; padding: 4px; }
+  .toolbar button { height: 36px; min-width: 36px; font-size: 14px; }
+  .toolbar select { height: 36px; }
+}
 
 /* colour button: stacked A + swatch bar */
 #btn-color {

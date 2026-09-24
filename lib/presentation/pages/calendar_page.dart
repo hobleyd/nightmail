@@ -522,6 +522,17 @@ String? _accountId(BuildContext context) {
   return null;
 }
 
+/// Whether anyone other than this account is invited. Rooms are resources, not
+/// people, and Google lists the organizer among their own guests.
+bool _hasGuests(BuildContext context, CalendarEvent event) {
+  final state = context.read<AccountCubit>().state;
+  final self = state is AccountsLoaded
+      ? state.activeAccount.emailAddress.toLowerCase()
+      : null;
+  return event.attendees.any(
+      (a) => !a.isResource && a.email.toLowerCase() != self);
+}
+
 bool _isO365Account(BuildContext context) {
   final state = context.read<AccountCubit>().state;
   if (state is AccountsLoaded) return state.activeAccount is MicrosoftAccount;
@@ -2200,11 +2211,26 @@ class _PositionedEventState extends State<_PositionedEvent> {
     if (newStart == widget.event.start) return;
 
     if (widget.event.isOrganizer) {
-      context.read<CalendarBloc>().add(CalendarEventRescheduleRequested(
-        event: widget.event,
-        newStart: newStart,
-        newEnd: newEnd,
-      ));
+      if (_hasGuests(context, widget.event)) {
+        // A meeting with people in it opens in the editor on the drop slot,
+        // so their availability can be checked before Save sends the update.
+        // A personal appointment has nobody to check and just moves.
+        await EventEditDialog.show(
+          context,
+          event: widget.event,
+          initialStart: newStart,
+          initialEnd: newEnd,
+          accountId: _accountId(context),
+          isO365Account: _isO365Account(context),
+          isGmailAccount: _isGmailAccount(context),
+        );
+      } else {
+        context.read<CalendarBloc>().add(CalendarEventRescheduleRequested(
+          event: widget.event,
+          newStart: newStart,
+          newEnd: newEnd,
+        ));
+      }
     } else {
       // Somebody else's meeting: dragging proposes rather than moves, and the
       // proposal is made from the full event form so the drop slot can be

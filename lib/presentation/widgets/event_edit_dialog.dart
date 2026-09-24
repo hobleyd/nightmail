@@ -345,11 +345,14 @@ class EventEditForm extends StatefulWidget {
             'A counter-proposal needs the meeting it is about');
   final CalendarEvent? event;
 
-  /// Where a new event starts; in [proposeNewTime] mode, the slot the form
-  /// opens on instead of the meeting's own (a dragged tile's drop position).
+  /// Where a new event starts. For an existing [event], the slot the form
+  /// opens on instead of the meeting's own — a dragged tile's drop position,
+  /// whether the drag is the organizer moving their meeting or a guest
+  /// proposing. The change-detection snapshot still comes from the meeting's
+  /// stored slot, so saving a pre-filled move notifies the guests.
   final DateTime? initialStart;
 
-  /// Only read in [proposeNewTime] mode, alongside [initialStart]. Left null,
+  /// Only read alongside [initialStart] on an existing [event]. Left null,
   /// the meeting keeps its duration from the new start.
   final DateTime? initialEnd;
 
@@ -494,16 +497,16 @@ class _EventEditFormState extends State<EventEditForm> {
     final defaultStart = widget.initialStart ?? nextHalfHour;
     final defaultEnd = defaultStart.add(const Duration(minutes: 30));
 
-    // A counter-proposal opened by dragging starts on the slot the tile was
-    // dropped on, not where the meeting is.
-    final proposedStart = _proposing ? widget.initialStart : null;
-    final proposedEnd = proposedStart == null
+    // A meeting opened by dragging starts on the slot the tile was dropped
+    // on, not where the meeting is — for the organizer moving it as much as
+    // for a guest proposing.
+    final movedStart = e == null ? null : widget.initialStart;
+    final movedEnd = movedStart == null
         ? null
-        : widget.initialEnd ??
-            proposedStart.add(e!.end.difference(e.start));
+        : widget.initialEnd ?? movedStart.add(e!.end.difference(e.start));
 
-    final startLocal = (proposedStart ?? e?.start ?? defaultStart).toLocal();
-    final endLocal = (proposedEnd ?? e?.end ?? defaultEnd).toLocal();
+    final startLocal = (movedStart ?? e?.start ?? defaultStart).toLocal();
+    final endLocal = (movedEnd ?? e?.end ?? defaultEnd).toLocal();
 
     _startDate = DateTime(startLocal.year, startLocal.month, startLocal.day);
     _startTime = TimeOfDay(hour: startLocal.hour, minute: startLocal.minute);
@@ -557,10 +560,17 @@ class _EventEditFormState extends State<EventEditForm> {
     _initialSubject = _titleController.text.trim();
     _initialLocation = _nullIfBlank(_locationController.text);
     _initialDescription = _nullIfBlank(_descriptionController.text);
-    _initialStartDate = _startDate;
-    _initialStartTime = _startTime;
-    _initialEndDate = _endDate;
-    _initialEndTime = _endTime;
+    // The meeting's *stored* slot, not the one the form opened on: a drag is
+    // already a change, and snapshotting the drop slot would have the save
+    // read as "nothing changed" and notify nobody.
+    final storedStart = (e?.start ?? defaultStart).toLocal();
+    final storedEnd = (e?.end ?? defaultEnd).toLocal();
+    _initialStartDate =
+        DateTime(storedStart.year, storedStart.month, storedStart.day);
+    _initialStartTime =
+        TimeOfDay(hour: storedStart.hour, minute: storedStart.minute);
+    _initialEndDate = DateTime(storedEnd.year, storedEnd.month, storedEnd.day);
+    _initialEndTime = TimeOfDay(hour: storedEnd.hour, minute: storedEnd.minute);
     _initialIsAllDay = _isAllDay;
     _initialTimezone = _timezone;
     _initialRecurrence = _recurrence;

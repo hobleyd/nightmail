@@ -161,8 +161,12 @@ Two consequences of where the form runs:
   theirs is the one calendar a counter-proposal most has to suit, so
   `organizerEmail` travels in the sub-window's arguments for this.
 
-An organizer dragging their *own* meeting still reschedules it directly
-(`CalendarEventRescheduleRequested`); only the attendee path opens the form.
+An organizer dragging their *own* meeting opens the same form in ordinary
+edit mode, pre-filled with the drop slot, for the same reason — Save then
+sends the update. Only an appointment with no guests still moves directly
+(`CalendarEventRescheduleRequested`); there is nobody to check. The form's
+change-detection snapshot is taken from the meeting's *stored* slot, not the
+one it opened on, or a dragged save would read as unchanged and notify nobody.
 
 ## Calendar Cache
 

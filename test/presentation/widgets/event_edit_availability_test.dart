@@ -8,6 +8,7 @@ import 'package:nightmail/domain/entities/attendee_availability.dart';
 import 'package:nightmail/domain/entities/calendar_event.dart';
 import 'package:nightmail/domain/entities/calendar_event_attendee.dart';
 import 'package:nightmail/domain/entities/contact_suggestion.dart';
+import 'package:nightmail/domain/entities/meeting_notify_scope.dart';
 import 'package:nightmail/domain/repositories/calendar_repository.dart';
 import 'package:nightmail/domain/repositories/system_contacts_repository.dart';
 import 'package:nightmail/domain/usecases/check_attendees_availability.dart';
@@ -46,13 +47,26 @@ class _FakeCreateCalendarEvent extends Fake implements CreateCalendarEvent {}
 
 class _FakeUpdateCalendarEvent extends Fake implements UpdateCalendarEvent {}
 
+/// Records the save the form makes, so a test can see what was sent.
+class _RecordingUpdateCalendarEvent extends Fake
+    implements UpdateCalendarEvent {
+  final params = <UpdateCalendarEventParams>[];
+
+  @override
+  Future<Either<Failure, CalendarEvent>> call(
+      UpdateCalendarEventParams p) async {
+    params.add(p);
+    return Right(_event());
+  }
+}
+
 class _FakeProposeNewTime extends Fake implements ProposeNewTime {}
 
 class _FakeNotificationService extends Fake implements NotificationService {}
 
-EventEditBloc _stubBloc() => EventEditBloc(
+EventEditBloc _stubBloc({UpdateCalendarEvent? update}) => EventEditBloc(
       createCalendarEvent: _FakeCreateCalendarEvent(),
-      updateCalendarEvent: _FakeUpdateCalendarEvent(),
+      updateCalendarEvent: update ?? _FakeUpdateCalendarEvent(),
       proposeNewTime: _FakeProposeNewTime(),
       notificationService: _FakeNotificationService(),
     );
@@ -193,6 +207,9 @@ void main() {
     String? accountId = 'acct-1',
     bool fillsWindow = false,
     bool loose = false,
+    DateTime? initialStart,
+    DateTime? initialEnd,
+    UpdateCalendarEvent? update,
   }) async {
     // Most tests hand the form a *tight* box, which stretches it to fill
     // whatever it is given. `loose` reproduces the constraint a Scaffold body
@@ -204,13 +221,15 @@ void main() {
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
         body: BlocProvider<EventEditBloc>(
-          create: (_) => _stubBloc(),
+          create: (_) => _stubBloc(update: update),
           child: Center(
             child: SizedBox(
               width: 1000,
               height: 800,
               child: box(EventEditForm(
                 event: event,
+                initialStart: initialStart,
+                initialEnd: initialEnd,
                 accountId: accountId,
                 onClose: () {},
                 fillsWindow: fillsWindow,
@@ -285,6 +304,61 @@ void main() {
       await settleDebounce(tester);
 
       expect(repository.calls, isEmpty);
+    });
+  });
+
+  group('EventEditForm — opened on a dragged slot', () {
+    // Dragging your own meeting opens the editor on the drop slot rather than
+    // moving it outright, so the guests' availability there can be checked
+    // before Save sends the update.
+    final droppedStart = DateTime(2026, 6, 10, 14);
+    final droppedEnd = DateTime(2026, 6, 10, 15);
+
+    testWidgets('queries the drop slot, excluding the stored one',
+        (tester) async {
+      await pumpForm(tester,
+          event: _event(), initialStart: droppedStart, initialEnd: droppedEnd);
+      await settleDebounce(tester);
+
+      final call = repository.calls.single;
+      expect(call.start, droppedStart);
+      expect(call.end, droppedEnd);
+      // The guests' copies still sit where the server put them.
+      expect(call.excludeStart, _start);
+      expect(call.excludeEnd, _end);
+    });
+
+    testWidgets('saves the new slot and notifies everyone', (tester) async {
+      // The change-detection snapshot must be the stored slot: a form that
+      // snapshotted the slot it opened on would see no change and tell nobody
+      // the meeting had moved.
+      final update = _RecordingUpdateCalendarEvent();
+      await pumpForm(tester,
+          event: _event(),
+          initialStart: droppedStart,
+          initialEnd: droppedEnd,
+          update: update);
+      await settleDebounce(tester);
+
+      await tester.tap(find.text('Save changes'));
+      await tester.pumpAndSettle();
+
+      final saved = update.params.single;
+      expect(saved.start, droppedStart);
+      expect(saved.end, droppedEnd);
+      expect(saved.notifyScope, MeetingNotifyScope.all);
+    });
+
+    testWidgets('an untouched meeting still saves as unchanged',
+        (tester) async {
+      final update = _RecordingUpdateCalendarEvent();
+      await pumpForm(tester, event: _event(), update: update);
+      await settleDebounce(tester);
+
+      await tester.tap(find.text('Save changes'));
+      await tester.pumpAndSettle();
+
+      expect(update.params.single.notifyScope, MeetingNotifyScope.none);
     });
   });
 

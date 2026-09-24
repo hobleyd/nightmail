@@ -1,20 +1,59 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.34.1",
+  "version": "1.34.2",
   "sections": [
     {
       "type": "features",
       "title": "New features",
       "items": [
         {
-          "body": "drop a dragged folder as a sibling, including at the top level",
-          "title": "folders"
+          "body": "fold a meeting's countdown into one notification per platform",
+          "title": "reminders"
+        },
+        {
+          "body": "dragging your own meeting opens the editor on the drop slot",
+          "title": "calendar"
+        }
+      ]
+    },
+    {
+      "type": "fixes",
+      "title": "Fixes",
+      "items": [
+        {
+          "body": "signature and out-of-office editors scroll with their forms",
+          "title": "mobile"
+        },
+        {
+          "body": "compose editor as a platform view; labels and footer fit a phone",
+          "title": "mobile"
+        },
+        {
+          "body": "a non-release build drains its OS reminders instead of scheduling",
+          "title": "reminders"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.34.1",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "drop a dragged folder as a sibling, including at the top level",
+              "title": "folders"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -455,27 +494,6 @@
             {
               "body": "an empty Drafts folder no longer fills with the whole mailbox on refresh",
               "title": "mail"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.26.2",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "give the DMG a background drawn from the logo",
-              "title": "release"
-            },
-            {
-              "body": "format from the keyboard, with the platform's own modifier",
-              "title": "editor"
             }
           ]
         }

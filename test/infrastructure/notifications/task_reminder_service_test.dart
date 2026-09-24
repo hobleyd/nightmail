@@ -95,6 +95,7 @@ void main() {
       accountManager: accountManager,
       notificationService: notifications,
       database: db,
+      schedulesReminders: true,
     );
   });
 
@@ -467,6 +468,50 @@ void main() {
       verify(notifications.cancelTaskReminder(accountId: 'acct-1', taskId: 't2'))
           .called(1);
       expect(await db.getScheduledTaskReminders('acct-1'), isEmpty);
+    });
+  });
+
+  group('a build that must not hold reminders', () {
+    // See the same group in calendar_reminder_service_test.dart: a debug
+    // build's alerts can only be cancelled by a debug build, so a non-release
+    // pass drains its own queue instead of reconciling.
+    setUp(() {
+      when(notifications.drainReminders()).thenAnswer((_) async {});
+      service = TaskReminderService(
+        accountManager: accountManager,
+        notificationService: notifications,
+        database: db,
+        schedulesReminders: false,
+      );
+    });
+
+    test('drains the OS queue, drops its own rows, and fetches nothing',
+        () async {
+      for (final owner in [account.id, 'release-acct']) {
+        await db.upsertScheduledTaskReminder(
+          accountId: owner,
+          listId: 'list-1',
+          taskId: 't1',
+          triggerAtMs: 1000,
+          dueAtMs: 2000,
+          osScheduled: true,
+        );
+      }
+
+      await service.reconcileAll();
+
+      verify(notifications.drainReminders()).called(1);
+      verifyNever(tasksDatasource.getTaskLists());
+      verifyNever(notifications.scheduleTaskReminder(
+        accountId: anyNamed('accountId'),
+        listId: anyNamed('listId'),
+        taskId: anyNamed('taskId'),
+        title: anyNamed('title'),
+        body: anyNamed('body'),
+        triggerUtc: anyNamed('triggerUtc'),
+      ));
+      expect(await db.getScheduledTaskReminders(account.id), isEmpty);
+      expect(await db.getScheduledTaskReminders('release-acct'), hasLength(1));
     });
   });
 

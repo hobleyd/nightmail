@@ -736,6 +736,53 @@ class NotificationService {
     }
   }
 
+  /// Cancels every reminder this build is holding with the OS — meeting
+  /// series and task alerts alike — without consulting an account or a row.
+  ///
+  /// For a build that must not schedule reminders at all (see
+  /// `AppConfig.schedulesOsReminders`): what it holds is whatever an earlier
+  /// run of the *same* build left behind, and on macOS this build is the only
+  /// one that can reach those requests, because the daemon files them under
+  /// the code-signing identity that queued them. Nothing here is keyed by
+  /// account, so a stale alert survives even after the account it belonged to
+  /// was re-added under a fresh id.
+  ///
+  /// On the plugin platforms every pending request is a reminder of one kind
+  /// or the other (mail toasts are shown, never queued), so the pending list is
+  /// cancelled wholesale; Linux holds its reminders in in-process timers.
+  Future<void> drainReminders() async {
+    if (Platform.isMacOS) {
+      for (final kind in const ['event', 'task']) {
+        try {
+          final ids = await _macChannel
+              .invokeMethod<List<dynamic>>('pendingReminderIds', {'kind': kind});
+          if (ids == null || ids.isEmpty) continue;
+          await _macChannel.invokeMethod<void>(
+              'cancelReminder', {'ids': ids.cast<String>(), 'kind': kind});
+        } catch (e) {
+          debugPrint('NotificationService.drainReminders($kind) failed: $e');
+        }
+      }
+      return;
+    }
+    if (await _handedToMainWindow()) return;
+    for (final timer in _linuxTimers.values) {
+      timer.cancel();
+    }
+    _linuxTimers.clear();
+    if (Platform.isLinux) return;
+    final plugin = _plugin;
+    if (plugin == null) return;
+    try {
+      await _initLocalNotifications();
+      for (final request in await plugin.pendingNotificationRequests()) {
+        await plugin.cancel(id: request.id);
+      }
+    } catch (e) {
+      debugPrint('NotificationService.drainReminders failed: $e');
+    }
+  }
+
   /// Shows a "task is due" alert immediately. Used for tasks that fell due
   /// while NightMail wasn't running (or on Linux, where the in-process timer
   /// didn't survive), so the user still learns about it at the next poll.
@@ -1041,11 +1088,12 @@ class PendingReminders {
   /// An alert keyed to an account this process does not have is one nothing
   /// in this process will ever cancel or move: the reconciler only visits the
   /// accounts it has, and `clearAccount` only runs for a removal it saw. Such
-  /// alerts come from another build of the app sharing this bundle id — a
-  /// debug run adds the same mailboxes under fresh ids, because the Keychain
-  /// is per code signature — or from accounts removed while the app was not
-  /// running. Left alone they fire on their original schedule, which is how a
-  /// meeting moved to tomorrow still announced itself today.
+  /// alerts are left by an account removed while the app was not running, or
+  /// re-added under a fresh id. What this snapshot *cannot* contain is another
+  /// build's alerts: macOS files pending requests under the code-signing
+  /// identity that queued them, so a debug build's series is invisible here
+  /// and uncancellable from here — which is why a non-release build drains
+  /// its own queue instead (`NotificationService.drainReminders`).
   ///
   /// Only the macOS shape can answer: hashed ids carry no account. The
   /// persisted rows cover the other platforms.

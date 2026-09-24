@@ -6,6 +6,7 @@ import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:get_it/get_it.dart';
 
+import 'core/config/app_config.dart';
 import 'core/config/oauth_client_id_storage.dart';
 import 'core/settings/app_settings.dart';
 import 'data/database/app_database.dart';
@@ -468,6 +469,7 @@ Future<void> configureDependencies() async {
       accountManager: sl<AccountManager>(),
       notificationService: sl<NotificationService>(),
       database: sl<ReminderScheduleLocalDatasource>(),
+      schedulesReminders: AppConfig.schedulesOsReminders,
     ),
   );
   sl.registerLazySingleton(
@@ -475,6 +477,7 @@ Future<void> configureDependencies() async {
       accountManager: sl<AccountManager>(),
       notificationService: sl<NotificationService>(),
       database: sl<TaskReminderScheduleLocalDatasource>(),
+      schedulesReminders: AppConfig.schedulesOsReminders,
     ),
   );
 

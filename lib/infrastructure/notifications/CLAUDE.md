@@ -88,44 +88,60 @@ No migration is needed for rows written by earlier builds: the first pass finds
 them outside the horizon and clears them, or finds the OS holding nothing and
 re-arms.
 
-## An Alert for an Account This Process Does Not Have Is Nobody's
+## Two Builds of the App Cannot See Each Other's Alerts
 
-Both reconcilers only ever visit the accounts in `AccountManager.accounts`, and
-`clearAccount` only runs for a removal this process saw. So an alert keyed to
-any other account id is one nothing in the process will ever cancel or move —
-it fires on whatever schedule it was given.
+Observed twice on a real machine: a meeting the organiser had moved still
+announced itself at its original time, three times over. Both times the alerts
+belonged to a **debug build** run earlier — `flutter run` adds the same two
+mailboxes under fresh account ids, because the Keychain is per code signature
+(`usesDataProtectionKeychain: kReleaseMode`), and its reconciler queued the
+day's meetings under those ids. The release build reconciled *its* copy of the
+series correctly and could do nothing about the other.
 
-Observed on a real machine: a meeting moved from today to tomorrow still
-announced itself at today's time, three times. The alerts that fired belonged
-to a **debug build** run that morning. Debug and release share the bundle id,
-so they share the OS notification pool and (since the data-directory
-consolidation) `~/.nightmail`; but the Keychain is per code signature, so the
-debug build could not see the release build's accounts and had the same two
-mailboxes added under fresh ids. Its reconciler queued today's meetings under
-those ids and quit at 11:34. The release build rescheduled *its* copy of the
-series for tomorrow correctly, and had no way to know the other copy existed.
+The first fix (commit 3c4bd1c) assumed the two builds share one OS notification
+pool because they share a bundle id, and swept "orphan" alerts — any keyed to
+an account this process does not have — from both the rows and the OS's
+pending list. It shipped, ran every 15 minutes, and cleared nothing. Verified
+in usernoted's own database (`~/Library/Group Containers/group.com.apple.usernoted/db2/db`,
+macOS 27.0): every `record` row carries a `srce` UUID, all of the debug build's
+requests share one and all of the release build's share another, stable across
+relaunches and days. **The daemon files an app's pending requests under the
+code-signing identity that queued them.** Both builds deliver through the same
+`app` row, but `getPendingNotificationRequests` in one build never lists the
+other's requests and `removePendingNotificationRequests` never removes them.
+Sixteen debug-build alerts queued at 16:39 survived fifteen release passes and
+fired the next day.
 
-Each pass therefore ends with an orphan sweep (`_clearOrphans` /
-`_clearOrphanRows`), against two sources:
+So the fix is at the source. `AppConfig.schedulesOsReminders` is true only in a
+release build (or with `--dart-define=NIGHTMAIL_DEBUG_REMINDERS=true`); in any
+other build a reconcile pass is a **drain** — `NotificationService.drainReminders`
+cancels every event and task request this build's identity holds, and the
+service deletes the rows *its own* accounts wrote — and nothing is fetched or
+scheduled. Four things here are deliberate:
 
-- **The rows** — every account id in `scheduled_reminders` /
-  `scheduled_task_reminders` that is not configured has its alerts cancelled
-  and its rows deleted. This is what a shared database leaves behind.
-- **The OS's pending list** — `PendingReminders.orphanedEvents` reads the
-  account id back out of each `accountId::eventId[::offset]` key and cancels
-  any series under an unknown account. This is what a build with its *own*
-  data directory leaves behind. Calendar only: the snapshot is of `event`
-  alerts, and hashed integer ids (every platform but macOS) carry no account.
+- **The drain is not keyed by account.** The accounts a developer run held
+  last week may since have been re-added under fresh ids; the OS is asked what
+  it holds and all of it goes. This is also what clears the leftovers of every
+  debug run made before this change: the first debug launch afterwards is the
+  cleanup.
+- **The row deletion *is* keyed by account.** `~/.nightmail` is shared with the
+  release build, whose rows are its record of what it holds. Deleting them
+  would make it re-arm its whole calendar next pass. (The orphan-rows sweep
+  below does exactly that from the debug side, which is why the drain returns
+  before reaching it.)
+- **The overdue-tasks badge is dark in such a build**, since it counts the rows
+  the drain deletes. Set the define to see it, and quit the debug build before
+  the meetings it queued fall due — nothing else can cancel them.
+- **The release-side orphan sweep stays**, for what it *can* reach: an account
+  removed while the app was not running, or re-added under a fresh id, leaves
+  rows and alerts under this build's own identity. `_clearOrphans` /
+  `_clearOrphanRows` cancel and delete those, from both the rows and (calendar
+  only — hashed integer ids carry no account) the OS's pending list. Skipped
+  while the account list is empty, which is more likely the moment before
+  accounts load than a user who removed every one; `clearAccount` handles
+  removal. A debug build's rows in the shared database are still deleted here;
+  the cancel that goes with them is a no-op, and harmless.
 
-Two things here are deliberate:
-
-- **Skipped while the account list is empty.** That is more likely the moment
-  before accounts load than a user who removed every one, and `clearAccount`
-  already handles removal. Cancelling everything on a transient empty list
-  would re-arm the whole calendar on the next pass — the overflow again.
-- **Two builds running at once will fight**, each cancelling the other's
-  alerts every 15 minutes and re-arming its own when `holdsSeries` finds them
-  gone. That is a developer-only situation and the alternative — alerts that
-  cannot be cancelled by anyone — is what this section is about. If it bites,
-  run one build at a time.
-
+To see what is queued and by whom, decode `record.data` (a binary plist holding
+the request identifier and `srce`) for the rows whose `app_id` maps to
+`au.com.sharpblue.nightmail`; undelivered ones have `delivered_date IS NULL`.

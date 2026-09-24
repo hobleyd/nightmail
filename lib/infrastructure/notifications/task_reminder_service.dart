@@ -28,9 +28,11 @@ class TaskReminderService {
     required AccountManager accountManager,
     required NotificationService notificationService,
     required TaskReminderScheduleLocalDatasource database,
+    required bool schedulesReminders,
   })  : _accountManager = accountManager,
         _notificationService = notificationService,
-        _database = database;
+        _database = database,
+        _schedulesReminders = schedulesReminders;
 
   /// How far ahead to hand triggers to the OS. Anything further out is picked
   /// up by a later reconcile, which keeps the pending-notification list short.
@@ -56,6 +58,12 @@ class TaskReminderService {
   final AccountManager _accountManager;
   final NotificationService _notificationService;
   final TaskReminderScheduleLocalDatasource _database;
+
+  /// Whether this build hands reminders to the OS at all
+  /// (`AppConfig.schedulesOsReminders`). When it does not, a pass is a drain —
+  /// see `CalendarReminderService._drain` for why. The overdue-tasks badge
+  /// rides on the rows this drain deletes, so it is dark in such a build.
+  final bool _schedulesReminders;
 
   Timer? _timer;
   Timer? _startupTimer;
@@ -124,6 +132,18 @@ class TaskReminderService {
   }
 
   Future<void> _reconcileEveryAccount() async {
+    if (!_schedulesReminders) {
+      await _notificationService.drainReminders();
+      for (final account in _accountManager.accounts) {
+        try {
+          await _database.clearScheduledTaskRemindersForAccount(account.id);
+        } catch (e) {
+          debugPrint(
+              'TaskReminderService: drain failed for account ${account.id}: $e');
+        }
+      }
+      return;
+    }
     for (final account in _accountManager.accounts) {
       try {
         await _reconcileAccount(account);

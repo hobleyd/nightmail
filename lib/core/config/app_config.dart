@@ -5,6 +5,21 @@ import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode;
 class AppConfig {
   const AppConfig._();
 
+  /// Whether this build may hand meeting and task reminders to the OS.
+  ///
+  /// Release builds only, unless `--dart-define=NIGHTMAIL_DEBUG_REMINDERS=true`.
+  /// macOS's notification daemon files an app's pending requests under the
+  /// code-signing identity that queued them, so a debug build and the
+  /// Developer-ID release build of the same bundle id each hold a private
+  /// queue that the other can neither list nor cancel. A developer run that
+  /// scheduled reminders would therefore leave alerts behind that fire on
+  /// their original time for the rest of the horizon — for the release build's
+  /// user, with no way for it to intervene. So a build that is not release
+  /// drains what it holds and schedules nothing; see
+  /// `lib/infrastructure/notifications/CLAUDE.md`.
+  static const schedulesOsReminders =
+      kReleaseMode || bool.fromEnvironment('NIGHTMAIL_DEBUG_REMINDERS');
+
   static const microsoftClientId = String.fromEnvironment(
     'AZURE_CLIENT_ID',
     defaultValue: 'YOUR_CLIENT_ID',

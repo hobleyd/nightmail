@@ -22,9 +22,11 @@ class CalendarReminderService {
     required AccountManager accountManager,
     required NotificationService notificationService,
     required ReminderScheduleLocalDatasource database,
+    required bool schedulesReminders,
   })  : _accountManager = accountManager,
         _notificationService = notificationService,
-        _database = database;
+        _database = database,
+        _schedulesReminders = schedulesReminders;
 
   static const _lookahead = Duration(days: 14);
 
@@ -59,6 +61,11 @@ class CalendarReminderService {
   final AccountManager _accountManager;
   final NotificationService _notificationService;
   final ReminderScheduleLocalDatasource _database;
+
+  /// Whether this build hands reminders to the OS at all
+  /// (`AppConfig.schedulesOsReminders`). When it does not, a pass is a drain:
+  /// see [_drain].
+  final bool _schedulesReminders;
 
   Timer? _timer;
   Timer? _startupTimer;
@@ -123,6 +130,10 @@ class CalendarReminderService {
   }
 
   Future<void> _reconcileEveryAccount() async {
+    if (!_schedulesReminders) {
+      await _drain();
+      return;
+    }
     final now = DateTime.now().toUtc();
 
     // Fetch every account first, then decide what to queue across all of them
@@ -168,25 +179,62 @@ class CalendarReminderService {
     );
   }
 
+  /// The pass a build that must not hold reminders makes instead of
+  /// reconciling: cancel everything this build has queued with the OS, and
+  /// drop the rows its own accounts wrote, so nothing it scheduled on an
+  /// earlier run outlives it.
+  ///
+  /// This exists because of the debug build. On macOS the notification daemon
+  /// files an app's pending requests under the code-signing identity that
+  /// queued them, so a debug run and the Developer-ID release build of the same
+  /// bundle id each hold a queue the other can neither list nor cancel. A debug
+  /// run that reconciled normally therefore left alerts that fired on their
+  /// original schedule for the rest of the horizon — a meeting the organiser
+  /// had since moved still announced itself three times, from the debug
+  /// build's copy of the series — and [_clearOrphans] in the release build,
+  /// written on the assumption of one shared pool, could do nothing about it.
+  /// Only this build can clear its own queue, so it does, every pass.
+  ///
+  /// The OS drain is not keyed by account, deliberately: the accounts a
+  /// developer run held last week may since have been re-added under fresh
+  /// ids. The row deletion is, because the database is shared with the
+  /// release build and its rows are not ours to touch; [_clearOrphans] would
+  /// otherwise see them as orphans and delete them, making the release build
+  /// re-arm its whole calendar on its next pass.
+  Future<void> _drain() async {
+    await _notificationService.drainReminders();
+    for (final account in _accountManager.accounts) {
+      try {
+        await _database.clearScheduledRemindersForAccount(account.id);
+      } catch (e) {
+        debugPrint(
+            'CalendarReminderService: drain failed for account ${account.id}: $e');
+      }
+    }
+  }
+
   /// Cancels every alert, and deletes every row, keyed to an account this
   /// process does not have.
   ///
   /// The loop above only ever visits configured accounts, and
   /// [clearAccount] only runs for a removal this process saw — so an alert
   /// under any other account id is one nothing here will ever cancel or move,
-  /// and it fires on whatever schedule it was given. Two things leave such
-  /// alerts behind: another build of the app sharing this bundle id (a debug
-  /// run adds the same mailboxes under fresh ids, since the Keychain is per
-  /// code signature, and queues into the same OS notification pool), and an
-  /// account removed while the app was not running. Observed as a meeting
-  /// moved to tomorrow still announcing itself at today's time, from the
-  /// debug build's copy of the series.
+  /// and it fires on whatever schedule it was given. What leaves such alerts
+  /// behind is an account removed while the app was not running, or re-added
+  /// under a fresh id.
   ///
-  /// Both sources are checked: the rows, which is what a shared database
-  /// leaves, and the OS's own pending list, which is what a build with its
-  /// own data directory leaves. Skipped while no account is configured — an
-  /// empty account list is more likely a moment before they load than a user
-  /// who removed every one, and [clearAccount] has the removal case anyway.
+  /// What this cannot reach is another build's alerts. macOS files pending
+  /// requests under the code-signing identity that queued them, so a debug
+  /// build's series never appears in this build's pending list and a cancel
+  /// from here never removes it; the rows it wrote to the shared database *are*
+  /// visible and are deleted here, but the cancel that goes with them is a
+  /// no-op. That case is handled at the source instead — a non-release build
+  /// drains its own queue and schedules nothing ([_drain]).
+  ///
+  /// Both sources are checked: the rows, and the OS's own pending list.
+  /// Skipped while no account is configured — an empty account list is more
+  /// likely a moment before they load than a user who removed every one, and
+  /// [clearAccount] has the removal case anyway.
   Future<void> _clearOrphans({
     required Set<String> known,
     required PendingReminders? pending,

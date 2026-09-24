@@ -68,6 +68,7 @@ void main() {
       accountManager: accountManager,
       notificationService: notifications,
       database: db,
+      schedulesReminders: true,
     );
     cubit = OverdueTasksCubit(
       accountManager: accountManager,

@@ -91,6 +91,7 @@ void main() {
       accountManager: accountManager,
       notificationService: notifications,
       database: db,
+      schedulesReminders: true,
     );
   });
 
@@ -480,6 +481,71 @@ void main() {
         (accountId: 'gone-2', eventId: graphId),
       });
       expect(pending.orphanedEvents({'known', 'gone-1', 'gone-2'}), isEmpty);
+    });
+  });
+
+  group('a build that must not hold reminders', () {
+    // macOS files pending notification requests under the code-signing
+    // identity that queued them, so a debug build's alerts are invisible to,
+    // and uncancellable from, the release build sharing its bundle id. The
+    // only build that can clear a debug run's leftovers is a debug run — so a
+    // non-release build's pass drains its own queue and schedules nothing.
+    setUp(() {
+      when(notifications.drainReminders()).thenAnswer((_) async {});
+      service = CalendarReminderService(
+        accountManager: accountManager,
+        notificationService: notifications,
+        database: db,
+        schedulesReminders: false,
+      );
+    });
+
+    test('drains the OS queue and schedules nothing, without fetching',
+        () async {
+      final start = DateTime.now().toUtc().add(const Duration(hours: 2));
+      stubEvents([event('e1', start: start)]);
+
+      await service.reconcileAll();
+
+      verify(notifications.drainReminders()).called(1);
+      verifyNever(notifications.scheduleEventReminder(
+        accountId: anyNamed('accountId'),
+        eventId: anyNamed('eventId'),
+        eventTitle: anyNamed('eventTitle'),
+        startUtc: anyNamed('startUtc'),
+        reminderMinutes: anyNamed('reminderMinutes'),
+        startIso: anyNamed('startIso'),
+      ));
+      verifyNever(calendarDatasource.getCalendarEvents(
+        startDateTime: anyNamed('startDateTime'),
+        endDateTime: anyNamed('endDateTime'),
+      ));
+      expect(await db.getScheduledReminders(account.id), isEmpty);
+    });
+
+    test("drops its own accounts' rows and leaves every other account's",
+        () async {
+      // The database is shared with the release build, whose rows are its
+      // record of what it holds; deleting them would make it re-arm its whole
+      // calendar on the next pass.
+      for (final owner in [account.id, 'release-acct']) {
+        await db.upsertScheduledReminder(
+          accountId: owner,
+          eventId: 'e1',
+          triggerAtMs: 1000,
+          reminderMinutes: 15,
+          eventStartMs: 2000,
+        );
+      }
+
+      await service.reconcileAll();
+
+      expect(await db.getScheduledReminders(account.id), isEmpty);
+      expect(await db.getScheduledReminders('release-acct'), hasLength(1));
+      // The drain is what cancels — by what the OS holds, not by row — so no
+      // per-event cancel is issued for anyone.
+      verifyNever(notifications.cancelEventReminder(
+          accountId: anyNamed('accountId'), eventId: anyNamed('eventId')));
     });
   });
 

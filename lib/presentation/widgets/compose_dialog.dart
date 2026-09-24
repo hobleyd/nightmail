@@ -1284,7 +1284,10 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
       if (_hasOrphanedInlineImages(effectiveBody)) {
         setState(() => _sent = false);
         if (!mounted) return;
+        final editorState = _htmlEditorKey.currentState;
+        if (editorState != null) await editorState.hide();
         final sendAnyway = await _confirmSendWithBrokenImages(context);
+        if (mounted && editorState != null) await editorState.show();
         if (sendAnyway != true) return;
         setState(() => _sent = true);
       }

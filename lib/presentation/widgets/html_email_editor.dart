@@ -293,6 +293,7 @@ class _PlatformViewHost implements _EditorHost {
 
   final _HostEvent onEvent;
   late final WebViewController _controller;
+  final ValueNotifier<bool> _visible = ValueNotifier<bool>(true);
 
   @override
   void load(String assetKey) {
@@ -324,15 +325,35 @@ class _PlatformViewHost implements _EditorHost {
   @override
   Future<void> focus() async {}
 
-  /// The platform view is part of the Flutter tree, so a dialog or sheet
-  /// pushed above it simply draws on top.
+  /// The platform view is part of the Flutter tree, so an *ordinary* dialog
+  /// or sheet pushed above it simply draws on top — true for anything Flutter
+  /// paints itself. It is not true for a `BackdropFilter`-blurred surface
+  /// (the native-style iOS alert, `AdaptiveAlertDialog`'s Cupertino branch):
+  /// the blur samples the *composited* scene, and a hybrid-composition
+  /// platform view is composited by the OS outside Flutter's own layer, so
+  /// the filter cannot reliably read it — visible on a phone as a patch of
+  /// wrong colour behind the alert exactly where the webview sits, but only
+  /// while the keyboard has it scrolled into that area. `Offstage` drops the
+  /// native view's layer for the frame without disposing the `WebViewController`,
+  /// so the alert blurs whatever is *behind* the editor instead (the compose
+  /// page, or — inside a modal — the opaque backdrop `AdaptiveAlertDialog`
+  /// paints behind the Cupertino surface) and the edited HTML survives the
+  /// round trip untouched.
   @override
-  Future<void> setVisible(bool visible) async {}
+  Future<void> setVisible(bool visible) async {
+    _visible.value = visible;
+  }
 
   @override
-  Widget build(BuildContext context) =>
-      WebViewWidget(controller: _controller);
+  Widget build(BuildContext context) => ValueListenableBuilder<bool>(
+        valueListenable: _visible,
+        builder: (context, visible, child) =>
+            Offstage(offstage: !visible, child: child),
+        child: WebViewWidget(controller: _controller),
+      );
 
   @override
-  void dispose() {}
+  void dispose() {
+    _visible.dispose();
+  }
 }

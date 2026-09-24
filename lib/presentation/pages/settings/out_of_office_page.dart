@@ -3,6 +3,7 @@ import '../../widgets/adaptive_switch.dart';
 import '../../widgets/adaptive_alert_dialog.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../core/platform/touch_metrics.dart';
 import '../../../core/settings/app_settings.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/consumer_email_domain.dart';
@@ -350,12 +351,76 @@ class _OutOfOfficeViewState extends State<_OutOfOfficeView> {
       });
     }
 
-    // The message editor embeds a native platform view (WebView2/WKWebView)
-    // whose screen position is only recalculated on layout, never on scroll
-    // deltas — nested in a scroll view it visually detaches from the rest of
-    // the form. The fields scroll; the editor gets a fixed area below, the
-    // same shape (and the same height) as the signature editor in
-    // `_AccountsSection`.
+    final editor = Opacity(
+      opacity: enabled ? 1 : 0.4,
+      child: ExcludeFocus(
+        excluding: !enabled,
+        child: IgnorePointer(
+          ignoring: !enabled,
+          child: SizedBox(
+            height: 160,
+            child: Container(
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                color: c.surfaceBase,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: c.separatorStrong),
+              ),
+              child: _composeFormat == EmailBodyType.html
+                  ? HtmlEmailEditor(
+                      // Keyed on the account so switching mailboxes
+                      // reloads the editor with that mailbox's message.
+                      // *Not* on the slot: the two bodies share one
+                      // webview and are swapped through setContent, since
+                      // rebuilding a platform view per tab press is both
+                      // slow and a chance to lose the last keystrokes.
+                      key: ValueKey('ooo-${state.accountId}'),
+                      initialHtml: state.saved?.messageHtml ?? '',
+                      onContentChanged: _onEditorChanged,
+                      onLinkRequested: _onLinkRequested,
+                      onAttachRequested: () {},
+                    )
+                  : Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: TextField(
+                        controller: _plainController,
+                        maxLines: null,
+                        expands: true,
+                        textAlignVertical: TextAlignVertical.top,
+                        style: TextStyle(
+                          color: c.textPrimary,
+                          fontSize: 13,
+                        ),
+                        decoration: InputDecoration(
+                          hintText:
+                              "e.g.\n\nI'm away until Friday and "
+                              'will reply when I get back.',
+                          hintStyle: TextStyle(
+                            color: c.textMuted,
+                            fontSize: 13,
+                          ),
+                          border: InputBorder.none,
+                          isCollapsed: true,
+                        ),
+                        onChanged: (text) => _onEditorChanged(
+                          ComposeBodyBuilder.plainToHtml(text),
+                        ),
+                      ),
+                    ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    // On the desktop the message editor is html_view's native overlay
+    // (WebView2/WKWebView), whose screen position is only recalculated on
+    // layout, never on scroll deltas — nested in a scroll view it visually
+    // detaches from the rest of the form. So there the fields scroll and the
+    // editor gets a fixed area below, the same shape (and the same height) as
+    // the signature editor in `_AccountsSection`. On a phone the editor is a
+    // real platform view that scrolls with the form, and the fixed area only
+    // squeezed the fields under a 160px box once the keyboard was up.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -474,72 +539,18 @@ class _OutOfOfficeViewState extends State<_OutOfOfficeView> {
                   showTabs: showTabs,
                   onSelect: _selectSlot,
                 ),
+                if (isTouchPlatform) ...[
+                  const SizedBox(height: 8),
+                  editor,
+                ],
               ],
             ),
           ),
         ),
-        const SizedBox(height: 8),
-        Opacity(
-          opacity: enabled ? 1 : 0.4,
-          child: ExcludeFocus(
-            excluding: !enabled,
-            child: IgnorePointer(
-              ignoring: !enabled,
-              child: SizedBox(
-                height: 160,
-                child: Container(
-                  clipBehavior: Clip.antiAlias,
-                  decoration: BoxDecoration(
-                    color: c.surfaceBase,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: c.separatorStrong),
-                  ),
-                  child: _composeFormat == EmailBodyType.html
-                      ? HtmlEmailEditor(
-                          // Keyed on the account so switching mailboxes
-                          // reloads the editor with that mailbox's message.
-                          // *Not* on the slot: the two bodies share one
-                          // webview and are swapped through setContent, since
-                          // rebuilding a platform view per tab press is both
-                          // slow and a chance to lose the last keystrokes.
-                          key: ValueKey('ooo-${state.accountId}'),
-                          initialHtml: state.saved?.messageHtml ?? '',
-                          onContentChanged: _onEditorChanged,
-                          onLinkRequested: _onLinkRequested,
-                          onAttachRequested: () {},
-                        )
-                      : Padding(
-                          padding: const EdgeInsets.all(10),
-                          child: TextField(
-                            controller: _plainController,
-                            maxLines: null,
-                            expands: true,
-                            textAlignVertical: TextAlignVertical.top,
-                            style: TextStyle(
-                              color: c.textPrimary,
-                              fontSize: 13,
-                            ),
-                            decoration: InputDecoration(
-                              hintText:
-                                  "e.g.\n\nI'm away until Friday and "
-                                  'will reply when I get back.',
-                              hintStyle: TextStyle(
-                                color: c.textMuted,
-                                fontSize: 13,
-                              ),
-                              border: InputBorder.none,
-                              isCollapsed: true,
-                            ),
-                            onChanged: (text) => _onEditorChanged(
-                              ComposeBodyBuilder.plainToHtml(text),
-                            ),
-                          ),
-                        ),
-                ),
-              ),
-            ),
-          ),
-        ),
+        if (!isTouchPlatform) ...[
+          const SizedBox(height: 8),
+          editor,
+        ],
         const SizedBox(height: 12),
         if (state.errorMessage != null) ...[
           _Notice(

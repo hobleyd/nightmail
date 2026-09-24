@@ -1162,6 +1162,13 @@ class _AccountsSectionState extends State<_AccountsSection> {
           _syncControllers(_selectedAccount!);
         }
 
+        final signature = _SignatureEditor(
+          key: ValueKey(_selectedAccount!.id),
+          initialHtml: _selectedAccount!.signatureHtml,
+          composeFormat: _composeFormat,
+          onChanged: _onSignatureChanged,
+        );
+
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1229,13 +1236,17 @@ class _AccountsSectionState extends State<_AccountsSection> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // The signature editor embeds a native platform view
-                    // (WebView2/WKWebView) whose screen position is only
-                    // recalculated on layout/window-resize, never on scroll
-                    // deltas — nested in a SingleChildScrollView it visually
-                    // detaches from the rest of the form as soon as you
-                    // scroll. It gets its own fixed, non-scrolling area below
-                    // instead (matching how compose_dialog.dart places it).
+                    // On the desktop the signature editor is html_view's
+                    // native overlay (WebView2/WKWebView), whose screen
+                    // position is only recalculated on layout/window-resize,
+                    // never on scroll deltas — nested in a SingleChildScrollView
+                    // it visually detaches from the rest of the form as soon
+                    // as you scroll, so there it gets its own fixed area below
+                    // (matching how compose_dialog.dart places it). On a phone
+                    // the editor is a real platform view that scrolls with the
+                    // form, and the fixed area was the problem: with the
+                    // keyboard up it left the fields a few lines of scroll
+                    // space under a 160px box that looked to be covering them.
                     Expanded(
                       child: SingleChildScrollView(
                         child: Column(
@@ -1436,17 +1447,18 @@ class _AccountsSectionState extends State<_AccountsSection> {
                             ),
                         ],
                       ],
+                            if (isTouchPlatform) ...[
+                              const SizedBox(height: 12),
+                              signature,
+                            ],
                           ],
                         ),
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    _SignatureEditor(
-                      key: ValueKey(_selectedAccount!.id),
-                      initialHtml: _selectedAccount!.signatureHtml,
-                      composeFormat: _composeFormat,
-                      onChanged: _onSignatureChanged,
-                    ),
+                    if (!isTouchPlatform) ...[
+                      const SizedBox(height: 12),
+                      signature,
+                    ],
                   ],
                 ),
               ),

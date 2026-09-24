@@ -44,7 +44,20 @@ class AdaptiveAlertDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     if (_isIOS) {
       final cupertino = _tryCupertino();
-      if (cupertino != null) return cupertino;
+      if (cupertino != null) {
+        // CupertinoPopupSurface blurs and tints whatever is immediately
+        // behind the alert box — sampled from the composited scene, not just
+        // `showDialog`'s own barrier, which stays translucent (Colors.black54
+        // by default) so a slice of the page's real colours still shows
+        // through it. Behind a page with more than one background tone under
+        // the dialog — compose's white fields above its grey toolbar, say —
+        // the alert reads as two different colours stitched together instead
+        // of one. An opaque backdrop behind it gives the blur a single
+        // colour to work from, so the alert reads as one surface again; the
+        // `showDialog` barrier underneath becomes redundant once this covers
+        // it, but it's harmless left in place.
+        return ColoredBox(color: Colors.black, child: cupertino);
+      }
     }
     return AlertDialog(
       title: title,

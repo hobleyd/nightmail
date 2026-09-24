@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:desktop_drop/desktop_drop.dart';
@@ -187,7 +188,7 @@ class ComposeForm extends StatefulWidget {
   State<ComposeForm> createState() => ComposeFormState();
 }
 
-class ComposeFormState extends State<ComposeForm> {
+class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
   late List<String> _toRecipients;
   late List<String> _ccRecipients;
   final _toFieldKey = GlobalKey<RecipientInputFieldState>();
@@ -208,6 +209,50 @@ class ComposeFormState extends State<ComposeForm> {
   // Tracks the latest HTML from the WebView (updated on every change event).
   String _htmlBodyCache = '';
   final _htmlEditorKey = GlobalKey<HtmlEmailEditorState>();
+
+  // ── Touch-platform body scrolling ────────────────────────────────────────
+  //
+  // On a phone the fields, attachments and body editor all sit inside one
+  // scroll view (see `_buildContent`) so the keyboard doesn't just crush the
+  // editor into whatever space is left. The webview editor is a real platform
+  // view with no Flutter focus node of its own though, so — unlike the
+  // recipient/subject fields and the plain-text `TextField`, which Flutter
+  // already scrolls into view on focus — nothing brings it above the keyboard
+  // on its own. `_scrollEditorIntoView` does that by hand, on the one signal
+  // the webview does give us (`onClickFocus`) and, for a reply, on the
+  // keyboard actually opening — the HTML editor autofocuses itself once its
+  // content finishes loading, with no Flutter-side focus event to hook.
+  final _editorAreaKey = GlobalKey();
+  final _mobileBodyScrollController = ScrollController();
+  double _lastBottomInset = 0;
+  bool _awaitingAutoFocusScroll = false;
+
+  void _scrollEditorIntoView() {
+    if (!isTouchPlatform) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final editorContext = _editorAreaKey.currentContext;
+      if (editorContext == null) return;
+      unawaited(Scrollable.ensureVisible(
+        editorContext,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOut,
+        alignment: 0.05,
+      ));
+    });
+  }
+
+  @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    if (!isTouchPlatform || !mounted) return;
+    final bottomInset = View.of(context).viewInsets.bottom;
+    if (bottomInset > 0 && _lastBottomInset == 0 && _awaitingAutoFocusScroll) {
+      _awaitingAutoFocusScroll = false;
+      _scrollEditorIntoView();
+    }
+    _lastBottomInset = bottomInset;
+  }
 
   // AI compose / smart-reply streaming.
   late final AiComposeCubit _aiCubit;
@@ -253,6 +298,7 @@ class ComposeFormState extends State<ComposeForm> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _aiCubit = sl<AiComposeCubit>();
     _toRecipients = _parseAddresses(_initialTo());
     _ccRecipients = _parseAddresses(_initialCc());
@@ -261,6 +307,10 @@ class ComposeFormState extends State<ComposeForm> {
     _subjectController = TextEditingController(text: _initialSubject());
 
     _bodyType = _determineInitialBodyType();
+    _awaitingAutoFocusScroll = isTouchPlatform &&
+        _bodyType == EmailBodyType.html &&
+        (widget.mode == ComposeMode.reply ||
+            widget.mode == ComposeMode.replyAll);
     if (_bodyType == EmailBodyType.html) {
       _htmlBodyCache = _buildInitialHtmlBody();
       _localAttachments = _sourceInlineAttachments();
@@ -523,6 +573,8 @@ class ComposeFormState extends State<ComposeForm> {
     _bodyController.dispose();
     _subjectFocus.dispose();
     _bodyFocus.dispose();
+    _mobileBodyScrollController.dispose();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
 
     if (hasPendingSave) {
@@ -762,7 +814,7 @@ class ComposeFormState extends State<ComposeForm> {
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => AdaptiveAlertDialog(
+      builder: (dialogContext) => AdaptiveAlertDialog(
         backgroundColor: context.colors.surfacePanel,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         title: Text(
@@ -780,14 +832,14 @@ class ComposeFormState extends State<ComposeForm> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
             child: Text(
               'Keep HTML',
               style: TextStyle(color: context.colors.textMuted, fontSize: 13),
             ),
           ),
           FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
             style: FilledButton.styleFrom(
               backgroundColor: Colors.red.shade600,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1309,7 +1361,7 @@ class ComposeFormState extends State<ComposeForm> {
   Future<bool?> _confirmSendWithBrokenImages(BuildContext context) {
     return showDialog<bool>(
       context: context,
-      builder: (_) => AdaptiveAlertDialog(
+      builder: (dialogContext) => AdaptiveAlertDialog(
         backgroundColor: context.colors.surfacePanel,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         title: Text(
@@ -1328,14 +1380,14 @@ class ComposeFormState extends State<ComposeForm> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
             child: Text(
               'Go Back',
               style: TextStyle(color: context.colors.textMuted, fontSize: 13),
             ),
           ),
           FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
             style: FilledButton.styleFrom(
               backgroundColor: Colors.red.shade600,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1466,7 +1518,10 @@ class ComposeFormState extends State<ComposeForm> {
         onLinkRequested: () => _onLinkRequested(context),
         onAttachRequested: _pickAttachments,
         onImagePasted: _onImagePasted,
-        onClickFocus: () => FocusManager.instance.primaryFocus?.unfocus(),
+        onClickFocus: () {
+          FocusManager.instance.primaryFocus?.unfocus();
+          _scrollEditorIntoView();
+        },
       );
     }
 
@@ -1528,6 +1583,99 @@ class ComposeFormState extends State<ComposeForm> {
         _localAttachments.where((a) => !a.isInline).toList();
 
     if (widget.scrollable) {
+      final footer = _Footer(
+        onSend: () => _submit(context),
+        onClose: () => _requestClose(context),
+        isSubmitting: _sent,
+        draftSavedAt: _lastDraftSavedAt,
+        bodyType: _bodyType,
+        onBodyTypeChanged: (val) {
+          if (val == EmailBodyType.text) {
+            _switchToPlainText(context);
+          } else {
+            _switchToHtml();
+          }
+        },
+        onAiCompose: _aiGenerating ? null : () => _onAiCompose(context),
+      );
+
+      if (isTouchPlatform) {
+        // On the desktop, below, the body editor keeps its own fixed
+        // `Expanded` area because it's html_view's native overlay — a
+        // platform view whose screen position is only recalculated on
+        // layout, so nested in a scroll view it visually detaches as soon as
+        // the page scrolls (the same split out_of_office_page.dart and
+        // settings_page.dart make for their own editors). On a phone the
+        // editor is webview_flutter's WebViewWidget, a real
+        // platform view composited into the tree, so it scrolls with
+        // everything else instead: fields, attachment chips and the editor
+        // are all one scroll view, which is what leaves room to type once the
+        // keyboard is up — the fixed layout below just handed the keyboard
+        // whatever was left after the fields, which on a phone was often
+        // nothing.
+        //
+        // The editor's height is floored against the *keyboard-less* screen
+        // height (`MediaQuery.sizeOf`, not `viewInsets`), so it does not
+        // itself shrink when the keyboard opens — the scroll viewport does,
+        // and the content becomes taller than it, which is what makes this
+        // scrollable in the first place. `_scrollEditorIntoView` then brings
+        // the editor back above the keyboard rather than leaving the user to
+        // find it by hand.
+        final editorHeight =
+            math.max(260.0, MediaQuery.sizeOf(context).height * 0.42);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _TitleBar(title: _title, onClose: () => _requestClose(context)),
+            Divider(height: 1, color: c.border),
+            Expanded(
+              child: Stack(
+                children: [
+                  SingleChildScrollView(
+                    controller: _mobileBodyScrollController,
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        ..._buildFields(c),
+                        if (forwardEmail != null &&
+                            forwardEmail.attachments.isNotEmpty)
+                          _ForwardAttachmentChips(
+                            attachments: forwardEmail.attachments,
+                            excludedIds: _excludedAttachmentIds,
+                            onRemove: (id) => setState(
+                                () => _excludedAttachmentIds = [
+                                      ..._excludedAttachmentIds,
+                                      id
+                                    ]),
+                          ),
+                        if (visibleAttachments.isNotEmpty)
+                          _LocalAttachmentChips(
+                            attachments: visibleAttachments,
+                            onRemove: (att) => setState(() =>
+                                _localAttachments = _localAttachments
+                                    .where((a) => a != att)
+                                    .toList()),
+                          ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          key: _editorAreaKey,
+                          height: editorHeight,
+                          child: _buildBodyEditor(c),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (_isDragOver) const Positioned.fill(child: _DropOverlay()),
+                ],
+              ),
+            ),
+            Divider(height: 1, color: c.border),
+            footer,
+          ],
+        );
+      }
+
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1578,22 +1726,7 @@ class ComposeFormState extends State<ComposeForm> {
             ),
           ),
           Divider(height: 1, color: c.border),
-          _Footer(
-            onSend: () => _submit(context),
-            onClose: () => _requestClose(context),
-            isSubmitting: _sent,
-            draftSavedAt: _lastDraftSavedAt,
-            bodyType: _bodyType,
-            onBodyTypeChanged: (val) {
-              if (val == EmailBodyType.text) {
-                _switchToPlainText(context);
-              } else {
-                _switchToHtml();
-              }
-            },
-            onAiCompose:
-                _aiGenerating ? null : () => _onAiCompose(context),
-          ),
+          footer,
         ],
       );
     }

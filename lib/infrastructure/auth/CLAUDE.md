@@ -134,9 +134,19 @@ different builds of the same client:
   registers both schemes — `nightmail` is still Microsoft's, unaffected by any
   of this.
 
-Neither client type is issued a client secret. `showClientIdDialog`'s Gmail
-call sites (`add_account_page.dart`, `account_selection_page.dart`) set
-`requireSecret: !isMobile` for this reason — the dialog can't demand a secret
-Google never gives out on those platforms, and the downstream `GmailAuthService`
-call sends `credentials.clientSecret ?? ''` rather than force-unwrapping.
+Neither client type is issued a client secret, and no other client type can
+stand in for one on mobile either: a Desktop/Web-type client's secret is
+useless here because the *redirect* is the actual blocker — Google dropped
+custom-scheme redirect support for Desktop clients in 2022, so any client
+that carries a secret is the wrong client type for the `au.com.sharpblue.
+nightmail:/google-auth-callback` redirect regardless of what's typed into the
+dialog (confirmed by reproducing `Error 400: redirect_uri_mismatch` with a
+working desktop Client ID/Secret entered as a custom registration on iOS). A
+custom app registration on mobile must be its own genuine iOS/Android-type
+client, which Google never issues a secret for either. `showClientIdDialog`'s
+Gmail call sites (`add_account_page.dart`, `account_selection_page.dart`)
+set `requireSecret: !isMobile` for this reason — the field is hidden
+entirely on mobile, not just optional — and the downstream
+`GmailAuthService` call sends `credentials.clientSecret ?? ''` rather than
+force-unwrapping.
 

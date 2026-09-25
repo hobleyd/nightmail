@@ -119,7 +119,12 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
         : null;
     final initialSecret = AppConfig.gmailClientSecret;
     // iOS and Android OAuth clients don't get a client secret from Google —
-    // only the Desktop-type client used on macOS/Windows/Linux/Web does.
+    // only the Desktop-type client used on macOS/Windows/Linux/Web does. A
+    // Desktop-type client also can't be used on iOS/Android in its place:
+    // Google dropped custom-scheme redirect support for Desktop clients in
+    // 2022, so any client with a secret is the wrong client type there
+    // regardless — a custom app registration on mobile must be a genuine
+    // iOS/Android-type client, which is never issued one either.
     final isMobile = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
     if (!mounted) return;

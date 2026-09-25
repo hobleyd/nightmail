@@ -282,9 +282,8 @@ class _EmailListPanelState extends State<EmailListPanel> {
   /// to refresh on touch; on the desktop it is returned untouched.
   Widget _pullToRefresh(Widget child) {
     if (!_isTouch) return child;
-    return RefreshIndicator.adaptive(
+    return RefreshIndicator.noSpinner(
       onRefresh: _refreshAndSettle,
-      color: AppColors.accent,
       child: LayoutBuilder(
         builder: (context, constraints) => SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -1012,37 +1011,46 @@ class _ListHeader extends StatelessWidget {
           // targets in this row a long name is what would otherwise push the
           // trailing actions off a narrow phone.
           Expanded(
-            child: Row(
+            // Stack rather than a flex sibling: the spinner then centres on
+            // the whole title area regardless of the folder name's width,
+            // instead of splitting flex space with the text and drifting off
+            // to whichever side has room.
+            child: Stack(
+              alignment: Alignment.center,
               children: [
-                Flexible(
-                  child: Padding(
-                    padding: EdgeInsets.only(left: onBack != null ? 0 : 8),
-                    child: Text(
-                      folderName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: c.textPrimary,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: -0.3,
+                Row(
+                  children: [
+                    Flexible(
+                      child: Padding(
+                        padding: EdgeInsets.only(left: onBack != null ? 0 : 8),
+                        child: Text(
+                          folderName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: c.textPrimary,
+                            fontSize: isTouchPlatform ? 18 : 15,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: -0.3,
+                          ),
+                        ),
                       ),
                     ),
-                  ),
+                    if (!isTouchPlatform)
+                      IconButton(
+                        icon: Icon(Icons.refresh_rounded,
+                            size: touchIcon(20), color: c.textMuted),
+                        tooltip: 'Refresh',
+                        padding: EdgeInsets.zero,
+                        constraints: BoxConstraints(
+                          minWidth: touchTarget(32),
+                          minHeight: touchTarget(32),
+                        ),
+                        onPressed: onRefresh,
+                      ),
+                  ],
                 ),
-                IconButton(
-                  icon: Icon(Icons.refresh_rounded,
-                      size: touchIcon(20), color: c.textMuted),
-                  tooltip: 'Refresh',
-                  padding: EdgeInsets.zero,
-                  constraints: BoxConstraints(
-                    minWidth: touchTarget(32),
-                    minHeight: touchTarget(32),
-                  ),
-                  onPressed: onRefresh,
-                ),
-                if (isLoadingFresh) ...[
-                  const SizedBox(width: 4),
+                if (isLoadingFresh)
                   SizedBox(
                     width: 14,
                     height: 14,
@@ -1051,7 +1059,6 @@ class _ListHeader extends StatelessWidget {
                       color: c.textMuted,
                     ),
                   ),
-                ],
               ],
             ),
           ),
@@ -1394,9 +1401,11 @@ class _EmailListView extends StatelessWidget {
     );
     final refresh = onRefresh;
     if (refresh == null) return list;
-    return RefreshIndicator.adaptive(
+    // No visible spinner: the gesture still drives the refresh, but progress
+    // is shown by the folder header's spinner rather than a second one
+    // overlaying the top email.
+    return RefreshIndicator.noSpinner(
       onRefresh: refresh,
-      color: AppColors.accent,
       child: list,
     );
   }

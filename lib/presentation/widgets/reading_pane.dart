@@ -95,10 +95,14 @@ class ReadingPane extends StatelessWidget {
           builder: (context, state) {
             return switch (state) {
               EmailDetailInitial() => const _EmptyState(),
-              EmailDetailLoading() => Center(
-                  child: CircularProgressIndicator(
-                      color: AppColors.accent, strokeWidth: 2),
-                ),
+              // On touch, the folder header's own spinner already communicates
+              // loading; a second one here would just flash blank/spin twice.
+              EmailDetailLoading() => isTouchPlatform
+                  ? const SizedBox.shrink()
+                  : Center(
+                      child: CircularProgressIndicator(
+                          color: AppColors.accent, strokeWidth: 2),
+                    ),
               EmailDetailLoaded(:final email, :final senderAnomaly) =>
                 _EmailView(
                   key: ValueKey(email.id),

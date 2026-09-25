@@ -67,6 +67,18 @@ class HomeCubit extends Cubit<HomeState> {
     emit(state.copyWith(clearNotificationNav: true));
   }
 
+  /// Tells _MobileLayout to bring the email list to the front. Used once the
+  /// auto-selected Inbox for a freshly switched-to account has landed, so the
+  /// switch lands the user on their mail rather than leaving them on the
+  /// folder list where the account switcher lives.
+  void requestMobileInboxNav() {
+    emit(state.copyWith(mobileInboxNavRequested: true));
+  }
+
+  void clearMobileInboxNavRequest() {
+    emit(state.copyWith(mobileInboxNavRequested: false));
+  }
+
   void clearEmail() {
     emit(state.copyWith(clearEmail: true));
   }
@@ -103,6 +115,7 @@ class HomeState extends Equatable {
     this.view = HomeView.email,
     this.accountLabel = '',
     this.notificationEmailId,
+    this.mobileInboxNavRequested = false,
   });
 
   final String? selectedFolderId;
@@ -116,6 +129,11 @@ class HomeState extends Equatable {
   /// _MobileLayout listens for this to advance to the reading pane step.
   final String? notificationEmailId;
 
+  /// Set transiently once the account switch listener's auto-selected Inbox
+  /// for the arriving account has landed. _MobileLayout listens for this to
+  /// push the email list back to the top of its stack.
+  final bool mobileInboxNavRequested;
+
   HomeState copyWith({
     String? selectedFolderId,
     String? selectedEmailId,
@@ -124,6 +142,7 @@ class HomeState extends Equatable {
     String? accountLabel,
     String? notificationEmailId,
     bool clearNotificationNav = false,
+    bool? mobileInboxNavRequested,
   }) {
     return HomeState(
       selectedFolderId: selectedFolderId ?? this.selectedFolderId,
@@ -133,10 +152,18 @@ class HomeState extends Equatable {
       accountLabel: accountLabel ?? this.accountLabel,
       notificationEmailId:
           clearNotificationNav ? null : (notificationEmailId ?? this.notificationEmailId),
+      mobileInboxNavRequested:
+          mobileInboxNavRequested ?? this.mobileInboxNavRequested,
     );
   }
 
   @override
-  List<Object?> get props =>
-      [selectedFolderId, selectedEmailId, view, accountLabel, notificationEmailId];
+  List<Object?> get props => [
+        selectedFolderId,
+        selectedEmailId,
+        view,
+        accountLabel,
+        notificationEmailId,
+        mobileInboxNavRequested,
+      ];
 }

@@ -142,6 +142,13 @@ class _HomeViewState extends State<_HomeView> {
   /// mail alike, so this is the one place the pairing has to hold.
   String? _accountShowing;
 
+  /// Set when an account switch is what triggered the folder list reload, so
+  /// the FolderListLoaded listener below knows to also request the mobile
+  /// shell jump to the email list once it auto-selects the new account's
+  /// Inbox — a plain folder-list refresh (poll cycle, pull-to-refresh) must
+  /// not yank the user off whatever screen they're on.
+  bool _pendingMobileInboxNavOnSwitch = false;
+
   @override
   void initState() {
     super.initState();
@@ -368,6 +375,7 @@ class _HomeViewState extends State<_HomeView> {
             }
 
             homeCubit.clearFolder();
+            _pendingMobileInboxNavOnSwitch = true;
             context.read<FolderListBloc>().add(const FolderListLoadRequested());
             context.read<EmailListBloc>().add(const EmailListCleared());
             context.read<EmailDetailBloc>().add(const EmailDetailCleared());
@@ -427,6 +435,8 @@ class _HomeViewState extends State<_HomeView> {
                         .savedFolderForAccount(accountState.activeAccount.id)
                     : null,
               );
+              final switchedAccount = _pendingMobileInboxNavOnSwitch;
+              _pendingMobileInboxNavOnSwitch = false;
               if (target == null) return;
 
               homeCubit.selectFolder(target.id);
@@ -436,6 +446,10 @@ class _HomeViewState extends State<_HomeView> {
                       folderDisplayName: target.displayName,
                     ),
                   );
+              // Only on the load that follows an account switch: a plain
+              // refresh must not push the mobile shell off whatever screen
+              // the user is already looking at.
+              if (switchedAccount) homeCubit.requestMobileInboxNav();
             }
           },
         ),
@@ -798,6 +812,14 @@ class _MobileLayoutState extends State<_MobileLayout> {
             listener: (context, state) {
               context.read<HomeCubit>().clearNotificationNavigation();
               _showReadingPane();
+            },
+          ),
+          BlocListener<HomeCubit, HomeState>(
+            listenWhen: (prev, curr) =>
+                curr.mobileInboxNavRequested && !prev.mobileInboxNavRequested,
+            listener: (context, state) {
+              context.read<HomeCubit>().clearMobileInboxNavRequest();
+              _showEmailList();
             },
           ),
         ],

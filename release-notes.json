@@ -1,24 +1,41 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.34.4",
+  "version": "1.34.5",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "drop redundant refresh UI now that pull-to-refresh works",
-          "title": "mobile"
-        },
-        {
-          "body": "open the Inbox on an account switch instead of the folder list",
+          "body": "scroll the compose editor's own content while the keyboard is up",
           "title": "mobile"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.34.4",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "drop redundant refresh UI now that pull-to-refresh works",
+              "title": "mobile"
+            },
+            {
+              "body": "open the Inbox on an account switch instead of the folder list",
+              "title": "mobile"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -489,23 +506,6 @@
             {
               "body": "build and upload signed release builds to TestFlight",
               "title": "ios"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.27.4",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "stop one group-writable font blocking every macOS update",
-              "title": "update"
             }
           ]
         }

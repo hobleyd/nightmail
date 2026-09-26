@@ -242,6 +242,39 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     });
   }
 
+  // Fires once when a drag runs off the top or bottom of the editor's own
+  // scrollable content (`onOverscroll` on `HtmlEmailEditor`, from
+  // `editor.html`'s touchmove handler), so that drag continues into the
+  // fields/attachments above or the space below instead of just stopping.
+  // `deltaY`'s sign is the only thing used — positive means the crossing was
+  // at the top (nowhere left to scroll up), negative the bottom — because
+  // this runs one fixed-duration `animateTo` rather than tracking the finger
+  // 1:1 the way the editor's own scroll does. Re-driving this scroll view
+  // from JS every frame (a `jumpTo` per touchmove) still read as laggy once
+  // the in-editor scroll itself was smooth, because `jumpTo` repaints the
+  // whole scroll view — recipient fields, chips, the editor's platform view —
+  // on every call, on the same UI thread the WebView draws on. One animation
+  // driven entirely here is smooth by construction instead of re-triggered
+  // from across the JS↔Dart bridge each frame.
+  //
+  // Moves by a fraction of the viewport rather than jumping straight to
+  // `minScrollExtent`/`maxScrollExtent` — animating the full distance in one
+  // 200ms step from a single boundary crossing read as a much bigger jump
+  // than the drag that triggered it. A second swipe past the boundary
+  // triggers another step, same as this one.
+  void _applyEditorOverscroll(double deltaY) {
+    if (!_mobileBodyScrollController.hasClients) return;
+    final position = _mobileBodyScrollController.position;
+    final step = position.viewportDimension * 0.4;
+    final target = (deltaY > 0 ? position.pixels - step : position.pixels + step)
+        .clamp(position.minScrollExtent, position.maxScrollExtent);
+    unawaited(_mobileBodyScrollController.animateTo(
+      target,
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+    ));
+  }
+
   @override
   void didChangeMetrics() {
     super.didChangeMetrics();
@@ -1525,6 +1558,8 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
           FocusManager.instance.primaryFocus?.unfocus();
           _scrollEditorIntoView();
         },
+        onOverscroll: isTouchPlatform ? _applyEditorOverscroll : null,
+        enableScrollHandoff: isTouchPlatform,
       );
     }
 

@@ -185,11 +185,36 @@ body { display: flex; flex-direction: column; }
   display: block;
 }
 
-.editor {
+/* The scrolling and the editing are deliberately two different elements.
+   This was tried as a fix for WKWebView freezing this element's own
+   touch-scrolling while the keyboard is up (`scrollTop` measured stuck at 0
+   through an entire drag with the keyboard shown; the same drag scrolls fine
+   with it dismissed) — on the theory that a focused `contenteditable` also
+   being the `overflow-y: auto` container was the trigger. It measurably
+   was not: `scrollTop` stayed stuck at 0 on `#editor-scroll` after this split
+   too. The real fix is the manual, JS-driven scroll in the touchmove handler
+   further down; the split is kept only because a non-editable scroll
+   ancestor is the more conventional shape and nothing depends on the old one. */
+.editor-scroll {
   flex: 1;
+  overflow-y: auto;
+  /* `none`, not `contain`: this stops the engine's own rubber-band/glow at
+     the scroll boundary outright, which is what lets the touchmove handoff
+     further down stay a passive listener — see "Touch-scroll handoff to the
+     host page" there for why that matters. `contain` only stops scroll
+     *chaining* to an ancestor scrollable and still plays the bounce locally,
+     which there is nothing to chain to here anyway. */
+  overscroll-behavior-y: none;
+  background: var(--bg);
+}
+
+.editor {
+  /* Fills `#editor-scroll` even when short, so tapping the empty space below
+     a one-line message still lands in the editor instead of doing nothing —
+     matching the old behaviour, where this element was the flex:1 box itself. */
+  min-height: 100%;
   padding: 12px 16px;
   outline: none;
-  overflow-y: auto;
   word-wrap: break-word;
   color: var(--fg);
   background: var(--bg);
@@ -299,10 +324,13 @@ body { display: flex; flex-direction: column; }
   <button class="color-more" onmousedown="event.preventDefault()" onclick="openCustomColor()">Custom…</button>
 </div>
 <input type="color" id="color-input" style="position:fixed; opacity:0; width:0; height:0; pointer-events:none;" value="#cc0000">
+<div class="editor-scroll" id="editor-scroll">
 <div class="editor" id="editor" contenteditable="true" spellcheck="true" data-placeholder="Write your message here…"></div>
+</div>
 
 <script>
 const editor = document.getElementById('editor');
+const editorScroll = document.getElementById('editor-scroll');
 const colorInput = document.getElementById('color-input');
 const colorSwatch = document.getElementById('color-swatch');
 let changeTimer = null;
@@ -869,8 +897,234 @@ editor.addEventListener('keydown', function(e) {
 });
 
 // Keep the frame glued to the image as the editor scrolls or the window resizes.
-editor.addEventListener('scroll', positionImgOverlay);
+editorScroll.addEventListener('scroll', positionImgOverlay);
 window.addEventListener('resize', positionImgOverlay);
+
+// --- Touch-scroll handoff to the host page ----------------------------------
+// On a phone this page is a platform view composited into a Flutter scroll
+// view that also holds the To/Cc/subject fields above it. `#editor-scroll`'s
+// own `overflow-y: auto` handles a drag while there is still somewhere for it
+// to scroll, but a platform view has no reach into the Flutter scrollable
+// that hosts it, so a drag that runs off the top or bottom of the editor's
+// content just stops instead of continuing to scroll the fields into view (or
+// back out of it) the way a nested native scroll view would. The first
+// touchmove past that boundary notifies Flutter once (`onOverscroll`), which
+// runs its own single animated scroll to bring the fields into (or back out
+// of) view — see `_onEditorTouchMove` further down for why this is a single
+// trigger rather than tracking the finger across the boundary.
+//
+// Disabled by default: the signature editors in Settings and Out of Office
+// load this same page but aren't sitting inside another scroll view, so a
+// host has to opt in (`setScrollHandoffEnabled(true)`) once it actually is —
+// otherwise a drag that reaches either end would find no listener on the
+// other side of `onOverscroll` and just go nowhere, worse than leaving the
+// engine's own boundary behaviour alone.
+let _scrollHandoffEnabled = false;
+let _touchLastY = null;
+// A short ring of recent {y, t} samples, oldest first, for the fling velocity
+// computed on touchend below — see the manual-scroll section further down.
+let _touchSamples = [];
+let _flingRaf = null;
+
+function setScrollHandoffEnabled(enabled) {
+  _scrollHandoffEnabled = !!enabled;
+}
+
+function _cancelFling() {
+  if (_flingRaf !== null) {
+    cancelAnimationFrame(_flingRaf);
+    _flingRaf = null;
+  }
+}
+
+// WKWebView freezes `#editor-scroll`'s own touch-driven scrolling outright
+// for as long as the keyboard is up and this page holds the caret — measured
+// directly (a bare drag never moves `scrollTop` off 0 the whole time the
+// keyboard is shown, and scrolls normally the instant it's dismissed). Splitting
+// the scrollable ancestor from the `contenteditable` (`#editor-scroll` vs
+// `#editor`, above) did not change this, so it isn't a caret/selection-reveal
+// conflict on a shared element — something at or below the native scroll
+// view is disabled while the keyboard session is active. Setting `.scrollTop`
+// directly from JS still works there, so while the keyboard is visible this
+// drives the scroll itself from the touch deltas instead of trusting the
+// browser's own (here, inert) touch-scroll physics.
+//
+// That requires `preventDefault()` — both to stop double-scrolling should the
+// engine's own handling turn out to be only partially disabled on some
+// device/OS combination, and because a manual scroll with the default touch
+// action left running would otherwise fight whatever the engine does with
+// the gesture. A `touchmove` listener that *can* cancel forces the engine
+// into synchronous, main-thread-gated scrolling for the entire gesture rather
+// than its normal compositor-driven one (measured as the "feels unnatural"
+// lag from an earlier version of this handler that was always non-passive) —
+// so rather than eat that cost for every drag, the listener is re-registered
+// passive/non-passive as the keyboard shows and hides, and it only actually
+// calls `preventDefault()` while non-passive. With the keyboard down this
+// stays exactly the passive, read-only listener it was before.
+let _keyboardVisible = false;
+let _touchMoveIsPassive = true;
+
+function setKeyboardVisible(visible) {
+  visible = !!visible;
+  if (visible === _keyboardVisible) return;
+  _keyboardVisible = visible;
+  const wantPassive = !visible;
+  if (wantPassive === _touchMoveIsPassive) return;
+  // `removeEventListener` only matches on type/listener/capture — `passive`
+  // plays no part in identifying which registration to drop.
+  editorScroll.removeEventListener('touchmove', _onEditorTouchMove);
+  _touchMoveIsPassive = wantPassive;
+  editorScroll.addEventListener('touchmove', _onEditorTouchMove, {passive: _touchMoveIsPassive});
+}
+
+// Set once a drag has triggered the boundary handoff below, so a finger held
+// past the boundary for longer than one frame doesn't keep re-triggering it —
+// one crossing, one handoff, for the whole gesture.
+let _handoffTriggered = false;
+
+editorScroll.addEventListener('touchstart', function(e) {
+  if (e.touches.length !== 1) return;
+  _cancelFling();
+  _handoffTriggered = false;
+  _touchLastY = e.touches[0].clientY;
+  _touchSamples = [{y: _touchLastY, t: e.timeStamp}];
+}, {passive: true});
+
+// `scrollTop` is a layout-forcing write — setting it synchronously inside a
+// touchmove handler makes the engine do a full reflow before the handler can
+// return, and while that's in flight WebKit falls behind and starts
+// coalescing/dropping the underlying touch samples rather than dispatching
+// them all. Measured: with a direct `scrollTop -=` write here, the *last*
+// touchmove this handler actually saw was routinely 300-2600ms stale by the
+// time `touchend` fired, on nearly every drag — the handler was falling
+// further and further behind the real gesture, not the user pausing before
+// lifting. Accumulating the delta and applying it at most once per animation
+// frame keeps this handler itself cheap (arithmetic only), so the engine
+// keeps dispatching touch samples at full rate.
+let _pendingScrollDelta = 0;
+let _scrollApplyScheduled = false;
+
+function _scheduleScrollApply() {
+  if (_scrollApplyScheduled) return;
+  _scrollApplyScheduled = true;
+  requestAnimationFrame(function() {
+    _scrollApplyScheduled = false;
+    if (_pendingScrollDelta !== 0) {
+      editorScroll.scrollTop += _pendingScrollDelta;
+      _pendingScrollDelta = 0;
+    }
+  });
+}
+
+function _onEditorTouchMove(e) {
+  if (!_scrollHandoffEnabled || e.touches.length !== 1 || _touchLastY === null) return;
+  const y = e.touches[0].clientY;
+  const deltaY = y - _touchLastY; // positive: finger moved down
+  _touchLastY = y;
+  _touchSamples.push({y, t: e.timeStamp});
+  if (_touchSamples.length > 5) _touchSamples.shift();
+
+  // Once this gesture has handed off, stay handed off for the rest of it
+  // rather than re-evaluating the boundary on every event. Right at the
+  // boundary, ordinary per-sample noise in a slowing drag can flip `deltaY`'s
+  // sign for a single event; re-checking `atTop`/`atBottom` on every event let
+  // that noise route a stray sample to the *other* branch below and nudge
+  // `scrollTop` back away from the boundary it had just reached, which read
+  // as the editor's own scroll jerking right as it neared the top. Lifting
+  // and dragging again starts a fresh gesture (`_handoffTriggered` resets in
+  // `touchstart`) and can scroll the editor's own content again normally.
+  if (_handoffTriggered) {
+    if (_keyboardVisible) e.preventDefault();
+    return;
+  }
+
+  // Positive deltaY (finger down) scrolls content down, decreasing
+  // scrollTop, so it only has somewhere to go while scrollTop > 0; negative
+  // deltaY (finger up) increases scrollTop, capped at scrollHeight -
+  // clientHeight. Once the relevant edge is already reached, this delta has
+  // nowhere to go inside the editor. `scrollTop` alone is checked against
+  // here (not `_pendingScrollDelta`-adjusted) because the write above is at
+  // most one frame behind — the boundary is only ever off by whatever moved
+  // in that one frame, not worth the extra bookkeeping.
+  const atTop = editorScroll.scrollTop <= 0;
+  const atBottom =
+      editorScroll.scrollTop + editorScroll.clientHeight >= editorScroll.scrollHeight - 2;
+  const overscrolling = (deltaY > 0 && atTop) || (deltaY < 0 && atBottom);
+
+  if (overscrolling) {
+    if (_keyboardVisible) e.preventDefault();
+    // One trigger per crossing rather than tracking the finger 1:1 across the
+    // boundary: re-driving the outer Flutter scroll view from JS every frame
+    // (via a continuous `onOverscroll` + `jumpTo`) still read as laggy even
+    // once the in-editor scroll itself was smooth — `jumpTo` repaints that
+    // whole scroll view (recipient fields, chips, this platform view) every
+    // time it's called, on the same UI thread the WebView draws on. A single
+    // animated scroll, driven entirely on the Flutter side once triggered, is
+    // smooth by construction instead. `deltaY`'s sign is all that's needed —
+    // positive means the crossing was at the top (finger down, nowhere left
+    // to scroll up), negative means it was at the bottom. The guard above
+    // means this is only ever reached once per gesture.
+    _handoffTriggered = true;
+    _flutterNotify('onOverscroll', deltaY);
+    return;
+  }
+  if (_keyboardVisible) {
+    e.preventDefault();
+    _pendingScrollDelta -= deltaY;
+    _scheduleScrollApply();
+  }
+}
+
+editorScroll.addEventListener('touchmove', _onEditorTouchMove, {passive: _touchMoveIsPassive});
+
+// A native scroll's real travel comes mostly from momentum after the finger
+// lifts, not from the raw contact distance — a normal flick only moves the
+// finger 20-40px. `scrollTop -= deltaY` above is 1:1 with contact only, so
+// without this a flick that would normally coast for a screenful stopped
+// dead the instant the finger left the glass ("one line at a time",
+// measured directly against a real drag). This estimates the release
+// velocity from the last few touchmove samples and keeps scrolling on a
+// decaying `requestAnimationFrame` loop, the same shape as native momentum
+// scrolling. It intentionally stops at either boundary rather than handing
+// the remaining velocity to Flutter's `onOverscroll` — a fling that runs out
+// against the edge is a reasonable place to stop.
+function _onEditorTouchEnd(e) {
+  if (_keyboardVisible && _scrollHandoffEnabled && _touchSamples.length >= 2) {
+    const first = _touchSamples[0];
+    const last = _touchSamples[_touchSamples.length - 1];
+    const dt = last.t - first.t;
+    // A finger that paused before lifting isn't flinging, even if it moved
+    // fast earlier in the gesture — timeStamp shares performance.now()'s clock.
+    const sinceLastMove = (e.timeStamp || last.t) - last.t;
+    const fingerVelocity = dt > 0 ? (last.y - first.y) / dt : 0; // px/ms
+    const willFling = dt > 0 && sinceLastMove < 100 && Math.abs(fingerVelocity) > 0.1;
+    if (willFling) _startFling(-fingerVelocity);
+  }
+  _touchLastY = null;
+  _touchSamples = [];
+}
+editorScroll.addEventListener('touchend', _onEditorTouchEnd);
+editorScroll.addEventListener('touchcancel', _onEditorTouchEnd);
+
+function _startFling(scrollVelocity) {
+  let v = scrollVelocity; // px of scrollTop change per ms
+  let lastT = performance.now();
+  function step(now) {
+    const dt = now - lastT;
+    lastT = now;
+    v *= Math.pow(0.95, dt / 16.7); // ~5% decay per 60fps frame
+    editorScroll.scrollTop += v * dt;
+    const atTop = editorScroll.scrollTop <= 0;
+    const atBottom =
+        editorScroll.scrollTop + editorScroll.clientHeight >= editorScroll.scrollHeight - 2;
+    if (Math.abs(v) < 0.02 || (atTop && v < 0) || (atBottom && v > 0)) {
+      _flingRaf = null;
+      return;
+    }
+    _flingRaf = requestAnimationFrame(step);
+  }
+  _flingRaf = requestAnimationFrame(step);
+}
 
 // --- Caret-tracked insertion (used for streaming AI drafts) ----------------
 var savedRange = null;

@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show Factory;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:html_view/html_view.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -15,6 +17,8 @@ class HtmlEmailEditor extends StatefulWidget {
     required this.onAttachRequested,
     this.onImagePasted,
     this.onClickFocus,
+    this.onOverscroll,
+    this.enableScrollHandoff = false,
     this.autofocus = false,
   });
 
@@ -35,6 +39,20 @@ class HtmlEmailEditor extends StatefulWidget {
   /// (e.g. `FocusManager.instance.primaryFocus?.unfocus()`), since a native
   /// focus steal doesn't otherwise reach Flutter's own FocusNode tree.
   final VoidCallback? onClickFocus;
+  /// Raised while a finger drag inside the editor's own scrollable content
+  /// hits the top or bottom of it and keeps moving the same way — the editor
+  /// has nowhere further to scroll, so the value is the drag's pixel delta
+  /// (positive: finger moved down) for the caller to apply to whatever
+  /// scroll view hosts this editor instead. Mobile-only; the desktop backend
+  /// never raises it. Only fires when [enableScrollHandoff] is true.
+  final ValueChanged<double>? onOverscroll;
+  /// Lets the page's own touchmove handler take over a drag once it reaches
+  /// either end of the editor's content, rather than letting the drag simply
+  /// stop there. Only the caller that embeds this editor inside another
+  /// scroll view (the mobile compose layout) knows there is somewhere for
+  /// that drag to go — the signature editors in Settings and Out of Office
+  /// don't, and default to leaving the boundary alone.
+  final bool enableScrollHandoff;
   /// Focuses the editor as soon as its content finishes loading. The webview
   /// loads asynchronously, so this can't be done with a synchronous
   /// `requestFocus()` call from the parent the way the plain-text body works.
@@ -44,11 +62,12 @@ class HtmlEmailEditor extends StatefulWidget {
   State<HtmlEmailEditor> createState() => HtmlEmailEditorState();
 }
 
-class HtmlEmailEditorState extends State<HtmlEmailEditor> {
+class HtmlEmailEditorState extends State<HtmlEmailEditor> with WidgetsBindingObserver {
   late final _EditorHost _host;
 
   String _pendingHtml = '';
   bool   _disposed    = false;
+  bool   _keyboardVisible = false;
 
   /// The desktop editor is `html_view`'s native webview, a sibling view laid
   /// over the Flutter surface and positioned by hand; a phone gets
@@ -67,6 +86,24 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
         ? _NativeOverlayHost(onEvent: _onHostEvent)
         : _PlatformViewHost(onEvent: _onHostEvent);
     _host.load('assets/editor/editor.html');
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  // WKWebView freezes `#editor-scroll`'s own touch-driven scrolling for as
+  // long as the on-screen keyboard is up and this page holds the caret —
+  // measured directly: dragging inside the editor with the keyboard open
+  // never moves its `scrollTop` off 0, no matter how far the drag goes, while
+  // the identical drag scrolls normally the moment the keyboard is dismissed.
+  // `editor.html`'s touchmove handler drives the scroll itself via JS while
+  // the keyboard is visible rather than relying on the browser's own (here,
+  // inert) touch-scroll physics for that state.
+  @override
+  void didChangeMetrics() {
+    if (!mounted) return;
+    final visible = View.of(context).viewInsets.bottom > 0;
+    if (visible == _keyboardVisible) return;
+    _keyboardVisible = visible;
+    unawaited(_host.run('setKeyboardVisible($visible)'));
   }
 
   /// Every event either backend can raise, named as the page raises them —
@@ -82,6 +119,8 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
         widget.onAttachRequested();
       case 'onImagePasted':
         widget.onImagePasted?.call(value);
+      case 'onOverscroll':
+        widget.onOverscroll?.call(double.tryParse(value) ?? 0);
       case 'onClickFocus':
         // Unfocus the Flutter side first — calling focus() (native
         // makeFirstResponder) before this can otherwise be undone when
@@ -100,6 +139,20 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
     if (_pendingHtml.isNotEmpty) {
       await _host.run('setContent(${jsonEncode(_pendingHtml)})');
     }
+    if (widget.enableScrollHandoff) {
+      await _host.run('setScrollHandoffEnabled(true)');
+    }
+    // `didChangeMetrics` only reports a *transition*, so if the keyboard is
+    // already up when this page finishes loading — the user was in the
+    // Subject field and tapped straight into the body — no transition ever
+    // fires and the page never learns the keyboard is visible. Read the
+    // current state directly instead of waiting for one.
+    if (mounted) {
+      _keyboardVisible = View.of(context).viewInsets.bottom > 0;
+      if (_keyboardVisible) {
+        await _host.run('setKeyboardVisible(true)');
+      }
+    }
     if (widget.autofocus && !_disposed) {
       await focus();
     }
@@ -108,6 +161,7 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> {
   @override
   void dispose() {
     _disposed = true;
+    WidgetsBinding.instance.removeObserver(this);
     _host.dispose();
     super.dispose();
   }
@@ -283,6 +337,7 @@ class _PlatformViewHost implements _EditorHost {
       'onLinkRequest',
       'onAttachRequest',
       'onImagePasted',
+      'onOverscroll',
     ]) {
       _controller.addJavaScriptChannel(
         name,
@@ -349,7 +404,27 @@ class _PlatformViewHost implements _EditorHost {
         valueListenable: _visible,
         builder: (context, visible, child) =>
             Offstage(offstage: !visible, child: child),
-        child: WebViewWidget(controller: _controller),
+        // `WebViewWidget`'s default `gestureRecognizers` (empty) only lets the
+        // platform view handle pointer events the Flutter side hasn't already
+        // claimed — and on the mobile compose layout this view sits inside a
+        // `SingleChildScrollView`, whose own vertical drag recognizer can win
+        // that arena partway through a drag. Measured directly: a drag over
+        // the editor only delivered its first handful of `touchmove`s to the
+        // page before falling silent for hundreds of ms, independent of any
+        // work this page's own handler did — the rest of the gesture had gone
+        // to the ancestor scrollable instead, which is what read as "the
+        // editor and the page scrolling are interacting". `EagerGestureRecognizer`
+        // claims the arena immediately so every drag starting on the editor
+        // stays with it for the whole gesture; the editor's own touchmove
+        // handler is what forwards a drag to the outer scroll view once it
+        // has nowhere further to go (`onOverscroll`), so the outer view isn't
+        // losing a way to be scrolled from here — it gains a well-defined one.
+        child: WebViewWidget(
+          controller: _controller,
+          gestureRecognizers: {
+            Factory<EagerGestureRecognizer>(() => EagerGestureRecognizer()),
+          },
+        ),
       );
 
   @override

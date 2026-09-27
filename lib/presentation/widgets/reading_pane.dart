@@ -27,12 +27,14 @@ import 'forward_meeting_dialog.dart';
 import 'cloud_document_preview_host.dart';
 import 'invite_banner_parts.dart';
 import 'date_time_fields.dart';
+import 'event_edit_dialog.dart';
 
 import '../../core/platform/touch_metrics.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/error/failures.dart';
 import '../../core/utils/cloud_document_format.dart';
+import '../../core/utils/latest_reply.dart';
 import '../../core/utils/markdown_file.dart';
 import '../../core/utils/meeting_conflicts.dart';
 import '../../core/utils/outgoing_folder.dart';
@@ -1159,6 +1161,39 @@ class _ReadingPaneToolbar extends StatelessWidget {
     );
   }
 
+  /// Opens a new meeting with everyone on this email as its guests and the
+  /// message as its notes — the "turn this thread into a meeting" step that
+  /// otherwise means copying addresses across by hand.
+  ///
+  /// The guests are the sender plus every To/Cc recipient, minus this account
+  /// (the form does not list the organizer among the guests) and minus
+  /// duplicates. The notes are the newest message only, not the quoted
+  /// history under it ([latestReplyText]); the title is the subject with its
+  /// reply/forward prefixes taken off.
+  Future<void> _openMeetingRequest(BuildContext context) async {
+    final account = sl<AccountManager>().activeAccount;
+    final self = account?.emailAddress.trim().toLowerCase();
+    final seen = <String>{};
+    final guests = <String>[];
+    for (final a in [email.from, ...email.toRecipients, ...email.ccRecipients]) {
+      final address = a.address.trim();
+      if (address.isEmpty) continue;
+      final key = address.toLowerCase();
+      if (key == self || !seen.add(key)) continue;
+      guests.add(address);
+    }
+
+    await EventEditDialog.show(
+      context,
+      accountId: account?.id,
+      isO365Account: account is MicrosoftAccount,
+      isGmailAccount: account is GmailAccount,
+      initialSubject: meetingTitleForSubject(email.subject),
+      initialAttendees: guests,
+      initialDescription: latestReplyText(email.body, email.bodyType),
+    );
+  }
+
   Future<void> _copyToClipboard(BuildContext context) async {
     await Clipboard.setData(ClipboardData(text: email.body));
     if (context.mounted) {
@@ -1207,13 +1242,19 @@ class _ReadingPaneToolbar extends StatelessWidget {
           ),
           // Takes the place of a Spacer: `reverse` pins the group to the right
           // edge exactly as one would, but scrolls instead of overflowing when
-          // seven touch-sized targets do not fit a narrow phone.
+          // eight touch-sized targets do not fit a narrow phone.
           Expanded(
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               reverse: true,
               child: Row(
                 children: [
+                  _ToolbarButton(
+                    icon: Icons.event_outlined,
+                    tooltip: 'New meeting from this email',
+                    color: c.textMuted,
+                    onPressed: () => _openMeetingRequest(context),
+                  ),
                   _ToolbarButton(
                     icon: Icons.content_copy_outlined,
                     tooltip: 'Debug: copy body to clipboard',

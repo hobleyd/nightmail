@@ -57,6 +57,9 @@ class EventEditDialog extends StatelessWidget {
     this.accountId,
     this.isO365Account = false,
     this.isGmailAccount = false,
+    this.initialSubject,
+    this.initialAttendees,
+    this.initialDescription,
   });
 
   final CalendarEvent? event;
@@ -69,6 +72,11 @@ class EventEditDialog extends StatelessWidget {
   final String? accountId;
   final bool isO365Account;
   final bool isGmailAccount;
+
+  /// What a *new* meeting starts out with — see [EventEditForm.initialSubject].
+  final String? initialSubject;
+  final List<String>? initialAttendees;
+  final String? initialDescription;
 
   /// Opens the event form: a full-screen page on a phone or tablet, its own
   /// window on the desktop. `desktop_multi_window` has no Android or iOS
@@ -91,6 +99,9 @@ class EventEditDialog extends StatelessWidget {
     String? accountId,
     bool isO365Account = false,
     bool isGmailAccount = false,
+    String? initialSubject,
+    List<String>? initialAttendees,
+    String? initialDescription,
   }) async {
     if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
       // The calendar that opened the form is the one to repaint on save. Read
@@ -113,6 +124,9 @@ class EventEditDialog extends StatelessWidget {
             accountId: accountId,
             isO365Account: isO365Account,
             isGmailAccount: isGmailAccount,
+            initialSubject: initialSubject,
+            initialAttendees: initialAttendees,
+            initialDescription: initialDescription,
             calendarBloc: calendarBloc,
           ),
         ),
@@ -130,6 +144,9 @@ class EventEditDialog extends StatelessWidget {
           if (accountId != null) 'accountId': accountId,
           if (isO365Account) 'isO365Account': true,
           if (isGmailAccount) 'isGmailAccount': true,
+          ?'initialSubject': initialSubject,
+          ?'initialAttendees': initialAttendees,
+          ?'initialDescription': initialDescription,
         }),
       ),
     );
@@ -241,6 +258,9 @@ class _MobileEventEditPage extends StatelessWidget {
     this.accountId,
     this.isO365Account = false,
     this.isGmailAccount = false,
+    this.initialSubject,
+    this.initialAttendees,
+    this.initialDescription,
     this.calendarBloc,
   });
 
@@ -251,6 +271,9 @@ class _MobileEventEditPage extends StatelessWidget {
   final String? accountId;
   final bool isO365Account;
   final bool isGmailAccount;
+  final String? initialSubject;
+  final List<String>? initialAttendees;
+  final String? initialDescription;
   final CalendarBloc? calendarBloc;
 
   @override
@@ -293,6 +316,9 @@ class _MobileEventEditPage extends StatelessWidget {
               accountId: accountId,
               isO365Account: isO365Account,
               isGmailAccount: isGmailAccount,
+              initialSubject: initialSubject,
+              initialAttendees: initialAttendees,
+              initialDescription: initialDescription,
               onClose: () => Navigator.of(context).pop(),
               checkAttendeesAvailability: sl<CheckAttendeesAvailability>(),
               getMeetingRooms: sl<GetMeetingRooms>(),
@@ -341,9 +367,22 @@ class EventEditForm extends StatefulWidget {
     this.getMeetingRooms,
     this.onSchedulePaneToggled,
     this.fillsWindow = false,
+    this.initialSubject,
+    this.initialAttendees,
+    this.initialDescription,
   }) : assert(!proposeNewTime || event != null,
             'A counter-proposal needs the meeting it is about');
   final CalendarEvent? event;
+
+  /// What a *new* meeting starts out with: the title, the Guests chips, and
+  /// the Notes. Only read when [event] is null — an existing meeting is
+  /// seeded from itself — and only a starting point: the form is otherwise
+  /// exactly "New Event", so nothing here is treated as a change to notify
+  /// anyone about. The reading pane's "New meeting from this email" fills
+  /// these from the message.
+  final String? initialSubject;
+  final List<String>? initialAttendees;
+  final String? initialDescription;
 
   /// Where a new event starts. For an existing [event], the slot the form
   /// opens on instead of the meeting's own — a dragged tile's drop position,
@@ -467,7 +506,8 @@ class _EventEditFormState extends State<EventEditForm> {
         ? DateTime(now.year, now.month, now.day, now.hour, 30)
         : DateTime(now.year, now.month, now.day, now.hour + 1);
 
-    _titleController = TextEditingController(text: e?.subject ?? '');
+    _titleController = TextEditingController(
+        text: e?.subject ?? widget.initialSubject ?? '');
 
     // Rooms arrive back as resource attendees. Everything known about them at
     // this point is a name and an address; the room directory fills in capacity
@@ -489,7 +529,8 @@ class _EventEditFormState extends State<EventEditForm> {
     _locationController = TextEditingController(
       text: _stripRoomNames(e?.location ?? '', _selectedRooms),
     );
-    _descriptionController = TextEditingController(text: e?.bodyPreview ?? '');
+    _descriptionController = TextEditingController(
+        text: e?.bodyPreview ?? widget.initialDescription ?? '');
 
     _titleController.addListener(_onTitleChanged);
     widget.onTitleChanged?.call(_windowTitle);
@@ -537,12 +578,11 @@ class _EventEditFormState extends State<EventEditForm> {
     // belongs in the list they are shown.
     final selfEmail = _organizerEmail?.trim().toLowerCase();
     final hideSelf = (e?.isOrganizer ?? true) && selfEmail != null;
-    _attendees = e?.attendees
-            .where((a) => !a.isResource)
-            .map((a) => a.email)
-            .where((a) => !hideSelf || a.trim().toLowerCase() != selfEmail)
-            .toList() ??
-        const [];
+    _attendees = (e?.attendees.where((a) => !a.isResource).map((a) => a.email) ??
+            widget.initialAttendees ??
+            const <String>[])
+        .where((a) => !hideSelf || a.trim().toLowerCase() != selfEmail)
+        .toList();
     _attendeeStatuses = {
       for (final a in e?.attendees ?? const <CalendarEventAttendee>[])
         if (a.email.isNotEmpty) a.email.toLowerCase(): a.responseStatus,
@@ -581,8 +621,9 @@ class _EventEditFormState extends State<EventEditForm> {
         .toSet();
     _initialRooms = _selectedRooms.map((r) => r.email.toLowerCase()).toSet();
 
-    // An existing meeting opens with its guest list already filled in, so the
-    // first free/busy fetch has to be kicked off here. Every other trigger is a
+    // An existing meeting — or a new one seeded from an email — opens with
+    // its guest list already filled in, so the first free/busy fetch has to
+    // be kicked off here. Every other trigger is a
     // user edit, which means an organizer who opens a meeting and reads the
     // availability rows — or clicks "Find a time" — without touching anything
     // would otherwise see nothing at all.

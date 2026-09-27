@@ -66,6 +66,10 @@ class EventEditWindowApp extends StatelessWidget {
     final accountId = arguments['accountId'] as String?;
     final isO365Account = arguments['isO365Account'] as bool? ?? false;
     final isGmailAccount = arguments['isGmailAccount'] as bool? ?? false;
+    final initialSubject = arguments['initialSubject'] as String?;
+    final initialAttendees =
+        (arguments['initialAttendees'] as List<dynamic>?)?.cast<String>();
+    final initialDescription = arguments['initialDescription'] as String?;
 
     return MultiBlocProvider(
       providers: [
@@ -91,6 +95,9 @@ class EventEditWindowApp extends StatelessWidget {
               accountId: accountId,
               isO365Account: isO365Account,
               isGmailAccount: isGmailAccount,
+              initialSubject: initialSubject,
+              initialAttendees: initialAttendees,
+              initialDescription: initialDescription,
             ),
           );
         },
@@ -171,6 +178,9 @@ class _EventEditWindowPage extends StatefulWidget {
     this.accountId,
     this.isO365Account = false,
     this.isGmailAccount = false,
+    this.initialSubject,
+    this.initialAttendees,
+    this.initialDescription,
   });
 
   final CalendarEvent? event;
@@ -180,6 +190,9 @@ class _EventEditWindowPage extends StatefulWidget {
   final String? accountId;
   final bool isO365Account;
   final bool isGmailAccount;
+  final String? initialSubject;
+  final List<String>? initialAttendees;
+  final String? initialDescription;
 
   @override
   State<_EventEditWindowPage> createState() => _EventEditWindowPageState();
@@ -374,6 +387,9 @@ class _EventEditWindowPageState extends State<_EventEditWindowPage>
             accountId: widget.accountId,
             isO365Account: widget.isO365Account,
             isGmailAccount: widget.isGmailAccount,
+            initialSubject: widget.initialSubject,
+            initialAttendees: widget.initialAttendees,
+            initialDescription: widget.initialDescription,
             onClose: _close,
             onTitleChanged: (title) => windowManager.setTitle(title),
             checkAttendeesAvailability: sl<CheckAttendeesAvailability>(),

@@ -19,6 +19,7 @@ The app provides a three-pane layout (folders, message list, reading pane) with 
 - Sender anomaly and spam detection
 - Spam filter synced across IMAP clients via a dedicated server-side folder
 - Delete a conversation thread's in-folder messages from the reading pane
+- Turn an email into a meeting from the reading pane: the sender and recipients become the guests, the latest message (without the quoted history) the notes, and the subject the title
 - Double-click an image in a message to open it in a resizable window
 - Spell-checking with inline suggestions in the compose editor (macOS, Windows, Linux)
 - Compose editor: font-family dropdown, custom font-colour palette, and pasting/resizing images inline

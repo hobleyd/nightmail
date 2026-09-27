@@ -883,6 +883,33 @@ class _EmailViewState extends State<_EmailView> {
     return doc.save();
   }
 
+  /// A plain (unbounded-height) child of the outer `Column`, [_EmailHeader]
+  /// starves the body below it when a long To/Cc list wraps across enough
+  /// lines: nothing here scrolls, so on a phone the header can eat the whole
+  /// pane and leave the message unreachable — no drag over the header has
+  /// anywhere to send its scroll. Touch-only, matching where a long
+  /// recipient list is actually likely to exceed the available height;
+  /// desktop's tall reading pane has never needed this and capping it there
+  /// too would fight the header's `SelectionArea` (native Cmd+C selection)
+  /// for no reason. [constraints] is this view's own — from the
+  /// `LayoutBuilder` around the whole `Column` — not the screen's, so the
+  /// cap tracks the pane's real height in the iPad/Split View desktop
+  /// layout too.
+  Widget _buildHeader(BoxConstraints constraints) {
+    final header = _EmailHeader(
+      email: widget.email,
+      senderAnomaly: widget.senderAnomaly,
+      onAttachmentPreview: _showPreview,
+      activePreviewAttachmentId: _previewAttachmentId,
+      bytesLoader: _emlBytesLoader,
+    );
+    if (!isTouchPlatform) return header;
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: constraints.maxHeight * 0.4),
+      child: SingleChildScrollView(child: header),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -905,7 +932,8 @@ class _EmailViewState extends State<_EmailView> {
         const SingleActivator(LogicalKeyboardKey.keyP, control: true):
             () => _doPrint(context),
       },
-      child: Column(
+      child: LayoutBuilder(
+        builder: (context, constraints) => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
         _ReadingPaneToolbar(
@@ -914,13 +942,7 @@ class _EmailViewState extends State<_EmailView> {
           onPrint: () => _doPrint(context),
         ),
         Divider(height: 1, color: c.border),
-        _EmailHeader(
-          email: widget.email,
-          senderAnomaly: widget.senderAnomaly,
-          onAttachmentPreview: _showPreview,
-          activePreviewAttachmentId: _previewAttachmentId,
-          bytesLoader: _emlBytesLoader,
-        ),
+        _buildHeader(constraints),
         Divider(height: 1, color: c.border),
         if (calendarAvailable && meetingType == MeetingEmailType.invitation) ...[
           _MeetingInviteBanner(email: widget.email),
@@ -980,6 +1002,7 @@ class _EmailViewState extends State<_EmailView> {
         ),
       ],
     ),
+      ),
     ),
     );
   }

@@ -134,6 +134,7 @@ Settings → Accounts.
 - Opens on the Inbox of the last active account, with Calendar, Tasks and AI one tap away at the foot of the list
 - Message list and message are real screens: edge-swipe back on iOS, predictive back on Android
 - Pull to refresh, long-press to multi-select, swipe right to mark unread, swipe left for actions, long-press for context menus
+- Swipe left or right while reading a message to open the next or previous thread in the folder, with a matching slide transition
 - Calendar cycles Day → Week → Full Week → Month, with the same month view as the desktop
 - Swipe left or right on the calendar to step forward or back by a day, week or month
 - Swipe left or right on the mobile calendar to step to the next or previous period

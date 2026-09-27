@@ -249,7 +249,7 @@ class _ThreadSwipeNavigator extends StatefulWidget {
 class _ThreadSwipeNavigatorState extends State<_ThreadSwipeNavigator> {
   static const _distanceThreshold = 80.0;
   static const _velocityThreshold = 300.0;
-  static const _slideDuration = Duration(milliseconds: 220);
+  static const _slideDuration = Duration(milliseconds: 450);
 
   /// The pointer a possible swipe is being tracked from, or null between
   /// gestures. A new down always takes over tracking (see [_onPointerDown])

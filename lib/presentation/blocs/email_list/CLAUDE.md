@@ -150,6 +150,17 @@ Three consequences, none incidental:
   keyboard stop — `_isNavigable` skips it, or arrow-down would select what is
   already selected and bounce back to the header on the next press.
 
+**The reading pane's swipe-between-threads walks conversations, not rows.**
+`adjacentConversation` (`email_list_conversations.dart`) steps through the same
+`groupIntoConversations` list the panel draws, one conversation at a time
+regardless of expand/collapse state, and skips a conversation whose anchor is
+the user's own message — the mobile equivalent of "never show sent emails" for
+a gesture that has no folder-label row to lean on. `anchorOnSelf` has to be
+threaded through from `isOutgoingMailFolder` the same way the panel's own
+`_anchorOnSelf` is, or the walk both orders differently from what's on screen
+and — in Sent/Drafts/Outbox — rejects every thread as "the user's own" and the
+swipe goes dead.
+
 ## A List Row Names Its Own Folder
 
 A row whose message is **somewhere else** names that folder in brackets between

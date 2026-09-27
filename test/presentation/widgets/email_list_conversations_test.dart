@@ -441,4 +441,121 @@ void main() {
       expect(targets.emailIds, isEmpty);
     });
   });
+
+  // What a reading-pane swipe walks between: the same anchor-date order the
+  // folder listing itself draws its rows in.
+  group('adjacentConversation', () {
+    test('steps forward to the next thread by anchor date', () {
+      final emails = [
+        _email('newest', conversationId: 'a', minute: 3),
+        _email('middle', conversationId: 'b', minute: 2),
+        _email('oldest', conversationId: 'c', minute: 1),
+      ];
+
+      final next = adjacentConversation(
+        emails,
+        currentConversationId: 'a',
+        step: 1,
+      );
+
+      expect(next?.id, 'b');
+    });
+
+    test('steps backward to the previous thread', () {
+      final emails = [
+        _email('newest', conversationId: 'a', minute: 3),
+        _email('middle', conversationId: 'b', minute: 2),
+        _email('oldest', conversationId: 'c', minute: 1),
+      ];
+
+      final prev = adjacentConversation(
+        emails,
+        currentConversationId: 'b',
+        step: -1,
+      );
+
+      expect(prev?.id, 'a');
+    });
+
+    test('returns null past either end', () {
+      final emails = [
+        _email('newest', conversationId: 'a', minute: 2),
+        _email('oldest', conversationId: 'b', minute: 1),
+      ];
+
+      expect(
+        adjacentConversation(emails, currentConversationId: 'a', step: -1),
+        isNull,
+      );
+      expect(
+        adjacentConversation(emails, currentConversationId: 'b', step: 1),
+        isNull,
+      );
+    });
+
+    test('returns null when the current conversation is not in the list', () {
+      final emails = [_email('a', conversationId: 'a')];
+
+      expect(
+        adjacentConversation(emails, currentConversationId: 'gone', step: 1),
+        isNull,
+      );
+    });
+
+    // The whole point: swiping through the Inbox must never land on a thread
+    // that is nothing but mail the user sent.
+    test('skips a thread that is nothing but the user own mail', () {
+      final emails = [
+        _email('newest', conversationId: 'a', minute: 4),
+        _mine('sent-only', conversationId: 'sent', minute: 3),
+        _email('reached', conversationId: 'b', minute: 2),
+      ];
+
+      final next = adjacentConversation(
+        emails,
+        currentConversationId: 'a',
+        step: 1,
+        selfAddress: _me,
+      );
+
+      expect(next?.id, 'b');
+    });
+
+    test('a self-authored thread is reachable when no self address is given',
+        () {
+      final emails = [
+        _email('newest', conversationId: 'a', minute: 3),
+        _mine('sent-only', conversationId: 'sent', minute: 2),
+      ];
+
+      final next = adjacentConversation(
+        emails,
+        currentConversationId: 'a',
+        step: 1,
+      );
+
+      expect(next?.id, 'sent');
+    });
+
+    // In Sent/Drafts/Outbox the user's own message is the anchor by design —
+    // the skip that protects an incoming folder would otherwise reject every
+    // thread and make the swipe a no-op there.
+    test('anchorOnSelf keeps the user own thread reachable in an outgoing folder',
+        () {
+      final emails = [
+        _mine('my-newest', conversationId: 'a', minute: 3),
+        _mine('my-older', conversationId: 'b', minute: 2),
+      ];
+
+      final next = adjacentConversation(
+        emails,
+        currentConversationId: 'a',
+        step: 1,
+        selfAddress: _me,
+        anchorOnSelf: true,
+      );
+
+      expect(next?.id, 'b');
+    });
+  });
 }

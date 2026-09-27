@@ -108,6 +108,49 @@ bool _isFromSelf(Email email, String self) {
   return from.isEmpty || from == self;
 }
 
+/// The conversation [step] away from [currentConversationId] in the same
+/// anchor-date order the folder listing itself draws — one step forward for
+/// `1`, one back for `-1` — or null if [currentConversationId] isn't among
+/// [emails] or the walk runs off either end.
+///
+/// [anchorOnSelf] must match what the list itself was grouped with
+/// (`isOutgoingMailFolder`), or this walks a different order than the rows on
+/// screen — and, in an incoming folder, skips a conversation whose anchor is
+/// the user's own message: this is what a reading pane swipes between, and it
+/// must never land on a thread that is nothing but mail the user sent — an
+/// unanswered thread they started, or the anchor fallback for one seen here
+/// only via its Sent copy. That skip does not apply in an outgoing folder,
+/// where the user's own message is the anchor by design.
+EmailConversation? adjacentConversation(
+  List<Email> emails, {
+  required String? currentConversationId,
+  required int step,
+  String? selfAddress,
+  bool anchorOnSelf = false,
+}) {
+  final conversations = groupIntoConversations(
+    emails,
+    selfAddress: selfAddress,
+    anchorOnSelf: anchorOnSelf,
+  );
+  final index =
+      conversations.indexWhere((c) => c.id == currentConversationId);
+  if (index == -1) return null;
+
+  final self = selfAddress?.trim().toLowerCase();
+  for (var i = index + step; i >= 0 && i < conversations.length; i += step) {
+    final conversation = conversations[i];
+    if (!anchorOnSelf &&
+        self != null &&
+        self.isNotEmpty &&
+        _isFromSelf(conversation.anchor, self)) {
+      continue;
+    }
+    return conversation;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Delete targets
 // ---------------------------------------------------------------------------

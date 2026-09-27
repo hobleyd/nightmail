@@ -34,12 +34,14 @@ import '../../core/error/failures.dart';
 import '../../core/utils/cloud_document_format.dart';
 import '../../core/utils/markdown_file.dart';
 import '../../core/utils/meeting_conflicts.dart';
+import '../../core/utils/outgoing_folder.dart';
 import '../../data/services/eml_parser.dart';
 import '../../data/services/markdown_preview_service.dart';
 import '../../data/services/office_preview_service.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_address.dart';
 import '../../domain/entities/email_attachment.dart';
+import '../../domain/entities/email_folder.dart';
 import '../../domain/entities/meeting_invite.dart';
 import '../../domain/usecases/check_sender_anomaly.dart';
 import '../../domain/usecases/delete_email.dart';
@@ -70,9 +72,12 @@ import '../blocs/email_list/email_list_event.dart';
 import '../blocs/email_list/email_list_state.dart';
 import '../blocs/folder_list/folder_list_bloc.dart';
 import '../blocs/folder_list/folder_list_event.dart';
+import '../blocs/folder_list/folder_list_state.dart';
 import '../blocs/home/home_cubit.dart';
 import '../pages/compose_window.dart';
 import 'email_date_formatter.dart';
+import 'email_list_conversations.dart';
+import 'email_selection.dart';
 
 /// Attachment names can contain characters (e.g. `:` from a forwarded
 /// subject line) that are illegal in Windows file paths. Strip them before
@@ -90,32 +95,7 @@ class ReadingPane extends StatelessWidget {
     final c = context.colors;
     return ColoredBox(
       color: c.surfaceReading,
-      child: _OpenMessageListSync(
-        child: BlocBuilder<EmailDetailBloc, EmailDetailState>(
-          builder: (context, state) {
-            return switch (state) {
-              EmailDetailInitial() => const _EmptyState(),
-              // On touch, the folder header's own spinner already communicates
-              // loading; a second one here would just flash blank/spin twice.
-              EmailDetailLoading() => isTouchPlatform
-                  ? const SizedBox.shrink()
-                  : Center(
-                      child: CircularProgressIndicator(
-                          color: AppColors.accent, strokeWidth: 2),
-                    ),
-              EmailDetailLoaded(:final email, :final senderAnomaly) =>
-                _EmailView(
-                  key: ValueKey(email.id),
-                  email: email,
-                  senderAnomaly: senderAnomaly,
-                  onBack: onBack,
-                  emlSource: state.emlSource,
-                ),
-              EmailDetailError(:final message) => _ErrorState(message: message, onBack: onBack),
-            };
-          },
-        ),
-      ),
+      child: _OpenMessageListSync(child: _ThreadSwipeNavigator(onBack: onBack)),
     );
   }
 }
@@ -240,6 +220,205 @@ class _OpenMessageListSyncState extends State<_OpenMessageListSync> {
       },
       listener: _onListChanged,
       child: widget.child,
+    );
+  }
+}
+
+/// Renders [EmailDetailBloc]'s state (this pane's whole content, moved here
+/// from [ReadingPane.build] so one widget can both read the swipe gesture and
+/// drive the slide it triggers) and, on touch, swipes over the open message
+/// move to the next/previous thread in whatever folder listing it came from:
+/// right-to-left (a negative drag) goes forward, left-to-right goes back.
+/// Never lands on a thread that is nothing but the user's own sent mail — see
+/// [adjacentConversation].
+///
+/// Distance and velocity are both accepted as a trigger, the way a Dismissible
+/// would: a slow deliberate drag released past the distance threshold with
+/// little velocity, and a short flick released well short of it, should both
+/// count as a swipe.
+class _ThreadSwipeNavigator extends StatefulWidget {
+  const _ThreadSwipeNavigator({this.onBack});
+
+  final VoidCallback? onBack;
+
+  @override
+  State<_ThreadSwipeNavigator> createState() => _ThreadSwipeNavigatorState();
+}
+
+class _ThreadSwipeNavigatorState extends State<_ThreadSwipeNavigator> {
+  static const _distanceThreshold = 80.0;
+  static const _velocityThreshold = 300.0;
+  static const _slideDuration = Duration(milliseconds: 220);
+
+  double _dragTotal = 0;
+
+  /// +1 while the pending/last transition slides the incoming message in from
+  /// the right (a forward swipe), -1 from the left (a backward swipe).
+  int _direction = 1;
+
+  /// True from the moment a swipe kicks off a load to the moment it settles
+  /// into a real state (Loaded or Error). Two things read it: the builder
+  /// below, to hold the outgoing message over the load's own transient
+  /// `EmailDetailLoading` frame rather than flash it away early, and [build],
+  /// to animate only the transition a swipe actually caused — a tap, a
+  /// keyboard nav, a poll's refresh, all still switch instantly, as before.
+  bool _swipeSettling = false;
+
+  /// The last non-transient (Loaded/Error/Initial) child built and the key
+  /// [AnimatedSwitcher] tracks it under, held over across a swipe's own
+  /// `EmailDetailLoading` frame — see [_swipeSettling].
+  Widget? _lastSettled;
+  Key? _lastSettledKey;
+
+  void _onDragEnd(DragEndDetails details) {
+    final velocity = details.primaryVelocity ?? 0;
+    final distance = _dragTotal;
+    _dragTotal = 0;
+    final isFlick = velocity.abs() > _velocityThreshold;
+    final isDrag = distance.abs() > _distanceThreshold;
+    if (!isFlick && !isDrag) return;
+    final forward = isFlick ? velocity < 0 : distance < 0;
+    _navigate(forward: forward);
+  }
+
+  /// Reads the open message off the bloc rather than taking it as a
+  /// constructor argument, since this widget's `BuildContext` has to survive
+  /// the load `openEmailForReading` awaits on to mark the thread read.
+  void _navigate({required bool forward}) {
+    final detail = context.read<EmailDetailBloc>().state;
+    if (detail is! EmailDetailLoaded) return;
+    final current = detail.email;
+
+    final listState = context.read<EmailListBloc>().state;
+    // A search hit or a focused-thread view isn't the folder's own listing —
+    // there is no "next in the folder" to swipe to from either.
+    if (listState is! EmailListLoaded || !listState.isShowingFolder) return;
+
+    final folder = _folderById(
+        context.read<FolderListBloc>().state, listState.currentFolderId);
+    // Must match the grouping the list itself drew its rows with, or this
+    // walks a different order and (in Sent/Drafts/Outbox) rejects every
+    // thread as "the user's own" — see [adjacentConversation].
+    final anchorOnSelf = isOutgoingMailFolder(folder);
+
+    final target = adjacentConversation(
+      listState.emails,
+      currentConversationId: current.conversationId ?? current.id,
+      step: forward ? 1 : -1,
+      selfAddress: sl<AccountManager>().activeAccount?.emailAddress,
+      anchorOnSelf: anchorOnSelf,
+    )?.anchor;
+    if (target == null) return;
+
+    setState(() {
+      _direction = forward ? 1 : -1;
+      _swipeSettling = true;
+    });
+    openEmailForReading(context, target, folder);
+  }
+
+  static EmailFolder? _folderById(FolderListState state, String? id) {
+    if (id == null || state is! FolderListLoaded) return null;
+    try {
+      return state.folders.firstWhere((f) => f.id == id);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final gestureChild = BlocBuilder<EmailDetailBloc, EmailDetailState>(
+      builder: (context, state) {
+        // Whether *this* settle is the one a swipe caused — read before it's
+        // cleared below, so the transition it triggers still animates even
+        // though nothing here is "mid-swipe" by the time it lands.
+        final animateThisChange = _swipeSettling;
+
+        final Widget built;
+        final Key key;
+        if (_swipeSettling && state is EmailDetailLoading && _lastSettled != null) {
+          // The load's own transient frame: hold the outgoing message rather
+          // than let it flash away before the incoming one is ready to slide
+          // in over it.
+          built = _lastSettled!;
+          key = _lastSettledKey!;
+        } else {
+          _swipeSettling = false;
+          switch (state) {
+            case EmailDetailInitial():
+              built = const _EmptyState();
+              key = const ValueKey('empty');
+            case EmailDetailLoading():
+              // On touch, the folder header's own spinner already
+              // communicates loading; a second one here would just flash
+              // blank/spin twice.
+              built = isTouchPlatform
+                  ? const SizedBox.shrink()
+                  : Center(
+                      child: CircularProgressIndicator(
+                          color: AppColors.accent, strokeWidth: 2),
+                    );
+              key = const ValueKey('loading');
+            case EmailDetailLoaded(:final email, :final senderAnomaly):
+              built = _EmailView(
+                key: ValueKey(email.id),
+                email: email,
+                senderAnomaly: senderAnomaly,
+                onBack: widget.onBack,
+                emlSource: state.emlSource,
+              );
+              key = ValueKey('email-${email.id}');
+            case EmailDetailError(:final message):
+              built = _ErrorState(message: message, onBack: widget.onBack);
+              key = const ValueKey('error');
+          }
+          _lastSettled = built;
+          _lastSettledKey = key;
+        }
+
+        return AnimatedSwitcher(
+          duration: animateThisChange ? _slideDuration : Duration.zero,
+          // Both sides need the *same* curve, and one symmetric about its
+          // midpoint (`c(x) + c(1 - x) == 1`), or incoming and outgoing drift
+          // out of lockstep — see the transitionBuilder comment below.
+          switchInCurve: Curves.easeInOut,
+          switchOutCurve: Curves.easeInOut,
+          transitionBuilder: (child, animation) {
+            final incoming = child.key == key;
+            final dir = _direction.toDouble();
+            // AnimatedSwitcher runs the *outgoing* entry's controller in
+            // reverse, so its `animation` also counts down from 1 to 0 over
+            // the transition — 1 (fully shown) at the instant it starts being
+            // replaced, 0 (fully gone) once it's removed. Framed as "offscreen
+            // at animation 0, home at animation 1" that is the same shape the
+            // incoming entry already uses (0 = just-added and offscreen, 1 =
+            // settled at home), so one Tween covers both roles; giving the
+            // outgoing side `begin`/`end` the other way around (as this used
+            // to) made it jump to offscreen the instant the swipe began and
+            // drift back to home right as it was discarded — visually
+            // indistinguishable from the incoming message sliding the
+            // opposite way, which is what read as jumbled overlapping text.
+            final offscreen = incoming ? Offset(dir, 0) : Offset(-dir, 0);
+            return SlideTransition(
+              position:
+                  Tween<Offset>(begin: offscreen, end: Offset.zero).animate(animation),
+              child: child,
+            );
+          },
+          child: KeyedSubtree(key: key, child: built),
+        );
+      },
+    );
+
+    if (!isTouchPlatform) return gestureChild;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragStart: (_) => _dragTotal = 0,
+      onHorizontalDragUpdate: (details) => _dragTotal += details.delta.dx,
+      onHorizontalDragEnd: _onDragEnd,
+      child: gestureChild,
     );
   }
 }

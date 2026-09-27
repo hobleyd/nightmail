@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:html_view/html_view.dart';
 import 'package:flutter/material.dart';
 import 'adaptive_alert_dialog.dart';
@@ -250,7 +251,14 @@ class _ThreadSwipeNavigatorState extends State<_ThreadSwipeNavigator> {
   static const _velocityThreshold = 300.0;
   static const _slideDuration = Duration(milliseconds: 220);
 
-  double _dragTotal = 0;
+  /// The pointer a possible swipe is being tracked from, or null between
+  /// gestures. A new down always takes over tracking (see [_onPointerDown])
+  /// rather than only tracking the first pointer seen, so a stray up/cancel
+  /// that never reaches this widget can't wedge it onto a dead id.
+  int? _trackedPointer;
+  double _dragTotalX = 0;
+  double _dragTotalY = 0;
+  VelocityTracker? _velocityTracker;
 
   /// +1 while the pending/last transition slides the incoming message in from
   /// the right (a forward swipe), -1 from the left (a backward swipe).
@@ -270,15 +278,64 @@ class _ThreadSwipeNavigatorState extends State<_ThreadSwipeNavigator> {
   Widget? _lastSettled;
   Key? _lastSettledKey;
 
-  void _onDragEnd(DragEndDetails details) {
-    final velocity = details.primaryVelocity ?? 0;
-    final distance = _dragTotal;
-    _dragTotal = 0;
+  // A `Listener` rather than a `GestureDetector`: the message body scrolls
+  // via a native WebView (see html_body_view.dart), which claims a drag that
+  // starts on it only once no competing Flutter `GestureRecognizer` in the
+  // arena wants it — that's what `WebViewWidget`'s default (empty)
+  // `gestureRecognizers` means. A `HorizontalDragGestureRecognizer` here,
+  // however narrowly scoped, still enters that same arena and holds up (or
+  // outright wins) the platform view's own touches, which is what made
+  // reading-pane scrolling stutter and misfire the moment this swipe gesture
+  // was added — the compose editor hit the identical WebView-vs-ancestor-
+  // recognizer conflict a day earlier (see html_email_editor.dart's
+  // `EagerGestureRecognizer`), just from the other direction. A `Listener`
+  // observes the same raw pointer stream without registering an arena
+  // member, so the WebView's own scrolling is never contended for; the
+  // horizontal-dominance check below is what keeps an ordinary vertical (or
+  // diagonal) scroll from being misread as a swipe now that nothing is
+  // stealing pixels from it to make that distinction moot.
+  void _onPointerDown(PointerDownEvent event) {
+    // Always starts fresh on the newest pointer rather than deferring to
+    // whatever was tracked before: if a prior gesture's up/cancel never
+    // reached us — plausible once a drag is inside a native platform view,
+    // see the class doc — falling back to `??=` would leave `_trackedPointer`
+    // wedged on a dead id and silently drop every swipe for the rest of the
+    // session.
+    _trackedPointer = event.pointer;
+    _dragTotalX = 0;
+    _dragTotalY = 0;
+    _velocityTracker = VelocityTracker.withKind(event.kind)
+      ..addPosition(event.timeStamp, event.position);
+  }
+
+  void _onPointerMove(PointerMoveEvent event) {
+    if (_trackedPointer != event.pointer) return;
+    _dragTotalX += event.delta.dx;
+    _dragTotalY += event.delta.dy;
+    _velocityTracker?.addPosition(event.timeStamp, event.position);
+  }
+
+  void _onPointerUp(PointerUpEvent event) {
+    if (_trackedPointer != event.pointer) return;
+    _trackedPointer = null;
+    final velocity = _velocityTracker?.getVelocity().pixelsPerSecond.dx ?? 0;
+    _velocityTracker = null;
+    final distanceX = _dragTotalX;
+    final distanceY = _dragTotalY;
+    // Never more horizontal intent than vertical — a scroll with some
+    // sideways wobble must not be read as a swipe.
+    if (distanceX.abs() <= distanceY.abs()) return;
     final isFlick = velocity.abs() > _velocityThreshold;
-    final isDrag = distance.abs() > _distanceThreshold;
+    final isDrag = distanceX.abs() > _distanceThreshold;
     if (!isFlick && !isDrag) return;
-    final forward = isFlick ? velocity < 0 : distance < 0;
+    final forward = isFlick ? velocity < 0 : distanceX < 0;
     _navigate(forward: forward);
+  }
+
+  void _onPointerCancel(PointerCancelEvent event) {
+    if (_trackedPointer != event.pointer) return;
+    _trackedPointer = null;
+    _velocityTracker = null;
   }
 
   /// Reads the open message off the bloc rather than taking it as a
@@ -413,11 +470,12 @@ class _ThreadSwipeNavigatorState extends State<_ThreadSwipeNavigator> {
 
     if (!isTouchPlatform) return gestureChild;
 
-    return GestureDetector(
+    return Listener(
       behavior: HitTestBehavior.translucent,
-      onHorizontalDragStart: (_) => _dragTotal = 0,
-      onHorizontalDragUpdate: (details) => _dragTotal += details.delta.dx,
-      onHorizontalDragEnd: _onDragEnd,
+      onPointerDown: _onPointerDown,
+      onPointerMove: _onPointerMove,
+      onPointerUp: _onPointerUp,
+      onPointerCancel: _onPointerCancel,
       child: gestureChild,
     );
   }

@@ -12,6 +12,24 @@
           "title": "mobile"
         }
       ]
+    },
+    {
+      "type": "fixes",
+      "title": "Fixes",
+      "items": [
+        {
+          "body": "cap the reading pane header so a long recipient list can't hide the message",
+          "title": "mobile"
+        },
+        {
+          "body": "slow the thread-swipe slide so it reads as a transition",
+          "title": "mobile"
+        },
+        {
+          "body": "stop the swipe-to-navigate gesture from stealing reading-pane scroll",
+          "title": "mobile"
+        }
+      ]
     }
   ],
   "previous": [

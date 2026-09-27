@@ -9,8 +9,8 @@
   "artifact": {
     "kind": "zip",
     "url": "https://hobleyd.github.io/nightmail/releases/1.34.6+197-windows/nightmail-1.34.6-windows.zip",
-    "sha256": "68f9ff6ac4beb192c45c5cd12609a0148238cc45769ef13b818f73e886cf2fa9",
-    "length": 27675563
+    "sha256": "c7371ff9d251eeef63480ef9e11e7d13f4db5211ad79fc043fc0d0636a2c2caa",
+    "length": 27679120
   },
   "install": {
     "strategy": "wholeDirectoryReplace"
@@ -18,8 +18,8 @@
   "signature": {
     "algorithm": "ed25519",
     "publicKeyId": "release-b53948b0e36b895fa047a8f4",
-    "value": "6sLJY7T2A8BzKibnM7KGX6RfvG6wYKBcXLDGIBG2jUe/ZTfiofvQjwx9fWiQSZLVK0FVEei3Efn+j1hNROo8DQ=="
+    "value": "lTSBqzIqnOwdR5UOSoTP4F5ZV+wMhvNjkBD7JjDRo+JHK8f8o6ZySuCgJOiIqaJH1sTnD0u+1sErRNQFnJlzBA=="
   },
   "minimumUpdaterVersion": "2.0.0",
-  "generatedAt": "2026-09-27T09:06:04.600396Z"
+  "generatedAt": "2026-09-27T23:02:44.779918Z"
 }

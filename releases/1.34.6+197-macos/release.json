@@ -9,8 +9,8 @@
   "artifact": {
     "kind": "zip",
     "url": "https://hobleyd.github.io/nightmail/releases/1.34.6+197-macos/NightMail-1.34.6-macos.zip",
-    "sha256": "c0304a9a2fc6ce930d9aef6cc5209787acd3d55d9a373fc2cad5de3f97330e04",
-    "length": 40635393
+    "sha256": "9465eca9855aab8171705c324da4ee4785352c59817662020b177e2be15c8f6e",
+    "length": 40637447
   },
   "install": {
     "strategy": "wholeBundleReplace"
@@ -18,8 +18,8 @@
   "signature": {
     "algorithm": "ed25519",
     "publicKeyId": "release-b53948b0e36b895fa047a8f4",
-    "value": "z9wAXWwd29HAJtDJTV7FITmrC8MKjs4TSCTOT/3XMr16XUkUeWYI9yu2MdF1zIWOqcGcI5h5IJ7xoK8RtxtOBg=="
+    "value": "1zyBroPYBMXZb2HrqU15sRisd4qIzfa2mZRbWr80wAhjW4Vl6VDMFj4ZMhUvzGtGjbo1BdgPKiTHXnMVDtB4AQ=="
   },
   "minimumUpdaterVersion": "2.0.0",
-  "generatedAt": "2026-09-27T09:02:56.258350Z"
+  "generatedAt": "2026-09-27T23:01:26.646135Z"
 }

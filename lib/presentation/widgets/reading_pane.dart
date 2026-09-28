@@ -1239,21 +1239,21 @@ class _ReadingPaneToolbar extends StatelessWidget {
             color: c.textMuted,
             onPressed: () => _openComposeWindow(context, ComposeMode.forward),
           ),
+          _ToolbarButton(
+            icon: Icons.event_outlined,
+            tooltip: 'New meeting from this email',
+            color: c.textMuted,
+            onPressed: () => _openMeetingRequest(context),
+          ),
           // Takes the place of a Spacer: `reverse` pins the group to the right
           // edge exactly as one would, but scrolls instead of overflowing when
-          // eight touch-sized targets do not fit a narrow phone.
+          // seven touch-sized targets do not fit a narrow phone.
           Expanded(
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               reverse: true,
               child: Row(
                 children: [
-                  _ToolbarButton(
-                    icon: Icons.event_outlined,
-                    tooltip: 'New meeting from this email',
-                    color: c.textMuted,
-                    onPressed: () => _openMeetingRequest(context),
-                  ),
                   _ToolbarButton(
                     icon: Icons.content_copy_outlined,
                     tooltip: 'Debug: copy body to clipboard',

@@ -5,6 +5,7 @@ import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import 'email_date_formatter.dart';
 import 'email_folder_label.dart';
+import 'email_list_correspondent.dart';
 import 'flag_icon_button.dart';
 
 class EmailListItem extends StatefulWidget {
@@ -21,6 +22,7 @@ class EmailListItem extends StatefulWidget {
     this.isSpam = false,
     this.isDesktop = true,
     this.isDuplicate = false,
+    this.showRecipients = false,
     this.folderLabel,
     this.onLongPress,
     this.onDoubleTap,
@@ -39,6 +41,10 @@ class EmailListItem extends StatefulWidget {
   /// above it. Drawn in italics to say so, and without the hover actions — they
   /// belong to the row this one echoes.
   final bool isDuplicate;
+
+  /// True when the row leads with who the message went to rather than who sent
+  /// it — the reader's own message in Sent. See [showsRecipients].
+  final bool showRecipients;
 
   /// The folder this message lives in, drawn in brackets between the sender and
   /// the date. Null when it could not be resolved to a real folder name — see
@@ -67,16 +73,6 @@ class _EmailListItemState extends State<EmailListItem> {
     _localFlagFn.dispose();
     _localDeleteFn.dispose();
     super.dispose();
-  }
-
-  // When the from address is empty (e.g. unsent drafts from Graph API), fall
-  // back to showing the recipients so the Drafts list is useful.
-  static String _senderLabel(Email email) {
-    if (email.from.address.isNotEmpty) return email.from.displayName;
-    final recipients = email.toRecipients;
-    if (recipients.isEmpty) return '';
-    final names = recipients.take(2).map((r) => r.displayName).join(', ');
-    return 'To: $names${recipients.length > 2 ? '…' : ''}';
   }
 
   @override
@@ -156,7 +152,8 @@ class _EmailListItemState extends State<EmailListItem> {
                         children: [
                           Expanded(
                             child: Text(
-                              _senderLabel(widget.email),
+                              emailListCorrespondent(widget.email,
+                                  showRecipients: widget.showRecipients),
                               style: TextStyle(
                                 color: c.textPrimary,
                                 fontSize: 13,

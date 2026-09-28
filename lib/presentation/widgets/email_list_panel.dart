@@ -37,6 +37,7 @@ import 'error_snack_bar.dart';
 import 'email_date_formatter.dart';
 import 'view_shortcut_buttons.dart';
 import 'email_list_conversations.dart';
+import 'email_list_correspondent.dart';
 import 'email_list_item.dart';
 import 'flag_icon_button.dart';
 
@@ -1269,6 +1270,11 @@ class _EmailListView extends StatelessWidget {
             email: email,
             isDesktop: isDesktop,
             isDuplicate: isDuplicate,
+            showRecipients: showsRecipients(
+              email,
+              outgoingFolder: anchorOnSelf,
+              selfAddress: selfAddress,
+            ),
             isSelected: isSelected,
             isMultiSelected: selectedEmailIds.contains(email.id),
             showCheckbox: showCheckboxes,
@@ -1354,6 +1360,11 @@ class _EmailListView extends StatelessWidget {
           totalCount: conv.totalCount,
           isExpanded: conv.isExpanded,
           hasUnread: conv.hasUnread,
+          showRecipients: showsRecipients(
+            conv.anchorEmail,
+            outgoingFolder: anchorOnSelf,
+            selfAddress: selfAddress,
+          ),
           isDesktop: isDesktop,
           isSelected: isConvSelected,
           isMultiSelected: selectedEmailIds.contains(conv.anchorEmail.id),
@@ -1426,6 +1437,7 @@ class _ConversationHeader extends StatefulWidget {
     this.isDesktop = true,
     this.isMultiSelected = false,
     this.showCheckbox = false,
+    this.showRecipients = false,
     this.folderLabel,
     this.onLongPress,
     this.flagFocusNode,
@@ -1442,6 +1454,9 @@ class _ConversationHeader extends StatefulWidget {
   final bool isMultiSelected;
   final bool showCheckbox;
   final bool isDesktop;
+
+  /// See [EmailListItem.showRecipients].
+  final bool showRecipients;
 
   /// The folder the anchor message lives in — see [emailFolderLabel].
   final String? folderLabel;
@@ -1547,7 +1562,8 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
                             children: [
                               Expanded(
                                 child: Text(
-                                  widget.anchorEmail.from.displayName,
+                                  emailListCorrespondent(widget.anchorEmail,
+                                      showRecipients: widget.showRecipients),
                                   style: TextStyle(
                                     color: c.textPrimary,
                                     fontSize: 13,

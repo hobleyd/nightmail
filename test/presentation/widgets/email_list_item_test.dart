@@ -49,6 +49,7 @@ void main() {
     bool showCheckbox = false,
     bool isDesktop = true,
     bool isDuplicate = false,
+    bool showRecipients = false,
     String? folderLabel,
     double width = 420,
     VoidCallback? onDoubleTap,
@@ -64,6 +65,7 @@ void main() {
             showCheckbox: showCheckbox,
             isDesktop: isDesktop,
             isDuplicate: isDuplicate,
+            showRecipients: showRecipients,
             folderLabel: folderLabel,
             onTap: () => taps++,
             onDelete: () => deletes++,
@@ -146,6 +148,37 @@ void main() {
       await pumpItem(tester, _email(from: const EmailAddress(address: '')));
 
       expect(find.text(''), findsOneWidget);
+    });
+
+    testWidgets('leads with the recipients in Sent, not the sender',
+        (tester) async {
+      // Every row in Sent is from the reader, so their own name says nothing;
+      // who the message went to is what tells one row from the next.
+      await pumpItem(
+        tester,
+        _email(
+          from: const EmailAddress(address: 'me@example.com', name: 'Me'),
+          toRecipients: const [EmailAddress(address: 'bob@example.com', name: 'Bob')],
+        ),
+        showRecipients: true,
+      );
+
+      expect(find.text('To: Bob'), findsOneWidget);
+      expect(find.text('Me'), findsNothing);
+    });
+
+    testWidgets('bolds the recipients line when unread, like the sender',
+        (tester) async {
+      await pumpItem(
+        tester,
+        _email(
+          isRead: false,
+          toRecipients: const [EmailAddress(address: 'bob@example.com', name: 'Bob')],
+        ),
+        showRecipients: true,
+      );
+
+      expect(styleOf(tester, 'To: Bob').fontWeight, FontWeight.w600);
     });
   });
 

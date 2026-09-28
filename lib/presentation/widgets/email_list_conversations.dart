@@ -97,13 +97,14 @@ List<EmailConversation> groupIntoConversations(
 Email _anchorOf(List<Email> emails, String? self, bool onSelf) {
   if (self == null || self.isEmpty) return emails.first;
   for (final email in emails) {
-    if (_isFromSelf(email, self) == onSelf) return email;
+    if (isFromSelf(email, self) == onSelf) return email;
   }
   return emails.first;
 }
 
-/// An empty from address is an unsent draft, which is the user's own.
-bool _isFromSelf(Email email, String self) {
+/// Whether [email] is the user's own message. [self] must already be trimmed and
+/// lower-cased. An empty from address is an unsent draft, which is the user's own.
+bool isFromSelf(Email email, String self) {
   final from = email.from.address.trim().toLowerCase();
   return from.isEmpty || from == self;
 }
@@ -143,7 +144,7 @@ EmailConversation? adjacentConversation(
     if (!anchorOnSelf &&
         self != null &&
         self.isNotEmpty &&
-        _isFromSelf(conversation.anchor, self)) {
+        isFromSelf(conversation.anchor, self)) {
       continue;
     }
     return conversation;

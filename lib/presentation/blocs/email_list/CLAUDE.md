@@ -161,6 +161,29 @@ threaded through from `isOutgoingMailFolder` the same way the panel's own
 and — in Sent/Drafts/Outbox — rejects every thread as "the user's own" and the
 swipe goes dead.
 
+## A Sent Row Names Who It Went To
+
+In an outgoing folder (`isOutgoingMailFolder` again, so Sent, Drafts and
+Outbox alike) every message is from the reader, and a column of their own name
+tells one row from the next no better than blank space. So a row there leads
+with "To: Ann, Bob…" instead (`emailListCorrespondent`,
+`presentation/widgets/email_list_correspondent.dart`) — the same label the
+Drafts list already fell back to for Graph's from-less unsent drafts, now the
+rule rather than a fallback.
+
+Two things here are load-bearing:
+
+- **It is per row, not per folder** (`showsRecipients`). A Sent listing also
+  carries the correspondent's replies both providers expand a thread with, and
+  those rows still have to say who wrote back — "To: me" on every one of them
+  would hide exactly what the reader opened the thread to see. The test is the
+  same `isFromSelf` the anchor rule uses, against the same `selfAddress`; with
+  no address to compare, every row in an outgoing folder is taken as the
+  reader's own, which is what the folder holds.
+- **A row is never blank when there is something to say.** A message with no
+  one in To falls back to Cc, then to the sender, so a Bcc-only send still
+  shows a name. Only a from-less draft with no recipients draws empty.
+
 ## A List Row Names Its Own Folder
 
 A row whose message is **somewhere else** names that folder in brackets between

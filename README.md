@@ -1,8 +1,10 @@
 # NightMail
 
-NightMail is an Enterprise (i.e. requires a CLIENT_ID from the tenant and in Googles weird case also a CLIENT_SECRET) desktop and mobile email client built with Flutter. It supports Microsoft 365, Google Workspace, Gmail, and any standard IMAP/SMTP account — all from a single unified interface.
+https://github.com/user-attachments/assets/26e3b874-dc2e-475b-aab0-650dabf907f3
 
-The app provides a three-pane layout (folders, message list, reading pane) with integrated calendar, tasks, and contacts across all supported providers.
+NightMail is a desktop and mobile email client built with Flutter. It supports Microsoft 365, Google Workspace, Gmail, and any standard IMAP/SMTP account — all from a single unified interface. It will default to using my tenant, but you can specify your own. The ISO app works, but is in test using TestFlight currently. Gmail support requires config at my side until I submit to Google for verification.
+
+The app provides a desktop based three-pane layout (folders, message list, reading pane) with integrated calendar, tasks, and contacts across all supported providers. On mobile, a suitable interface as expected.
 
 ---
 

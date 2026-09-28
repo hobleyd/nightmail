@@ -161,6 +161,17 @@ wide and shrinks it, toolbar included, to a third of its size) and a
 `android/` halves of `packages/html_view` are now unused by the app; nothing
 in `lib/` reaches `HtmlViewWidget` on a phone.
 
+**A snack bar in the compose form is under the editor on the desktop.** The
+overlay covers the bottom of the window, which is exactly where a `SnackBar`
+lands, so a failed send used to show a red bar with the message body painted
+over it. Nothing in the form goes through `ScaffoldMessenger` now:
+`ComposeFormState.showNotice` puts the message in a strip *inside the form's
+layout*, above the footer, which shrinks the editor (its position and size are
+re-reported on every layout) instead of competing with it. The window and
+dialog hosts leave `ComposeError` to the form for the same reason. Anything
+else Flutter needs to draw over the editor takes the other route: `hide()` it
+first, `show()` it after, the way every dialog the form opens already does.
+
 ## Resigning First Responder Costs the Caret
 
 On macOS the editor and reading-pane webviews are plain sibling `NSView`s, so

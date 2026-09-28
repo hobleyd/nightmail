@@ -439,11 +439,17 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage>
     _closing = false;
     await windowManager.setPreventClose(true).catchError((_) {});
     if (!mounted) return;
-    showErrorSnackBar(
-      context,
-      'This window would not close. Anything you sent has been sent — close it '
-      'from the title bar.',
-    );
+    const message =
+        'This window would not close. Anything you sent has been sent — close it '
+        'from the title bar.';
+    // The form's strip sits in the layout; a snack bar would be under the
+    // native editor overlay.
+    final form = _formKey.currentState;
+    if (form != null) {
+      form.showNotice(message);
+    } else {
+      showErrorSnackBar(context, message);
+    }
   }
 
   Email? _originalEmail() {
@@ -544,11 +550,9 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage>
         backgroundColor: c.surfacePanel,
         body: BlocListener<ComposeBloc, ComposeState>(
           listener: (context, state) {
-            if (state is ComposeSent) {
-              _close();
-            } else if (state is ComposeError) {
-              showErrorSnackBar(context, state.message);
-            }
+            // [ComposeError] is the form's own to show — see
+            // [ComposeFormState._notice].
+            if (state is ComposeSent) _close();
           },
           child: ComposeForm(
             key: _formKey,
@@ -643,14 +647,11 @@ class _MobileComposePageState extends State<_MobileComposePage> {
         body: SafeArea(
           child: BlocListener<ComposeBloc, ComposeState>(
             listener: (context, state) {
-              if (state is ComposeSent || state is ComposeError) {
-                if (state is ComposeError) {
-                  showErrorSnackBar(context, state.message);
-                }
-                if (state is ComposeSent) {
-                  Navigator.of(context).pop();
-                  widget.onSent?.call();
-                }
+              // [ComposeError] is the form's own to show — see
+              // [ComposeFormState._notice].
+              if (state is ComposeSent) {
+                Navigator.of(context).pop();
+                widget.onSent?.call();
               }
             },
             child: ComposeForm(

@@ -383,12 +383,40 @@ void main() {
     await send(tester);
     await tester.pumpAndSettle();
 
-    // The message itself is surfaced by the window's (or dialog's) own
-    // listener, which this harness doesn't mount. What the form owes is a way
-    // back: not 'Sending…' forever, whose only exit used to be closing the
-    // window and losing the message.
+    // What the form owes is a way back: not 'Sending…' forever, whose only
+    // exit used to be closing the window and losing the message.
     expect(find.text('Sending…'), findsNothing);
     expect(find.text('Sent'), findsNothing);
     expect(find.text('Send'), findsOneWidget);
+  });
+
+  testWidgets('a failed send shows the error in the form, not a snack bar',
+      (tester) async {
+    repository.sendFailure = const ServerFailure(message: 'Mailbox unavailable');
+    await pumpForm(tester);
+    await send(tester);
+    await tester.pumpAndSettle();
+
+    // On the desktop the body editor is a native overlay that paints over a
+    // snack bar, so the error has to be part of the form's own layout.
+    expect(find.text('Mailbox unavailable'), findsOneWidget);
+    expect(find.byType(SnackBar), findsNothing);
+
+    // The next attempt starts clean: a stale error would read as its result.
+    repository.sendFailure = null;
+    await send(tester);
+    await tester.pumpAndSettle();
+    expect(find.text('Mailbox unavailable'), findsNothing);
+  });
+
+  testWidgets('the notice can be dismissed', (tester) async {
+    repository.sendFailure = const ServerFailure(message: 'Mailbox unavailable');
+    await pumpForm(tester);
+    await send(tester);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Dismiss'));
+    await tester.pumpAndSettle();
+    expect(find.text('Mailbox unavailable'), findsNothing);
   });
 }

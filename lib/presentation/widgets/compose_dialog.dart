@@ -32,7 +32,6 @@ import '../blocs/compose/compose_bloc.dart';
 import '../blocs/compose/compose_event.dart';
 import '../blocs/compose/compose_state.dart';
 import 'compose_body_builder.dart';
-import 'error_snack_bar.dart';
 import 'html_email_editor.dart';
 import 'insert_link_dialog.dart';
 import 'recipient_input_field.dart';
@@ -122,9 +121,9 @@ class ComposeDialog extends StatelessWidget {
               duration: Duration(seconds: 2),
             ),
           );
-        } else if (state is ComposeError) {
-          showErrorSnackBar(listenerContext, state.message);
         }
+        // [ComposeError] is the form's own to show — see
+        // [ComposeFormState._notice].
       },
       child: Dialog(
         backgroundColor: context.colors.surfacePanel,
@@ -309,6 +308,13 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
   Timer? _draftTimer;
   DateTime? _lastDraftSavedAt;
   bool _sent = false;
+  // The notice strip above the footer. Errors in this form are never shown as
+  // a [SnackBar]: on the desktop the body editor is html_view's native overlay,
+  // which paints over everything Flutter draws in the window, so a snack bar
+  // at the bottom of the Scaffold ends up underneath the message body. The
+  // strip is part of the form's own layout, so it shrinks the editor rather
+  // than being hidden by it, and stays until dismissed or the next Send.
+  String? _notice;
   // The message is gone: the send came back [ComposeSent]. Unlike [_sent] —
   // which only means Send was pressed — there is nothing left worth keeping, so
   // closing must not offer to save what has already been sent as a draft.
@@ -816,13 +822,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
           widget.onClose();
         } else {
           if (editorState != null) await editorState.show();
-          ScaffoldMessenger.of(this.context).showSnackBar(
-            SnackBar(
-              content: Text('Failed to save draft: $error'),
-              backgroundColor: Colors.red.shade700,
-              duration: const Duration(seconds: 8),
-            ),
-          );
+          showNotice('Failed to save draft: $error');
         }
       case _CloseAction.delete:
         // Cancel before deleting: a pending autosave would otherwise re-upload
@@ -1056,14 +1056,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
         // verbatim provider error bodies. Log the detail and show a fixed,
         // user-safe message instead (L12).
         debugPrint('AI draft failed: ${failure.message}');
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text(
-              "Couldn't generate the AI draft. Please try again.",
-            ),
-            backgroundColor: Colors.red.shade700,
-          ),
-        );
+        showNotice("Couldn't generate the AI draft. Please try again.");
     }
   }
 
@@ -1093,13 +1086,9 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
       final failCount = results.length - added.length;
       if (!mounted) return;
       if (failCount > 0) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(failCount == 1
-              ? 'Could not attach file: Windows denied access. Try copying it to your Desktop first.'
-              : '$failCount files could not be attached: Windows denied access.'),
-          backgroundColor: Colors.red.shade700,
-          duration: const Duration(seconds: 8),
-        ));
+        showNotice(failCount == 1
+            ? 'Could not attach file: Windows denied access. Try copying it to your Desktop first.'
+            : '$failCount files could not be attached: Windows denied access.');
       }
       if (added.isEmpty) return;
 
@@ -1283,11 +1272,23 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     });
   }
 
+  /// Shows [message] in the notice strip above the footer, replacing whatever
+  /// it held. See [_notice] for why this is not a snack bar.
+  void showNotice(String message) {
+    if (!mounted) return;
+    setState(() => _notice = message);
+  }
+
   Future<void> _submit(BuildContext context) async {
     // Flips the Send button to its "Sending…" state immediately on tap, before
     // the async prep below (HTML extraction, draft-delete network calls) has a
     // chance to run — otherwise the button looks unresponsive for that gap.
-    setState(() => _sent = true);
+    // A notice left over from the last attempt would otherwise read as the
+    // result of this one.
+    setState(() {
+      _sent = true;
+      _notice = null;
+    });
     _draftTimer?.cancel();
     _toFieldKey.currentState?.flush();
     _ccFieldKey.currentState?.flush();
@@ -1299,9 +1300,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
             widget.mode == ComposeMode.forward) &&
         to.isEmpty) {
       setState(() => _sent = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter at least one recipient')),
-      );
+      showNotice('Please enter at least one recipient');
       return;
     }
 
@@ -1597,9 +1596,12 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
         }
         // A failed send has to hand the form back. [_sent] is what the footer
         // draws its "Sending…" shimmer from, so leaving it set strands the
-        // window looking mid-send for good — the red snack bar is the only sign
+        // window looking mid-send for good — the notice is the only sign
         // anything went wrong, and there is no way back to a live Send button.
-        setState(() => _sent = false);
+        setState(() {
+          _sent = false;
+          _notice = (state as ComposeError).message;
+        });
       },
       child: BlocListener<AiComposeCubit, AiComposeState>(
         bloc: _aiCubit,
@@ -1708,6 +1710,11 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
                 ],
               ),
             ),
+            if (_notice != null)
+              _ComposeNotice(
+                message: _notice!,
+                onDismiss: () => setState(() => _notice = null),
+              ),
             Divider(height: 1, color: c.border),
             footer,
           ],
@@ -1763,6 +1770,11 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
               ],
             ),
           ),
+          if (_notice != null)
+            _ComposeNotice(
+              message: _notice!,
+              onDismiss: () => setState(() => _notice = null),
+            ),
           Divider(height: 1, color: c.border),
           footer,
         ],
@@ -1808,6 +1820,11 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
               ],
             ),
           ),
+          if (_notice != null)
+            _ComposeNotice(
+              message: _notice!,
+              onDismiss: () => setState(() => _notice = null),
+            ),
           Divider(height: 1, color: c.border),
           _Footer(
             onSend: () => _submit(context),
@@ -2557,6 +2574,65 @@ class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
           ),
         );
       },
+    );
+  }
+}
+
+/// The form's error strip: an error that stays until dismissed, with a copy
+/// button for the long server/protocol messages a failed send comes back with.
+/// Lives in the form's layout rather than a snack bar because on the desktop
+/// the body editor is a native overlay that would paint over one — see
+/// [ComposeFormState._notice].
+class _ComposeNotice extends StatelessWidget {
+  const _ComposeNotice({required this.message, required this.onDismiss});
+
+  final String message;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Semantics(
+      liveRegion: true,
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+        padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+        decoration: BoxDecoration(
+          color: c.errorBannerBg,
+          border: Border.all(color: c.errorBannerBorder),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 2, right: 8),
+              child:
+                  Icon(Icons.error_outline, size: 18, color: c.errorBannerText),
+            ),
+            Expanded(
+              child: SelectableText(
+                message,
+                style: TextStyle(fontSize: 13, color: c.errorBannerText),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.copy, size: 16),
+              color: c.errorBannerText,
+              tooltip: 'Copy error',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => Clipboard.setData(ClipboardData(text: message)),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, size: 16),
+              color: c.errorBannerText,
+              tooltip: 'Dismiss',
+              visualDensity: VisualDensity.compact,
+              onPressed: onDismiss,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

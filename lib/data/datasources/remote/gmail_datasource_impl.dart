@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../core/error/exceptions.dart';
 import '../../../core/utils/special_folder_kind.dart';
+import '../../../core/utils/subject_prefixes.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/local_attachment.dart';
 import '../../../domain/entities/inline_attachment.dart';
@@ -610,6 +611,7 @@ class GmailDatasourceImpl
   Future<void> replyToEmail({
     required String messageId,
     required String comment,
+    String? subject,
     bool replyAll = false,
     List<String> toAddresses = const [],
     List<String> ccAddresses = const [],
@@ -646,7 +648,8 @@ class GmailDatasourceImpl
         original,
         MailAddress(displayName.isEmpty ? null : displayName, fromEmail),
         replyAll: replyAll,
-      );
+      )..subject = _sentSubject(subject) ??
+          replySubjectFor(original.decodeSubject() ?? '');
       if (toAddresses.isNotEmpty) {
         builder.to = toAddresses.map((a) => MailAddress(null, a)).toList();
       }
@@ -677,12 +680,20 @@ class GmailDatasourceImpl
     }
   }
 
+  /// The compose window's subject, or null when it has nothing to say so the
+  /// caller derives one from the original message.
+  static String? _sentSubject(String? subject) {
+    final trimmed = subject?.trim();
+    return (trimmed == null || trimmed.isEmpty) ? null : trimmed;
+  }
+
   @override
   Future<void> forwardEmail({
     required String messageId,
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
     required String comment,
+    String? subject,
     List<String> excludedAttachmentIds = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
@@ -700,16 +711,14 @@ class GmailDatasourceImpl
 
       final source = await compute(parseGmailForwardSource, raw);
       final threadId = source.threadId;
-      final originalSubject = source.subject;
+      final fwdSubject =
+          _sentSubject(subject) ?? forwardSubjectFor(source.subject);
 
       final fromEmail = await _getUserEmail();
-      final subject = originalSubject.startsWith('Fwd:')
-          ? originalSubject
-          : 'Fwd: $originalSubject';
 
       final builder = MessageBuilder()
         ..to = toAddresses.map((e) => MailAddress(null, e)).toList()
-        ..subject = subject;
+        ..subject = fwdSubject;
 
       if (ccAddresses.isNotEmpty) {
         builder.cc = ccAddresses.map((e) => MailAddress(null, e)).toList();
@@ -1772,9 +1781,37 @@ class GmailDatasourceImpl
     if (statusCode == 401) {
       return const AuthException(message: 'Authentication required');
     }
-    return ServerException(
-        message: e.message ?? 'Server error ($statusCode)',
-        statusCode: statusCode);
+    // Deliberately not e.message: for a bad HTTP response Dio's message is its
+    // own boilerplate ("...validateStatus was configured to throw... Read more
+    // about status codes at https://developer.mozilla.org/..."), which is what
+    // a failed send used to put in front of the user in place of Google's
+    // reason ("Invalid To header", "Message too large"...).
+    final msg = _extractGoogleErrorMessage(e) ??
+        (statusCode != null ? 'Server error ($statusCode)' : e.message) ??
+        'Unknown server error';
+    return ServerException(message: msg, statusCode: statusCode);
+  }
+
+  /// Google's own explanation from an error body of the shape
+  /// `{"error": {"code": 400, "message": "..."}}`. The message-fetch requests
+  /// ask for `ResponseType.plain`, so their error bodies arrive as an undecoded
+  /// String rather than a Map; both are handled.
+  static String? _extractGoogleErrorMessage(DioException e) {
+    try {
+      var data = e.response?.data;
+      if (data is String) {
+        if (data.isEmpty) return null;
+        data = jsonDecode(data);
+      }
+      if (data is Map) {
+        final error = data['error'];
+        if (error is Map) {
+          final message = error['message'];
+          if (message is String && message.isNotEmpty) return message;
+        }
+      }
+    } catch (_) {}
+    return null;
   }
 }
 

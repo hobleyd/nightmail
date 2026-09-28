@@ -14,6 +14,7 @@ import 'core/platform/macos_app_data_migration.dart';
 import 'core/platform/window_utils.dart';
 import 'core/platform/windows_app_data_migration.dart';
 import 'core/settings/window_bounds_service.dart';
+import 'core/utils/subject_prefixes.dart';
 import 'data/database/app_database.dart';
 import 'data/services/inline_attachment_cache.dart';
 import 'domain/usecases/send_email.dart';
@@ -264,9 +265,7 @@ void main(List<String> args) async {
         ((arguments['originalEmail'] as Map<String, dynamic>?)?['subject']
                 as String?) ??
             '';
-    final cleanSubject = originalSubject
-        .replaceFirst(RegExp(r'^(?:re:\s*)+', caseSensitive: false), '')
-        .trim();
+    final cleanSubject = stripSubjectPrefixes(originalSubject);
     final title = draftEmailRaw != null
         ? () {
             final s = draftEmailRaw['subject'] as String? ?? '';
@@ -275,9 +274,10 @@ void main(List<String> args) async {
         : switch (mode) {
             ComposeMode.newEmail => 'New Email',
             ComposeMode.reply || ComposeMode.replyAll =>
-              cleanSubject.isNotEmpty ? 'Re: $cleanSubject' : 'Reply',
-            ComposeMode.forward =>
-              originalSubject.isNotEmpty ? 'Fwd: $originalSubject' : 'Forward',
+              cleanSubject.isNotEmpty ? replySubjectFor(cleanSubject) : 'Reply',
+            ComposeMode.forward => cleanSubject.isNotEmpty
+                ? forwardSubjectFor(cleanSubject)
+                : 'Forward',
           };
 
     await showSubWindow(

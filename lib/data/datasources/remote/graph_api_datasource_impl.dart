@@ -2296,6 +2296,7 @@ class GraphApiDatasourceImpl
   Future<void> replyToEmail({
     required String messageId,
     required String comment,
+    String? subject,
     bool replyAll = false,
     List<String> toAddresses = const [],
     List<String> ccAddresses = const [],
@@ -2304,6 +2305,10 @@ class GraphApiDatasourceImpl
   }) async {
     try {
       final messageBody = <String, dynamic>{
+        // Graph builds "RE: <original>" itself when no subject is given; the
+        // compose window's line wins so the sent mail matches what was shown.
+        if (subject != null && subject.trim().isNotEmpty)
+          'subject': subject.trim(),
         'body': {
           'contentType': bodyType == EmailBodyType.html ? 'html' : 'text',
           'content': comment,
@@ -2350,6 +2355,7 @@ class GraphApiDatasourceImpl
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
     required String comment,
+    String? subject,
     List<String> excludedAttachmentIds = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
@@ -2358,6 +2364,8 @@ class GraphApiDatasourceImpl
       // Use message.body instead of comment so Graph doesn't auto-append the
       // original (which would double-quote since we've already embedded it).
       final messageBody = <String, dynamic>{
+        if (subject != null && subject.trim().isNotEmpty)
+          'subject': subject.trim(),
         'body': {
           'contentType': bodyType == EmailBodyType.html ? 'html' : 'text',
           'content': comment,

@@ -56,6 +56,7 @@ abstract interface class EmailRepository {
   Future<Either<Failure, Unit>> replyToEmail({
     required String messageId,
     required String comment,
+    String? subject,
     bool replyAll = false,
     List<String> toAddresses = const [],
     List<String> ccAddresses = const [],
@@ -64,7 +65,9 @@ abstract interface class EmailRepository {
     String? accountId,
   });
 
-  /// Forwards an existing email. If [accountId] is set and differs from the
+  /// Forwards an existing email. [subject] is the compose window's subject
+  /// line; when empty the provider derives one from the original ("Fwd: "
+  /// plus the subject with any stacked Re:/Fwd: prefixes removed). If [accountId] is set and differs from the
   /// active account, the forward is sent through that account's datasource
   /// instead.
   Future<Either<Failure, Unit>> forwardEmail({
@@ -72,6 +75,7 @@ abstract interface class EmailRepository {
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
     required String comment,
+    String? subject,
     List<String> excludedAttachmentIds = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],

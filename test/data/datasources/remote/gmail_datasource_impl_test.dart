@@ -78,6 +78,57 @@ void main() {
     datasource = GmailDatasourceImpl.withDio(mockDio);
   });
 
+  group('a failed request carries Google\'s reason', () {
+    DioException badRequest(dynamic body) => DioException(
+          requestOptions: RequestOptions(path: '/users/me/messages/send'),
+          response: Response(
+            statusCode: 400,
+            data: body,
+            requestOptions: RequestOptions(path: '/users/me/messages/send'),
+          ),
+        );
+
+    test('from a decoded JSON error body', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data'))).thenAnswer(
+          (_) async => throw badRequest({
+                'error': {'code': 400, 'message': 'Invalid To header'}
+              }));
+
+      await expectLater(
+        datasource.sendEmail(
+            toAddresses: ['x@example.com'], subject: 's', body: 'b'),
+        throwsA(isA<ServerException>()
+            .having((e) => e.message, 'message', 'Invalid To header')
+            .having((e) => e.statusCode, 'statusCode', 400)),
+      );
+    });
+
+    test('from an undecoded String error body', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data'))).thenAnswer(
+          (_) async => throw badRequest(
+              jsonEncode({'error': {'code': 400, 'message': 'Message too large'}})));
+
+      await expectLater(
+        datasource.sendEmail(
+            toAddresses: ['x@example.com'], subject: 's', body: 'b'),
+        throwsA(isA<ServerException>()
+            .having((e) => e.message, 'message', 'Message too large')),
+      );
+    });
+
+    test('never Dio\'s own boilerplate when the body says nothing', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => throw badRequest(''));
+
+      await expectLater(
+        datasource.sendEmail(
+            toAddresses: ['x@example.com'], subject: 's', body: 'b'),
+        throwsA(isA<ServerException>()
+            .having((e) => e.message, 'message', 'Server error (400)')),
+      );
+    });
+  });
+
   void stubLabels(List<Map<String, dynamic>> labels) {
     when(mockDio.get<Map<String, dynamic>>(any)).thenAnswer(
       (_) async => _labelsResp(labels),
@@ -1658,6 +1709,72 @@ void main() {
       final result = await datasource.syncMailDelta('inbox', deltaLink: '5000');
 
       expect(result.upserted.map((e) => e.id), ['m1']);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Subject on replies and forwards — one prefix, never a stack
+  // ---------------------------------------------------------------------------
+
+  String _sentSubject(Map<String, dynamic> data) {
+    final rawMime =
+        utf8.decode(base64Url.decode(_padBase64(data['raw'] as String)));
+    final line = rawMime
+        .split(RegExp(r'\r?\n'))
+        .firstWhere((l) => l.toLowerCase().startsWith('subject:'));
+    return line.substring('subject:'.length).trim();
+  }
+
+  group('GmailDatasourceImpl subject prefixes', () {
+    test('a forward of a reply carries "Fwd:" alone', () async {
+      _stubGetByUrl((url) => url.contains('profile')
+          ? {'emailAddress': 'me@example.com'}
+          : _fullMessage(subject: 'Re: Fwd: Budget'));
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _sendResp());
+
+      await datasource.forwardEmail(
+        messageId: 'msg1',
+        toAddresses: ['alice@example.com'],
+        comment: 'FYI',
+      );
+
+      final data = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      expect(_sentSubject(data), 'Fwd: Budget');
+    });
+
+    test('a forward uses the compose subject when one is given', () async {
+      _stubGetByUrl((url) => url.contains('profile')
+          ? {'emailAddress': 'me@example.com'}
+          : _fullMessage(subject: 'Budget'));
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _sendResp());
+
+      await datasource.forwardEmail(
+        messageId: 'msg1',
+        toAddresses: ['alice@example.com'],
+        comment: 'FYI',
+        subject: 'Fwd: Budget (final)',
+      );
+
+      final data = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      expect(_sentSubject(data), 'Fwd: Budget (final)');
+    });
+
+    test('a reply to a forward carries "Re:" alone', () async {
+      _stubGetByUrl((url) => url.contains('profile')
+          ? {'emailAddress': 'me@example.com'}
+          : {'raw': _rawMime(subject: 'Fwd: Budget'), 'threadId': 'thread1'});
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _sendResp());
+
+      await datasource.replyToEmail(messageId: 'msg1', comment: 'Thanks');
+
+      final data = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      expect(_sentSubject(data), 'Re: Budget');
     });
   });
 }

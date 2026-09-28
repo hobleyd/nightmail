@@ -27,6 +27,7 @@ class SendEmail {
       ComposeMode.reply => _repository.replyToEmail(
           messageId: params.originalMessageId!,
           comment: params.body,
+          subject: params.subject,
           replyAll: false,
           toAddresses: params.toAddresses,
           ccAddresses: params.ccAddresses,
@@ -37,6 +38,7 @@ class SendEmail {
       ComposeMode.replyAll => _repository.replyToEmail(
           messageId: params.originalMessageId!,
           comment: params.body,
+          subject: params.subject,
           replyAll: true,
           toAddresses: params.toAddresses,
           ccAddresses: params.ccAddresses,
@@ -49,6 +51,7 @@ class SendEmail {
           toAddresses: params.toAddresses,
           ccAddresses: params.ccAddresses,
           comment: params.body,
+          subject: params.subject,
           excludedAttachmentIds: params.excludedAttachmentIds,
           bodyType: params.bodyType,
           newAttachments: params.newAttachments,

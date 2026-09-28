@@ -1,4 +1,5 @@
 import '../../domain/entities/email.dart';
+import 'subject_prefixes.dart';
 
 /// The newest message in an email body as plain text, with the quoted
 /// history below it cut off.
@@ -15,8 +16,9 @@ import '../../domain/entities/email.dart';
 /// signature stays: it is part of what the sender wrote last.
 String latestReplyText(String body, EmailBodyType bodyType) {
   final full = bodyType == EmailBodyType.html ? htmlToPlainText(body) : body;
-  final trimmedHtml =
-      bodyType == EmailBodyType.html ? _cutHtmlQuote(body) : body;
+  final trimmedHtml = bodyType == EmailBodyType.html
+      ? _cutHtmlQuote(body)
+      : body;
   final text = bodyType == EmailBodyType.html
       ? htmlToPlainText(trimmedHtml)
       : trimmedHtml;
@@ -61,8 +63,10 @@ final List<RegExp> _textQuoteLines = [
 /// Outlook quotes with a header block rather than a marker line: `From:` at
 /// the start of a line, followed within a few lines by another header.
 final RegExp _fromHeader = RegExp(r'^\s*\*?From:\*?\s', caseSensitive: false);
-final RegExp _followingHeader =
-    RegExp(r'^\s*\*?(Sent|Date|To|Cc|Subject):\*?\s', caseSensitive: false);
+final RegExp _followingHeader = RegExp(
+  r'^\s*\*?(Sent|Date|To|Cc|Subject):\*?\s',
+  caseSensitive: false,
+);
 
 String _cutTextQuote(String text) {
   final lines = text.split('\n');
@@ -111,9 +115,13 @@ bool _restIsQuoted(List<String> lines, int from) {
 String htmlToPlainText(String html) {
   return html
       .replaceAll(
-          RegExp(r'<(style|script|head)[^>]*>.*?</\1>',
-              caseSensitive: false, dotAll: true),
-          '')
+        RegExp(
+          r'<(style|script|head)[^>]*>.*?</\1>',
+          caseSensitive: false,
+          dotAll: true,
+        ),
+        '',
+      )
       .replaceAll(RegExp(r'<!--.*?-->', dotAll: true), '')
       .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
       .replaceAll(RegExp(r'<p[^>]*>', caseSensitive: false), '\n')
@@ -137,12 +145,4 @@ String htmlToPlainText(String html) {
 /// "Re: Re: FW: Budget" → "Budget". A meeting called "Re: Budget" reads as a
 /// reply, not a meeting. A subject that is nothing but prefixes is kept as it
 /// was rather than emptied.
-String meetingTitleForSubject(String subject) {
-  final stripped = subject
-      .replaceFirst(
-          RegExp(r'^(\s*(re|fwd?|aw|wg|tr)\s*(\[\d+\])?\s*:\s*)+',
-              caseSensitive: false),
-          '')
-      .trim();
-  return stripped.isNotEmpty ? stripped : subject.trim();
-}
+String meetingTitleForSubject(String subject) => stripSubjectPrefixes(subject);

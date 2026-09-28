@@ -476,6 +476,7 @@ class EmailRepositoryImpl implements EmailRepository {
   Future<Either<Failure, Unit>> replyToEmail({
     required String messageId,
     required String comment,
+    String? subject,
     bool replyAll = false,
     List<String> toAddresses = const [],
     List<String> ccAddresses = const [],
@@ -487,6 +488,7 @@ class EmailRepositoryImpl implements EmailRepository {
       await _datasourceFor(accountId).replyToEmail(
         messageId: messageId,
         comment: comment,
+        subject: subject,
         replyAll: replyAll,
         toAddresses: toAddresses,
         ccAddresses: ccAddresses,
@@ -503,6 +505,7 @@ class EmailRepositoryImpl implements EmailRepository {
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
     required String comment,
+    String? subject,
     List<String> excludedAttachmentIds = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
@@ -514,6 +517,7 @@ class EmailRepositoryImpl implements EmailRepository {
         toAddresses: toAddresses,
         ccAddresses: ccAddresses,
         comment: comment,
+        subject: subject,
         excludedAttachmentIds: excludedAttachmentIds,
         bodyType: bodyType,
         newAttachments: newAttachments,

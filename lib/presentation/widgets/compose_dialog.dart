@@ -16,6 +16,7 @@ import '../../core/platform/touch_metrics.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/signature/signature_merge_engine.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/subject_prefixes.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_attachment.dart';
@@ -571,18 +572,14 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     };
   }
 
-  static final _rePrefix = RegExp(r'^(?:re:\s*)+', caseSensitive: false);
-
   String _initialSubject() {
     if (widget.draftEmail != null) return widget.draftEmail!.subject;
     final email = widget.originalEmail;
     if (email == null) return '';
     final subject = email.subject;
     return switch (widget.mode) {
-      ComposeMode.reply ||
-      ComposeMode.replyAll =>
-        'Re: ${subject.replaceFirst(_rePrefix, '').trim()}',
-      ComposeMode.forward => 'Fwd: $subject',
+      ComposeMode.reply || ComposeMode.replyAll => replySubjectFor(subject),
+      ComposeMode.forward => forwardSubjectFor(subject),
       ComposeMode.newEmail => '',
     };
   }

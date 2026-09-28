@@ -35,9 +35,13 @@ abstract interface class EmailRemoteDatasource {
     List<LocalAttachment> newAttachments = const [],
   });
 
+  /// [subject] is what the compose window shows; an empty or null value
+  /// means "derive it from the original" ("Re: " plus the subject with every
+  /// stacked Re:/Fwd: prefix stripped, see `replySubjectFor`).
   Future<void> replyToEmail({
     required String messageId,
     required String comment,
+    String? subject,
     bool replyAll = false,
     List<String> toAddresses = const [],
     List<String> ccAddresses = const [],
@@ -45,11 +49,13 @@ abstract interface class EmailRemoteDatasource {
     List<LocalAttachment> newAttachments = const [],
   });
 
+  /// [subject] as for [replyToEmail]; the fallback is `forwardSubjectFor`.
   Future<void> forwardEmail({
     required String messageId,
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
     required String comment,
+    String? subject,
     List<String> excludedAttachmentIds = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],

@@ -9,6 +9,7 @@ import '../../../core/error/exceptions.dart';
 import '../../../core/platform/window_utils.dart';
 import '../../../core/utils/html_entities.dart';
 import '../../../core/utils/special_folder_kind.dart';
+import '../../../core/utils/subject_prefixes.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/local_attachment.dart';
 import '../../../domain/entities/email_attachment.dart';
@@ -1715,6 +1716,7 @@ class ImapDatasourceImpl
   Future<void> replyToEmail({
     required String messageId,
     required String comment,
+    String? subject,
     bool replyAll = false,
     List<String> toAddresses = const [],
     List<String> ccAddresses = const [],
@@ -1726,7 +1728,8 @@ class ImapDatasourceImpl
       original,
       MailAddress(_account.senderName, _account.emailAddress),
       replyAll: replyAll,
-    );
+    )..subject = _sentSubject(subject) ??
+        replySubjectFor(original.decodeSubject() ?? '');
     if (toAddresses.isNotEmpty) {
       builder.to = toAddresses.map((a) => MailAddress(null, a)).toList();
     }
@@ -1742,22 +1745,28 @@ class ImapDatasourceImpl
     await _sendMime(builder.buildMimeMessage());
   }
 
+  /// The compose window's subject, or null when it has nothing to say so the
+  /// caller derives one from the original message.
+  static String? _sentSubject(String? subject) {
+    final trimmed = subject?.trim();
+    return (trimmed == null || trimmed.isEmpty) ? null : trimmed;
+  }
+
   @override
   Future<void> forwardEmail({
     required String messageId,
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
     required String comment,
+    String? subject,
     List<String> excludedAttachmentIds = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
     final original = await _fetchOriginal(messageId);
 
-    final originalSubject = original.decodeSubject() ?? '';
-    final fwdSubject = originalSubject.startsWith('Fwd:')
-        ? originalSubject
-        : 'Fwd: $originalSubject';
+    final fwdSubject = _sentSubject(subject) ??
+        forwardSubjectFor(original.decodeSubject() ?? '');
 
     // Build a plain message — compose body already contains the quoted content
     // the user can edit, so we don't auto-append via prepareForwardMessage.

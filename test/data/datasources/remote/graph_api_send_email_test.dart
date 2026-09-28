@@ -559,4 +559,53 @@ void main() {
       expect((message['ccRecipients'] as List), hasLength(1));
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Subject on replies and forwards
+  // ---------------------------------------------------------------------------
+
+  group('GraphApiDatasourceImpl reply/forward subject', () {
+    test('a reply sends the compose subject so it matches what was shown',
+        () async {
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _replyVoidResp('msg1'));
+
+      await datasource.replyToEmail(
+        messageId: 'msg1',
+        comment: 'Thanks',
+        subject: 'Re: Budget',
+      );
+
+      final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      expect((body['message'] as Map)['subject'], 'Re: Budget');
+    });
+
+    test('a reply with no subject leaves it to Graph', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _replyVoidResp('msg1'));
+
+      await datasource.replyToEmail(messageId: 'msg1', comment: 'Thanks');
+
+      final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      expect((body['message'] as Map).containsKey('subject'), isFalse);
+    });
+
+    test('a forward sends the compose subject', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _forwardVoidResp('msg1'));
+
+      await datasource.forwardEmail(
+        messageId: 'msg1',
+        toAddresses: ['alice@example.com'],
+        comment: 'FYI',
+        subject: 'Fwd: Budget',
+      );
+
+      final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      expect((body['message'] as Map)['subject'], 'Fwd: Budget');
+    });
+  });
 }

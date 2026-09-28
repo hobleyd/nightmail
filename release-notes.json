@@ -1,20 +1,63 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.35.0",
+  "version": "1.36.0",
   "sections": [
     {
       "type": "features",
       "title": "New features",
       "items": [
         {
-          "body": "new meeting from this email",
-          "title": "reading-pane"
+          "body": "Cmd-A / Ctrl-A selects every email in the folder",
+          "title": "list"
+        },
+        {
+          "body": "a Sent row names who the message went to, not the sender",
+          "title": "list"
+        }
+      ]
+    },
+    {
+      "type": "fixes",
+      "title": "Fixes",
+      "items": [
+        {
+          "body": "a recipient named \"Last, First\" no longer breaks send and drafts",
+          "title": "gmail"
+        },
+        {
+          "body": "a reply or forward carries one prefix, never a stack",
+          "title": "compose"
+        },
+        {
+          "body": "show a rename at once and write it to the folder cache",
+          "title": "folders"
+        },
+        {
+          "body": "show send errors in the form, not under the editor",
+          "title": "compose"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.35.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "new meeting from this email",
+              "title": "reading-pane"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -507,23 +550,6 @@
             {
               "body": "synthesize local Ollama catalog entry; route macOS About to Settings",
               "title": "ai"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.27.8",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "notarize macOS builds with the ASC API key, not the stale NOTARY_* one",
-              "title": "release"
             }
           ]
         }

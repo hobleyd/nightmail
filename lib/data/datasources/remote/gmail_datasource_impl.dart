@@ -1157,7 +1157,7 @@ class GmailDatasourceImpl
   }
 
   @override
-  Future<void> renameFolder({
+  Future<String> renameFolder({
     required String folderId,
     required String newDisplayName,
   }) async {
@@ -1175,6 +1175,8 @@ class GmailDatasourceImpl
         '/users/me/labels/$folderId',
         data: {'name': newName},
       );
+      // A label id is opaque: the name is what changed, not the id.
+      return folderId;
     } on DioException catch (e) {
       throw _mapException(e);
     }

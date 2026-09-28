@@ -1039,6 +1039,138 @@ void main() {
     });
   });
 
+  group('renameFolder', () {
+    final cachedProjects = EmailFolder(
+      id: 'projects-id',
+      displayName: 'Projects',
+      totalItemCount: 4,
+      unreadItemCount: 1,
+      parentFolderId: 'archive-id',
+      childFolderCount: 2,
+    );
+
+    setUp(() {
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      when(mockFolderLocalDatasource.getCachedFolders(any))
+          .thenAnswer((_) async => [cachedProjects]);
+      when(mockFolderLocalDatasource.cacheFolders(
+        accountId: anyNamed('accountId'),
+        folders: anyNamed('folders'),
+      )).thenAnswer((_) async {});
+    });
+
+    List<EmailFolder> cachedWrites() => verify(mockFolderLocalDatasource
+            .cacheFolders(
+                accountId: 'account-1', folders: captureAnyNamed('folders')))
+        .captured
+        .map((c) => (c as List<EmailFolder>).single)
+        .toList();
+
+    test('renames the cached folder before asking the provider, and returns '
+        "the folder's id after the rename", () async {
+      // Regression: the cache kept the old name until the next tree fetch
+      // rewrote it, so a cold load, the poller or the background service
+      // could put the old name back on a folder the user had just renamed.
+      final order = <String>[];
+      when(mockFolderLocalDatasource.cacheFolders(
+        accountId: anyNamed('accountId'),
+        folders: anyNamed('folders'),
+      )).thenAnswer((_) async => order.add('cache'));
+      when(mockRemoteDatasource.renameFolder(
+        folderId: anyNamed('folderId'),
+        newDisplayName: anyNamed('newDisplayName'),
+      )).thenAnswer((_) async {
+        order.add('server');
+        return 'projects-id';
+      });
+
+      final result = await repository.renameFolder(
+        folderId: 'projects-id',
+        newDisplayName: 'Work',
+      );
+
+      expect((result as Right).value, 'projects-id');
+      expect(order, ['cache', 'server']);
+      final written = cachedWrites().single;
+      expect(written.displayName, 'Work');
+      // Only the name changes: the row keeps its counts and its place.
+      expect(written.id, 'projects-id');
+      expect(written.parentFolderId, 'archive-id');
+      expect(written.unreadItemCount, 1);
+      expect(written.childFolderCount, 2);
+    });
+
+    test('puts the old name back in the cache when the provider refuses',
+        () async {
+      when(mockRemoteDatasource.renameFolder(
+        folderId: anyNamed('folderId'),
+        newDisplayName: anyNamed('newDisplayName'),
+      )).thenThrow(const ServerException(message: 'nope'));
+
+      final result = await repository.renameFolder(
+        folderId: 'projects-id',
+        newDisplayName: 'Work',
+      );
+
+      expect((result as Left).value, isA<ServerFailure>());
+      expect(cachedWrites().map((f) => f.displayName), ['Work', 'Projects']);
+    });
+
+    test('offline: returns Left(NetworkFailure) without calling the '
+        'datasource, and the cache ends up as it was', () async {
+      when(mockConnectivityService.isOnline).thenAnswer((_) async => false);
+
+      final result = await repository.renameFolder(
+        folderId: 'projects-id',
+        newDisplayName: 'Work',
+      );
+
+      expect((result as Left).value, isA<NetworkFailure>());
+      verifyNever(mockRemoteDatasource.renameFolder(
+        folderId: anyNamed('folderId'),
+        newDisplayName: anyNamed('newDisplayName'),
+      ));
+      expect(cachedWrites().map((f) => f.displayName), ['Work', 'Projects']);
+    });
+
+    test('a folder the cache does not hold is renamed on the server only',
+        () async {
+      when(mockFolderLocalDatasource.getCachedFolders(any))
+          .thenAnswer((_) async => []);
+      when(mockRemoteDatasource.renameFolder(
+        folderId: anyNamed('folderId'),
+        newDisplayName: anyNamed('newDisplayName'),
+      )).thenAnswer((_) async => 'projects-id');
+
+      final result = await repository.renameFolder(
+        folderId: 'projects-id',
+        newDisplayName: 'Work',
+      );
+
+      expect(result.isRight(), isTrue);
+      verifyNever(mockFolderLocalDatasource.cacheFolders(
+        accountId: anyNamed('accountId'),
+        folders: anyNamed('folders'),
+      ));
+    });
+
+    test('a cache that cannot be read does not stop the rename', () async {
+      when(mockFolderLocalDatasource.getCachedFolders(any))
+          .thenThrow(const CacheException(message: 'locked'));
+      when(mockRemoteDatasource.renameFolder(
+        folderId: anyNamed('folderId'),
+        newDisplayName: anyNamed('newDisplayName'),
+      )).thenAnswer((_) async => 'projects-id');
+
+      final result = await repository.renameFolder(
+        folderId: 'projects-id',
+        newDisplayName: 'Work',
+      );
+
+      expect((result as Right).value, 'projects-id');
+    });
+  });
+
   group('markAsRead', () {
     test('delegates to datasource and returns updated email', () async {
       final updated = EmailModel(

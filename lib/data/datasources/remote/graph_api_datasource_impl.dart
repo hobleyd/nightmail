@@ -3401,7 +3401,7 @@ class GraphApiDatasourceImpl
   }
 
   @override
-  Future<void> renameFolder({
+  Future<String> renameFolder({
     required String folderId,
     required String newDisplayName,
   }) async {
@@ -3410,6 +3410,8 @@ class GraphApiDatasourceImpl
         '$_base/mailFolders/$folderId',
         data: {'displayName': newDisplayName},
       );
+      // A Graph folder id is opaque, so it survives the rename.
+      return folderId;
     } on DioException catch (e) {
       throw _mapDioException(e);
     }

@@ -122,7 +122,12 @@ abstract interface class EmailRemoteDatasource {
   });
 
   /// Renames [folderId] to [newDisplayName].
-  Future<void> renameFolder({
+  ///
+  /// Returns the folder's id **after** the rename, as [moveFolder] does: an
+  /// IMAP mailbox's id is its path, so the rename mints a new one and every
+  /// descendant's id changes with it. Graph folders and Gmail labels keep
+  /// theirs.
+  Future<String> renameFolder({
     required String folderId,
     required String newDisplayName,
   });

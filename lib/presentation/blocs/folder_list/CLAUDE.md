@@ -151,15 +151,56 @@ that the disagreement is more likely the truth (changed from another client)
 than lag. Entries are cleared on an account switch.
 
 What counts as agreement differs by change, which is the whole of
-`_unconfirmedFolders`' `isMove` flag: a create is confirmed by its id being
-listed at all, a move only by its id being listed **under the parent it was
-moved to**. Confirming a move on the id alone would take a stale list naming
-the folder in its old place as agreement and put the row back.
+`_unconfirmedFolders`' `_FolderChange` kind: a create is confirmed by its id
+being listed at all, a move only by its id being listed **under the parent it
+was moved to**, a rename only by its id being listed **under its new name**.
+Confirming a move or rename on the id alone would take a stale list naming
+the folder in its old place, or under its old name, as agreement and put the
+row back.
 
 `EmailFolder.props` carries `parentFolderId` and `childFolderCount` because of
 this: inserting a child bumps its parent's count, and an emit that changed
 nothing else would otherwise compare equal and be dropped — same trap as
 `MailPollerState`.
+
+### Renaming One Is Drawn Ahead of the Answer, and Written to the Cache
+
+A rename used to wait on the provider's round trip *and then* on the full
+tree fetch behind it before the row changed, so the name the user had just
+typed into that row sat there unchanged for seconds after the editor closed
+— longer on a deep hierarchy, where the fetch is a round trip per level.
+
+`FolderListBloc` now renames the row (and re-sorts: siblings sort by name)
+**before** asking the provider, which is the opposite of what a move or
+delete does. The difference is where the row is: a moved or deleted row is on
+screen where it always was, so a refusal costs nothing; a renamed row was
+just typed into, so the honest picture is the one the user was looking at,
+and putting the old name back **is** what a refusal means. So a refused
+rename restores the old name and requests no reconcile; an accepted one joins
+`_unconfirmedFolders` as a `rename` (confirmed only by the id listed under
+the new name — see above) and requests the reconcile fetch.
+
+Three things are load-bearing:
+
+- **`renameFolder` returns the folder's id after the rename**, as
+  `moveFolder` does, because an IMAP mailbox's id is its path: renaming one
+  mints a new id and a new id for every descendant, which only the fetch can
+  list. A changed id registers nothing unconfirmed — `_applyRename` on an id
+  the server no longer lists is a no-op, so it could do no harm, but it would
+  sit there for three fetches saying it was waiting on something. The typed
+  name stays on screen under the old id until the fetch replaces the row.
+  Graph folders and Gmail labels keep their id.
+- **The folder cache is renamed before the provider is asked, and put back
+  if it refuses** — `EmailRepositoryImpl.renameFolder`, not the bloc, because
+  the bloc has no cache write. The cache is what a cold load, the poller and
+  the background service read, so leaving the old name in it until the next
+  tree fetch rewrote it meant any of them could put the old name back on a
+  folder the user had just renamed. Offline counts as a refusal here:
+  `_execute` fails the rename before the datasource sees it, and the cache
+  goes back with it. A cache that cannot be read or written is logged and
+  otherwise ignored — it is a copy, and the server's answer is what counts.
+- **`EmailFolder.copyWith` takes a `displayName`** for this; nothing else
+  needed to change a name in place before.
 
 ### Being drawn is not the same as being on screen
 

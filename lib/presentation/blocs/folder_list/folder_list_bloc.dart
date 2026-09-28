@@ -71,20 +71,22 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
   /// Folder changes this bloc has made that no server folder list has come
   /// back agreeing with yet, and how many lists have now disagreed with each.
   ///
-  /// A create returns a real server id and a move returns the folder's id
-  /// after it, so both are applied to state the moment the server accepts
-  /// them — but a folder-tree fetch is a wholesale replacement, and a provider
-  /// can answer one built a moment too early (Graph propagation, Gmail's
-  /// cached label list): without the new folder, or with the moved one still
-  /// under its old parent. That would undo the change the user just watched
-  /// happen. So each is re-applied to a list that disagrees, for a few lists
-  /// only: past that, the disagreement is more likely to be the truth
-  /// (changed from another client) than lag.
+  /// A create returns a real server id, and a move or rename returns the
+  /// folder's id after it, so all three are applied to state the moment the
+  /// server accepts them — but a folder-tree fetch is a wholesale
+  /// replacement, and a provider can answer one built a moment too early
+  /// (Graph propagation, Gmail's cached label list): without the new folder,
+  /// with the moved one still under its old parent, or with the renamed one
+  /// still under its old name. That would undo the change the user just
+  /// watched happen. So each is re-applied to a list that disagrees, for a
+  /// few lists only: past that, the disagreement is more likely to be the
+  /// truth (changed from another client) than lag.
   ///
-  /// [isMove] is what "agreeing" means here — a create is confirmed by the id
-  /// being present at all, a move only by it being present *under the parent
-  /// it was moved to*.
-  final Map<String, ({EmailFolder folder, bool isMove, int misses})>
+  /// [_FolderChange] is what "agreeing" means here — a create is confirmed by
+  /// the id being present at all, a move only by it being present *under the
+  /// parent it was moved to*, a rename only by it being present *under its
+  /// new name*.
+  final Map<String, ({EmailFolder folder, _FolderChange kind, int misses})>
       _unconfirmedFolders = {};
 
   static const int _unconfirmedFolderGrace = 3;
@@ -342,7 +344,7 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
       },
       (folder) {
         _unconfirmedFolders[folder.id] =
-            (folder: folder, isMove: false, misses: 0);
+            (folder: folder, kind: _FolderChange.create, misses: 0);
         final current = state;
         if (current is FolderListLoaded) {
           emit(current.copyWith(
@@ -424,11 +426,32 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
 
   static List<EmailFolder> _applyUnconfirmed(
     List<EmailFolder> folders,
-    ({EmailFolder folder, bool isMove, int misses}) entry,
+    ({EmailFolder folder, _FolderChange kind, int misses}) entry,
   ) =>
-      entry.isMove
-          ? _applyMove(folders, entry.folder)
-          : _insertFolder(folders, entry.folder);
+      switch (entry.kind) {
+        _FolderChange.create => _insertFolder(folders, entry.folder),
+        _FolderChange.move => _applyMove(folders, entry.folder),
+        _FolderChange.rename =>
+          _applyRename(folders, entry.folder.id, entry.folder.displayName),
+      };
+
+  /// Gives the folder with [folderId] the name [displayName] and nothing
+  /// else: its counts and parent stay whatever the list already had. A folder
+  /// not in the list is left to whoever put the list together — a renamed
+  /// IMAP mailbox, say, is listed under a new id, and re-adding it under the
+  /// old one would draw it twice.
+  static List<EmailFolder> _applyRename(
+    List<EmailFolder> folders,
+    String folderId,
+    String displayName,
+  ) =>
+      [
+        for (final f in folders)
+          if (f.id == folderId && f.displayName != displayName)
+            f.copyWith(displayName: displayName)
+          else
+            f,
+      ];
 
   /// Re-applies every unconfirmed change to [folders] without judging them,
   /// for the cached list — which is not the server's answer either way, so a
@@ -453,17 +476,25 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
     for (final id in _unconfirmedFolders.keys.toList()) {
       final entry = _unconfirmedFolders[id]!;
       final onServer = serverById[id];
-      final agreed = entry.isMove
-          ? onServer != null &&
-              onServer.parentFolderId == entry.folder.parentFolderId
-          : onServer != null;
+      final agreed = onServer != null &&
+          switch (entry.kind) {
+            _FolderChange.create => true,
+            _FolderChange.move =>
+              onServer.parentFolderId == entry.folder.parentFolderId,
+            _FolderChange.rename =>
+              onServer.displayName == entry.folder.displayName,
+          };
       if (agreed) {
         _unconfirmedFolders.remove(id);
         continue;
       }
       if (entry.misses + 1 >= _unconfirmedFolderGrace) {
         debugPrint('[FolderList] giving up on unconfirmed '
-            '${entry.isMove ? 'move of' : 'folder'} '
+            '${switch (entry.kind) {
+              _FolderChange.create => 'folder',
+              _FolderChange.move => 'move of',
+              _FolderChange.rename => 'rename to',
+            }} '
             '"${entry.folder.displayName}" — the server has disagreed '
             '$_unconfirmedFolderGrace times');
         _unconfirmedFolders.remove(id);
@@ -471,7 +502,7 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
       }
       _unconfirmedFolders[id] = (
         folder: entry.folder,
-        isMove: entry.isMove,
+        kind: entry.kind,
         misses: entry.misses + 1,
       );
       merged = _applyUnconfirmed(merged, entry);
@@ -479,17 +510,72 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
     return merged;
   }
 
+  /// Renaming a folder shows the new name at once and reconciles afterwards.
+  ///
+  /// Unlike a move, the row is renamed *ahead* of the provider's answer: the
+  /// user has just typed the name into that row, so the honest picture is
+  /// the one they were looking at, and putting the old name back on a refusal
+  /// is exactly what a refusal means. Waiting on the round trip and then on
+  /// the tree fetch behind it — every level of the hierarchy — is what left
+  /// the old name sitting there for seconds after the editor closed.
+  ///
+  /// Once the provider accepts, the rename joins [_unconfirmedFolders] so a
+  /// fetch built before it applied cannot put the old name back — but only
+  /// where the id survived. A changed id (IMAP: the id is the path) means
+  /// every descendant's id changed too, and the fetch is the only thing that
+  /// can list them; the renamed row stays on screen under its old id until
+  /// that fetch replaces it, and re-applying the name to an id the server no
+  /// longer lists would be a no-op anyway.
   Future<void> _onRenameFolderRequested(
     FolderListRenameFolderRequested event,
     Emitter<FolderListState> emit,
   ) async {
+    final before = state;
+    final renaming = before is FolderListLoaded
+        ? before.folders.where((f) => f.id == event.folderId).firstOrNull
+        : null;
+    if (before is FolderListLoaded && renaming != null) {
+      emit(before.copyWith(
+        folders: _sorted(_applyRename(
+          before.folders,
+          event.folderId,
+          event.newDisplayName,
+        )),
+      ));
+    }
+
     final result = await _renameFolder(RenameFolderParams(
       folderId: event.folderId,
       newDisplayName: event.newDisplayName,
     ));
+    if (isClosed) return;
+
     result.fold(
-      (_) {},
-      (_) => add(const FolderListLoadRequested()),
+      (failure) {
+        debugPrint('[FolderList] rename ${event.folderId} to '
+            '"${event.newDisplayName}" failed: '
+            '${failure.runtimeType} — ${failure.message}');
+        final current = state;
+        if (current is FolderListLoaded && renaming != null) {
+          emit(current.copyWith(
+            folders: _sorted(_applyRename(
+              current.folders,
+              event.folderId,
+              renaming.displayName,
+            )),
+          ));
+        }
+      },
+      (newId) {
+        if (renaming != null && newId == event.folderId) {
+          _unconfirmedFolders[newId] = (
+            folder: renaming.copyWith(displayName: event.newDisplayName),
+            kind: _FolderChange.rename,
+            misses: 0,
+          );
+        }
+        add(const FolderListLoadRequested());
+      },
     );
   }
 
@@ -610,7 +696,8 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
           final moved = event.newParentFolderId.isEmpty
               ? moving.copyWith(toRoot: true)
               : moving.copyWith(parentFolderId: event.newParentFolderId);
-          _unconfirmedFolders[newId] = (folder: moved, isMove: true, misses: 0);
+          _unconfirmedFolders[newId] =
+              (folder: moved, kind: _FolderChange.move, misses: 0);
           emit(current.copyWith(
             folders: _sorted(_applyMove(current.folders, moved)),
           ));
@@ -641,6 +728,10 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
     };
   }
 }
+
+/// What an entry of [FolderListBloc._unconfirmedFolders] is waiting for the
+/// server to agree with.
+enum _FolderChange { create, move, rename }
 
 /// One optimistic count change and the counts it was applied over; see
 /// [FolderListBloc._recentCountChanges].

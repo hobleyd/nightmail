@@ -25,6 +25,7 @@ class EmailFolder extends Equatable {
   /// other field — so moving a folder to the top level is asked for with
   /// [toRoot], which clears it.
   EmailFolder copyWith({
+    String? displayName,
     int? totalItemCount,
     int? unreadItemCount,
     int? childFolderCount,
@@ -34,7 +35,7 @@ class EmailFolder extends Equatable {
     assert(!toRoot || parentFolderId == null);
     return EmailFolder(
       id: id,
-      displayName: displayName,
+      displayName: displayName ?? this.displayName,
       totalItemCount: totalItemCount ?? this.totalItemCount,
       unreadItemCount: unreadItemCount ?? this.unreadItemCount,
       parentFolderId: toRoot ? null : (parentFolderId ?? this.parentFolderId),

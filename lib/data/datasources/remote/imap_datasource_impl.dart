@@ -2463,7 +2463,7 @@ class ImapDatasourceImpl
       });
 
   @override
-  Future<void> renameFolder({
+  Future<String> renameFolder({
     required String folderId,
     required String newDisplayName,
   }) =>
@@ -2472,7 +2472,9 @@ class ImapDatasourceImpl
             newDisplayName: newDisplayName,
           ));
 
-  Future<void> _renameFolderInner({
+  /// The id of an IMAP mailbox *is* its path, so the renamed folder comes
+  /// back under a new one — the path with its leaf replaced.
+  Future<String> _renameFolderInner({
     required String folderId,
     required String newDisplayName,
   }) async {
@@ -2491,6 +2493,7 @@ class ImapDatasourceImpl
         pathSeparator: sep,
       );
       await client.renameMailbox(mailbox, newPath);
+      return newPath;
     } on ImapException catch (e) {
       throw ServerException(message: e.message ?? 'IMAP error');
     }

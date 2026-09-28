@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:fpdart/fpdart.dart';
 
 import '../../core/error/exceptions.dart';
@@ -811,18 +812,74 @@ class EmailRepositoryImpl implements EmailRepository {
     });
   }
 
+  /// The folder cache is renamed *before* the provider is asked, and put back
+  /// if the provider refuses (or the request never goes out — an offline
+  /// rename is refused by [_execute] before the datasource sees it).
+  ///
+  /// The cache is what the next cold load, the poller and the background
+  /// service read, so leaving the old name in it until the next tree fetch
+  /// rewrote it meant a rename the user had just watched happen could come
+  /// back under its old name from any of them. A cache failure on either
+  /// write is logged and otherwise ignored: the cache is a copy, and the
+  /// server's answer is the one that counts.
+  ///
+  /// When the id changes with the rename (IMAP — the id is the path) the
+  /// cached row is left under the old id carrying the new name: every
+  /// descendant's id changed too, and only the next tree fetch — which
+  /// replaces the cache wholesale — can say what they are now.
   @override
-  Future<Either<Failure, Unit>> renameFolder({
+  Future<Either<Failure, String>> renameFolder({
     required String folderId,
     required String newDisplayName,
   }) async {
-    return _execute(() async {
-      await _accountManager.emailDatasource.renameFolder(
+    final accountId = _accountManager.activeAccount?.id;
+    final previous = accountId == null
+        ? null
+        : await _renameCachedFolder(
+            accountId: accountId,
+            folderId: folderId,
+            displayName: newDisplayName,
+          );
+
+    final result = await _execute(
+      () => _accountManager.emailDatasource.renameFolder(
         folderId: folderId,
         newDisplayName: newDisplayName,
+      ),
+    );
+
+    if (result.isLeft() && previous != null) {
+      await _renameCachedFolder(
+        accountId: accountId!,
+        folderId: folderId,
+        displayName: previous.displayName,
       );
-      return unit;
-    });
+    }
+    return result;
+  }
+
+  /// Renames [folderId] in the folder cache and returns the row as it was, or
+  /// null when the folder is not cached (nothing to rename, nothing to put
+  /// back). Never throws: see [renameFolder].
+  Future<EmailFolder?> _renameCachedFolder({
+    required String accountId,
+    required String folderId,
+    required String displayName,
+  }) async {
+    try {
+      final cached = await _folderLocalDatasource.getCachedFolders(accountId);
+      final folder = cached.where((f) => f.id == folderId).firstOrNull;
+      if (folder == null) return null;
+      await _folderLocalDatasource.cacheFolders(
+        accountId: accountId,
+        folders: [folder.copyWith(displayName: displayName)],
+      );
+      return folder;
+    } catch (e) {
+      debugPrint('[EmailRepository] folder cache rename of $folderId '
+          'failed: $e');
+      return null;
+    }
   }
 
   @override

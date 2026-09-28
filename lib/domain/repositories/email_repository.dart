@@ -190,7 +190,16 @@ abstract interface class EmailRepository {
   });
 
   /// Renames [folderId] to [newDisplayName].
-  Future<Either<Failure, Unit>> renameFolder({
+  ///
+  /// The cached copy of the folder is renamed *before* the provider is asked,
+  /// so a folder list read from the cache in the meantime already carries the
+  /// new name — and put back if the provider refuses.
+  ///
+  /// Returns the folder's id **after** the rename, for the same reason
+  /// [moveFolder] does: an IMAP mailbox's id is its path, so renaming one
+  /// mints a new id (and a new id for every descendant) that only a fresh
+  /// fetch can list. Graph folders and Gmail labels keep theirs.
+  Future<Either<Failure, String>> renameFolder({
     required String folderId,
     required String newDisplayName,
   });

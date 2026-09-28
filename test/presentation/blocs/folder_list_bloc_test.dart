@@ -95,6 +95,7 @@ void main() {
     List<Duration> retryDelays = const [Duration.zero, Duration.zero],
     AccountManager? accountManager,
     CreateFolder? createFolder,
+    RenameFolder? renameFolder,
     MoveFolder? moveFolder,
     DeleteFolder? deleteFolder,
     Duration countChangeTtl = const Duration(seconds: 30),
@@ -104,7 +105,7 @@ void main() {
         getMailFolders: mockGetMailFolders,
         getCachedFolders: mockGetCachedFolders,
         createFolder: createFolder ?? MockCreateFolder(),
-        renameFolder: MockRenameFolder(),
+        renameFolder: renameFolder ?? MockRenameFolder(),
         moveFolder: moveFolder ?? MockMoveFolder(),
         deleteFolder: deleteFolder ?? MockDeleteFolder(),
         accountManager: accountManager ?? _FakeAccountManager(),
@@ -863,6 +864,182 @@ void main() {
       expect(folderById(bloc, 'archive-id')?.childFolderCount, 0);
       // Nothing was applied, so there is nothing to reconcile either.
       verifyNever(mockGetMailFolders(any));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Renaming a folder.
+  //
+  // Regression: the rename waited on the provider and then on a full tree
+  // fetch (a round trip per level of the hierarchy) before the row changed,
+  // so the name the user had just typed sat there unchanged for seconds after
+  // the editor closed.
+  // ---------------------------------------------------------------------------
+
+  group('FolderListBloc — renaming a folder', () {
+    late MockRenameFolder mockRenameFolder;
+
+    List<EmailFolder> tree() => [
+          _folder('inbox-id', 'Inbox'),
+          _folder('archive-id', 'Archive'),
+          _folder('projects-id', 'Projects'),
+        ];
+
+    setUp(() {
+      mockRenameFolder = MockRenameFolder();
+      when(mockGetCachedFolders(any)).thenAnswer((_) async => const Right([]));
+      when(mockGetMailFolders(any)).thenAnswer((_) async => Right(tree()));
+    });
+
+    Future<FolderListBloc> loadedBloc() async {
+      final bloc = makeBloc(renameFolder: mockRenameFolder);
+      addTearDown(bloc.close);
+      bloc.add(const FolderListLoadRequested());
+      await bloc.stream
+          .firstWhere((s) => s is FolderListLoaded && !s.isRefreshing);
+      return bloc;
+    }
+
+    String? nameOf(FolderListBloc bloc, String id) =>
+        (bloc.state as FolderListLoaded)
+            .folders
+            .where((f) => f.id == id)
+            .firstOrNull
+            ?.displayName;
+
+    List<String> names(FolderListBloc bloc) =>
+        (bloc.state as FolderListLoaded).folders.map((f) => f.displayName).toList();
+
+    test('shows the new name before the provider has answered, and keeps it '
+        'through the fetch', () async {
+      // Held open: the row has to change without it.
+      final rename = Completer<Either<Failure, String>>();
+      when(mockRenameFolder(any)).thenAnswer((_) => rename.future);
+      final bloc = await loadedBloc();
+      clearInteractions(mockGetMailFolders);
+
+      bloc.add(const FolderListRenameFolderRequested(
+        folderId: 'projects-id',
+        newDisplayName: 'Work',
+      ));
+      await pumpEventQueue();
+
+      expect(nameOf(bloc, 'projects-id'), 'Work');
+      // Siblings sort by name, so the row moves to where its new name puts it.
+      expect(names(bloc), ['Inbox', 'Archive', 'Work']);
+      // The reconcile waits for the provider: nothing to reconcile yet.
+      verifyNever(mockGetMailFolders(any));
+
+      // The reconcile fetch is held open too: the name must not depend on it.
+      final slowFetch = Completer<Either<Failure, List<EmailFolder>>>();
+      when(mockGetMailFolders(any)).thenAnswer((_) => slowFetch.future);
+      rename.complete(const Right('projects-id'));
+      await pumpEventQueue();
+      expect(nameOf(bloc, 'projects-id'), 'Work');
+
+      slowFetch.complete(Right([
+        _folder('inbox-id', 'Inbox'),
+        _folder('archive-id', 'Archive'),
+        _folder('projects-id', 'Work'),
+      ]));
+      await pumpEventQueue();
+      expect(nameOf(bloc, 'projects-id'), 'Work');
+    });
+
+    test('a refused rename puts the old name back', () async {
+      final rename = Completer<Either<Failure, String>>();
+      when(mockRenameFolder(any)).thenAnswer((_) => rename.future);
+      final bloc = await loadedBloc();
+      clearInteractions(mockGetMailFolders);
+
+      bloc.add(const FolderListRenameFolderRequested(
+        folderId: 'projects-id',
+        newDisplayName: 'Work',
+      ));
+      await pumpEventQueue();
+      expect(nameOf(bloc, 'projects-id'), 'Work');
+
+      rename.complete(const Left(ServerFailure(message: 'nope')));
+      await pumpEventQueue();
+
+      expect(nameOf(bloc, 'projects-id'), 'Projects');
+      expect(names(bloc), ['Inbox', 'Archive', 'Projects']);
+      // Nothing was applied on the server, so there is nothing to reconcile.
+      verifyNever(mockGetMailFolders(any));
+    });
+
+    test('a fetch that still shows the old name does not undo the rename',
+        () async {
+      when(mockRenameFolder(any))
+          .thenAnswer((_) async => const Right('projects-id'));
+      final bloc = await loadedBloc();
+
+      // The provider took the rename; the list it answers with (the default
+      // tree()) was built before it applied.
+      bloc.add(const FolderListRenameFolderRequested(
+        folderId: 'projects-id',
+        newDisplayName: 'Work',
+      ));
+      await pumpEventQueue();
+
+      expect(nameOf(bloc, 'projects-id'), 'Work');
+      // Only the name is re-applied: the server's counts for the row stand.
+      final row = (bloc.state as FolderListLoaded)
+          .folders
+          .firstWhere((f) => f.id == 'projects-id');
+      expect(row.parentFolderId, isNull);
+    });
+
+    test('a server that keeps disagreeing is eventually believed', () async {
+      when(mockRenameFolder(any))
+          .thenAnswer((_) async => const Right('projects-id'));
+      final bloc = await loadedBloc();
+
+      bloc.add(const FolderListRenameFolderRequested(
+        folderId: 'projects-id',
+        newDisplayName: 'Work',
+      ));
+      await pumpEventQueue();
+
+      // Past the grace, the old name is more likely the truth (renamed back
+      // from another client) than propagation lag.
+      for (var i = 0; i < 3; i++) {
+        bloc.add(const FolderListLoadRequested());
+        await pumpEventQueue();
+      }
+
+      expect(nameOf(bloc, 'projects-id'), 'Projects');
+    });
+
+    test('a rename that changes the id is left to the fetch', () async {
+      // IMAP: the id is the path, so the renamed mailbox is listed under a
+      // new id and every descendant's id changed with it.
+      when(mockRenameFolder(any))
+          .thenAnswer((_) async => const Right('Work'));
+      final bloc = await loadedBloc();
+
+      final slowFetch = Completer<Either<Failure, List<EmailFolder>>>();
+      when(mockGetMailFolders(any)).thenAnswer((_) => slowFetch.future);
+
+      bloc.add(const FolderListRenameFolderRequested(
+        folderId: 'projects-id',
+        newDisplayName: 'Work',
+      ));
+      await pumpEventQueue();
+
+      // The typed name is on screen meanwhile, under the id the row had.
+      expect(nameOf(bloc, 'projects-id'), 'Work');
+
+      // The fetch lists the folder under its new id; no phantom row is
+      // re-added under the old one.
+      slowFetch.complete(Right([
+        _folder('inbox-id', 'Inbox'),
+        _folder('archive-id', 'Archive'),
+        _folder('Work', 'Work'),
+      ]));
+      await pumpEventQueue();
+      expect(nameOf(bloc, 'projects-id'), isNull);
+      expect(names(bloc), ['Inbox', 'Archive', 'Work']);
     });
   });
 

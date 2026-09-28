@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_selector/file_selector.dart';
@@ -800,6 +799,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
 
     final editorState = _htmlEditorKey.currentState;
     if (editorState != null) await editorState.hide();
+    if (!context.mounted) return;
 
     _closePromptOpen = true;
     final action = await showDialog<_CloseAction>(
@@ -841,6 +841,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
   Future<void> _switchToPlainText(BuildContext context) async {
     final editorState = _htmlEditorKey.currentState;
     if (editorState != null) await editorState.hide();
+    if (!context.mounted) return;
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -922,6 +923,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     await editorState?.saveSelection();
 
     if (editorState != null) await editorState.hide();
+    if (!context.mounted) return;
     final instruction = await _promptForAiInstruction(context);
     if (mounted && editorState != null) await editorState.show();
 
@@ -1315,6 +1317,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
         if (!mounted) return;
         final editorState = _htmlEditorKey.currentState;
         if (editorState != null) await editorState.hide();
+        if (!context.mounted) return;
         final sendAnyway = await _confirmSendWithBrokenImages(context);
         if (mounted && editorState != null) await editorState.show();
         if (sendAnyway != true) return;
@@ -1344,7 +1347,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
           .catchError((_) {}));
     }
 
-    if (!mounted) return;
+    if (!context.mounted) return;
     context.read<ComposeBloc>().add(ComposeSubmitted(
           mode: widget.mode,
           originalMessageId: widget.originalEmail?.id,
@@ -1469,6 +1472,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
   Future<void> _onLinkRequested(BuildContext context) async {
     final editorState = _htmlEditorKey.currentState;
     if (editorState != null) await editorState.hide();
+    if (!context.mounted) return;
 
     final url = await showInsertLinkDialog(context);
 

@@ -103,8 +103,8 @@ class RecipientInputFieldState extends State<RecipientInputField> {
   }
 
   @override
-  void didUpdateWidget(RecipientInputField old) {
-    super.didUpdateWidget(old);
+  void didUpdateWidget(RecipientInputField oldWidget) {
+    super.didUpdateWidget(oldWidget);
     if (_selectedIndex != null && _selectedIndex! >= widget.recipients.length) {
       _selectedIndex = null;
     }

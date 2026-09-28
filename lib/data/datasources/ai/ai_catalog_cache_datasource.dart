@@ -36,8 +36,7 @@ abstract interface class AiCatalogCacheDatasource {
 }
 
 class AiCatalogCacheDatasourceImpl implements AiCatalogCacheDatasource {
-  const AiCatalogCacheDatasourceImpl({required AppDatabase database})
-      : _database = database;
+  const AiCatalogCacheDatasourceImpl({required this._database});
 
   final AppDatabase _database;
 

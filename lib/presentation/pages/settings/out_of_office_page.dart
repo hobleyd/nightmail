@@ -615,6 +615,7 @@ class _AccountPicker extends StatelessWidget {
                 : null;
             return _SettingRow(
               label: 'Account',
+              width: 280,
               child: _Dropdown<String>(
                 value: value,
                 items: [
@@ -635,7 +636,6 @@ class _AccountPicker extends StatelessWidget {
                         }
                       },
               ),
-              width: 280,
             );
           },
         );

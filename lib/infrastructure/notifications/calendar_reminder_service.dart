@@ -19,14 +19,11 @@ import 'notification_service.dart';
 /// mirroring how `MailPollerCubit` already polls all accounts for mail.
 class CalendarReminderService {
   CalendarReminderService({
-    required AccountManager accountManager,
-    required NotificationService notificationService,
-    required ReminderScheduleLocalDatasource database,
-    required bool schedulesReminders,
-  })  : _accountManager = accountManager,
-        _notificationService = notificationService,
-        _database = database,
-        _schedulesReminders = schedulesReminders;
+    required this._accountManager,
+    required this._notificationService,
+    required this._database,
+    required this._schedulesReminders,
+  });
 
   static const _lookahead = Duration(days: 14);
 

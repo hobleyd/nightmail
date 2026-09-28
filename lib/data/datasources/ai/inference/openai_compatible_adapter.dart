@@ -30,9 +30,9 @@ const _kDefaultOpenAiBaseUrl = 'https://api.openai.com/v1';
 /// tool-calling wire work in this adapter covers Ollama too (no separate adapter).
 class OpenAiCompatibleAdapter implements AiAdapter {
   const OpenAiCompatibleAdapter({
-    required Dio dio,
+    required this._dio,
     this.useApiKeyHeader = false,
-  }) : _dio = dio;
+  });
 
   final Dio _dio;
 

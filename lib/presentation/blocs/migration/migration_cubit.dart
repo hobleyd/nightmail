@@ -12,9 +12,8 @@ import 'migration_state.dart';
 /// move without the user having to reopen it; nothing is polled before
 /// [watch] is called.
 class MigrationCubit extends Cubit<MigrationState> {
-  MigrationCubit({required AccountMigrationService migrationService})
-      : _migrationService = migrationService,
-        super(const MigrationState());
+  MigrationCubit({required this._migrationService})
+      : super(const MigrationState());
 
   final AccountMigrationService _migrationService;
   Timer? _pollTimer;

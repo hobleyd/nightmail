@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:enough_mail/enough_mail.dart';
@@ -317,7 +316,7 @@ class GmailDatasourceImpl
         rawBodies.addAll(await Future.wait(chunk.map(_fetchThreadRaw)));
       }
 
-      return compute(
+      return await compute(
         parseGmailThreads,
         GmailThreadParseParams(
           rawThreadBodies: rawBodies,
@@ -413,7 +412,7 @@ class GmailDatasourceImpl
 
       // As in getEmails: fetch concurrently, decode once off the UI isolate.
       final rawBodies = await Future.wait(futures);
-      return compute(parseGmailMetadataMessages, rawBodies);
+      return await compute(parseGmailMetadataMessages, rawBodies);
     } on DioException catch (e) {
       throw _mapException(e);
     }
@@ -554,7 +553,7 @@ class GmailDatasourceImpl
       );
 
       // Re-fetch the message to return updated state.
-      return getEmail(id);
+      return await getEmail(id);
     } on DioException catch (e) {
       throw _mapException(e);
     }
@@ -686,7 +685,7 @@ class GmailDatasourceImpl
         '/users/me/messages/send',
         data: {
           'raw': encoded,
-          if (threadId != null) 'threadId': threadId,
+          'threadId': ?threadId,
         },
       );
     } on DioException catch (e) {
@@ -777,7 +776,7 @@ class GmailDatasourceImpl
         '/users/me/messages/send',
         data: {
           'raw': rawBase64,
-          if (threadId != null) 'threadId': threadId,
+          'threadId': ?threadId,
         },
       );
     } on DioException catch (e) {
@@ -932,6 +931,7 @@ class GmailDatasourceImpl
     return id;
   }
 
+  @override
   Future<void> deleteEmail(String id) async {
     await _dio.post<void>('/users/me/messages/$id/trash');
   }

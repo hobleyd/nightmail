@@ -12,10 +12,9 @@ class OutOfOfficeCubit extends Cubit<OutOfOfficeState> {
   OutOfOfficeCubit({
     required GetOutOfOffice getOutOfOffice,
     required SetOutOfOffice setOutOfOffice,
-    required AccountManager accountManager,
+    required this._accountManager,
   }) : _get = getOutOfOffice,
        _set = setOutOfOffice,
-       _accountManager = accountManager,
        super(const OutOfOfficeState());
 
   final GetOutOfOffice _get;

@@ -4,8 +4,8 @@ import '../datasources/local/contact_cache_local_datasource.dart';
 
 class ContactCacheRepositoryImpl implements ContactCacheRepository {
   const ContactCacheRepositoryImpl({
-    required ContactCacheLocalDatasource localDatasource,
-  }) : _localDatasource = localDatasource;
+    required this._localDatasource,
+  });
 
   final ContactCacheLocalDatasource _localDatasource;
 

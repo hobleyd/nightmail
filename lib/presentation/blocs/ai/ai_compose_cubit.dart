@@ -16,9 +16,8 @@ import 'ai_compose_state.dart';
 /// emits [AiComposeDone] (with usage) on the terminal chunk or
 /// [AiComposeError] on failure.
 class AiComposeCubit extends Cubit<AiComposeState> {
-  AiComposeCubit({required ComposeReply composeReply})
-      : _composeReply = composeReply,
-        super(const AiComposeIdle());
+  AiComposeCubit({required this._composeReply})
+      : super(const AiComposeIdle());
 
   final ComposeReply _composeReply;
 

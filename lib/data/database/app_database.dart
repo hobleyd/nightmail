@@ -388,7 +388,7 @@ class AppDatabase extends _$AppDatabase
   /// [QueryExecutor] (e.g. `NativeDatabase.memory()`) instead of the on-disk
   /// `nightmail_cache` file. Not used by production code.
   @visibleForTesting
-  AppDatabase.forTesting(QueryExecutor executor) : super(executor);
+  AppDatabase.forTesting(super.executor);
 
   @override
   int get schemaVersion => 17;
@@ -548,6 +548,7 @@ class AppDatabase extends _$AppDatabase
     );
   }
 
+  @override
   Future<String?> loadDeltaToken(String accountId, String folderId) async {
     final q = select(deltaSyncTokens)
       ..where(
@@ -556,6 +557,7 @@ class AppDatabase extends _$AppDatabase
     return (await q.getSingleOrNull())?.deltaLink;
   }
 
+  @override
   Future<void> saveDeltaToken(
     String accountId,
     String folderId,
@@ -569,6 +571,7 @@ class AppDatabase extends _$AppDatabase
         ),
       );
 
+  @override
   Future<void> clearDeltaTokensForAccount(String accountId) =>
       (delete(deltaSyncTokens)
             ..where((t) => t.accountId.equals(accountId)))

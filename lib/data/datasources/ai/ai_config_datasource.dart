@@ -67,8 +67,7 @@ abstract interface class AiConfigDatasource {
 }
 
 class AiConfigDatasourceImpl implements AiConfigDatasource {
-  const AiConfigDatasourceImpl({required AppDatabase database})
-      : _database = database;
+  const AiConfigDatasourceImpl({required this._database});
 
   final AppDatabase _database;
 

@@ -55,8 +55,7 @@ import 'models_dev_catalog_datasource.dart';
 /// * [AiCatalogCacheDatasource]
 ///   * `Future<CachedCatalog?> read()` — `CachedCatalog` exposes `rawJson` and
 ///     `fetchedAt`.
-///   * `Future<void> write({required String rawJson, required DateTime
-///     fetchedAt})`.
+///   * `Future<void> write({required String rawJson, required DateTime fetchedAt})`.
 /// * [AiConfigDatasource]
 ///   * `Future<List<AiProvider>> getConfiguredProviders()` — durable providers
 ///     (BYO *and* configured catalog picks), each `source`-tagged.

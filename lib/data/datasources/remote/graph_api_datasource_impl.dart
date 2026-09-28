@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -460,7 +459,7 @@ class GraphApiDatasourceImpl
       );
       final raw = response.data;
       if (raw == null || raw.isEmpty) return [];
-      return compute(parseGraphMessageCollection, raw);
+      return await compute(parseGraphMessageCollection, raw);
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
@@ -680,7 +679,7 @@ class GraphApiDatasourceImpl
             message: 'Empty response when updating message $id', statusCode: 200);
       }
 
-      return compute(parseGraphMessage, raw);
+      return await compute(parseGraphMessage, raw);
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
@@ -1863,7 +1862,7 @@ class GraphApiDatasourceImpl
       'subject': subject,
       'isAllDay': isAllDay,
       'isReminderOn': reminderMinutes != null,
-      if (reminderMinutes != null) 'reminderMinutesBeforeStart': reminderMinutes,
+      'reminderMinutesBeforeStart': ?reminderMinutes,
       if (isOnlineMeeting) 'isOnlineMeeting': true,
       if (isOnlineMeeting) 'onlineMeetingProvider': 'teamsForBusiness',
     };
@@ -2790,14 +2789,14 @@ class GraphApiDatasourceImpl
   }) async {
     try {
       if (emlBytes.length <= _inlineAttachmentLimit) {
-        return _attachInline(
+        return await _attachInline(
           listId: listId,
           taskId: taskId,
           fileName: fileName,
           emlBytes: emlBytes,
         );
       } else {
-        return _attachViaUploadSession(
+        return await _attachViaUploadSession(
           listId: listId,
           taskId: taskId,
           fileName: fileName,
@@ -3061,7 +3060,9 @@ class GraphApiDatasourceImpl
               if (startDt == null || endDt == null) return null;
               final status = _parseItemStatus(si['status'] as String?);
               if (status == AttendeeAvailabilityStatus.free ||
-                  status == AttendeeAvailabilityStatus.unknown) return null;
+                  status == AttendeeAvailabilityStatus.unknown) {
+                return null;
+              }
               return AttendeeScheduleItem(
                 start: DateTime.parse('${startDt.split('.').first}Z'),
                 end: DateTime.parse('${endDt.split('.').first}Z'),
@@ -3458,7 +3459,7 @@ class GraphApiDatasourceImpl
   static final _angleEmail = RegExp(r'<([^>]+)>\s*$');
 
   /// Extracts a bare email address from an optionally formatted string like
-  /// "Display Name <email@example.com>" — Graph API rejects the full format.
+  /// `Display Name <email@example.com>` — Graph API rejects the full format.
   static String _bareEmail(String address) {
     final m = _angleEmail.firstMatch(address);
     return m != null ? m.group(1)!.trim() : address.trim();

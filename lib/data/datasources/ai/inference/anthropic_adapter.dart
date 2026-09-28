@@ -26,7 +26,7 @@ import 'ai_adapter.dart';
 /// A single instance serves every Anthropic-protocol provider — the API key and
 /// endpoint are supplied per call (see [AiAdapter]).
 class AnthropicAdapter implements AiAdapter {
-  const AnthropicAdapter({required Dio dio}) : _dio = dio;
+  const AnthropicAdapter({required this._dio});
 
   final Dio _dio;
 

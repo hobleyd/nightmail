@@ -413,7 +413,7 @@ void main() {
       verify(mockConfig.deleteRoute('compose'));
       verifyNever(mockConfig.deleteRoute('summarize'));
       // The orphaned API key is also cleaned up (L8 finding).
-      verify(mockStorage.delete(key: '${apiKeyPrefix}$targetId'));
+      verify(mockStorage.delete(key: '$apiKeyPrefix$targetId'));
     });
 
     test('still succeeds when the secret cleanup throws', () async {

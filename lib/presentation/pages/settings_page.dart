@@ -738,6 +738,7 @@ class _SignatureEditorState extends State<_SignatureEditor> {
   Future<void> _onLinkRequested(BuildContext context) async {
     final editorState = _htmlEditorKey.currentState;
     if (editorState != null) await editorState.hide();
+    if (!context.mounted) return;
 
     final url = await showInsertLinkDialog(context);
 

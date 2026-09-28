@@ -222,7 +222,10 @@ void main() {
         MailCodec.decodeBinary('=25PDF', 'quoted-printable'),
         <int>[0x25, 0x50, 0x44, 0x46],
       );
-      expect(MailCodec.decodeBinary('=25PDF', 'Q'), <int>[0x25, 0x50, 0x44, 0x46]);
+      expect(
+        MailCodec.decodeBinary('=25PDF', 'Q'),
+        <int>[0x25, 0x50, 0x44, 0x46],
+      );
     });
 
     test('decodeBinary knows 7bit, which it used to fall through on', () {

@@ -14,11 +14,9 @@ import 'ai_settings_state.dart';
 /// BYO providers — all via [AiSettingsRepository].
 class AiSettingsCubit extends Cubit<AiSettingsState> {
   AiSettingsCubit({
-    required AiCatalogRepository catalogRepository,
-    required AiSettingsRepository settingsRepository,
-  })  : _catalogRepository = catalogRepository,
-        _settingsRepository = settingsRepository,
-        super(const AiSettingsState());
+    required this._catalogRepository,
+    required this._settingsRepository,
+  })  : super(const AiSettingsState());
 
   final AiCatalogRepository _catalogRepository;
   final AiSettingsRepository _settingsRepository;

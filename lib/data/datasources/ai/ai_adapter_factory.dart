@@ -15,14 +15,11 @@ import 'inference/ai_adapter.dart';
 /// an explicit case so the exhaustiveness check still flags any new protocol.
 class AiAdapterFactory {
   const AiAdapterFactory({
-    required AiAdapter openAiAdapter,
-    required AiAdapter anthropicAdapter,
-    required AiAdapter azureAdapter,
-    required AiAdapter googleAdapter,
-  })  : _openAiAdapter = openAiAdapter,
-        _anthropicAdapter = anthropicAdapter,
-        _azureAdapter = azureAdapter,
-        _googleAdapter = googleAdapter;
+    required this._openAiAdapter,
+    required this._anthropicAdapter,
+    required this._azureAdapter,
+    required this._googleAdapter,
+  });
 
   final AiAdapter _openAiAdapter;
   final AiAdapter _anthropicAdapter;

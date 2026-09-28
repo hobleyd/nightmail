@@ -27,9 +27,8 @@ import 'ai_folder_chat_state.dart';
 /// The system prompt is owned by [RunFolderAgent] (it picks the agent vs.
 /// fallback variant), so it is deliberately absent from [_history].
 class AiFolderCubit extends Cubit<AiFolderChatState> {
-  AiFolderCubit({required RunFolderAgent runFolderAgent})
-      : _runFolderAgent = runFolderAgent,
-        super(const AiFolderChatState());
+  AiFolderCubit({required this._runFolderAgent})
+      : super(const AiFolderChatState());
 
   final RunFolderAgent _runFolderAgent;
 

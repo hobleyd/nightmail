@@ -23,7 +23,7 @@ abstract interface class ProviderModelsDatasource {
 }
 
 class ProviderModelsDatasourceImpl implements ProviderModelsDatasource {
-  ProviderModelsDatasourceImpl({required Dio dio}) : _dio = dio;
+  ProviderModelsDatasourceImpl({required this._dio});
 
   final Dio _dio;
 

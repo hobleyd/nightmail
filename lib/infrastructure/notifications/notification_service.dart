@@ -384,8 +384,8 @@ class NotificationService {
           'type': 'eventReminder',
           'eventId': eventId,
           'eventTitle': eventTitle,
-          if (startIso != null) 'startIso': startIso,
-          if (minutesUntilStart != null) 'minutesUntilStart': minutesUntilStart,
+          'startIso': ?startIso,
+          'minutesUntilStart': ?minutesUntilStart,
         }),
       ),
     );

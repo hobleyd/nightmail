@@ -47,19 +47,19 @@ void main() {
         participation: participation,
       );
 
-  var _nextId = 1;
+  var nextId = 1;
   PendingCalendarOperationRecord op(
     PendingCalendarOperationType type,
     String targetId, [
     Map<String, dynamic> payload = const {},
   ]) =>
       PendingCalendarOperationRecord(
-        id: _nextId++,
+        id: nextId++,
         accountId: 'acc1',
         targetId: targetId,
         opType: type,
         payload: jsonEncode(payload),
-        createdAtMs: _nextId,
+        createdAtMs: nextId,
         retryCount: 0,
         lastError: null,
       );

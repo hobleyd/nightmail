@@ -18,7 +18,7 @@ String _googlePage(
 }) =>
     jsonEncode({
       listKey: persons,
-      if (nextPageToken != null) 'nextPageToken': nextPageToken,
+      'nextPageToken': ?nextPageToken,
     });
 
 Map<String, dynamic> _person(String name, List<String> emails) => {

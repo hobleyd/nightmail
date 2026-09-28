@@ -28,12 +28,10 @@ import '../network/connectivity_service.dart';
 /// mutations to go through.
 class CalendarOutboxDrainService {
   CalendarOutboxDrainService({
-    required PendingCalendarOperationsDatasource pendingOperations,
-    required AccountManager accountManager,
-    required ConnectivityService connectivityService,
-  })  : _pendingOperations = pendingOperations,
-        _accountManager = accountManager,
-        _connectivityService = connectivityService;
+    required this._pendingOperations,
+    required this._accountManager,
+    required this._connectivityService,
+  });
 
   final PendingCalendarOperationsDatasource _pendingOperations;
   final AccountManager _accountManager;

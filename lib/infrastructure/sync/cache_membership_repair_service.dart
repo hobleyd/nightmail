@@ -43,14 +43,12 @@ import '../accounts/account_manager.dart';
 /// like "there was nothing to do", for good.
 class CacheMembershipRepairService {
   CacheMembershipRepairService({
-    required AccountManager accountManager,
+    required this._accountManager,
     required EmailLocalDatasource emailLocalDatasource,
     required FolderLocalDatasource folderLocalDatasource,
-    required DeltaTokenDatasource deltaTokens,
-  })  : _accountManager = accountManager,
-        _local = emailLocalDatasource,
-        _folders = folderLocalDatasource,
-        _deltaTokens = deltaTokens;
+    required this._deltaTokens,
+  })  : _local = emailLocalDatasource,
+        _folders = folderLocalDatasource;
 
   final AccountManager _accountManager;
   final EmailLocalDatasource _local;

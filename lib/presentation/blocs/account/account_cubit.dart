@@ -79,9 +79,8 @@ class AccountCubit extends Cubit<AccountState> {
     required this._calendarReminderService,
     required this._calendarCacheSync,
     required this._contactCacheSync,
-    required TaskReminderService taskReminderService,
-  })  : _taskReminderService = taskReminderService,
-        super(const AccountLoading()) {
+    required this._taskReminderService,
+  })  : super(const AccountLoading()) {
     _authFailureSub = _accountManager.authFailures.listen(_onAuthFailure);
     _authSuccessSub = _accountManager.authSuccesses.listen(_onAuthSuccess);
   }

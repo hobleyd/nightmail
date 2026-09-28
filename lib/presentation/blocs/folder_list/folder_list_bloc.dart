@@ -24,13 +24,10 @@ class FolderListBloc extends Bloc<FolderListEvent, FolderListState> {
     required this._moveFolder,
     required this._deleteFolder,
     required this._accountManager,
-    List<Duration> staleRetryDelays = staleDataRetryDelays,
-    Duration countChangeTtl = const Duration(seconds: 30),
-    DateTime Function() now = DateTime.now,
-  })  : _staleRetryDelays = staleRetryDelays,
-        _countChangeTtl = countChangeTtl,
-        _now = now,
-        super(const FolderListInitial()) {
+    this._staleRetryDelays = staleDataRetryDelays,
+    this._countChangeTtl = const Duration(seconds: 30),
+    this._now = DateTime.now,
+  })  : super(const FolderListInitial()) {
     on<FolderListLoadRequested>(_onLoadRequested);
     on<FolderListFolderEmptied>(_onFolderEmptied);
     on<FolderListUnreadCountChanged>(_onUnreadCountChanged);

@@ -34,7 +34,7 @@ class Command {
   /// text.
   ///
   /// Every other continuation command sends text the socket's default
-  /// UTF-8 [IOSink] encoding round-trips exactly (search terms, message
+  /// UTF-8 `IOSink` encoding round-trips exactly (search terms, message
   /// flags — genuine Unicode content). APPEND's literal is not that: it is
   /// already-encoded MIME source (RFC 3501's `CHAR8`), and its `{n}` byte
   /// count is computed over those exact bytes. Routing it through
@@ -43,7 +43,7 @@ class Command {
   /// the declared `{n}` no longer matches what's sent, desyncing the
   /// connection. This constructor keeps the byte count and the transmitted
   /// bytes identical by carrying the literal as bytes all the way to the
-  /// socket's raw [writeData] path.
+  /// socket's raw `writeData` path.
   Command.withRawContinuation(
     String commandText,
     List<int> rawBytes, {

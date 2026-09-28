@@ -23,7 +23,7 @@ abstract interface class ModelsDevCatalogDatasource {
 }
 
 class ModelsDevCatalogDatasourceImpl implements ModelsDevCatalogDatasource {
-  ModelsDevCatalogDatasourceImpl({required Dio dio}) : _dio = dio;
+  ModelsDevCatalogDatasourceImpl({required this._dio});
 
   final Dio _dio;
 

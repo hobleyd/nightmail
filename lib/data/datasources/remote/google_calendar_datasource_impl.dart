@@ -23,9 +23,8 @@ import 'calendar_remote_datasource.dart';
 class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
   GoogleCalendarDatasourceImpl({
     required GoogleCalendarHttpClient client,
-    required String accountEmail,
-  })  : _dio = client.dio,
-        _accountEmail = accountEmail;
+    required this._accountEmail,
+  })  : _dio = client.dio;
 
   final Dio _dio;
 
@@ -903,7 +902,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     final h = utc.hour.toString().padLeft(2, '0');
     final mi = utc.minute.toString().padLeft(2, '0');
     final s = utc.second.toString().padLeft(2, '0');
-    return '${y}${mo}${d}T${h}${mi}${s}Z';
+    return '$y$mo${d}T$h$mi${s}Z';
   }
 
   @override
@@ -1144,7 +1143,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
           '/resources/calendars',
           queryParameters: {
             'maxResults': _roomPageSize,
-            if (pageToken != null) 'pageToken': pageToken,
+            'pageToken': ?pageToken,
           },
         );
       } on DioException catch (e) {

@@ -9,16 +9,12 @@ import 'event_edit_state.dart';
 
 class EventEditBloc extends Bloc<EventEditBlocEvent, EventEditState> {
   EventEditBloc({
-    required CreateCalendarEvent createCalendarEvent,
-    required UpdateCalendarEvent updateCalendarEvent,
-    required ProposeNewTime proposeNewTime,
-    required NotificationService notificationService,
+    required this._createCalendarEvent,
+    required this._updateCalendarEvent,
+    required this._proposeNewTime,
+    required this._notificationService,
     this.accountId,
-  })  : _createCalendarEvent = createCalendarEvent,
-        _updateCalendarEvent = updateCalendarEvent,
-        _proposeNewTime = proposeNewTime,
-        _notificationService = notificationService,
-        super(const EventEditInitial()) {
+  })  : super(const EventEditInitial()) {
     on<EventEditSubmitted>(_onSubmitted);
     on<EventEditProposeSubmitted>(_onProposeSubmitted);
   }

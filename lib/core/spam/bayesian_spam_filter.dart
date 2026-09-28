@@ -12,14 +12,12 @@ class BayesianSpamFilter {
         _trainedIds = {};
 
   BayesianSpamFilter._({
-    required Map<String, int> spamWords,
-    required Map<String, int> hamWords,
+    required this._spamWords,
+    required this._hamWords,
     required this.totalSpam,
     required this.totalHam,
-    required Set<String> trainedIds,
-  })  : _spamWords = spamWords,
-        _hamWords = hamWords,
-        _trainedIds = trainedIds;
+    required this._trainedIds,
+  });
 
   final Map<String, int> _spamWords;
   final Map<String, int> _hamWords;
@@ -98,14 +96,14 @@ class BayesianSpamFilter {
       };
 
   factory BayesianSpamFilter.fromJson(Map<String, dynamic> json) {
-    Map<String, int> _toWordMap(Object? raw) {
+    Map<String, int> toWordMap(Object? raw) {
       final m = raw as Map? ?? {};
       return {for (final e in m.entries) e.key as String: (e.value as num).toInt()};
     }
 
     return BayesianSpamFilter._(
-      spamWords: _toWordMap(json['spamWords']),
-      hamWords: _toWordMap(json['hamWords']),
+      spamWords: toWordMap(json['spamWords']),
+      hamWords: toWordMap(json['hamWords']),
       totalSpam: (json['totalSpam'] as num?)?.toInt() ?? 0,
       totalHam: (json['totalHam'] as num?)?.toInt() ?? 0,
       trainedIds: Set<String>.from(json['trainedIds'] as List? ?? []),

@@ -137,7 +137,7 @@ void main() {
   late RecentMutationStore recentMutations;
   late BodyPrefetchService bodyPrefetchService;
 
-  MailPollerCubit _makeCubit() => MailPollerCubit(
+  MailPollerCubit makeCubit() => MailPollerCubit(
         accountManager: mockAccountManager,
         appSettings: mockAppSettings,
         badgeService: mockBadgeService,
@@ -155,7 +155,7 @@ void main() {
         spamDbSyncService: mockSpamDbSyncService,
       );
 
-  void _stubInfra() {
+  void stubInfra() {
     when(mockAppSettings.loadPollIntervalSeconds())
         .thenAnswer((_) async => 9999); // long — no repeated timer fires
     when(mockBadgeService.setBadgeCount(any)).thenAnswer((_) async {});
@@ -227,7 +227,7 @@ void main() {
     bodyPrefetchService =
         BodyPrefetchService(localDatasource: mockEmailLocalDatasource);
     provideDummy<Either<Failure, List<EmailFolder>>>(const Right([]));
-    _stubInfra();
+    stubInfra();
   });
 
   // ---------------------------------------------------------------------------
@@ -250,7 +250,7 @@ void main() {
     });
 
     test('calls getMailFolders for immediate badge count', () async {
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -260,7 +260,7 @@ void main() {
     });
 
     test('updates badge from folder unread count', () async {
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -272,7 +272,7 @@ void main() {
     });
 
     test('bootstrap saves delta token after initial sync', () async {
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -296,7 +296,7 @@ void main() {
           .thenReturn(mockGraphDs);
       when(mockConnectivityService.isOnline).thenAnswer((_) async => false);
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -320,7 +320,7 @@ void main() {
           .thenAnswer((_) => reconnectController.stream);
       addTearDown(reconnectController.close);
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
       await cubit.initialize();
       await pumpEventQueue();
@@ -360,7 +360,7 @@ void main() {
 
     test('does NOT call getMailFolders when delta returns no changes',
         () async {
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -370,7 +370,7 @@ void main() {
     });
 
     test('saves the new delta link returned by the server', () async {
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -406,7 +406,7 @@ void main() {
     });
 
     test('calls getMailFolders when changes are found', () async {
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -416,7 +416,7 @@ void main() {
     });
 
     test('emits state with account in accountsWithNewMail', () async {
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       final states = <MailPollerState>[];
@@ -431,7 +431,7 @@ void main() {
     });
 
     test('updates badge to folder unread count', () async {
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -471,7 +471,7 @@ void main() {
     });
 
     test('still calls getMailFolders to refresh badge', () async {
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -481,7 +481,7 @@ void main() {
     });
 
     test('does NOT add account to accountsWithNewMail', () async {
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       final states = <MailPollerState>[];
@@ -536,7 +536,7 @@ void main() {
                 ),
               ]);
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
       await cubit.initialize();
       await pumpEventQueue();
@@ -571,7 +571,7 @@ void main() {
           .thenAnswer((_) async => []);
       recentMutations.recordRemoval(_msId, 'drained-msg');
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
       await cubit.initialize();
       await pumpEventQueue();
@@ -615,7 +615,7 @@ void main() {
         emailId: 'msg-1',
       )).thenAnswer((_) async => _email('msg-1', isRead: true));
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
       await cubit.initialize();
       await pumpEventQueue();
@@ -661,7 +661,7 @@ void main() {
     });
 
     test('are applied to the cached row instead of rewriting it', () async {
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
       await cubit.initialize();
       await pumpEventQueue();
@@ -697,7 +697,7 @@ void main() {
                 ),
               ]);
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
       await cubit.initialize();
       await pumpEventQueue();
@@ -716,7 +716,7 @@ void main() {
           .thenAnswer((_) async => []);
       recentMutations.recordReadChange(_msId, 'msg-1', isRead: false);
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
       await cubit.initialize();
       await pumpEventQueue();
@@ -734,7 +734,7 @@ void main() {
           .thenAnswer((_) async => []);
       recentMutations.recordRemoval(_msId, 'msg-1');
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
       await cubit.initialize();
       await pumpEventQueue();
@@ -769,7 +769,7 @@ void main() {
     });
 
     test('clears delta token so next poll can re-bootstrap', () async {
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -779,7 +779,7 @@ void main() {
     });
 
     test('does not crash the cubit', () async {
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       expect(() async {
@@ -807,7 +807,7 @@ void main() {
     });
 
     test('always calls getMailFolders (no delta support)', () async {
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -817,7 +817,7 @@ void main() {
     });
 
     test('sets badge from folder unread count', () async {
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -865,7 +865,7 @@ void main() {
               folderId: anyNamed('folderId'), top: anyNamed('top')))
           .thenAnswer((_) async => [_email('bg-1')]);
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -916,7 +916,7 @@ void main() {
               folderId: anyNamed('folderId'), top: anyNamed('top')))
           .thenAnswer((_) async => [_email('new-1', isRead: false)]);
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -949,7 +949,7 @@ void main() {
               folderId: anyNamed('folderId'), top: anyNamed('top')))
           .thenThrow(Exception('network blip'));
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -998,7 +998,7 @@ void main() {
         return [_inbox(unread: callCount == 1 ? 3 : 6)];
       });
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       // Poll 1: sets baseline (3 unread) — no increment expected.
@@ -1018,7 +1018,7 @@ void main() {
       when(mockGmailDs.getMailFolders())
           .thenAnswer((_) async => [_inbox(unread: 3)]);
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1039,7 +1039,7 @@ void main() {
         return [_inbox(unread: callCount == 1 ? 5 : 2)];
       });
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1096,7 +1096,7 @@ void main() {
     test('replaces the folder cache in a single write', () async {
       stubTwoPolls(page: [_email('still-here')]);
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1124,7 +1124,7 @@ void main() {
         () async {
       stubTwoPolls(page: const []);
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1182,7 +1182,7 @@ void main() {
       when(mockGmailDs.getMailFolders())
           .thenAnswer((_) async => [_inbox(unread: 27)]);
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1199,7 +1199,7 @@ void main() {
       when(mockGmailDs.getMailFolders())
           .thenAnswer((_) async => [_inbox(unread: 27)]);
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1222,7 +1222,7 @@ void main() {
       when(mockGmailDs.getMailFolders())
           .thenAnswer((_) async => [_inbox(unread: 7)]);
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1242,7 +1242,7 @@ void main() {
       when(mockGmailDs.getMailFolders())
           .thenAnswer((_) async => [_inbox(unread: 7)]); // total 100
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1261,7 +1261,7 @@ void main() {
       when(mockGmailDs.getMailFolders())
           .thenAnswer((_) async => [_inbox(unread: 27)]);
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1312,7 +1312,7 @@ void main() {
         return [_inbox(unread: callCount == 1 ? 2 : 5)];
       });
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       // Poll 1: sets baseline (2 unread). Bootstrap completes and emits
@@ -1333,7 +1333,7 @@ void main() {
       when(mockGraphDs.getMailFolders())
           .thenAnswer((_) async => [_inbox(unread: 4)]);
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       // Bootstrap emits pollGeneration+1 once after poll 1.
@@ -1377,7 +1377,7 @@ void main() {
 
     test('pollGeneration increments for active account with new unread delta',
         () async {
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1415,7 +1415,7 @@ void main() {
             .thenThrow(ServerException(
                 message: 'rejected', statusCode: status));
 
-        final cubit = _makeCubit();
+        final cubit = makeCubit();
         addTearDown(cubit.close);
 
         await cubit.initialize();
@@ -1433,7 +1433,7 @@ void main() {
       when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
           .thenThrow(const ServerException(message: 'no delta link'));
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1447,7 +1447,7 @@ void main() {
       when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
           .thenThrow(Exception('transport blew up'));
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1480,7 +1480,7 @@ void main() {
         replaceFolder: anyNamed('replaceFolder'),
       )).thenThrow(Exception('disk full'));
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1499,7 +1499,7 @@ void main() {
                 deltaLink: _newToken,
               ));
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
       final generationSeen = <int>[];
       cubit.stream.listen((s) => generationSeen.add(s.pollGeneration));
@@ -1528,7 +1528,7 @@ void main() {
                 deltaLink: _newToken,
               ));
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1569,7 +1569,7 @@ void main() {
 
     test('flags the active account too while it has real unread mail',
         () async {
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1580,7 +1580,7 @@ void main() {
 
     test('decrementUnreadCount clears it the instant unread hits zero',
         () async {
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1622,7 +1622,7 @@ void main() {
       when(mockGmailDs.getMailFolders())
           .thenThrow(Exception('connection reset'));
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1643,7 +1643,7 @@ void main() {
         return [_inbox(unread: 1)];
       });
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1663,7 +1663,7 @@ void main() {
     test('reports being skipped while offline', () async {
       when(mockConnectivityService.isOnline).thenAnswer((_) async => false);
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1684,7 +1684,7 @@ void main() {
       when(mockGmailDs.getMailFolders())
           .thenAnswer((_) async => [_inbox(unread: 2)]);
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1720,7 +1720,7 @@ void main() {
               folderId: anyNamed('folderId'), top: anyNamed('top')))
           .thenAnswer((_) async => [_email('archived-1')]);
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1745,7 +1745,7 @@ void main() {
     // as the watched folder must not fetch it twice.
     test('does not double-sync when the Inbox is the folder on screen',
         () async {
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1760,7 +1760,7 @@ void main() {
     // A repaint is only valid for a folder whose cache this cycle actually
     // wrote; the UI reads this to decide cache-repaint versus network refresh.
     test('reports no synced folders when nothing changed', () async {
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1789,7 +1789,7 @@ void main() {
         folderId: 'archive-id',
       )).thenAnswer((_) async => [newer, older]);
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1820,7 +1820,7 @@ void main() {
             ]),
           ]);
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1843,7 +1843,7 @@ void main() {
         folderId: 'archive-id',
       )).thenAnswer((_) async => [_email('msg-1', isRead: false)]);
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1886,7 +1886,7 @@ void main() {
     });
 
     test('does not re-fetch the Inbox as if it were a second folder', () async {
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1909,7 +1909,7 @@ void main() {
       when(mockGetCachedFolders(any))
           .thenAnswer((_) async => Right([_inbox(unread: 3)]));
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       cubit.setWatchedFolder('inbox-id');
@@ -1937,7 +1937,7 @@ void main() {
       when(mockGmailDs.getMailFolders())
           .thenThrow(const AuthException(message: 'Session expired'));
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();
@@ -1950,7 +1950,7 @@ void main() {
       when(mockGmailDs.getMailFolders())
           .thenThrow(const AuthException(message: 'Session expired'));
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       expect(() async {
@@ -1970,7 +1970,7 @@ void main() {
         return [_inbox(unread: 2)];
       });
 
-      final cubit = _makeCubit();
+      final cubit = makeCubit();
       addTearDown(cubit.close);
 
       await cubit.initialize();

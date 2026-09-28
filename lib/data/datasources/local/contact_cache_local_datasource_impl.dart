@@ -11,8 +11,7 @@ import 'like_escape.dart';
 const systemContactsAccountId = '__system__';
 
 class ContactCacheLocalDatasourceImpl implements ContactCacheLocalDatasource {
-  const ContactCacheLocalDatasourceImpl({required AppDatabase database})
-      : _database = database;
+  const ContactCacheLocalDatasourceImpl({required this._database});
 
   final AppDatabase _database;
 

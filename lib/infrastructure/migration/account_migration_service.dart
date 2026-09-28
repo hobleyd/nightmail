@@ -58,14 +58,11 @@ class MigrationProgress extends Equatable {
 /// graph; a spawned isolate gets its own service locator and cannot reach it.
 class AccountMigrationService {
   AccountMigrationService({
-    required AccountManager accountManager,
-    required MigrationLocalDatasource localDatasource,
-    required ImapConnectionGate imapConnectionGate,
-    required ConnectivityService connectivityService,
-  })  : _accountManager = accountManager,
-        _localDatasource = localDatasource,
-        _imapConnectionGate = imapConnectionGate,
-        _connectivityService = connectivityService;
+    required this._accountManager,
+    required this._localDatasource,
+    required this._imapConnectionGate,
+    required this._connectivityService,
+  });
 
   final AccountManager _accountManager;
   final MigrationLocalDatasource _localDatasource;

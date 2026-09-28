@@ -25,14 +25,11 @@ import 'notification_service.dart';
 /// `notifiedAtMs` is what stops that catch-up from repeating every cycle.
 class TaskReminderService {
   TaskReminderService({
-    required AccountManager accountManager,
-    required NotificationService notificationService,
-    required TaskReminderScheduleLocalDatasource database,
-    required bool schedulesReminders,
-  })  : _accountManager = accountManager,
-        _notificationService = notificationService,
-        _database = database,
-        _schedulesReminders = schedulesReminders;
+    required this._accountManager,
+    required this._notificationService,
+    required this._database,
+    required this._schedulesReminders,
+  });
 
   /// How far ahead to hand triggers to the OS. Anything further out is picked
   /// up by a later reconcile, which keeps the pending-notification list short.

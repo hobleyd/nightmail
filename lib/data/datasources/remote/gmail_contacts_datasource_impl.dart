@@ -112,7 +112,7 @@ class GmailContactsDatasourceImpl {
         path,
         queryParameters: {
           ...baseParams,
-          if (pageToken != null) 'pageToken': pageToken,
+          'pageToken': ?pageToken,
         },
         options: Options(responseType: ResponseType.plain),
       );

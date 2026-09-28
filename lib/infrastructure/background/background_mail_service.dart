@@ -31,10 +31,7 @@ class BackgroundMailService {
   /// Safe to call on all platforms — no-op on non-mobile.
   static Future<void> initialize() async {
     if (!_isMobile) return;
-    await Workmanager().initialize(
-      _callbackDispatcher,
-      isInDebugMode: kDebugMode,
-    );
+    await Workmanager().initialize(_callbackDispatcher);
   }
 
   /// Register a periodic background check. Safe to call multiple times —

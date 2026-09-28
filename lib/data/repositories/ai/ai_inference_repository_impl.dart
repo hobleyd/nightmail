@@ -21,12 +21,10 @@ import '../../datasources/ai/inference/ai_adapter.dart';
 /// ([NoProviderConfigured] / [MissingApiKey]) before any network call.
 class AiInferenceRepositoryImpl implements AiInferenceRepository {
   const AiInferenceRepositoryImpl({
-    required AiProviderRegistry registry,
-    required AiAdapterFactory adapterFactory,
-    required AiSettingsRepository settingsRepository,
-  })  : _registry = registry,
-        _adapterFactory = adapterFactory,
-        _settingsRepository = settingsRepository;
+    required this._registry,
+    required this._adapterFactory,
+    required this._settingsRepository,
+  });
 
   final AiProviderRegistry _registry;
   final AiAdapterFactory _adapterFactory;

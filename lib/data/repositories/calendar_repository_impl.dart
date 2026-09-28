@@ -51,16 +51,12 @@ import '../datasources/remote/calendar_remote_datasource.dart';
 /// emails other people is not safe to replay blindly.
 class CalendarRepositoryImpl implements CalendarRepository {
   CalendarRepositoryImpl({
-    required AccountManager accountManager,
-    required CalendarLocalDatasource localDatasource,
-    required PendingCalendarOperationsDatasource pendingOperations,
-    required CalendarOutboxDrainService outboxDrainService,
-    required CalendarPendingOpReconciler pendingOpReconciler,
-  })  : _accountManager = accountManager,
-        _localDatasource = localDatasource,
-        _pendingOperations = pendingOperations,
-        _outboxDrainService = outboxDrainService,
-        _pendingOpReconciler = pendingOpReconciler;
+    required this._accountManager,
+    required this._localDatasource,
+    required this._pendingOperations,
+    required this._outboxDrainService,
+    required this._pendingOpReconciler,
+  });
 
   final AccountManager _accountManager;
   final CalendarLocalDatasource _localDatasource;

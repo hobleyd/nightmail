@@ -21,10 +21,9 @@ import '../../datasources/ai/provider_models_datasource.dart';
 /// [refreshCatalog], a foreground refresh whose fetch failure is reported.
 class AiCatalogRepositoryImpl implements AiCatalogRepository {
   const AiCatalogRepositoryImpl({
-    required AiProviderRegistry registry,
-    required ProviderModelsDatasource providerModels,
-  })  : _registry = registry,
-        _providerModels = providerModels;
+    required this._registry,
+    required this._providerModels,
+  });
 
   final AiProviderRegistry _registry;
   final ProviderModelsDatasource _providerModels;

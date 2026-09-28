@@ -29,12 +29,10 @@ import '../accounts/account_manager.dart';
 ///    own background isolate via `NativeDatabase.createBackgroundConnection`.
 class ContactCacheSyncService {
   ContactCacheSyncService({
-    required AccountManager accountManager,
-    required ContactCacheLocalDatasource cache,
-    required SystemContactsRepository systemContacts,
-  })  : _accountManager = accountManager,
-        _cache = cache,
-        _systemContacts = systemContacts;
+    required this._accountManager,
+    required this._cache,
+    required this._systemContacts,
+  });
 
   final AccountManager _accountManager;
   final ContactCacheLocalDatasource _cache;

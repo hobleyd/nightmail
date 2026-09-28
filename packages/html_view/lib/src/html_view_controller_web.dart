@@ -1,20 +1,21 @@
 // Web-specific HtmlViewController.
-// Uses dart:html IFrameElement + dart:js_util for same-origin eval.
-// Conditionally exported by lib/html_view.dart when dart.library.html is present.
+// Uses a package:web HTMLIFrameElement + dart:js_interop for same-origin eval.
+// Conditionally exported by lib/html_view.dart when dart.library.js_interop is
+// present.
 
 import 'dart:async';
-// ignore: avoid_web_libraries_in_flutter
-import 'dart:html' as html;
-// ignore: avoid_web_libraries_in_flutter
-import 'dart:js_util' as js_util;
+import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 import 'dart:ui_web' as ui_web;
+
+import 'package:web/web.dart' as web;
 
 class HtmlViewController {
   static int _nextId = 1;
 
   int? _viewId;
-  html.IFrameElement? _iframe;
-  StreamSubscription? _messageSub;
+  web.HTMLIFrameElement? _iframe;
+  StreamSubscription<web.MessageEvent>? _messageSub;
 
   final _onContentChanged = StreamController<String>.broadcast();
   final _onLinkRequest    = StreamController<void>.broadcast();
@@ -38,7 +39,7 @@ class HtmlViewController {
     final id = _nextId++;
     _viewId = id;
 
-    final iframe = html.IFrameElement()
+    final iframe = web.HTMLIFrameElement()
       ..style.border = 'none'
       ..style.width  = '100%'
       ..style.height = '100%'
@@ -52,9 +53,9 @@ class HtmlViewController {
     );
 
     // Listen for postMessage events from the iframe.
-    _messageSub = html.window.onMessage.listen((event) {
+    _messageSub = web.window.onMessage.listen((event) {
       if (event.source != _iframe?.contentWindow) return;
-      final data = event.data?.toString();
+      final data = event.data.dartify()?.toString();
       if (data == null) return;
       final sep = data.indexOf('\x00');
       if (sep < 0) return;
@@ -111,7 +112,7 @@ class HtmlViewController {
 })();
 """;
     try {
-      js_util.callMethod(win, 'eval', [bridge]);
+      win.callMethod<JSAny?>('eval'.toJS, bridge.toJS);
     } catch (_) {
       // Cross-origin or CSP restriction — bridge unavailable.
     }
@@ -125,8 +126,8 @@ class HtmlViewController {
     final win = _iframe?.contentWindow;
     if (win == null) return null;
     try {
-      final result = js_util.callMethod(win, 'eval', [js]);
-      return result?.toString();
+      final result = win.callMethod<JSAny?>('eval'.toJS, js.toJS);
+      return result?.dartify()?.toString();
     } catch (_) {
       return null;
     }

@@ -30,14 +30,11 @@ import '../sync/calendar_outbox_drain_service.dart';
 /// `CalendarRepository`, which is hard-wired to the active account.
 class CalendarCacheSyncService {
   CalendarCacheSyncService({
-    required AccountManager accountManager,
-    required CalendarLocalDatasource cache,
-    required PendingCalendarOperationsDatasource pendingOperations,
-    required CalendarOutboxDrainService outboxDrainService,
-  })  : _accountManager = accountManager,
-        _cache = cache,
-        _pendingOperations = pendingOperations,
-        _outboxDrainService = outboxDrainService;
+    required this._accountManager,
+    required this._cache,
+    required this._pendingOperations,
+    required this._outboxDrainService,
+  });
 
   final AccountManager _accountManager;
   final CalendarLocalDatasource _cache;

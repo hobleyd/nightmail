@@ -923,9 +923,10 @@ class MessageBuilder extends PartBuilder {
       final value = queryParameters[key];
       switch (key.toLowerCase()) {
         case 'subject':
-          builder.subject = value;
-          // Defaults to QP-encoding
-          builder.subjectEncoding = HeaderEncoding.Q;
+          builder
+            ..subject = value
+            // Defaults to QP-encoding
+            ..subjectEncoding = HeaderEncoding.Q;
           break;
         case 'to':
           if (value != null) {

@@ -2,8 +2,7 @@ import '../../domain/repositories/sender_repository.dart';
 import '../datasources/local/sender_local_datasource.dart';
 
 class SenderRepositoryImpl implements SenderRepository {
-  const SenderRepositoryImpl({required SenderLocalDatasource localDatasource})
-      : _localDatasource = localDatasource;
+  const SenderRepositoryImpl({required this._localDatasource});
 
   final SenderLocalDatasource _localDatasource;
 

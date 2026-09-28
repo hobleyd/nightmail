@@ -11,17 +11,12 @@ import 'email_detail_state.dart';
 
 class EmailDetailBloc extends Bloc<EmailDetailEvent, EmailDetailState> {
   EmailDetailBloc({
-    required GetEmail getEmail,
-    required EmlParser emlParser,
-    required CheckSenderAnomaly checkSenderAnomaly,
-    required MergeSenderAddresses mergeSenderAddresses,
-    required AccountManager accountManager,
-  })  : _getEmail = getEmail,
-        _emlParser = emlParser,
-        _checkSenderAnomaly = checkSenderAnomaly,
-        _mergeSenderAddresses = mergeSenderAddresses,
-        _accountManager = accountManager,
-        super(const EmailDetailInitial()) {
+    required this._getEmail,
+    required this._emlParser,
+    required this._checkSenderAnomaly,
+    required this._mergeSenderAddresses,
+    required this._accountManager,
+  })  : super(const EmailDetailInitial()) {
     on<EmailDetailLoadRequested>(_onLoadRequested);
     on<EmailDetailRefreshRequested>(_onRefreshRequested);
     on<EmailDetailLoadedFromEml>(_onLoadedFromEml);

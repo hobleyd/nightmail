@@ -6,8 +6,7 @@ import 'like_escape.dart';
 import 'sender_local_datasource.dart';
 
 class SenderLocalDatasourceImpl implements SenderLocalDatasource {
-  const SenderLocalDatasourceImpl({required AppDatabase database})
-      : _database = database;
+  const SenderLocalDatasourceImpl({required this._database});
 
   final AppDatabase _database;
 

@@ -184,7 +184,7 @@ void main() {
 
   tearDown(() async => bloc.close());
 
-  Future<void> _loadEmails(List<Email> emails, {String? folderId}) async {
+  Future<void> loadEmails(List<Email> emails, {String? folderId}) async {
     when(mockGetCachedEmails(any)).thenAnswer((_) async => const Right([]));
     when(mockGetEmails(any)).thenAnswer((_) async => Right(emails));
     bloc.add(EmailListLoadRequested(folderId: folderId));
@@ -199,7 +199,7 @@ void main() {
     test(
         'with conversationId removes all emails sharing that id, '
         'not just the ones listed in emailIds', () async {
-      await _loadEmails([
+      await loadEmails([
         _email('id1', conversationId: 'conv-a'),
         _email('id2', conversationId: 'conv-a'),
         _email('id3', conversationId: 'conv-a'),
@@ -228,7 +228,7 @@ void main() {
     });
 
     test('without conversationId removes only the specified emailIds', () async {
-      await _loadEmails([
+      await loadEmails([
         _email('id1', conversationId: 'conv-a'),
         _email('id2', conversationId: 'conv-a'),
         _email('id3', conversationId: 'conv-b'),
@@ -254,7 +254,7 @@ void main() {
     // inside _onEmailsMoved, which cleared and replaced the entire folder cache
     // with only the conversation emails, corrupting subsequent refreshes.
     test('does not call getEmails during move', () async {
-      await _loadEmails([_email('id1', conversationId: 'conv-a')]);
+      await loadEmails([_email('id1', conversationId: 'conv-a')]);
 
       clearInteractions(mockGetEmails);
       when(mockMoveEmail(any)).thenAnswer((_) async => const Right(unit));
@@ -280,7 +280,7 @@ void main() {
     // folder wholesale, which is exactly the "disappears on the next refresh"
     // half of the report.
     test('forgets the cached rows a folder-scoped move spared', () async {
-      await _loadEmails([
+      await loadEmails([
         // In this folder, and the target of the move.
         _email('original',
             conversationId: 'conv-a',
@@ -316,7 +316,7 @@ void main() {
     });
 
     test('does not forget anything when nothing was spared', () async {
-      await _loadEmails([
+      await loadEmails([
         _email('id1',
             conversationId: 'conv-a',
             parentFolderId: 'INBOX',
@@ -336,7 +336,7 @@ void main() {
     });
 
     test('calls moveEmail once per id in emailIds', () async {
-      await _loadEmails([
+      await loadEmails([
         _email('id1', conversationId: 'conv-a'),
         _email('id2', conversationId: 'conv-a'),
         _email('id3', conversationId: 'conv-a'),
@@ -370,7 +370,7 @@ void main() {
     // carried, because moveEmail removes every Label_* it finds on the message.
     test('leaves the copies in Sent alone when filing from another folder',
         () async {
-      await _loadEmails([
+      await loadEmails([
         _email('id1',
             conversationId: 'conv-a',
             parentFolderId: 'INBOX',
@@ -403,7 +403,7 @@ void main() {
     // go with it rather than leaving a stub behind.
     test('still clears the whole thread from view when sparing Sent copies',
         () async {
-      await _loadEmails([
+      await loadEmails([
         _email('id1',
             conversationId: 'conv-a',
             parentFolderId: 'INBOX',
@@ -438,7 +438,7 @@ void main() {
     // user is told nothing, because nothing went wrong.
     test('does nothing when the provider has no thread-level membership',
         () async {
-      await _loadEmails([
+      await loadEmails([
         _email('sent1', conversationId: 'conv-a', folderIds: ['SENT']),
         _email('sent2', conversationId: 'conv-a', folderIds: ['SENT']),
       ], folderId: 'INBOX');
@@ -469,7 +469,7 @@ void main() {
     test(
         'falls back to a thread-level removal when the thread is in the folder '
         'but none of its messages is', () async {
-      await _loadEmails([
+      await loadEmails([
         _email('sent1', conversationId: 'conv-a', folderIds: ['SENT']),
         _email('filed', conversationId: 'conv-a', folderIds: ['Label_11']),
         _email('other', conversationId: 'conv-b', folderIds: ['INBOX']),
@@ -504,7 +504,7 @@ void main() {
     // performed has to say so.
     test('reports a failed thread-level removal instead of returning silently',
         () async {
-      await _loadEmails([
+      await loadEmails([
         _email('sent1', conversationId: 'conv-a', folderIds: ['SENT']),
         _email('filed', conversationId: 'conv-a', folderIds: ['Label_11']),
       ], folderId: 'INBOX');
@@ -532,7 +532,7 @@ void main() {
     // Without a distinct sequence the second emit compares equal on props and
     // is dropped, so pressing the same broken button twice reports once.
     test('reports the same failure twice as two distinct states', () async {
-      await _loadEmails([
+      await loadEmails([
         _email('sent1', conversationId: 'conv-a', folderIds: ['SENT']),
       ], folderId: 'INBOX');
 
@@ -562,7 +562,7 @@ void main() {
     // A single-message move must never reach the thread-level removal: it has
     // no conversation to address, and the removal cannot file anything anyway.
     test('does not fall back for a move with no conversationId', () async {
-      await _loadEmails([
+      await loadEmails([
         _email('sent1', folderIds: ['SENT']),
       ], folderId: 'INBOX');
 
@@ -591,7 +591,7 @@ void main() {
     // EmailRepositoryImpl.getEmail has already evicted the cache row — this
     // event only has to drop it from the list already on screen.
     test('drops the email from the list with no network call', () async {
-      await _loadEmails([
+      await loadEmails([
         _email('id1', conversationId: 'conv-a'),
         _email('id2', conversationId: 'conv-b'),
       ]);
@@ -631,7 +631,7 @@ void main() {
         _email('id3', conversationId: 'conv-a', isRead: false),
         _email('id4', conversationId: 'conv-b', isRead: false),
       ];
-      await _loadEmails(emails);
+      await loadEmails(emails);
       stubMarkReadEchoes(emails);
 
       // Opening thread conv-a hands the BLoC all three of its unread ids.
@@ -658,7 +658,7 @@ void main() {
         _email('id1', conversationId: 'conv-a', isRead: false),
         _email('id2', conversationId: 'conv-a', isRead: false),
       ];
-      await _loadEmails(emails);
+      await loadEmails(emails);
       stubMarkReadEchoes(emails);
 
       bloc.add(const EmailListMarkThreadReadRequested(
@@ -679,7 +679,7 @@ void main() {
         _email('id1', conversationId: 'conv-a', isRead: false),
         _email('id2', conversationId: 'conv-a', isRead: false),
       ];
-      await _loadEmails(emails);
+      await loadEmails(emails);
       when(mockMarkEmailAsRead(any)).thenAnswer((inv) async {
         final params = inv.positionalArguments[0] as MarkEmailAsReadParams;
         if (params.id == 'id1') {
@@ -703,7 +703,7 @@ void main() {
     });
 
     test('an empty id list makes no use-case calls', () async {
-      await _loadEmails([_email('id1', isRead: false)]);
+      await loadEmails([_email('id1', isRead: false)]);
       clearInteractions(mockMarkEmailAsRead);
 
       bloc.add(const EmailListMarkThreadReadRequested(
@@ -732,7 +732,7 @@ void main() {
 
     test('deletes every in-folder message of the thread, not just the latest',
         () async {
-      await _loadEmails([
+      await loadEmails([
         _email('id1', conversationId: 'conv-a', parentFolderId: 'inbox'),
         _email('id2', conversationId: 'conv-a', parentFolderId: 'inbox'),
         _email('id3', conversationId: 'conv-a', parentFolderId: 'inbox'),
@@ -756,7 +756,7 @@ void main() {
 
     test('leaves messages the thread has filed in a sub-folder untouched',
         () async {
-      await _loadEmails([
+      await loadEmails([
         _email('id1', conversationId: 'conv-a', parentFolderId: 'inbox'),
         _email('id2', conversationId: 'conv-a', parentFolderId: 'inbox'),
         // Same thread, already filed into a sub-folder (cross-folder
@@ -780,7 +780,7 @@ void main() {
     });
 
     test('treats a null parentFolderId as in-folder', () async {
-      await _loadEmails([
+      await loadEmails([
         _email('id1', conversationId: 'conv-a', parentFolderId: 'inbox'),
         _email('id2', conversationId: 'conv-a'), // null parentFolderId
       ], folderId: 'inbox');
@@ -796,7 +796,7 @@ void main() {
 
     test('deletes the whole thread when the view is unscoped (null folder)',
         () async {
-      await _loadEmails([
+      await loadEmails([
         _email('id1', conversationId: 'conv-a', parentFolderId: 'inbox'),
         _email('id2', conversationId: 'conv-a', parentFolderId: 'archive'),
       ]); // no folderId → currentFolderId null
@@ -816,7 +816,7 @@ void main() {
     // out of the Inbox once took the record of what was sent with it.
     test('leaves the copies in Sent alone when deleting from another folder',
         () async {
-      await _loadEmails([
+      await loadEmails([
         _email('id1',
             conversationId: 'conv-a',
             parentFolderId: 'INBOX',
@@ -843,7 +843,7 @@ void main() {
     });
 
     test('leaves a draft in the thread alone', () async {
-      await _loadEmails([
+      await loadEmails([
         _email('id1', conversationId: 'conv-a', folderIds: ['INBOX']),
         _email('draft1', conversationId: 'conv-a', folderIds: ['DRAFT']),
       ], folderId: 'INBOX');
@@ -862,7 +862,7 @@ void main() {
     // in that label — but the sent record still must not be destroyed.
     test('leaves a sent message that also carries the current label alone',
         () async {
-      await _loadEmails([
+      await loadEmails([
         _email('id1', conversationId: 'conv-a', folderIds: ['Label_7']),
         _email('sent1', conversationId: 'conv-a', folderIds: ['SENT', 'Label_7']),
       ], folderId: 'Label_7');
@@ -879,7 +879,7 @@ void main() {
 
     test('deletes the sent messages when Sent is the folder being viewed',
         () async {
-      await _loadEmails([
+      await loadEmails([
         _email('sent1', conversationId: 'conv-a', folderIds: ['SENT']),
         _email('sent2', conversationId: 'conv-a', folderIds: ['SENT']),
         _email('id1', conversationId: 'conv-a', folderIds: ['INBOX']),
@@ -903,7 +903,7 @@ void main() {
     // label, an INBOX-labelled member of the thread is still in that label.
     test('deletes a message that holds the current label among others',
         () async {
-      await _loadEmails([
+      await loadEmails([
         _email('id1',
             conversationId: 'conv-a',
             parentFolderId: 'INBOX',
@@ -928,7 +928,7 @@ void main() {
     // other-folder context must not vanish from a delete that does nothing.
     test('deletes nothing and keeps the thread when no member is in the folder',
         () async {
-      await _loadEmails([
+      await loadEmails([
         _email('sent1', conversationId: 'conv-a', folderIds: ['SENT']),
         _email('filed1', conversationId: 'conv-a', folderIds: ['Archive']),
         _email('id9', conversationId: 'conv-b', folderIds: ['INBOX']),
@@ -947,7 +947,7 @@ void main() {
     // server refused leaves the message where it was, so the row has to come
     // back rather than wait for the next refresh to resurrect it.
     test('restores the thread when every delete fails', () async {
-      await _loadEmails([
+      await loadEmails([
         _email('id1', conversationId: 'conv-a', folderIds: ['INBOX']),
         _email('id2', conversationId: 'conv-a', folderIds: ['INBOX']),
         _email('sent1', conversationId: 'conv-a', folderIds: ['SENT']),
@@ -968,7 +968,7 @@ void main() {
     });
 
     test('restores only what the server did not delete', () async {
-      await _loadEmails([
+      await loadEmails([
         _email('id1', conversationId: 'conv-a', folderIds: ['INBOX']),
         _email('id2', conversationId: 'conv-a', folderIds: ['INBOX']),
       ], folderId: 'INBOX');
@@ -990,7 +990,7 @@ void main() {
     });
 
     test('does not restore into a folder the user has moved on to', () async {
-      await _loadEmails([
+      await loadEmails([
         _email('id1', conversationId: 'conv-a', folderIds: ['INBOX']),
       ], folderId: 'INBOX');
       final deleteBlocked = Completer<void>();
@@ -1019,7 +1019,7 @@ void main() {
 
     // A refresh landing mid-delete can put the surviving rows back on its own.
     test('does not restore a row the list already has', () async {
-      await _loadEmails([
+      await loadEmails([
         _email('id1', conversationId: 'conv-a', folderIds: ['INBOX']),
         _email('id2', conversationId: 'conv-a', folderIds: ['INBOX']),
       ], folderId: 'INBOX');
@@ -1207,7 +1207,7 @@ void main() {
   // ---------------------------------------------------------------------------
 
   group('EmailListThreadFocusRequested', () {
-    Future<EmailListLoaded> _focus(String emailId) async {
+    Future<EmailListLoaded> focus(String emailId) async {
       bloc.add(EmailListThreadFocusRequested(emailId: emailId));
       return await bloc.stream.firstWhere(
         (s) => s is EmailListLoaded && s.focusedThreadId != null,
@@ -1215,7 +1215,7 @@ void main() {
     }
 
     test('replaces the list with the anchor email\'s thread', () async {
-      await _loadEmails([
+      await loadEmails([
         _email('id1', conversationId: 'conv-a'),
         _email('id2', conversationId: 'conv-b'),
       ]);
@@ -1224,7 +1224,7 @@ void main() {
             _email('id1-reply', conversationId: 'conv-a'),
           ]));
 
-      final state = await _focus('id1');
+      final state = await focus('id1');
 
       expect(state.emails.map((e) => e.id), {'id1', 'id1-reply'});
       expect(state.focusedThreadId, 'conv-a');
@@ -1239,13 +1239,13 @@ void main() {
     // never loaded — the id alone has to be enough.
     test('fetches the anchor by id when it is not in the current list',
         () async {
-      await _loadEmails([_email('other', conversationId: 'conv-b')]);
+      await loadEmails([_email('other', conversationId: 'conv-b')]);
       when(mockGetEmail(any)).thenAnswer(
           (_) async => Right(_email('archived', conversationId: 'conv-z')));
       when(mockGetConversationThread(any)).thenAnswer((_) async =>
           Right([_email('archived', conversationId: 'conv-z')]));
 
-      final state = await _focus('archived');
+      final state = await focus('archived');
 
       verify(mockGetEmail(any)).called(1);
       expect(state.focusedThreadId, 'conv-z');
@@ -1255,18 +1255,18 @@ void main() {
     // A partial or failed thread fetch must never lose the message the
     // reading pane is already showing.
     test('keeps the anchor when the thread fetch fails', () async {
-      await _loadEmails([_email('id1', conversationId: 'conv-a')]);
+      await loadEmails([_email('id1', conversationId: 'conv-a')]);
       when(mockGetConversationThread(any)).thenAnswer(
           (_) async => const Left(ServerFailure(message: 'boom')));
 
-      final state = await _focus('id1');
+      final state = await focus('id1');
 
       expect(state.emails.map((e) => e.id), contains('id1'));
     });
 
     test('an anchor that cannot be resolved leaves the folder listing alone',
         () async {
-      await _loadEmails([_email('id1', conversationId: 'conv-a')]);
+      await loadEmails([_email('id1', conversationId: 'conv-a')]);
       when(mockGetEmail(any)).thenAnswer(
           (_) async => const Left(ServerFailure(message: 'gone')));
 
@@ -1283,12 +1283,12 @@ void main() {
     // cycle. Left unguarded it would swap the thread out from under the user.
     test('a background cache refresh does not replace the focused thread',
         () async {
-      await _loadEmails([_email('id1', conversationId: 'conv-a')]);
+      await loadEmails([_email('id1', conversationId: 'conv-a')]);
       when(mockGetConversationThread(any)).thenAnswer((_) async => Right([
             _email('id1', conversationId: 'conv-a'),
             _email('id1-reply', conversationId: 'conv-a'),
           ]));
-      await _focus('id1');
+      await focus('id1');
 
       bloc.add(const EmailListCacheRefreshRequested());
       await Future.delayed(const Duration(milliseconds: 50));
@@ -1302,10 +1302,10 @@ void main() {
     // Same hazard via the periodic foreground refresh: it should re-read the
     // thread, not fall back to the folder.
     test('a refresh re-fetches the thread instead of the folder', () async {
-      await _loadEmails([_email('id1', conversationId: 'conv-a')]);
+      await loadEmails([_email('id1', conversationId: 'conv-a')]);
       when(mockGetConversationThread(any)).thenAnswer(
           (_) async => Right([_email('id1', conversationId: 'conv-a')]));
-      await _focus('id1');
+      await focus('id1');
 
       when(mockGetConversationThread(any)).thenAnswer((_) async => Right([
             _email('id1', conversationId: 'conv-a'),
@@ -1323,13 +1323,13 @@ void main() {
     });
 
     test('clearing the focus reloads the folder', () async {
-      await _loadEmails([_email('id1', conversationId: 'conv-a')],
+      await loadEmails([_email('id1', conversationId: 'conv-a')],
           folderId: 'folder-1');
       when(mockGetConversationThread(any)).thenAnswer((_) async => Right([
             _email('id1', conversationId: 'conv-a'),
             _email('id1-reply', conversationId: 'conv-a'),
           ]));
-      await _focus('id1');
+      await focus('id1');
 
       when(mockGetEmails(any)).thenAnswer((_) async => Right([
             _email('id1', conversationId: 'conv-a'),
@@ -1701,7 +1701,7 @@ void main() {
     // down was right; losing the signal was not.
     test('a repaint deferred during a search is spent when the search clears',
         () async {
-      await _loadEmails([_email('id1')], folderId: 'folder-1');
+      await loadEmails([_email('id1')], folderId: 'folder-1');
       when(mockSearchEmails(any))
           .thenAnswer((_) async => Right([_email('hit')]));
       bloc.add(const EmailListSearchRequested(query: 'q'));
@@ -1732,7 +1732,7 @@ void main() {
 
     test('a repaint deferred during a focused thread is spent when it clears',
         () async {
-      await _loadEmails([_email('id1', conversationId: 'conv-a')],
+      await loadEmails([_email('id1', conversationId: 'conv-a')],
           folderId: 'folder-1');
       when(mockGetConversationThread(any)).thenAnswer((_) async =>
           Right([_email('id1', conversationId: 'conv-a')]));
@@ -1822,7 +1822,7 @@ void main() {
     // or a poll on a folder whose cache the poller did not write — replaced the
     // results with the folder's contents.
     test('re-runs the query instead of replacing it with the folder', () async {
-      await _loadEmails([_email('folder-row')], folderId: 'folder-1');
+      await loadEmails([_email('folder-row')], folderId: 'folder-1');
       when(mockSearchEmails(any))
           .thenAnswer((_) async => Right([_email('hit')]));
       bloc.add(const EmailListSearchRequested(query: 'q'));
@@ -1843,7 +1843,7 @@ void main() {
     });
 
     test('a failed re-run leaves the results on screen', () async {
-      await _loadEmails([_email('folder-row')], folderId: 'folder-1');
+      await loadEmails([_email('folder-row')], folderId: 'folder-1');
       when(mockSearchEmails(any))
           .thenAnswer((_) async => Right([_email('hit')]));
       bloc.add(const EmailListSearchRequested(query: 'q'));
@@ -1873,7 +1873,7 @@ void main() {
     setUp(() => fakeAccountManager.account = _account);
 
     test('a refresh fetches nothing and caches nothing', () async {
-      await _loadEmails([_email('a')], folderId: 'INBOX');
+      await loadEmails([_email('a')], folderId: 'INBOX');
       clearInteractions(mockGetEmails);
       clearInteractions(mockCacheEmails);
 
@@ -1890,7 +1890,7 @@ void main() {
     test('a load-more fetches nothing', () async {
       // A full page, or hasMore is false and the handler returns before the
       // guard is reached — the test would pass without it.
-      await _loadEmails(
+      await loadEmails(
         [for (var i = 0; i < 25; i++) _email('a$i')],
         folderId: 'INBOX',
       );
@@ -1905,7 +1905,7 @@ void main() {
     });
 
     test('a cache repaint reads nothing', () async {
-      await _loadEmails([_email('a')], folderId: 'INBOX');
+      await loadEmails([_email('a')], folderId: 'INBOX');
       clearInteractions(mockGetCachedEmails);
 
       fakeAccountManager.account = _otherAccount;
@@ -1940,12 +1940,12 @@ void main() {
     });
 
     test('the folder the new account loads is fetched as normal', () async {
-      await _loadEmails([_email('a')], folderId: 'INBOX');
+      await loadEmails([_email('a')], folderId: 'INBOX');
 
       fakeAccountManager.account = _otherAccount;
       // What HomePage does once the new account's folder list lands.
       bloc.add(const EmailListCleared());
-      await _loadEmails([_email('b')], folderId: 'folder-2');
+      await loadEmails([_email('b')], folderId: 'folder-2');
       clearInteractions(mockGetEmails);
 
       bloc.add(const EmailListRefreshRequested());

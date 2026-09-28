@@ -23,13 +23,10 @@ import '../../../infrastructure/notifications/task_reminder_service.dart';
 /// [TaskReminderService.dismissTask] drops the row and reports it.
 class OverdueTasksCubit extends Cubit<int> {
   OverdueTasksCubit({
-    required AccountManager accountManager,
-    required TaskReminderScheduleLocalDatasource database,
-    required TaskReminderService reminders,
-  })  : _accountManager = accountManager,
-        _database = database,
-        _reminders = reminders,
-        super(0);
+    required this._accountManager,
+    required this._database,
+    required this._reminders,
+  })  : super(0);
 
   final AccountManager _accountManager;
   final TaskReminderScheduleLocalDatasource _database;

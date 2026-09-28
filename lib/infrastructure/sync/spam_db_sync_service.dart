@@ -28,10 +28,9 @@ const _spamDbSentinelId = '__spamdb__';
 /// what keeps it from ever overlapping another mutation on that connection.
 class SpamDbSyncService {
   SpamDbSyncService({
-    required SpamFilterRepository spamFilterRepository,
-    required PendingOperationsDatasource pendingOperations,
-  })  : _spamFilterRepository = spamFilterRepository,
-        _pendingOperations = pendingOperations;
+    required this._spamFilterRepository,
+    required this._pendingOperations,
+  });
 
   final SpamFilterRepository _spamFilterRepository;
   final PendingOperationsDatasource _pendingOperations;

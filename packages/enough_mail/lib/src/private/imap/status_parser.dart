@@ -8,7 +8,8 @@ class StatusParser extends ResponseParser<Mailbox> {
   /// Creates a new parser
   // Matches both quoted ("INBOX") and unquoted atom (INBOX) mailbox names,
   // since servers like Dovecot return unquoted atoms in STATUS responses.
-  StatusParser(this.box) : _regex = RegExp(r'(STATUS (?:"[^"]+?"|[^ (]+) )(.*)');
+  StatusParser(this.box)
+      : _regex = RegExp(r'(STATUS (?:"[^"]+?"|[^ (]+) )(.*)');
 
   /// The current mailbox
   Mailbox box;

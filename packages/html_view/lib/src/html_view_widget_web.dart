@@ -1,6 +1,7 @@
 // Web-specific HtmlViewWidget.
 // Uses HtmlElementView to embed the iframe registered in HtmlViewController.
-// Conditionally exported by lib/html_view.dart when dart.library.html is present.
+// Conditionally exported by lib/html_view.dart when dart.library.js_interop is
+// present.
 
 import 'package:flutter/widgets.dart';
 

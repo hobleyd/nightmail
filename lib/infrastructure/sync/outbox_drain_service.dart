@@ -26,20 +26,14 @@ import 'spam_db_sync_service.dart';
 /// block every other message's unrelated mutations.
 class OutboxDrainService {
   OutboxDrainService({
-    required PendingOperationsDatasource pendingOperations,
-    required EmailLocalDatasource localDatasource,
-    required AccountManager accountManager,
-    required ConnectivityService connectivityService,
-    required SpamDbSyncService spamDbSyncService,
-    required CalendarOutboxDrainService calendarDrainService,
-    required ImapConnectionGate imapConnectionGate,
-  })  : _pendingOperations = pendingOperations,
-        _localDatasource = localDatasource,
-        _accountManager = accountManager,
-        _connectivityService = connectivityService,
-        _spamDbSyncService = spamDbSyncService,
-        _calendarDrainService = calendarDrainService,
-        _imapConnectionGate = imapConnectionGate;
+    required this._pendingOperations,
+    required this._localDatasource,
+    required this._accountManager,
+    required this._connectivityService,
+    required this._spamDbSyncService,
+    required this._calendarDrainService,
+    required this._imapConnectionGate,
+  });
 
   final PendingOperationsDatasource _pendingOperations;
   final EmailLocalDatasource _localDatasource;

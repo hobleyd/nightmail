@@ -71,7 +71,7 @@ class ImapDatasourceImpl
   ///
   /// Abbreviated namespace: Courier and some Dovecot configs advertise root
   /// folders (Sent, Drafts, Trash) that are actually children of INBOX and
-  /// must be accessed as INBOX<sep>Sent, INBOX<sep>Drafts, etc.
+  /// must be accessed as `INBOX<sep>Sent`, `INBOX<sep>Drafts`, etc.
   ///
   /// Detection strategy:
   /// - Courier always uses '.'; abbreviated-namespace detection always runs.
@@ -729,7 +729,7 @@ class ImapDatasourceImpl
         return _parseToModel(msg, folderId: folderId, fullBody: true);
       }
 
-      return compute(
+      return await compute(
         parseFullImapMessage,
         ImapFullMessageParams(
           rawMime: rawMime,

@@ -96,6 +96,9 @@ dependencies:
   # surface — see MarkdownPreviewService.
   markdown: ^7.3.1
 
+  # Direct only for @visibleForTesting in GmailMessageParser.
+  meta: ^1.16.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -107,6 +110,9 @@ dev_dependencies:
   innosetup: ^0.1.3
   path_provider_platform_interface: any
   plugin_platform_interface: any
+  # Direct only because the generated *.mocks.dart files import them.
+  flutter_secure_storage_platform_interface: any
+  bloc: any
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

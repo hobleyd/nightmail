@@ -442,13 +442,13 @@ void main() {
   // moveEmail — labels modify API
   // ---------------------------------------------------------------------------
 
-  Response<Map<String, dynamic>> _metaResp(List<String> labelIds) => Response(
+  Response<Map<String, dynamic>> metaResp(List<String> labelIds) => Response(
         data: {'labelIds': labelIds},
         statusCode: 200,
         requestOptions: RequestOptions(path: ''),
       );
 
-  Response<void> _modifyResp() => Response(
+  Response<void> modifyResp() => Response(
         data: null,
         statusCode: 200,
         requestOptions: RequestOptions(path: ''),
@@ -458,14 +458,14 @@ void main() {
     when(mockDio.get<Map<String, dynamic>>(
       any,
       queryParameters: anyNamed('queryParameters'),
-    )).thenAnswer((_) async => _metaResp(labelIds));
+    )).thenAnswer((_) async => metaResp(labelIds));
   }
 
   void stubModify() {
     when(mockDio.post<void>(
       any,
       data: anyNamed('data'),
-    )).thenAnswer((_) async => _modifyResp());
+    )).thenAnswer((_) async => modifyResp());
   }
 
   group('moveEmail', () {
@@ -649,17 +649,17 @@ void main() {
   // deleteEmail — trash endpoint
   // ---------------------------------------------------------------------------
 
-  Response<void> _trashResp() => Response(
+  Response<void> trashResp() => Response(
         statusCode: 200,
         requestOptions: RequestOptions(path: ''),
       );
 
   void stubTrash() {
-    when(mockDio.post<void>(any)).thenAnswer((_) async => _trashResp());
+    when(mockDio.post<void>(any)).thenAnswer((_) async => trashResp());
   }
 
   group('createServerDraft', () {
-    Response<Map<String, dynamic>> _draftResp(String draftId) => Response(
+    Response<Map<String, dynamic>> draftResp(String draftId) => Response(
           data: {'id': draftId},
           statusCode: 200,
           requestOptions: RequestOptions(path: '/users/me/drafts'),
@@ -669,7 +669,7 @@ void main() {
       when(mockDio.post<Map<String, dynamic>>(
         '/users/me/drafts',
         data: anyNamed('data'),
-      )).thenAnswer((_) async => _draftResp('r1234567890'));
+      )).thenAnswer((_) async => draftResp('r1234567890'));
 
       final id = await datasource.createServerDraft(
         toAddresses: ['alice@example.com'],
@@ -834,7 +834,7 @@ void main() {
   // forwardEmail — To and Cc recipients in raw MIME
   // ---------------------------------------------------------------------------
 
-  void _stubGetByUrl(Map<String, dynamic> Function(String url) responder) {
+  void stubGetByUrl(Map<String, dynamic> Function(String url) responder) {
     when(mockDio.get<Map<String, dynamic>>(any)).thenAnswer((inv) async {
       final url = inv.positionalArguments[0] as String;
       return _jsonResp(responder(url), url);
@@ -860,7 +860,7 @@ void main() {
 
   group('GmailDatasourceImpl.forwardEmail — To recipients in MIME', () {
     test('sets To header in raw MIME', () async {
-      _stubGetByUrl((url) => url.contains('profile')
+      stubGetByUrl((url) => url.contains('profile')
           ? {'emailAddress': 'me@example.com'}
           : _fullMessage());
       when(mockDio.post<void>(any, data: anyNamed('data')))
@@ -882,7 +882,7 @@ void main() {
 
   group('GmailDatasourceImpl.forwardEmail — Cc recipients in MIME', () {
     test('includes Cc header in raw MIME when ccAddresses is non-empty', () async {
-      _stubGetByUrl((url) => url.contains('profile')
+      stubGetByUrl((url) => url.contains('profile')
           ? {'emailAddress': 'me@example.com'}
           : _fullMessage());
       when(mockDio.post<void>(any, data: anyNamed('data')))
@@ -903,7 +903,7 @@ void main() {
     });
 
     test('omits Cc header when ccAddresses is empty', () async {
-      _stubGetByUrl((url) => url.contains('profile')
+      stubGetByUrl((url) => url.contains('profile')
           ? {'emailAddress': 'me@example.com'}
           : _fullMessage());
       when(mockDio.post<void>(any, data: anyNamed('data')))
@@ -929,7 +929,7 @@ void main() {
 
   group('GmailDatasourceImpl.replyToEmail — Cc recipients in MIME', () {
     test('includes Cc header in raw MIME when ccAddresses is non-empty', () async {
-      _stubGetByUrl((url) => url.contains('profile')
+      stubGetByUrl((url) => url.contains('profile')
           ? {'emailAddress': 'me@example.com'}
           : {'raw': _rawMime(), 'threadId': 'thread1'});
       when(mockDio.post<void>(any, data: anyNamed('data')))
@@ -952,7 +952,7 @@ void main() {
 
   group('GmailDatasourceImpl.replyToEmail — To not duplicated', () {
     test('To address appears only once in raw MIME (not duplicated vs prepareReplyToMessage)', () async {
-      _stubGetByUrl((url) => url.contains('profile')
+      stubGetByUrl((url) => url.contains('profile')
           ? {'emailAddress': 'me@example.com'}
           : {'raw': _rawMime(from: 'alice@example.com'), 'threadId': 'thread1'});
       when(mockDio.post<void>(any, data: anyNamed('data')))
@@ -992,7 +992,7 @@ void main() {
       const html = '<div><img src="cid:ii_x" alt="image.png"></div>';
       final imageBytes = base64Url.encode([1, 2, 3, 4]).replaceAll('=', '');
 
-      _stubGetByUrl((url) {
+      stubGetByUrl((url) {
         if (url.contains('/attachments/')) return {'data': imageBytes};
         return {
           'id': 'msg1',
@@ -1046,7 +1046,7 @@ void main() {
     test('the inline-merge rebuild keeps the thread id', () async {
       const html = '<div><img src="cid:ii_x"></div>';
 
-      _stubGetByUrl((url) {
+      stubGetByUrl((url) {
         if (url.contains('/attachments/')) {
           return {'data': base64Url.encode([9]).replaceAll('=', '')};
         }
@@ -1093,7 +1093,7 @@ void main() {
         'attachment', () async {
       const html = '<div>no inline images here</div>';
 
-      _stubGetByUrl((url) {
+      stubGetByUrl((url) {
         if (url.contains('/attachments/')) {
           return {'data': base64Url.encode([1]).replaceAll('=', '')};
         }
@@ -1154,7 +1154,7 @@ void main() {
         'END:VCALENDAR';
 
     void stubIcsMessage(String icsText) {
-      _stubGetByUrl((url) => {
+      stubGetByUrl((url) => {
             'id': 'msg1',
             'threadId': 'thread1',
             'payload': {
@@ -1305,7 +1305,7 @@ void main() {
         };
 
     void stubThread(List<Map<String, dynamic>> messages) {
-      _stubGetByUrl((url) => url.endsWith('/threads')
+      stubGetByUrl((url) => url.endsWith('/threads')
           ? {
               'threads': [
                 {'id': 'thread1'},
@@ -1416,7 +1416,7 @@ void main() {
         {
           'historyId': historyId,
           if (records.isNotEmpty) 'history': records,
-          if (nextPageToken != null) 'nextPageToken': nextPageToken,
+          'nextPageToken': ?nextPageToken,
         };
 
     /// Answers the profile, the history pages (one per call, in order) and the
@@ -1796,7 +1796,7 @@ void main() {
   // Subject on replies and forwards — one prefix, never a stack
   // ---------------------------------------------------------------------------
 
-  String _sentSubject(Map<String, dynamic> data) {
+  String sentSubject(Map<String, dynamic> data) {
     final rawMime =
         utf8.decode(base64Url.decode(_padBase64(data['raw'] as String)));
     final line = rawMime
@@ -1807,7 +1807,7 @@ void main() {
 
   group('GmailDatasourceImpl subject prefixes', () {
     test('a forward of a reply carries "Fwd:" alone', () async {
-      _stubGetByUrl((url) => url.contains('profile')
+      stubGetByUrl((url) => url.contains('profile')
           ? {'emailAddress': 'me@example.com'}
           : _fullMessage(subject: 'Re: Fwd: Budget'));
       when(mockDio.post<void>(any, data: anyNamed('data')))
@@ -1821,11 +1821,11 @@ void main() {
 
       final data = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
           .captured.single as Map<String, dynamic>;
-      expect(_sentSubject(data), 'Fwd: Budget');
+      expect(sentSubject(data), 'Fwd: Budget');
     });
 
     test('a forward uses the compose subject when one is given', () async {
-      _stubGetByUrl((url) => url.contains('profile')
+      stubGetByUrl((url) => url.contains('profile')
           ? {'emailAddress': 'me@example.com'}
           : _fullMessage(subject: 'Budget'));
       when(mockDio.post<void>(any, data: anyNamed('data')))
@@ -1840,11 +1840,11 @@ void main() {
 
       final data = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
           .captured.single as Map<String, dynamic>;
-      expect(_sentSubject(data), 'Fwd: Budget (final)');
+      expect(sentSubject(data), 'Fwd: Budget (final)');
     });
 
     test('a reply to a forward carries "Re:" alone', () async {
-      _stubGetByUrl((url) => url.contains('profile')
+      stubGetByUrl((url) => url.contains('profile')
           ? {'emailAddress': 'me@example.com'}
           : {'raw': _rawMime(subject: 'Fwd: Budget'), 'threadId': 'thread1'});
       when(mockDio.post<void>(any, data: anyNamed('data')))
@@ -1854,7 +1854,7 @@ void main() {
 
       final data = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
           .captured.single as Map<String, dynamic>;
-      expect(_sentSubject(data), 'Re: Budget');
+      expect(sentSubject(data), 'Re: Budget');
     });
   });
 }

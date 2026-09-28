@@ -326,7 +326,7 @@ void main() {
   // forwardEmail
   // ---------------------------------------------------------------------------
 
-  Response<void> _forwardVoidResp(String messageId) => Response<void>(
+  Response<void> forwardVoidResp(String messageId) => Response<void>(
         statusCode: 202,
         requestOptions: RequestOptions(path: '/me/messages/$messageId/forward'),
       );
@@ -334,7 +334,7 @@ void main() {
   group('GraphApiDatasourceImpl.forwardEmail — To recipients', () {
     test('includes toRecipients in the POST body', () async {
       when(mockDio.post<void>(any, data: anyNamed('data')))
-          .thenAnswer((_) async => _forwardVoidResp('msg1'));
+          .thenAnswer((_) async => forwardVoidResp('msg1'));
 
       await datasource.forwardEmail(
         messageId: 'msg1',
@@ -351,7 +351,7 @@ void main() {
 
     test('strips display name from To address in forward', () async {
       when(mockDio.post<void>(any, data: anyNamed('data')))
-          .thenAnswer((_) async => _forwardVoidResp('msg1'));
+          .thenAnswer((_) async => forwardVoidResp('msg1'));
 
       await datasource.forwardEmail(
         messageId: 'msg1',
@@ -369,7 +369,7 @@ void main() {
   group('GraphApiDatasourceImpl.forwardEmail — Cc recipients', () {
     test('includes ccRecipients in message body when ccAddresses is non-empty', () async {
       when(mockDio.post<void>(any, data: anyNamed('data')))
-          .thenAnswer((_) async => _forwardVoidResp('msg1'));
+          .thenAnswer((_) async => forwardVoidResp('msg1'));
 
       await datasource.forwardEmail(
         messageId: 'msg1',
@@ -389,7 +389,7 @@ void main() {
 
     test('omits ccRecipients from message when ccAddresses is empty', () async {
       when(mockDio.post<void>(any, data: anyNamed('data')))
-          .thenAnswer((_) async => _forwardVoidResp('msg1'));
+          .thenAnswer((_) async => forwardVoidResp('msg1'));
 
       await datasource.forwardEmail(
         messageId: 'msg1',
@@ -405,7 +405,7 @@ void main() {
 
     test('strips display name from Cc address in forward', () async {
       when(mockDio.post<void>(any, data: anyNamed('data')))
-          .thenAnswer((_) async => _forwardVoidResp('msg1'));
+          .thenAnswer((_) async => forwardVoidResp('msg1'));
 
       await datasource.forwardEmail(
         messageId: 'msg1',
@@ -422,7 +422,7 @@ void main() {
 
     test('sends multiple Cc recipients in forward', () async {
       when(mockDio.post<void>(any, data: anyNamed('data')))
-          .thenAnswer((_) async => _forwardVoidResp('msg1'));
+          .thenAnswer((_) async => forwardVoidResp('msg1'));
 
       await datasource.forwardEmail(
         messageId: 'msg1',
@@ -442,7 +442,7 @@ void main() {
   // replyToEmail
   // ---------------------------------------------------------------------------
 
-  Response<void> _replyVoidResp(String messageId) => Response<void>(
+  Response<void> replyVoidResp(String messageId) => Response<void>(
         statusCode: 202,
         requestOptions: RequestOptions(path: '/me/messages/$messageId/reply'),
       );
@@ -450,7 +450,7 @@ void main() {
   group('GraphApiDatasourceImpl.replyToEmail — To recipients', () {
     test('includes toRecipients in message body when toAddresses is non-empty', () async {
       when(mockDio.post<void>(any, data: anyNamed('data')))
-          .thenAnswer((_) async => _replyVoidResp('msg1'));
+          .thenAnswer((_) async => replyVoidResp('msg1'));
 
       await datasource.replyToEmail(
         messageId: 'msg1',
@@ -469,7 +469,7 @@ void main() {
 
     test('omits toRecipients from message when toAddresses is empty', () async {
       when(mockDio.post<void>(any, data: anyNamed('data')))
-          .thenAnswer((_) async => _replyVoidResp('msg1'));
+          .thenAnswer((_) async => replyVoidResp('msg1'));
 
       await datasource.replyToEmail(
         messageId: 'msg1',
@@ -486,7 +486,7 @@ void main() {
   group('GraphApiDatasourceImpl.replyToEmail — Cc recipients', () {
     test('includes ccRecipients in message body when ccAddresses is non-empty', () async {
       when(mockDio.post<void>(any, data: anyNamed('data')))
-          .thenAnswer((_) async => _replyVoidResp('msg1'));
+          .thenAnswer((_) async => replyVoidResp('msg1'));
 
       await datasource.replyToEmail(
         messageId: 'msg1',
@@ -506,7 +506,7 @@ void main() {
 
     test('omits ccRecipients from message when ccAddresses is empty', () async {
       when(mockDio.post<void>(any, data: anyNamed('data')))
-          .thenAnswer((_) async => _replyVoidResp('msg1'));
+          .thenAnswer((_) async => replyVoidResp('msg1'));
 
       await datasource.replyToEmail(
         messageId: 'msg1',
@@ -522,7 +522,7 @@ void main() {
 
     test('sends multiple Cc recipients in reply', () async {
       when(mockDio.post<void>(any, data: anyNamed('data')))
-          .thenAnswer((_) async => _replyVoidResp('msg1'));
+          .thenAnswer((_) async => replyVoidResp('msg1'));
 
       await datasource.replyToEmail(
         messageId: 'msg1',
@@ -568,7 +568,7 @@ void main() {
     test('a reply sends the compose subject so it matches what was shown',
         () async {
       when(mockDio.post<void>(any, data: anyNamed('data')))
-          .thenAnswer((_) async => _replyVoidResp('msg1'));
+          .thenAnswer((_) async => replyVoidResp('msg1'));
 
       await datasource.replyToEmail(
         messageId: 'msg1',
@@ -583,7 +583,7 @@ void main() {
 
     test('a reply with no subject leaves it to Graph', () async {
       when(mockDio.post<void>(any, data: anyNamed('data')))
-          .thenAnswer((_) async => _replyVoidResp('msg1'));
+          .thenAnswer((_) async => replyVoidResp('msg1'));
 
       await datasource.replyToEmail(messageId: 'msg1', comment: 'Thanks');
 
@@ -594,7 +594,7 @@ void main() {
 
     test('a forward sends the compose subject', () async {
       when(mockDio.post<void>(any, data: anyNamed('data')))
-          .thenAnswer((_) async => _forwardVoidResp('msg1'));
+          .thenAnswer((_) async => forwardVoidResp('msg1'));
 
       await datasource.forwardEmail(
         messageId: 'msg1',

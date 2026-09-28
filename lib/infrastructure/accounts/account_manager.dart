@@ -40,12 +40,10 @@ import 'account_storage.dart';
 
 class AccountManager {
   AccountManager({
-    required AccountStorage accountStorage,
-    required FlutterSecureStorage secureStorage,
-    required OAuthClientIdStorage clientIdStorage,
-  }) : _accountStorage = accountStorage,
-       _secureStorage = secureStorage,
-       _clientIdStorage = clientIdStorage;
+    required this._accountStorage,
+    required this._secureStorage,
+    required this._clientIdStorage,
+  });
 
   final AccountStorage _accountStorage;
   final FlutterSecureStorage _secureStorage;
@@ -813,8 +811,9 @@ class AccountManager {
 
   /// Cycle to the next account. Returns the newly active account.
   Future<Account> cycleToNextAccount() async {
-    if (_accounts.length < 2)
+    if (_accounts.length < 2) {
       throw StateError('Need at least 2 accounts to cycle');
+    }
     _activeIndex = (_activeIndex + 1) % _accounts.length;
     await _accountStorage.saveActiveIndex(_activeIndex);
     _buildDatasourcesForActiveAccount();

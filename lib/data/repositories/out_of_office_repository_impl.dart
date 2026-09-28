@@ -11,10 +11,9 @@ import '../datasources/remote/out_of_office_datasource.dart';
 
 class OutOfOfficeRepositoryImpl implements OutOfOfficeRepository {
   OutOfOfficeRepositoryImpl({
-    required AccountManager accountManager,
-    required ConnectivityService connectivityService,
-  })  : _accountManager = accountManager,
-        _connectivityService = connectivityService;
+    required this._accountManager,
+    required this._connectivityService,
+  });
 
   final AccountManager _accountManager;
   final ConnectivityService _connectivityService;

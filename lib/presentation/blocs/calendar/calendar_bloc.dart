@@ -20,23 +20,15 @@ import 'calendar_state.dart';
 
 class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
   CalendarBloc({
-    required GetCalendarEvents getCalendarEvents,
-    required GetCachedCalendarEvents getCachedCalendarEvents,
-    required CancelCalendarEvent cancelCalendarEvent,
-    required CancelCalendarEventSeries cancelCalendarEventSeries,
-    required DeclineCalendarEvent declineCalendarEvent,
-    required UpdateCalendarEvent updateCalendarEvent,
-    required NotificationService notificationService,
-    required AccountManager accountManager,
-  })  : _getCalendarEvents = getCalendarEvents,
-        _getCachedCalendarEvents = getCachedCalendarEvents,
-        _cancelCalendarEvent = cancelCalendarEvent,
-        _cancelCalendarEventSeries = cancelCalendarEventSeries,
-        _declineCalendarEvent = declineCalendarEvent,
-        _updateCalendarEvent = updateCalendarEvent,
-        _notificationService = notificationService,
-        _accountManager = accountManager,
-        super(CalendarInitial(weekStart: _mondayOfWeek(DateTime.now()))) {
+    required this._getCalendarEvents,
+    required this._getCachedCalendarEvents,
+    required this._cancelCalendarEvent,
+    required this._cancelCalendarEventSeries,
+    required this._declineCalendarEvent,
+    required this._updateCalendarEvent,
+    required this._notificationService,
+    required this._accountManager,
+  })  : super(CalendarInitial(weekStart: _mondayOfWeek(DateTime.now()))) {
     on<CalendarWeekLoadRequested>(_onLoadRequested);
     on<CalendarWeekNavigated>(_onWeekNavigated);
     on<CalendarEventCancelRequested>(_onCancelRequested);

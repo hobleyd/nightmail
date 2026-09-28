@@ -109,7 +109,7 @@ void main() {
           GraphApiDatasourceImpl.parseAutomaticReplies({
             'automaticRepliesSetting': {
               'status': 'scheduled',
-              if (raw != null) 'externalAudience': raw,
+              'externalAudience': ?raw,
             },
           }).audience;
 

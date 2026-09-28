@@ -57,7 +57,7 @@ class GoogleTasksDatasourceImpl implements TasksRemoteDatasource {
             'maxResults': 100,
             'showCompleted': includeCompleted,
             'showHidden': false,
-            if (pageToken != null) 'pageToken': pageToken,
+            'pageToken': ?pageToken,
           },
         );
 

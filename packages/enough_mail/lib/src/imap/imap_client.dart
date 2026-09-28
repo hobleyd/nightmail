@@ -352,7 +352,9 @@ class ImapClient extends ClientBase {
     _currentCommandTask = null;
     _idleCommandTask = null;
     for (final task in pending) {
-      if (task.completer.isCompleted) continue;
+      if (task.completer.isCompleted) {
+        continue;
+      }
       try {
         task.completer.completeError(
           ImapException(this, 'connection lost: $error'),

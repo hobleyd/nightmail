@@ -15,8 +15,7 @@ import '../../infrastructure/accounts/account_manager.dart';
 /// tenants, work and personal — they are tried in turn, because only one of
 /// them may have been shared the file.
 class CloudDriveRepositoryImpl implements CloudDriveRepository {
-  const CloudDriveRepositoryImpl({required AccountManager accountManager})
-      : _accountManager = accountManager;
+  const CloudDriveRepositoryImpl({required this._accountManager});
 
   final AccountManager _accountManager;
 

@@ -99,11 +99,24 @@ the `::offset` stripped — so all of them depend on the key format pinned by
 - **macOS** does both halves in Swift. At scheduling, every alert gets
   `threadIdentifier = event_reminder_<series>`, so Notification Center stacks
   the countdown even when it lands with NightMail not running. At delivery,
-  `willPresent` calls `removeEarlierAlerts`, which reads the delivered list and
+  `willPresent` calls `reconcileSeries`, which reads the delivered list and
   removes the other alerts of the same series — the one being presented is
   excluded by identifier, and nothing outside the
   `event_reminder_<series>[::offset]` namespace is touched. "Starting now"
   therefore stands alone. This is the only platform with a delivery hook.
+  The hook depends on this window still being the notification-centre
+  delegate, which every sub-window used to take away — see
+  [`macos/CLAUDE.md`](../../../macos/CLAUDE.md) "The Notification Delegate Is
+  Stolen by Every Sub-Window".
+
+  A Mac that slept through the countdown gets it replayed on wake, and the
+  daemon does not promise the order. So the hook compares offsets
+  (`minutesUntilStart`, falling back to the identifier's `::offset`; the bare
+  lead alert counts as earliest): if a *later* alert of the series is already
+  delivered, the one being presented is stale and gets `completionHandler([])`
+  — no banner, no popup — instead of replacing the newer banner with an older
+  one. Two stale alerts arriving at the same instant can still both slip
+  through, since each reads the list before the other is delivered.
 - **Linux** replaces outright: the in-process timers all `show` under one
   display id, the series key's, and the plugin hands a repeated id to the
   daemon as `replaces_id`. The timers themselves stay filed under each alert's

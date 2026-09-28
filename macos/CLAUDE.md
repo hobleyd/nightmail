@@ -59,6 +59,39 @@ The Dart callers are best-effort regardless: only macOS and Windows implement
 these relays at all, so Linux, Android and iOS raise `MissingPluginException`
 every time as a matter of course.
 
+## The Notification Delegate Is Stolen by Every Sub-Window
+
+`MainFlutterWindow` is the `UNUserNotificationCenterDelegate`: `willPresent`
+folds a meeting's countdown and opens the reminder popup, `didReceive`
+handles taps and the Mark Read / Delete actions. It is set once in
+`awakeFromNib`, after `RegisterGeneratedPlugins`, and that order is the only
+reason it holds at all.
+
+`FlutterLocalNotificationsPlugin.register(with:)` — the plugin's macOS entry
+point, run by the generated registrant even though the plugin is never
+*initialised* on macOS — does `UNUserNotificationCenter.current().delegate =
+instance` unconditionally. The `setOnWindowCreatedCallback` in `awakeFromNib`
+registers every generated plugin for every `desktop_multi_window` sub-window,
+so the first compose window, event editor or reminder popup to open moved the
+delegate to a throwaway plugin instance. That instance's `willPresent` and
+`didReceive` return *without calling the completion handler* for anything it
+did not schedule, so the OS showed the banner itself and nothing in this file
+ran. When the sub-window closed and its engine was torn down, the instance was
+freed and the weak `delegate` went to nil, with the same effect.
+
+Observed on 2026-09-29: a 15-minute countdown left all five alerts in
+Notification Center, and the app-side log (`/usr/bin/log show --debug
+--predicate 'process == "NightMail" AND subsystem == "com.apple.UserNotifications"'`)
+showed two days of pending-list reads and adds and not one delivered-list
+read — `willPresent` had never reached this window since the first popup
+opened. The first alert of a series was the one that opened the popup, which
+is why only the *subsequent* alerts failed.
+
+The callback now re-asserts `delegate = self` immediately after
+`RegisterGeneratedPlugins`. Anything else that registers plugins for a new
+engine must do the same. The Dart side cannot help: the plugin's `register`
+runs before any Dart code in the new isolate.
+
 ## The Editor Webview Sits Above Flutter's Surface by zPosition, Not by Luck
 
 `html_view`'s WKWebView (`packages/html_view/macos/Classes/WebKitView.swift`)

@@ -135,6 +135,14 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     FlutterMultiWindowPlugin.setOnWindowCreatedCallback { [weak self] controller in
       let channelsBefore = self?.allChannels.count ?? 0
       RegisterGeneratedPlugins(registry: controller)
+      // FlutterLocalNotificationsPlugin.register(with:) sets itself as the
+      // UNUserNotificationCenter delegate every time it is registered, so the
+      // line above hands every notification callback to a plugin instance
+      // that only answers for alerts it scheduled itself — and returns
+      // without calling the completion handler for ours. Take the delegate
+      // back at once; see macos/CLAUDE.md "The Notification Delegate Is
+      // Stolen by Every Sub-Window".
+      if let self { UNUserNotificationCenter.current().delegate = self }
       self?.registerContactsChannel(messenger: controller.engine.binaryMessenger)
       self?.registerEventKitChannel(messenger: controller.engine.binaryMessenger)
       self?.registerCalendarRefreshRelay(messenger: controller.engine.binaryMessenger)
@@ -326,7 +334,7 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       // One thread per meeting. A reminder is a countdown of several alerts;
       // threading them makes Notification Center stack them as one group,
       // which is the only tidying that also happens when the app is not
-      // running to do it itself (see `removeEarlierAlerts`).
+      // running to do it itself (see `reconcileSeries`).
       content.threadIdentifier = "\(kind)_reminder_\(Self.reminderSeriesKey(id))"
     }
     content.userInfo  = userInfo
@@ -359,28 +367,60 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     return String(key[..<range.lowerBound])
   }
 
-  /// Clears the delivered alerts that precede `identifier` in its meeting's
-  /// countdown, so Notification Center shows only the latest — "Starting in
-  /// 5 minutes" replaces "Starting in 10 minutes", and "Starting now" replaces
-  /// everything before it. Only the alerts of *this* series go: the identifier
-  /// namespace is `event_reminder_<acct>::<event>[::<offset>]`, event ids
-  /// never contain `::`, and the alert being presented is excluded by id.
+  /// The minutes-before-start a reminder alert stands for, so two alerts of
+  /// one series can be ordered. Read from the request's `minutesUntilStart`;
+  /// a request scheduled before that key existed falls back to the `::offset`
+  /// suffix of its identifier, and the bare first alert — the lead-time
+  /// warning, the earliest of any series — to `Int.max`.
+  private static func countdownOffset(of request: UNNotificationRequest) -> Int {
+    if let mins = request.content.userInfo["minutesUntilStart"] as? Int { return mins }
+    if let range = request.identifier.range(of: #"::\d+$"#, options: .regularExpression) {
+      return Int(request.identifier[range].dropFirst(2)) ?? Int.max
+    }
+    return Int.max
+  }
+
+  /// Folds a meeting's countdown into one banner at delivery time. Given the
+  /// alert about to be presented, looks at what of the same series is already
+  /// in Notification Center and calls `completion` with `true` when this alert
+  /// should be shown: the earlier alerts ("Starting in 10 minutes") are then
+  /// removed so "Starting in 5 minutes" replaces them and "Starting now"
+  /// stands alone. `false` means a *later* alert of the series is already
+  /// delivered — the Mac slept through the countdown and the daemon is
+  /// replaying it out of order on wake — so this one is stale and the caller
+  /// presents nothing rather than replace the newer banner with an older one.
   ///
-  /// Runs from `willPresent`, which fires only while the app is running; a
-  /// countdown delivered with NightMail closed is left to the thread grouping
-  /// set at scheduling time.
-  private func removeEarlierAlerts(inSeriesOf identifier: String) {
+  /// Only the alerts of *this* series are touched: the identifier namespace is
+  /// `event_reminder_<acct>::<event>[::<offset>]`, event ids never contain
+  /// `::`, and the alert being presented is excluded by id. Runs from
+  /// `willPresent`, which fires only while the app is running (and only while
+  /// this window is still the delegate — see the sub-window callback in
+  /// `awakeFromNib`); a countdown delivered with NightMail closed is left to
+  /// the thread grouping set at scheduling time. `completion` is called on the
+  /// main thread.
+  private func reconcileSeries(
+    presenting request: UNNotificationRequest,
+    completion: @escaping (_ present: Bool) -> Void
+  ) {
     let prefix = "event_reminder_"
-    guard identifier.hasPrefix(prefix) else { return }
+    let identifier = request.identifier
+    guard identifier.hasPrefix(prefix) else {
+      DispatchQueue.main.async { completion(true) }
+      return
+    }
     let series = prefix + Self.reminderSeriesKey(String(identifier.dropFirst(prefix.count)))
+    let offset = Self.countdownOffset(of: request)
     let center = UNUserNotificationCenter.current()
     center.getDeliveredNotifications { delivered in
-      let stale = delivered.map { $0.request.identifier }.filter {
-        $0 != identifier && ($0 == series || $0.hasPrefix(series + "::"))
+      let siblings = delivered.map { $0.request }.filter {
+        $0.identifier != identifier
+          && ($0.identifier == series || $0.identifier.hasPrefix(series + "::"))
       }
-      if !stale.isEmpty {
-        center.removeDeliveredNotifications(withIdentifiers: stale)
+      let superseded = siblings.contains { Self.countdownOffset(of: $0) < offset }
+      if !superseded, !siblings.isEmpty {
+        center.removeDeliveredNotifications(withIdentifiers: siblings.map { $0.identifier })
       }
+      DispatchQueue.main.async { completion(!superseded) }
     }
   }
 
@@ -423,30 +463,38 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     let userInfo = notification.request.content.userInfo
     let type = userInfo["type"] as? String
 
-    if type == "reminder" {
-      removeEarlierAlerts(inSeriesOf: notification.request.identifier)
-    }
-
-    if type == "reminder", (userInfo["popup"] as? Bool) ?? true {
-      // For calendar reminders fired in-app, show the existing popup so the
-      // user can dismiss it without leaving what they're doing. Only the first
-      // and last alert of a series carry `popup` — the countdown between them
-      // stays a banner, so a meeting cannot pile up a stack of these windows.
-      let eventId    = userInfo["eventId"]    as? String ?? ""
-      let eventTitle = userInfo["eventTitle"] as? String ?? ""
-      let startIso   = userInfo["startIso"]   as? String
-      var args: [String: Any] = ["eventId": eventId, "eventTitle": eventTitle]
-      if let iso = startIso { args["startIso"] = iso }
-      if let mins = userInfo["minutesUntilStart"] as? Int {
-        args["minutesUntilStart"] = mins
+    let present: () -> Void = {
+      if #available(macOS 11.0, *) {
+        completionHandler([.banner, .sound])
+      } else {
+        completionHandler([.alert, .sound])
       }
-      mainNotificationChannel?.invokeMethod("showReminderPopup", arguments: args)
     }
 
-    if #available(macOS 11.0, *) {
-      completionHandler([.banner, .sound])
-    } else {
-      completionHandler([.alert, .sound])
+    guard type == "reminder" else { present(); return }
+
+    reconcileSeries(presenting: notification.request) { [weak self] show in
+      // A later alert of this countdown is already on screen: this one is
+      // stale, so neither a banner nor the popup.
+      guard show else { completionHandler([]); return }
+
+      if (userInfo["popup"] as? Bool) ?? true {
+        // For calendar reminders fired in-app, show the existing popup so the
+        // user can dismiss it without leaving what they're doing. Only the
+        // first and last alert of a series carry `popup` — the countdown
+        // between them stays a banner, so a meeting cannot pile up a stack of
+        // these windows.
+        let eventId    = userInfo["eventId"]    as? String ?? ""
+        let eventTitle = userInfo["eventTitle"] as? String ?? ""
+        let startIso   = userInfo["startIso"]   as? String
+        var args: [String: Any] = ["eventId": eventId, "eventTitle": eventTitle]
+        if let iso = startIso { args["startIso"] = iso }
+        if let mins = userInfo["minutesUntilStart"] as? Int {
+          args["minutesUntilStart"] = mins
+        }
+        self?.mainNotificationChannel?.invokeMethod("showReminderPopup", arguments: args)
+      }
+      present()
     }
   }
 

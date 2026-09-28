@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:meta/meta.dart';
+
 import '../../../core/utils/html_entities.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/email_attachment.dart';
@@ -817,7 +819,42 @@ EmailAddressModel _parseAddress(String raw) {
 
 List<EmailAddressModel> _parseAddressList(String raw) {
   if (raw.isEmpty) return [];
-  return raw.split(',').map((s) => _parseAddress(s.trim())).toList();
+  return splitAddressList(raw).map(_parseAddress).toList();
+}
+
+/// Splits a To/Cc header on the commas *between* addresses, leaving alone the
+/// one inside a quoted display name (`"Pedavoli, Kristian" <k@example.com>`).
+/// A plain `split(',')` made that two recipients — `"Pedavoli` and
+/// `Kristian" <k@example.com>` — and the first of them, carried into a
+/// reply-all's To field, is what Gmail refused with a 400 on send and on
+/// every draft save.
+@visibleForTesting
+List<String> splitAddressList(String raw) {
+  final out = <String>[];
+  final current = StringBuffer();
+  var inQuotes = false;
+  var inAngle = false;
+  for (var i = 0; i < raw.length; i++) {
+    final ch = raw[i];
+    if (ch == '"' && !inAngle) {
+      inQuotes = !inQuotes;
+    } else if (!inQuotes) {
+      if (ch == '<') {
+        inAngle = true;
+      } else if (ch == '>') {
+        inAngle = false;
+      } else if (ch == ',' && !inAngle) {
+        final part = current.toString().trim();
+        if (part.isNotEmpty) out.add(part);
+        current.clear();
+        continue;
+      }
+    }
+    current.write(ch);
+  }
+  final last = current.toString().trim();
+  if (last.isNotEmpty) out.add(last);
+  return out;
 }
 
 DateTime _parseRfc2822Date(String date) {

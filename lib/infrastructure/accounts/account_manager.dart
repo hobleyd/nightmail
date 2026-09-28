@@ -1017,6 +1017,7 @@ class AccountManager {
             onAuthSuccess: () => _authSuccessController.add(account.id),
           ),
           displayName: account.senderName,
+          accountEmail: account.emailAddress,
         );
 
       case ImapAccount():
@@ -1132,6 +1133,7 @@ class AccountManager {
         _emailDatasource = GmailDatasourceImpl(
           client: gmailClient,
           displayName: account.senderName,
+          accountEmail: account.emailAddress,
         );
         _calendarDatasource = GoogleCalendarDatasourceImpl(
           client: calendarClient,

@@ -129,6 +129,86 @@ void main() {
     });
   });
 
+  group('the MIME a send builds', () {
+    String sentMime() {
+      final captured = verify(mockDio.post<void>(
+        '/users/me/messages/send',
+        data: captureAnyNamed('data'),
+      )).captured.single as Map<String, dynamic>;
+      final raw = captured['raw'] as String;
+      // Unfolded: a long recipient list is wrapped across header lines.
+      return utf8
+          .decode(base64Url.decode(base64Url.normalize(raw)))
+          .replaceAll(RegExp(r'\r\n[ \t]+'), ' ');
+    }
+
+    void stubSend() {
+      when(mockDio.post<void>(any, data: anyNamed('data'))).thenAnswer(
+          (_) async => Response(
+              statusCode: 200, requestOptions: RequestOptions(path: '')));
+    }
+
+    void profileFails() {
+      when(mockDio.get<String>(any, options: anyNamed('options')))
+          .thenAnswer((_) async => throw DioException(
+                requestOptions: RequestOptions(path: '/users/me/profile'),
+                response: Response(
+                  statusCode: 403,
+                  requestOptions: RequestOptions(path: '/users/me/profile'),
+                ),
+              ));
+    }
+
+    test('falls back to the account address when the profile lookup fails',
+        () async {
+      datasource = GmailDatasourceImpl.withDio(mockDio,
+          displayName: 'David', accountEmail: 'me@example.com');
+      profileFails();
+      stubSend();
+
+      await datasource.sendEmail(
+          toAddresses: ['x@example.com'], subject: 's', body: 'b');
+
+      expect(sentMime(), contains('From: "David" <me@example.com>'));
+    });
+
+    test('carries no From header at all rather than an empty one', () async {
+      datasource = GmailDatasourceImpl.withDio(mockDio, displayName: 'David');
+      profileFails();
+      stubSend();
+
+      await datasource.sendEmail(
+          toAddresses: ['x@example.com'], subject: 's', body: 'b');
+
+      // Google fills in the authenticated user's; `From: "David" <>` is a 400.
+      expect(sentMime(), isNot(contains('From:')));
+    });
+
+    test('quotes a recipient name so a comma in it is not a second address',
+        () async {
+      profileFails();
+      stubSend();
+
+      await datasource.sendEmail(
+        toAddresses: ['Pedavoli, Kristian <kristian@example.com>'],
+        ccAddresses: [
+          '"Hughes, Shane" <shane@example.com>',
+          'Ian Pollock <ian@example.com>',
+          'bare@example.com',
+        ],
+        subject: 's',
+        body: 'b',
+      );
+
+      final mime = sentMime();
+      expect(mime, contains('To: "Pedavoli, Kristian" <kristian@example.com>'));
+      expect(
+          mime,
+          contains('Cc: "Hughes, Shane" <shane@example.com>, '
+              '"Ian Pollock" <ian@example.com>, bare@example.com'));
+    });
+  });
+
   void stubLabels(List<Map<String, dynamic>> labels) {
     when(mockDio.get<Map<String, dynamic>>(any)).thenAnswer(
       (_) async => _labelsResp(labels),

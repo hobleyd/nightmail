@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/foundation.dart';
 
+import '../../../core/utils/mail_address_format.dart';
 import '../../../core/error/exceptions.dart';
 import '../../../core/utils/special_folder_kind.dart';
 import '../../../core/utils/subject_prefixes.dart';
@@ -31,14 +32,24 @@ class GmailDatasourceImpl
         MailDeltaDatasource,
         ConversationFolderDatasource,
         OutOfOfficeDatasource {
-  GmailDatasourceImpl({required GmailHttpClient client, this.displayName = ''})
-      : _dio = client.dio;
+  GmailDatasourceImpl({
+    required GmailHttpClient client,
+    this.displayName = '',
+    this.accountEmail = '',
+  }) : _dio = client.dio;
 
   @visibleForTesting
-  GmailDatasourceImpl.withDio(this._dio, {this.displayName = ''});
+  GmailDatasourceImpl.withDio(
+    this._dio, {
+    this.displayName = '',
+    this.accountEmail = '',
+  });
 
   final Dio _dio;
   final String displayName;
+  /// The address the account was added under: the From address to fall back
+  /// on when the profile lookup cannot supply one (see [_getUserEmail]).
+  final String accountEmail;
   String? _cachedUserEmail;
 
   /// Stores the Gmail API nextPageToken per label/folder ID.
@@ -587,9 +598,9 @@ class GmailDatasourceImpl
     try {
       final fromEmail = await _getUserEmail();
       final builder = MessageBuilder()
-        ..from = [MailAddress(displayName.isEmpty ? null : displayName, fromEmail)]
-        ..to = toAddresses.map((a) => MailAddress(null, a)).toList()
-        ..cc = ccAddresses.map((a) => MailAddress(null, a)).toList()
+        ..from = _fromAddress(fromEmail)
+        ..to = toAddresses.map(parseMailAddress).toList()
+        ..cc = ccAddresses.map(parseMailAddress).toList()
         ..subject = subject;
       if (bodyType == EmailBodyType.html) {
         builder.addTextHtml(body);
@@ -650,11 +661,14 @@ class GmailDatasourceImpl
         replyAll: replyAll,
       )..subject = _sentSubject(subject) ??
           replySubjectFor(original.decodeSubject() ?? '');
+      // prepareReplyToMessage needs a sender to leave out of a reply-all; the
+      // header itself follows the same rule as every other send.
+      builder.from = _fromAddress(fromEmail);
       if (toAddresses.isNotEmpty) {
-        builder.to = toAddresses.map((a) => MailAddress(null, a)).toList();
+        builder.to = toAddresses.map(parseMailAddress).toList();
       }
       if (ccAddresses.isNotEmpty) {
-        builder.cc = ccAddresses.map((a) => MailAddress(null, a)).toList();
+        builder.cc = ccAddresses.map(parseMailAddress).toList();
       }
       if (bodyType == EmailBodyType.html) {
         builder.addTextHtml(comment);
@@ -717,16 +731,14 @@ class GmailDatasourceImpl
       final fromEmail = await _getUserEmail();
 
       final builder = MessageBuilder()
-        ..to = toAddresses.map((e) => MailAddress(null, e)).toList()
+        ..to = toAddresses.map(parseMailAddress).toList()
         ..subject = fwdSubject;
 
       if (ccAddresses.isNotEmpty) {
-        builder.cc = ccAddresses.map((e) => MailAddress(null, e)).toList();
+        builder.cc = ccAddresses.map(parseMailAddress).toList();
       }
 
-      if (fromEmail.isNotEmpty) {
-        builder.from = [MailAddress(displayName.isEmpty ? null : displayName, fromEmail)];
-      }
+      builder.from = _fromAddress(fromEmail);
 
       // Compose body already contains the full forwarded content the user can edit;
       // send it as-is rather than re-appending the original.
@@ -794,15 +806,29 @@ class GmailDatasourceImpl
     }
   }
 
+  /// The From header for [email], or none when no address is known — Gmail
+  /// then fills in the authenticated user's, which beats an empty `<>` it
+  /// rejects outright.
+  List<MailAddress>? _fromAddress(String email) => email.isEmpty
+      ? null
+      : [MailAddress(displayName.isEmpty ? null : displayName, email)];
+
   Future<String> _getUserEmail() async {
-    if (_cachedUserEmail != null) return _cachedUserEmail!;
+    final cached = _cachedUserEmail;
+    if (cached != null && cached.isNotEmpty) return cached;
     try {
-      _cachedUserEmail =
-          (await _profile())['emailAddress'] as String? ?? '';
-      return _cachedUserEmail!;
-    } catch (_) {
-      return '';
-    }
+      final email = (await _profile())['emailAddress'] as String? ?? '';
+      if (email.isNotEmpty) {
+        _cachedUserEmail = email;
+        return email;
+      }
+    } catch (_) {}
+    // A failed profile lookup used to answer with an empty address, which the
+    // builders rendered as `From: "Name" <>` — Google refuses that with a 400
+    // on send and on every draft save, and the profile call's error was
+    // swallowed, so nothing said why. The account's own address is right for
+    // the one mailbox this datasource talks to.
+    return accountEmail;
   }
 
   /// `users.getProfile`, decoded here rather than in an isolate: it is four
@@ -1851,9 +1877,15 @@ class _DraftMimeParams {
 /// touches the main isolate.
 String _buildDraftRawBase64(_DraftMimeParams p) {
   final builder = MessageBuilder()
-    ..from = [MailAddress(p.fromDisplayName.isEmpty ? null : p.fromDisplayName, p.fromAddress)]
-    ..to = p.toAddresses.map((a) => MailAddress(null, a)).toList()
-    ..cc = p.ccAddresses.map((a) => MailAddress(null, a)).toList()
+    ..from = p.fromAddress.isEmpty
+        ? null
+        : [
+            MailAddress(
+                p.fromDisplayName.isEmpty ? null : p.fromDisplayName,
+                p.fromAddress)
+          ]
+    ..to = p.toAddresses.map(parseMailAddress).toList()
+    ..cc = p.ccAddresses.map(parseMailAddress).toList()
     ..subject = p.subject;
   if (p.isHtml) {
     builder.addTextHtml(p.body);

@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/foundation.dart' show compute, visibleForTesting;
 
+import '../../../core/utils/mail_address_format.dart';
 import '../../../core/error/exceptions.dart';
 import '../../../core/platform/window_utils.dart';
 import '../../../core/utils/html_entities.dart';
@@ -1671,8 +1672,8 @@ class ImapDatasourceImpl
   }) async {
     final builder = MessageBuilder()
       ..from = [MailAddress(_account.senderName, _account.emailAddress)]
-      ..to = toAddresses.map((e) => MailAddress(null, e)).toList()
-      ..cc = ccAddresses.map((e) => MailAddress(null, e)).toList()
+      ..to = toAddresses.map(parseMailAddress).toList()
+      ..cc = ccAddresses.map(parseMailAddress).toList()
       ..subject = subject;
     if (bodyType == EmailBodyType.html) {
       builder.addTextHtml(body);
@@ -1731,10 +1732,10 @@ class ImapDatasourceImpl
     )..subject = _sentSubject(subject) ??
         replySubjectFor(original.decodeSubject() ?? '');
     if (toAddresses.isNotEmpty) {
-      builder.to = toAddresses.map((a) => MailAddress(null, a)).toList();
+      builder.to = toAddresses.map(parseMailAddress).toList();
     }
     if (ccAddresses.isNotEmpty) {
-      builder.cc = ccAddresses.map((a) => MailAddress(null, a)).toList();
+      builder.cc = ccAddresses.map(parseMailAddress).toList();
     }
     if (bodyType == EmailBodyType.html) {
       builder.addTextHtml(comment);
@@ -1772,11 +1773,11 @@ class ImapDatasourceImpl
     // the user can edit, so we don't auto-append via prepareForwardMessage.
     final builder = MessageBuilder()
       ..from = [MailAddress(_account.senderName, _account.emailAddress)]
-      ..to = toAddresses.map((e) => MailAddress(null, e)).toList()
+      ..to = toAddresses.map(parseMailAddress).toList()
       ..subject = fwdSubject;
 
     if (ccAddresses.isNotEmpty) {
-      builder.cc = ccAddresses.map((e) => MailAddress(null, e)).toList();
+      builder.cc = ccAddresses.map(parseMailAddress).toList();
     }
 
     if (bodyType == EmailBodyType.html) {
@@ -2762,8 +2763,8 @@ class _DraftMimeParams {
 String _buildDraftMimeText(_DraftMimeParams p) {
   final builder = MessageBuilder()
     ..from = [MailAddress(p.fromName, p.fromAddress)]
-    ..to = p.toAddresses.map((a) => MailAddress(null, a)).toList()
-    ..cc = p.ccAddresses.map((a) => MailAddress(null, a)).toList()
+    ..to = p.toAddresses.map(parseMailAddress).toList()
+    ..cc = p.ccAddresses.map(parseMailAddress).toList()
     ..subject = p.subject
     ..messageId = p.messageId;
   if (p.isHtml) {

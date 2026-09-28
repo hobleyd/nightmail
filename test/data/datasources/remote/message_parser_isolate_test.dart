@@ -121,6 +121,49 @@ void main() {
     });
   });
 
+  group('parseGmailFullMessage — recipient headers', () {
+    test('a quoted display name keeps the comma inside it', () {
+      final parsed = parseGmailFullMessage(jsonEncode({
+        'id': 'm1',
+        'threadId': 't1',
+        'labelIds': ['INBOX'],
+        'snippet': '',
+        'payload': {
+          'mimeType': 'text/plain',
+          'headers': [
+            {'name': 'From', 'value': '"Pedavoli, Kristian" <krisped@example.com>'},
+            {
+              'name': 'To',
+              'value': '"Hughes, Shane" <shane@example.com>, me@example.com'
+            },
+            {'name': 'Cc', 'value': 'Ian Pollock <ian@example.com>'},
+          ],
+          'body': {'data': _b64Url('hello')},
+        },
+      }));
+
+      final email = parsed.email;
+      expect(email.from.name, 'Pedavoli, Kristian');
+      expect(email.from.address, 'krisped@example.com');
+      // A plain split on ',' made this three recipients, the first of them
+      // the non-address `"Hughes` — which a reply-all then sent to Gmail.
+      expect(email.toRecipients.map((r) => r.address),
+          ['shane@example.com', 'me@example.com']);
+      expect(email.toRecipients.first.name, 'Hughes, Shane');
+      expect(email.ccRecipients.single.name, 'Ian Pollock');
+    });
+
+    test('splitAddressList', () {
+      expect(splitAddressList('a@x.com,b@x.com , c@x.com'),
+          ['a@x.com', 'b@x.com', 'c@x.com']);
+      expect(splitAddressList('"Last, First" <a@x.com>, b@x.com'),
+          ['"Last, First" <a@x.com>', 'b@x.com']);
+      expect(splitAddressList('First Last <a@x.com>,"B, C" <b@x.com>'),
+          ['First Last <a@x.com>', '"B, C" <b@x.com>']);
+      expect(splitAddressList(''), isEmpty);
+    });
+  });
+
   group('parseGmailFullMessage — follow-up work reported to the caller', () {
     Map<String, dynamic> message(Map<String, dynamic> payload) => {
           'id': 'm1',

@@ -128,6 +128,12 @@ class _EmailListPanelState extends State<EmailListPanel> {
         case LogicalKeyboardKey.arrowRight:
           if (widget.selectedEmailId != null) _flagFocusNode.requestFocus();
           return KeyEventResult.handled;
+        case LogicalKeyboardKey.keyA when _modifierPressed && !_shiftPressed:
+          // Cmd-A / Ctrl-A. Handled here rather than in a CallbackShortcuts
+          // around the panel so the search field above the list keeps the
+          // text-editing select-all it gets from the app.
+          if (event is KeyDownEvent) _selectAll();
+          return KeyEventResult.handled;
         default:
           return KeyEventResult.ignored;
       }
@@ -173,7 +179,11 @@ class _EmailListPanelState extends State<EmailListPanel> {
   }
 
   void _onListFocusChanged() {
-    if (_listFocusNode.hasFocus && widget.selectedEmailId == null) {
+    // Tabbing into an idle list opens its first row. A multi-selection is not
+    // idle: a Cmd-click that gave the list focus must not be undone by it.
+    if (_listFocusNode.hasFocus &&
+        widget.selectedEmailId == null &&
+        _selectedEmailIds.isEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         final items = _currentFlatItems();
@@ -335,6 +345,13 @@ class _EmailListPanelState extends State<EmailListPanel> {
   }
 
   void _handleEmailTap(Email email, int index) {
+    // A row is a GestureDetector, so a click leaves keyboard focus wherever
+    // it was; take it for the list so the arrow keys and Cmd-A that follow a
+    // click reach the handlers above. Touch keeps its focus for the
+    // checkboxes' sake: the focus listener would open a row it has no
+    // business opening once the last checkbox is cleared.
+    if (_isDesktop) _listFocusNode.requestFocus();
+
     // Touch multi-select mode: tap toggles selection
     if (_isTouch && _isMultiSelectMode) {
       setState(() {
@@ -402,6 +419,24 @@ class _EmailListPanelState extends State<EmailListPanel> {
       _isMultiSelectMode = true;
       _selectedEmailIds = {email.id};
       _lastSelectedIndex = index;
+    });
+  }
+
+  /// Selects every row on screen: each single message and, for a thread, the
+  /// message its header row shows — the same rows a Shift-click over the whole
+  /// list would take, so delete, move and junk resolve them the same way.
+  void _selectAll() {
+    final items = _currentFlatItems();
+    if (items.isEmpty) return;
+    final ids = <String>{};
+    for (final item in items) {
+      if (item is _SingleEmailItem) ids.add(item.email.id);
+      if (item is _ConversationHeaderItem) ids.add(item.anchorEmail.id);
+    }
+    setState(() {
+      _selectedEmailIds = ids;
+      // Shows the checkboxes when a touch device has a hardware keyboard.
+      _isMultiSelectMode = true;
     });
   }
 

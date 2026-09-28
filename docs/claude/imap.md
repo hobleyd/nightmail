@@ -15,3 +15,14 @@ A UIDVALIDITY change means the server rebuilt the mailbox and every cached
 The reading is persisted, because a rebuild while the app was closed is the case
 an in-memory comparison cannot see.
 
+
+## Testing Against a Real Dialogue
+
+`test/data/datasources/imap_test_harness.dart` runs a scripted IMAP server and
+SMTP server on loopback ports and points an `ImapDatasourceImpl` at them, so a
+test drives the unmodified datasource through the full LOGIN → SELECT → UID
+FETCH → SMTP DATA → APPEND-to-Sent exchange and reads back what was sent
+(`harness.smtp.sent`) and filed (`harness.imap.appended`). Prefer it over
+mocking `ImapClient`: the connection chain and the literal handling are the
+parts worth covering, and a mock skips both. `imap_datasource_send_test.dart`
+shows the shape.

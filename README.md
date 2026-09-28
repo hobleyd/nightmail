@@ -38,6 +38,8 @@ The app provides a desktop based three-pane layout (folders, message list, readi
 - A markdown attachment or a `.md` document link renders as formatted text in the reading pane's preview, rather than showing its raw source
 - The compose window reopens at the size and position it was last closed at
 - New-mail notifications on iOS/macOS carry Mark Read, Delete, and Dismiss actions that act without opening the app, and appear on a paired Apple Watch automatically
+- Cmd/Ctrl+A selects every message in the folder list, so delete, junk and drag act on the whole folder
+- In Sent, Drafts and Outbox a row leads with who the message went to ("To: Ann, Bob…") instead of your own name
 
 ### Folders
 - Full folder hierarchy with unread counts

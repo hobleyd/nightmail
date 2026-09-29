@@ -267,6 +267,21 @@ the saved id is checked against real folders and falls back to the Inbox.
 Nothing may select a folder at switch time: that listener clears it a beat
 later, which is what made the old restore in `folder_panel.dart` a no-op.
 
+A notification tap is a switch with a message to show at the end of it, and
+the message is selected two frames after the switch — usually *before* the
+new account's folders land. The rule still fires then, but the listener selects
+through `HomeCubit.selectFolderBehindEmail`, which keeps `selectedEmailId`,
+rather than `selectFolder`, which is the user choosing a folder and constructs
+a fresh state. It used to stand down entirely while a message was open, and
+that left the new account with no folder at all: an empty list under the
+message, and on a phone an empty list after Back from it, until the next poll
+cycle happened to reload the folders. On a phone the switch's
+`requestMobileInboxNav` is also skipped in that case — the list is already
+under the message, and bringing it to the top would pop the message the tap
+opened. `HomeCubit.load` likewise leaves a message opened before the saved
+view was read back alone, or a cold start from a tap showed last session's
+calendar over it.
+
 ### A Null Folder Is the Whole Mailbox, Not No Folder
 
 `getEmails(folderId: null)` is `/me/messages` on Graph: the newest mail of the

@@ -83,13 +83,11 @@ void main() {
     EmailFolder? select({
       List<EmailFolder>? list,
       String? folderId,
-      String? emailId,
       String? preferred,
     }) =>
         folderToAutoSelect(
           folders: list ?? folders,
           selectedFolderId: folderId,
-          selectedEmailId: emailId,
           preferredFolderId: preferred,
         );
 
@@ -103,12 +101,6 @@ void main() {
 
     test('leaves a folder the user has already chosen alone', () {
       expect(select(folderId: 'archive-1'), isNull);
-    });
-
-    // selectFolder() builds a new HomeState that zeroes selectedEmailId, so
-    // auto-selecting here would unload an email opened by a notification tap.
-    test('leaves an email opened from a notification alone', () {
-      expect(select(emailId: 'msg-1'), isNull);
     });
 
     test('does nothing with an empty list rather than throwing', () {
@@ -227,17 +219,22 @@ void main() {
     });
 
     // A notification tap switches accounts to show one specific email, and
-    // defers selecting it until after the clear cascade. The folder list lands
-    // in between, and auto-selecting then would zero selectedEmailId.
-    test('leaves an email opened by a notification tap alone', () async {
+    // defers selecting it until after the clear cascade. When the folder list
+    // lands after that, the Inbox still goes in behind the message — or the
+    // list under it stays empty — but without zeroing selectedEmailId.
+    test('puts the Inbox behind an email opened by a notification tap',
+        () async {
       await shell.loadFolders();
 
       await shell.switchTo(accountB, thenOpenEmail: 'msg-1');
       expect(home.state.selectedEmailId, 'msg-1');
+      expect(home.state.selectedFolderId, 'inbox-acct-b');
+      expect(shell.requestedFolderIds.last, 'inbox-acct-b');
 
       // A later reload — the poller's, say — must not steal the pane either.
       await shell.loadFolders();
       expect(home.state.selectedEmailId, 'msg-1');
+      expect(home.state.selectedFolderId, 'inbox-acct-b');
     });
   });
 }
@@ -273,12 +270,15 @@ class _HomeShell {
     final target = folderToAutoSelect(
       folders: state.folders,
       selectedFolderId: home.state.selectedFolderId,
-      selectedEmailId: home.state.selectedEmailId,
       preferredFolderId:
           home.savedFolderForAccount(accounts.activeAccount?.id ?? ''),
     );
     if (target == null) return;
-    home.selectFolder(target.id);
+    if (home.state.selectedEmailId != null) {
+      home.selectFolderBehindEmail(target.id);
+    } else {
+      home.selectFolder(target.id);
+    }
     requestedFolderIds.add(target.id);
   }
 

@@ -430,7 +430,6 @@ class _HomeViewState extends State<_HomeView> {
               final target = folderToAutoSelect(
                 folders: state.folders,
                 selectedFolderId: homeCubit.state.selectedFolderId,
-                selectedEmailId: homeCubit.state.selectedEmailId,
                 preferredFolderId: accountState is AccountsLoaded
                     ? homeCubit
                         .savedFolderForAccount(accountState.activeAccount.id)
@@ -440,7 +439,14 @@ class _HomeViewState extends State<_HomeView> {
               _pendingMobileInboxNavOnSwitch = false;
               if (target == null) return;
 
-              homeCubit.selectFolder(target.id);
+              // A message a notification tap opened before the folders landed
+              // stays open; the folder goes in behind it.
+              final behindEmail = homeCubit.state.selectedEmailId != null;
+              if (behindEmail) {
+                homeCubit.selectFolderBehindEmail(target.id);
+              } else {
+                homeCubit.selectFolder(target.id);
+              }
               context.read<EmailListBloc>().add(
                     EmailListLoadRequested(
                       folderId: target.id,
@@ -449,8 +455,11 @@ class _HomeViewState extends State<_HomeView> {
                   );
               // Only on the load that follows an account switch: a plain
               // refresh must not push the mobile shell off whatever screen
-              // the user is already looking at.
-              if (switchedAccount) homeCubit.requestMobileInboxNav();
+              // the user is already looking at. Nor may it pop the message the
+              // tap opened — the list is already under it.
+              if (switchedAccount && !behindEmail) {
+                homeCubit.requestMobileInboxNav();
+              }
             }
           },
         ),

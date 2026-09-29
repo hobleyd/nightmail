@@ -16,7 +16,10 @@ class HomeCubit extends Cubit<HomeState> {
       (v) => v.name == raw,
       orElse: () => HomeView.email,
     );
-    if (view != HomeView.email) {
+    // A message opened meanwhile — a notification tap on a cold start lands
+    // before this read resolves — is what the user asked to see, not the view
+    // they left last time.
+    if (view != HomeView.email && state.selectedEmailId == null) {
       emit(state.copyWith(view: view));
     }
   }
@@ -51,6 +54,13 @@ class HomeCubit extends Cubit<HomeState> {
 
   void selectEmail(String emailId) {
     emit(state.copyWith(selectedEmailId: emailId));
+  }
+
+  /// Selects the folder the auto-select rule chose while a message opened by a
+  /// notification tap stays on screen — unlike [selectFolder], which is the
+  /// user choosing a folder and rightly drops whatever was open.
+  void selectFolderBehindEmail(String folderId) {
+    emit(state.copyWith(selectedFolderId: folderId));
   }
 
   /// Navigate to an email opened via a notification tap. On mobile this also

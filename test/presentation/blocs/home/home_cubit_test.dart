@@ -43,6 +43,20 @@ void main() {
         expect(cubit.state.view, HomeView.calendar);
       });
 
+      // A notification tap on a cold start opens its message before the
+      // saved view is read back; restoring "calendar" over it would show the
+      // calendar instead of the message the user tapped.
+      test('does not cover a message opened before the read resolved',
+          () async {
+        when(mockSettings.loadActiveView()).thenAnswer((_) async => 'calendar');
+        cubit.openEmailFromNotification('msg-1');
+
+        await cubit.load();
+
+        expect(cubit.state.view, HomeView.email);
+        expect(cubit.state.selectedEmailId, 'msg-1');
+      });
+
       test('an unrecognised saved value falls back to email', () async {
         when(mockSettings.loadActiveView()).thenAnswer((_) async => 'garbage');
 
@@ -183,6 +197,14 @@ void main() {
       });
     });
 
+    test('selectFolderBehindEmail keeps the open message', () {
+      cubit.openEmailFromNotification('email-1');
+      cubit.selectFolderBehindEmail('inbox-id');
+
+      expect(cubit.state.selectedFolderId, 'inbox-id');
+      expect(cubit.state.selectedEmailId, 'email-1');
+    });
+
     test('setAccountLabel updates only the label', () {
       cubit.selectFolder('folder-1');
       cubit.setAccountLabel('Personal');
@@ -201,7 +223,6 @@ void main() {
         folderToAutoSelect(
           folders: const [],
           selectedFolderId: null,
-          selectedEmailId: null,
         ),
         isNull,
       );
@@ -212,18 +233,6 @@ void main() {
         folderToAutoSelect(
           folders: [inbox, archive],
           selectedFolderId: 'archive-id',
-          selectedEmailId: null,
-        ),
-        isNull,
-      );
-    });
-
-    test('does not override an email opened from a notification', () {
-      expect(
-        folderToAutoSelect(
-          folders: [inbox, archive],
-          selectedFolderId: null,
-          selectedEmailId: 'email-1',
         ),
         isNull,
       );
@@ -233,7 +242,6 @@ void main() {
       final result = folderToAutoSelect(
         folders: [inbox, archive],
         selectedFolderId: null,
-        selectedEmailId: null,
         preferredFolderId: 'archive-id',
       );
       expect(result, archive);
@@ -243,7 +251,6 @@ void main() {
       final result = folderToAutoSelect(
         folders: [inbox, archive],
         selectedFolderId: null,
-        selectedEmailId: null,
         preferredFolderId: 'deleted-id',
       );
       expect(result, inbox);
@@ -254,7 +261,6 @@ void main() {
       final result = folderToAutoSelect(
         folders: [archive, lowerInbox],
         selectedFolderId: null,
-        selectedEmailId: null,
       );
       expect(result, lowerInbox);
     });
@@ -263,7 +269,6 @@ void main() {
       final result = folderToAutoSelect(
         folders: [archive],
         selectedFolderId: null,
-        selectedEmailId: null,
       );
       expect(result, archive);
     });

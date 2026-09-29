@@ -133,6 +133,7 @@ Settings → Accounts.
   - Previously known senders (local database)
   - System contacts (macOS Contacts app)
   - Organisational directory (Microsoft People API / Google Directory)
+- Paste a list of names, one per line, into To or Cc and each is looked up in the directory and added as a recipient; names that aren't found are kept and flagged
 
 ### Mobile
 - Touch-sized icons and back-button navigation between panels on Android and iOS

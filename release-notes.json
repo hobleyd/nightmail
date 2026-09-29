@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.36.2",
+  "version": "1.36.3",
   "sections": [
     {
-      "type": "fixes",
-      "title": "Fixes",
+      "type": "features",
+      "title": "New features",
       "items": [
         {
-          "body": "stop a deleted O365 message coming back after a slow outbox drain",
-          "title": "sync"
+          "body": "resolve a pasted list of names against the directory",
+          "title": "compose"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.36.2",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "stop a deleted O365 message coming back after a slow outbox drain",
+              "title": "sync"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -499,27 +516,6 @@
             {
               "body": "await result.fold in TasksBloc's status/due-date revert paths",
               "title": "tasks"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.29.1",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "register iOS/Android Gmail OAuth clients and their redirect scheme",
-              "title": "auth"
-            },
-            {
-              "body": "scope OAuth Client ID/Secret/Tenant ID per account, not shared",
-              "title": "auth"
             }
           ]
         }

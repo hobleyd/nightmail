@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.36.3",
+  "version": "1.37.0",
   "sections": [
     {
       "type": "features",
       "title": "New features",
       "items": [
         {
-          "body": "resolve a pasted list of names against the directory",
+          "body": "Bcc recipients, collapsed behind an expander on the Cc row",
           "title": "compose"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.36.3",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "resolve a pasted list of names against the directory",
+              "title": "compose"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -477,45 +494,6 @@
             {
               "body": "render the quoted original in the rich text editor",
               "title": "compose"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.30.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "thread accountId through CalendarRepository",
-              "title": "calendar"
-            },
-            {
-              "body": "offer to decline/cancel meetings when Out of Office turns on",
-              "title": "calendar"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "evict ghost rows a cross-folder conversation expansion leaves behind",
-              "title": "email"
-            },
-            {
-              "body": "give saved and draft the same default dates on load",
-              "title": "out_of_office"
-            },
-            {
-              "body": "await result.fold in TasksBloc's status/due-date revert paths",
-              "title": "tasks"
             }
           ]
         }

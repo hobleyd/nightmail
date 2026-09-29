@@ -1,19 +1,15 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.36.0",
+  "version": "1.36.1",
   "sections": [
     {
       "type": "features",
       "title": "New features",
       "items": [
         {
-          "body": "Cmd-A / Ctrl-A selects every email in the folder",
-          "title": "list"
-        },
-        {
-          "body": "a Sent row names who the message went to, not the sender",
-          "title": "list"
+          "body": "move New Meeting button beside Forward",
+          "title": "reading-pane"
         }
       ]
     },
@@ -22,25 +18,56 @@
       "title": "Fixes",
       "items": [
         {
-          "body": "a recipient named \"Last, First\" no longer breaks send and drafts",
-          "title": "gmail"
-        },
-        {
-          "body": "a reply or forward carries one prefix, never a stack",
-          "title": "compose"
-        },
-        {
-          "body": "show a rename at once and write it to the folder cache",
-          "title": "folders"
-        },
-        {
-          "body": "show send errors in the form, not under the editor",
-          "title": "compose"
+          "body": "keep the notification delegate through sub-windows; fold replayed countdowns",
+          "title": "macos"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.36.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "Cmd-A / Ctrl-A selects every email in the folder",
+              "title": "list"
+            },
+            {
+              "body": "a Sent row names who the message went to, not the sender",
+              "title": "list"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "a recipient named \"Last, First\" no longer breaks send and drafts",
+              "title": "gmail"
+            },
+            {
+              "body": "a reply or forward carries one prefix, never a stack",
+              "title": "compose"
+            },
+            {
+              "body": "show a rename at once and write it to the folder cache",
+              "title": "folders"
+            },
+            {
+              "body": "show send errors in the form, not under the editor",
+              "title": "compose"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -506,49 +533,6 @@
             },
             {
               "body": "normalize Ollama base URL to always carry /v1",
-              "title": "ai"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.28.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "Mark Read/Delete/Dismiss actions on mail notifications",
-              "title": "notifications"
-            },
-            {
-              "body": "default O365 Tenant ID, editable; Google OAuth values via build config",
-              "title": "auth"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "catch local-notifications plugin init failure",
-              "title": "notifications"
-            },
-            {
-              "body": "left-align the Add Account explanatory text",
-              "title": "auth"
-            },
-            {
-              "body": "source O365 Tenant ID via build config too, not a source literal",
-              "title": "auth"
-            },
-            {
-              "body": "synthesize local Ollama catalog entry; route macOS About to Settings",
               "title": "ai"
             }
           ]

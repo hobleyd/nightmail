@@ -1,30 +1,47 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.36.1",
+  "version": "1.36.2",
   "sections": [
-    {
-      "type": "features",
-      "title": "New features",
-      "items": [
-        {
-          "body": "move New Meeting button beside Forward",
-          "title": "reading-pane"
-        }
-      ]
-    },
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "keep the notification delegate through sub-windows; fold replayed countdowns",
-          "title": "macos"
+          "body": "stop a deleted O365 message coming back after a slow outbox drain",
+          "title": "sync"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.36.1",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "move New Meeting button beside Forward",
+              "title": "reading-pane"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "keep the notification delegate through sub-windows; fold replayed countdowns",
+              "title": "macos"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -503,37 +520,6 @@
             {
               "body": "scope OAuth Client ID/Secret/Tenant ID per account, not shared",
               "title": "auth"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.29.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "add Not Junk action when viewing the Junk folder",
-              "title": "mail"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "stop double-registering the BGTaskScheduler mail-check handler",
-              "title": "ios"
-            },
-            {
-              "body": "normalize Ollama base URL to always carry /v1",
-              "title": "ai"
             }
           ]
         }

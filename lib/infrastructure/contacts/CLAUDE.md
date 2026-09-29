@@ -31,6 +31,24 @@ Two things that look optional but are not:
 - `_searchRequestId` in `RecipientInputField` drops out-of-order responses.
   Cancelling the debounce timer does not cancel an already-awaiting search.
 
+### Pasted lists
+
+Pasting several lines into the field — a column of names from a spreadsheet,
+one per line — resolves each line through the same `_search` and adds a chip
+per line (`ResolveRecipientNames`, `lib/domain/usecases/`). Two constraints:
+
+- The paste is intercepted with an `Actions` override of `PasteTextIntent`,
+  not a `TextInputFormatter`. The input is single-line and `EditableText`
+  runs `singleLineFormatter` *before* any caller-supplied formatter, so by the
+  time one runs the newlines are gone and the names have been glued together.
+  `EditableText` registers its paste action as overridable, so the ancestor
+  `Actions` wins and gets the default paste back as `callingAction` for the
+  single-line case. Right-click > Paste calls `pasteText` directly and is not
+  intercepted.
+- A name the directory cannot place stays in the list as typed (a chip with no
+  `@`, drawn in the error colours) and is named in a SnackBar. It is never
+  dropped silently and never guessed: a shared surname alone is not a match.
+
 ### Write path (daily refresh)
 
 `ContactCacheSyncService` (`lib/infrastructure/contacts/`) refreshes each

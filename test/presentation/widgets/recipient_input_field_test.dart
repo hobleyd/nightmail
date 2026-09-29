@@ -56,8 +56,19 @@ Widget _wrapDraggable({
 class _FakeSystemContacts implements SystemContactsRepository {
   List<ContactSuggestion> results = const [];
 
+  /// Filters [results] by name the way the real search does, so a test can
+  /// hold a small directory and get per-query answers out of it.
+  bool filterByQuery = false;
+
   @override
-  Future<List<ContactSuggestion>> search(String query) async => results;
+  Future<List<ContactSuggestion>> search(String query) async {
+    if (!filterByQuery) return results;
+    final q = query.toLowerCase();
+    return [
+      for (final s in results)
+        if ((s.name ?? '').toLowerCase().contains(q)) s,
+    ];
+  }
 
   @override
   Future<void> warmUp() async {}
@@ -75,11 +86,13 @@ void main() {
       final key = GlobalKey<RecipientInputFieldState>();
       List<String> result = [];
 
-      await tester.pumpWidget(_wrap(
-        fieldKey: key,
-        recipients: const [],
-        onChanged: (r) => result = r,
-      ));
+      await tester.pumpWidget(
+        _wrap(
+          fieldKey: key,
+          recipients: const [],
+          onChanged: (r) => result = r,
+        ),
+      );
 
       await tester.enterText(find.byType(TextField), 'user@example.com');
 
@@ -92,11 +105,13 @@ void main() {
       final key = GlobalKey<RecipientInputFieldState>();
       var called = false;
 
-      await tester.pumpWidget(_wrap(
-        fieldKey: key,
-        recipients: const [],
-        onChanged: (_) => called = true,
-      ));
+      await tester.pumpWidget(
+        _wrap(
+          fieldKey: key,
+          recipients: const [],
+          onChanged: (_) => called = true,
+        ),
+      );
 
       key.currentState!.flush();
 
@@ -107,11 +122,13 @@ void main() {
       final key = GlobalKey<RecipientInputFieldState>();
       List<String> result = [];
 
-      await tester.pumpWidget(_wrap(
-        fieldKey: key,
-        recipients: const [],
-        onChanged: (r) => result = r,
-      ));
+      await tester.pumpWidget(
+        _wrap(
+          fieldKey: key,
+          recipients: const [],
+          onChanged: (r) => result = r,
+        ),
+      );
 
       await tester.enterText(find.byType(TextField), '  user@example.com  ');
 
@@ -124,11 +141,13 @@ void main() {
       final key = GlobalKey<RecipientInputFieldState>();
       List<String> result = [];
 
-      await tester.pumpWidget(_wrap(
-        fieldKey: key,
-        recipients: const [],
-        onChanged: (r) => result = r,
-      ));
+      await tester.pumpWidget(
+        _wrap(
+          fieldKey: key,
+          recipients: const [],
+          onChanged: (r) => result = r,
+        ),
+      );
 
       await tester.enterText(find.byType(TextField), 'user@example.com,');
 
@@ -141,11 +160,13 @@ void main() {
       final key = GlobalKey<RecipientInputFieldState>();
       List<String> result = [];
 
-      await tester.pumpWidget(_wrap(
-        fieldKey: key,
-        recipients: const ['alice@example.com'],
-        onChanged: (r) => result = r,
-      ));
+      await tester.pumpWidget(
+        _wrap(
+          fieldKey: key,
+          recipients: const ['alice@example.com'],
+          onChanged: (r) => result = r,
+        ),
+      );
 
       await tester.enterText(find.byType(TextField), 'bob@example.com');
 
@@ -157,11 +178,9 @@ void main() {
     testWidgets('clears the text field after flushing', (tester) async {
       final key = GlobalKey<RecipientInputFieldState>();
 
-      await tester.pumpWidget(_wrap(
-        fieldKey: key,
-        recipients: const [],
-        onChanged: (_) {},
-      ));
+      await tester.pumpWidget(
+        _wrap(fieldKey: key, recipients: const [], onChanged: (_) {}),
+      );
 
       await tester.enterText(find.byType(TextField), 'user@example.com');
       expect(find.text('user@example.com'), findsOneWidget);
@@ -178,20 +197,22 @@ void main() {
       List<String> result = [];
       final otherFocus = FocusNode();
 
-      await tester.pumpWidget(MaterialApp(
-        home: Scaffold(
-          body: Column(
-            children: [
-              RecipientInputField(
-                label: 'To',
-                recipients: const [],
-                onChanged: (r) => result = r,
-              ),
-              Focus(focusNode: otherFocus, child: const SizedBox()),
-            ],
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                RecipientInputField(
+                  label: 'To',
+                  recipients: const [],
+                  onChanged: (r) => result = r,
+                ),
+                Focus(focusNode: otherFocus, child: const SizedBox()),
+              ],
+            ),
           ),
         ),
-      ));
+      );
 
       await tester.enterText(find.byType(TextField), 'user@example.com');
 
@@ -205,10 +226,9 @@ void main() {
     testWidgets('Enter key commits typed text', (tester) async {
       List<String> result = [];
 
-      await tester.pumpWidget(_wrap(
-        recipients: const [],
-        onChanged: (r) => result = r,
-      ));
+      await tester.pumpWidget(
+        _wrap(recipients: const [], onChanged: (r) => result = r),
+      );
 
       await tester.enterText(find.byType(TextField), 'user@example.com');
       await tester.testTextInput.receiveAction(TextInputAction.done);
@@ -220,10 +240,9 @@ void main() {
     testWidgets('typing a comma commits the preceding address', (tester) async {
       List<String> result = [];
 
-      await tester.pumpWidget(_wrap(
-        recipients: const [],
-        onChanged: (r) => result = r,
-      ));
+      await tester.pumpWidget(
+        _wrap(recipients: const [], onChanged: (r) => result = r),
+      );
 
       // Simulate typing "user@example.com,"
       await tester.enterText(find.byType(TextField), 'user@example.com,');
@@ -234,15 +253,18 @@ void main() {
   });
 
   group('RecipientInputField.chipBadgeBuilder', () {
-    testWidgets('renders a badge only for the chips the builder marks',
-        (tester) async {
-      await tester.pumpWidget(_wrap(
-        recipients: const ['alice@example.com', 'bob@example.com'],
-        onChanged: (_) {},
-        chipBadgeBuilder: (address) => address == 'alice@example.com'
-            ? const Icon(Icons.check, size: 12)
-            : null,
-      ));
+    testWidgets('renders a badge only for the chips the builder marks', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _wrap(
+          recipients: const ['alice@example.com', 'bob@example.com'],
+          onChanged: (_) {},
+          chipBadgeBuilder: (address) => address == 'alice@example.com'
+              ? const Icon(Icons.check, size: 12)
+              : null,
+        ),
+      );
 
       expect(find.byIcon(Icons.check), findsOneWidget);
       // The badge sits inside Alice's chip, alongside her label.
@@ -259,10 +281,9 @@ void main() {
     });
 
     testWidgets('renders no badges when no builder is given', (tester) async {
-      await tester.pumpWidget(_wrap(
-        recipients: const ['alice@example.com'],
-        onChanged: (_) {},
-      ));
+      await tester.pumpWidget(
+        _wrap(recipients: const ['alice@example.com'], onChanged: (_) {}),
+      );
 
       expect(find.text('alice@example.com'), findsOneWidget);
       expect(find.byType(Icon), findsNothing);
@@ -286,8 +307,9 @@ void main() {
       HtmlViewOverlayGuard.activeCount.value = 0;
     });
 
-    testWidgets('is held while the dropdown is up and freed when it closes',
-        (tester) async {
+    testWidgets('is held while the dropdown is up and freed when it closes', (
+      tester,
+    ) async {
       contacts.results = const [
         ContactSuggestion(address: 'alice@example.com', name: 'Alice'),
       ];
@@ -347,8 +369,9 @@ void main() {
       expect(HtmlViewOverlayGuard.activeCount.value, 0);
     });
 
-    testWidgets('is freed when the field is disposed with the list open',
-        (tester) async {
+    testWidgets('is freed when the field is disposed with the list open', (
+      tester,
+    ) async {
       contacts.results = const [
         ContactSuggestion(address: 'alice@example.com', name: 'Alice'),
       ];
@@ -394,7 +417,8 @@ void main() {
     ) async {
       List<String> committed = const [];
       await tester.pumpWidget(
-          _wrap(recipients: const [], onChanged: (r) => committed = r));
+        _wrap(recipients: const [], onChanged: (r) => committed = r),
+      );
       await tester.enterText(find.byType(TextField), 'ali');
       await tester.pump(const Duration(milliseconds: 250));
       await tester.pump();
@@ -407,10 +431,12 @@ void main() {
       return committed;
     }
 
-    testWidgets('Enter with nothing highlighted takes the first suggestion',
-        (tester) async {
-      final committed =
-          await pressWithDropdownOpen(tester, [LogicalKeyboardKey.enter]);
+    testWidgets('Enter with nothing highlighted takes the first suggestion', (
+      tester,
+    ) async {
+      final committed = await pressWithDropdownOpen(tester, [
+        LogicalKeyboardKey.enter,
+      ]);
       expect(committed, ['Alice <alice@example.com>']);
       expect(find.text('Alice'), findsNothing);
     });
@@ -424,11 +450,146 @@ void main() {
       expect(committed, ['Alicia <alicia@example.com>']);
     });
 
-    testWidgets('Tab with nothing highlighted takes the first suggestion',
-        (tester) async {
-      final committed =
-          await pressWithDropdownOpen(tester, [LogicalKeyboardKey.tab]);
+    testWidgets('Tab with nothing highlighted takes the first suggestion', (
+      tester,
+    ) async {
+      final committed = await pressWithDropdownOpen(tester, [
+        LogicalKeyboardKey.tab,
+      ]);
       expect(committed, ['Alice <alice@example.com>']);
+    });
+  });
+
+  group('RecipientInputField — pasting a list', () {
+    late _FakeSystemContacts contacts;
+
+    setUp(() {
+      contacts = _FakeSystemContacts()
+        ..filterByQuery = true
+        ..results = const [
+          ContactSuggestion(
+            address: 'andrew.munro@example.com',
+            name: 'Andrew Munro',
+          ),
+          ContactSuggestion(
+            address: 'matthew.garrick@example.com',
+            name: 'Matthew Garrick',
+          ),
+        ];
+      sl.registerLazySingleton<SystemContactsRepository>(() => contacts);
+    });
+
+    tearDown(() async {
+      await sl.reset();
+      HtmlViewOverlayGuard.activeCount.value = 0;
+    });
+
+    /// Puts [text] on the (mocked) clipboard and presses the paste shortcut
+    /// in the focused input, so the whole chain from `DefaultTextEditingShortcuts`
+    /// through the overridable action is what is under test.
+    Future<void> paste(WidgetTester tester, String text) async {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async => switch (call.method) {
+          'Clipboard.getData' => {'text': text},
+          'Clipboard.hasStrings' => {'value': true},
+          _ => null,
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyV);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyV);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      await tester.pump();
+    }
+
+    testWidgets('one line per name: each is looked up and added as a chip', (
+      tester,
+    ) async {
+      List<String> committed = const [];
+      await tester.pumpWidget(
+        _wrap(recipients: const [], onChanged: (r) => committed = r),
+      );
+
+      await paste(tester, 'Andrew Munro\nMatt Garrick\nNobody Here\n');
+
+      expect(committed, [
+        'Andrew Munro <andrew.munro@example.com>',
+        'Matthew Garrick <matthew.garrick@example.com>',
+        'Nobody Here',
+      ]);
+      expect(find.byType(TextField), findsOneWidget);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
+      );
+      expect(
+        find.textContaining('1 name not found in the directory'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Nobody Here'), findsWidgets);
+    });
+
+    testWidgets('half-typed text is committed ahead of the pasted lines', (
+      tester,
+    ) async {
+      List<String> committed = const [];
+      await tester.pumpWidget(
+        _wrap(recipients: const [], onChanged: (r) => committed = r),
+      );
+      await tester.enterText(find.byType(TextField), 'first@example.com');
+
+      await paste(tester, 'Andrew Munro\nmatt@example.com');
+
+      expect(committed, [
+        'first@example.com',
+        'Andrew Munro <andrew.munro@example.com>',
+        'matt@example.com',
+      ]);
+    });
+
+    testWidgets('a single line pastes into the input as usual', (tester) async {
+      List<String> committed = const [];
+      await tester.pumpWidget(
+        _wrap(recipients: const [], onChanged: (r) => committed = r),
+      );
+
+      await paste(tester, 'bob@example.com');
+
+      expect(committed, isEmpty);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        'bob@example.com',
+      );
+    });
+
+    testWidgets('a chip without an address is marked undeliverable', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _wrap(
+          recipients: const ['Nobody Here', 'Someone <someone@example.com>'],
+          onChanged: (_) {},
+        ),
+      );
+      expect(find.byType(Tooltip), findsOneWidget);
+      expect(
+        find.ancestor(
+          of: find.text('Nobody Here'),
+          matching: find.byType(Tooltip),
+        ),
+        findsOneWidget,
+      );
     });
   });
 
@@ -450,11 +611,9 @@ void main() {
         ContactSuggestion(address: 'alice@example.com', name: 'Alice'),
       ];
 
-      await tester.pumpWidget(_wrap(
-        recipients: const [],
-        onChanged: (_) {},
-        leftInset: leftInset,
-      ));
+      await tester.pumpWidget(
+        _wrap(recipients: const [], onChanged: (_) {}, leftInset: leftInset),
+      );
 
       await tester.enterText(find.byType(TextField), 'ali');
       await tester.pump(const Duration(milliseconds: 250));
@@ -464,16 +623,19 @@ void main() {
       return tester.getRect(find.byType(ListView));
     }
 
-    testWidgets('stays inside the window when the input is near the right edge',
-        (tester) async {
-      final windowWidth = tester.view.physicalSize.width / tester.view.devicePixelRatio;
-      final rect = await showDropdown(tester, windowWidth - 120);
+    testWidgets(
+      'stays inside the window when the input is near the right edge',
+      (tester) async {
+        final windowWidth =
+            tester.view.physicalSize.width / tester.view.devicePixelRatio;
+        final rect = await showDropdown(tester, windowWidth - 120);
 
-      expect(rect.right, lessThanOrEqualTo(windowWidth));
-      expect(rect.left, greaterThanOrEqualTo(0));
-      // Unclipped means it kept its full width, not that it was squeezed.
-      expect(rect.width, 400);
-    });
+        expect(rect.right, lessThanOrEqualTo(windowWidth));
+        expect(rect.left, greaterThanOrEqualTo(0));
+        // Unclipped means it kept its full width, not that it was squeezed.
+        expect(rect.width, 400);
+      },
+    );
 
     testWidgets('is left where it falls when there is room', (tester) async {
       final rect = await showDropdown(tester, 0);
@@ -539,15 +701,18 @@ void main() {
       await tester.pump();
     }
 
-    testWidgets('a drifting mouse click then Delete removes the chip',
-        (tester) async {
+    testWidgets('a drifting mouse click then Delete removes the chip', (
+      tester,
+    ) async {
       var recipients = ['alice@example.com', 'bob@example.com'];
-      await tester.pumpWidget(StatefulBuilder(
-        builder: (_, setState) => _wrapDraggable(
-          recipients: recipients,
-          onChanged: (r) => setState(() => recipients = r),
+      await tester.pumpWidget(
+        StatefulBuilder(
+          builder: (_, setState) => _wrapDraggable(
+            recipients: recipients,
+            onChanged: (r) => setState(() => recipients = r),
+          ),
         ),
-      ));
+      );
 
       await clickWithDrift(tester, find.text('alice@example.com'));
       await tester.sendKeyEvent(LogicalKeyboardKey.delete);
@@ -556,15 +721,18 @@ void main() {
       expect(recipients, ['bob@example.com']);
     });
 
-    testWidgets('a drifting mouse click then Backspace removes the chip',
-        (tester) async {
+    testWidgets('a drifting mouse click then Backspace removes the chip', (
+      tester,
+    ) async {
       var recipients = ['alice@example.com', 'bob@example.com'];
-      await tester.pumpWidget(StatefulBuilder(
-        builder: (_, setState) => _wrapDraggable(
-          recipients: recipients,
-          onChanged: (r) => setState(() => recipients = r),
+      await tester.pumpWidget(
+        StatefulBuilder(
+          builder: (_, setState) => _wrapDraggable(
+            recipients: recipients,
+            onChanged: (r) => setState(() => recipients = r),
+          ),
         ),
-      ));
+      );
 
       await clickWithDrift(tester, find.text('bob@example.com'));
       await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
@@ -575,12 +743,14 @@ void main() {
 
     testWidgets('a still mouse click still selects', (tester) async {
       var recipients = ['alice@example.com', 'bob@example.com'];
-      await tester.pumpWidget(StatefulBuilder(
-        builder: (_, setState) => _wrapDraggable(
-          recipients: recipients,
-          onChanged: (r) => setState(() => recipients = r),
+      await tester.pumpWidget(
+        StatefulBuilder(
+          builder: (_, setState) => _wrapDraggable(
+            recipients: recipients,
+            onChanged: (r) => setState(() => recipients = r),
+          ),
         ),
-      ));
+      );
 
       await clickWithDrift(tester, find.text('alice@example.com'), drift: 0);
       await tester.sendKeyEvent(LogicalKeyboardKey.delete);
@@ -594,12 +764,14 @@ void main() {
     // own tap, which clears it, never sees a tap the TextField took.
     testWidgets('clicking into the input drops the selection', (tester) async {
       var recipients = ['alice@example.com', 'bob@example.com'];
-      await tester.pumpWidget(StatefulBuilder(
-        builder: (_, setState) => _wrapDraggable(
-          recipients: recipients,
-          onChanged: (r) => setState(() => recipients = r),
+      await tester.pumpWidget(
+        StatefulBuilder(
+          builder: (_, setState) => _wrapDraggable(
+            recipients: recipients,
+            onChanged: (r) => setState(() => recipients = r),
+          ),
         ),
-      ));
+      );
 
       await clickWithDrift(tester, find.text('alice@example.com'));
       await clickWithDrift(tester, find.byType(TextField), drift: 0);
@@ -611,23 +783,26 @@ void main() {
 
     // A completed drag takes the chip out of the list, so the index would name
     // whichever recipient shuffled up into its place.
-    testWidgets('dragging a chip to another field drops the selection',
-        (tester) async {
+    testWidgets('dragging a chip to another field drops the selection', (
+      tester,
+    ) async {
       var to = ['alice@example.com', 'bob@example.com'];
       var cc = <String>[];
 
-      await tester.pumpWidget(StatefulBuilder(
-        builder: (_, setState) => twoFields(
-          to: to,
-          cc: cc,
-          onToChanged: (r) => setState(() => to = r),
-          onCcChanged: (r) => setState(() => cc = r),
-          onDropToCc: (address, _) => setState(() {
-            to = List.of(to)..remove(address);
-            cc = List.of(cc)..add(address);
-          }),
+      await tester.pumpWidget(
+        StatefulBuilder(
+          builder: (_, setState) => twoFields(
+            to: to,
+            cc: cc,
+            onToChanged: (r) => setState(() => to = r),
+            onCcChanged: (r) => setState(() => cc = r),
+            onDropToCc: (address, _) => setState(() {
+              to = List.of(to)..remove(address);
+              cc = List.of(cc)..add(address);
+            }),
+          ),
         ),
-      ));
+      );
 
       final gesture = await tester.startGesture(
         tester.getCenter(find.text('alice@example.com')),
@@ -654,15 +829,18 @@ void main() {
     // this to a bare node and the chip highlights while Delete edits the
     // message body — which is invisible to a test without a real webview, so
     // the focus target is what gets pinned instead.
-    testWidgets('selecting a chip leaves the keyboard on the input',
-        (tester) async {
+    testWidgets('selecting a chip leaves the keyboard on the input', (
+      tester,
+    ) async {
       var recipients = ['alice@example.com', 'bob@example.com'];
-      await tester.pumpWidget(StatefulBuilder(
-        builder: (_, setState) => _wrapDraggable(
-          recipients: recipients,
-          onChanged: (r) => setState(() => recipients = r),
+      await tester.pumpWidget(
+        StatefulBuilder(
+          builder: (_, setState) => _wrapDraggable(
+            recipients: recipients,
+            onChanged: (r) => setState(() => recipients = r),
+          ),
         ),
-      ));
+      );
 
       await clickWithDrift(tester, find.text('alice@example.com'));
 
@@ -672,12 +850,14 @@ void main() {
 
     testWidgets('typing drops the selection', (tester) async {
       var recipients = ['alice@example.com', 'bob@example.com'];
-      await tester.pumpWidget(StatefulBuilder(
-        builder: (_, setState) => _wrapDraggable(
-          recipients: recipients,
-          onChanged: (r) => setState(() => recipients = r),
+      await tester.pumpWidget(
+        StatefulBuilder(
+          builder: (_, setState) => _wrapDraggable(
+            recipients: recipients,
+            onChanged: (r) => setState(() => recipients = r),
+          ),
         ),
-      ));
+      );
 
       await clickWithDrift(tester, find.text('alice@example.com'));
       await tester.enterText(find.byType(TextField), 'c');
@@ -693,20 +873,24 @@ void main() {
     testWidgets('Backspace in an empty input selects the last chip, and a '
         'second Backspace removes it', (tester) async {
       var recipients = ['alice@example.com', 'bob@example.com'];
-      await tester.pumpWidget(StatefulBuilder(
-        builder: (_, setState) => _wrapDraggable(
-          recipients: recipients,
-          onChanged: (r) => setState(() => recipients = r),
+      await tester.pumpWidget(
+        StatefulBuilder(
+          builder: (_, setState) => _wrapDraggable(
+            recipients: recipients,
+            onChanged: (r) => setState(() => recipients = r),
+          ),
         ),
-      ));
+      );
 
       await tester.tap(find.byType(TextField));
       await tester.pump();
 
       await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
       await tester.pump();
-      expect(recipients, ['alice@example.com', 'bob@example.com'],
-          reason: 'the first Backspace only selects');
+      expect(recipients, [
+        'alice@example.com',
+        'bob@example.com',
+      ], reason: 'the first Backspace only selects');
 
       await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
       await tester.pump();

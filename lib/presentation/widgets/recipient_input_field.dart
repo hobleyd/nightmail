@@ -7,11 +7,13 @@ import 'package:html_view/html_view.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/contact_suggestion.dart';
 import '../../domain/repositories/system_contacts_repository.dart';
+import '../../domain/usecases/resolve_recipient_names.dart';
 import '../../domain/usecases/search_contacts.dart';
 import '../../injection_container.dart';
 import 'anchored_dropdown.dart';
 
-typedef RecipientDropAccepted = void Function(String address, String fromFieldId);
+typedef RecipientDropAccepted =
+    void Function(String address, String fromFieldId);
 
 typedef _RecipientDrag = ({String address, String sourceFieldId});
 
@@ -35,9 +37,9 @@ class RecipientInputField extends StatefulWidget {
     this.onTabToNext,
     this.chipBadgeBuilder,
   }) : assert(
-          fieldId == null || onDropAccepted != null,
-          'onDropAccepted is required when fieldId is set',
-        );
+         fieldId == null || onDropAccepted != null,
+         'onDropAccepted is required when fieldId is set',
+       );
 
   final String label;
   final double labelWidth;
@@ -49,6 +51,7 @@ class RecipientInputField extends StatefulWidget {
   final bool showInput;
   final String? fieldId;
   final RecipientDropAccepted? onDropAccepted;
+
   /// Called when Tab is pressed in the input with no suggestion dropdown
   /// open, so the caller can move focus to the next field in a fixed order
   /// instead of relying on default focus traversal.
@@ -96,9 +99,9 @@ class RecipientInputFieldState extends State<RecipientInputField> {
     super.initState();
     _inputFocus.addListener(_onInputFocusChanged);
     if (widget.showInput && widget.accountId != null) {
-      sl<SystemContactsRepository>()
-          .warmUp()
-          .catchError((e) => debugPrint('[NightMail] contacts warmUp: $e'));
+      sl<SystemContactsRepository>().warmUp().catchError(
+        (e) => debugPrint('[NightMail] contacts warmUp: $e'),
+      );
     }
   }
 
@@ -199,22 +202,97 @@ class RecipientInputFieldState extends State<RecipientInputField> {
       // the user has already typed past.
       final requestId = ++_searchRequestId;
       try {
-        final List<ContactSuggestion> results;
-        final accountId = widget.accountId;
-        if (accountId != null) {
-          results = await sl<SearchContacts>().call(
-            query: query,
-            accountId: accountId,
-            accountDomain: widget.accountDomain,
-          );
-        } else {
-          results = await sl<SystemContactsRepository>().search(query);
-        }
+        final results = await _search(query);
         if (mounted && requestId == _searchRequestId) _setSuggestions(results);
       } catch (e) {
         debugPrint('[NightMail] recipient search error: $e');
       }
     });
+  }
+
+  /// The local contact lookup behind both the dropdown and a pasted list:
+  /// the merged sender/address-book search for an account, or the OS address
+  /// book alone when the field has none.
+  Future<List<ContactSuggestion>> _search(String query) {
+    final accountId = widget.accountId;
+    if (accountId != null) {
+      return sl<SearchContacts>().call(
+        query: query,
+        accountId: accountId,
+        accountDomain: widget.accountDomain,
+      );
+    }
+    return sl<SystemContactsRepository>().search(query);
+  }
+
+  /// Handles a paste of several lines — a list of names or addresses, one per
+  /// line — by looking each one up in the directory and adding a chip per
+  /// line. Returns false for anything else so the paste goes into the text
+  /// field as usual.
+  ///
+  /// This has to intercept the paste itself rather than watch the text: the
+  /// input is single-line, and `EditableText` strips newlines out of pasted
+  /// text before any `TextInputFormatter` sees it, which is why pasting a
+  /// column of names used to produce one chip reading "Andrew MunroAziz
+  /// Farah…".
+  bool handlePastedText(String text) {
+    final lines = ResolveRecipientNames.splitLines(text);
+    if (lines.length < 2) return false;
+    unawaited(_addPastedLines(lines));
+    return true;
+  }
+
+  Future<void> _addPastedLines(List<String> lines) async {
+    // Whatever was half-typed before the paste is committed ahead of the
+    // pasted lines, in one onChanged with them: the parent only applies a new
+    // list on its next build, so two calls in a row would lose the first.
+    final typed = _inputController.text
+        .trim()
+        .replaceAll(',', '')
+        .replaceAll(';', '');
+    _inputController.clear();
+    _clearSuggestions();
+
+    List<RecipientResolution> resolved;
+    try {
+      resolved = await const ResolveRecipientNames()(
+        lines: lines,
+        search: _search,
+      );
+    } catch (e) {
+      debugPrint('[NightMail] recipient list paste error: $e');
+      resolved = [for (final l in lines) RecipientResolution(input: l)];
+    }
+    if (!mounted) return;
+
+    final seen = {for (final r in widget.recipients) r.toLowerCase()};
+    final added = <String>[
+      if (typed.isNotEmpty && seen.add(typed.toLowerCase())) typed,
+      for (final r in resolved)
+        if (seen.add(r.recipient.toLowerCase())) r.recipient,
+    ];
+    if (added.isNotEmpty) {
+      widget.onChanged(List.from(widget.recipients)..addAll(added));
+    }
+    _inputFocus.requestFocus();
+
+    final missing = [
+      for (final r in resolved)
+        if (r.isUnresolved) r.input,
+    ];
+    if (missing.isEmpty) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    final noun = missing.length == 1 ? 'name' : 'names';
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          '${missing.length} $noun not found in the directory: '
+          '${missing.join(', ')}',
+        ),
+        duration: const Duration(seconds: 8),
+      ),
+    );
   }
 
   /// Held for as long as the dropdown is up, not per keystroke: both calls are
@@ -387,15 +465,21 @@ class RecipientInputFieldState extends State<RecipientInputField> {
                 }
                 if (_suggestions.isNotEmpty) {
                   if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-                    setState(() => _suggestionIndex =
-                        (_suggestionIndex + 1)
-                            .clamp(0, _suggestions.length - 1));
+                    setState(
+                      () => _suggestionIndex = (_suggestionIndex + 1).clamp(
+                        0,
+                        _suggestions.length - 1,
+                      ),
+                    );
                     return KeyEventResult.handled;
                   }
                   if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-                    setState(() => _suggestionIndex =
-                        (_suggestionIndex - 1)
-                            .clamp(-1, _suggestions.length - 1));
+                    setState(
+                      () => _suggestionIndex = (_suggestionIndex - 1).clamp(
+                        -1,
+                        _suggestions.length - 1,
+                      ),
+                    );
                     return KeyEventResult.handled;
                   }
                   if (event.logicalKey == LogicalKeyboardKey.escape) {
@@ -410,7 +494,10 @@ class RecipientInputFieldState extends State<RecipientInputField> {
                       event.logicalKey == LogicalKeyboardKey.numpadEnter ||
                       event.logicalKey == LogicalKeyboardKey.tab) {
                     _addSuggestion(
-                        _suggestions[_suggestionIndex >= 0 ? _suggestionIndex : 0]);
+                      _suggestions[_suggestionIndex >= 0
+                          ? _suggestionIndex
+                          : 0],
+                    );
                     return KeyEventResult.handled;
                   }
                 }
@@ -455,20 +542,32 @@ class RecipientInputFieldState extends State<RecipientInputField> {
                         setState(() => _selectedIndex = null);
                       }
                     },
-                    child: TextField(
-                      controller: _inputController,
-                      focusNode: _inputFocus,
-                      style: TextStyle(color: c.textPrimary, fontSize: 13),
-                      onSubmitted: (_) => _flushInput(),
-                      onChanged: _onTextChanged,
-                      decoration: InputDecoration(
-                        hintText:
-                            widget.recipients.isEmpty ? widget.hintText : null,
-                        hintStyle:
-                            TextStyle(color: c.textMuted, fontSize: 13),
-                        border: InputBorder.none,
-                        contentPadding: EdgeInsets.zero,
-                        isDense: true,
+                    // EditableText registers its paste action as overridable,
+                    // so an Actions ancestor with the same intent type takes
+                    // the keyboard shortcut and gets the default handler back
+                    // as `callingAction` for the single-line case.
+                    child: Actions(
+                      actions: {
+                        PasteTextIntent: _RecipientListPasteAction(this),
+                      },
+                      child: TextField(
+                        controller: _inputController,
+                        focusNode: _inputFocus,
+                        style: TextStyle(color: c.textPrimary, fontSize: 13),
+                        onSubmitted: (_) => _flushInput(),
+                        onChanged: _onTextChanged,
+                        decoration: InputDecoration(
+                          hintText: widget.recipients.isEmpty
+                              ? widget.hintText
+                              : null,
+                          hintStyle: TextStyle(
+                            color: c.textMuted,
+                            fontSize: 13,
+                          ),
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.zero,
+                          isDense: true,
+                        ),
                       ),
                     ),
                   ),
@@ -545,6 +644,34 @@ class RecipientInputFieldState extends State<RecipientInputField> {
 }
 
 // ---------------------------------------------------------------------------
+// Paste
+// ---------------------------------------------------------------------------
+
+/// Reads the clipboard on paste and hands a multi-line list to the field;
+/// anything else falls through to `EditableText`'s own paste.
+///
+/// [callingAction] is only set for the duration of [invoke], so the default is
+/// captured before the clipboard read and invoked after it. It does not depend
+/// on being called inside that window, and it ignores the context argument,
+/// so none is carried across the gap.
+class _RecipientListPasteAction extends ContextAction<PasteTextIntent> {
+  _RecipientListPasteAction(this.state);
+
+  final RecipientInputFieldState state;
+
+  @override
+  Object? invoke(PasteTextIntent intent, [BuildContext? context]) {
+    final defaultPaste = callingAction;
+    return Clipboard.getData(Clipboard.kTextPlain).then((data) {
+      if (!state.mounted) return;
+      final text = data?.text;
+      if (text != null && state.handlePastedText(text)) return;
+      defaultPaste?.invoke(intent);
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Suggestion dropdown
 // ---------------------------------------------------------------------------
 
@@ -586,16 +713,17 @@ class _SuggestionDropdown extends StatelessWidget {
               selected: i == selectedIndex,
               selectedTileColor: AppColors.accent.withAlpha(40),
               hoverColor: AppColors.accent.withAlpha(20),
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 0,
+              ),
               visualDensity: VisualDensity.compact,
               title: Text(
                 hasName ? s.name! : s.address,
                 style: TextStyle(
                   color: c.textPrimary,
                   fontSize: 13,
-                  fontWeight:
-                      hasName ? FontWeight.w500 : FontWeight.normal,
+                  fontWeight: hasName ? FontWeight.w500 : FontWeight.normal,
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -641,18 +769,33 @@ class _RecipientChip extends StatelessWidget {
     return m != null ? m.group(1)!.trim() : address;
   }
 
+  /// A chip with no `@` cannot be delivered to. It is usually a name from a
+  /// pasted list that the directory did not recognise, and since a resolved
+  /// chip shows only its name too, this is the one thing that tells the two
+  /// apart.
+  bool get _isDeliverable => address.contains('@');
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return Opacity(
+    final undeliverable = !_isDeliverable;
+    final Widget chip = Opacity(
       opacity: opacity,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
-          color: isSelected ? AppColors.accent.withAlpha(30) : c.separator,
+          color: isSelected
+              ? AppColors.accent.withAlpha(30)
+              : undeliverable
+              ? c.errorBannerBg
+              : c.separator,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: isSelected ? AppColors.accent : c.separatorStrong,
+            color: isSelected
+                ? AppColors.accent
+                : undeliverable
+                ? c.errorBannerBorder
+                : c.separatorStrong,
           ),
         ),
         child: Row(
@@ -661,7 +804,11 @@ class _RecipientChip extends StatelessWidget {
             Text(
               _label,
               style: TextStyle(
-                color: isSelected ? AppColors.accent : c.textSecondary,
+                color: isSelected
+                    ? AppColors.accent
+                    : undeliverable
+                    ? c.errorBannerText
+                    : c.textSecondary,
                 fontSize: 12,
               ),
             ),
@@ -669,6 +816,11 @@ class _RecipientChip extends StatelessWidget {
           ],
         ),
       ),
+    );
+    if (!undeliverable) return chip;
+    return Tooltip(
+      message: 'No email address — not found in the directory',
+      child: chip,
     );
   }
 }

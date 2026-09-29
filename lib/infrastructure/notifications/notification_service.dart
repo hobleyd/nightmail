@@ -101,6 +101,37 @@ class NotificationService {
     } else {
       _initLocalNotifications();
     }
+    if (Platform.isIOS) {
+      _tapChannel.setMethodCallHandler((call) async {
+        if (call.method == 'tap') await _takeNativeTap();
+        return null;
+      });
+      // Registers itself with the binding, which is what keeps it alive; this
+      // service is a process-long singleton with nothing to dispose it from.
+      AppLifecycleListener(onResume: () => unawaited(_takeNativeTap()));
+    }
+  }
+
+  /// iOS only: the tap on a notification, held by `AppDelegate.swift`'s
+  /// `NotificationTapRelay` until collected here. The plugin's own callback
+  /// and `getNotificationAppLaunchDetails` never see a plain tap on iOS any
+  /// more — see the relay for why they could not be relied on.
+  static const _tapChannel =
+      MethodChannel('au.com.sharpblue.nightmail/notification_tap');
+
+  /// Collects a held tap, if there is one, and raises it as an action. Pulled
+  /// at startup, on resume and when the native side pokes — the take is
+  /// atomic on the native side, so however those overlap the tap is raised
+  /// once.
+  Future<void> _takeNativeTap() async {
+    String? payload;
+    try {
+      payload = await _tapChannel.invokeMethod<String>('takePendingTap');
+    } catch (_) {
+      return; // No relay behind the channel — a test, or an older AppDelegate.
+    }
+    final action = _parsePayload(payload);
+    if (action != null) _setAction(action);
   }
 
   // Memoized as a Future (not a bool flag) so concurrent callers await the
@@ -127,6 +158,8 @@ class NotificationService {
         if (action != null) _pendingAction = action;
       }
     } catch (_) {}
+    // Nothing listens yet, so _setAction files this as the pending action.
+    if (Platform.isIOS) await _takeNativeTap();
   }
 
   Future<void> _doInitLocalNotifications() async {

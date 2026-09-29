@@ -134,6 +134,46 @@ delivery time, and a scheduled notification's id is also its alarm/toast
 identity, so a shared id would replace the *pending* alerts rather than the
 delivered ones.
 
+## A Tap on iOS Is Held by the App Delegate, Not the Plugin
+
+On iOS a plain tap on any of our notifications is collected by
+`NotificationTapRelay` in `ios/Runner/AppDelegate.swift`, which stands in front
+of `FlutterAppDelegate` as the `UNUserNotificationCenter` delegate, and reaches
+Dart only through `NotificationService._takeNativeTap` — pulled at startup, on
+resume and when the relay pokes the `notification_tap` channel. The
+`flutter_local_notifications` tap callback and `getNotificationAppLaunchDetails`
+never see a tap on iOS any more.
+
+The plugin path could not be relied on. `FlutterAppDelegate` forwards a tap to
+every plugin instance registered as an app-lifecycle delegate — one per Flutter
+engine. On a phone, the notification is usually raised by the WorkManager
+BGAppRefresh task, which launched the process headlessly, ran a throwaway
+engine, showed the alert from *that* engine's plugin instance, and destroyed
+the engine. By the time the user tapped, the only instance that had ever
+existed in the process was freed and there was no main engine at all. The main
+engine started when the app was then opened, found no launch notification and
+had no callback to fire, so nothing happened: the account did not switch and
+the message did not open. A tap for the account already on screen looked as
+though it worked because its Inbox was showing anyway, which is why the
+symptom read as "won't switch account".
+
+Two things here are load-bearing:
+
+- **The relay is installed after `super.application(_:didFinishLaunchingWithOptions:)`
+  and inside it.** After, because that is where `FlutterAppDelegate` makes
+  itself the delegate; inside, because a tap that launched the app is only
+  delivered to a delegate set before launching finishes.
+- **Dart pulls; the native side never pushes the payload.** The take is atomic
+  on the native side, so however a tap and the engine's start interleave the
+  action is raised exactly once. Everything that is not a plain tap — the Mark
+  Read / Delete / Dismiss actions, foreground presentation — is forwarded to
+  Flutter's delegate unchanged, so the plugin's background-isolate handling of
+  the actions is untouched.
+
+The same shape does not arise on Android (the tap is an Intent to the
+activity, and the launch intent survives until the main engine reads it) or on
+macOS (its own native channel, one process, one engine).
+
 ## Two Builds of the App Cannot See Each Other's Alerts
 
 Observed twice on a real machine: a meeting the organiser had moved still

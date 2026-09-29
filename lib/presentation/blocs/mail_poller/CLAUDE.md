@@ -45,8 +45,21 @@ overlays it for the store's 30 s window — long enough for the drain and the
 next fetch to bring the server's copy. Pinning the *cached* value instead was
 tried first and pinned the stale write: read → unread → stuck.
 
-The same store carries the 30 s post-dequeue tombstone removals already had,
-and both reconciliation paths (`EmailRepositoryImpl._reconcileAgainstPendingOps`,
+The same store carries the 30 s removal tombstone, and **the tombstone is
+armed twice**: by the repository as it queues the op, and again by
+`OutboxDrainService` the moment the server acknowledges the delete/move/junk
+(or drops a delete on 404). The drain can take longer than the tombstone to
+reach the server — it waits for connectivity, chains behind the calendar drain
+and any drain in flight, and a throttled Graph move sits out `Retry-After` up
+to five times — and while the op is queued the pending-ops set keeps the id
+out; the window nothing covers is the one *after* dequeue, which the
+enqueue-time tombstone had often already left. Exchange Online then answered
+the next listing from a replica behind the move, the row came back, and the
+following delta took it away again. The tests that cover this move the clock
+between enqueue and drain (`outbox_drain_service_test.dart`); a test that
+records the tombstone and feeds a stale snapshot without advancing time only
+proves the window the doc describes, not the one the code runs. Both
+reconciliation paths (`EmailRepositoryImpl._reconcileAgainstPendingOps`,
 `MailPollerCubit._pendingMutations` behind the watched-folder sync, the delta
 upserts and `_applyFieldUpdates`) read both namespaces alongside the pending
 ops — a folder listing that resolves after the op is dequeued would otherwise

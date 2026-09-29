@@ -19,6 +19,23 @@ mailbox with an `AQMk…` id while its messages carried `AAMk…` in
 Drafts listing filled with the Deleted Items copies of the threads its drafts
 answered. The merge still compares client-side as a second line, and the
 per-conversation fallback retries without the clause if a tenant refuses it.
+**A lookup that cannot resolve both folders skips the expansion for that
+listing** rather than expanding with a partial clause: the lookup runs beside
+the page's own request and is the first thing a 429 burst takes, and a page
+expanded without the Deleted Items clause hands back that folder's copy of
+every thread on it, each under an id no tombstone knows. The listing goes out
+without its cross-folder rows once and the next one retries the lookup.
+
+**A load keeps only the cached rows that lie beyond the fresh page.** The first
+page comes from the network and the cache is merged in behind it so a folder
+the user has scrolled does not shrink back to a page on every open — but only
+rows *older than the oldest of the page's own rows* qualify (`_cachedRowsBeyondPage`),
+and none at all when the page is not full. A cached row the page would have
+listed and did not has left the folder, and keeping it on screen until the next
+repaint showed a message the cache write had already dropped: on a folder the
+user had just deleted from, the delete undoing itself. The bound is the page's
+own rows, not its expansion rows, because a thread's Sent copy can be older
+than the whole folder and would count page two as "on the page and missing".
 
 The whole page is cached under the folder being listed, expansion rows
 included — so a `cached_emails` row is *one message as seen in one folder*, and

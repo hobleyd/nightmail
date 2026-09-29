@@ -56,6 +56,23 @@ void main() {
   // messages were never moved when the user dragged the thread, leaving them
   // in the source folder so the thread reappeared after a refresh.
   group('getEmails — _fetchConversationMessages uses \$top: 200', () {
+    // The expansion is only made once the Deleted Items / Junk lookup has
+    // answered in full — see the exclusion group below — so these tests, which
+    // are about the expansion request itself, need that lookup to succeed.
+    setUp(() {
+      for (final wellKnownName in const ['deleteditems', 'junkemail']) {
+        when(mockDio.get<Map<String, dynamic>>(
+          '/me/mailFolders/$wellKnownName',
+          queryParameters: anyNamed('queryParameters'),
+          options: anyNamed('options'),
+        )).thenAnswer((_) async => Response(
+              data: {'id': 'id-of-$wellKnownName'},
+              statusCode: 200,
+              requestOptions: RequestOptions(path: '/me/mailFolders'),
+            ));
+      }
+    });
+
     test('passes \$top: 200 when fetching cross-folder conversation messages',
         () async {
       // First call: folder messages (contains one email with a conversationId).
@@ -112,8 +129,10 @@ void main() {
 
       await datasource.getEmails(folderId: 'inbox', top: 1);
 
+      // The exclusion clauses follow the conversation clause — see the
+      // exclusion group below for those.
       expect(capturedParams!['\$filter'],
-          equals("conversationId in ('my-conv-id')"));
+          startsWith("conversationId in ('my-conv-id')"));
     });
 
     // A page of 25 threads used to cost 25 requests, which is enough concurrency
@@ -195,8 +214,8 @@ void main() {
       await datasource.getEmails(folderId: 'inbox', top: 2);
 
       expect(filters.where((f) => f.contains(' in (')), hasLength(1));
-      expect(filters, contains("conversationId eq 'conv-1'"));
-      expect(filters, contains("conversationId eq 'conv-2'"));
+      expect(filters, contains(startsWith("conversationId eq 'conv-1'")));
+      expect(filters, contains(startsWith("conversationId eq 'conv-2'")));
     });
   });
 
@@ -545,13 +564,27 @@ void main() {
           ));
 
       final first = await datasource.getEmails(folderId: 'inbox');
-      expect(first.map((e) => e.id), ['msg1', 'deleted'],
-          reason: 'the listing still answers when the lookup fails');
+      expect(first.map((e) => e.id), ['msg1'],
+          reason: 'the listing still answers when the lookup fails — but '
+              'without the expansion, which could not be told what to keep '
+              'out. A partial answer used to be applied as if it were whole, '
+              'and one throttled lookup put the Deleted Items copy of every '
+              'thread on the page back for a cycle.');
+      verifyNever(mockDio.get<String>(
+        '/me/messages',
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      ));
 
       final second = await datasource.getEmails(folderId: 'inbox');
       expect(second.map((e) => e.id), ['msg1'],
           reason: 'the failed lookup was not memoised');
       expect(lookupAttempts, 2);
+      verify(mockDio.get<String>(
+        '/me/messages',
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).called(1);
     });
   });
 

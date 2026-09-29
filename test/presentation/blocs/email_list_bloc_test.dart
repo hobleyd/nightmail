@@ -40,12 +40,16 @@ import 'email_list_bloc_test.mocks.dart';
 
 const _addr = EmailAddress(address: 'a@b.com', name: 'A');
 
+/// EmailListBloc's own first-page size.
+const _pageSize = 25;
+
 Email _email(
   String id, {
   String? conversationId,
   bool isRead = true,
   String? parentFolderId,
   List<String> folderIds = const [],
+  DateTime? receivedDateTime,
 }) =>
     Email(
       id: id,
@@ -57,7 +61,7 @@ Email _email(
       body: '',
       bodyType: EmailBodyType.text,
       isRead: isRead,
-      receivedDateTime: DateTime(2026),
+      receivedDateTime: receivedDateTime ?? DateTime(2026),
       importance: EmailImportance.normal,
       conversationId: conversationId,
       parentFolderId: parentFolderId,
@@ -1569,6 +1573,97 @@ void main() {
   // whose first request lost a race with the machine's network coming up sat
   // there showing yesterday's mail until the user pressed Refresh.
   // ---------------------------------------------------------------------------
+
+  // Regression. The load used to keep every cached row the fresh first page
+  // did not list, meaning it to be "the folder beyond page 1" — but a row the
+  // page *would* have listed and did not has left the folder, and keeping it
+  // showed a message the cache write had already dropped. On a folder the user
+  // had just deleted from, that read as the delete undoing itself until the
+  // next repaint.
+  group('EmailListLoadRequested merge with the cached page', () {
+    final day = DateTime(2026, 6, 1);
+    List<Email> page(int count, {String? parentFolderId}) => [
+          for (var i = 0; i < count; i++)
+            _email('fresh-$i',
+                parentFolderId: parentFolderId,
+                receivedDateTime: day.subtract(Duration(hours: i))),
+        ];
+
+    // The cache is only read for an active account.
+    setUp(() => fakeAccountManager.account = _account);
+
+    test('drops a cached row the full page no longer lists, keeps the rows '
+        'beyond the page', () async {
+      final fresh = page(_pageSize);
+      final oldest = fresh.last.receivedDateTime;
+      when(mockGetCachedEmails(any)).thenAnswer((_) async => Right([
+            // Newer than the oldest row on the page and not on it: gone.
+            _email('deleted-meanwhile',
+                receivedDateTime: day.subtract(const Duration(minutes: 30))),
+            ...fresh.take(3),
+            // Older than anything on the page: page 2, still the folder's.
+            _email('page-2',
+                receivedDateTime: oldest.subtract(const Duration(hours: 1))),
+          ]));
+      when(mockGetEmails(any)).thenAnswer((_) async => Right(fresh));
+
+      bloc.add(const EmailListLoadRequested(folderId: 'folder-1'));
+      final state = await bloc.stream.firstWhere(
+              (s) => s is EmailListLoaded && !s.isLoadingFresh)
+          as EmailListLoaded;
+
+      final ids = state.emails.map((e) => e.id).toList();
+      expect(ids, isNot(contains('deleted-meanwhile')));
+      expect(ids.last, 'page-2');
+      expect(ids.length, _pageSize + 1);
+    });
+
+    test('a page that is not full is the whole folder — nothing cached '
+        'survives it', () async {
+      when(mockGetCachedEmails(any)).thenAnswer((_) async => Right([
+            _email('stale', receivedDateTime: day.subtract(const Duration(days: 9))),
+            _email('fresh-0', receivedDateTime: day),
+          ]));
+      when(mockGetEmails(any))
+          .thenAnswer((_) async => Right([_email('fresh-0', receivedDateTime: day)]));
+
+      bloc.add(const EmailListLoadRequested(folderId: 'folder-1'));
+      final state = await bloc.stream.firstWhere(
+              (s) => s is EmailListLoaded && !s.isLoadingFresh)
+          as EmailListLoaded;
+
+      expect(state.emails.map((e) => e.id), ['fresh-0']);
+    });
+
+    // The expansion adds a thread's copies from other folders, which can be
+    // older than anything the folder itself holds. The page is bounded by its
+    // own rows: bounded by an old Sent reply instead, the folder's whole
+    // second page would count as "on the page and missing" and be dropped.
+    test('the page is bounded by its own rows, not by an older expansion row',
+        () async {
+      final fresh = [
+        ...page(_pageSize - 1, parentFolderId: 'folder-1'),
+        _email('old-sent-copy',
+            parentFolderId: 'sent',
+            receivedDateTime: day.subtract(const Duration(days: 30))),
+      ];
+      when(mockGetCachedEmails(any)).thenAnswer((_) async => Right([
+            // Older than every row the folder has on the page, newer than the
+            // Sent copy: page 2, and must survive.
+            _email('page-2',
+                parentFolderId: 'folder-1',
+                receivedDateTime: day.subtract(const Duration(days: 2))),
+          ]));
+      when(mockGetEmails(any)).thenAnswer((_) async => Right(fresh));
+
+      bloc.add(const EmailListLoadRequested(folderId: 'folder-1'));
+      final state = await bloc.stream.firstWhere(
+              (s) => s is EmailListLoaded && !s.isLoadingFresh)
+          as EmailListLoaded;
+
+      expect(state.emails.map((e) => e.id), contains('page-2'));
+    });
+  });
 
   group('EmailListLoadRequested retry (active account)', () {
     EmailListBloc makeBloc({required List<Duration> retryDelays}) {

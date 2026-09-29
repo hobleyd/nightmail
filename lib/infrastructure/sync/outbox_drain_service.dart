@@ -9,6 +9,7 @@ import '../accounts/account_manager.dart';
 import '../network/connectivity_service.dart';
 import 'calendar_outbox_drain_service.dart';
 import 'imap_connection_gate.dart';
+import 'recent_mutation_store.dart';
 import 'spam_db_sync_service.dart';
 
 /// Replays queued mutations (see [PendingOperationsDatasource]) against the
@@ -33,6 +34,7 @@ class OutboxDrainService {
     required this._spamDbSyncService,
     required this._calendarDrainService,
     required this._imapConnectionGate,
+    required this._recentMutations,
   });
 
   final PendingOperationsDatasource _pendingOperations;
@@ -41,6 +43,25 @@ class OutboxDrainService {
   final ConnectivityService _connectivityService;
   final SpamDbSyncService _spamDbSyncService;
   final ImapConnectionGate _imapConnectionGate;
+
+  /// Re-armed here, at the moment the server acknowledges a removal — not only
+  /// when the repository queued it.
+  ///
+  /// The repository records a removal tombstone as it enqueues the op, and the
+  /// tombstone lives 30 s. But the op itself can take longer than that to
+  /// reach the server: this drain waits for connectivity, chains behind the
+  /// calendar drain and any drain already in flight, and a throttled Graph
+  /// move sits out `Retry-After` up to five times. Once the op is dequeued
+  /// nothing but the tombstone keeps the id out of a fetch, so a tombstone
+  /// that lapsed *before* the server did the move guarded nothing — and
+  /// Exchange Online answers a folder listing from a replica seconds behind
+  /// the change, so the first snapshot after a slow drain re-cached the row
+  /// the user had deleted, and the next delta took it away again. Observed
+  /// as a deleted message that vanished, came back, and vanished.
+  ///
+  /// Recording it again here starts the 30 s from the acknowledgement, which
+  /// is the window every reconciliation reader was written for.
+  final RecentMutationStore _recentMutations;
 
   /// Queued calendar mutations are replayed before this queue is, because some
   /// of them are addressed by *message* id — see [_drainInner].
@@ -142,6 +163,7 @@ class OutboxDrainService {
           switch (op.opType) {
             case PendingOperationType.delete:
               await ds.deleteEmail(emailId);
+              _tombstoneAcknowledgedRemoval(accountId, op.emailId, emailId);
 
             case PendingOperationType.move:
               final payload = jsonDecode(op.payload) as Map<String, dynamic>;
@@ -149,6 +171,7 @@ class OutboxDrainService {
                   payload['destinationFolderId'] as String;
               final newId = await ds.moveEmail(emailId, destinationFolderId);
               await _remapIfNeeded(accountId, emailId, newId, destinationFolderId);
+              _tombstoneAcknowledgedRemoval(accountId, op.emailId, emailId);
               // Keyed by the *original* queued id (not the already-resolved
               // emailId) so a message remapped twice in one pass still
               // resolves to its final id via this single lookup.
@@ -157,11 +180,13 @@ class OutboxDrainService {
             case PendingOperationType.junk:
               final newId = await ds.reportJunk(emailId);
               await _remapIfNeeded(accountId, emailId, newId, 'junkemail');
+              _tombstoneAcknowledgedRemoval(accountId, op.emailId, emailId);
               if (newId != null && newId != emailId) idRemap[op.emailId] = newId;
 
             case PendingOperationType.notJunk:
               final newId = await ds.notJunk(emailId);
               await _remapIfNeeded(accountId, emailId, newId, 'inbox');
+              _tombstoneAcknowledgedRemoval(accountId, op.emailId, emailId);
               if (newId != null && newId != emailId) idRemap[op.emailId] = newId;
 
             case PendingOperationType.markRead:
@@ -216,6 +241,11 @@ class OutboxDrainService {
         final exhausted = op.retryCount + 1 >= _maxOpRetries;
         if (targetGone || exhausted) {
           await _pendingOperations.removeOperation(op.id);
+          // The id is gone from the server either way; a lagging listing can
+          // still name it, and the op that kept it out has just been dropped.
+          if (targetGone) {
+            _tombstoneAcknowledgedRemoval(accountId, op.emailId, emailId);
+          }
         } else {
           await _pendingOperations.recordFailure(
               id: op.id, error: e.toString());
@@ -223,6 +253,23 @@ class OutboxDrainService {
         quarantined.add(op.emailId);
       }
     }
+  }
+
+  /// See [_recentMutations]. Both the id the op was queued under and the one
+  /// it was sent with are recorded: a snapshot taken before an earlier remap
+  /// in this pass carries the former, one taken after it the latter.
+  ///
+  /// Deliberately *not* the id the server assigned the moved copy. That copy
+  /// is the message's new home — tombstoning it would drop it from the
+  /// destination folder's own listing for the life of the tombstone, so a
+  /// message filed into Archive would be missing from Archive for 30 s.
+  void _tombstoneAcknowledgedRemoval(
+    String accountId,
+    String queuedId,
+    String sentId,
+  ) {
+    _recentMutations.recordRemoval(accountId, queuedId);
+    if (sentId != queuedId) _recentMutations.recordRemoval(accountId, sentId);
   }
 
   Future<void> _remapIfNeeded(

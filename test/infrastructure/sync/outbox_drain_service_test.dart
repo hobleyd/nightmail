@@ -86,9 +86,16 @@ void main() {
   late MockConnectivityService mockConnectivityService;
   late MockSpamDbSyncService mockSpamDbSyncService;
   late MockCalendarOutboxDrainService mockCalendarDrainService;
+  late RecentMutationStore recentMutations;
   late OutboxDrainService service;
 
+  /// The clock [recentMutations] reads. Advanced by the tests below to prove
+  /// what a tombstone recorded at enqueue time no longer covers.
+  late DateTime now;
+
   setUp(() {
+    now = DateTime(2026, 6, 1, 9);
+    recentMutations = RecentMutationStore(now: () => now);
     db = AppDatabase.forTesting(NativeDatabase.memory());
     localDatasource = EmailLocalDatasourceImpl(
       database: db,
@@ -116,10 +123,163 @@ void main() {
       spamDbSyncService: mockSpamDbSyncService,
       calendarDrainService: mockCalendarDrainService,
       imapConnectionGate: ImapConnectionGate(),
+      recentMutations: recentMutations,
     );
   });
 
   tearDown(() async => db.close());
+
+  // Regression. The repository records a removal tombstone as it enqueues the
+  // op, and the tombstone lives 30 s — but the drain can take longer than that
+  // to reach the server (offline, chained behind another drain, a throttled
+  // Graph move sitting out Retry-After). Once the op was dequeued nothing kept
+  // the id out of a fetch, and Exchange Online's next listing — answered from
+  // a replica seconds behind the move — put the deleted message back until the
+  // following delta removed it again. Every earlier test of the tombstone
+  // recorded it and fed a stale snapshot without moving the clock, so they
+  // exercised the window the docs described rather than the one the code
+  // implemented. These move the clock.
+  group('removal tombstone re-armed at acknowledgement', () {
+    test('a delete acknowledged after the enqueue-time tombstone lapsed is '
+        'tombstoned again', () async {
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+        opType: PendingOperationType.delete,
+        payload: '{}',
+      );
+      // What EmailRepositoryImpl.deleteEmail does alongside the enqueue.
+      recentMutations.recordRemoval('acct-1', 'email-1');
+      when(mockRemoteDatasource.deleteEmail('email-1'))
+          .thenAnswer((_) async {});
+
+      // The drain only gets to run a minute later.
+      now = now.add(const Duration(seconds: 60));
+      expect(recentMutations.recentlyRemovedIds('acct-1'), isEmpty,
+          reason: 'the enqueue-time tombstone has lapsed by now');
+
+      await service.drainForAccount('acct-1');
+
+      expect(await db.getPendingOperations('acct-1'), isEmpty);
+      expect(recentMutations.recentlyRemovedIds('acct-1'), {'email-1'},
+          reason: 'the acknowledgement starts a fresh window, so the stale '
+              'listing that follows a slow drain still drops the id');
+    });
+
+    test('a move, a junk report and a not-junk are tombstoned the same way',
+        () async {
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'moved',
+        opType: PendingOperationType.move,
+        payload: jsonEncode({'destinationFolderId': 'folder-2'}),
+      );
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'junked',
+        opType: PendingOperationType.junk,
+        payload: '{}',
+      );
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'rescued',
+        opType: PendingOperationType.notJunk,
+        payload: '{}',
+      );
+      when(mockRemoteDatasource.moveEmail('moved', 'folder-2'))
+          .thenAnswer((_) async => 'moved-new');
+      when(mockRemoteDatasource.reportJunk('junked'))
+          .thenAnswer((_) async => 'junked-new');
+      when(mockRemoteDatasource.notJunk('rescued'))
+          .thenAnswer((_) async => 'rescued-new');
+
+      await service.drainForAccount('acct-1');
+
+      expect(recentMutations.recentlyRemovedIds('acct-1'),
+          {'moved', 'junked', 'rescued'});
+    });
+
+    // The moved copy is the message's new home. Tombstoning its id would drop
+    // it from the destination folder's own listing for the life of the
+    // tombstone — a message filed into Archive missing from Archive for 30 s.
+    test('never tombstones the id the server assigned the moved copy',
+        () async {
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'old-id',
+        opType: PendingOperationType.move,
+        payload: jsonEncode({'destinationFolderId': 'folder-2'}),
+      );
+      when(mockRemoteDatasource.moveEmail('old-id', 'folder-2'))
+          .thenAnswer((_) async => 'new-id');
+
+      await service.drainForAccount('acct-1');
+
+      expect(recentMutations.recentlyRemovedIds('acct-1'), {'old-id'});
+    });
+
+    // A later op on a message remapped earlier in the same pass is sent under
+    // the new id; a snapshot taken either side of that remap names one or the
+    // other, so both are covered.
+    test('records the id an op was queued under as well as the one it was '
+        'sent with', () async {
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'first-id',
+        opType: PendingOperationType.move,
+        payload: jsonEncode({'destinationFolderId': 'folder-2'}),
+      );
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'first-id',
+        opType: PendingOperationType.delete,
+        payload: '{}',
+      );
+      when(mockRemoteDatasource.moveEmail('first-id', 'folder-2'))
+          .thenAnswer((_) async => 'second-id');
+      when(mockRemoteDatasource.deleteEmail('second-id'))
+          .thenAnswer((_) async {});
+
+      await service.drainForAccount('acct-1');
+
+      expect(recentMutations.recentlyRemovedIds('acct-1'),
+          {'first-id', 'second-id'});
+    });
+
+    // The id is gone from the server either way, a lagging listing can still
+    // name it, and the op that kept it out has just been dropped.
+    test('a delete dropped on 404 is tombstoned too', () async {
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'gone-id',
+        opType: PendingOperationType.delete,
+        payload: '{}',
+      );
+      when(mockRemoteDatasource.deleteEmail('gone-id')).thenThrow(
+          const ServerException(message: 'not found', statusCode: 404));
+
+      await service.drainForAccount('acct-1');
+
+      expect(recentMutations.recentlyRemovedIds('acct-1'), {'gone-id'});
+    });
+
+    test('a failure that leaves the op queued records nothing — the pending '
+        'op is still what keeps the id out', () async {
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+        opType: PendingOperationType.delete,
+        payload: '{}',
+      );
+      when(mockRemoteDatasource.deleteEmail('email-1')).thenThrow(
+          const ServerException(message: 'throttled', statusCode: 429));
+
+      await service.drainForAccount('acct-1');
+
+      expect(await db.getPendingOperations('acct-1'), hasLength(1));
+      expect(recentMutations.recentlyRemovedIds('acct-1'), isEmpty);
+    });
+  });
 
   group('move (server assigns a new id — Graph)', () {
     test('renames the cache row, remaps queued ops, and removes the op',

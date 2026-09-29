@@ -198,6 +198,15 @@ class GraphApiDatasourceImpl
       // drafts reply to. Graph resolves both encodings to the same folder, so
       // the comparison has to be its.
       final excludedFolderIds = await _expansionExcludedFolderIds(folderId);
+      // The lookup could not say which folders to keep out — throttled, most
+      // likely, since it runs beside the page's own request. An expansion
+      // made without the clause would hand back the Deleted Items copy of
+      // every thread on the page, each under an id no tombstone knows, so
+      // the page goes out without its cross-folder rows this once and the
+      // next listing retries the lookup. A refresh during a 429 burst shows
+      // a thread without its Sent reply for a cycle; the alternative showed
+      // the mail the user had just deleted.
+      if (excludedFolderIds == null) return folderEmails;
 
       // Ask for the whole page's threads in as few requests as possible, then
       // decode the lot in one background isolate rather than one per
@@ -249,34 +258,40 @@ class GraphApiDatasourceImpl
   /// The *future* is memoised rather than the result, so a page holding 25
   /// conversations makes one lookup instead of racing 25; a mailbox does not
   /// re-home its Deleted Items, so it is good for the datasource's lifetime.
-  Future<Set<String>>? _excludedFolderIds;
+  Future<Set<String>?>? _excludedFolderIds;
 
   /// The folder ids to drop from a cross-folder expansion made while listing
-  /// [folderId].
+  /// [folderId], or null when the lookup could not answer in full.
   ///
   /// Empty — and no lookup at all — when the folder being listed *is* one of
   /// them (its own messages are the point), or when the listing is already
   /// mailbox-wide (`folderId == null`, i.e. `/me/messages`) and so has no folder
   /// to be dragged back into.
-  Future<Set<String>> _expansionExcludedFolderIds(String? folderId) async {
+  ///
+  /// Null is not empty: empty means "exclude nothing", null means "we cannot
+  /// tell what to exclude", and the caller must not expand on the latter — a
+  /// partial answer used to be returned as if it were the whole one, and one
+  /// throttled lookup put every deleted copy on the page back for a cycle.
+  Future<Set<String>?> _expansionExcludedFolderIds(String? folderId) async {
     if (folderId == null) return const {};
     if (_expansionExcludedFolders.contains(folderId.toLowerCase())) {
       return const {};
     }
     final ids = await (_excludedFolderIds ??= _fetchExpansionExcludedIds());
+    if (ids == null) return null;
     // The caller may have addressed the folder by id rather than by well-known
     // name, which the check above cannot see.
     return ids.contains(folderId) ? const {} : ids;
   }
 
   /// Resolves [_expansionExcludedFolders] to ids, comparable against a message's
-  /// `parentFolderId`.
+  /// `parentFolderId` — or null if any of them could not be resolved.
   ///
   /// A lookup that could not answer in full is deliberately *not* kept: a
   /// folder listing must degrade rather than fail if this request is throttled,
   /// but keeping a partial answer would expand deleted mail back into the folder
   /// for the rest of the session instead of retrying on the next listing.
-  Future<Set<String>> _fetchExpansionExcludedIds() async {
+  Future<Set<String>?> _fetchExpansionExcludedIds() async {
     final ids = <String>{};
     var complete = true;
     for (final wellKnownName in _expansionExcludedFolders) {
@@ -295,7 +310,10 @@ class GraphApiDatasourceImpl
         complete = false;
       }
     }
-    if (!complete) _excludedFolderIds = null;
+    if (!complete) {
+      _excludedFolderIds = null;
+      return null;
+    }
     return ids;
   }
 

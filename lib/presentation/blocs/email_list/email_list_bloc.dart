@@ -246,11 +246,15 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
           }
           _serverOffset = _pageSize;
           loaded = freshEmails;
-          // Merge: use fresh data for page-1 emails, keep cached beyond page 1.
-          final freshIds = freshEmails.map((e) => e.id).toSet();
+          // Merge: the fresh first page, then whatever the cache holds beyond
+          // it — not every cached row the page happens not to list.
           final merged = [
             ...freshEmails,
-            ...cachedEmails.where((e) => !freshIds.contains(e.id)),
+            ..._cachedRowsBeyondPage(
+              freshEmails,
+              cachedEmails,
+              event.folderId,
+            ),
           ];
           final s = state;
           emit(EmailListLoaded(
@@ -282,6 +286,41 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     if (loaded != null) {
       await _classifyAndTrainIfImap(emit, loaded!);
     }
+  }
+
+  /// The cached rows a fresh first page says nothing about: the ones the
+  /// folder holds *beyond* the page, which the load keeps on screen so a folder
+  /// the user has scrolled does not shrink back to a page on every open.
+  ///
+  /// A row the page would have listed but did not is a different thing — it
+  /// has left the folder, deleted or moved here or on another client. The
+  /// repository's cache write has already dropped it, so keeping it on screen
+  /// until the next repaint showed a message that no longer existed; on a
+  /// folder the user had just deleted from, that read as the delete undoing
+  /// itself.
+  ///
+  /// The page's own rows bound it: the expansion adds a thread's copies from
+  /// other folders, and those can be older than anything the folder holds —
+  /// bounded by one of those, the folder's whole second page would count as
+  /// "on the page and missing" and go with it. A page that is not full is the
+  /// whole folder, and nothing lies beyond it.
+  List<Email> _cachedRowsBeyondPage(
+    List<Email> fresh,
+    List<Email> cached,
+    String? folderId,
+  ) {
+    if (fresh.length < _pageSize) return const [];
+    final freshIds = fresh.map((e) => e.id).toSet();
+    final own = fresh.where((e) => e.isInFolder(folderId));
+    final oldestOnPage = (own.isEmpty ? fresh : own)
+        .map((e) => e.receivedDateTime)
+        .reduce((a, b) => a.isBefore(b) ? a : b);
+    return [
+      for (final email in cached)
+        if (!freshIds.contains(email.id) &&
+            email.receivedDateTime.isBefore(oldestOnPage))
+          email,
+    ];
   }
 
   Future<void> _onLoadMoreRequested(

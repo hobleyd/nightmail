@@ -270,6 +270,7 @@ Future<void> configureDependencies() async {
       spamDbSyncService: sl<SpamDbSyncService>(),
       calendarDrainService: sl<CalendarOutboxDrainService>(),
       imapConnectionGate: sl<ImapConnectionGate>(),
+      recentMutations: sl<RecentMutationStore>(),
     ),
   );
   sl.registerLazySingleton(

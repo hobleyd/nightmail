@@ -12,6 +12,7 @@ The app provides a desktop based three-pane layout (folders, message list, readi
 
 ### Email
 - Read, compose, reply, reply-all, and forward messages
+- Bcc recipients, behind an expander on the Cc row; a message can go to Cc or Bcc recipients alone, with no To
 - HTML and plain text rendering
 - Attachment download and upload
 - Move messages between folders

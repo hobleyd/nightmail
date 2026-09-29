@@ -2,12 +2,14 @@ class MailtoData {
   const MailtoData({
     this.to = const [],
     this.cc = const [],
+    this.bcc = const [],
     this.subject = '',
     this.body = '',
   });
 
   final List<String> to;
   final List<String> cc;
+  final List<String> bcc;
   final String subject;
   final String body;
 }
@@ -33,10 +35,12 @@ class MailtoParser {
 
     final toParam = params['to']?.expand(_splitAddresses).toList() ?? [];
     final ccParam = params['cc']?.expand(_splitAddresses).toList() ?? [];
+    final bccParam = params['bcc']?.expand(_splitAddresses).toList() ?? [];
 
     return MailtoData(
       to: [...pathAddresses, ...toParam],
       cc: ccParam,
+      bcc: bccParam,
       subject: params['subject']?.firstOrNull ?? '',
       body: params['body']?.firstOrNull ?? '',
     );

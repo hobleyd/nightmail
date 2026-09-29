@@ -10,6 +10,7 @@ class SaveServerDraftParams {
     this.existingDraftId,
     required this.toAddresses,
     this.ccAddresses = const [],
+    this.bccAddresses = const [],
     required this.subject,
     required this.body,
     this.bodyType = EmailBodyType.text,
@@ -19,6 +20,7 @@ class SaveServerDraftParams {
   final String? existingDraftId;
   final List<String> toAddresses;
   final List<String> ccAddresses;
+  final List<String> bccAddresses;
   final String subject;
   final String body;
   final EmailBodyType bodyType;
@@ -36,6 +38,7 @@ class SaveServerDraft {
         draftId: params.existingDraftId!,
         toAddresses: params.toAddresses,
         ccAddresses: params.ccAddresses,
+      bccAddresses: params.bccAddresses,
         subject: params.subject,
         body: params.body,
         bodyType: params.bodyType,
@@ -45,6 +48,7 @@ class SaveServerDraft {
     return _repository.createServerDraft(
       toAddresses: params.toAddresses,
       ccAddresses: params.ccAddresses,
+      bccAddresses: params.bccAddresses,
       subject: params.subject,
       body: params.body,
       bodyType: params.bodyType,

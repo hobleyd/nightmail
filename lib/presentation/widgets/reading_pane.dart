@@ -2520,6 +2520,14 @@ class _EmailHeader extends StatelessWidget {
                 recipients: email.ccRecipients,
               ),
             ],
+            if (email.bccRecipients.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              _RecipientRow(
+                icon: Icons.visibility_off_outlined,
+                label: 'Bcc',
+                recipients: email.bccRecipients,
+              ),
+            ],
             const SizedBox(height: 6),
             _MetaRow(
               icon: Icons.schedule_rounded,
@@ -3892,6 +3900,11 @@ class _EmlBodyView extends StatelessWidget {
                 _EmlRecipientLine(
                   label: 'Cc',
                   recipients: email.ccRecipients,
+                ),
+              if (email.bccRecipients.isNotEmpty)
+                _EmlRecipientLine(
+                  label: 'Bcc',
+                  recipients: email.bccRecipients,
                 ),
               if (email.attachments.isNotEmpty) ...[
                 const SizedBox(height: 10),

@@ -70,6 +70,45 @@ void main() {
     });
   });
 
+  group('GraphApiDatasourceImpl.sendEmail — BCC recipients', () {
+    test('includes bccRecipients when bccAddresses is non-empty', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _voidResp());
+
+      await datasource.sendEmail(
+        toAddresses: ['to@example.com'],
+        bccAddresses: ['Dan Smith <dan@example.com>', 'eve@example.com'],
+        subject: 'Subject',
+        body: 'Body',
+      );
+
+      final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      final message = body['message'] as Map;
+      expect(message.containsKey('ccRecipients'), isFalse);
+      final bcc = message['bccRecipients'] as List;
+      expect(bcc, [
+        {'emailAddress': {'address': 'dan@example.com'}},
+        {'emailAddress': {'address': 'eve@example.com'}},
+      ]);
+    });
+
+    test('omits bccRecipients key when bccAddresses is empty', () async {
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _voidResp());
+
+      await datasource.sendEmail(
+        toAddresses: ['to@example.com'],
+        subject: 'Subject',
+        body: 'Body',
+      );
+
+      final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      expect((body['message'] as Map).containsKey('bccRecipients'), isFalse);
+    });
+  });
+
   group('GraphApiDatasourceImpl.sendEmail — CC recipients', () {
     test('includes ccRecipients when ccAddresses is non-empty', () async {
       when(mockDio.post<void>(any, data: anyNamed('data')))

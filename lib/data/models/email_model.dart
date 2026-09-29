@@ -15,6 +15,7 @@ class EmailModel extends Email {
     required super.from,
     required super.toRecipients,
     required super.ccRecipients,
+    super.bccRecipients,
     required super.bodyPreview,
     required super.body,
     required super.bodyType,
@@ -48,6 +49,9 @@ class EmailModel extends Email {
           .map((r) => EmailAddressModel.fromJson(r as Map<String, dynamic>))
           .toList(),
       ccRecipients: (json['ccRecipients'] as List<dynamic>? ?? [])
+          .map((r) => EmailAddressModel.fromJson(r as Map<String, dynamic>))
+          .toList(),
+      bccRecipients: (json['bccRecipients'] as List<dynamic>? ?? [])
           .map((r) => EmailAddressModel.fromJson(r as Map<String, dynamic>))
           .toList(),
       bodyPreview: decodeHtmlEntities(json['bodyPreview'] as String? ?? ''),
@@ -251,6 +255,9 @@ class EmailModel extends Email {
           .map(EmailAddressModel.fromEntity)
           .toList(),
       ccRecipients: entity.ccRecipients
+          .map(EmailAddressModel.fromEntity)
+          .toList(),
+      bccRecipients: entity.bccRecipients
           .map(EmailAddressModel.fromEntity)
           .toList(),
       bodyPreview: entity.bodyPreview,

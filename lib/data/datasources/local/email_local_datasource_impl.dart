@@ -765,6 +765,7 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
       'from': _addressToJson(email.from),
       'toRecipients': email.toRecipients.map(_addressToJson).toList(),
       'ccRecipients': email.ccRecipients.map(_addressToJson).toList(),
+      'bccRecipients': email.bccRecipients.map(_addressToJson).toList(),
       'bodyPreview': email.bodyPreview,
       'isRead': email.isRead,
       'isFlagged': email.isFlagged,
@@ -882,6 +883,11 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
           .map(_addressFromJson)
           .toList(),
       ccRecipients: (j['ccRecipients'] as List<dynamic>)
+          .cast<Map<String, dynamic>>()
+          .map(_addressFromJson)
+          .toList(),
+      // Absent on rows cached before Bcc was recorded.
+      bccRecipients: (j['bccRecipients'] as List<dynamic>? ?? const [])
           .cast<Map<String, dynamic>>()
           .map(_addressFromJson)
           .toList(),

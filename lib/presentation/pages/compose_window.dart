@@ -46,8 +46,6 @@ class ComposeWindowApp extends StatelessWidget {
   /// `openBodyLink`, which deliberately does not send that one back out to the
   /// OS only to be handed straight back.
   ///
-  /// A `bcc` parameter is dropped, because nothing downstream of here — neither
-  /// [Email] nor the compose form — carries a BCC list yet.
   static Future<void> openMailto(BuildContext context, Uri uri) {
     final data = MailtoParser.parse(uri);
     return open(
@@ -61,6 +59,8 @@ class ComposeWindowApp extends StatelessWidget {
             data.to.map((a) => EmailAddress(address: a)).toList(),
         ccRecipients:
             data.cc.map((a) => EmailAddress(address: a)).toList(),
+        bccRecipients:
+            data.bcc.map((a) => EmailAddress(address: a)).toList(),
         bodyPreview: '',
         body: data.body,
         bodyType: EmailBodyType.text,
@@ -135,6 +135,9 @@ class ComposeWindowApp extends StatelessWidget {
             .map((r) => {'address': r.address, 'name': r.name})
             .toList(),
         'ccRecipients': draftEmail.ccRecipients
+            .map((r) => {'address': r.address, 'name': r.name})
+            .toList(),
+        'bccRecipients': draftEmail.bccRecipients
             .map((r) => {'address': r.address, 'name': r.name})
             .toList(),
         'body': draftEmail.body,
@@ -511,6 +514,9 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage>
           .map((r) => parseAddress(r as Map<String, dynamic>))
           .toList(),
       ccRecipients: (map['ccRecipients'] as List<dynamic>? ?? [])
+          .map((r) => parseAddress(r as Map<String, dynamic>))
+          .toList(),
+      bccRecipients: (map['bccRecipients'] as List<dynamic>? ?? [])
           .map((r) => parseAddress(r as Map<String, dynamic>))
           .toList(),
       bodyPreview: '',

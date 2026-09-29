@@ -44,6 +44,7 @@ class _RecordingEmailRepository extends Fake implements EmailRepository {
   Future<Either<Failure, String>> createServerDraft({
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String subject,
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,
@@ -62,6 +63,7 @@ class _RecordingEmailRepository extends Fake implements EmailRepository {
     required String draftId,
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String subject,
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,
@@ -86,6 +88,7 @@ class _RecordingEmailRepository extends Fake implements EmailRepository {
   Future<Either<Failure, Unit>> sendEmail({
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String subject,
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,
@@ -176,11 +179,15 @@ void main() {
     return key.currentState!;
   }
 
+  // To, Cc, then Subject: the recipient rows are TextFields too, and the
+  // Bcc row is collapsed until asked for.
+  final subjectField = find.byType(TextField).at(2);
+
   testWidgets(
       'the window-close path raises the same save-or-discard prompt as Cancel',
       (tester) async {
     final state = await pumpForm(tester);
-    await tester.enterText(find.byType(TextField).at(2), 'Half-written');
+    await tester.enterText(subjectField, 'Half-written');
     await tester.pump();
 
     state.requestClose();
@@ -197,7 +204,7 @@ void main() {
   testWidgets('a second close request while the prompt is up does not stack',
       (tester) async {
     final state = await pumpForm(tester);
-    await tester.enterText(find.byType(TextField).at(2), 'Half-written');
+    await tester.enterText(subjectField, 'Half-written');
     await tester.pump();
 
     state.requestClose();
@@ -229,7 +236,7 @@ void main() {
     final state = await pumpForm(tester, existingDraftId: 'draft-99');
     // Typing arms the 1.5 s autosave; discarding before it fires must not
     // re-upload the draft the user just threw away.
-    await tester.enterText(find.byType(TextField).at(2), 'Half-written');
+    await tester.enterText(subjectField, 'Half-written');
     await tester.pump();
 
     state.requestClose();
@@ -257,7 +264,7 @@ void main() {
   /// during the send would time out rather than finish.
   Future<void> send(WidgetTester tester) async {
     await tester.enterText(find.byType(TextField).at(0), 'you@example.com');
-    await tester.enterText(find.byType(TextField).at(2), 'Subject');
+    await tester.enterText(subjectField, 'Subject');
     await tester.pump();
     await tester.tap(find.text('Send'));
     for (var i = 0; i < 4; i++) {
@@ -304,13 +311,13 @@ void main() {
       await pumpForm(tester);
 
       // First pause: the timer fires and the create goes on the wire.
-      await tester.enterText(find.byType(TextField).at(2), 'First');
+      await tester.enterText(subjectField, 'First');
       await tester.pump(const Duration(milliseconds: 1600));
       expect(repository.createsStarted, 1);
 
       // Second pause, while that create is still in flight. The form does not
       // yet know an id, which is what used to make this a second create.
-      await tester.enterText(find.byType(TextField).at(2), 'First, then more');
+      await tester.enterText(subjectField, 'First, then more');
       await tester.pump(const Duration(milliseconds: 1600));
       expect(repository.createsStarted, 1,
           reason: 'the second save must wait for the first to mint an id');
@@ -335,7 +342,7 @@ void main() {
       repository.createGate = gate;
       await pumpForm(tester);
       await tester.enterText(find.byType(TextField).at(0), 'you@example.com');
-      await tester.enterText(find.byType(TextField).at(2), 'Subject');
+      await tester.enterText(subjectField, 'Subject');
       await tester.pump(const Duration(milliseconds: 1600));
       expect(repository.createsStarted, 1);
 
@@ -358,7 +365,7 @@ void main() {
       final gate = Completer<void>();
       repository.createGate = gate;
       final state = await pumpForm(tester);
-      await tester.enterText(find.byType(TextField).at(2), 'Half-written');
+      await tester.enterText(subjectField, 'Half-written');
       await tester.pump(const Duration(milliseconds: 1600));
       expect(repository.createsStarted, 1);
 
@@ -418,5 +425,33 @@ void main() {
     await tester.tap(find.byTooltip('Dismiss'));
     await tester.pumpAndSettle();
     expect(find.text('Mailbox unavailable'), findsNothing);
+  });
+
+  testWidgets('a message with only a Cc recipient can be sent', (tester) async {
+    await pumpForm(tester);
+    await tester.enterText(find.byType(TextField).at(1), 'copy@example.com');
+    await tester.enterText(subjectField, 'Cc only');
+    await tester.pump();
+
+    // No pumpAndSettle: the Sending shimmer never settles (see `send`).
+    await tester.tap(find.text('Send'));
+    for (var i = 0; i < 4; i++) {
+      await tester.pump();
+    }
+
+    expect(find.text('Please enter at least one recipient'), findsNothing);
+    expect(repository.sent, ['Cc only']);
+  });
+
+  testWidgets('a message with no recipient at all is refused', (tester) async {
+    await pumpForm(tester);
+    await tester.enterText(subjectField, 'Nobody');
+    await tester.pump();
+
+    await tester.tap(find.text('Send'));
+    await tester.pump();
+
+    expect(find.text('Please enter at least one recipient'), findsOneWidget);
+    expect(repository.sent, isEmpty);
   });
 }

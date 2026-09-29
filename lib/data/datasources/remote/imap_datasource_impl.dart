@@ -996,6 +996,7 @@ class ImapDatasourceImpl
       from: fromModel,
       toRecipients: mapAddresses(msg.to),
       ccRecipients: mapAddresses(msg.cc),
+      bccRecipients: mapAddresses(msg.bcc),
       bodyPreview: bodyPreview,
       body: body,
       bodyType: bodyType,
@@ -1665,6 +1666,7 @@ class ImapDatasourceImpl
   Future<void> sendEmail({
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String subject,
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,
@@ -1674,6 +1676,7 @@ class ImapDatasourceImpl
       ..from = [MailAddress(_account.senderName, _account.emailAddress)]
       ..to = toAddresses.map(parseMailAddress).toList()
       ..cc = ccAddresses.map(parseMailAddress).toList()
+      ..bcc = bccAddresses.map(parseMailAddress).toList()
       ..subject = subject;
     if (bodyType == EmailBodyType.html) {
       builder.addTextHtml(body);
@@ -1721,6 +1724,7 @@ class ImapDatasourceImpl
     bool replyAll = false,
     List<String> toAddresses = const [],
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
@@ -1736,6 +1740,9 @@ class ImapDatasourceImpl
     }
     if (ccAddresses.isNotEmpty) {
       builder.cc = ccAddresses.map(parseMailAddress).toList();
+    }
+    if (bccAddresses.isNotEmpty) {
+      builder.bcc = bccAddresses.map(parseMailAddress).toList();
     }
     if (bodyType == EmailBodyType.html) {
       builder.addTextHtml(comment);
@@ -1758,6 +1765,7 @@ class ImapDatasourceImpl
     required String messageId,
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String comment,
     String? subject,
     List<String> excludedAttachmentIds = const [],
@@ -1778,6 +1786,10 @@ class ImapDatasourceImpl
 
     if (ccAddresses.isNotEmpty) {
       builder.cc = ccAddresses.map(parseMailAddress).toList();
+    }
+
+    if (bccAddresses.isNotEmpty) {
+      builder.bcc = bccAddresses.map(parseMailAddress).toList();
     }
 
     if (bodyType == EmailBodyType.html) {
@@ -2282,6 +2294,7 @@ class ImapDatasourceImpl
   Future<String> createServerDraft({
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String subject,
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,
@@ -2290,6 +2303,7 @@ class ImapDatasourceImpl
       withConnection(() => _createServerDraftInner(
             toAddresses: toAddresses,
             ccAddresses: ccAddresses,
+            bccAddresses: bccAddresses,
             subject: subject,
             body: body,
             bodyType: bodyType,
@@ -2299,6 +2313,7 @@ class ImapDatasourceImpl
   Future<String> _createServerDraftInner({
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String subject,
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,
@@ -2318,6 +2333,7 @@ class ImapDatasourceImpl
         fromAddress: _account.emailAddress,
         toAddresses: toAddresses,
         ccAddresses: ccAddresses,
+        bccAddresses: bccAddresses,
         subject: subject,
         body: body,
         isHtml: bodyType == EmailBodyType.html,
@@ -2348,6 +2364,7 @@ class ImapDatasourceImpl
     required String draftId,
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String subject,
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,
@@ -2357,6 +2374,7 @@ class ImapDatasourceImpl
             draftId: draftId,
             toAddresses: toAddresses,
             ccAddresses: ccAddresses,
+            bccAddresses: bccAddresses,
             subject: subject,
             body: body,
             bodyType: bodyType,
@@ -2367,6 +2385,7 @@ class ImapDatasourceImpl
     required String draftId,
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String subject,
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,
@@ -2386,6 +2405,7 @@ class ImapDatasourceImpl
         fromAddress: _account.emailAddress,
         toAddresses: toAddresses,
         ccAddresses: ccAddresses,
+        bccAddresses: bccAddresses,
         subject: subject,
         body: body,
         isHtml: bodyType == EmailBodyType.html,
@@ -2734,6 +2754,7 @@ class _DraftMimeParams {
     required this.fromAddress,
     required this.toAddresses,
     required this.ccAddresses,
+    required this.bccAddresses,
     required this.subject,
     required this.body,
     required this.isHtml,
@@ -2745,6 +2766,7 @@ class _DraftMimeParams {
   final String fromAddress;
   final List<String> toAddresses;
   final List<String> ccAddresses;
+  final List<String> bccAddresses;
   final String subject;
   final String body;
   final bool isHtml;
@@ -2765,6 +2787,7 @@ String _buildDraftMimeText(_DraftMimeParams p) {
     ..from = [MailAddress(p.fromName, p.fromAddress)]
     ..to = p.toAddresses.map(parseMailAddress).toList()
     ..cc = p.ccAddresses.map(parseMailAddress).toList()
+    ..bcc = p.bccAddresses.map(parseMailAddress).toList()
     ..subject = p.subject
     ..messageId = p.messageId;
   if (p.isHtml) {

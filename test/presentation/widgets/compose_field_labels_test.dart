@@ -16,7 +16,9 @@ import 'package:nightmail/domain/usecases/ai/compose_reply.dart';
 import 'package:nightmail/domain/usecases/delete_server_draft.dart';
 import 'package:nightmail/domain/usecases/save_server_draft.dart';
 import 'package:nightmail/domain/usecases/search_contacts.dart';
+import 'package:nightmail/domain/entities/email_address.dart';
 import 'package:nightmail/domain/usecases/send_email.dart';
+import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/injection_container.dart';
 import 'package:nightmail/presentation/blocs/ai/ai_compose_cubit.dart';
 import 'package:nightmail/presentation/blocs/compose/compose_bloc.dart';
@@ -31,6 +33,7 @@ class _FakeEmailRepository extends Fake implements EmailRepository {
   Future<Either<Failure, String>> createServerDraft({
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String subject,
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,
@@ -43,6 +46,7 @@ class _FakeEmailRepository extends Fake implements EmailRepository {
     required String draftId,
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String subject,
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,
@@ -107,7 +111,10 @@ void main() {
 
   /// A plain-text compose form (no webview) at a phone's width, with the
   /// system text size turned up.
-  Future<void> pumpForm(WidgetTester tester, {required double textScale}) async {
+  Future<void> pumpForm(WidgetTester tester,
+      {required double textScale,
+      List<Account> accounts = const [],
+      Email? draftEmail}) async {
     await tester.binding.setSurfaceSize(const Size(390, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(MaterialApp(
@@ -124,12 +131,20 @@ void main() {
             onClose: () {},
             fromAddress: 'me@example.com',
             accountId: 'acct-1',
+            accounts: accounts,
+            draftEmail: draftEmail,
             scrollable: true,
             defaultComposeFormat: EmailBodyType.text,
           ),
         ),
       ),
     ));
+    await tester.pump();
+  }
+
+  /// Opens the collapsed Bcc row through the Cc label's expander.
+  Future<void> showBcc(WidgetTester tester) async {
+    await tester.tap(find.text('Cc'));
     await tester.pump();
   }
 
@@ -166,12 +181,119 @@ void main() {
   testWidgets('every field label shares the same column width',
       (tester) async {
     await pumpForm(tester, textScale: 1.3);
+    await showBcc(tester);
 
     final widths = <double>{
-      for (final label in ['From', 'To', 'Cc'])
+      for (final label in ['From', 'To', 'Cc', 'Bcc'])
         tester.renderObject<RenderParagraph>(find.text(label)).constraints.maxWidth,
       subjectLabel(tester).constraints.maxWidth,
     };
     expect(widths, hasLength(1), reason: 'the fields must stay aligned');
+  });
+
+  /// Regression: the To/Cc labels sat a fixed 6px below their row's top while
+  /// the hint text sat at the top of the row, so the two never shared a line;
+  /// the Subject row, with a different inset, happened to. Every row now
+  /// aligns on the text baseline, so the label and whatever is beside it —
+  /// hint, chip, account name — read as one line.
+  testWidgets('every field label sits on the same baseline as its field',
+      (tester) async {
+    await pumpForm(tester, textScale: 1.0);
+    await showBcc(tester);
+
+    double baselineOf(RenderParagraph paragraph) {
+      final top = paragraph.localToGlobal(Offset.zero).dy;
+      return top +
+          paragraph.getDryBaseline(
+              paragraph.constraints, TextBaseline.alphabetic)!;
+    }
+
+    RenderParagraph paragraph(String text) =>
+        tester.renderObject<RenderParagraph>(find.text(text));
+
+    const rows = {
+      'From': 'me@example.com',
+      'To': 'recipient@example.com',
+      'Cc': 'cc@example.com',
+      'Bcc': 'bcc@example.com',
+    };
+    for (final MapEntry(key: label, value: field) in rows.entries) {
+      expect(baselineOf(paragraph(label)),
+          moreOrLessEquals(baselineOf(paragraph(field)), epsilon: 0.5),
+          reason: '$label label vs its field');
+    }
+    final subjectHint = tester
+        .renderObjectList<RenderParagraph>(find.text('Subject'))
+        .reduce((a, b) => a.constraints.maxWidth > b.constraints.maxWidth ? a : b);
+    expect(baselineOf(subjectLabel(tester)),
+        moreOrLessEquals(baselineOf(subjectHint), epsilon: 0.5),
+        reason: 'Subject label vs its hint');
+  });
+
+  testWidgets('with several accounts the From label sits on the dropdown text',
+      (tester) async {
+    const accounts = [
+      GmailAccount(id: 'acct-1', displayName: 'Alice', emailAddress: 'a@x.com'),
+      GmailAccount(id: 'acct-2', displayName: 'Bob', emailAddress: 'b@x.com'),
+    ];
+    await pumpForm(tester, textScale: 1.0, accounts: accounts);
+
+    double baselineOf(RenderParagraph paragraph) =>
+        paragraph.localToGlobal(Offset.zero).dy +
+        paragraph.getDryBaseline(
+            paragraph.constraints, TextBaseline.alphabetic)!;
+
+    final label = tester.renderObject<RenderParagraph>(find.text('From'));
+    // The dropdown lays out every item in a stack and shows the selected one.
+    final selected =
+        tester.renderObject<RenderParagraph>(find.text('Alice <a@x.com>'));
+    expect(baselineOf(label), moreOrLessEquals(baselineOf(selected), epsilon: 0.5));
+  });
+
+  group('the Bcc row', () {
+    testWidgets('is collapsed until the expander on the Cc row opens it',
+        (tester) async {
+      await pumpForm(tester, textScale: 1.0);
+      expect(find.text('Bcc'), findsNothing);
+      expect(find.byTooltip('Show Bcc'), findsOneWidget);
+
+      await showBcc(tester);
+      expect(find.text('Bcc'), findsOneWidget);
+      expect(find.byTooltip('Hide Bcc'), findsOneWidget);
+      expect(find.byTooltip('Show Bcc'), findsNothing);
+
+      await showBcc(tester);
+      expect(find.text('Bcc'), findsNothing);
+      expect(find.byTooltip('Show Bcc'), findsOneWidget);
+    });
+
+    testWidgets('starts open for a draft that already has Bcc recipients',
+        (tester) async {
+      await pumpForm(
+        tester,
+        textScale: 1.0,
+        draftEmail: Email(
+          id: 'd1',
+          subject: 'Draft',
+          from: const EmailAddress(address: 'me@example.com'),
+          toRecipients: const [],
+          ccRecipients: const [],
+          bccRecipients: const [EmailAddress(address: 'hidden@example.com')],
+          bodyPreview: '',
+          body: '',
+          bodyType: EmailBodyType.text,
+          isRead: true,
+          receivedDateTime: DateTime(2026, 9, 29),
+          importance: EmailImportance.normal,
+        ),
+      );
+      expect(find.text('Bcc'), findsOneWidget);
+      expect(find.text('hidden@example.com'), findsOneWidget);
+
+      // With recipients in it the row cannot be hidden from sight.
+      await showBcc(tester);
+      expect(find.text('Bcc'), findsOneWidget);
+      expect(find.byTooltip('Hide Bcc'), findsOneWidget);
+    });
   });
 }

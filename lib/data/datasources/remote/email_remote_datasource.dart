@@ -29,6 +29,7 @@ abstract interface class EmailRemoteDatasource {
   Future<void> sendEmail({
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String subject,
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,
@@ -45,6 +46,7 @@ abstract interface class EmailRemoteDatasource {
     bool replyAll = false,
     List<String> toAddresses = const [],
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   });
@@ -54,6 +56,7 @@ abstract interface class EmailRemoteDatasource {
     required String messageId,
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String comment,
     String? subject,
     List<String> excludedAttachmentIds = const [],
@@ -184,6 +187,7 @@ abstract interface class EmailRemoteDatasource {
   Future<String> createServerDraft({
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String subject,
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,
@@ -195,6 +199,7 @@ abstract interface class EmailRemoteDatasource {
     required String draftId,
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String subject,
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,

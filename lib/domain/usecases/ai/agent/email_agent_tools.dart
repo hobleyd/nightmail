@@ -242,6 +242,8 @@ String _encodeEmail(Email e, bool includeBodies) {
     'from': _formatAddress(e.from),
     'to': e.toRecipients.map(_formatAddress).toList(),
     'cc': e.ccRecipients.map(_formatAddress).toList(),
+    if (e.bccRecipients.isNotEmpty)
+      'bcc': e.bccRecipients.map(_formatAddress).toList(),
     'subject': e.subject,
     'date': e.receivedDateTime.toIso8601String(),
     'isRead': e.isRead,

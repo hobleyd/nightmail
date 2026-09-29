@@ -494,6 +494,8 @@ class GmailDatasourceImpl
             email.toRecipients.map(EmailAddressModel.fromEntity).toList(),
         ccRecipients:
             email.ccRecipients.map(EmailAddressModel.fromEntity).toList(),
+        bccRecipients:
+            email.bccRecipients.map(EmailAddressModel.fromEntity).toList(),
         bodyPreview: email.bodyPreview,
         body: email.body,
         bodyType: email.bodyType,
@@ -589,6 +591,7 @@ class GmailDatasourceImpl
   Future<void> sendEmail({
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String subject,
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,
@@ -600,6 +603,7 @@ class GmailDatasourceImpl
         ..from = _fromAddress(fromEmail)
         ..to = toAddresses.map(parseMailAddress).toList()
         ..cc = ccAddresses.map(parseMailAddress).toList()
+        ..bcc = bccAddresses.map(parseMailAddress).toList()
         ..subject = subject;
       if (bodyType == EmailBodyType.html) {
         builder.addTextHtml(body);
@@ -625,6 +629,7 @@ class GmailDatasourceImpl
     bool replyAll = false,
     List<String> toAddresses = const [],
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
@@ -669,6 +674,9 @@ class GmailDatasourceImpl
       if (ccAddresses.isNotEmpty) {
         builder.cc = ccAddresses.map(parseMailAddress).toList();
       }
+      if (bccAddresses.isNotEmpty) {
+        builder.bcc = bccAddresses.map(parseMailAddress).toList();
+      }
       if (bodyType == EmailBodyType.html) {
         builder.addTextHtml(comment);
       } else {
@@ -705,6 +713,7 @@ class GmailDatasourceImpl
     required String messageId,
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String comment,
     String? subject,
     List<String> excludedAttachmentIds = const [],
@@ -735,6 +744,10 @@ class GmailDatasourceImpl
 
       if (ccAddresses.isNotEmpty) {
         builder.cc = ccAddresses.map(parseMailAddress).toList();
+      }
+
+      if (bccAddresses.isNotEmpty) {
+        builder.bcc = bccAddresses.map(parseMailAddress).toList();
       }
 
       builder.from = _fromAddress(fromEmail);
@@ -1330,6 +1343,7 @@ class GmailDatasourceImpl
   Future<String> createServerDraft({
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String subject,
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,
@@ -1342,6 +1356,7 @@ class GmailDatasourceImpl
         fromDisplayName: displayName,
         toAddresses: toAddresses,
         ccAddresses: ccAddresses,
+        bccAddresses: bccAddresses,
         subject: subject,
         body: body,
         isHtml: bodyType == EmailBodyType.html,
@@ -1364,6 +1379,7 @@ class GmailDatasourceImpl
     required String draftId,
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String subject,
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,
@@ -1376,6 +1392,7 @@ class GmailDatasourceImpl
         fromDisplayName: displayName,
         toAddresses: toAddresses,
         ccAddresses: ccAddresses,
+        bccAddresses: bccAddresses,
         subject: subject,
         body: body,
         isHtml: bodyType == EmailBodyType.html,
@@ -1850,6 +1867,7 @@ class _DraftMimeParams {
     this.fromDisplayName = '',
     required this.toAddresses,
     required this.ccAddresses,
+    required this.bccAddresses,
     required this.subject,
     required this.body,
     required this.isHtml,
@@ -1860,6 +1878,7 @@ class _DraftMimeParams {
   final String fromDisplayName;
   final List<String> toAddresses;
   final List<String> ccAddresses;
+  final List<String> bccAddresses;
   final String subject;
   final String body;
   final bool isHtml;
@@ -1886,6 +1905,7 @@ String _buildDraftRawBase64(_DraftMimeParams p) {
           ]
     ..to = p.toAddresses.map(parseMailAddress).toList()
     ..cc = p.ccAddresses.map(parseMailAddress).toList()
+    ..bcc = p.bccAddresses.map(parseMailAddress).toList()
     ..subject = p.subject;
   if (p.isHtml) {
     builder.addTextHtml(p.body);

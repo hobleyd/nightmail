@@ -21,6 +21,7 @@ class Email extends Equatable {
     required this.from,
     required this.toRecipients,
     required this.ccRecipients,
+    this.bccRecipients = const [],
     required this.bodyPreview,
     required this.body,
     required this.bodyType,
@@ -43,6 +44,11 @@ class Email extends Equatable {
   final EmailAddress from;
   final List<EmailAddress> toRecipients;
   final List<EmailAddress> ccRecipients;
+
+  /// Only ever populated on mail this account authored — a draft or a Sent
+  /// copy. A received message never carries the header; the provider strips
+  /// it before delivery.
+  final List<EmailAddress> bccRecipients;
   final String bodyPreview;
   final String body;
   final EmailBodyType bodyType;
@@ -134,6 +140,7 @@ class Email extends Equatable {
       from: from,
       toRecipients: toRecipients,
       ccRecipients: ccRecipients,
+      bccRecipients: bccRecipients,
       bodyPreview: bodyPreview,
       body: body,
       bodyType: bodyType,
@@ -159,6 +166,7 @@ class Email extends Equatable {
         from,
         toRecipients,
         ccRecipients,
+        bccRecipients,
         bodyPreview,
         isRead,
         // In props deliberately: a flag-only change is otherwise content-equal,

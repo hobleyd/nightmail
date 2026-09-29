@@ -17,6 +17,7 @@ final class ComposeSubmitted extends ComposeEvent {
     this.originalMessageId,
     required this.toAddresses,
     this.ccAddresses = const [],
+    this.bccAddresses = const [],
     required this.subject,
     required this.body,
     this.excludedAttachmentIds = const [],
@@ -29,6 +30,7 @@ final class ComposeSubmitted extends ComposeEvent {
   final String? originalMessageId;
   final List<String> toAddresses;
   final List<String> ccAddresses;
+  final List<String> bccAddresses;
   final String subject;
   final String body;
   final List<String> excludedAttachmentIds;
@@ -42,6 +44,7 @@ final class ComposeSubmitted extends ComposeEvent {
         originalMessageId,
         toAddresses,
         ccAddresses,
+        bccAddresses,
         subject,
         body,
         excludedAttachmentIds,

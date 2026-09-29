@@ -1085,6 +1085,9 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                 'ccRecipients': full.ccRecipients
                     .map((r) => {'address': r.address, 'name': r.name})
                     .toList(),
+                'bccRecipients': full.bccRecipients
+                    .map((r) => {'address': r.address, 'name': r.name})
+                    .toList(),
                 'body': full.body,
                 'bodyType': full.bodyType.name,
                 'attachments': full.attachments

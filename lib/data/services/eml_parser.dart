@@ -109,6 +109,7 @@ Email _toEmail(MimeMessage msg, {required String id}) {
     from: fromModel,
     toRecipients: mapAddresses(msg.to),
     ccRecipients: mapAddresses(msg.cc),
+    bccRecipients: mapAddresses(msg.bcc),
     bodyPreview: preview.length > 200 ? preview.substring(0, 200) : preview,
     body: body,
     bodyType: bodyType,

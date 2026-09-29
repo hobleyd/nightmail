@@ -476,6 +476,7 @@ EmailModel _parseMessage(Map<String, dynamic> json, {required bool fullBody}) {
   final fromStr = headerValue('From');
   final toStr = headerValue('To');
   final ccStr = headerValue('Cc');
+  final bccStr = headerValue('Bcc');
   final dateStr = headerValue('Date');
 
   DateTime receivedAt;
@@ -554,6 +555,7 @@ EmailModel _parseMessage(Map<String, dynamic> json, {required bool fullBody}) {
     from: _parseAddress(fromStr),
     toRecipients: _parseAddressList(toStr),
     ccRecipients: _parseAddressList(ccStr),
+    bccRecipients: _parseAddressList(bccStr),
     bodyPreview: snippet,
     body: body,
     bodyType: bodyType,

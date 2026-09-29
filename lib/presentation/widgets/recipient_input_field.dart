@@ -36,6 +36,8 @@ class RecipientInputField extends StatefulWidget {
     this.onDropAccepted,
     this.onTabToNext,
     this.chipBadgeBuilder,
+    this.leading,
+    this.onLabelTap,
   }) : assert(
          fieldId == null || onDropAccepted != null,
          'onDropAccepted is required when fieldId is set',
@@ -62,6 +64,14 @@ class RecipientInputField extends StatefulWidget {
   /// state it owns (e.g. a meeting guest's acceptance tick) without this
   /// widget knowing anything about that state.
   final Widget? Function(String address)? chipBadgeBuilder;
+
+  /// Drawn before the label, inside the [labelWidth] column — an expander
+  /// icon, or a blank box the same width so this row's label lines up with
+  /// a sibling row that has one.
+  final Widget? leading;
+
+  /// Makes the whole label cell (leading and text) a tap target.
+  final VoidCallback? onLabelTap;
 
   @override
   State<RecipientInputField> createState() => RecipientInputFieldState();
@@ -345,23 +355,14 @@ class RecipientInputFieldState extends State<RecipientInputField> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    // Baseline, not a fixed top inset: the wrap reports its first run's text
+    // baseline, so the label lines up with the hint, a chip's name and the
+    // caret line alike, whatever the fonts on this platform measure.
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.baseline,
+      textBaseline: TextBaseline.alphabetic,
       children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 6),
-          child: SizedBox(
-            width: widget.labelWidth,
-            child: Text(
-              widget.label,
-              style: TextStyle(
-                color: c.textDimmed,
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-        ),
+        _buildLabel(c),
         Expanded(
           child: Focus(
             focusNode: _chipKeyFocus,
@@ -386,6 +387,38 @@ class RecipientInputFieldState extends State<RecipientInputField> {
         ),
       ],
     );
+  }
+
+  Widget _buildLabel(AppColors c) {
+    final text = Text(
+      widget.label,
+      style: TextStyle(
+        color: c.textDimmed,
+        fontSize: 12,
+        fontWeight: FontWeight.w500,
+      ),
+    );
+    final leading = widget.leading;
+    // The inner Row still reports the text's baseline — an icon has none —
+    // so the outer baseline alignment is unaffected by the leading widget.
+    Widget cell = SizedBox(
+      width: widget.labelWidth,
+      child: leading == null
+          ? text
+          : Row(children: [leading, Expanded(child: text)]),
+    );
+    final onLabelTap = widget.onLabelTap;
+    if (onLabelTap != null) {
+      cell = MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onLabelTap,
+          child: cell,
+        ),
+      );
+    }
+    return cell;
   }
 
   Widget _buildInputArea(AppColors c) {

@@ -18,6 +18,7 @@ class SendEmail {
       ComposeMode.newEmail => _repository.sendEmail(
           toAddresses: params.toAddresses,
           ccAddresses: params.ccAddresses,
+          bccAddresses: params.bccAddresses,
           subject: params.subject,
           body: params.body,
           bodyType: params.bodyType,
@@ -31,6 +32,7 @@ class SendEmail {
           replyAll: false,
           toAddresses: params.toAddresses,
           ccAddresses: params.ccAddresses,
+          bccAddresses: params.bccAddresses,
           bodyType: params.bodyType,
           newAttachments: params.newAttachments,
           accountId: params.fromAccountId,
@@ -42,6 +44,7 @@ class SendEmail {
           replyAll: true,
           toAddresses: params.toAddresses,
           ccAddresses: params.ccAddresses,
+          bccAddresses: params.bccAddresses,
           bodyType: params.bodyType,
           newAttachments: params.newAttachments,
           accountId: params.fromAccountId,
@@ -50,6 +53,7 @@ class SendEmail {
           messageId: params.originalMessageId!,
           toAddresses: params.toAddresses,
           ccAddresses: params.ccAddresses,
+          bccAddresses: params.bccAddresses,
           comment: params.body,
           subject: params.subject,
           excludedAttachmentIds: params.excludedAttachmentIds,
@@ -67,6 +71,7 @@ class SendEmailParams extends Equatable {
     this.originalMessageId,
     this.toAddresses = const [],
     this.ccAddresses = const [],
+    this.bccAddresses = const [],
     this.subject = '',
     required this.body,
     this.excludedAttachmentIds = const [],
@@ -79,6 +84,7 @@ class SendEmailParams extends Equatable {
   final String? originalMessageId;
   final List<String> toAddresses;
   final List<String> ccAddresses;
+  final List<String> bccAddresses;
   final String subject;
   final String body;
   final List<String> excludedAttachmentIds;
@@ -92,6 +98,7 @@ class SendEmailParams extends Equatable {
         originalMessageId,
         toAddresses,
         ccAddresses,
+        bccAddresses,
         subject,
         body,
         excludedAttachmentIds,

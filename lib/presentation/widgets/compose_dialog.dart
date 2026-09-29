@@ -190,8 +190,15 @@ class ComposeForm extends StatefulWidget {
 class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
   late List<String> _toRecipients;
   late List<String> _ccRecipients;
+  late List<String> _bccRecipients;
+
+  /// Whether the user has opened the Bcc row. The row is also forced open
+  /// while it holds recipients — see [_bccVisible] — so a list that will be
+  /// sent to can never be out of sight.
+  bool _showBcc = false;
   final _toFieldKey = GlobalKey<RecipientInputFieldState>();
   final _ccFieldKey = GlobalKey<RecipientInputFieldState>();
+  final _bccFieldKey = GlobalKey<RecipientInputFieldState>();
   late String? _selectedAccountId;
   late final TextEditingController _subjectController;
   late final TextEditingController _bodyController;
@@ -341,6 +348,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     _aiCubit = sl<AiComposeCubit>();
     _toRecipients = _parseAddresses(_initialTo());
     _ccRecipients = _parseAddresses(_initialCc());
+    _bccRecipients = _parseAddresses(_initialBcc());
     _selectedAccountId = widget.accountId ??
         (widget.accounts.isNotEmpty ? widget.accounts.first.id : null);
     _subjectController = TextEditingController(text: _initialSubject());
@@ -571,6 +579,38 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     };
   }
 
+  bool get _bccVisible => _showBcc || _bccRecipients.isNotEmpty;
+
+  void _toggleBcc() {
+    if (_bccRecipients.isNotEmpty) {
+      // Cannot be hidden while it has recipients; the tap lands in the
+      // field instead so it never reads as a dead control.
+      _bccFieldKey.currentState?.requestFocus();
+      return;
+    }
+    setState(() => _showBcc = !_showBcc);
+    if (_showBcc) {
+      WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _bccFieldKey.currentState?.requestFocus());
+    }
+  }
+
+  void _focusAfterCc() {
+    if (_bccVisible) {
+      _bccFieldKey.currentState?.requestFocus();
+    } else {
+      _subjectFocus.requestFocus();
+    }
+  }
+
+  /// Only a draft can bring a Bcc list in: a reply-all never copies one,
+  /// since the original's Bcc header was stripped before it reached us.
+  String _initialBcc() {
+    final draft = widget.draftEmail;
+    if (draft == null) return '';
+    return draft.bccRecipients.map((r) => r.address).join(', ');
+  }
+
   String _initialSubject() {
     if (widget.draftEmail != null) return widget.draftEmail!.subject;
     final email = widget.originalEmail;
@@ -593,6 +633,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     final hasPendingSave = !_sent && _draftTimer?.isActive == true;
     final to = List<String>.from(_toRecipients);
     final cc = List<String>.from(_ccRecipients);
+    final bcc = List<String>.from(_bccRecipients);
     final subject = _subjectController.text;
     final body = _bodyType == EmailBodyType.html
         ? _substituteInlineImageSrcs(_htmlBodyCache)
@@ -624,6 +665,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
           existingDraftId: draftId,
           toAddresses: to,
           ccAddresses: cc,
+          bccAddresses: bcc,
           subject: subject,
           body: body,
           bodyType: bodyType,
@@ -693,6 +735,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
         existingDraftId: _serverDraftId,
         toAddresses: _toRecipients,
         ccAddresses: _ccRecipients,
+        bccAddresses: _bccRecipients,
         subject: _subjectController.text,
         body: body,
         bodyType: _bodyType,
@@ -771,6 +814,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     return _serverDraftId != null ||
         _toRecipients.isNotEmpty ||
         _ccRecipients.isNotEmpty ||
+        _bccRecipients.isNotEmpty ||
         _subjectController.text.isNotEmpty ||
         (_bodyType == EmailBodyType.html
             ? !htmlEmpty
@@ -1251,22 +1295,31 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     return subject.isNotEmpty ? subject : _baseTitle;
   }
 
+  List<String> _recipientsOf(String fieldId) => switch (fieldId) {
+        'to' => _toRecipients,
+        'cc' => _ccRecipients,
+        _ => _bccRecipients,
+      };
+
+  void _setRecipientsOf(String fieldId, List<String> recipients) {
+    switch (fieldId) {
+      case 'to':
+        _toRecipients = recipients;
+      case 'cc':
+        _ccRecipients = recipients;
+      default:
+        _bccRecipients = recipients;
+    }
+  }
+
   void _handleDrop(String address, String fromFieldId, String toFieldId) {
     if (fromFieldId == toFieldId) return;
     setState(() {
-      if (fromFieldId == 'to') {
-        _toRecipients = List.from(_toRecipients)..remove(address);
-      } else {
-        _ccRecipients = List.from(_ccRecipients)..remove(address);
-      }
-      if (toFieldId == 'to') {
-        if (!_toRecipients.contains(address)) {
-          _toRecipients = List.from(_toRecipients)..add(address);
-        }
-      } else {
-        if (!_ccRecipients.contains(address)) {
-          _ccRecipients = List.from(_ccRecipients)..add(address);
-        }
+      _setRecipientsOf(
+          fromFieldId, List.from(_recipientsOf(fromFieldId))..remove(address));
+      final target = _recipientsOf(toFieldId);
+      if (!target.contains(address)) {
+        _setRecipientsOf(toFieldId, List.from(target)..add(address));
       }
     });
   }
@@ -1291,13 +1344,19 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     _draftTimer?.cancel();
     _toFieldKey.currentState?.flush();
     _ccFieldKey.currentState?.flush();
+    _bccFieldKey.currentState?.flush();
     final to = _toRecipients;
     final cc = _ccRecipients;
+    final bcc = _bccRecipients;
     final subject = _subjectController.text.trim();
 
+    // Any recipient will do: To is optional in RFC 5322, and every provider
+    // path delivers a Cc-only or Bcc-only message.
     if ((widget.mode == ComposeMode.newEmail ||
             widget.mode == ComposeMode.forward) &&
-        to.isEmpty) {
+        to.isEmpty &&
+        cc.isEmpty &&
+        bcc.isEmpty) {
       setState(() => _sent = false);
       showNotice('Please enter at least one recipient');
       return;
@@ -1353,6 +1412,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
           originalMessageId: widget.originalEmail?.id,
           toAddresses: to,
           ccAddresses: cc,
+          bccAddresses: bcc,
           subject: subject,
           body: effectiveBody,
           excludedAttachmentIds: _excludedAttachmentIds,
@@ -1494,6 +1554,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
           key: _toFieldKey,
           label: 'To',
           labelWidth: composeLabelWidth(context),
+          leading: const SizedBox(width: composeLabelGutter),
           fieldId: 'to',
           recipients: _toRecipients,
           onChanged: (r) {
@@ -1513,6 +1574,8 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
           key: _ccFieldKey,
           label: 'Cc',
           labelWidth: composeLabelWidth(context),
+          leading: _BccExpander(expanded: _bccVisible),
+          onLabelTap: _toggleBcc,
           fieldId: 'cc',
           recipients: _ccRecipients,
           onChanged: (r) {
@@ -1525,8 +1588,30 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
           hintText: 'cc@example.com',
           accountId: _selectedAccountId,
           accountDomain: _selectedAccountDomain,
-          onTabToNext: () => _subjectFocus.requestFocus(),
+          onTabToNext: _focusAfterCc,
         ),
+        if (_bccVisible) ...[
+          const SizedBox(height: 8),
+          RecipientInputField(
+            key: _bccFieldKey,
+            label: 'Bcc',
+            labelWidth: composeLabelWidth(context),
+            leading: const SizedBox(width: composeLabelGutter),
+            fieldId: 'bcc',
+            recipients: _bccRecipients,
+            onChanged: (r) {
+              setState(() => _bccRecipients = r);
+              _scheduleDraftSave();
+            },
+            onDropAccepted: (address, fromFieldId) =>
+                _handleDrop(address, fromFieldId, 'bcc'),
+            showInput: true,
+            hintText: 'bcc@example.com',
+            accountId: _selectedAccountId,
+            accountDomain: _selectedAccountDomain,
+            onTabToNext: () => _subjectFocus.requestFocus(),
+          ),
+        ],
         const SizedBox(height: 8),
         _FieldRow(
           label: 'Subject',
@@ -1853,12 +1938,17 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// The style every compose field label ("From", "To", "Cc", "Subject") is
-/// drawn in; the colour is added where it is drawn.
+/// The style every compose field label ("From", "To", "Cc", "Bcc",
+/// "Subject") is drawn in; the colour is added where it is drawn.
 const composeLabelStyle = TextStyle(fontSize: 12, fontWeight: FontWeight.w500);
 
+/// Room before every label for the Cc row's Bcc expander, so the labels stay
+/// in one column whether or not a row has one.
+const composeLabelGutter = 18.0;
+
 /// The width of the label column beside every compose field: the widest label
-/// as this device will actually draw it, plus the gap to the field.
+/// as this device will actually draw it, plus the gap to the field and the
+/// [composeLabelGutter] before it.
 ///
 /// A fixed 52 fit "Subject" at 12px in the desktop fonts at scale 1.0 and
 /// nowhere else: on a phone, with its own font and a larger system text size
@@ -1868,7 +1958,7 @@ double composeLabelWidth(BuildContext context) {
   final style = DefaultTextStyle.of(context).style.merge(composeLabelStyle);
   final scaler = MediaQuery.textScalerOf(context);
   var widest = 0.0;
-  for (final label in const ['From', 'To', 'Cc', 'Subject']) {
+  for (final label in const ['From', 'To', 'Cc', 'Bcc', 'Subject']) {
     final painter = TextPainter(
       text: TextSpan(text: label, style: style),
       textDirection: TextDirection.ltr,
@@ -1877,7 +1967,7 @@ double composeLabelWidth(BuildContext context) {
     if (painter.width > widest) widest = painter.width;
     painter.dispose();
   }
-  return widest + 8;
+  return composeLabelGutter + widest + 8;
 }
 
 String _stripHtml(String html) {
@@ -1970,10 +2060,10 @@ class _FromFieldRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final label = Padding(
-      padding: const EdgeInsets.only(top: 2),
-      child: SizedBox(
-        width: composeLabelWidth(context),
+    final label = SizedBox(
+      width: composeLabelWidth(context),
+      child: Padding(
+        padding: const EdgeInsets.only(left: composeLabelGutter),
         child: Text(
           'From',
           style: TextStyle(
@@ -1987,7 +2077,8 @@ class _FromFieldRow extends StatelessWidget {
 
     if (accounts.length <= 1) {
       return Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.baseline,
+        textBaseline: TextBaseline.alphabetic,
         children: [
           label,
           Expanded(
@@ -2003,8 +2094,12 @@ class _FromFieldRow extends StatelessWidget {
     final value =
         accounts.any((a) => a.id == selectedAccountId) ? selectedAccountId : accounts.first.id;
 
+    // The dense dropdown centres its text in a 24px button; the label rides
+    // on that text's baseline rather than the button's top edge, the same as
+    // every other field row.
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.baseline,
+      textBaseline: TextBaseline.alphabetic,
       children: [
         label,
         Expanded(
@@ -2030,6 +2125,29 @@ class _FromFieldRow extends StatelessWidget {
   }
 }
 
+/// The chevron before "Cc" that shows or hides the Bcc row. The tap itself
+/// is handled by the row's label cell, so the icon is purely the indicator.
+class _BccExpander extends StatelessWidget {
+  const _BccExpander({required this.expanded});
+
+  final bool expanded;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: expanded ? 'Hide Bcc' : 'Show Bcc',
+      child: SizedBox(
+        width: composeLabelGutter,
+        child: Icon(
+          expanded ? Icons.expand_more : Icons.chevron_right,
+          size: 14,
+          color: context.colors.textDimmed,
+        ),
+      ),
+    );
+  }
+}
+
 class _FieldRow extends StatelessWidget {
   const _FieldRow({
     required this.label,
@@ -2049,12 +2167,13 @@ class _FieldRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.baseline,
+      textBaseline: TextBaseline.alphabetic,
       children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 2),
-          child: SizedBox(
-            width: composeLabelWidth(context),
+        SizedBox(
+          width: composeLabelWidth(context),
+          child: Padding(
+            padding: const EdgeInsets.only(left: composeLabelGutter),
             child: Text(
               label,
               style: TextStyle(

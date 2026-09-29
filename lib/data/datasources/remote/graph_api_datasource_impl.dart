@@ -80,6 +80,7 @@ final _emailListSelect = [
   'from',
   'toRecipients',
   'ccRecipients',
+  'bccRecipients',
   'bodyPreview',
   'isRead',
   // The provider's own follow-up bit. In the projection so a flag set or
@@ -660,6 +661,8 @@ class GraphApiDatasourceImpl
           email.toRecipients.map(EmailAddressModel.fromEntity).toList(),
       ccRecipients:
           email.ccRecipients.map(EmailAddressModel.fromEntity).toList(),
+      bccRecipients:
+          email.bccRecipients.map(EmailAddressModel.fromEntity).toList(),
       bodyPreview: email.bodyPreview,
       body: body ?? email.body,
       bodyType: bodyType ?? email.bodyType,
@@ -2272,6 +2275,7 @@ class GraphApiDatasourceImpl
   Future<void> sendEmail({
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String subject,
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,
@@ -2299,6 +2303,10 @@ class GraphApiDatasourceImpl
               'ccRecipients': ccAddresses
                   .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
                   .toList(),
+            if (bccAddresses.isNotEmpty)
+              'bccRecipients': bccAddresses
+                  .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
+                  .toList(),
             if (attachmentsList.isNotEmpty) 'attachments': attachmentsList,
           },
           'saveToSentItems': true,
@@ -2317,6 +2325,7 @@ class GraphApiDatasourceImpl
     bool replyAll = false,
     List<String> toAddresses = const [],
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
@@ -2336,6 +2345,10 @@ class GraphApiDatasourceImpl
               .toList(),
         if (ccAddresses.isNotEmpty)
           'ccRecipients': ccAddresses
+              .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
+              .toList(),
+        if (bccAddresses.isNotEmpty)
+          'bccRecipients': bccAddresses
               .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
               .toList(),
       };
@@ -2371,6 +2384,7 @@ class GraphApiDatasourceImpl
     required String messageId,
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String comment,
     String? subject,
     List<String> excludedAttachmentIds = const [],
@@ -2389,6 +2403,10 @@ class GraphApiDatasourceImpl
         },
         if (ccAddresses.isNotEmpty)
           'ccRecipients': ccAddresses
+              .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
+              .toList(),
+        if (bccAddresses.isNotEmpty)
+          'bccRecipients': bccAddresses
               .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
               .toList(),
       };
@@ -3487,6 +3505,7 @@ class GraphApiDatasourceImpl
   Future<String> createServerDraft({
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String subject,
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,
@@ -3505,6 +3524,10 @@ class GraphApiDatasourceImpl
             'ccRecipients': ccAddresses
                 .map((a) => {'emailAddress': {'address': a}})
                 .toList(),
+          if (bccAddresses.isNotEmpty)
+            'bccRecipients': bccAddresses
+                .map((a) => {'emailAddress': {'address': a}})
+                .toList(),
         },
       );
       final id = resp.data?['id'] as String?;
@@ -3521,6 +3544,7 @@ class GraphApiDatasourceImpl
     required String draftId,
     required List<String> toAddresses,
     List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
     required String subject,
     required String body,
     EmailBodyType bodyType = EmailBodyType.text,
@@ -3528,6 +3552,9 @@ class GraphApiDatasourceImpl
   }) async {
     try {
       final contentType = bodyType == EmailBodyType.html ? 'Html' : 'Text';
+      // Always sent, empty or not: a PATCH only touches the keys it names,
+      // so leaving one out would keep whatever the draft already had after
+      // the user cleared the field.
       await _dio.patch<void>(
         '$_base/messages/$draftId',
         data: {
@@ -3535,10 +3562,12 @@ class GraphApiDatasourceImpl
           'body': {'contentType': contentType, 'content': body},
           'toRecipients':
               toAddresses.map((a) => {'emailAddress': {'address': a}}).toList(),
-          if (ccAddresses.isNotEmpty)
-            'ccRecipients': ccAddresses
-                .map((a) => {'emailAddress': {'address': a}})
-                .toList(),
+          'ccRecipients': ccAddresses
+              .map((a) => {'emailAddress': {'address': a}})
+              .toList(),
+          'bccRecipients': bccAddresses
+              .map((a) => {'emailAddress': {'address': a}})
+              .toList(),
         },
       );
       await _syncDraftAttachments(draftId, newAttachments);

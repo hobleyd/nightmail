@@ -189,6 +189,8 @@ dependency_overrides:
   #   #291 STATUS records HIGHESTMODSEQ
   #   #292 APPEND internalDate + appendMessageBytes (stacked on #289)
   #   #293 bare-LF line endings in a fetched BODY[] literal
+  #   (not yet raised) SMTP DATA kept the folded continuation lines of a
+  #   long Bcc header, so To/Cc recipients saw the rest of the Bcc list
   enough_mail:
     path: packages/enough_mail
   # printing >=5.15 (Swift Package Manager support) needs pdf >=3.13, which

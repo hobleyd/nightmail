@@ -1,24 +1,41 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.37.2",
+  "version": "1.37.3",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "page the Graph folder listings instead of stopping at 100",
-          "title": "folders"
-        },
-        {
-          "body": "keep a message's attachments when another folder lists it thin",
-          "title": "cache"
+          "body": "release a closed sub-window's engine after its last frame has presented",
+          "title": "macos"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.37.2",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "page the Graph folder listings instead of stopping at 100",
+              "title": "folders"
+            },
+            {
+              "body": "keep a message's attachments when another folder lists it thin",
+              "title": "cache"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -484,23 +501,6 @@
           "items": [
             {
               "body": "shut a secondary window's engine down when the window closes",
-              "title": "macos"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.30.3",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "keep the compose editor's webview above Flutter's surface layer",
               "title": "macos"
             }
           ]

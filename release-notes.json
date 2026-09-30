@@ -1,24 +1,45 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.37.1",
+  "version": "1.37.2",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "select the Inbox behind a message a notification tap opened",
-          "title": "mail"
+          "body": "page the Graph folder listings instead of stopping at 100",
+          "title": "folders"
         },
         {
-          "body": "deliver a notification tap when the background poll raised it",
-          "title": "ios"
+          "body": "keep a message's attachments when another folder lists it thin",
+          "title": "cache"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.37.1",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "select the Inbox behind a message a notification tap opened",
+              "title": "mail"
+            },
+            {
+              "body": "deliver a notification tap when the background poll raised it",
+              "title": "ios"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -481,23 +502,6 @@
             {
               "body": "keep the compose editor's webview above Flutter's surface layer",
               "title": "macos"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.30.2",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "prime the snap desktop entry so snapcraft 9.1 can find it",
-              "title": "release"
             }
           ]
         }

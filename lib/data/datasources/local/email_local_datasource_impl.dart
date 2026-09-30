@@ -176,7 +176,13 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
               old['attachments'] as List<dynamic>? ?? const [];
           json = {
             ...json,
-            if (oldAttachments.isNotEmpty) 'attachments': oldAttachments,
+            // The flag travels with the list, or the carry-over restores the
+            // reading pane's chips while leaving the list row's paperclip off:
+            // both are read out of this JSON, and the thin fetch set it false.
+            if (oldAttachments.isNotEmpty) ...{
+              'attachments': oldAttachments,
+              'hasAttachments': true,
+            },
             _parseVersionKey: old[_parseVersionKey],
           };
         }
@@ -209,7 +215,12 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
           accountId: accountId,
           folderId: folderId,
           isRead: email.isRead,
-          hasAttachments: email.hasAttachments,
+          // Off [json], not [email]: the carry-over above may have put an
+          // attachment list back that this thin fetch never carried, and the
+          // column is what [_anyCachedRow] ranks the copies by — written from
+          // the thin value it would rank a restored copy below an empty one.
+          hasAttachments:
+              json['hasAttachments'] as bool? ?? email.hasAttachments,
           receivedDateTimeMs: email.receivedDateTime.millisecondsSinceEpoch,
           conversationId: Value(conversationId),
           cachedAtMs: now,
@@ -446,18 +457,38 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     return deleted;
   }
 
-  /// One cached copy of [emailId], whichever folder listing it was filed under.
+  /// The best cached copy of [emailId], whichever folder listing it was filed
+  /// under.
   ///
-  /// A message appears once per folder it was listed in (see [CachedEmails]) and
-  /// every copy holds the same message, so any of them answers "what is this
-  /// message". This used to decrypt each copy in turn looking for the one
-  /// carrying a body, because [upgradeCachedEmailBody] might not have reached
-  /// them all; the body now lives once per message in [CachedEmailDetails], so
-  /// there is nothing left for the copies to disagree about but read state.
+  /// A message appears once per folder it was listed in (see [CachedEmails]).
+  /// The body no longer distinguishes them — it lives once per message in
+  /// [CachedEmailDetails] — but **attachment metadata still does**: it rides on
+  /// the list row (see [_listJson]), and a list/poll fetch carries none, so a
+  /// folder re-listed since the message was last opened in full holds a copy
+  /// with an empty attachment list beside copies that have one. This used to
+  /// take whichever row the engine happened to return first, on the premise
+  /// that the copies disagreed about nothing but read state. They do, and the
+  /// unordered `limit(1)` meant the reading pane's chips and the list's
+  /// paperclip came and went with the arbitrary pick: a folder listing adding a
+  /// second, thinner copy was enough to lose a message's attachments on screen
+  /// while another folder's copy still held them.
+  ///
+  /// So the richest copy wins, decided in SQL off the `has_attachments` column
+  /// rather than by decrypting each copy in turn — [cacheEmails] and
+  /// [upgradeCachedEmailBody] both write that column from the same JSON the
+  /// chips are read out of, so it answers for the payload without the blob
+  /// being touched. The sort is over the handful of rows one message has, so
+  /// it costs nothing that the column is not itself indexed; the primary key
+  /// still serves the lookup. `cached_at` breaks the remaining tie, making the
+  /// choice stable across calls instead of merely likely.
   Future<CachedEmail?> _anyCachedRow(String accountId, String emailId) =>
       (_database.select(_database.cachedEmails)
             ..where((t) =>
                 t.accountId.equals(accountId) & t.emailId.equals(emailId))
+            ..orderBy([
+              (t) => OrderingTerm.desc(t.hasAttachments),
+              (t) => OrderingTerm.desc(t.cachedAtMs),
+            ])
             ..limit(1))
           .getSingleOrNull();
 
@@ -547,6 +578,14 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
     // the *old* stamp forward (see [cacheEmails]) rather than declaring itself
     // current. Reading the detail row here instead would mean decrypting the
     // body and every inline image on every cached open just to fetch an int.
+    //
+    // [_anyCachedRow] answers with the *richest* copy, which is the right one
+    // to trust here: the copy carrying the attachment metadata is the copy
+    // whose stamp describes how that metadata was parsed. A carried-over copy
+    // deliberately holds the older stamp while a thin sibling holds the
+    // current one, so the message reports stale and takes its one repair
+    // round-trip — which is the repair firing where it is meant to, not a
+    // copy talking over the one that matters.
     final json = jsonDecode(await _encryption.decrypt(row.encryptedData))
         as Map<String, dynamic>;
     final version = json[_parseVersionKey] as int? ?? 1;

@@ -44,6 +44,23 @@ and listing any folder emptied every other folder's cache of the mail they
 shared a thread with. `CacheMembershipRepairService` files misplaced rows back
 once per account, reading each one's own folder out of its payload.
 
+**The copies disagree about attachment metadata, so a read of "this message"
+has to pick the richest one.** Attachments ride on the list row (they are part
+of `Email.props`; see `_listJson`), and a list/poll fetch carries none — Gmail
+lists with `format=metadata`, which has no payload parts at all — so a folder
+re-listed since the message was last opened in full holds a copy with an empty
+attachment list beside copies that have one. `_anyCachedRow` used to take
+whichever row the engine returned first, on the premise that the copies
+differed only in read state; a morning INBOX listing adding a second, thinner
+copy was then enough to drop a message's attachments out of the reading pane
+and the paperclip off its row, while another folder's copy still held them. It
+now orders on the `has_attachments` column, and `cacheEmails` writes that
+column from the payload it actually stored rather than from the thin fetch, so
+a copy whose attachments were carried over ranks above one that never had any.
+Nothing self-heals it: a lean row carries the *current* parse stamp, so
+`hasStaleAttachmentParse` is false, and `getEmail` short-circuits on the cache
+rather than refetching.
+
 `BodyPrefetchService` writes through `upgradeCachedEmailBody`, never
 `cacheEmails`: its write lands a round-trip after its "still cached?" check, on
 the message the user is most likely reading, so only a present-row-only write

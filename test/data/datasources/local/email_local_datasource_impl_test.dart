@@ -11,6 +11,7 @@ import 'package:nightmail/data/services/inline_attachment_cache.dart';
 import 'package:nightmail/data/models/email_address_model.dart';
 import 'package:nightmail/data/models/email_model.dart';
 import 'package:nightmail/domain/entities/email.dart';
+import 'package:nightmail/domain/entities/email_attachment.dart';
 import 'package:nightmail/domain/entities/inline_attachment.dart';
 import 'package:nightmail/domain/entities/meeting_invite.dart';
 import 'package:nightmail/infrastructure/cache/cache_encryption_service.dart';
@@ -36,6 +37,7 @@ EmailModel _email(
   required String body,
   String folderId = 'folder-1',
   String? conversationId,
+  List<EmailAttachment> attachments = const [],
 }) =>
     EmailModel(
       id: id,
@@ -50,8 +52,17 @@ EmailModel _email(
       receivedDateTime: DateTime(2026, 6, 1),
       importance: EmailImportance.normal,
       conversationId: conversationId,
+      hasAttachments: attachments.isNotEmpty,
+      attachments: attachments,
       parentFolderId: folderId,
     );
+
+const _attachment = EmailAttachment(
+  id: 'att-1',
+  name: 'report.pdf',
+  contentType: 'application/pdf',
+  size: 1024,
+);
 
 /// Rewrites a cached row without its parse stamp, standing in for a row
 /// written before the stamp existed (the encryption here is plaintext, so the
@@ -919,6 +930,129 @@ void main() {
             .map((e) => e.id),
         ['c'],
       );
+    });
+  });
+
+  // A `cached_emails` row is one message *as seen in one folder*, and
+  // attachment metadata rides on the list row — so a folder listed since the
+  // message was last opened in full holds a copy with an empty attachment list
+  // beside copies that have one. Which copy answers `getCachedEmailById` used
+  // to be whichever the engine returned first.
+  group("a message's per-folder copies disagree about attachments", () {
+    // Regression: a Gmail thread whose attachment vanished from the reading
+    // pane overnight. The message had been opened in full while a label was
+    // the active folder (rich copy), and the next morning's INBOX listing —
+    // Gmail lists with `format=metadata`, which carries no payload parts —
+    // added a second, thin copy. The unordered `limit(1)` then started
+    // answering with the thin one: no chips, and no paperclip on the list row
+    // either, since both are read out of this JSON.
+    test('the richest copy answers, not whichever row came back first',
+        () async {
+      // Thin first, so the lean row is the one a bare `limit(1)` finds.
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'INBOX',
+        emails: [_email('email-1', body: '')],
+      );
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'Label_1',
+        emails: [
+          _email('email-1', body: '<p>full</p>', attachments: [_attachment]),
+        ],
+      );
+
+      final email = await datasource.getCachedEmailById(
+          accountId: 'acct-1', emailId: 'email-1');
+      expect(email!.attachments, [_attachment]);
+      expect(email.hasAttachments, isTrue);
+    });
+
+    test('the choice is stable across calls', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'INBOX',
+        emails: [_email('email-1', body: '')],
+      );
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'Label_1',
+        emails: [
+          _email('email-1', body: '<p>full</p>', attachments: [_attachment]),
+        ],
+      );
+
+      for (var i = 0; i < 3; i++) {
+        final email = await datasource.getCachedEmailById(
+            accountId: 'acct-1', emailId: 'email-1');
+        expect(email!.attachments, [_attachment]);
+      }
+    });
+
+    // The carry-over restored the list but left the flag the thin fetch wrote,
+    // so the reading pane drew chips while the list row showed no paperclip.
+    test('a thin re-list of the same folder keeps both the list and the flag',
+        () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'INBOX',
+        emails: [
+          _email('email-1', body: '<p>full</p>', attachments: [_attachment]),
+        ],
+      );
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'INBOX',
+        emails: [_email('email-1', body: '')],
+      );
+
+      final email = await datasource.getCachedEmailById(
+          accountId: 'acct-1', emailId: 'email-1');
+      expect(email!.attachments, [_attachment]);
+      expect(email.hasAttachments, isTrue);
+    });
+
+    // The column is what the copies are ranked by, so a restored copy written
+    // with the thin fetch's `false` would rank below an empty one.
+    test('the has_attachments column describes the row actually written',
+        () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'INBOX',
+        emails: [
+          _email('email-1', body: '<p>full</p>', attachments: [_attachment]),
+        ],
+      );
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'INBOX',
+        emails: [_email('email-1', body: '')],
+      );
+
+      final row = await (db.select(db.cachedEmails)
+            ..where((t) => t.emailId.equals('email-1')))
+          .getSingle();
+      expect(row.hasAttachments, isTrue);
+    });
+
+    // A message that genuinely has none must not be dragged along by a
+    // sibling: the carry-over only ever adds what a copy already recorded.
+    test('a message with no attachments anywhere stays empty', () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'INBOX',
+        emails: [_email('email-1', body: '')],
+      );
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'Label_1',
+        emails: [_email('email-1', body: '<p>full</p>')],
+      );
+
+      final email = await datasource.getCachedEmailById(
+          accountId: 'acct-1', emailId: 'email-1');
+      expect(email!.attachments, isEmpty);
+      expect(email.hasAttachments, isFalse);
     });
   });
 

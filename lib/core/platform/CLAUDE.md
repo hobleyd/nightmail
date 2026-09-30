@@ -112,15 +112,24 @@ and detaches the controller so the cycle unwinds. Two consequences:
   open time (see `lib/data/database/CLAUDE.md`); a change there would now
   crash on closing a compose window, not just on quitting.
 
-`shutDownEngine()` does not release the engine *object*: its message handlers
-still hold every plugin, and every plugin's channels hold the engine, so the
-shell stays until the process exits and `FlutterWindow`'s "Child window deinit"
-still never prints. What matters is what the shell keeps alive. The Dart heap,
-the raster surfaces and the FlutterView go with the controller; the one heavy
-thing left was `html_view`'s WKWebView — a WebContent process per closed
-window — so `WebKitView` watches its own window's `willCloseNotification` and
-`HtmlViewPlugin` drops it from its registry then (the Dart `destroyView` that
-normally does this can never arrive from a dead isolate).
+`shutDownEngine()` ends the isolate and joins the raster thread but does not
+release the engine *object*; dropping `contentViewController` does, because the
+controller is its last owner — the engine's view-controller table is weak, and
+plugin channels reach it through `FlutterBinaryMessengerRelay`, whose parent is
+weak. **The controller is dropped one second later, not in the same turn**
+(`engineReleaseDelay`). `FlutterCompositor::Present` hands the surface manager
+a block that captures the compositor unretained, and frame pacing defers that
+block by up to half a frame interval on the process-wide `FlutterRunLoop`;
+freeing the engine under it was a `SIGSEGV` in `presenters_.find` on the main
+thread when a sub-window closed (1.37.2, 2026-10-01 — still unguarded on
+engine `master`). Nothing new can be queued once the raster thread is joined,
+so a fixed delay is enough; the shut-down shell holds no isolate and no
+surfaces worth the second.
+
+`html_view`'s WKWebView — a WebContent process per closed window — does not
+wait for that: `WebKitView` watches its own window's `willCloseNotification`
+and `HtmlViewPlugin` drops it from its registry then (the Dart `destroyView`
+that normally does this can never arrive from a dead isolate).
 
 `test/core/platform/secondary_window_teardown_test.dart` pins the shape.
 

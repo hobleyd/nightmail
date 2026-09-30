@@ -1061,10 +1061,31 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       DispatchQueue.main.async {
         controller?.engine.shutDownEngine()
         self?.forgetChannels(channels)
-        window?.contentViewController = nil
+        // Dropping the controller is what frees the FlutterEngine object —
+        // nothing else owns it (the engine's view-controller table is weak, and
+        // plugin channels reach it through a relay whose parent is weak) — and
+        // the compositor goes with it. But the engine's last frame may still be
+        // queued: FlutterCompositor::Present hands FlutterSurfaceManager a block
+        // that captures the compositor unretained, and frame pacing defers that
+        // block by up to half a frame interval on the process-wide
+        // FlutterRunLoop. Freeing the engine under it was a SIGSEGV in
+        // `presenters_.find` on the main thread when a sub-window closed
+        // (1.37.2, 2026-10-01). Nothing new can be queued once shutDownEngine
+        // has joined the raster thread, so holding the shut-down shell for a
+        // second is enough for that block to find it.
+        let shell = controller
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.engineReleaseDelay) {
+          window?.contentViewController = nil
+          withExtendedLifetime(shell) {}
+        }
       }
     }
   }
+
+  /// How long a closed sub-window's shut-down engine is kept before it is
+  /// released. The frame-present block it can still have queued fires within
+  /// one frame interval; see `tearDownEngineWhenClosed`.
+  private static let engineReleaseDelay: TimeInterval = 1
 
   private func forgetChannels(_ channels: [FlutterMethodChannel]) {
     let isGone = { (c: FlutterMethodChannel) in channels.contains { $0 === c } }

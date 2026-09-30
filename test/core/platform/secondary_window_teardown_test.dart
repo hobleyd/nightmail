@@ -38,10 +38,29 @@ void main() {
     );
     expect(
       mainWindow,
-      contains('DispatchQueue.main.async'),
+      contains('DispatchQueue.main.async {'),
       reason:
           "the notification fires inside window_manager's close handler, "
           'which still has to answer the Dart call',
+    );
+  });
+
+  test('the shut-down engine is released a beat after it is shut down', () {
+    expect(
+      mainWindow,
+      contains(
+        'DispatchQueue.main.asyncAfter(deadline: .now() + '
+        'Self.engineReleaseDelay)',
+      ),
+      reason:
+          "the engine's last frame-present block captures its compositor "
+          'unretained and can still be queued on the FlutterRunLoop; '
+          'freeing the engine under it crashed 1.37.2 when a sub-window closed',
+    );
+    expect(
+      mainWindow,
+      contains('withExtendedLifetime(shell)'),
+      reason: 'the controller is the last owner of the engine object',
     );
   });
 

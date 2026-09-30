@@ -706,49 +706,76 @@ class GraphApiDatasourceImpl
     }
   }
 
+  /// The columns both folder listings ask for, named once so the two cannot
+  /// drift apart — they feed the same [EmailFolderModel].
+  static const _folderSelect =
+      'id,displayName,totalItemCount,unreadItemCount,parentFolderId,'
+      'isHidden,childFolderCount';
+
+  /// Folders per request. This bounds a *page*, not the result: the listings
+  /// below follow `@odata.nextLink`, so the real ceiling is
+  /// [_maxBulkPages] × this.
+  static const _folderPageSize = 100;
+
+  /// Flattens the undecoded page bodies [_fetchAllGraphPages] hands back.
+  ///
+  /// Decoded here rather than in an isolate, unlike a page of messages: a
+  /// folder carries a name and four counts, so a whole mailbox of them is a
+  /// few kilobytes.
+  List<EmailFolderModel> _foldersFromPages(List<String> pages) {
+    final folders = <EmailFolderModel>[];
+    for (final page in pages) {
+      final data = jsonDecode(page) as Map<String, dynamic>;
+      final value = data['value'] as List<dynamic>? ?? const [];
+      folders.addAll(
+        value.map((e) => EmailFolderModel.fromJson(e as Map<String, dynamic>)),
+      );
+    }
+    return folders;
+  }
+
+  /// Every folder in the mailbox, not just the first page of them.
+  ///
+  /// `$top` caps one response and Graph hands the rest back behind
+  /// `@odata.nextLink`, so reading `value` off the first response alone
+  /// dropped every folder past the cap — no error, no empty state, the
+  /// folders simply were not in the panel, and nothing in the result said so.
+  /// A mailbox only has to be organised enough to pass the cap.
   @override
   Future<List<EmailFolderModel>> getMailFolders() async {
     try {
-      final response = await _dio.get<Map<String, dynamic>>(
-        '$_base/mailFolders',
-        queryParameters: {
-          '\$select':
-              'id,displayName,totalItemCount,unreadItemCount,parentFolderId,isHidden,childFolderCount',
-          '\$top': 100,
-        },
-      );
-
-      final data = response.data;
-      if (data == null) return [];
-
-      final value = data['value'] as List<dynamic>? ?? [];
-      return value
-          .map((e) => EmailFolderModel.fromJson(e as Map<String, dynamic>))
-          .toList();
+      final result = await _fetchAllGraphPages('$_base/mailFolders', {
+        '\$select': _folderSelect,
+        '\$top': _folderPageSize,
+      });
+      if (result.truncated) {
+        debugPrint('[Graph] mailFolders paging hit the page ceiling — the '
+            'folder list is incomplete');
+      }
+      return _foldersFromPages(result.pages);
     } on DioException catch (e) {
       throw _mapDioException(e);
     }
   }
 
+  /// See [getMailFolders] — one parent's children page the same way, and a
+  /// deep folder tree reaches the cap under a single parent as readily as the
+  /// mailbox root does.
   @override
   Future<List<EmailFolderModel>> getChildFolders(String parentFolderId) async {
     try {
-      final response = await _dio.get<Map<String, dynamic>>(
+      final result = await _fetchAllGraphPages(
         '$_base/mailFolders/$parentFolderId/childFolders',
-        queryParameters: {
-          '\$select':
-              'id,displayName,totalItemCount,unreadItemCount,parentFolderId,isHidden,childFolderCount',
-          '\$top': 100,
+        {
+          '\$select': _folderSelect,
+          '\$top': _folderPageSize,
         },
       );
-
-      final data = response.data;
-      if (data == null) return [];
-
-      final value = data['value'] as List<dynamic>? ?? [];
-      return value
-          .map((e) => EmailFolderModel.fromJson(e as Map<String, dynamic>))
-          .toList();
+      if (result.truncated) {
+        debugPrint('[Graph] childFolders paging hit the page ceiling for '
+            '$parentFolderId — its children are incomplete');
+      }
+      return _foldersFromPages(result.pages);
     } on DioException catch (e) {
       throw _mapDioException(e);
     }

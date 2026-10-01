@@ -70,3 +70,16 @@ Failures are reported on `lastPollAt`/`lastPollErrors`, including the
 offline skip. A silent `catch (_)` here is how a deterministic failure came to
 look like a quiet mailbox for the life of an install.
 
+## A Re-Sign-In Clears the Re-Auth Flag Now, Not at the Next Tick
+
+`accountsNeedingReauth` is rewritten at the end of each cycle, and that used
+to be the only place an account that had signed in again stopped being
+flagged. The folder panel ORs this set with `AccountCubit`'s own, so the Sign
+In prompt outlived a successful sign-in by up to a poll interval. The cubit
+now listens to `AccountManager.authSuccesses` — which a verified interactive
+sign-in fires as well as the interceptor's refreshes — and an account *it had
+flagged* is unflagged at once and polled at once (`_onAuthSuccess`). An
+account it had not flagged is left alone: that stream also carries every
+routine hourly refresh, and polling on each of those would be a second poll
+timer. A shared mailbox is flagged under its own id but signs in through its
+owner, so the owner's success clears the mailboxes riding on it too.

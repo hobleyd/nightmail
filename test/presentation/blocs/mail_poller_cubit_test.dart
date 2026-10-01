@@ -203,6 +203,9 @@ void main() {
     when(mockConnectivityService.isOnline).thenAnswer((_) async => true);
     when(mockConnectivityService.onReconnected)
         .thenAnswer((_) => const Stream<void>.empty());
+    // No sign-ins or refreshes land during a test unless it drives them.
+    when(mockAccountManager.authSuccesses)
+        .thenAnswer((_) => const Stream<String>.empty());
     // No pending outbox ops by default — tests exercising reconciliation
     // override this.
     when(mockPendingOperations.getPendingOperations(any))
@@ -1694,6 +1697,87 @@ void main() {
 
       // Two cycles reached the provider, so _polling was released each time.
       verify(mockGmailDs.getMailFolders()).called(2);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // The folder panel ORs this cubit's re-auth set with AccountCubit's, so a
+  // flag that only ever cleared at the end of a cycle kept the Sign In prompt
+  // up for a whole poll interval after the user had signed in again.
+  // ---------------------------------------------------------------------------
+
+  group('MailPollerCubit — re-authentication', () {
+    late MockEmailRemoteDatasource mockGmailDs;
+    late StreamController<String> authSuccesses;
+
+    setUp(() {
+      mockGmailDs = MockEmailRemoteDatasource();
+      authSuccesses = StreamController<String>.broadcast();
+      when(mockAccountManager.authSuccesses)
+          .thenAnswer((_) => authSuccesses.stream);
+      when(mockAccountManager.accounts).thenReturn([_gmailAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(_gmailAccount);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(mockGmailDs);
+    });
+
+    tearDown(() => authSuccesses.close());
+
+    test('a rejected token flags the account', () async {
+      when(mockGmailDs.getMailFolders())
+          .thenThrow(const AuthException(message: 'invalid_grant'));
+
+      final cubit = makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      expect(cubit.state.accountsNeedingReauth, contains(_gmailAccount.id));
+    });
+
+    test(
+        'a successful sign-in clears the flag at once and syncs the account, '
+        'without waiting for the next tick', () async {
+      var calls = 0;
+      when(mockGmailDs.getMailFolders()).thenAnswer((_) async {
+        calls++;
+        if (calls == 1) throw const AuthException(message: 'invalid_grant');
+        return [_inbox(unread: 1)];
+      });
+
+      final cubit = makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+      expect(cubit.state.accountsNeedingReauth, contains(_gmailAccount.id));
+
+      authSuccesses.add(_gmailAccount.id);
+      await pumpEventQueue();
+
+      expect(cubit.state.accountsNeedingReauth, isEmpty);
+      // The second call is the cycle the sign-in started, not a timer tick —
+      // the interval is far too long for one to have fired.
+      verify(mockGmailDs.getMailFolders()).called(2);
+    });
+
+    test('a success for an account that was never flagged starts no cycle',
+        () async {
+      when(mockGmailDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: 1)]);
+
+      final cubit = makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      authSuccesses.add(_gmailAccount.id);
+      await pumpEventQueue();
+
+      expect(cubit.state.accountsNeedingReauth, isEmpty);
+      verify(mockGmailDs.getMailFolders()).called(1);
     });
   });
 

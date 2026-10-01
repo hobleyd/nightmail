@@ -54,7 +54,9 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
         super(const MailPollerState(
           accountsWithNewMail: {},
           pollIntervalSeconds: AppSettings.defaultPollIntervalSeconds,
-        ));
+        )) {
+    _authSuccessSub = _accountManager.authSuccesses.listen(_onAuthSuccess);
+  }
 
   final AccountManager _accountManager;
   final AppSettings _appSettings;
@@ -82,6 +84,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   final Set<String> _bootstrapping = {};
   final Set<String> _reauthAccounts = {};
   StreamSubscription<void>? _reconnectSub;
+  StreamSubscription<String>? _authSuccessSub;
 
   /// Consecutive delta failures per [_folderKey]. A delta stream that keeps
   /// failing has its token dropped so the next cycle re-bootstraps — see
@@ -274,6 +277,36 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     if (seconds <= 0) return;
     _poll();
     _timer = Timer.periodic(Duration(seconds: seconds), (_) => _poll());
+  }
+
+  /// A usable token was just obtained for [accountId]: an interactive
+  /// re-sign-in, or a refresh that worked after ones that did not.
+  ///
+  /// Only an account this poller had *flagged* is of interest. Its flag is
+  /// cleared now rather than at the end of the next cycle — the folder panel
+  /// ORs [MailPollerState.accountsNeedingReauth] with `AccountCubit`'s own set,
+  /// so the Sign In prompt used to outlive a successful sign-in by up to a poll
+  /// interval — and a cycle runs now so its mail arrives now rather than at the
+  /// next tick. An account that was never flagged is left alone: the same
+  /// stream carries every routine hourly refresh, and polling on each of those
+  /// would amount to a second poll timer.
+  ///
+  /// A shared mailbox is flagged under its own id but signs in through its
+  /// owner, so the owner's success clears the mailboxes riding on it too.
+  void _onAuthSuccess(String accountId) {
+    if (isClosed) return;
+    final ids = <String>{
+      accountId,
+      for (final a in _accountManager.accounts)
+        if (a is MicrosoftAccount && a.parentAccountId == accountId) a.id,
+    };
+    var changed = false;
+    for (final id in ids) {
+      if (_reauthAccounts.remove(id)) changed = true;
+    }
+    if (!changed) return;
+    emit(state.copyWith(accountsNeedingReauth: Set.of(_reauthAccounts)));
+    _poll();
   }
 
   Future<void> _poll() async {
@@ -1387,6 +1420,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _reconnectSub?.cancel();
+    _authSuccessSub?.cancel();
     for (final sub in _idleSubs.values) {
       sub.cancel();
     }

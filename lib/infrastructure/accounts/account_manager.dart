@@ -72,8 +72,11 @@ class AccountManager {
   Stream<String> get authFailures => _authFailureController.stream;
 
   // Mirror of [authFailures]: fired by AuthInterceptor whenever a usable token
-  // is obtained for an account, so the UI can clear a stale "needs reauth" flag
-  // that a transient failure latched (see AccountCubit._onAuthSuccess).
+  // is obtained for an account, and by a verified interactive sign-in
+  // (_signInExistingAccount), so the UI can clear a "needs reauth" flag the
+  // moment it stops being true — whether a transient failure latched it (see
+  // AccountCubit._onAuthSuccess) or the user has just signed in again (see
+  // MailPollerCubit._onAuthSuccess).
   final _authSuccessController = StreamController<String>.broadcast();
   Stream<String> get authSuccesses => _authSuccessController.stream;
 
@@ -991,6 +994,10 @@ class AccountManager {
     if (address != null) {
       await updateAccount(account.copyWith(emailAddress: address));
     }
+    // The stored token is this account's and works: say so, the same way the
+    // interceptor does after a refresh, so every "needs re-authentication"
+    // flag clears now rather than at whatever next checks it.
+    _authSuccessController.add(account.id);
     return token;
   }
 

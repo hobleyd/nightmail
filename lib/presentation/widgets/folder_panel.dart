@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 
+import '../../core/error/exceptions.dart';
 import '../../core/platform/touch_metrics.dart';
 import 'package:flutter/material.dart';
 import 'adaptive_alert_dialog.dart';
@@ -2001,7 +2002,11 @@ class _SignInPromptState extends State<_SignInPrompt> {
         await context.read<AccountCubit>().reauthenticateActiveOAuth();
       }
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      // An AuthException's message is written for the user — "you signed in
+      // as X, but this account is Y" — so show it without the type's prefix.
+      if (mounted) {
+        setState(() => _error = e is AuthException ? e.message : e.toString());
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }

@@ -11,6 +11,7 @@ import '../../core/error/exceptions.dart';
 import 'auth_service.dart';
 import 'auth_token.dart';
 import 'oauth_state.dart';
+import 'sign_in_identity.dart';
 import 'token_refresh_coordinator.dart';
 import 'token_refresh_error.dart';
 import 'token_storage.dart';
@@ -31,6 +32,7 @@ class MicrosoftAuthService implements AuthService {
     required this._tokenStorage,
     this.clientSecret,
     this.extraScopes = const [],
+    this.verifySignIn,
     Dio? httpClient,
   })  : _http = httpClient ?? Dio();
 
@@ -53,6 +55,12 @@ class MicrosoftAuthService implements AuthService {
   /// clicks a SharePoint link and says yes, and everything else keeps working
   /// whether it is granted or refused.
   final List<String> extraScopes;
+
+  /// Run on the token an interactive [signIn] produces, *before* it is stored.
+  /// Throwing an [AuthException] refuses it: nothing is written, and whatever
+  /// token was stored before stays. See `GmailAuthService.verifySignIn` and
+  /// `sign_in_identity.dart`.
+  final SignInVerifier? verifySignIn;
 
   // On Windows, open the system browser with a localhost loopback redirect.
   // Microsoft Azure AD accepts any http://localhost:{port} for public-client
@@ -294,7 +302,7 @@ class MicrosoftAuthService implements AuthService {
     // carrying a code just as ours used to.
     verifyOAuthState(expected: state, redirect: uri);
 
-    return _exchangeCodeForToken(code: code, codeVerifier: codeVerifier);
+    return exchangeCodeForToken(code: code, codeVerifier: codeVerifier);
   }
 
   @override
@@ -368,10 +376,15 @@ class MicrosoftAuthService implements AuthService {
     await _tokenStorage.clearToken();
   }
 
-  Future<AuthToken> _exchangeCodeForToken({
+  /// The code exchange, then [verifySignIn], then the store — in that order,
+  /// so a refused token is never on disk, not even for the length of a check.
+  /// Visible so the ordering can be pinned without driving a browser.
+  @visibleForTesting
+  Future<AuthToken> exchangeCodeForToken({
     required String code,
     required String codeVerifier,
   }) async {
+    final AuthToken token;
     try {
       final response = await _http.post(
         '$_baseUrl/token',
@@ -388,14 +401,15 @@ class MicrosoftAuthService implements AuthService {
           contentType: 'application/x-www-form-urlencoded',
         ),
       );
-
-      final token = AuthToken.fromJson(response.data as Map<String, dynamic>);
-      await _tokenStorage.saveToken(token);
-      return token;
+      token = AuthToken.fromJson(response.data as Map<String, dynamic>);
     } on DioException catch (e) {
       final message = _extractErrorMessage(e) ?? e.message ?? e.toString();
       throw AuthException(message: 'Token exchange failed: $message');
     }
+
+    await verifySignIn?.call(token);
+    await _tokenStorage.saveToken(token);
+    return token;
   }
 
   String _generateCodeVerifier() {

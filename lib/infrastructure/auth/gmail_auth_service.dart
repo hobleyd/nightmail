@@ -13,6 +13,7 @@ import 'auth_service.dart';
 import 'auth_token.dart';
 import 'loopback_auth_flow.dart';
 import 'oauth_state.dart';
+import 'sign_in_identity.dart';
 import 'token_refresh_coordinator.dart';
 import 'token_refresh_error.dart';
 import 'token_storage.dart';
@@ -31,6 +32,7 @@ class GmailAuthService implements AuthService {
     required this._tokenStorage,
     this.accountEmail,
     this.extraScopes = const [],
+    this.verifySignIn,
     Dio? httpClient,
   }) : _http = httpClient ?? Dio();
 
@@ -55,6 +57,14 @@ class GmailAuthService implements AuthService {
   /// a verification requirement) in front of adding a mail account. It is asked
   /// for on its own, when the user clicks a Drive link and says yes.
   final List<String> extraScopes;
+
+  /// Run on the token an interactive [signIn] produces, *before* it is stored.
+  /// Throwing an [AuthException] refuses it: nothing is written, and whatever
+  /// token was stored before stays. `AccountManager` uses it to make sure the
+  /// mailbox that signed in is the one the account is for — see
+  /// `sign_in_identity.dart`. Null when adding a brand-new account, where
+  /// there is nothing yet to compare against.
+  final SignInVerifier? verifySignIn;
 
   static const _scopes = [
     'openid',
@@ -358,7 +368,7 @@ class GmailAuthService implements AuthService {
     // paths have no listener of ours to do it in.
     verifyOAuthState(expected: state, redirect: uri);
 
-    return _exchangeCodeForToken(code: code, codeVerifier: codeVerifier);
+    return exchangeCodeForToken(code: code, codeVerifier: codeVerifier);
   }
 
   @override
@@ -427,10 +437,15 @@ class GmailAuthService implements AuthService {
     await _tokenStorage.clearToken();
   }
 
-  Future<AuthToken> _exchangeCodeForToken({
+  /// The code exchange, then [verifySignIn], then the store — in that order,
+  /// so a refused token is never on disk, not even for the length of a check.
+  /// Visible so the ordering can be pinned without driving a browser.
+  @visibleForTesting
+  Future<AuthToken> exchangeCodeForToken({
     required String code,
     required String codeVerifier,
   }) async {
+    final AuthToken token;
     try {
       final response = await _http.post(
         _tokenEndpoint,
@@ -444,14 +459,15 @@ class GmailAuthService implements AuthService {
         },
         options: Options(contentType: 'application/x-www-form-urlencoded'),
       );
-
-      final token = AuthToken.fromJson(response.data as Map<String, dynamic>);
-      await _tokenStorage.saveToken(token);
-      return token;
+      token = AuthToken.fromJson(response.data as Map<String, dynamic>);
     } on DioException catch (e) {
       final message = _extractErrorMessage(e) ?? e.message ?? e.toString();
       throw AuthException(message: 'Token exchange failed: $message');
     }
+
+    await verifySignIn?.call(token);
+    await _tokenStorage.saveToken(token);
+    return token;
   }
 
   String _generateCodeVerifier() {

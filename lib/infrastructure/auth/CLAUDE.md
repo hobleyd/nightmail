@@ -150,3 +150,41 @@ entirely on mobile, not just optional — and the downstream
 `GmailAuthService` call sends `credentials.clientSecret ?? ''` rather than
 force-unwrapping.
 
+## A Sign-In for an Existing Account Is Checked Against That Account
+
+Every re-sign-in (Settings' *Sign In Again*, the folder panel's prompt) and
+every incremental-scope flow (Drive, full-mail, out-of-office) goes through
+`AccountManager._signInExistingAccount`, which hands the auth service a
+`verifySignIn` hook (`sign_in_identity.dart`). The hook asks the provider which
+mailbox the *new* token answers for (`signed_in_mailbox_lookup.dart`: Gmail
+`users.getProfile` plus `settings.sendAs`, Graph `/me` with
+`mail`/`userPrincipalName`/`proxyAddresses`) and throws `AuthException` when
+none of those addresses is the account's.
+
+Why: `login_hint` only suggests. After a forced password reset the browser's
+session for the account is gone, and Google falls through to whichever of the
+user's accounts *is* still signed in there — straight to a consent screen, with
+nothing visibly wrong — and that mailbox's token landed under this account's
+key. (The October 2026 report with exactly that symptom turned out to be the
+folder-cache race in `presentation/blocs/email_list/CLAUDE.md`; this closes
+the way the same symptom can arise from sign-in itself.)
+
+Four things here are load-bearing:
+
+- **The check runs before the token is stored**, inside
+  `exchangeCodeForToken`: exchange, verify, store. A refused token is never on
+  disk, not even for the length of a check — the poller builds a fresh
+  datasource for every account every cycle, and a wrong token stored for a
+  moment is a wrong mailbox fetched into this account's cache.
+- **The lookup uses the token under test, not the account's HTTP client.** The
+  account's `GmailHttpClient`/`GraphHttpClient` reads whatever token is
+  stored, which is the old one, and would vouch for it.
+- **An empty answer is "could not tell", and the token is accepted.** A failed
+  lookup right after a successful exchange is a network hiccup; refusing on it
+  would lock the user out of an account whose sign-in just worked. Aliases are
+  accepted because an alias may well be what Settings holds.
+- **An account with no address adopts the one that signed in.** Gmail accounts
+  used to be added with `emailAddress: ''` (only a hand edit in Settings could
+  fill it), so their re-sign-ins carried no `login_hint` at all — the hint
+  needs the address, and so does this check. Adding a Gmail account now learns
+  the address through the same lookup, best-effort.

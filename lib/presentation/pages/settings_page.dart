@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../core/error/exceptions.dart';
 import '../../core/platform/touch_metrics.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
@@ -1003,8 +1004,11 @@ class _AccountsSectionState extends State<_AccountsSection> {
         content: Text('Signed in again as ${account.emailAddress}.'),
       ));
     } catch (e) {
+      // An AuthException's message is written for the user — "you signed in
+      // as X, but this account is Y" — so show it without the type's prefix.
       messenger.showSnackBar(SnackBar(
-        content: Text('Sign-in failed: $e'),
+        content: Text(
+            'Sign-in failed: ${e is AuthException ? e.message : e}'),
         backgroundColor: Colors.red.shade700,
       ));
     } finally {

@@ -22,11 +22,14 @@ import '../../data/datasources/remote/graph_drive_datasource_impl.dart';
 import '../../data/datasources/remote/imap_datasource_impl.dart';
 import '../../data/datasources/remote/tasks_remote_datasource.dart';
 import '../auth/auth_service.dart';
+import '../auth/auth_token.dart';
 import '../auth/caldav_credential_storage.dart';
 import '../auth/gmail_auth_service.dart';
 import '../auth/imap_auth_service.dart';
 import '../auth/imap_credential_storage.dart';
 import '../auth/microsoft_auth_service.dart';
+import '../auth/sign_in_identity.dart';
+import '../auth/signed_in_mailbox_lookup.dart';
 import '../auth/token_storage.dart';
 import '../http/gmail_http_client.dart';
 import '../http/google_calendar_http_client.dart';
@@ -365,34 +368,15 @@ class AccountManager {
     final account = accountById(accountId);
     if (account == null) throw StateError('Unknown account: $accountId');
 
-    final tokenStorage = TokenStorage(
-      _secureStorage,
-      storageKey: 'token_${account.id}',
-    );
-    final AuthService authService;
-    switch (account) {
-      case MicrosoftAccount():
-        authService = MicrosoftAuthService(
-          clientId: account.clientId ?? AppConfig.microsoftClientId,
-          tenantId: account.tenantId,
-          redirectUri: AppConfig.microsoftRedirectUri,
-          tokenStorage: tokenStorage,
-          extraScopes: const [MicrosoftAuthService.filesReadScope],
-        );
-      case GmailAccount():
-        authService = GmailAuthService(
-          clientId: account.clientId ?? AppConfig.gmailClientId,
-          clientSecret: account.clientSecret ?? AppConfig.gmailClientSecret,
-          redirectUri: AppConfig.gmailRedirectUri,
-          tokenStorage: tokenStorage,
-          accountEmail: account.emailAddress,
-          extraScopes: const [GmailAuthService.driveReadonlyScope],
-        );
-      case ImapAccount():
-        return false;
-    }
+    final extraScopes = switch (account) {
+      MicrosoftAccount() => const [MicrosoftAuthService.filesReadScope],
+      GmailAccount() => const [GmailAuthService.driveReadonlyScope],
+      ImapAccount() => null,
+    };
+    if (extraScopes == null) return false;
 
-    final token = await authService.signIn();
+    final token =
+        await _signInExistingAccount(account, extraScopes: extraScopes);
     // The datasource caches hold clients built around the old token's storage
     // key, which is unchanged — but the active account's pipeline is rebuilt
     // for the same reason reauthenticateOAuthAccount does it: so the new token
@@ -435,19 +419,10 @@ class AccountManager {
     if (account == null) throw StateError('Unknown account: $accountId');
     if (account is! GmailAccount) return false;
 
-    final authService = GmailAuthService(
-      clientId: account.clientId ?? AppConfig.gmailClientId,
-      clientSecret: account.clientSecret ?? AppConfig.gmailClientSecret,
-      redirectUri: AppConfig.gmailRedirectUri,
-      tokenStorage: TokenStorage(
-        _secureStorage,
-        storageKey: 'token_${account.id}',
-      ),
-      accountEmail: account.emailAddress,
+    final token = await _signInExistingAccount(
+      account,
       extraScopes: const [GmailAuthService.fullMailScope],
     );
-
-    final token = await authService.signIn();
     // The mail datasource holds a client built around this account's token
     // storage — the key is unchanged, but rebuild for the reason
     // requestCloudDriveAccess does: so the new token is used now rather than
@@ -512,34 +487,17 @@ class AccountManager {
     final account = _credentialOwnerFor(accountById(accountId));
     if (account == null) throw StateError('Unknown account: $accountId');
 
-    final tokenStorage = TokenStorage(
-      _secureStorage,
-      storageKey: 'token_${account.id}',
-    );
-    final AuthService authService;
-    switch (account) {
-      case MicrosoftAccount():
-        authService = MicrosoftAuthService(
-          clientId: account.clientId ?? AppConfig.microsoftClientId,
-          tenantId: account.tenantId,
-          redirectUri: AppConfig.microsoftRedirectUri,
-          tokenStorage: tokenStorage,
-          extraScopes: const [MicrosoftAuthService.mailboxSettingsWriteScope],
-        );
-      case GmailAccount():
-        authService = GmailAuthService(
-          clientId: account.clientId ?? AppConfig.gmailClientId,
-          clientSecret: account.clientSecret ?? AppConfig.gmailClientSecret,
-          redirectUri: AppConfig.gmailRedirectUri,
-          tokenStorage: tokenStorage,
-          accountEmail: account.emailAddress,
-          extraScopes: const [GmailAuthService.mailSettingsScope],
-        );
-      case ImapAccount():
-        return false;
-    }
+    final extraScopes = switch (account) {
+      MicrosoftAccount() => const [
+          MicrosoftAuthService.mailboxSettingsWriteScope,
+        ],
+      GmailAccount() => const [GmailAuthService.mailSettingsScope],
+      ImapAccount() => null,
+    };
+    if (extraScopes == null) return false;
 
-    final token = await authService.signIn();
+    final token =
+        await _signInExistingAccount(account, extraScopes: extraScopes);
     // The mail datasource holds a client built around this account's token
     // storage — the key is unchanged, but rebuild for the reason
     // requestCloudDriveAccess does: so the new token is used now rather than
@@ -912,8 +870,9 @@ class AccountManager {
 
   /// Re-authenticate the active Microsoft or Gmail account via OAuth.
   Future<void> reauthenticateActiveOAuth() async {
-    if (_authService == null) throw StateError('No active account');
-    await _authService!.signIn();
+    final account = activeAccount;
+    if (account == null) throw StateError('No active account');
+    await reauthenticateOAuthAccount(account.id);
   }
 
   /// Re-authenticate a specific Microsoft or Gmail account via OAuth, active or
@@ -928,7 +887,8 @@ class AccountManager {
   /// full interactive authorization (Gmail sends `prompt=consent`, so new scopes
   /// are re-consented), and leaving the existing token in place means a
   /// cancelled or failed sign-in leaves a working account behind rather than a
-  /// locked-out one.
+  /// locked-out one. A sign-in that comes back as a *different* mailbox is
+  /// refused before anything is stored — see [_signInExistingAccount].
   Future<void> reauthenticateOAuthAccount(String accountId) async {
     final account = accountById(accountId);
     if (account == null) throw StateError('Unknown account: $accountId');
@@ -939,11 +899,7 @@ class AccountManager {
       return reauthenticateOAuthAccount(account.parentAccountId!);
     }
 
-    final authService = _buildOAuthServiceForAccount(account);
-    if (authService == null) {
-      throw StateError('${account.emailAddress} does not sign in with OAuth');
-    }
-    await authService.signIn();
+    await _signInExistingAccount(account);
 
     // The new token lands under the same per-account storage key, so existing
     // datasources would pick it up anyway; rebuilding the active account's
@@ -953,7 +909,11 @@ class AccountManager {
 
   /// The OAuth service for [account], or null for account types that do not use
   /// OAuth (IMAP, which authenticates with a stored password).
-  AuthService? _buildOAuthServiceForAccount(Account account) {
+  AuthService? _buildOAuthServiceForAccount(
+    Account account, {
+    List<String> extraScopes = const [],
+    SignInVerifier? verifySignIn,
+  }) {
     final tokenStorage = TokenStorage(
       _secureStorage,
       storageKey: 'token_${account.id}',
@@ -964,6 +924,8 @@ class AccountManager {
         tenantId: account.tenantId,
         redirectUri: AppConfig.microsoftRedirectUri,
         tokenStorage: tokenStorage,
+        extraScopes: extraScopes,
+        verifySignIn: verifySignIn,
       ),
       // The email is what lets a Workspace account pick up the room-directory
       // scope on re-auth; see GmailAuthService._requestedScopes.
@@ -973,9 +935,63 @@ class AccountManager {
         redirectUri: AppConfig.gmailRedirectUri,
         tokenStorage: tokenStorage,
         accountEmail: account.emailAddress,
+        extraScopes: extraScopes,
+        verifySignIn: verifySignIn,
       ),
       ImapAccount() => null,
     };
+  }
+
+  /// The interactive sign-in for an account that already exists, keeping the
+  /// token only if the mailbox that signed in is [account]'s. Every re-sign-in
+  /// and every incremental-scope flow comes through here.
+  ///
+  /// Google's `login_hint` (and Microsoft's account picker) only *suggest* an
+  /// account. After a forced password reset the browser's session for this
+  /// account is gone, and the one still signed in there is routinely another
+  /// of the user's accounts — which Google then shows a consent screen for as
+  /// if nothing were amiss. Without this check that account's token landed
+  /// under this account's key, and this account showed the other mailbox's
+  /// folders and mail.
+  ///
+  /// The check runs inside the auth service, *before* the token is stored, so
+  /// a refused token is never on disk — not even for the moment it would take
+  /// to put the old one back, during which a poll could have fetched the wrong
+  /// mailbox into this account's cache. An account recorded without an address
+  /// (every Gmail account added before addresses were learned on add) adopts
+  /// the one that signed in, which is also what gives its next sign-in a
+  /// `login_hint`.
+  Future<AuthToken> _signInExistingAccount(
+    Account account, {
+    List<String> extraScopes = const [],
+  }) async {
+    final SignedInMailboxLookup? lookup = switch (account) {
+      MicrosoftAccount() => GraphMailboxLookup(),
+      GmailAccount() => GmailMailboxLookup(),
+      ImapAccount() => null,
+    };
+    String? learned;
+    final authService = lookup == null
+        ? null
+        : _buildOAuthServiceForAccount(
+            account,
+            extraScopes: extraScopes,
+            verifySignIn: mailboxGuard(
+              accountEmail: account.emailAddress,
+              lookup: lookup,
+              onAddressLearned: (address) => learned = address,
+            ),
+          );
+    if (authService == null) {
+      throw StateError('${account.emailAddress} does not sign in with OAuth');
+    }
+
+    final token = await authService.signIn();
+    final address = learned;
+    if (address != null) {
+      await updateAccount(account.copyWith(emailAddress: address));
+    }
+    return token;
   }
 
   /// Re-authenticate an IMAP account by saving the supplied password.

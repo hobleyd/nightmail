@@ -15,6 +15,7 @@ import '../../data/datasources/remote/graph_api_datasource_impl.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/auth/gmail_auth_service.dart';
 import '../../infrastructure/auth/imap_credential_storage.dart';
+import '../../infrastructure/auth/signed_in_mailbox_lookup.dart';
 import '../../infrastructure/auth/microsoft_auth_service.dart';
 import '../../infrastructure/auth/token_storage.dart';
 import '../../infrastructure/http/graph_http_client.dart';
@@ -161,12 +162,17 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
         tokenStorage: tokenStorage,
       );
 
-      await authService.signIn();
+      final token = await authService.signIn();
+      // Learn the mailbox's address now rather than leaving it blank: it is
+      // what pins a later re-sign-in to this account (`login_hint`) and what
+      // that sign-in is checked against — see AccountManager. Best-effort:
+      // the account is still added without it, as it always was.
+      final addresses = await GmailMailboxLookup().addressesFor(token);
 
       final account = GmailAccount(
         id: id,
         displayName: 'Gmail Account',
-        emailAddress: '',
+        emailAddress: addresses.isEmpty ? '' : addresses.first,
         clientId: credentials.clientId,
         clientSecret: credentials.clientSecret,
       );

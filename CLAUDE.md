@@ -29,6 +29,10 @@ flutter run
 
 Always `flutter clean` after changing entitlements or code signing settings.
 
+Runtime diagnostics: every window tees `debugPrint` into `diagnostics.log` in
+the app data directory (`~/.nightmail` on macOS; rotates to `.1` at 512 KB).
+Read it before asking for a repro — `lib/core/diagnostics/diagnostic_log.dart`.
+
 ## Subsystem Notes
 
 The rest of this repo's accumulated "why" lives in `CLAUDE.md`/`.md` files next

@@ -6,7 +6,8 @@ Where the app keeps its files, how `desktop_multi_window` sub-windows relate to 
 
 `appDataDirectory()` (`app_data_directory.dart`) is the one directory the app
 writes to, and every store goes through it — settings, window bounds, spam
-rules, the legacy credential files, and the drift cache database.
+rules, the legacy credential files, the drift cache database and the
+diagnostic log (`diagnostics.log`, see `lib/core/diagnostics/`).
 
 It exists because the platform's own answer moved under the app. The macOS
 release build used to be sandboxed, so every path resolved inside

@@ -73,6 +73,17 @@ class RecipientInputField extends StatefulWidget {
   /// Makes the whole label cell (leading and text) a tap target.
   final VoidCallback? onLabelTap;
 
+  /// How long a lookup may take before the dropdown stops waiting for it.
+  ///
+  /// The read path is indexed local SQL (see
+  /// `lib/infrastructure/contacts/CLAUDE.md`), so anything near this is a
+  /// fault, not a slow answer. It exists so that a lookup that never comes
+  /// back is written to the diagnostic log instead of leaving a dropdown that
+  /// silently never opens — which is all the 2026-10-01 dead-typeahead report
+  /// had to go on, with nothing recording which of search, result or overlay
+  /// had failed.
+  static const Duration searchTimeout = Duration(seconds: 5);
+
   @override
   State<RecipientInputField> createState() => RecipientInputFieldState();
 }
@@ -214,6 +225,12 @@ class RecipientInputFieldState extends State<RecipientInputField> {
       try {
         final results = await _search(query);
         if (mounted && requestId == _searchRequestId) _setSuggestions(results);
+      } on TimeoutException {
+        debugPrint(
+          '[NightMail] recipient search timed out after '
+          '${RecipientInputField.searchTimeout.inSeconds} s '
+          '(account ${widget.accountId ?? 'none'}, ${query.length}-char query)',
+        );
       } catch (e) {
         debugPrint('[NightMail] recipient search error: $e');
       }
@@ -225,14 +242,16 @@ class RecipientInputFieldState extends State<RecipientInputField> {
   /// book alone when the field has none.
   Future<List<ContactSuggestion>> _search(String query) {
     final accountId = widget.accountId;
-    if (accountId != null) {
-      return sl<SearchContacts>().call(
-        query: query,
-        accountId: accountId,
-        accountDomain: widget.accountDomain,
-      );
-    }
-    return sl<SystemContactsRepository>().search(query);
+    final lookup = accountId != null
+        ? sl<SearchContacts>().call(
+            query: query,
+            accountId: accountId,
+            accountDomain: widget.accountDomain,
+          )
+        : sl<SystemContactsRepository>().search(query);
+    // Bounded, so a lookup that never answers is reported rather than leaving
+    // a dropdown that silently never opens. A late answer is simply dropped.
+    return lookup.timeout(RecipientInputField.searchTimeout);
   }
 
   /// Handles a paste of several lines — a list of names or addresses, one per

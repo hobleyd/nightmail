@@ -18,6 +18,9 @@ import '../repositories/system_contacts_repository.dart';
 /// The live provider lookup only runs as a fallback for an account whose cache
 /// has never been populated, i.e. between first launch and the first sync
 /// completing.
+///
+/// An empty answer is written to the diagnostic log with where each source
+/// stood — see "Self-reporting" in `lib/infrastructure/contacts/CLAUDE.md`.
 class SearchContacts {
   const SearchContacts({
     required this.senderRepository,
@@ -46,7 +49,7 @@ class SearchContacts {
     final q = query.toLowerCase().trim();
     if (q.isEmpty) return [];
 
-    final candidates = <CachedContact>[];
+    final stopwatch = Stopwatch()..start();
 
     // Known senders live in their own table, written continuously as mail
     // arrives, so they are always current and are queried separately from the
@@ -55,15 +58,32 @@ class SearchContacts {
       _senders(accountId, q),
       _cached(accountId, q),
     ]);
-    candidates
-      ..addAll(results[0])
-      ..addAll(results[1]);
+    final senders = results[0];
+    final cached = results[1];
+    final candidates = <CachedContact>[...senders, ...cached];
 
-    if (!await _cacheIsUsable(accountId)) {
-      candidates.addAll(await _liveFallback(accountId, q));
+    final cacheUsable = await _cacheIsUsable(accountId);
+    var live = 0;
+    if (!cacheUsable) {
+      final fallback = await _liveFallback(accountId, q);
+      live = fallback.length;
+      candidates.addAll(fallback);
     }
 
-    return _rank(candidates, query: q, accountDomain: accountDomain);
+    final ranked = _rank(candidates, query: q, accountDomain: accountDomain);
+    if (ranked.isEmpty) {
+      // An empty answer is the one outcome the field cannot tell apart from a
+      // fault — the dropdown simply does not open — so say where each source
+      // stood, for the diagnostic log. Counts and lengths only: the query is
+      // someone's name.
+      debugPrint(
+        '[NightMail] contact search: no match for a ${q.length}-char query '
+        '(account $accountId; senders ${senders.length}, '
+        'cached ${cached.length}, cache ${cacheUsable ? 'synced' : 'unsynced'}, '
+        'live $live; ${stopwatch.elapsedMilliseconds} ms)',
+      );
+    }
+    return ranked;
   }
 
   Future<List<CachedContact>> _senders(String accountId, String q) async {

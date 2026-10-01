@@ -31,6 +31,27 @@ Two things that look optional but are not:
 - `_searchRequestId` in `RecipientInputField` drops out-of-order responses.
   Cancelling the debounce timer does not cancel an already-awaiting search.
 
+### Self-reporting
+
+Nothing on this path reaches the user when it fails: an exception, a lookup
+that never answers and an empty answer all look the same from the field — the
+dropdown just does not open. So each one writes to the diagnostic log
+(`DiagnosticLog`, `lib/core/diagnostics/`; `diagnostics.log` in the app data
+directory, `~/.nightmail` on macOS):
+
+- `RecipientInputField` gives every lookup `searchTimeout` (5 s — the path is
+  indexed local SQL, so that is a fault, not slowness) and logs when it fires.
+- `SearchContacts` logs one line per empty answer with where each source
+  stood: sender and cache counts, whether the cache was usable, the
+  live-fallback count and the elapsed time. "Nothing matched" can then be told
+  from "the cache answered nothing" after the fact.
+- The exception paths were already logged.
+
+Counts and lengths only — the query is someone's name. Added after the
+2026-10-01 report: no dropdown in reply windows, fine in new-mail windows, same
+account, gone after an app restart, and nothing recorded which step had
+failed.
+
 ### Pasted lists
 
 Pasting several lines into the field — a column of names from a spreadsheet,

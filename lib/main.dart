@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'core/diagnostics/diagnostic_log.dart';
 import 'core/platform/macos_app_data_migration.dart';
 import 'core/platform/window_utils.dart';
 import 'core/platform/windows_app_data_migration.dart';
@@ -135,6 +136,17 @@ Future<void> _applyRestoreState(
 
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Before anything else can print. Lines are held in memory until
+  // DiagnosticLog.start() below has a directory to put them in, then teed into
+  // diagnostics.log: the installed macOS app runs with stdout and stderr on
+  // /dev/null, so that file is the only record of what a window said. Every
+  // engine installs its own — a sub-window is a fresh isolate with its own
+  // debugPrint — and all of them append to the one file.
+  DiagnosticLog.install(
+    windowLabel: args.firstOrNull == 'multi_window' && args.length > 1
+        ? 'window ${args[1]}'
+        : 'main',
+  );
   try {
     await windowManager.ensureInitialized();
   } catch (_) {
@@ -145,6 +157,9 @@ void main(List<String> args) async {
     // Must precede configureDependencies() — services keyed off this decide at
     // construction time whether they may touch process-wide native resources.
     AppWindow.markAsSubWindow();
+    // The data directory is settled: the main window ran the migrations
+    // before this window could exist.
+    DiagnosticLog.start();
     final windowId = args[1];
     final arguments = args[2].isEmpty
         ? <String, dynamic>{}
@@ -299,6 +314,9 @@ void main(List<String> args) async {
   // and the same reason: the service locator resolves the data directory, and
   // AppDatabase opens the cache out of it.
   await migrateMacOSAppData();
+  // Only now: resolving the data directory creates it, and the migrations
+  // above want to see it as the previous build left it.
+  DiagnosticLog.start();
   await configureDependencies();
   // Sweeps inline-image directories left behind by emails whose id the server
   // reassigned (a move), which per-email eviction cannot know about.

@@ -1,38 +1,55 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.37.4",
+  "version": "1.37.5",
   "sections": [
-    {
-      "type": "features",
-      "title": "New features",
-      "items": [
-        {
-          "body": "keep a rolling debugPrint log; make a dead typeahead lookup report itself",
-          "title": "diagnostics"
-        }
-      ]
-    },
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "clear the re-auth prompt the moment a sign-in succeeds",
+          "body": "keep a read the server's folder count has not caught up with",
           "title": "poller"
-        },
-        {
-          "body": "refuse a re-sign-in that comes back as a different mailbox",
-          "title": "auth"
-        },
-        {
-          "body": "stop an account switch filing one mailbox's folder tree under the other",
-          "title": "accounts"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.37.4",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "keep a rolling debugPrint log; make a dead typeahead lookup report itself",
+              "title": "diagnostics"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "clear the re-auth prompt the moment a sign-in succeeds",
+              "title": "poller"
+            },
+            {
+              "body": "refuse a re-sign-in that comes back as a different mailbox",
+              "title": "auth"
+            },
+            {
+              "body": "stop an account switch filing one mailbox's folder tree under the other",
+              "title": "accounts"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -503,23 +520,6 @@
             {
               "body": "cancel alerts left behind by an account this process does not have",
               "title": "reminders"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.31.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "in-app updates for the Linux snap",
-              "title": "update"
             }
           ]
         }

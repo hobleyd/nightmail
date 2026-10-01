@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 3,
+  "packageId": "au.com.sharpblue.nightmail",
+  "appName": "nightmail",
+  "version": "1.37.5",
+  "buildNumber": 208,
+  "platform": "windows",
+  "channel": "stable",
+  "artifact": {
+    "kind": "zip",
+    "url": "https://hobleyd.github.io/nightmail/releases/1.37.5+208-windows/nightmail-1.37.5-windows.zip",
+    "sha256": "d69ddd96a596e0c3bf6b38ecd2513c919460bd376fa9814022c178a732099467",
+    "length": 27713885
+  },
+  "install": {
+    "strategy": "wholeDirectoryReplace"
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "publicKeyId": "release-b53948b0e36b895fa047a8f4",
+    "value": "VqTDaf6iofQabOXdlIzNkQCd70hVXZ7zB6HB/6NPeL2kpGpwENVyQlE91Lp9pDcLglwYAuiUfXrtggvuhfeSBg=="
+  },
+  "minimumUpdaterVersion": "2.0.0",
+  "generatedAt": "2026-10-01T23:16:32.448244Z"
+}

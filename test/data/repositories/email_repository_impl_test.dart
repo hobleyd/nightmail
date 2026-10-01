@@ -948,6 +948,67 @@ void main() {
     });
   });
 
+  /// The tree walk is several round trips — a paged root listing and then a
+  /// getChildFolders wave per level — so an account switch can land inside
+  /// it. The id the cache write uses has to be the one bound at the start, with
+  /// the datasource; reading it at the end filed one mailbox's whole tree under
+  /// the other account (observed: a Gmail account's folders replaced wholesale
+  /// by a Microsoft mailbox's 128 Graph folders).
+  group('getMailFolders across an account switch', () {
+    const leaving = MicrosoftAccount(
+      id: 'leaving',
+      displayName: 'Leaving',
+      emailAddress: 'leaving@contoso.com',
+      tenantId: 'common',
+    );
+    const arriving = GmailAccount(
+      id: 'arriving',
+      displayName: 'Arriving',
+      emailAddress: 'arriving@gmail.com',
+    );
+
+    test('caches the tree under the account the fetch began with, not the '
+        'one active when it finished', () async {
+      final arrivingRemote = MockEmailRemoteDatasource();
+      when(mockAccountManager.activeAccount).thenReturn(leaving);
+      when(mockRemoteDatasource.getMailFolders()).thenAnswer((_) async {
+        // The switch lands mid-walk: id and datasource both flip to the new
+        // account before this listing returns.
+        when(mockAccountManager.activeAccount).thenReturn(arriving);
+        when(mockAccountManager.emailDatasource).thenReturn(arrivingRemote);
+        return [tFolderModel];
+      });
+      when(mockRemoteDatasource.getChildFolders(any))
+          .thenAnswer((_) async => []);
+      when(mockFolderLocalDatasource.clearFoldersForAccount(any))
+          .thenAnswer((_) async {});
+      when(mockFolderLocalDatasource.cacheFolders(
+        accountId: anyNamed('accountId'),
+        folders: anyNamed('folders'),
+      )).thenAnswer((_) async {});
+
+      final result = await repository.getMailFolders();
+      // The cache write is fire-and-forget; let it run.
+      await pumpEventQueue();
+
+      expect(result.isRight(), isTrue);
+      verify(mockFolderLocalDatasource.clearFoldersForAccount('leaving'))
+          .called(1);
+      verify(mockFolderLocalDatasource.cacheFolders(
+        accountId: 'leaving',
+        folders: anyNamed('folders'),
+      )).called(1);
+      verifyNever(mockFolderLocalDatasource.clearFoldersForAccount('arriving'));
+      verifyNever(mockFolderLocalDatasource.cacheFolders(
+        accountId: 'arriving',
+        folders: anyNamed('folders'),
+      ));
+      // Nor does the walk continue against the new account's mailbox.
+      verifyNever(arrivingRemote.getMailFolders());
+      verifyNever(arrivingRemote.getChildFolders(any));
+    });
+  });
+
   group('createFolder', () {
     test('returns the folder carrying the id the server assigned', () async {
       when(mockRemoteDatasource.createFolder(

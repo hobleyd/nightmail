@@ -710,9 +710,10 @@ class AccountManager {
     _accounts = [..._accounts, account];
     _activeIndex = _accounts.length - 1;
     _sortAccounts();
+    // Before the awaits — see switchToAccount.
+    _buildDatasourcesForActiveAccount();
     await _accountStorage.saveAccounts(_accounts);
     await _accountStorage.saveActiveIndex(_activeIndex);
-    _buildDatasourcesForActiveAccount();
   }
 
   /// Looks up [email] in [parentAccountId]'s directory and, if found, probes
@@ -801,12 +802,13 @@ class AccountManager {
 
     _sortAccounts();
 
-    await _accountStorage.saveAccounts(_accounts);
-    await _accountStorage.saveActiveIndex(_activeIndex);
-
+    // Before the awaits — see switchToAccount.
     if (activeAccount?.id == updatedAccount.id) {
       _buildDatasourcesForActiveAccount();
     }
+
+    await _accountStorage.saveAccounts(_accounts);
+    await _accountStorage.saveActiveIndex(_activeIndex);
   }
 
   /// Cycle to the next account. Returns the newly active account.
@@ -815,19 +817,32 @@ class AccountManager {
       throw StateError('Need at least 2 accounts to cycle');
     }
     _activeIndex = (_activeIndex + 1) % _accounts.length;
-    await _accountStorage.saveActiveIndex(_activeIndex);
+    // Before the await — see switchToAccount.
     _buildDatasourcesForActiveAccount();
+    await _accountStorage.saveActiveIndex(_activeIndex);
     return _accounts[_activeIndex];
   }
 
   /// Switch to a specific account by index.
+  ///
+  /// The datasources are rebuilt *before* the index is persisted, and the same
+  /// order holds in [addAccount], [updateAccount] and [cycleToNextAccount].
+  /// `EmailRepositoryImpl` guards against a switch landing mid-fetch by reading
+  /// [activeAccount] and [emailDatasource] together, before its first await —
+  /// a guard that only works if the two can never disagree. With the storage
+  /// write awaited in between, they did: for the length of a Keychain write
+  /// [activeAccount] was already the new account while [emailDatasource] still
+  /// answered for the old one, and a fetch starting in that window bound the
+  /// new account's id to the old mailbox's data (observed: Graph messages
+  /// filed under a Gmail account's cache in the same second as that account's
+  /// own listing landed).
   Future<void> switchToAccount(int index) async {
     if (index < 0 || index >= _accounts.length) {
       throw RangeError.index(index, _accounts);
     }
     _activeIndex = index;
-    await _accountStorage.saveActiveIndex(_activeIndex);
     _buildDatasourcesForActiveAccount();
+    await _accountStorage.saveActiveIndex(_activeIndex);
   }
 
   /// Remove account by ID. Adjusts active index if needed.

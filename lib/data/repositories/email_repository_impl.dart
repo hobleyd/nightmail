@@ -373,6 +373,14 @@ class EmailRepositoryImpl implements EmailRepository {
       return const Left(NetworkFailure(message: 'No network connection'));
     }
     try {
+      // Capture the account id and its datasource together, before any await
+      // — the same binding getEmails and getEmail make. The walk below is
+      // several round trips (a paged root listing, then a getChildFolders
+      // wave per level), and an account switch landing inside it used to
+      // file the whole tree under whichever account was active when the walk
+      // *finished*: observed as a Gmail account's folder cache replaced
+      // wholesale by a Microsoft mailbox's 128 Graph folders.
+      final accountId = _accountManager.activeAccount?.id;
       final remote = _accountManager.emailDatasource;
       // SPAMDB is an app-managed folder holding the synced spam filter
       // database (see SpamDbSyncDatasource) — it must never appear as a
@@ -402,7 +410,6 @@ class EmailRepositoryImpl implements EmailRepository {
         toExpand = nextLevel;
       }
 
-      final accountId = _accountManager.activeAccount?.id;
       if (accountId != null) {
         unawaited(() async {
           await _folderLocalDatasource.clearFoldersForAccount(accountId);
@@ -672,13 +679,16 @@ class EmailRepositoryImpl implements EmailRepository {
     String folderId, {
     bool permanentDelete = false,
   }) async {
+    // Read before the await, as in getMailFolders: the folder id is this
+    // account's, and a switch landing mid-request must not clear it from the
+    // next account's cache.
+    final accountId = _accountManager.activeAccount?.id;
     final result = await _execute(() async {
       await _accountManager.emailDatasource
           .emptyFolder(folderId, permanentDelete: permanentDelete);
       return unit;
     });
     result.fold((_) {}, (_) {
-      final accountId = _accountManager.activeAccount?.id;
       if (accountId != null) {
         unawaited(_localDatasource.clearCacheForFolder(
           accountId: accountId,

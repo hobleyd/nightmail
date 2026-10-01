@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/core/config/oauth_client_id_storage.dart';
+import 'package:nightmail/data/datasources/remote/gmail_datasource_impl.dart';
+import 'package:nightmail/data/datasources/remote/graph_api_datasource_impl.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 import 'package:nightmail/infrastructure/accounts/account_storage.dart';
@@ -348,6 +351,89 @@ void main() {
 
       await accountManager.removeAccount('1');
       expect(accountManager.contactsDatasource, isNull);
+    });
+  });
+
+  /// EmailRepositoryImpl reads activeAccount and emailDatasource together,
+  /// before its first await, so a switch landing mid-fetch cannot bind one
+  /// account's id to the other's data. That only holds if the two can never
+  /// disagree — and they did, for the length of the storage write that used
+  /// to sit between changing the index and rebuilding the datasources.
+  group('activeAccount and emailDatasource change together', () {
+    const graph = MicrosoftAccount(
+      id: 'm',
+      displayName: 'A Microsoft',
+      emailAddress: 'm@contoso.com',
+      tenantId: 'common',
+    );
+    const gmail = GmailAccount(
+      id: 'g',
+      displayName: 'B Gmail',
+      emailAddress: 'g@gmail.com',
+    );
+
+    setUp(() {
+      stubStorageEmpty();
+      stubSave();
+      when(mockAccountStorage.loadActiveIndex()).thenAnswer((_) async => 0);
+    });
+
+    test('switchToAccount: the new datasource is in place before the index '
+        'is persisted', () async {
+      when(mockAccountStorage.loadAccounts())
+          .thenAnswer((_) async => [graph, gmail]);
+      await accountManager.initialize();
+      expect(accountManager.emailDatasource, isA<GraphApiDatasourceImpl>());
+
+      final persisted = Completer<void>();
+      when(mockAccountStorage.saveActiveIndex(any))
+          .thenAnswer((_) => persisted.future);
+
+      final switching = accountManager.switchToAccount(1);
+      // The caller has not had control back yet: this is the window a fetch
+      // that reads the two "together" runs in.
+      expect(accountManager.activeAccount?.id, 'g');
+      expect(accountManager.emailDatasource, isA<GmailDatasourceImpl>(),
+          reason: 'a fetch here would bind the Gmail account id to the '
+              'Graph datasource');
+
+      persisted.complete();
+      await switching;
+    });
+
+    test('cycleToNextAccount: likewise', () async {
+      when(mockAccountStorage.loadAccounts())
+          .thenAnswer((_) async => [graph, gmail]);
+      await accountManager.initialize();
+
+      final persisted = Completer<void>();
+      when(mockAccountStorage.saveActiveIndex(any))
+          .thenAnswer((_) => persisted.future);
+
+      final cycling = accountManager.cycleToNextAccount();
+      expect(accountManager.activeAccount?.id, 'g');
+      expect(accountManager.emailDatasource, isA<GmailDatasourceImpl>());
+
+      persisted.complete();
+      expect((await cycling).id, 'g');
+    });
+
+    test('addAccount: the new account and its datasource become active '
+        'together', () async {
+      when(mockAccountStorage.loadAccounts()).thenAnswer((_) async => [graph]);
+      await accountManager.initialize();
+      expect(accountManager.emailDatasource, isA<GraphApiDatasourceImpl>());
+
+      final persisted = Completer<void>();
+      when(mockAccountStorage.saveAccounts(any))
+          .thenAnswer((_) => persisted.future);
+
+      final adding = accountManager.addAccount(gmail);
+      expect(accountManager.activeAccount?.id, 'g');
+      expect(accountManager.emailDatasource, isA<GmailDatasourceImpl>());
+
+      persisted.complete();
+      await adding;
     });
   });
 

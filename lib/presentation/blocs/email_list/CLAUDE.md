@@ -336,6 +336,26 @@ datasource together before its await (`email_repository_impl.dart`), which is a
 different half of the same race: those two agreed here, and the folder id was
 the stale one.
 
+**Two more halves, both closed at the source (October 2026).**
+`EmailRepositoryImpl.getMailFolders` bound its datasource before the walk but
+read the account id *after* it — and the walk is a paged root listing plus a
+`getChildFolders` wave per level, long enough on a 128-folder Graph mailbox
+for a switch to land inside it (the paging in 1.37.2 is what made it long).
+Observed: a Gmail account's folder cache replaced **wholesale** by the
+Microsoft account's Graph tree — its panel showed the other mailbox's folders,
+its Inbox id was a Graph id Gmail cannot list, and the poller synced nothing
+for it until the next tree fetch happened to land without a switch. The id is
+now captured with the datasource, as `getEmails` does. And
+`AccountManager.switchToAccount` (likewise `cycleToNextAccount`, `addAccount`,
+`updateAccount`) changed the index, *awaited* the Keychain write, and only
+then rebuilt the datasources — so "read the two together" could still pair a
+new id with the old datasource for the length of that write; observed as a
+handful of Graph messages filed under the Gmail account in the same second as
+its own listing. The rebuild now precedes the await. Neither half is
+self-healing for rows already filed: the tree is replaced on the next fetch,
+but a message row under a folder id its account never had is invisible rather
+than removed (`pruneForeignFolderRows` is lossless, and nothing lists it).
+
 `EmailListBloc._loadedAccountId` records the account that was active when the
 folder was *chosen* — set in `_onLoadRequested`, which is the only thing that
 establishes one — and `_folderBelongsToAnotherAccount` stands the refresh,

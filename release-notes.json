@@ -1,20 +1,55 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.37.3",
+  "version": "1.37.4",
   "sections": [
+    {
+      "type": "features",
+      "title": "New features",
+      "items": [
+        {
+          "body": "keep a rolling debugPrint log; make a dead typeahead lookup report itself",
+          "title": "diagnostics"
+        }
+      ]
+    },
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "release a closed sub-window's engine after its last frame has presented",
-          "title": "macos"
+          "body": "clear the re-auth prompt the moment a sign-in succeeds",
+          "title": "poller"
+        },
+        {
+          "body": "refuse a re-sign-in that comes back as a different mailbox",
+          "title": "auth"
+        },
+        {
+          "body": "stop an account switch filing one mailbox's folder tree under the other",
+          "title": "accounts"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.37.3",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "release a closed sub-window's engine after its last frame has presented",
+              "title": "macos"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -485,23 +520,6 @@
             {
               "body": "in-app updates for the Linux snap",
               "title": "update"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.30.4",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "shut a secondary window's engine down when the window closes",
-              "title": "macos"
             }
           ]
         }

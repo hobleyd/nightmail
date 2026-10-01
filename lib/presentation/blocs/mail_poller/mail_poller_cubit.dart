@@ -50,6 +50,8 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     required this._pendingOperations,
     required this._recentMutations,
     required this._spamDbSyncService,
+    this._recentChangeTtl = const Duration(seconds: 30),
+    this._now = DateTime.now,
   })  : _bodyPrefetch = bodyPrefetchService,
         super(const MailPollerState(
           accountsWithNewMail: {},
@@ -73,6 +75,8 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   final PendingOperationsDatasource _pendingOperations;
   final RecentMutationStore _recentMutations;
   final SpamDbSyncService _spamDbSyncService;
+  final Duration _recentChangeTtl;
+  final DateTime Function() _now;
 
   Timer? _timer;
   bool _polling = false;
@@ -83,6 +87,22 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   final Set<String> _newMailAccounts = {};
   final Set<String> _bootstrapping = {};
   final Set<String> _reauthAccounts = {};
+
+  /// Inbox unread changes the UI has reported ([decrementUnreadCount],
+  /// [incrementUnreadCount]) that no server folder count has yet been seen
+  /// to agree with, each with the count this cubit held *before* it.
+  ///
+  /// A cycle overwrites [_latestPolledUnread] with the server's Inbox count,
+  /// and that count is routinely answered from before a read the user has
+  /// just made: the mark-read PATCH is still in flight while the folder fetch
+  /// lands, or Graph's `unreadItemCount` simply trails it for a moment. The
+  /// envelope then went red again for an inbox the user had just read down to
+  /// zero — most visibly on an account they had since switched away from,
+  /// where nothing but the next cycle (30 s) could clear it. The same window
+  /// hits the folder panel, which guards itself with
+  /// `FolderListBloc._recentCountChanges`; this is that guard for the badge
+  /// and the envelope. See [_withRecentUnreadChanges].
+  final List<_UnreadChange> _recentUnreadChanges = [];
   StreamSubscription<void>? _reconnectSub;
   StreamSubscription<String>? _authSuccessSub;
 
@@ -452,12 +472,14 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
               if (inboxes.isEmpty) continue;
               inboxIdByAccount[account.id] = inboxes.first.id;
               await _persistFolderCounts(account.id, folders);
-              final unreadCount = inboxes.first.unreadItemCount;
+              final serverUnread = inboxes.first.unreadItemCount;
               final totalCount = inboxes.first.totalItemCount;
+              final unreadCount =
+                  _withRecentUnreadChanges(account.id, serverUnread);
               _latestPolledUnread[account.id] = unreadCount;
 
               if (_shouldPrimeBaseline(account.id, activeId)) {
-                _baselineUnread[account.id] = unreadCount;
+                _baselineUnread[account.id] = serverUnread;
                 _baselineTotal[account.id] = totalCount;
                 // The envelope badge mirrors the real unread count for every
                 // account, active included — same rule the dock/tray badge
@@ -473,11 +495,11 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                   // Mirror Gmail/IMAP: any change (increase or decrease) must
                   // refresh the UI. A decrease means mail was deleted or read
                   // on another client and would otherwise never self-heal.
-                  if ((prevUnread != null && unreadCount != prevUnread) ||
+                  if ((prevUnread != null && serverUnread != prevUnread) ||
                       (prevTotal != null && totalCount != prevTotal)) {
                     activeInboxChanged = true;
                   }
-                  _baselineUnread[account.id] = unreadCount;
+                  _baselineUnread[account.id] = serverUnread;
                   _baselineTotal[account.id] = totalCount;
                 }
                 if (unreadCount > 0) {
@@ -549,13 +571,20 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                 if (inboxes.isEmpty) continue;
                 inboxIdByAccount[account.id] = inboxes.first.id;
                 await _persistFolderCounts(account.id, folders);
-                final unreadCount = inboxes.first.unreadItemCount;
+                final serverUnread = inboxes.first.unreadItemCount;
+                final hasNewUnread = result.upserted.any((e) => !e.isRead);
+                // New unread mail moves the server's count, so a count that
+                // still reads as it did before the user's reads is one that
+                // has absorbed them, not one still behind them.
+                final unreadCount = _withRecentUnreadChanges(
+                  account.id,
+                  serverUnread,
+                  serverMoved: hasNewUnread,
+                );
                 _latestPolledUnread[account.id] = unreadCount;
 
-                final hasNewUnread = result.upserted.any((e) => !e.isRead);
-
                 if (account.id == activeId) {
-                  _baselineUnread[account.id] = unreadCount;
+                  _baselineUnread[account.id] = serverUnread;
                   activeInboxChanged = true;
                   // _cacheUpserted files each message under its own
                   // parentFolderId, which for an inbox delta is this id — so a
@@ -592,9 +621,10 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                 if (inboxes.isEmpty) continue;
                 inboxIdByAccount[account.id] = inboxes.first.id;
                 await _persistFolderCounts(account.id, folders);
-                final unreadCount = inboxes.first.unreadItemCount;
-                _latestPolledUnread[account.id] = unreadCount;
-                _baselineUnread[account.id] = unreadCount;
+                final serverUnread = inboxes.first.unreadItemCount;
+                _latestPolledUnread[account.id] =
+                    _withRecentUnreadChanges(account.id, serverUnread);
+                _baselineUnread[account.id] = serverUnread;
               }
               // No changes and count already known → badge count is unchanged.
 
@@ -645,13 +675,15 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
             // Before anything reads or writes this account's cache: the
             // getMailFolders above is what supplies the UIDVALIDITY readings.
             await _dropCacheForRebuiltImapFolders(account.id, ds);
-            final unreadCount = inboxes.first.unreadItemCount;
+            final serverUnread = inboxes.first.unreadItemCount;
+            final unreadCount =
+                _withRecentUnreadChanges(account.id, serverUnread);
             _latestPolledUnread[account.id] = unreadCount;
 
             final totalCount = inboxes.first.totalItemCount;
 
             if (_shouldPrimeBaseline(account.id, activeId)) {
-              _baselineUnread[account.id] = unreadCount;
+              _baselineUnread[account.id] = serverUnread;
               _baselineTotal[account.id] = totalCount;
               // The envelope badge mirrors the real unread count for every
               // account, active included — same rule the dock/tray badge
@@ -670,7 +702,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
             // in-app action whose optimistic local update was missed, and would
             // otherwise never self-heal.
             final countsChanged =
-                (prevUnread != null && unreadCount != prevUnread) ||
+                (prevUnread != null && serverUnread != prevUnread) ||
                     (prevTotal != null && totalCount != prevTotal);
 
             if (countsChanged && account.id == activeId) {
@@ -746,7 +778,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
               }
             }
 
-            _baselineUnread[account.id] = unreadCount;
+            _baselineUnread[account.id] = serverUnread;
             _baselineTotal[account.id] = totalCount;
 
             // Envelope badge tracks the real unread count for every account,
@@ -1370,7 +1402,10 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     final accountId = _accountManager.activeAccount?.id;
     if (accountId == null) return;
     final current = _latestPolledUnread[accountId] ?? 0;
-    if (current > 0) _latestPolledUnread[accountId] = current - 1;
+    if (current > 0) {
+      _latestPolledUnread[accountId] = current - 1;
+      _recordUnreadChange(accountId, before: current, delta: -1);
+    }
     final total = _latestPolledUnread.values.fold(0, (sum, n) => sum + n);
     unawaited(_badgeService.setBadgeCount(total));
     _syncNewMailFlag(accountId);
@@ -1381,6 +1416,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     if (accountId == null) return;
     final current = _latestPolledUnread[accountId] ?? 0;
     _latestPolledUnread[accountId] = current + 1;
+    _recordUnreadChange(accountId, before: current, delta: 1);
     final total = _latestPolledUnread.values.fold(0, (sum, n) => sum + n);
     unawaited(_badgeService.setBadgeCount(total));
     _syncNewMailFlag(accountId);
@@ -1409,6 +1445,50 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     }
   }
 
+  void _recordUnreadChange(
+    String accountId, {
+    required int before,
+    required int delta,
+  }) {
+    _recentUnreadChanges.add(_UnreadChange(
+      accountId: accountId,
+      unreadBefore: before,
+      delta: delta,
+      expiry: _now().add(_recentChangeTtl),
+    ));
+  }
+
+  /// [serverUnread] as the server reported it for [accountId]'s Inbox, with
+  /// every live entry of [_recentUnreadChanges] re-applied over it — each only
+  /// if the running count still reads exactly what this cubit held before
+  /// that change, the signature of a server that has not caught up with it.
+  ///
+  /// A count that moved at all is taken at the server's word: re-applying
+  /// there would count the read twice once the server did reflect it, and
+  /// nothing here can tell that from another client's change without the
+  /// comparison. Entries chain in order over the running value, so two reads
+  /// over a server behind both, or behind only the first, both land right.
+  /// [serverMoved] is the caller saying it already knows the count moved
+  /// (the delta carried new unread mail), which the comparison alone cannot
+  /// see when the arrivals happen to equal the reads it absorbed.
+  int _withRecentUnreadChanges(
+    String accountId,
+    int serverUnread, {
+    bool serverMoved = false,
+  }) {
+    final now = _now();
+    _recentUnreadChanges.removeWhere((c) => !c.expiry.isAfter(now));
+    if (serverMoved) return serverUnread;
+    var count = serverUnread;
+    for (final change in _recentUnreadChanges) {
+      if (change.accountId != accountId) continue;
+      if (count != change.unreadBefore) continue;
+      final next = count + change.delta;
+      count = next < 0 ? 0 : next;
+    }
+    return count;
+  }
+
   Future<void> updatePollInterval(int seconds) async {
     await _appSettings.savePollIntervalSeconds(seconds);
     if (!isClosed) emit(state.copyWith(pollIntervalSeconds: seconds));
@@ -1427,4 +1507,18 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     _idleSubs.clear();
     return super.close();
   }
+}
+
+class _UnreadChange {
+  const _UnreadChange({
+    required this.accountId,
+    required this.unreadBefore,
+    required this.delta,
+    required this.expiry,
+  });
+
+  final String accountId;
+  final int unreadBefore;
+  final int delta;
+  final DateTime expiry;
 }

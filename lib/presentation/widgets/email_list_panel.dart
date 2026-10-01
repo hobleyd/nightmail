@@ -563,8 +563,13 @@ class _EmailListPanelState extends State<EmailListPanel> {
         folderId: widget.folder!.id,
         unreadCountDelta: readIds.length,
       ));
-      for (var i = 0; i < readIds.length; i++) {
-        context.read<MailPollerCubit>().incrementUnreadCount();
+      // Inbox only, like _applyRemovalCountChange: the poller's count is the
+      // Inbox's, and it now holds an increment over the next server count
+      // that matches it, so one from another folder would stick.
+      if (_isInboxFolder) {
+        for (var i = 0; i < readIds.length; i++) {
+          context.read<MailPollerCubit>().incrementUnreadCount();
+        }
       }
     }
     _clearSelection();

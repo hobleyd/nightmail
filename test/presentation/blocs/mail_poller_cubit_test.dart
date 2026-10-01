@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fpdart/fpdart.dart';
 import 'package:mockito/annotations.dart';
@@ -137,7 +138,7 @@ void main() {
   late RecentMutationStore recentMutations;
   late BodyPrefetchService bodyPrefetchService;
 
-  MailPollerCubit makeCubit() => MailPollerCubit(
+  MailPollerCubit makeCubit({DateTime Function()? now}) => MailPollerCubit(
         accountManager: mockAccountManager,
         appSettings: mockAppSettings,
         badgeService: mockBadgeService,
@@ -153,6 +154,7 @@ void main() {
         pendingOperations: mockPendingOperations,
         recentMutations: recentMutations,
         spamDbSyncService: mockSpamDbSyncService,
+        now: now ?? DateTime.now,
       );
 
   void stubInfra() {
@@ -1593,6 +1595,181 @@ void main() {
       cubit.decrementUnreadCount();
 
       expect(cubit.state.accountsWithNewMail, isNot(contains(_msId)));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // A cycle must not put back a read the server has not caught up with.
+  //
+  // Regression: every cycle that fetched folders overwrote the account's
+  // unread count with the server's, and the server routinely answers from
+  // before a read the user has just made (the PATCH still in flight, or
+  // Graph's count trailing it). An inbox read down to zero went red again on
+  // the next cycle — and on an account the user had since switched away from,
+  // nothing but a later cycle could clear it.
+  // ---------------------------------------------------------------------------
+
+  group('MailPollerCubit — a cycle keeps a read the server is behind on', () {
+    const ms2Id = 'acct-ms-2';
+    final msAccount2 = MicrosoftAccount(
+      id: ms2Id,
+      displayName: 'Second',
+      emailAddress: 'second@example.com',
+      tenantId: 'common',
+    );
+
+    /// The delta's echo of a read: a change, but not a new unread message.
+    MailDeltaResult readEcho() => MailDeltaResult(
+          upserted: [_email('msg-1', isRead: true)],
+          removedIds: const [],
+          deltaLink: _newToken,
+        );
+
+    setUp(() {
+      when(mockAccountManager.accounts).thenReturn([_msAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(_msAccount);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(mockGraphDs);
+      when(mockDatabase.loadDeltaToken(any, any))
+          .thenAnswer((_) async => _savedToken);
+      when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
+          .thenAnswer((_) async => MailDeltaResult(
+                upserted: [_email('msg-1', isRead: false)],
+                removedIds: const [],
+                deltaLink: _newToken,
+              ));
+      when(mockGraphDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: 1)]);
+      // The cycle is not over until the body prefetch that follows the emit
+      // is, and an unstubbed row lookup there costs a real 16 ms yield per
+      // message — long enough for the second cycle below to find _polling
+      // still latched and skip itself. A null row is skipped without one.
+      when(mockEmailLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => null);
+    });
+
+    Future<MailPollerCubit> flagged({int unread = 1, DateTime Function()? now}) async {
+      when(mockGraphDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: unread)]);
+      final cubit = makeCubit(now: now);
+      addTearDown(cubit.close);
+      await cubit.initialize();
+      await pumpEventQueue();
+      expect(cubit.state.accountsWithNewMail, contains(_msId));
+      return cubit;
+    }
+
+    /// A further cycle whose folder fetch answers [serverUnread].
+    Future<void> nextCycle(
+      MailPollerCubit cubit, {
+      required int serverUnread,
+      MailDeltaResult? delta,
+    }) async {
+      when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
+          .thenAnswer((_) async => delta ?? readEcho());
+      when(mockGraphDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: serverUnread)]);
+      cubit.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await pumpEventQueue();
+    }
+
+    int lastBadge() =>
+        verify(mockBadgeService.setBadgeCount(captureAny)).captured.last as int;
+
+    test('a count still reading as before the read does not re-flag it',
+        () async {
+      final cubit = await flagged();
+      cubit.decrementUnreadCount();
+      expect(cubit.state.accountsWithNewMail, isNot(contains(_msId)));
+
+      // The server's unreadItemCount trailing the PATCH.
+      await nextCycle(cubit, serverUnread: 1);
+
+      expect(cubit.state.accountsWithNewMail, isNot(contains(_msId)));
+      expect(lastBadge(), 0);
+    });
+
+    test('a count the server has caught up with is not decremented again',
+        () async {
+      final cubit = await flagged(unread: 2);
+      cubit.decrementUnreadCount();
+
+      await nextCycle(cubit, serverUnread: 1);
+
+      expect(cubit.state.accountsWithNewMail, contains(_msId));
+      expect(lastBadge(), 1);
+    });
+
+    test('new unread mail that arrived meanwhile is taken at the server\'s word',
+        () async {
+      final cubit = await flagged();
+      cubit.decrementUnreadCount();
+      expect(cubit.state.accountsWithNewMail, isNot(contains(_msId)));
+
+      // Unread is back where it was, but because a message arrived — the
+      // read has been absorbed and this is not a server that is behind.
+      await nextCycle(
+        cubit,
+        serverUnread: 1,
+        delta: MailDeltaResult(
+          upserted: [_email('msg-2', isRead: false)],
+          removedIds: const [],
+          deltaLink: _newToken,
+        ),
+      );
+
+      expect(cubit.state.accountsWithNewMail, contains(_msId));
+      expect(lastBadge(), 1);
+    });
+
+    test('two reads chain over a server that caught up with only the first',
+        () async {
+      final cubit = await flagged(unread: 2);
+      cubit.decrementUnreadCount();
+      cubit.decrementUnreadCount();
+      expect(cubit.state.accountsWithNewMail, isNot(contains(_msId)));
+
+      await nextCycle(cubit, serverUnread: 1);
+
+      expect(cubit.state.accountsWithNewMail, isNot(contains(_msId)));
+      expect(lastBadge(), 0);
+    });
+
+    test('a read on an account the user has since left is kept too',
+        () async {
+      when(mockAccountManager.accounts).thenReturn([_msAccount, msAccount2]);
+      final cubit = await flagged();
+      expect(cubit.state.accountsWithNewMail, contains(ms2Id));
+
+      // Read the first account's inbox down, then switch to the second.
+      cubit.decrementUnreadCount();
+      expect(cubit.state.accountsWithNewMail, isNot(contains(_msId)));
+      when(mockAccountManager.activeAccount).thenReturn(msAccount2);
+
+      // Both inboxes still answer 1: the first is behind the read, the
+      // second genuinely has one.
+      await nextCycle(cubit, serverUnread: 1);
+
+      expect(cubit.state.accountsWithNewMail, isNot(contains(_msId)));
+      expect(cubit.state.accountsWithNewMail, contains(ms2Id));
+      expect(lastBadge(), 1);
+    });
+
+    test('an expired read is no longer re-applied', () async {
+      var clock = DateTime(2026, 10, 2, 8);
+      final cubit = await flagged(now: () => clock);
+      cubit.decrementUnreadCount();
+      expect(cubit.state.accountsWithNewMail, isNot(contains(_msId)));
+
+      // Past the window the server's count is the truth even when it reads
+      // as it did before — a message marked unread from another client.
+      clock = clock.add(const Duration(seconds: 31));
+      await nextCycle(cubit, serverUnread: 1);
+
+      expect(cubit.state.accountsWithNewMail, contains(_msId));
+      expect(lastBadge(), 1);
     });
   });
 

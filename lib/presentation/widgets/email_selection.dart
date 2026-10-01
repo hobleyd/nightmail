@@ -11,6 +11,7 @@ import '../blocs/email_list/email_list_event.dart';
 import '../blocs/email_list/email_list_state.dart';
 import '../blocs/folder_list/folder_list_bloc.dart';
 import '../blocs/folder_list/folder_list_event.dart';
+import '../blocs/folder_list/folder_list_state.dart';
 import '../blocs/home/home_cubit.dart';
 import '../blocs/mail_poller/mail_poller_cubit.dart';
 
@@ -68,6 +69,9 @@ void markThreadReadOnceLoaded(
   List<String> unreadIds,
   EmailFolder? selectedFolder,
 ) {
+  // Counted now, while the rows are still unread, not once the load lands.
+  final inboxReads =
+      _inboxMessageCount(context, email, unreadIds, selectedFolder);
   context
       .read<EmailDetailBloc>()
       .stream
@@ -86,9 +90,55 @@ void markThreadReadOnceLoaded(
             ),
           );
     }
+    // The poller's count is the *Inbox's* unread count — it is what the dock
+    // badge and the header envelope show — so only the thread's Inbox
+    // messages move it, the same rule the delete and move paths apply. It
+    // used to decrement once per message read in any folder, and the poller
+    // now re-applies a decrement over the next server count it matches, so
+    // an Archive read would otherwise hold the Inbox badge one too low.
     final poller = context.read<MailPollerCubit>();
-    for (var i = 0; i < unreadIds.length; i++) {
+    for (var i = 0; i < inboxReads; i++) {
       poller.decrementUnreadCount();
     }
   });
+}
+
+/// How many of [unreadIds] are messages that live in the Inbox.
+///
+/// A folder listing carries a thread's other-folder messages too (the copies
+/// in Sent, already-filed replies), and the user may be reading from any
+/// folder, so membership is per message: [Email.isInFolder] against the
+/// Inbox's id where the folder list knows it. A row with no folder
+/// information at all came straight from the listed folder, so it is in the
+/// Inbox exactly when that is the folder being read.
+int _inboxMessageCount(
+  BuildContext context,
+  Email email,
+  List<String> unreadIds,
+  EmailFolder? selectedFolder,
+) {
+  final readingInbox = selectedFolder?.displayName.toLowerCase() == 'inbox';
+  final folderState = context.read<FolderListBloc>().state;
+  final inboxId = folderState is FolderListLoaded
+      ? folderState.folders
+          .where((f) => f.displayName.toLowerCase() == 'inbox')
+          .map((f) => f.id)
+          .firstOrNull
+      : null;
+  final listState = context.read<EmailListBloc>().state;
+  final byId = {
+    if (listState is EmailListLoaded)
+      for (final e in listState.emails) e.id: e,
+    email.id: email,
+  };
+  var count = 0;
+  for (final id in unreadIds) {
+    final e = byId[id];
+    if (e == null) continue;
+    final unplaced = e.folderIds.isEmpty && e.parentFolderId == null;
+    final inInbox =
+        inboxId == null || unplaced ? readingInbox : e.isInFolder(inboxId);
+    if (inInbox) count++;
+  }
+  return count;
 }

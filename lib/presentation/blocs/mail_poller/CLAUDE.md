@@ -83,3 +83,30 @@ account it had not flagged is left alone: that stream also carries every
 routine hourly refresh, and polling on each of those would be a second poll
 timer. A shared mailbox is flagged under its own id but signs in through its
 owner, so the owner's success clears the mailboxes riding on it too.
+
+## A Cycle Must Not Put Back a Read the Server Has Not Caught Up With
+
+`_latestPolledUnread` — the per-account Inbox count behind the dock badge and
+the header envelope (`accountsWithNewMail`) — is overwritten with the server's
+`unreadItemCount` by every cycle that fetches folders, and that count is
+routinely answered from *before* a read the user has just made: the mark-read
+PATCH is still in flight when the folder fetch lands (the cycle drains the
+outbox at its top, so a read made mid-cycle is not waited for), or Graph's
+count simply trails it. The user read an inbox down to zero, switched
+accounts, and the next cycle flagged it again; for an account that is not
+active nothing but a later cycle could clear it, and
+`HomePage`'s `updateBadgeFromFolders` only ever corrects the active one.
+
+`decrementUnreadCount`/`incrementUnreadCount` now record each change with the
+count the cubit held before it (`_recentUnreadChanges`, 30 s like the folder
+panel's), and `_withRecentUnreadChanges` re-applies the live ones over a
+fetched count **only where it still reads exactly that** — the same rule and
+the same reasoning as `FolderListBloc._recentCountChanges`. The baselines
+(`_baselineUnread`) keep the raw server value: they exist to detect server
+change, and the user's own read reaching the server is one. The delta branch
+passes `serverMoved` when the page carried new unread mail, because arrivals
+that happen to equal the reads the server absorbed leave the count reading as
+before. The UI sites that move this count are therefore Inbox-only
+(`markThreadReadOnceLoaded`, `_applyRemovalCountChange`, mark-unread, folder
+moves): a read in another folder used to be a one-cycle inaccuracy and would
+now be held for the window.

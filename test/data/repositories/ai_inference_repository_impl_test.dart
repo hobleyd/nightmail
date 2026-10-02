@@ -8,6 +8,7 @@ import 'package:nightmail/data/datasources/ai/ai_provider_registry.dart';
 import 'package:nightmail/data/datasources/ai/inference/ai_adapter.dart';
 import 'package:nightmail/data/repositories/ai/ai_inference_repository_impl.dart';
 import 'package:nightmail/domain/entities/ai/ai_chunk.dart';
+import 'package:nightmail/domain/entities/ai/ai_decision.dart';
 import 'package:nightmail/domain/entities/ai/ai_message.dart';
 import 'package:nightmail/domain/entities/ai/ai_model.dart';
 import 'package:nightmail/domain/entities/ai/ai_provider.dart';
@@ -169,6 +170,9 @@ void main() {
     // Either, so we register them explicitly.
     provideDummy<Either<Failure, AiResponse>>(const Right(tResponse));
     provideDummy<Either<Failure, String?>>(const Right(null));
+    provideDummy<Either<Failure, AiDecisionResponse>>(
+      const Right(AiDecisionResponse(model: '', answers: {})),
+    );
 
     mockRegistry = MockAiProviderRegistry();
     mockAdapterFactory = MockAiAdapterFactory();
@@ -527,6 +531,192 @@ void main() {
       expect(emissions.length, 1);
       emissions.single.fold(
         (failure) => expect(failure, isA<NoProviderConfigured>()),
+        (_) => fail('expected a Left'),
+      );
+      verifyNever(mockAdapterFactory.forProtocol(any));
+    });
+  });
+
+  group('decide (System One typed decisions)', () {
+    // A synthesized-catalog-style Jev provider: keyed, no explicit base URL,
+    // so the repository must supply `https://api.typesafe.ai/v1`.
+    const tJevProvider = AiProvider(
+      id: 'jev',
+      name: 'TypeSafe Jev',
+      npm: '@typesafe-ai/sdk',
+      doc: 'https://docs.typesafe.ai',
+      env: ['TYPESAFE_API_KEY'],
+      kind: AiProviderKind.cloud,
+      wireProtocol: AiWireProtocol.systemOne,
+      source: AiProviderSource.catalog,
+    );
+
+    // The local Laya-MLX bridge: keyless, default endpoint on the bridge port.
+    const tLayaProvider = AiProvider(
+      id: 'laya-mlx',
+      name: 'Laya-MLX',
+      npm: 'laya-mlx',
+      doc: '',
+      env: [],
+      kind: AiProviderKind.local,
+      wireProtocol: AiWireProtocol.systemOne,
+      source: AiProviderSource.catalog,
+    );
+
+    const tDecision = AiDecisionRequest(
+      providerId: 'jev',
+      modelId: 'jev-latest',
+      state: 'Billed twice, please refund.',
+      questions: {
+        'urgent': AiDecisionQuestion.noul(instructions: 'Is this urgent?'),
+      },
+    );
+
+    const tDecisionResponse = AiDecisionResponse(
+      model: 'jev-1.13.0',
+      answers: {
+        'urgent': AiDecisionAnswer(
+          type: AiDecisionQuestionType.noul,
+          probability: 0.82,
+        ),
+      },
+    );
+
+    test('resolves the provider, default endpoint and key, then delegates',
+        () async {
+      when(mockRegistry.byId('jev')).thenReturn(tJevProvider);
+      when(mockSettingsRepository.getApiKey('jev'))
+          .thenAnswer((_) async => const Right('jv_live_test'));
+      when(mockAdapterFactory.forProtocol(AiWireProtocol.systemOne))
+          .thenReturn(mockAdapter);
+      when(mockAdapter.decide(
+        any,
+        apiKey: anyNamed('apiKey'),
+        baseUrl: anyNamed('baseUrl'),
+      )).thenAnswer((_) async => const Right(tDecisionResponse));
+
+      final result = await repository.decide(tDecision);
+
+      expect(result, const Right(tDecisionResponse));
+      verify(mockRegistry.ensureReady()).called(1);
+      verify(mockAdapter.decide(
+        tDecision,
+        apiKey: 'jv_live_test',
+        baseUrl: 'https://api.typesafe.ai/v1',
+      ));
+    });
+
+    test('a keyless local provider (Laya-MLX bridge) is not blocked', () async {
+      when(mockRegistry.byId('laya-mlx')).thenReturn(tLayaProvider);
+      when(mockSettingsRepository.getApiKey('laya-mlx'))
+          .thenAnswer((_) async => const Right(null));
+      when(mockAdapterFactory.forProtocol(AiWireProtocol.systemOne))
+          .thenReturn(mockAdapter);
+      when(mockAdapter.decide(
+        any,
+        apiKey: anyNamed('apiKey'),
+        baseUrl: anyNamed('baseUrl'),
+      )).thenAnswer((_) async => const Right(tDecisionResponse));
+
+      final result = await repository.decide(
+        const AiDecisionRequest(
+          providerId: 'laya-mlx',
+          modelId: 'aac6fef/laya-mlx',
+          state: 'hello',
+          questions: {
+            'urgent': AiDecisionQuestion.noul(instructions: 'Urgent?'),
+          },
+        ),
+      );
+
+      expect(result.isRight(), isTrue);
+      verify(mockAdapter.decide(
+        any,
+        apiKey: null,
+        baseUrl: 'http://127.0.0.1:8766/v1',
+      ));
+    });
+
+    test('a keyed catalog provider with no stored key is MissingApiKey',
+        () async {
+      when(mockRegistry.byId('jev')).thenReturn(tJevProvider);
+      when(mockSettingsRepository.getApiKey('jev'))
+          .thenAnswer((_) async => const Right(null));
+
+      final result = await repository.decide(tDecision);
+
+      result.fold(
+        (failure) => expect(failure, isA<MissingApiKey>()),
+        (_) => fail('expected a Left'),
+      );
+      verifyNever(mockAdapterFactory.forProtocol(any));
+    });
+
+    test('a chat provider fails closed with UnsupportedFailure, no adapter call',
+        () async {
+      when(mockRegistry.byId('openai')).thenReturn(tProvider);
+      when(mockSettingsRepository.getApiKey('openai'))
+          .thenAnswer((_) async => const Right(tApiKey));
+
+      final result = await repository.decide(
+        const AiDecisionRequest(
+          providerId: 'openai',
+          modelId: 'gpt-4o',
+          state: 'hello',
+          questions: {
+            'urgent': AiDecisionQuestion.noul(instructions: 'Urgent?'),
+          },
+        ),
+      );
+
+      result.fold(
+        (failure) => expect(failure, isA<UnsupportedFailure>()),
+        (_) => fail('expected a Left'),
+      );
+      verifyNever(mockAdapterFactory.forProtocol(any));
+    });
+
+    test('unknown providerId returns NoProviderConfigured', () async {
+      when(mockRegistry.byId('jev')).thenReturn(null);
+
+      final result = await repository.decide(tDecision);
+
+      result.fold(
+        (failure) => expect(failure, isA<NoProviderConfigured>()),
+        (_) => fail('expected a Left'),
+      );
+      verifyNever(mockSettingsRepository.getApiKey(any));
+    });
+  });
+
+  group('chat requests to a System One provider', () {
+    const tJevProvider = AiProvider(
+      id: 'jev',
+      name: 'TypeSafe Jev',
+      npm: '@typesafe-ai/sdk',
+      doc: '',
+      env: ['TYPESAFE_API_KEY'],
+      kind: AiProviderKind.cloud,
+      wireProtocol: AiWireProtocol.systemOne,
+      source: AiProviderSource.catalog,
+    );
+
+    test('run fails closed with UnsupportedFailure before the adapter',
+        () async {
+      when(mockRegistry.byId('jev')).thenReturn(tJevProvider);
+      when(mockSettingsRepository.getApiKey('jev'))
+          .thenAnswer((_) async => const Right('jv_live_test'));
+
+      final result = await repository.run(
+        const AiRequest(
+          messages: [AiMessage(role: AiRole.user, content: 'Hello')],
+          providerId: 'jev',
+          modelId: 'jev-latest',
+        ),
+      );
+
+      result.fold(
+        (failure) => expect(failure, isA<UnsupportedFailure>()),
         (_) => fail('expected a Left'),
       );
       verifyNever(mockAdapterFactory.forProtocol(any));

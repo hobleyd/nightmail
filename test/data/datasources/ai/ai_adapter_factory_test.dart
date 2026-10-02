@@ -12,6 +12,7 @@ void main() {
   late MockAiAdapter mockAnthropicAdapter;
   late MockAiAdapter mockAzureAdapter;
   late MockAiAdapter mockGoogleAdapter;
+  late MockAiAdapter mockSystemOneAdapter;
   late AiAdapterFactory factory;
 
   setUp(() {
@@ -19,11 +20,13 @@ void main() {
     mockAnthropicAdapter = MockAiAdapter();
     mockAzureAdapter = MockAiAdapter();
     mockGoogleAdapter = MockAiAdapter();
+    mockSystemOneAdapter = MockAiAdapter();
     factory = AiAdapterFactory(
       openAiAdapter: mockOpenAiAdapter,
       anthropicAdapter: mockAnthropicAdapter,
       azureAdapter: mockAzureAdapter,
       googleAdapter: mockGoogleAdapter,
+      systemOneAdapter: mockSystemOneAdapter,
     );
   });
 
@@ -63,6 +66,14 @@ void main() {
       expect(
         factory.forProtocol(AiWireProtocol.ollama),
         same(mockOpenAiAdapter),
+      );
+    });
+
+    test('systemOne resolves to the dedicated System One (Jev wire) adapter',
+        () {
+      expect(
+        factory.forProtocol(AiWireProtocol.systemOne),
+        same(mockSystemOneAdapter),
       );
     });
 

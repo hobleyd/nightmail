@@ -209,7 +209,7 @@ class AiConfig extends Table {
   TextColumn get source => text()(); // catalog | user
   TextColumn get displayName => text().nullable()();
   TextColumn get apiBaseUrl => text().nullable()();
-  TextColumn get wireProtocol => text()(); // openai | anthropic | google | ollama | azure
+  TextColumn get wireProtocol => text()(); // openai | anthropic | google | ollama | azure | systemOne
   TextColumn get kind => text()(); // cloud | local | selfHosted
 
   @override

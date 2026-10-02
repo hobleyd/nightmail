@@ -2,6 +2,7 @@ import 'package:fpdart/fpdart.dart';
 
 import '../../../core/error/failures.dart';
 import '../../entities/ai/ai_chunk.dart';
+import '../../entities/ai/ai_decision.dart';
 import '../../entities/ai/ai_request.dart';
 import '../../entities/ai/ai_response.dart';
 
@@ -20,4 +21,12 @@ abstract interface class AiInferenceRepository {
   /// `finishReason` and usage. Each event is wrapped in [Either] so a mid-stream
   /// failure (e.g. [ProviderUnreachable], [RateLimited]) surfaces as a `Left`.
   Stream<Either<Failure, AiChunk>> stream(AiRequest request);
+
+  /// Typed decision — asks a System One model (Jev, Laya) the request's
+  /// noul / choice / score questions about its state.
+  ///
+  /// Only providers whose `supportsDecisions` is true can serve this; routing
+  /// it to a chat provider fails with an `UnsupportedFailure` before any
+  /// network call, mirroring how `run`/`stream` fail for a System One provider.
+  Future<Either<Failure, AiDecisionResponse>> decide(AiDecisionRequest request);
 }

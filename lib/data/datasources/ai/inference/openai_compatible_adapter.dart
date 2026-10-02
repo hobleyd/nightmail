@@ -28,7 +28,7 @@ const _kDefaultOpenAiBaseUrl = 'https://api.openai.com/v1';
 /// Ollama ([AiWireProtocol.ollama]) is also served here — its `/v1`
 /// OpenAI-compatibility surface accepts the same `tools` array, so the §7
 /// tool-calling wire work in this adapter covers Ollama too (no separate adapter).
-class OpenAiCompatibleAdapter implements AiAdapter {
+class OpenAiCompatibleAdapter extends AiAdapter {
   const OpenAiCompatibleAdapter({
     required this._dio,
     this.useApiKeyHeader = false,

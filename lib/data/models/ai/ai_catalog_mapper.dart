@@ -12,9 +12,15 @@ import '../../../domain/entities/ai/ai_provider.dart';
 class AiCatalogMapper {
   const AiCatalogMapper._();
 
-  /// Provider ids whose backends run a local model runtime. Drives both the
-  /// `local` privacy kind and the `ollama` wire protocol.
-  static const Set<String> _localProviderIds = {'ollama', 'lmstudio', 'llama'};
+  /// Provider ids whose backends run a local model runtime. Drives the
+  /// `local` privacy kind (and, for the chat runtimes, the `ollama` wire
+  /// protocol — `laya-mlx` is a System One runtime and keeps its own wire).
+  static const Set<String> _localProviderIds = {
+    'ollama',
+    'lmstudio',
+    'llama',
+    _layaMlxId,
+  };
 
   /// Parse the full decoded `api.json` object into the catalog's providers,
   /// each carrying its own list of models. All entries are tagged
@@ -36,10 +42,89 @@ class AiCatalogMapper {
     if (!providers.any((p) => p.id == _localOllamaId)) {
       providers.add(_localOllamaProvider);
     }
+    for (final synthesized in _systemOneProviders) {
+      if (!providers.any((p) => p.id == synthesized.id)) {
+        providers.add(synthesized);
+      }
+    }
     return providers;
   }
 
   static const String _localOllamaId = 'ollama';
+  static const String _jevId = 'jev';
+  static const String _layaMlxId = 'laya-mlx';
+
+  /// System One (typed decision) providers, none of which models.dev lists —
+  /// it catalogs text-generation APIs only. Synthesized the same way as the
+  /// local Ollama entry so they are discoverable under "From catalog".
+  ///
+  /// * [_jevProvider] — TypeSafe's hosted Jev API. Keyed; the model list is
+  ///   static because the API has no models-listing route.
+  /// * [_layaMlxProvider] — the open Laya decision model running on Apple MLX
+  ///   behind this repo's Jev-compatible bridge (`tool/laya_mlx_server.py`,
+  ///   `127.0.0.1:8766`). Keyless and local; models are listed live from the
+  ///   bridge's `/v1/models`, so none are baked in here.
+  static const List<AiProvider> _systemOneProviders = [
+    _jevProvider,
+    _layaMlxProvider,
+  ];
+
+  static const AiProvider _jevProvider = AiProvider(
+    id: _jevId,
+    name: 'TypeSafe Jev (System One)',
+    npm: '@typesafe-ai/sdk',
+    doc: 'https://docs.typesafe.ai',
+    env: ['TYPESAFE_API_KEY'],
+    kind: AiProviderKind.cloud,
+    wireProtocol: AiWireProtocol.systemOne,
+    source: AiProviderSource.catalog,
+    models: [
+      AiModel(
+        id: 'jev-latest',
+        providerId: _jevId,
+        name: 'Jev (latest)',
+        attachment: false,
+        reasoning: false,
+        toolCall: false,
+        openWeights: false,
+        releaseDate: '',
+        lastUpdated: '',
+        inputModalities: ['text'],
+        outputModalities: ['text'],
+        contextLimit: 0,
+        outputLimit: 0,
+        family: 'jev',
+      ),
+      AiModel(
+        id: 'jev-preview',
+        providerId: _jevId,
+        name: 'Jev (preview)',
+        attachment: false,
+        reasoning: false,
+        toolCall: false,
+        openWeights: false,
+        releaseDate: '',
+        lastUpdated: '',
+        inputModalities: ['text'],
+        outputModalities: ['text'],
+        contextLimit: 0,
+        outputLimit: 0,
+        family: 'jev',
+        status: AiModelStatus.beta,
+      ),
+    ],
+  );
+
+  static const AiProvider _layaMlxProvider = AiProvider(
+    id: _layaMlxId,
+    name: 'Laya-MLX (local System One)',
+    npm: 'laya-mlx',
+    doc: 'https://github.com/mizorewww/laya-mlx',
+    env: [],
+    kind: AiProviderKind.local,
+    wireProtocol: AiWireProtocol.systemOne,
+    source: AiProviderSource.catalog,
+  );
 
   /// Synthesized local-Ollama-server descriptor (see [parseCatalog]). Keyless,
   /// with no `apiBaseUrl` — it resolves to `http://localhost:11434/v1` via
@@ -142,14 +227,22 @@ class AiCatalogMapper {
   }
 
   /// `wireProtocol` from the provider's AI-SDK `npm` package:
-  /// `@ai-sdk/anthropic` → anthropic; `@ai-sdk/google*` → google; known
-  /// local-runtime packages (`ollama`/`lmstudio`/`llama`) → ollama; everything
-  /// else (OpenAI-shaped, and **unknown ⇒ default**) → openai.
+  /// `@ai-sdk/anthropic` → anthropic; `@ai-sdk/google*` → google; the System
+  /// One SDKs (`typesafe`/`jev`/`laya`) → systemOne; known local-runtime
+  /// packages (`ollama`/`lmstudio`/`llama`) → ollama; everything else
+  /// (OpenAI-shaped, and **unknown ⇒ default**) → openai.
   static AiWireProtocol _deriveWireProtocol(String npm) {
     final pkg = npm.toLowerCase();
     if (pkg.startsWith('@ai-sdk/anthropic')) return AiWireProtocol.anthropic;
     if (pkg.startsWith('@ai-sdk/google')) return AiWireProtocol.google;
     if (pkg.contains('azure')) return AiWireProtocol.azure;
+    // Checked before the local-runtime packages: `laya` must not be mistaken
+    // for a chat runtime should models.dev ever list these.
+    if (pkg.contains('typesafe') ||
+        pkg.contains('jev') ||
+        pkg.contains('laya')) {
+      return AiWireProtocol.systemOne;
+    }
     if (pkg.contains('ollama') ||
         pkg.contains('lmstudio') ||
         pkg.contains('llama')) {
@@ -159,8 +252,9 @@ class AiCatalogMapper {
   }
 
   /// `kind` from the provider id: a known local-runtime id (`ollama`,
-  /// `lmstudio`, `llama`) → local; otherwise → cloud. (`selfHosted` only ever
-  /// applies to user-source BYO entries, never to catalog providers.)
+  /// `lmstudio`, `llama`, `laya-mlx`) → local; otherwise → cloud.
+  /// (`selfHosted` only ever applies to user-source BYO entries, never to
+  /// catalog providers.)
   static AiProviderKind _deriveKind(String providerId) {
     return _localProviderIds.contains(providerId.toLowerCase())
         ? AiProviderKind.local

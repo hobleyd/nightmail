@@ -63,15 +63,22 @@ class ProviderModelsDatasourceImpl implements ProviderModelsDatasource {
         options: Options(headers: headers),
       );
 
-      // Both shapes: { "data": [ { "id": "..." }, ... ] }. For Azure the `id`
-      // is the deployment name.
-      final data = response.data?['data'];
+      // OpenAI/Azure shape: { "data": [ { "id": "..." }, ... ] } (for Azure
+      // the `id` is the deployment name). Jev-compatible decision servers
+      // (local-jev, the Laya-MLX bridge) answer `/v1/models` too, some as
+      // { "models": [ "name", ... ] } — accept either key, and entries that
+      // are bare strings or `{name}` objects.
+      final body = response.data;
+      final data = body?['data'] ?? body?['models'];
       if (data is! List) return const [];
 
       final ids = <String>[];
       for (final entry in data) {
-        if (entry is Map && entry['id'] is String) {
-          ids.add(entry['id'] as String);
+        if (entry is String && entry.isNotEmpty) {
+          ids.add(entry);
+        } else if (entry is Map) {
+          final id = entry['id'] ?? entry['name'];
+          if (id is String && id.isNotEmpty) ids.add(id);
         }
       }
       ids.sort();

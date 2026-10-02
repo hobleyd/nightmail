@@ -2,6 +2,7 @@ import 'package:fpdart/fpdart.dart';
 
 import '../../../../core/error/failures.dart';
 import '../../../../domain/entities/ai/ai_chunk.dart';
+import '../../../../domain/entities/ai/ai_decision.dart';
 import '../../../../domain/entities/ai/ai_provider.dart';
 import '../../../../domain/entities/ai/ai_request.dart';
 import '../../../../domain/entities/ai/ai_response.dart';
@@ -18,6 +19,10 @@ import '../../../../domain/entities/ai/ai_response.dart';
 /// adapter, so a single adapter instance serves every provider that speaks its
 /// protocol (catalog providers and user BYO endpoints alike).
 abstract class AiAdapter {
+  /// Const so adapters can stay `const` while *extending* (not implementing)
+  /// this class — extending is what lets them inherit [decide]'s default.
+  const AiAdapter();
+
   /// The wire protocol this adapter implements.
   AiWireProtocol get protocol;
 
@@ -40,4 +45,24 @@ abstract class AiAdapter {
     required String? apiKey,
     required String baseUrl,
   });
+
+  /// Typed decision (System One wire: noul / choice / score questions).
+  ///
+  /// Chat adapters inherit this default, which refuses with an
+  /// [UnsupportedFailure] — a text model has no decision operation, and that
+  /// is "does not apply here", not a failed request. Only
+  /// [AiWireProtocol.systemOne]'s adapter overrides it.
+  Future<Either<Failure, AiDecisionResponse>> decide(
+    AiDecisionRequest request, {
+    required String? apiKey,
+    required String baseUrl,
+  }) async {
+    return Left(
+      UnsupportedFailure(
+        message: 'The ${protocol.name} provider answers chat requests, not '
+            'typed decisions. Route this feature to a System One model '
+            '(Jev, Laya).',
+      ),
+    );
+  }
 }

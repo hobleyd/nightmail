@@ -30,7 +30,7 @@ import 'ai_adapter.dart';
 ///
 /// A single instance serves every Google-protocol provider — the API key and
 /// endpoint are supplied per call (see [AiAdapter]).
-class GoogleAdapter implements AiAdapter {
+class GoogleAdapter extends AiAdapter {
   const GoogleAdapter({required this._dio});
 
   final Dio _dio;

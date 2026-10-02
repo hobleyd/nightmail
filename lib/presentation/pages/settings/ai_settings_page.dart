@@ -5,9 +5,11 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../../../domain/entities/ai/ai_capability.dart';
+import '../../../domain/entities/ai/ai_decision.dart';
 import '../../../domain/entities/ai/ai_model.dart';
 import '../../../domain/entities/ai/ai_provider.dart';
 import '../../../domain/repositories/ai/ai_catalog_repository.dart';
+import '../../../domain/repositories/ai/ai_inference_repository.dart';
 import '../../../injection_container.dart';
 import '../../blocs/ai/ai_settings_cubit.dart';
 import '../../blocs/ai/ai_settings_state.dart';
@@ -19,8 +21,11 @@ import '../../blocs/ai/ai_settings_state.dart';
 /// * **Configured providers** — the (initially empty) durable list of providers
 ///   the user has set up (BYO endpoints and catalog picks). Each row stores an
 ///   API key (optional for local/BYO endpoints) and can be removed.
-/// * **Compose** — the only live AI feature: choose which configured provider +
-///   model drafts and replies to mail.
+/// * **Features** — one row per AI feature, each routed to a configured
+///   provider + model. *Compose* (drafting/replying, plus the folder agent)
+///   takes chat models; *Triage* takes System One typed-decision models (Jev,
+///   Laya-MLX), which answer yes/no, choice and score questions and cannot
+///   write text — so each row only offers the providers it can actually use.
 /// * **Privacy** — the cloud-bodies guard (default OFF/safe): whether the quoted
 ///   original email body may be sent to a *cloud* provider during compose.
 ///
@@ -50,125 +55,199 @@ class _AiSettingsView extends StatefulWidget {
   State<_AiSettingsView> createState() => _AiSettingsViewState();
 }
 
+/// A row of the Features table: which [AiCapability] it routes, and which
+/// configured providers may serve it. Compose needs a text model; Triage
+/// needs a System One (typed decision) model — the two sets are disjoint, so
+/// a provider is only ever offered where a request to it can succeed.
+class _Feature {
+  const _Feature({
+    required this.capability,
+    required this.label,
+    required this.isEligible,
+    required this.emptyHint,
+  });
+
+  final AiCapability capability;
+  final String label;
+  final bool Function(AiProvider provider) isEligible;
+
+  /// Shown in place of the provider dropdown when no configured provider is
+  /// eligible, naming what to add.
+  final String emptyHint;
+}
+
+bool _isChatProvider(AiProvider p) => p.supportsChat;
+bool _isDecisionProvider(AiProvider p) => p.supportsDecisions;
+
+/// The Features table, top to bottom. New features slot in as new entries.
+const _features = <_Feature>[
+  _Feature(
+    capability: AiCapability.compose,
+    label: 'Compose',
+    isEligible: _isChatProvider,
+    emptyHint: 'Add a chat provider (OpenAI, Anthropic, Ollama…) to enable.',
+  ),
+  _Feature(
+    capability: AiCapability.triage,
+    label: 'Triage',
+    isEligible: _isDecisionProvider,
+    emptyHint: 'Add a System One provider (Jev, Laya-MLX) to enable.',
+  ),
+];
+
+/// Per-feature UI state for one row of the Features table: the locally
+/// selected provider (before its routing is committed), the model field, and
+/// the model list loaded for that provider.
+///
+/// Each feature owns its own slot. A single shared loader would thrash: every
+/// rebuild has each row re-assert *its* provider, so two rows pointing at
+/// different providers would re-fetch each other's model lists forever.
+class _FeatureSlot {
+  final modelController = TextEditingController();
+
+  /// Locally-selected provider before its routing is committed.
+  String? providerId;
+
+  /// Provider whose saved model has been restored into [modelController], so
+  /// the field is seeded from persisted routing exactly once per load.
+  String? seededFor;
+
+  /// Provider the lists below were loaded for.
+  String? modelsLoadedFor;
+  bool modelsLoading = false;
+
+  /// Catalog models for the in-focus provider (BYO providers carry none, so
+  /// the model becomes a free-text field unless a live list is available).
+  List<AiModel> models = const [];
+
+  /// Live model ids fetched from a provider's own `/models` endpoint (Ollama,
+  /// the Laya-MLX bridge, …). Used to drive the same dropdown catalog
+  /// providers get.
+  List<String> liveModelIds = const [];
+
+  /// Set when a live `/models` fetch for [modelsLoadedFor] failed (endpoint
+  /// unreachable, non-2xx, bad shape, …), so the UI can tell "the server
+  /// refused/couldn't be reached" apart from "it has no models" and offer a
+  /// retry instead of silently falling back to a blank free-text field.
+  String? modelsLoadErrorFor;
+
+  /// The actual failure message for [modelsLoadErrorFor], shown in the UI —
+  /// a generic "couldn't reach it" label hides whether the real problem was a
+  /// connection failure, a timeout, or the endpoint returning something this
+  /// app doesn't understand, all of which need different fixes.
+  String? modelsLoadErrorMessage;
+
+  void dispose() => modelController.dispose();
+}
+
 class _AiSettingsViewState extends State<_AiSettingsView> {
   final _apiKeyController = TextEditingController();
-  final _modelController = TextEditingController();
 
   /// Configured provider currently expanded for key editing (null = collapsed).
   String? _expandedId;
   bool _obscureKey = true;
   String? _keyLoadedFor;
 
-  /// Locally-selected Compose provider before its routing is committed.
-  String? _composeProviderId;
-
-  /// Provider whose saved model has been restored into [_modelController], so we
-  /// seed the field from persisted routing exactly once per load.
-  String? _composeSeededFor;
-
-  /// Catalog models for the in-focus Compose provider (BYO providers carry none,
-  /// so the model becomes a free-text field).
-  String? _modelsLoadedFor;
-  bool _modelsLoading = false;
-  List<AiModel> _models = const [];
-
-  /// Live model ids fetched from a BYO provider's own `/models` endpoint
-  /// (e.g. Ollama). Used to drive the same dropdown catalog providers get.
-  List<String> _liveModelIds = const [];
-
-  /// Set when a live `/models` fetch for [_modelsLoadedFor] failed (endpoint
-  /// unreachable, non-2xx, bad shape, …), so the UI can tell "the server
-  /// refused/couldn't be reached" apart from "it has no models" and offer a
-  /// retry instead of silently falling back to a blank free-text field.
-  String? _modelsLoadErrorFor;
-
-  /// The actual failure message for [_modelsLoadErrorFor], shown in the UI —
-  /// a generic "couldn't reach it" label hides whether the real problem was a
-  /// connection failure, a timeout, or the endpoint returning something this
-  /// app doesn't understand, all of which need different fixes.
-  String? _modelsLoadErrorMessage;
+  /// One slot per Features-table row (see [_FeatureSlot]).
+  final _slots = <AiCapability, _FeatureSlot>{
+    for (final feature in _features) feature.capability: _FeatureSlot(),
+  };
 
   @override
   void dispose() {
     _apiKeyController.dispose();
-    _modelController.dispose();
+    for (final slot in _slots.values) {
+      slot.dispose();
+    }
     super.dispose();
   }
 
   // ---------------------------------------------------------------------------
-  // Compose feature
+  // Features (Compose, Triage, …)
   // ---------------------------------------------------------------------------
 
-  String? _composeProvider(AiSettingsState state) {
-    return _composeProviderId ??
-        state.routingFor(AiCapability.compose)?.providerId;
+  String? _selectedProvider(_Feature feature, AiSettingsState state) {
+    return _slots[feature.capability]!.providerId ??
+        state.routingFor(feature.capability)?.providerId;
   }
 
-  void _selectComposeProvider(String providerId, AiSettingsState state) {
-    final route = state.routingFor(AiCapability.compose);
+  void _selectProvider(
+    _Feature feature,
+    String providerId,
+    AiSettingsState state,
+  ) {
+    final slot = _slots[feature.capability]!;
+    final route = state.routingFor(feature.capability);
     setState(() {
-      _composeProviderId = providerId;
-      _modelController.text =
+      slot.providerId = providerId;
+      slot.modelController.text =
           route?.providerId == providerId ? route!.modelId : '';
     });
     for (final p in state.configured) {
       if (p.id == providerId) {
-        _ensureModelsLoaded(p);
+        _ensureModelsLoaded(slot, p);
         break;
       }
     }
   }
 
-  void _commitCompose(String providerId) {
-    final model = _modelController.text.trim();
+  void _commitRouting(_Feature feature, String providerId) {
+    final slot = _slots[feature.capability]!;
+    final model = slot.modelController.text.trim();
     if (model.isEmpty) {
       _snack('Enter a model id');
       return;
     }
     FocusScope.of(context).unfocus();
     context.read<AiSettingsCubit>().setRouting(
-          capability: AiCapability.compose,
+          capability: feature.capability,
           providerId: providerId,
           modelId: model,
         );
-    _snack('Compose will use $model');
+    _snack('${feature.label} will use $model');
   }
 
-  /// Loads the model list for [provider]: the static catalog for catalog
-  /// providers, or a live `/models` fetch for BYO/self-hosted endpoints (Ollama,
-  /// LM Studio, …) so they get a real dropdown too.
+  /// Loads the model list for [provider] into [slot]: the static catalog for
+  /// catalog providers, or a live `/models` fetch for BYO/self-hosted and
+  /// local endpoints (Ollama, LM Studio, the Laya-MLX bridge, …) so they get
+  /// a real dropdown too.
   ///
   /// Pass [retry] to force a re-fetch even though [provider] was already
   /// (unsuccessfully) attempted this session — the normal guard below only
   /// dedupes concurrent/repeated calls for the *same* provider, it doesn't
-  /// retry a failed live fetch on its own (a down Ollama server shouldn't be
+  /// retry a failed live fetch on its own (a down local server shouldn't be
   /// hammered on every rebuild).
-  void _ensureModelsLoaded(AiProvider provider, {bool retry = false}) {
-    if (provider.id == _modelsLoadedFor && !retry) return;
-    _modelsLoadedFor = provider.id;
-    _models = const [];
-    _liveModelIds = const [];
-    _modelsLoadErrorFor = null;
-    _modelsLoadErrorMessage = null;
-    _modelsLoading = true;
+  void _ensureModelsLoaded(
+    _FeatureSlot slot,
+    AiProvider provider, {
+    bool retry = false,
+  }) {
+    if (provider.id == slot.modelsLoadedFor && !retry) return;
+    slot.modelsLoadedFor = provider.id;
+    slot.models = const [];
+    slot.liveModelIds = const [];
+    slot.modelsLoadErrorFor = null;
+    slot.modelsLoadErrorMessage = null;
+    slot.modelsLoading = true;
 
     final repo = sl<AiCatalogRepository>();
     final cubit = context.read<AiSettingsCubit>();
 
     // `defaultBaseUrl` already returns `apiBaseUrl` when one is persisted
-    // (normalizing an Ollama endpoint to end in `/v1`) and only computes a
-    // true default otherwise (e.g. a catalog pick that stores none) — the same
-    // getter the inference path uses, so listing and inference always agree on
-    // where a provider actually lives.
+    // (normalizing an Ollama / System One endpoint to end in `/v1`) and only
+    // computes a true default otherwise (e.g. a catalog pick that stores
+    // none) — the same getter the inference path uses, so listing and
+    // inference always agree on where a provider actually lives.
     final baseUrl = provider.defaultBaseUrl;
     final hasUrl = baseUrl != null && baseUrl.isNotEmpty;
     // Detect Azure by protocol OR endpoint host, so a stale wireProtocol on the
     // persisted row still routes to the deployments listing.
     final isAzure = provider.wireProtocol == AiWireProtocol.azure ||
         (hasUrl && baseUrl.contains('azure.com'));
-    // Local runtimes (Ollama, LM Studio, …) always reflect what's actually
-    // installed on the endpoint, never a static catalog list — whether they
-    // were added as a catalog pick or a custom endpoint.
+    // Local runtimes (Ollama, LM Studio, the Laya-MLX bridge, …) always
+    // reflect what's actually installed on the endpoint, never a static
+    // catalog list — whether they were added as a catalog pick or a custom
+    // endpoint.
     final preferLive = hasUrl &&
         (provider.source == AiProviderSource.user ||
             isAzure ||
@@ -195,13 +274,13 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
         catalogModels = result.getOrElse((_) => const []);
       }
 
-      if (!mounted || _modelsLoadedFor != provider.id) return;
+      if (!mounted || slot.modelsLoadedFor != provider.id) return;
       setState(() {
-        _modelsLoading = false;
-        _models = catalogModels;
-        _liveModelIds = liveIds;
-        _modelsLoadErrorFor = errorMessage != null ? provider.id : null;
-        _modelsLoadErrorMessage = errorMessage;
+        slot.modelsLoading = false;
+        slot.models = catalogModels;
+        slot.liveModelIds = liveIds;
+        slot.modelsLoadErrorFor = errorMessage != null ? provider.id : null;
+        slot.modelsLoadErrorMessage = errorMessage;
       });
       if (errorMessage != null) {
         debugPrint(
@@ -210,6 +289,24 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
         );
       }
     });
+  }
+
+  /// The model id the "Test decision" probe should send for [provider]: the
+  /// model Triage is routed to when that route points here, else the
+  /// provider's first known model, else Jev's universal alias (which the
+  /// Jev-compatible local servers and the Laya-MLX bridge all accept).
+  String? _probeModelFor(AiProvider provider, AiSettingsState state) {
+    if (!provider.supportsDecisions) return null;
+    final route = state.routingFor(AiCapability.triage);
+    if (route != null && route.providerId == provider.id) return route.modelId;
+    for (final p in state.providers) {
+      if (p.id == provider.id && p.models.isNotEmpty) return p.models.first.id;
+    }
+    final slot = _slots[AiCapability.triage]!;
+    if (slot.modelsLoadedFor == provider.id && slot.liveModelIds.isNotEmpty) {
+      return slot.liveModelIds.first;
+    }
+    return 'jev-latest';
   }
 
   // ---------------------------------------------------------------------------
@@ -333,9 +430,12 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
                   _ConfiguredTile(
                     provider: provider,
                     isExpanded: _expandedId == provider.id,
-                    isComposeActive:
-                        state.routingFor(AiCapability.compose)?.providerId ==
-                            provider.id,
+                    routedFeatures: [
+                      for (final feature in _features)
+                        if (state.routingFor(feature.capability)?.providerId ==
+                            provider.id)
+                          feature.label,
+                    ],
                     onToggle: () => _toggleExpanded(provider),
                     editor: _expandedId == provider.id
                         ? _ProviderKeyEditor(
@@ -346,6 +446,8 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
                                 setState(() => _obscureKey = !_obscureKey),
                             onSaveKey: () => _saveKey(provider),
                             onRemove: () => _removeProvider(provider),
+                            decisionProbeModelId:
+                                _probeModelFor(provider, state),
                           )
                         : null,
                   ),
@@ -440,7 +542,7 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
   }
 
   // ---------------------------------------------------------------------------
-  // Features table (compact — scales to one row per feature)
+  // Features table (compact — one row per feature)
   // ---------------------------------------------------------------------------
 
   Widget _buildFeatures(
@@ -471,20 +573,25 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
       clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
-          // One compact row per feature. Future features slot in as new rows.
-          _composeFeatureRow(context, state, configured),
+          for (var i = 0; i < _features.length; i++) ...[
+            if (i > 0) Divider(height: 1, color: c.separator),
+            _featureRow(context, state, configured, _features[i]),
+          ],
         ],
       ),
     );
   }
 
-  Widget _composeFeatureRow(
+  Widget _featureRow(
     BuildContext context,
     AiSettingsState state,
     List<AiProvider> configured,
+    _Feature feature,
   ) {
     final c = context.colors;
-    final providerId = _composeProvider(state);
+    final slot = _slots[feature.capability]!;
+    final eligible = configured.where(feature.isEligible).toList(growable: false);
+    final providerId = _selectedProvider(feature, state);
     AiProvider? selected;
     if (providerId != null) {
       // Registry view = authoritative wireProtocol + catalog models; config row
@@ -514,18 +621,24 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
         selected = selected.copyWith(apiBaseUrl: cfgUrl);
       }
     }
-    if (selected != null) _ensureModelsLoaded(selected);
+    // Only offer what this feature can actually use: a stale route to a
+    // provider that was removed, or that this feature can't drive, renders as
+    // "no selection" rather than crashing the dropdown with a foreign value.
+    if (selected != null && !eligible.any((p) => p.id == selected!.id)) {
+      selected = null;
+    }
+    if (selected != null) _ensureModelsLoaded(slot, selected);
 
     // Restore the persisted model into the field once on load. Routing lives in
     // drift, but the text controller starts empty, so without this the saved
-    // model would render blank even though it still drives compose.
-    final route = state.routingFor(AiCapability.compose);
-    if (_composeProviderId == null &&
+    // model would render blank even though it still drives the feature.
+    final route = state.routingFor(feature.capability);
+    if (slot.providerId == null &&
         route != null &&
         route.providerId == providerId &&
-        _composeSeededFor != providerId) {
-      _composeSeededFor = providerId;
-      _modelController.text = route.modelId;
+        slot.seededFor != providerId) {
+      slot.seededFor = providerId;
+      slot.modelController.text = route.modelId;
     }
 
     return Padding(
@@ -535,7 +648,7 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
           SizedBox(
             width: 78,
             child: Text(
-              'Compose',
+              feature.label,
               style: TextStyle(
                 color: c.textSecondary,
                 fontSize: 13,
@@ -543,57 +656,79 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
               ),
             ),
           ),
-          Expanded(
-            flex: 5,
-            child: _compactDropdown<String>(
-              context,
-              value: selected?.id,
-              hint: 'Provider',
-              items: [
-                for (final p in configured)
-                  DropdownMenuItem(
-                    value: p.id,
-                    child: Text(p.name, overflow: TextOverflow.ellipsis),
-                  ),
-              ],
-              onChanged: (id) {
-                if (id != null) _selectComposeProvider(id, state);
-              },
+          if (eligible.isEmpty)
+            Expanded(
+              flex: 10,
+              child: _compactBox(
+                context,
+                child: Text(
+                  feature.emptyHint,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: c.textMuted, fontSize: 12),
+                ),
+              ),
+            )
+          else ...[
+            Expanded(
+              flex: 5,
+              child: _compactDropdown<String>(
+                context,
+                value: selected?.id,
+                hint: 'Provider',
+                items: [
+                  for (final p in eligible)
+                    DropdownMenuItem(
+                      value: p.id,
+                      child: Text(p.name, overflow: TextOverflow.ellipsis),
+                    ),
+                ],
+                onChanged: (id) {
+                  if (id != null) _selectProvider(feature, id, state);
+                },
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(flex: 5, child: _compactModelCell(context, selected)),
+            const SizedBox(width: 8),
+            Expanded(
+              flex: 5,
+              child: _modelCell(context, feature, slot, selected),
+            ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _compactModelCell(BuildContext context, AiProvider? provider) {
+  Widget _modelCell(
+    BuildContext context,
+    _Feature feature,
+    _FeatureSlot slot,
+    AiProvider? provider,
+  ) {
     final c = context.colors;
     if (provider == null) {
       return _compactBox(context,
           child: Text('—', style: TextStyle(color: c.textMuted, fontSize: 12)));
     }
-    if (_modelsLoading) {
+    if (slot.modelsLoading) {
       return _compactBox(context,
           child: Text('Loading…',
               style: TextStyle(color: c.textMuted, fontSize: 12)));
     }
 
     // Catalog providers → models.dev list; BYO providers → live `/models` list.
-    final modelIds = _models.isNotEmpty
-        ? [for (final m in _models) (id: m.id, label: m.name)]
-        : [for (final id in _liveModelIds) (id: id, label: id)];
+    final modelIds = slot.models.isNotEmpty
+        ? [for (final m in slot.models) (id: m.id, label: m.name)]
+        : [for (final id in slot.liveModelIds) (id: id, label: id)];
 
     if (modelIds.isEmpty) {
-      final failed = _modelsLoadErrorFor == provider.id;
+      final failed = slot.modelsLoadErrorFor == provider.id;
       // Endpoint unreachable / advertises nothing: fall back to manual entry.
       // When a live fetch actually failed (vs. a provider that just has no
       // models to enumerate), show the real failure reason and offer a retry
       // rather than a generic "unreachable" guess — a down/unstarted local
       // server is only one of several ways this can fail, and each needs a
       // different fix.
-      final errorHint = _modelsLoadErrorMessage;
+      final errorHint = slot.modelsLoadErrorMessage;
       return Row(
         children: [
           Expanded(
@@ -602,8 +737,8 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
               child: SizedBox(
                 height: 32,
                 child: TextField(
-                  controller: _modelController,
-                  onSubmitted: (_) => _commitCompose(provider.id),
+                  controller: slot.modelController,
+                  onSubmitted: (_) => _commitRouting(feature, provider.id),
                   style: TextStyle(color: c.textSecondary, fontSize: 12),
                   decoration: InputDecoration(
                     isDense: true,
@@ -660,8 +795,9 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
                 iconSize: 16,
                 tooltip: 'Retry',
                 icon: Icon(Icons.refresh_rounded, color: c.textMuted),
-                onPressed: () =>
-                    setState(() => _ensureModelsLoaded(provider, retry: true)),
+                onPressed: () => setState(
+                  () => _ensureModelsLoaded(slot, provider, retry: true),
+                ),
               ),
             ),
           ],
@@ -669,8 +805,8 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
       );
     }
 
-    final value = modelIds.any((m) => m.id == _modelController.text)
-        ? _modelController.text
+    final value = modelIds.any((m) => m.id == slot.modelController.text)
+        ? slot.modelController.text
         : null;
     return _compactDropdown<String>(
       context,
@@ -685,8 +821,8 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
       ],
       onChanged: (id) {
         if (id != null) {
-          setState(() => _modelController.text = id);
-          _commitCompose(provider.id);
+          setState(() => slot.modelController.text = id);
+          _commitRouting(feature, provider.id);
         }
       },
     );
@@ -747,14 +883,16 @@ class _ConfiguredTile extends StatelessWidget {
   const _ConfiguredTile({
     required this.provider,
     required this.isExpanded,
-    required this.isComposeActive,
+    required this.routedFeatures,
     required this.onToggle,
     required this.editor,
   });
 
   final AiProvider provider;
   final bool isExpanded;
-  final bool isComposeActive;
+
+  /// Labels of the features currently routed to this provider (badges).
+  final List<String> routedFeatures;
   final VoidCallback onToggle;
   final Widget? editor;
 
@@ -790,8 +928,12 @@ class _ConfiguredTile extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (isComposeActive) ...[
-                    const _ComposeBadge(),
+                  for (final label in routedFeatures) ...[
+                    _FeatureBadge(label),
+                    const SizedBox(width: 8),
+                  ],
+                  if (provider.supportsDecisions) ...[
+                    const _DecisionBadge(),
                     const SizedBox(width: 8),
                   ],
                   _KindBadge(kind: provider.kind),
@@ -817,8 +959,11 @@ class _ConfiguredTile extends StatelessWidget {
   }
 }
 
-class _ComposeBadge extends StatelessWidget {
-  const _ComposeBadge();
+/// Accent badge naming a feature routed to a provider ("Compose", "Triage").
+class _FeatureBadge extends StatelessWidget {
+  const _FeatureBadge(this.label);
+
+  final String label;
 
   @override
   Widget build(BuildContext context) {
@@ -828,12 +973,43 @@ class _ComposeBadge extends StatelessWidget {
         color: AppColors.accent.withAlpha(28),
         borderRadius: BorderRadius.circular(6),
       ),
-      child: const Text(
-        'Compose',
-        style: TextStyle(
+      child: Text(
+        label,
+        style: const TextStyle(
           color: AppColors.accent,
           fontSize: 11,
           fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+/// Marks a System One provider: it answers typed questions (yes/no, choice,
+/// score) and cannot write text, so it drives Triage, never Compose.
+class _DecisionBadge extends StatelessWidget {
+  const _DecisionBadge();
+
+  static const Color _color = Color(0xFF8B5CF6);
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'System One model: typed decisions (yes/no, choice, score), '
+          'not text generation. Used by Triage.',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: _color.withAlpha(28),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: const Text(
+          'Decisions',
+          style: TextStyle(
+            color: _color,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ),
     );
@@ -848,6 +1024,7 @@ class _ProviderKeyEditor extends StatelessWidget {
     required this.onToggleObscure,
     required this.onSaveKey,
     required this.onRemove,
+    this.decisionProbeModelId,
   });
 
   final AiProvider provider;
@@ -857,6 +1034,15 @@ class _ProviderKeyEditor extends StatelessWidget {
   final VoidCallback onSaveKey;
   final VoidCallback onRemove;
 
+  /// Non-null for a System One provider: the model id the "Test decision"
+  /// probe should send.
+  final String? decisionProbeModelId;
+
+  /// The catalog id of the synthesized Laya-MLX entry (see
+  /// `AiCatalogMapper`). Its endpoint is this repo's bridge script, which the
+  /// user has to start — worth saying so right where the URL is shown.
+  static const String _layaMlxId = 'laya-mlx';
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -864,6 +1050,7 @@ class _ProviderKeyEditor extends StatelessWidget {
     // (local Ollama needs none), so the key is offered as optional there.
     final keyOptional = provider.source == AiProviderSource.user;
     final showKey = provider.requiresApiKey || provider.source == AiProviderSource.user;
+    final probeModel = decisionProbeModelId;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -875,6 +1062,16 @@ class _ProviderKeyEditor extends StatelessWidget {
           ),
           const SizedBox(height: 12),
         ],
+        if (provider.id == _layaMlxId) ...[
+          Text(
+            'Runs the open Laya decision model on this Mac with Apple MLX. '
+            'Start the bridge first:  python3 tool/laya_mlx_server.py  '
+            '(in the NightMail repo; the first start downloads the ~850 MB '
+            'checkpoint).',
+            style: TextStyle(color: c.textMuted, fontSize: 12),
+          ),
+          const SizedBox(height: 12),
+        ],
         if (showKey)
           _ApiKeyField(
             controller: apiKeyController,
@@ -882,6 +1079,10 @@ class _ProviderKeyEditor extends StatelessWidget {
             optional: keyOptional,
             onToggleObscure: onToggleObscure,
           ),
+        if (probeModel != null) ...[
+          if (showKey) const SizedBox(height: 12),
+          _DecisionProbe(provider: provider, modelId: probeModel),
+        ],
         const SizedBox(height: 16),
         Row(
           children: [
@@ -905,6 +1106,138 @@ class _ProviderKeyEditor extends StatelessWidget {
                 child: const Text('Save key'),
               ),
           ],
+        ),
+      ],
+    );
+  }
+}
+
+/// "Test decision" for a System One provider: sends one fixed sample email
+/// through `AiInferenceRepository.decide` and shows the typed answers inline,
+/// so a freshly added Jev key or a just-started Laya-MLX bridge can be
+/// verified from the settings page without routing a feature first.
+///
+/// Reaches into `get_it` for the inference repository the same way the page
+/// already does for the catalog repository's live model listing — a one-off
+/// diagnostic, not state the cubit needs to own.
+class _DecisionProbe extends StatefulWidget {
+  const _DecisionProbe({required this.provider, required this.modelId});
+
+  final AiProvider provider;
+  final String modelId;
+
+  @override
+  State<_DecisionProbe> createState() => _DecisionProbeState();
+}
+
+class _DecisionProbeState extends State<_DecisionProbe> {
+  bool _running = false;
+  String? _result;
+  String? _error;
+
+  /// A realistic triage sample: the same three question types the Laya email
+  /// preset uses (urgency score, needs-reply noul, department choice).
+  static const AiDecisionRequest _sample = AiDecisionRequest(
+    providerId: '',
+    modelId: '',
+    state: {
+      'subject': 'Duplicate charge on September invoice',
+      'from': 'accounts@example.com',
+      'body': 'Hi team, the September invoice was charged twice. Can you '
+          'refund the duplicate today? It is blocking our month-end close.',
+    },
+    questions: {
+      'urgency': AiDecisionQuestion.score(
+        instructions: 'How urgent is the request in `body`?',
+        levels: [
+          'no time pressure',
+          'needs attention soon',
+          'blocking issue or hard deadline',
+        ],
+      ),
+      'needs_reply': AiDecisionQuestion.noul(
+        instructions: 'Does the sender expect a reply?',
+      ),
+      'category': AiDecisionQuestion.choice(
+        instructions: 'Which team should handle the email in `body`?',
+        options: {
+          'billing': 'invoices, payments, refunds',
+          'technical': 'bugs, outages, integrations',
+          'other': 'none of the above',
+        },
+      ),
+    },
+  );
+
+  Future<void> _run() async {
+    setState(() {
+      _running = true;
+      _result = null;
+      _error = null;
+    });
+    final response = await sl<AiInferenceRepository>().decide(
+      AiDecisionRequest(
+        providerId: widget.provider.id,
+        modelId: widget.modelId,
+        state: _sample.state,
+        questions: _sample.questions,
+      ),
+    );
+    if (!mounted) return;
+    setState(() {
+      _running = false;
+      response.match(
+        (failure) => _error = failure.message,
+        (decision) {
+          final model =
+              decision.model.isEmpty ? widget.modelId : decision.model;
+          final answers = [
+            for (final entry in decision.answers.entries)
+              '${entry.key}: ${entry.value.summary}',
+          ];
+          _result = '$model · ${answers.join(' · ')}';
+        },
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final message = _error ?? _result;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        OutlinedButton(
+          onPressed: _running ? null : _run,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: c.textSecondary,
+            side: BorderSide(color: c.separatorStrong),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            minimumSize: const Size(0, 32),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+          child: Text(
+            _running ? 'Deciding…' : 'Test decision',
+            style: const TextStyle(fontSize: 12),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: message == null
+              ? Text(
+                  'Sends a sample email and shows the model\'s typed answers.',
+                  style: TextStyle(color: c.textMuted, fontSize: 11),
+                )
+              : SelectableText(
+                  message,
+                  style: TextStyle(
+                    color: _error != null ? c.errorBannerBorder : c.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
         ),
       ],
     );
@@ -1036,7 +1369,12 @@ class _AddProviderDialogState extends State<_AddProviderDialog> {
     final url = _urlController.text.trim();
     if (name.isEmpty || url.isEmpty) return;
 
-    final isLocal = _protocol == AiWireProtocol.ollama;
+    // Ollama is local by definition. A Jev-compatible decision server is
+    // local when it lives on this machine (local-jev, jevlocal, the Laya-MLX
+    // bridge) and self-hosted otherwise; the other chat protocols keep their
+    // existing self-hosted classification regardless of host.
+    final isLocal = _protocol == AiWireProtocol.ollama ||
+        (_protocol == AiWireProtocol.systemOne && _isLoopbackUrl(url));
     final slug = name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_');
     final provider = AiProvider(
       id: 'byo_${slug}_${DateTime.now().millisecondsSinceEpoch}',
@@ -1053,6 +1391,18 @@ class _AddProviderDialogState extends State<_AddProviderDialog> {
     );
     context.read<AiSettingsCubit>().addConfiguredProvider(provider);
     Navigator.of(context).pop();
+  }
+
+  /// True for a URL on this machine (`localhost`, `127.0.0.1`, `::1`, or a
+  /// `.local` mDNS name of our own host is *not* counted — only loopback).
+  static bool _isLoopbackUrl(String url) {
+    final uri = Uri.tryParse(url.trim());
+    final host = uri?.host.toLowerCase() ?? '';
+    return host == 'localhost' ||
+        host == '127.0.0.1' ||
+        host == '::1' ||
+        host == '[::1]' ||
+        host.startsWith('127.');
   }
 
   Future<void> _addCatalog() async {
@@ -1140,7 +1490,8 @@ class _AddProviderDialogState extends State<_AddProviderDialog> {
         Text(
           'Connect a self-hosted or OpenAI-compatible endpoint (Ollama, '
           'LM Studio, vLLM, a proxy…). Pick Ollama for a local server with no '
-          'API key.',
+          'API key, or System One for a Jev-compatible decision server '
+          '(local-jev, jevlocal, OpenJev) used by Triage.',
           style: TextStyle(color: c.textMuted, fontSize: 12),
         ),
         const SizedBox(height: 16),
@@ -1218,10 +1569,23 @@ class _AddProviderDialogState extends State<_AddProviderDialog> {
                   ),
                 ),
               ),
+              if (provider.supportsDecisions) ...[
+                const _DecisionBadge(),
+                const SizedBox(width: 8),
+              ],
               _KindBadge(kind: provider.kind),
             ],
           ),
           const SizedBox(height: 12),
+          if (provider.supportsDecisions) ...[
+            Text(
+              'System One model: answers typed questions (yes/no, choice, '
+              'score) about a message instead of writing text. Drives '
+              'Triage, not Compose.',
+              style: TextStyle(color: c.textMuted, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+          ],
           if (provider.defaultBaseUrl == null) ...[
             _FormRow(
               label: 'Base URL',
@@ -1331,6 +1695,10 @@ class _AddProviderDialogState extends State<_AddProviderDialog> {
                                   fontSize: 11,
                                 ),
                               ),
+                              const SizedBox(width: 8),
+                            ],
+                            if (provider.supportsDecisions) ...[
+                              const _DecisionBadge(),
                               const SizedBox(width: 8),
                             ],
                             _KindBadge(kind: provider.kind),
@@ -1445,6 +1813,7 @@ class _ProtocolDropdown extends StatelessWidget {
       AiWireProtocol.google => 'Google',
       AiWireProtocol.ollama => 'Ollama (local, no key)',
       AiWireProtocol.azure => 'Azure OpenAI (api-key)',
+      AiWireProtocol.systemOne => 'System One / Jev-compatible (decisions)',
     };
   }
 }

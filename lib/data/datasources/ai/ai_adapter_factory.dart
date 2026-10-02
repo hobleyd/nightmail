@@ -13,18 +13,24 @@ import 'inference/ai_adapter.dart';
 /// adapter — Ollama's `/v1` OpenAI-compatibility surface is first-class (chat,
 /// streaming, and model listing), so no separate adapter is needed. Each keeps
 /// an explicit case so the exhaustiveness check still flags any new protocol.
+///
+/// `systemOne` is the Jev typed-decision wire (TypeSafe Jev, the Laya-MLX
+/// bridge, Jev-compatible local servers); its adapter serves `decide` and
+/// refuses chat.
 class AiAdapterFactory {
   const AiAdapterFactory({
     required this._openAiAdapter,
     required this._anthropicAdapter,
     required this._azureAdapter,
     required this._googleAdapter,
+    required this._systemOneAdapter,
   });
 
   final AiAdapter _openAiAdapter;
   final AiAdapter _anthropicAdapter;
   final AiAdapter _azureAdapter;
   final AiAdapter _googleAdapter;
+  final AiAdapter _systemOneAdapter;
 
   /// Returns the adapter for [protocol].
   AiAdapter forProtocol(AiWireProtocol protocol) {
@@ -46,6 +52,9 @@ class AiAdapterFactory {
         // Intentional: Ollama's first-class `/v1` OpenAI-compatibility surface
         // is complete for our needs (chat, streaming, model listing).
         return _openAiAdapter;
+      case AiWireProtocol.systemOne:
+        // Typed decisions only (`decide`); `run`/`stream` fail closed.
+        return _systemOneAdapter;
     }
   }
 }

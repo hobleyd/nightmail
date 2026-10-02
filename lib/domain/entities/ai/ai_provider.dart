@@ -15,7 +15,15 @@ enum AiProviderKind { cloud, local, selfHosted }
 /// Unknown packages default to [openai] (the OpenAI-compatible adapter).
 /// [azure] is the OpenAI shape but authenticated with the `api-key` header
 /// (Azure OpenAI / AI Foundry v1 endpoints) rather than a Bearer token.
-enum AiWireProtocol { openai, anthropic, google, ollama, azure }
+///
+/// [systemOne] is not a chat protocol at all: it is TypeSafe's Jev
+/// `POST {base}/systemone` typed-decision API (`{model, state, questions}` →
+/// `{model, answers, usage}`), also spoken by the Jev-compatible local servers
+/// (local-jev, jevlocal, OpenJev) and by this repo's Laya-MLX bridge
+/// (`tool/laya_mlx_server.py`). Providers on it answer typed questions
+/// (yes/no, choice, score) and cannot generate text — see
+/// [AiProvider.supportsChat] / [AiProvider.supportsDecisions].
+enum AiWireProtocol { openai, anthropic, google, ollama, azure, systemOne }
 
 /// Where a provider descriptor originated.
 ///
@@ -78,6 +86,16 @@ class AiProvider extends Equatable {
   /// True when the provider declares any [env] var, i.e. an API key is needed.
   bool get requiresApiKey => env.isNotEmpty;
 
+  /// Whether this provider answers typed decisions (noul / choice / score)
+  /// through `AiInferenceRepository.decide`. True only for System One (Jev
+  /// wire) providers; every chat protocol is false.
+  bool get supportsDecisions => wireProtocol == AiWireProtocol.systemOne;
+
+  /// Whether this provider generates text (`run` / `stream`). System One
+  /// providers do not — routing a text feature such as Compose to one fails
+  /// with an `UnsupportedFailure`, so the settings UI never offers them there.
+  bool get supportsChat => wireProtocol != AiWireProtocol.systemOne;
+
   /// A built-in default endpoint for providers whose models.dev entry carries
   /// no `api` URL but whose endpoint we know — first-party providers
   /// (OpenAI/Anthropic/Google) and a few common OpenAI-compatible hosts.
@@ -93,7 +111,12 @@ class AiProvider extends Equatable {
       // request in this app targets. Normalize here so a user-typed bare host
       // (or one with a trailing slash) still resolves correctly, instead of
       // 404ing on every request that needs `/v1/...`.
-      return wireProtocol == AiWireProtocol.ollama
+      //
+      // Jev-compatible servers likewise document a bare host
+      // (`http://127.0.0.1:8765`) while the decision route lives at
+      // `/v1/systemone`, so they get the same `/v1` normalization.
+      return wireProtocol == AiWireProtocol.ollama ||
+              wireProtocol == AiWireProtocol.systemOne
           ? _withV1Suffix(apiBaseUrl!)
           : apiBaseUrl;
     }
@@ -106,12 +129,20 @@ class AiProvider extends Equatable {
       'xai': 'https://api.x.ai/v1',
       'deepseek': 'https://api.deepseek.com',
       'cerebras': 'https://api.cerebras.ai/v1',
+      // System One (typed decision) providers — both synthesized by the
+      // catalog mapper, since models.dev lists neither.
+      'jev': 'https://api.typesafe.ai/v1',
+      'laya-mlx': 'http://127.0.0.1:8766/v1',
     };
     final known = byId[id];
     if (known != null) return known;
     switch (wireProtocol) {
       case AiWireProtocol.ollama:
         return 'http://localhost:11434/v1';
+      case AiWireProtocol.systemOne:
+        // A Jev-compatible server we don't ship a default for (local-jev,
+        // jevlocal, OpenJev each pick their own port) — the user supplies it.
+        return null;
       case AiWireProtocol.anthropic:
       case AiWireProtocol.google:
         // The `byId` map already covers the genuine first-party `anthropic` /

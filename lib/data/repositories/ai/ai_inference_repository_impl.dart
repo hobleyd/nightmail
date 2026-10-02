@@ -2,6 +2,7 @@ import 'package:fpdart/fpdart.dart';
 
 import '../../../core/error/failures.dart';
 import '../../../domain/entities/ai/ai_chunk.dart';
+import '../../../domain/entities/ai/ai_decision.dart';
 import '../../../domain/entities/ai/ai_provider.dart';
 import '../../../domain/entities/ai/ai_request.dart';
 import '../../../domain/entities/ai/ai_response.dart';
@@ -59,19 +60,77 @@ class AiInferenceRepositoryImpl implements AiInferenceRepository {
     );
   }
 
-  /// Resolves the provider descriptor, endpoint, key and adapter for [request],
-  /// or a config [Failure] when the request cannot be served.
+  @override
+  Future<Either<Failure, AiDecisionResponse>> decide(
+    AiDecisionRequest request,
+  ) async {
+    final resolved = await _resolveProvider(request.providerId);
+    return resolved.fold(
+      (failure) async => Left<Failure, AiDecisionResponse>(failure),
+      (target) async {
+        // Fail closed before any network call: a chat provider has no decision
+        // operation, and its adapter would only say the same thing later.
+        if (!target.provider.supportsDecisions) {
+          return Left<Failure, AiDecisionResponse>(
+            UnsupportedFailure(
+              message: 'Provider "${target.provider.id}" is a chat provider '
+                  'and cannot answer typed decisions. Route this feature to '
+                  'a System One model (Jev, Laya).',
+            ),
+          );
+        }
+        return _adapterFactory.forProtocol(target.provider.wireProtocol).decide(
+              request,
+              apiKey: target.apiKey,
+              baseUrl: target.baseUrl,
+            );
+      },
+    );
+  }
+
+  /// Resolves the provider descriptor, endpoint, key and adapter for a chat
+  /// [request], or a config [Failure] when the request cannot be served.
   Future<Either<Failure, _ResolvedTarget>> _resolve(AiRequest request) async {
+    final resolved = await _resolveProvider(request.providerId);
+    return resolved.flatMap((target) {
+      // Symmetric with [decide]: a System One provider generates no text.
+      if (!target.provider.supportsChat) {
+        return Left(
+          UnsupportedFailure(
+            message: 'Provider "${target.provider.id}" answers typed '
+                'decisions only and cannot generate text. Route this feature '
+                'to a chat model.',
+          ),
+        );
+      }
+      return Right(
+        _ResolvedTarget(
+          adapter: _adapterFactory.forProtocol(target.provider.wireProtocol),
+          apiKey: target.apiKey,
+          baseUrl: target.baseUrl,
+          // Resolve the routed model's wire shape (completions vs responses)
+          // from its catalog providerOverride before delegating.
+          request: _withResolvedShape(request, target.provider),
+        ),
+      );
+    });
+  }
+
+  /// Resolves [providerId] to its descriptor, stored key and endpoint — the
+  /// part of target resolution shared by chat and decision requests.
+  Future<Either<Failure, _ResolvedProvider>> _resolveProvider(
+    String providerId,
+  ) async {
     // The registry is a shared singleton that may have loaded its BYO providers
     // before this one was added (e.g. user adds a provider, then composes).
     // Re-sync the durable config before resolving so a just-added provider is
     // visible here, and cold-load the catalog if inference is the first reader.
     await _registry.ensureReady();
-    final provider = _registry.byId(request.providerId);
+    final provider = _registry.byId(providerId);
     if (provider == null) {
       return Left(
         NoProviderConfigured(
-          message: 'No provider configured for id "${request.providerId}".',
+          message: 'No provider configured for id "$providerId".',
         ),
       );
     }
@@ -110,14 +169,7 @@ class AiInferenceRepositoryImpl implements AiInferenceRepository {
       }
 
       return Right(
-        _ResolvedTarget(
-          adapter: _adapterFactory.forProtocol(provider.wireProtocol),
-          apiKey: apiKey,
-          baseUrl: baseUrl,
-          // Resolve the routed model's wire shape (completions vs responses)
-          // from its catalog providerOverride before delegating.
-          request: _withResolvedShape(request, provider),
-        ),
+        _ResolvedProvider(provider: provider, apiKey: apiKey, baseUrl: baseUrl),
       );
     });
   }
@@ -141,6 +193,19 @@ class AiInferenceRepositoryImpl implements AiInferenceRepository {
     }
     return request;
   }
+}
+
+/// A provider resolved to its descriptor, stored key and endpoint.
+class _ResolvedProvider {
+  const _ResolvedProvider({
+    required this.provider,
+    required this.apiKey,
+    required this.baseUrl,
+  });
+
+  final AiProvider provider;
+  final String? apiKey;
+  final String baseUrl;
 }
 
 /// A fully resolved inference target: the adapter to call plus the credentials

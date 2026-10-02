@@ -23,7 +23,7 @@ class AiConfigEntry {
   /// `catalog | user`.
   final String source;
 
-  /// `openai | anthropic | google | ollama | azure`.
+  /// `openai | anthropic | google | ollama | azure | systemOne`.
   final String wireProtocol;
 
   /// `cloud | local | selfHosted`.
@@ -193,6 +193,8 @@ class AiConfigDatasourceImpl implements AiConfigDatasource {
         return AiWireProtocol.ollama;
       case 'azure':
         return AiWireProtocol.azure;
+      case 'systemOne':
+        return AiWireProtocol.systemOne;
       default:
         return AiWireProtocol.openai;
     }

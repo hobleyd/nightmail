@@ -133,7 +133,9 @@ void main() {
 
   group('AiCatalogMapper.parseCatalog', () {
     test('parses one AiProvider per top-level entry, tagged as catalog', () {
-      expect(providers.length, apiJson.length);
+      // Plus the two synthesized System One entries (`jev`, `laya-mlx`) the
+      // fixture does not carry — the real `ollama` entry suppresses that one.
+      expect(providers.length, apiJson.length + 2);
       expect(
         providers.every((p) => p.source == AiProviderSource.catalog),
         isTrue,
@@ -146,9 +148,12 @@ void main() {
         'garbage': 'not-a-map',
         'also_garbage': 42,
       });
-      // Plus the synthesized local `ollama` entry (see below), since this
-      // fixture omits a real one.
-      expect(result.map((p) => p.id), ['anthropic', 'ollama']);
+      // Plus the synthesized local `ollama` and System One (`jev`,
+      // `laya-mlx`) entries (see below), since this fixture omits real ones.
+      expect(
+        result.map((p) => p.id),
+        ['anthropic', 'ollama', 'jev', 'laya-mlx'],
+      );
     });
 
     test(
@@ -170,6 +175,76 @@ void main() {
       // `apiJson` already carries its own `ollama` fixture entry.
       final matches = providers.where((p) => p.id == 'ollama');
       expect(matches.length, 1);
+    });
+
+    group('System One (typed decision) providers', () {
+      test('synthesizes a keyed cloud "jev" entry with static Jev models', () {
+        final jev = providers.firstWhere((p) => p.id == 'jev');
+        expect(jev.source, AiProviderSource.catalog);
+        expect(jev.kind, AiProviderKind.cloud);
+        expect(jev.wireProtocol, AiWireProtocol.systemOne);
+        expect(jev.requiresApiKey, isTrue);
+        expect(jev.supportsDecisions, isTrue);
+        expect(jev.supportsChat, isFalse);
+        expect(jev.apiBaseUrl, isNull);
+        expect(jev.defaultBaseUrl, 'https://api.typesafe.ai/v1');
+        // The hosted API has no models-listing route, so the dropdown is fed
+        // from these.
+        expect(jev.models.map((m) => m.id), contains('jev-latest'));
+        expect(jev.models.every((m) => m.providerId == 'jev'), isTrue);
+      });
+
+      test('synthesizes a keyless local "laya-mlx" entry on the bridge port',
+          () {
+        final laya = providers.firstWhere((p) => p.id == 'laya-mlx');
+        expect(laya.source, AiProviderSource.catalog);
+        expect(laya.kind, AiProviderKind.local);
+        expect(laya.wireProtocol, AiWireProtocol.systemOne);
+        expect(laya.requiresApiKey, isFalse);
+        expect(laya.supportsDecisions, isTrue);
+        expect(laya.apiBaseUrl, isNull);
+        expect(laya.defaultBaseUrl, 'http://127.0.0.1:8766/v1');
+        // Models are listed live from the bridge's `/v1/models`.
+        expect(laya.models, isEmpty);
+      });
+
+      test('does not duplicate real upstream "jev" / "laya-mlx" entries', () {
+        final result = AiCatalogMapper.parseCatalog(<String, dynamic>{
+          'jev': {
+            'id': 'jev',
+            'name': 'TypeSafe Jev',
+            'npm': '@typesafe-ai/sdk',
+            'env': ['TYPESAFE_API_KEY'],
+            'api': 'https://api.typesafe.ai/v1',
+            'models': {
+              'jev-2': {'id': 'jev-2', 'name': 'Jev 2'},
+            },
+          },
+          'laya-mlx': {
+            'id': 'laya-mlx',
+            'name': 'Laya MLX',
+            'npm': 'laya-mlx',
+            'models': <String, dynamic>{},
+          },
+        });
+
+        expect(result.where((p) => p.id == 'jev').length, 1);
+        expect(result.where((p) => p.id == 'laya-mlx').length, 1);
+        // The upstream descriptors win over the synthesized ones…
+        final jev = result.firstWhere((p) => p.id == 'jev');
+        expect(jev.models.map((m) => m.id), ['jev-2']);
+        // …and still derive the System One wire from their npm package.
+        expect(jev.wireProtocol, AiWireProtocol.systemOne);
+        expect(
+          result.firstWhere((p) => p.id == 'laya-mlx').wireProtocol,
+          AiWireProtocol.systemOne,
+        );
+      });
+
+      test('"laya-mlx" provider id → local; "jev" → cloud', () {
+        expect(providerById('laya-mlx').kind, AiProviderKind.local);
+        expect(providerById('jev').kind, AiProviderKind.cloud);
+      });
     });
 
     group('wireProtocol derivation', () {

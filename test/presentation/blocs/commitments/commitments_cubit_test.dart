@@ -9,6 +9,7 @@ import 'package:nightmail/domain/entities/commitment.dart';
 import 'package:nightmail/domain/entities/email.dart';
 import 'package:nightmail/domain/entities/email_address.dart';
 import 'package:nightmail/domain/entities/email_folder.dart';
+import 'package:nightmail/domain/entities/workload_forecast.dart';
 import 'package:nightmail/domain/repositories/commitment_repository.dart';
 import 'package:nightmail/domain/repositories/email_repository.dart';
 import 'package:nightmail/domain/usecases/commitments/detect_commitments.dart';
@@ -448,6 +449,123 @@ void main() {
         start: anyNamed('start'),
         end: anyNamed('end'),
       ));
+    });
+  });
+
+  group('Future Me forecast', () {
+    CalendarEvent meeting(String id, DateTime start, DateTime end) =>
+        CalendarEvent(id: id, subject: id, start: start, end: end, isAllDay: false);
+
+    test('load puts a week-ahead forecast in state, read from the same '
+        'two-week calendar window', () async {
+      await cubit.load();
+      await pumpEventQueue();
+
+      final f = cubit.state.forecast;
+      expect(f, isNotNull);
+      expect(f!.days, hasLength(5));
+      // `now` is Friday 2 Oct 09:00: Friday, then Mon–Thu.
+      expect(f.days.first.day, DateTime(2026, 10, 2));
+      expect(f.days[1].day, DateTime(2026, 10, 5));
+      final params = verify(calendar(captureAny)).captured.first as GetCalendarEventsParams;
+      expect(params.endDateTime, DateTime(2026, 10, 2).add(CommitmentsCubit.scheduleLookahead));
+    });
+
+    test('a meeting that disappears marks the gap it left as freed, and the '
+        'label sticks until the gap is filled', () async {
+      final nine = DateTime(2026, 10, 2, 9);
+      var events = [
+        meeting('a', nine, nine.add(const Duration(hours: 1))),
+        meeting('b', nine.add(const Duration(hours: 1)), nine.add(const Duration(hours: 2))),
+        meeting('rest', nine.add(const Duration(hours: 2)), nine.add(const Duration(hours: 8))),
+      ];
+      when(calendar(any)).thenAnswer((_) async => Right(events));
+      // Scan finds one open, unscheduled commitment to suggest.
+      await cubit.load();
+      await pumpEventQueue();
+      expect(cubit.state.forecast!.openSlots, isEmpty);
+
+      // The 10:00 meeting is cancelled.
+      events = [events[0], events[2]];
+      when(calendar(any)).thenAnswer((_) async => Right(events));
+      await cubit.scan();
+      var slot = cubit.state.forecast!.openSlots.single;
+      expect(slot.start, DateTime(2026, 10, 2, 10));
+      expect(slot.freed, isTrue);
+      expect(slot.suggestion?.id, 'iOwe:s1');
+
+      // Another refresh with the same calendar: still labelled freed.
+      await cubit.scan();
+      slot = cubit.state.forecast!.openSlots.single;
+      expect(slot.freed, isTrue);
+
+      // Filling it books an hour for the suggestion and the slot is gone.
+      when(ledger.setSchedule(
+        accountId: anyNamed('accountId'),
+        id: anyNamed('id'),
+        eventId: anyNamed('eventId'),
+        start: anyNamed('start'),
+        end: anyNamed('end'),
+      )).thenAnswer((_) async => Right(unit));
+      when(createEvent(any)).thenAnswer((inv) async {
+        final p = inv.positionalArguments.first as CreateCalendarEventParams;
+        return Right(meeting('new', p.start, p.end));
+      });
+      expect(await cubit.fillSlot(slot), isTrue);
+      final booked =
+          verify(createEvent(captureAny)).captured.single as CreateCalendarEventParams;
+      expect(booked.start, DateTime(2026, 10, 2, 10));
+      expect(booked.end, DateTime(2026, 10, 2, 11));
+      expect(cubit.state.commitments.single.isScheduled, isTrue);
+    });
+
+    test('applyMoves books each move in turn and reports how many landed',
+        () async {
+      await cubit.load();
+      await pumpEventQueue();
+      when(ledger.setSchedule(
+        accountId: anyNamed('accountId'),
+        id: anyNamed('id'),
+        eventId: anyNamed('eventId'),
+        start: anyNamed('start'),
+        end: anyNamed('end'),
+      )).thenAnswer((_) async => Right(unit));
+      var calls = 0;
+      when(createEvent(any)).thenAnswer((inv) async {
+        calls++;
+        final p = inv.positionalArguments.first as CreateCalendarEventParams;
+        if (calls == 2) return const Left(ServerFailure(message: 'full'));
+        return Right(meeting('ev-$calls', p.start, p.end));
+      });
+      // The second move finds the commitment already blocked by the first,
+      // so it is attempted as a move of that block; refuse it so the
+      // fallback create (the refused second call above) is what runs.
+      when(updateEvent(any)).thenAnswer(
+        (_) async => const Left(ServerFailure(message: 'gone')),
+      );
+      final c = cubit.state.commitments.single;
+      final moves = [
+        ScheduleMove(
+          commitment: c,
+          from: null,
+          toStart: DateTime(2026, 10, 5, 9),
+          toEnd: DateTime(2026, 10, 5, 10),
+        ),
+        ScheduleMove(
+          commitment: c,
+          from: null,
+          toStart: DateTime(2026, 10, 6, 9),
+          toEnd: DateTime(2026, 10, 6, 10),
+        ),
+      ];
+
+      final applied = await cubit.applyMoves(moves);
+
+      // The first lands; the second is refused (and, having been given a
+      // block by the first, was attempted as a move of that block, whose
+      // failure falls back to a create — the refused call).
+      expect(applied, 1);
+      expect(cubit.state.message, 'full');
     });
   });
 }

@@ -239,6 +239,14 @@ void main() {
     double? width = 420,
     ValueChanged<Commitment>? onOpenEmail,
   }) async {
+    if (width != null) {
+      // A tall pane, so every section is built: the list is lazy, and a
+      // section below the fold would not be findable.
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+    }
     final pane = CommitmentsDayPanel(onClose: () {}, onOpenEmail: onOpenEmail);
     await tester.pumpWidget(
       MaterialApp(
@@ -460,5 +468,14 @@ void main() {
     expect(find.text('Schedule time'), findsNothing);
     expect(find.text('Time blocked for Sarah.'), findsOneWidget);
     expect(find.byIcon(Icons.event_rounded), findsWidgets);
+  });
+
+  testWidgets('the week-ahead strip is part of the pane', (tester) async {
+    await pumpPane(tester);
+
+    expect(find.text('WEEK AHEAD'), findsOneWidget);
+    // One pressure cell per forecast day.
+    final days = find.byTooltip(RegExp(r'.*'));
+    expect(days, findsWidgets);
   });
 }

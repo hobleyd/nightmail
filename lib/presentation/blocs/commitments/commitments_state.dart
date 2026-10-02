@@ -2,6 +2,7 @@ import 'package:equatable/equatable.dart';
 
 import '../../../domain/entities/calendar_event.dart';
 import '../../../domain/entities/commitment.dart';
+import '../../../domain/entities/workload_forecast.dart';
 
 /// Lifecycle of the Commitments pane.
 ///
@@ -23,6 +24,7 @@ class CommitmentsState extends Equatable {
     this.remaining = 0,
     this.message,
     this.needsTriageRoute = false,
+    this.forecast,
   });
 
   final CommitmentsStatus status;
@@ -58,6 +60,11 @@ class CommitmentsState extends Equatable {
   /// Triage has no System One provider routed, so nothing can be detected —
   /// the pane points at Settings › AI instead of showing an empty ledger.
   final bool needsTriageRoute;
+
+  /// The week ahead: per-day load, overloaded days with a plan to lighten
+  /// them, and gaps in today worth filling. Recomputed whenever the ledger
+  /// or today's context is refreshed; null until the first load.
+  final WorkloadForecast? forecast;
 
   List<Commitment> _open(CommitmentKind kind) => [
         for (final c in commitments)
@@ -112,6 +119,7 @@ class CommitmentsState extends Equatable {
     int? remaining,
     Object? message = _unset,
     bool? needsTriageRoute,
+    WorkloadForecast? forecast,
   }) {
     return CommitmentsState(
       status: status ?? this.status,
@@ -125,6 +133,7 @@ class CommitmentsState extends Equatable {
       remaining: remaining ?? this.remaining,
       message: message == _unset ? this.message : message as String?,
       needsTriageRoute: needsTriageRoute ?? this.needsTriageRoute,
+      forecast: forecast ?? this.forecast,
     );
   }
 
@@ -141,6 +150,7 @@ class CommitmentsState extends Equatable {
         remaining,
         message,
         needsTriageRoute,
+        forecast,
       ];
 }
 

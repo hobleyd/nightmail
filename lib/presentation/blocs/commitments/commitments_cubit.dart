@@ -14,9 +14,11 @@ import '../../../domain/entities/calendar_event.dart';
 import '../../../domain/entities/commitment.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/time_block_suggestion.dart';
+import '../../../domain/entities/workload_forecast.dart';
 import '../../../domain/repositories/commitment_repository.dart';
 import '../../../domain/repositories/email_repository.dart';
 import '../../../domain/usecases/commitments/detect_commitments.dart';
+import '../../../domain/usecases/commitments/forecast_workload.dart';
 import '../../../domain/usecases/commitments/suggest_time_block.dart';
 import '../../../domain/usecases/create_calendar_event.dart';
 import '../../../domain/usecases/get_cached_calendar_events.dart';
@@ -47,6 +49,7 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
     required CreateCalendarEvent createCalendarEvent,
     required UpdateCalendarEvent updateCalendarEvent,
     this.suggester = const SuggestTimeBlock(),
+    this.forecaster = const ForecastWorkload(),
     DateTime Function()? now,
   })  : _accounts = accountManager,
         _emails = emailRepository,
@@ -73,6 +76,18 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
   /// free-slot and conflict checks against a day the user picked by hand with
   /// the same working hours and slot grid the suggestion used.
   final SuggestTimeBlock suggester;
+
+  /// "Future Me": the week-ahead forecast, recomputed with every refresh.
+  final ForecastWorkload forecaster;
+
+  /// The calendar as it was at the previous forecast, so a meeting that has
+  /// since disappeared can mark the gap it left as *freed*.
+  List<CalendarEvent>? _lastEvents;
+
+  /// Gap starts once recognised as freed. The comparison above only sees the
+  /// disappearance at the first refresh after it; this keeps the label on the
+  /// slot until it is filled or the time has passed.
+  final Set<DateTime> _freedSlotStarts = {};
 
   /// How far ahead the calendar is read when suggesting a time block — wide
   /// enough for the longest horizon `SuggestTimeBlock` considers.
@@ -107,7 +122,10 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
 
     final ledger = await _ledger.getCommitments(accountId: account.id);
     if (isClosed) return;
-    final today = await _todayContext(account.id);
+    final ctx = await _contextFor(
+      account.id,
+      ledger.getOrElse((_) => state.commitments),
+    );
     if (isClosed) return;
 
     ledger.fold(
@@ -118,8 +136,9 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
       (commitments) => emit(state.copyWith(
         status: CommitmentsStatus.loaded,
         commitments: commitments,
-        todayEvents: today.events,
-        tasksDueToday: today.tasksDue,
+        todayEvents: ctx.events,
+        tasksDueToday: ctx.tasksDue,
+        forecast: ctx.forecast,
       )),
     );
     if (state.status == CommitmentsStatus.loaded) unawaited(scan());
@@ -159,7 +178,9 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
       (_) => state.inboxScanned,
       (ids) => mail.inbox.where((e) => ids.contains(e.id)).length,
     );
-    final today = await _todayContext(account.id);
+    final nextCommitments =
+        result.fold((_) => state.commitments, (r) => r.commitments);
+    final ctx = await _contextFor(account.id, nextCommitments);
     if (isClosed) return;
 
     result.fold(
@@ -173,8 +194,9 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
               : CommitmentsStatus.loaded,
           needsTriageRoute: noRoute,
           message: failure.message,
-          todayEvents: today.events,
-          tasksDueToday: today.tasksDue,
+          todayEvents: ctx.events,
+          tasksDueToday: ctx.tasksDue,
+          forecast: ctx.forecast,
           inboxScanned: inboxScanned,
         ));
       },
@@ -187,8 +209,9 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
           lastScanAt: _now(),
           lastClassified: r.classified,
           remaining: r.remaining,
-          todayEvents: today.events,
-          tasksDueToday: today.tasksDue,
+          todayEvents: ctx.events,
+          tasksDueToday: ctx.tasksDue,
+          forecast: ctx.forecast,
           inboxScanned: inboxScanned,
         ));
       },
@@ -331,24 +354,62 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
       end: end,
     );
     if (isClosed) return true;
-    final today = await _todayContext(accountId);
+    final updated = [
+      for (final c in state.commitments)
+        c.id == commitment.id
+            ? c.copyWith(
+                scheduledEventId: event.id,
+                scheduledStart: start,
+                scheduledEnd: end,
+              )
+            : c,
+    ];
+    // A block that fills a freed gap retires the label.
+    _freedSlotStarts.remove(start);
+    final ctx = await _contextFor(accountId, updated);
     if (isClosed) return true;
     emit(state.copyWith(
       message: saved.fold((f) => f.message, (_) => null),
-      commitments: [
-        for (final c in state.commitments)
-          c.id == commitment.id
-              ? c.copyWith(
-                  scheduledEventId: event.id,
-                  scheduledStart: start,
-                  scheduledEnd: end,
-                )
-              : c,
-      ],
-      todayEvents: today.events,
-      tasksDueToday: today.tasksDue,
+      commitments: updated,
+      todayEvents: ctx.events,
+      tasksDueToday: ctx.tasksDue,
+      forecast: ctx.forecast,
     ));
     return true;
+  }
+
+  /// Applies a rebalance plan's chosen [moves] one after another — each is a
+  /// [schedule] — and returns how many the calendar accepted. Stops at the
+  /// first refusal so the failure message in state is about that move.
+  Future<int> applyMoves(List<ScheduleMove> moves) async {
+    var applied = 0;
+    for (final move in moves) {
+      // Use the ledger's current copy of the commitment: an earlier move in
+      // the same plan may already have given it a block id to reuse.
+      final current = state.commitments
+          .where((c) => c.id == move.commitment.id)
+          .cast<Commitment?>()
+          .firstWhere((_) => true, orElse: () => null);
+      final ok = await schedule(
+        current ?? move.commitment,
+        start: move.toStart,
+        end: move.toEnd,
+      );
+      if (!ok || isClosed) break;
+      applied++;
+    }
+    return applied;
+  }
+
+  /// Puts the slot's suggested commitment into the gap: an hour when the gap
+  /// has one, otherwise the whole gap.
+  Future<bool> fillSlot(OpenSlot slot) async {
+    final target = slot.suggestion;
+    if (target == null) return false;
+    final length = slot.length >= const Duration(hours: 1)
+        ? const Duration(hours: 1)
+        : slot.length;
+    return schedule(target, start: slot.start, end: slot.start.add(length));
   }
 
   /// The calendar subject for a commitment's block — what it is for and who
@@ -416,34 +477,78 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
     );
   }
 
-  /// Today's events (from the calendar cache) and the count of open tasks due
-  /// today (from the task-reminder rows, which cover every list).
-  Future<({List<CalendarEvent> events, int tasksDue})> _todayContext(
-    String accountId,
-  ) async {
+  /// Today's events, the count of open tasks due today, and the week-ahead
+  /// forecast — from one read of the calendar cache over [scheduleLookahead]
+  /// and the task-reminder rows (which cover every list). [commitments] is
+  /// the ledger the forecast should describe: the list about to be emitted,
+  /// which is not always the one in state.
+  Future<({List<CalendarEvent> events, int tasksDue, WorkloadForecast forecast})>
+      _contextFor(String accountId, List<Commitment> commitments) async {
     final now = _now();
     final start = DateTime(now.year, now.month, now.day);
-    final end = start.add(const Duration(days: 1));
+    final tomorrow = start.add(const Duration(days: 1));
 
     final events = (await _calendar(GetCalendarEventsParams(
       startDateTime: start,
-      endDateTime: end,
+      endDateTime: start.add(scheduleLookahead),
       accountId: accountId,
     )))
         .getOrElse((_) => const []);
-    final sorted = List.of(events)..sort((a, b) => a.start.compareTo(b.start));
+    final todayEvents = [
+      for (final e in events)
+        if (e.start.toLocal().isBefore(tomorrow) && e.end.toLocal().isAfter(start))
+          e,
+    ]..sort((a, b) => a.start.compareTo(b.start));
 
-    var tasksDue = 0;
+    final taskDueDates = <DateTime>[];
     try {
       final rows = await _taskReminders.getScheduledTaskReminders(accountId);
-      tasksDue = rows
-          .where((r) =>
-              taskDueDay(DateTime.fromMillisecondsSinceEpoch(r.dueAtMs)) ==
-              start)
-          .length;
+      for (final r in rows) {
+        taskDueDates.add(
+          taskDueDay(DateTime.fromMillisecondsSinceEpoch(r.dueAtMs)),
+        );
+      }
     } catch (e) {
       debugPrint('CommitmentsCubit: task reminder rows unavailable: $e');
     }
-    return (events: sorted, tasksDue: tasksDue);
+    final tasksDue = taskDueDates.where((d) => d == start).length;
+
+    var forecast = forecaster(
+      commitments: commitments,
+      events: events,
+      taskDueDates: taskDueDates,
+      now: now,
+      previousEvents: _lastEvents,
+    );
+    _lastEvents = events;
+    forecast = _withStickyFreed(forecast, now);
+
+    return (events: todayEvents, tasksDue: tasksDue, forecast: forecast);
+  }
+
+  /// Keeps a slot labelled *freed* across refreshes until it is filled or its
+  /// start has passed.
+  WorkloadForecast _withStickyFreed(WorkloadForecast f, DateTime now) {
+    _freedSlotStarts.removeWhere((s) => !s.isAfter(now));
+    for (final s in f.openSlots) {
+      if (s.freed) _freedSlotStarts.add(s.start);
+    }
+    if (_freedSlotStarts.isEmpty) return f;
+    return WorkloadForecast(
+      days: f.days,
+      plans: f.plans,
+      openSlots: [
+        for (final s in f.openSlots)
+          s.freed || !_freedSlotStarts.contains(s.start)
+              ? s
+              : OpenSlot(
+                  start: s.start,
+                  end: s.end,
+                  suggestion: s.suggestion,
+                  freed: true,
+                ),
+      ],
+      computedAt: f.computedAt,
+    );
   }
 }

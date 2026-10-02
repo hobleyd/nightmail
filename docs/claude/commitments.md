@@ -150,9 +150,46 @@ time in place of its age. The main window's reminder reconciler picks the new
 event up on its next cycle, so the cubit does not touch the notification
 plugin (which must not be initialised from a sub-window anyway).
 
-Not built, still: "Future Me" workload forecasting (warning on Tuesday that
-Thursday is overloaded) and natural-language control. The load-per-day data
-this feature computes is the foundation either would need.
+## Future Me: the week-ahead forecast
+
+`ForecastWorkload` (pure, `domain/usecases/commitments/`) turns the calendar
+cache, the open ledger and the task-reminder rows into a `WorkloadForecast`
+on every refresh; `CommitmentsCubit._contextFor` computes it from the same
+two-week calendar read that feeds Today, so it costs no extra I/O.
+
+* **Per day** (today and the next working days, five in all): *capacity* is
+  the working window minus meetings — where the user's own commitment
+  blocks are **not** meetings, they are demand already placed — and
+  *demand* is blocked time plus 60 min per unscheduled commitment landing
+  that day plus 30 min per task due. A commitment lands on its block's day
+  if it has one; otherwise today when due today or overdue, the week's last
+  working day when due this week, nowhere when open-ended. **Overloaded**
+  means demand exceeds capacity; *tight* means more than three quarters
+  spoken for.
+* **A `RebalancePlan` per overloaded day**: its movable items, least urgent
+  first (blocks, then unscheduled commitments — an item due today that
+  lands on today cannot move), each sent to the freest other day its
+  deadline allows, into a real free slot found by `SuggestTimeBlock`, with
+  earlier moves counted as pseudo-events so two never take the same slot;
+  the plan stops once the day fits. `RebalanceDialog` shows the moves with
+  checkboxes and applies the kept ones through `CommitmentsCubit.applyMoves`
+  (each a `schedule`, so a block is moved rather than duplicated).
+* **Open slots**: gaps of 45 min or more left in today after now, each
+  paired with the most pressing unscheduled commitment (overdue first, then
+  urgency, then due, then age). A slot is **freed** when a meeting
+  overlapped it at the previous forecast and is gone now — the cubit keeps
+  the previous calendar snapshot for this, and `_freedSlotStarts` keeps the
+  label on the slot across refreshes until it is filled or has passed.
+  `fillSlot` books an hour (or the whole gap if shorter).
+
+`WorkloadStrip` shows it: in the side pane a "Week ahead" box with a
+pressure cell per day, a warning row per overloaded day with **Rebalance**,
+and the open slot with **Schedule**; in the detached window a full-width row
+of day cards above the board — stacked bar of meetings / blocked / estimated
+against the working day, the numbers, Overloaded / Tight badges, Rebalance —
+with the open slot as its own callout at the end.
+
+Not built: natural-language control.
 
 ## Deliberate limits
 

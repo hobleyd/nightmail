@@ -16,8 +16,11 @@ import '../blocs/email_detail/email_detail_event.dart';
 import '../blocs/email_list/email_list_bloc.dart';
 import '../blocs/email_list/email_list_event.dart';
 import '../blocs/home/home_cubit.dart';
+import '../../domain/entities/workload_forecast.dart';
 import '../blocs/mail_poller/mail_poller_cubit.dart';
+import '../widgets/commitments/rebalance_dialog.dart';
 import '../widgets/commitments/schedule_commitment_dialog.dart';
+import '../widgets/commitments/workload_strip.dart';
 import 'settings_page.dart';
 
 /// The Commitments pane: mail, calendar and tasks read as one stream of
@@ -177,6 +180,41 @@ class _CommitmentsDayPanelState extends State<CommitmentsDayPanel> {
     }
   }
 
+  /// Shows the moves "Future Me" proposes for an overloaded day and applies
+  /// the ones the user keeps.
+  Future<void> _rebalance(RebalancePlan plan) async {
+    final applied = await RebalanceDialog.show(
+      context,
+      plan: plan,
+      onApply: _cubit.applyMoves,
+    );
+    if (applied > 0 && mounted) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(
+          content: Text(
+            'Moved $applied ${applied == 1 ? 'block' : 'blocks'} off '
+            '${DateFormat('EEEE').format(plan.day.day)}.',
+          ),
+        ),
+      );
+    }
+  }
+
+  /// Puts the slot's suggested commitment into a gap that opened in today.
+  Future<void> _fillSlot(OpenSlot slot) async {
+    final ok = await _cubit.fillSlot(slot);
+    if (ok && mounted) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(
+          content: Text(
+            '${slot.suggestion?.counterpart.displayName ?? 'Commitment'} '
+            'scheduled for ${DateFormat.jm().format(slot.start)}.',
+          ),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -225,6 +263,8 @@ class _CommitmentsDayPanelState extends State<CommitmentsDayPanel> {
                                 onDismiss: (c) =>
                                     unawaited(_cubit.dismiss(c.id)),
                                 onSchedule: (c) => unawaited(_schedule(c)),
+                                onRebalance: (p) => unawaited(_rebalance(p)),
+                                onFillSlot: (s) => unawaited(_fillSlot(s)),
                               )
                             : _LoadedBody(
                                 state: state,
@@ -234,6 +274,8 @@ class _CommitmentsDayPanelState extends State<CommitmentsDayPanel> {
                                 onDismiss: (c) =>
                                     unawaited(_cubit.dismiss(c.id)),
                                 onSchedule: (c) => unawaited(_schedule(c)),
+                                onRebalance: (p) => unawaited(_rebalance(p)),
+                                onFillSlot: (s) => unawaited(_fillSlot(s)),
                               );
                       },
                     );
@@ -358,6 +400,8 @@ class _LoadedBody extends StatelessWidget {
     required this.onDone,
     required this.onDismiss,
     required this.onSchedule,
+    required this.onRebalance,
+    required this.onFillSlot,
   });
 
   final CommitmentsState state;
@@ -366,6 +410,8 @@ class _LoadedBody extends StatelessWidget {
   final ValueChanged<Commitment> onDone;
   final ValueChanged<Commitment> onDismiss;
   final ValueChanged<Commitment> onSchedule;
+  final ValueChanged<RebalancePlan> onRebalance;
+  final ValueChanged<OpenSlot> onFillSlot;
 
   @override
   Widget build(BuildContext context) {
@@ -374,6 +420,7 @@ class _LoadedBody extends StatelessWidget {
     final iOwe = state.iOwe;
     final waitingOn = state.waitingOn;
     final needsAction = state.needsAction;
+    final forecast = state.forecast;
 
     Widget row(Commitment c) => _CommitmentRow(
           commitment: c,
@@ -393,6 +440,13 @@ class _LoadedBody extends StatelessWidget {
           if (state.message != null) _Notice(text: state.message!),
           _ScanLine(state: state),
         ],
+        if (forecast != null)
+          WorkloadStrip(
+            forecast: forecast,
+            wide: false,
+            onRebalance: onRebalance,
+            onFillSlot: onFillSlot,
+          ),
         _Section(
           title: 'Today',
           emptyText: state.todayEvents.isEmpty && state.tasksDueToday == 0
@@ -948,6 +1002,8 @@ class _BoardBody extends StatelessWidget {
     required this.onDone,
     required this.onDismiss,
     required this.onSchedule,
+    required this.onRebalance,
+    required this.onFillSlot,
   });
 
   final CommitmentsState state;
@@ -956,6 +1012,8 @@ class _BoardBody extends StatelessWidget {
   final ValueChanged<Commitment> onDone;
   final ValueChanged<Commitment> onDismiss;
   final ValueChanged<Commitment> onSchedule;
+  final ValueChanged<RebalancePlan> onRebalance;
+  final ValueChanged<OpenSlot> onFillSlot;
 
   static const double _maxBoardWidth = 1760;
   static const double _gutter = 16;
@@ -967,6 +1025,7 @@ class _BoardBody extends StatelessWidget {
     final iOwe = state.iOwe;
     final waitingOn = state.waitingOn;
     final needsAction = state.needsAction;
+    final forecast = state.forecast;
 
     Widget card(Commitment c) => _CommitmentCard(
           commitment: c,
@@ -1001,6 +1060,24 @@ class _BoardBody extends StatelessWidget {
             ),
           ),
         ),
+        // The week ahead, full width above the columns: the forecast is the
+        // one thing on this screen that is about the days to come rather
+        // than the items themselves.
+        if (forecast != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(_gutter, 10, _gutter, 0),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: _maxBoardWidth),
+                child: WorkloadStrip(
+                  forecast: forecast,
+                  wide: true,
+                  onRebalance: onRebalance,
+                  onFillSlot: onFillSlot,
+                ),
+              ),
+            ),
+          ),
         Expanded(
           child: Center(
             child: ConstrainedBox(

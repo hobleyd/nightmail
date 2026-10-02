@@ -15,10 +15,12 @@ import 'package:nightmail/domain/repositories/commitment_repository.dart';
 import 'package:nightmail/domain/repositories/email_repository.dart';
 import 'package:nightmail/domain/usecases/commitments/detect_commitments.dart';
 import 'package:nightmail/domain/usecases/create_calendar_event.dart';
+import 'package:nightmail/domain/usecases/commitments/run_commitments_agent.dart';
 import 'package:nightmail/domain/usecases/get_cached_calendar_events.dart';
 import 'package:nightmail/domain/usecases/update_calendar_event.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
+import 'package:nightmail/injection_container.dart';
 import 'package:nightmail/presentation/blocs/commitments/commitments_cubit.dart';
 import 'package:nightmail/presentation/pages/commitments_page.dart';
 
@@ -36,6 +38,7 @@ import 'commitments_page_test.mocks.dart';
   TaskReminderScheduleLocalDatasource,
   CreateCalendarEvent,
   UpdateCalendarEvent,
+  RunCommitmentsAgent,
 ])
 void main() {
   late MockAccountManager accounts;
@@ -46,6 +49,7 @@ void main() {
   late MockTaskReminderScheduleLocalDatasource taskReminders;
   late MockCreateCalendarEvent createEvent;
   late MockUpdateCalendarEvent updateEvent;
+  late MockRunCommitmentsAgent runAgent;
 
   const account = MicrosoftAccount(
     id: 'acc',
@@ -162,6 +166,9 @@ void main() {
     taskReminders = MockTaskReminderScheduleLocalDatasource();
     createEvent = MockCreateCalendarEvent();
     updateEvent = MockUpdateCalendarEvent();
+    // The pane builds its natural-language assistant from get_it.
+    runAgent = MockRunCommitmentsAgent();
+    sl.registerSingleton<RunCommitmentsAgent>(runAgent);
 
     when(accounts.activeAccount).thenReturn(account);
     when(ledger.getCommitments(accountId: 'acc'))
@@ -220,6 +227,8 @@ void main() {
       )),
     );
   });
+
+  tearDown(() => sl.reset());
 
   CommitmentsCubit buildCubit() => CommitmentsCubit(
         accountManager: accounts,

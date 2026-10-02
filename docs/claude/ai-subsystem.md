@@ -30,6 +30,19 @@ the single-shot adapter path returns `Either` the same way rather than mixing
 throw-and-convert with emit-`Left` in one class.
 
 
+### One tool-calling loop, two agents
+
+`AgentLoop` (`lib/domain/usecases/ai/agent/agent_loop.dart`) is the
+stream-a-round / run-the-tools / feed-back-results loop. `RunFolderAgent`
+(mail tools, Compose route, no-tools fallback) and `RunCommitmentsAgent`
+(ledger tools, Compose route, no fallback — see
+[commitments.md](commitments.md)) both delegate to it; the two sentinel
+finish reasons the UI renders as tool cards live there, with
+`RunFolderAgent` keeping aliases so nothing that imported them moved. On
+the presentation side `AgentChatCubit` owns the transcript (text bubbles
+interleaved with tool cards, turn-tagged history trimming) and
+`AiFolderCubit` / `CommitmentsAgentCubit` only supply the turn.
+
 ### System One (typed decision) providers speak a non-chat wire
 
 `AiWireProtocol.systemOne` is TypeSafe's Jev API: `POST {base}/v1/systemone`

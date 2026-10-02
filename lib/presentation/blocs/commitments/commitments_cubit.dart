@@ -2,13 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:fpdart/fpdart.dart';
 
 import '../../../core/error/failures.dart';
 import '../../../core/utils/inbox_folder.dart';
 import '../../../core/utils/outgoing_folder.dart';
 import '../../../core/utils/task_due.dart';
-import '../../../core/utils/timezone_utils.dart';
 import '../../../data/datasources/local/task_reminder_schedule_local_datasource.dart';
 import '../../../domain/entities/calendar_event.dart';
 import '../../../domain/entities/commitment.dart';
@@ -18,12 +16,14 @@ import '../../../domain/entities/workload_forecast.dart';
 import '../../../domain/repositories/commitment_repository.dart';
 import '../../../domain/repositories/email_repository.dart';
 import '../../../domain/usecases/commitments/detect_commitments.dart';
+import '../../../domain/usecases/commitments/agent/commitment_agent_tools.dart';
 import '../../../domain/usecases/commitments/forecast_workload.dart';
+import '../../../domain/usecases/commitments/schedule_commitment.dart';
 import '../../../domain/usecases/commitments/suggest_time_block.dart';
 import '../../../domain/usecases/create_calendar_event.dart';
+import '../../../domain/usecases/update_calendar_event.dart';
 import '../../../domain/usecases/get_cached_calendar_events.dart';
 import '../../../domain/usecases/get_calendar_events.dart';
-import '../../../domain/usecases/update_calendar_event.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
 import 'commitments_state.dart';
 
@@ -57,8 +57,11 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
         _detect = detectCommitments,
         _calendar = getCachedCalendarEvents,
         _taskReminders = taskReminders, // ignore: prefer_initializing_formals
-        _createEvent = createCalendarEvent,
-        _updateEvent = updateCalendarEvent,
+        _scheduler = ScheduleCommitment(
+          createCalendarEvent: createCalendarEvent,
+          updateCalendarEvent: updateCalendarEvent,
+          commitmentRepository: commitmentRepository,
+        ),
         _now = now ?? DateTime.now,
         super(const CommitmentsState());
 
@@ -68,8 +71,7 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
   final DetectCommitments _detect;
   final GetCachedCalendarEvents _calendar;
   final TaskReminderScheduleLocalDatasource _taskReminders;
-  final CreateCalendarEvent _createEvent;
-  final UpdateCalendarEvent _updateEvent;
+  final ScheduleCommitment _scheduler;
   final DateTime Function() _now;
 
   /// The pure time-block logic, exposed so the scheduling UI can re-run its
@@ -84,6 +86,9 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
   /// since disappeared can mark the gap it left as *freed*.
   List<CalendarEvent>? _lastEvents;
 
+  /// Task due dates as of the last context read, for the agent snapshot.
+  List<DateTime> _lastTaskDueDates = const [];
+
   /// Gap starts once recognised as freed. The comparison above only sees the
   /// disappearance at the first refresh after it; this keeps the label on the
   /// slot until it is filled or the time has passed.
@@ -93,9 +98,8 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
   /// enough for the longest horizon `SuggestTimeBlock` considers.
   static const Duration scheduleLookahead = Duration(days: 14);
 
-  /// Reminder on a scheduled block, matching the app's default for new
-  /// meetings.
-  static const int blockReminderMinutes = 15;
+  /// Reminder on a scheduled block — see [ScheduleCommitment.reminderMinutes].
+  static const int blockReminderMinutes = ScheduleCommitment.reminderMinutes;
 
   /// How much of each folder's cached listing the scan considers.
   static const int recentMailWindow = 60;
@@ -295,81 +299,27 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
     final accountId = state.accountId;
     if (accountId == null) return false;
 
-    final subject = blockSubjectFor(commitment);
-    final description = blockDescriptionFor(commitment);
-    final timezone = localIanaTimezone();
-
-    Either<Failure, CalendarEvent> result;
-    final existingId = commitment.scheduledEventId;
-    if (existingId != null) {
-      result = await _updateEvent(UpdateCalendarEventParams(
-        id: existingId,
-        subject: subject,
-        start: start,
-        end: end,
-        isAllDay: false,
-        timezone: timezone,
-        description: description,
-        reminderMinutes: blockReminderMinutes,
-      ));
-      if (result.isLeft()) {
-        // The old block may have been deleted from the calendar; fall back
-        // to a fresh one rather than failing the reschedule.
-        result = await _createEvent(CreateCalendarEventParams(
-          subject: subject,
-          start: start,
-          end: end,
-          isAllDay: false,
-          timezone: timezone,
-          description: description,
-          reminderMinutes: blockReminderMinutes,
-        ));
-      }
-    } else {
-      result = await _createEvent(CreateCalendarEventParams(
-        subject: subject,
-        start: start,
-        end: end,
-        isAllDay: false,
-        timezone: timezone,
-        description: description,
-        reminderMinutes: blockReminderMinutes,
-      ));
-    }
+    final result = await _scheduler(commitment, start: start, end: end);
     if (isClosed) return false;
 
-    final event = result.fold((_) => null, (e) => e);
-    if (event == null) {
+    final scheduled = result.fold((_) => null, (c) => c);
+    if (scheduled == null) {
       emit(state.copyWith(
         message: result.fold((f) => f.message, (_) => null),
       ));
       return false;
     }
 
-    final saved = await _ledger.setSchedule(
-      accountId: accountId,
-      id: commitment.id,
-      eventId: event.id,
-      start: start,
-      end: end,
-    );
-    if (isClosed) return true;
     final updated = [
       for (final c in state.commitments)
-        c.id == commitment.id
-            ? c.copyWith(
-                scheduledEventId: event.id,
-                scheduledStart: start,
-                scheduledEnd: end,
-              )
-            : c,
+        c.id == commitment.id ? scheduled : c,
     ];
     // A block that fills a freed gap retires the label.
     _freedSlotStarts.remove(start);
     final ctx = await _contextFor(accountId, updated);
     if (isClosed) return true;
     emit(state.copyWith(
-      message: saved.fold((f) => f.message, (_) => null),
+      message: null,
       commitments: updated,
       todayEvents: ctx.events,
       tasksDueToday: ctx.tasksDue,
@@ -412,31 +362,40 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
     return schedule(target, start: slot.start, end: slot.start.add(length));
   }
 
-  /// The calendar subject for a commitment's block — what it is for and who
-  /// it involves, readable in a week view at a glance.
-  static String blockSubjectFor(Commitment c) {
-    final what = c.subject.trim().isEmpty ? 'Commitment' : c.subject.trim();
-    final who = c.counterpart.displayName;
-    return switch (c.kind) {
-      CommitmentKind.iOwe => '$what — for $who',
-      CommitmentKind.theyOweMe => 'Follow up with $who: $what',
-      CommitmentKind.needsAction => 'Reply to $who: $what',
-    };
+  // ---------------------------------------------------------------------------
+  // Natural-language control
+  // ---------------------------------------------------------------------------
+
+  /// What the commitments agent sees at the start of a turn: the ledger and
+  /// the context as of the last refresh. Null until an account has loaded.
+  CommitmentsAgentSnapshot? agentSnapshot() {
+    final accountId = state.accountId;
+    if (accountId == null) return null;
+    return CommitmentsAgentSnapshot(
+      accountId: accountId,
+      commitments: state.commitments,
+      events: _lastEvents ?? const [],
+      taskDueDates: _lastTaskDueDates,
+      now: _now(),
+    );
   }
 
-  static String blockDescriptionFor(Commitment c) {
-    final kind = switch (c.kind) {
-      CommitmentKind.iOwe => 'Something you promised',
-      CommitmentKind.theyOweMe => 'Something you are waiting on',
-      CommitmentKind.needsAction => 'Mail that needs your decision',
-    };
-    final snippet = c.snippet.trim();
-    return [
-      'Time blocked from NightMail Commitments.',
-      '$kind · ${c.counterpart.displayName} <${c.counterpart.address}>',
-      if (snippet.isNotEmpty) '',
-      if (snippet.isNotEmpty) snippet,
-    ].join('\n');
+  /// Re-reads the ledger and today's context without a model scan — what the
+  /// agent's tools changed is on disk, and this brings it on screen.
+  Future<void> reloadLedger() async {
+    final accountId = state.accountId;
+    if (accountId == null || isClosed) return;
+    final ledger = await _ledger.getCommitments(accountId: accountId);
+    if (isClosed) return;
+    final commitments = ledger.getOrElse((_) => state.commitments);
+    final ctx = await _contextFor(accountId, commitments);
+    if (isClosed) return;
+    emit(state.copyWith(
+      commitments: commitments,
+      todayEvents: ctx.events,
+      tasksDueToday: ctx.tasksDue,
+      forecast: ctx.forecast,
+    ));
   }
 
   // ---------------------------------------------------------------------------
@@ -511,6 +470,7 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
     } catch (e) {
       debugPrint('CommitmentsCubit: task reminder rows unavailable: $e');
     }
+    _lastTaskDueDates = taskDueDates;
     final tasksDue = taskDueDates.where((d) => d == start).length;
 
     var forecast = forecaster(

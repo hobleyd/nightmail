@@ -67,6 +67,8 @@ import 'data/datasources/local/commitment_local_datasource.dart';
 import 'data/repositories/commitment_repository_impl.dart';
 import 'domain/repositories/commitment_repository.dart';
 import 'domain/usecases/commitments/detect_commitments.dart';
+import 'domain/usecases/commitments/run_commitments_agent.dart';
+import 'domain/usecases/commitments/schedule_commitment.dart';
 import 'presentation/blocs/commitments/commitments_cubit.dart';
 import 'presentation/blocs/out_of_office/meeting_sweep_cubit.dart';
 import 'presentation/blocs/out_of_office/out_of_office_cubit.dart';
@@ -717,6 +719,24 @@ Future<void> configureDependencies() async {
     () => DetectCommitments(
       settingsRepository: sl<AiSettingsRepository>(),
       inferenceRepository: sl<AiInferenceRepository>(),
+      commitmentRepository: sl<CommitmentRepository>(),
+    ),
+  );
+  sl.registerLazySingleton(
+    () => ScheduleCommitment(
+      createCalendarEvent: sl<CreateCalendarEvent>(),
+      updateCalendarEvent: sl<UpdateCalendarEvent>(),
+      commitmentRepository: sl<CommitmentRepository>(),
+    ),
+  );
+  // Natural-language control over the ledger: a tool-calling agent on the
+  // Compose model, same loop as the folder agent.
+  sl.registerLazySingleton(
+    () => RunCommitmentsAgent(
+      settingsRepository: sl<AiSettingsRepository>(),
+      inferenceRepository: sl<AiInferenceRepository>(),
+      catalogRepository: sl<AiCatalogRepository>(),
+      scheduleCommitment: sl<ScheduleCommitment>(),
       commitmentRepository: sl<CommitmentRepository>(),
     ),
   );

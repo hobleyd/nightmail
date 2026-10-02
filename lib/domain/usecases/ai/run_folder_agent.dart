@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:fpdart/fpdart.dart';
 
 import '../../../core/error/failures.dart';
@@ -9,8 +7,6 @@ import '../../entities/ai/ai_message.dart';
 import '../../entities/ai/ai_provider.dart';
 import '../../entities/ai/ai_request.dart';
 import '../../entities/ai/ai_tool_call.dart';
-import '../../entities/ai/ai_tool_definition.dart';
-import '../../entities/ai/ai_tool_result.dart';
 import '../../repositories/ai/ai_catalog_repository.dart';
 import '../../repositories/ai/ai_inference_repository.dart';
 import '../../repositories/ai/ai_settings_repository.dart';
@@ -18,6 +14,7 @@ import '../get_email.dart';
 import '../get_emails.dart';
 import '../get_mail_folders.dart';
 import '../search_emails.dart';
+import 'agent/agent_loop.dart';
 import 'agent/agent_tool.dart';
 import 'agent/email_agent_tools.dart';
 
@@ -83,13 +80,15 @@ class RunFolderAgent {
   /// `delta` carries a human-readable label (e.g. `Searching for "..."`) and
   /// its `toolCalls` the originating call. The presentation layer surfaces this
   /// as a transient activity label rather than appending it to the answer text.
-  static const String toolActivityFinishReason = 'tool_activity';
+  static const String toolActivityFinishReason =
+      AgentLoop.toolActivityFinishReason;
 
   /// Sentinel `finishReason` on a tool-result chunk, emitted after a tool call
   /// has executed. The chunk's [AiChunk.toolResult] carries the originating
   /// call id, the serialized output, and whether the outcome was an error. The
   /// presentation layer matches it to the running tool card by `callId`.
-  static const String toolResultFinishReason = 'tool_result';
+  static const String toolResultFinishReason =
+      AgentLoop.toolResultFinishReason;
 
   /// Agent system prompt — a tool-using variant of the folder-assistant prompt.
   static const String _agentSystemPrompt =
@@ -200,133 +199,17 @@ class RunFolderAgent {
       SearchEmailsTool(searchEmails),
       ListFoldersTool(getMailFolders),
     ];
-    final toolsByName = {for (final t in tools) t.name: t};
-    final toolDefs = tools
-        .map((t) => AiToolDefinition(
-              name: t.name,
-              description: t.description,
-              parametersSchema: t.parametersSchema,
-            ))
-        .toList();
-
-    final messages = <AiMessage>[
-      const AiMessage(role: AiRole.system, content: _agentSystemPrompt),
-      ...history,
-      AiMessage(role: AiRole.user, content: userInstruction),
-    ];
-
-    for (var round = 0; round < maxRounds; round++) {
-      final request = AiRequest(
-        providerId: routing.providerId,
-        modelId: routing.modelId,
-        stream: true,
-        messages: List.unmodifiable(messages),
-        tools: toolDefs,
-      );
-
-      List<AiToolCall>? roundToolCalls;
-
-      await for (final event in inferenceRepository.stream(request)) {
-        final failure = event.getLeft().toNullable();
-        if (failure != null) {
-          // Hard provider failure aborts the turn.
-          yield Left(failure);
-          return;
-        }
-        final chunk = event.getRight().toNullable()!;
-        if (chunk.toolCalls != null && chunk.toolCalls!.isNotEmpty) {
-          // Capture the round-terminal tool calls; do not forward the
-          // round-terminal chunk (the turn is not over yet).
-          roundToolCalls = chunk.toolCalls;
-        } else {
-          // Pass text deltas (and a genuine no-tools terminal chunk) through.
-          yield event;
-        }
-      }
-
-      // No tool calls → the final answer has already been streamed.
-      if (roundToolCalls == null || roundToolCalls.isEmpty) return;
-
-      // Record the assistant turn that requested the tools.
-      messages.add(
-        AiMessage(
-          role: AiRole.assistant,
-          content: '',
-          toolCalls: roundToolCalls,
-        ),
-      );
-
-      // Execute each call, emit a transient activity chunk, and append the
-      // result as a `tool`-role turn. Every call gets a matching reply.
-      for (var i = 0; i < roundToolCalls.length; i++) {
-        final call = roundToolCalls[i];
-
-        yield Right(
-          AiChunk(
-            delta: _activityLabel(call),
-            finishReason: toolActivityFinishReason,
-            toolCalls: [call],
-          ),
-        );
-
-        final String resultString;
-        final bool isError;
-        if (i >= maxToolCallsPerRound) {
-          resultString = jsonEncode({
-            'error': 'Tool call skipped: per-round tool-call limit reached.',
-          });
-          isError = true;
-        } else {
-          final tool = toolsByName[call.name];
-          if (tool == null) {
-            resultString = jsonEncode({'error': "Unknown tool '${call.name}'."});
-            isError = true;
-          } else {
-            // Serialize a tool Left into the result so the model can recover.
-            final outcome =
-                await tool.invoke(call.arguments, currentFolderId: currentFolderId);
-            isError = outcome.isLeft();
-            resultString = outcome.fold(
-              (failure) => jsonEncode({'error': failure.message}),
-              (value) => value,
-            );
-          }
-        }
-
-        messages.add(
-          AiMessage(
-            role: AiRole.tool,
-            content: resultString,
-            toolCallId: call.id,
-            name: call.name,
-          ),
-        );
-
-        // Finished event: carries the structured result so the UI can update
-        // the running tool card to complete/error with its output.
-        yield Right(
-          AiChunk(
-            delta: '',
-            finishReason: toolResultFinishReason,
-            toolResult: AiToolResult(
-              callId: call.id,
-              output: resultString,
-              isError: isError,
-            ),
-          ),
-        );
-      }
-      // Loop to let the model read the results and either answer or call more.
-    }
-
-    // Max rounds exceeded without a final answer.
-    yield const Right(
-      AiChunk(
-        delta: '\n\n_(Reached the maximum number of tool steps for this '
-            'turn. Ask a follow-up to continue.)_',
-        done: true,
-        finishReason: 'max_rounds',
-      ),
+    // The loop itself is shared with the commitments agent — see AgentLoop.
+    yield* AgentLoop(inferenceRepository).run(
+      routing: routing,
+      systemPrompt: _agentSystemPrompt,
+      tools: tools,
+      history: history,
+      userInstruction: userInstruction,
+      currentFolderId: currentFolderId,
+      maxRounds: maxRounds,
+      maxToolCallsPerRound: maxToolCallsPerRound,
+      activityLabel: _activityLabel,
     );
   }
 

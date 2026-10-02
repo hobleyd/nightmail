@@ -17,7 +17,11 @@ import '../blocs/email_list/email_list_bloc.dart';
 import '../blocs/email_list/email_list_event.dart';
 import '../blocs/home/home_cubit.dart';
 import '../../domain/entities/workload_forecast.dart';
+import '../../domain/usecases/commitments/run_commitments_agent.dart';
+import '../../injection_container.dart';
+import '../blocs/commitments/commitments_agent_cubit.dart';
 import '../blocs/mail_poller/mail_poller_cubit.dart';
+import '../widgets/commitments/commitments_assistant.dart';
 import '../widgets/commitments/rebalance_dialog.dart';
 import '../widgets/commitments/schedule_commitment_dialog.dart';
 import '../widgets/commitments/workload_strip.dart';
@@ -72,6 +76,12 @@ class CommitmentsDayPanel extends StatefulWidget {
 
 class _CommitmentsDayPanelState extends State<CommitmentsDayPanel> {
   late final CommitmentsCubit _cubit;
+
+  /// Natural-language control: its own chat cubit, fed snapshots by
+  /// [_cubit] and asking it to reload once a turn's tools have run. Created
+  /// here (not provided from outside) so every host of the pane — docked,
+  /// phone route, detached window — gets one without extra wiring.
+  late final CommitmentsAgentCubit _agent;
   StreamSubscription<void>? _pollSub;
   StreamSubscription<void>? _accountSub;
   int? _lastPollGeneration;
@@ -81,6 +91,11 @@ class _CommitmentsDayPanelState extends State<CommitmentsDayPanel> {
   void initState() {
     super.initState();
     _cubit = context.read<CommitmentsCubit>();
+    _agent = CommitmentsAgentCubit(
+      runAgent: sl<RunCommitmentsAgent>(),
+      snapshot: _cubit.agentSnapshot,
+      onChanged: _cubit.reloadLedger,
+    );
     // A completed poll cycle may have brought new mail: scan it. An account
     // switch means a different ledger: reload. Both blocs are optional —
     // a detached window may provide neither — so a missing one is ignored.
@@ -114,6 +129,7 @@ class _CommitmentsDayPanelState extends State<CommitmentsDayPanel> {
   void dispose() {
     _pollSub?.cancel();
     _accountSub?.cancel();
+    _agent.close();
     super.dispose();
   }
 
@@ -218,7 +234,15 @@ class _CommitmentsDayPanelState extends State<CommitmentsDayPanel> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return ColoredBox(
+    return BlocProvider<CommitmentsAgentCubit>.value(
+      value: _agent,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // The assistant sits under the ledger in a pane and takes its own
+          // column in the board, so the board body hosts it when wide.
+          final wide =
+              constraints.maxWidth >= CommitmentsDayPanel.kBoardMinWidth;
+          return ColoredBox(
       color: c.surfacePanel,
       child: Column(
         children: [
@@ -283,7 +307,11 @@ class _CommitmentsDayPanelState extends State<CommitmentsDayPanel> {
               },
             ),
           ),
+          if (!wide) const CommitmentsAssistant(compact: true),
         ],
+      ),
+          );
+        },
       ),
     );
   }
@@ -1015,7 +1043,7 @@ class _BoardBody extends StatelessWidget {
   final ValueChanged<RebalancePlan> onRebalance;
   final ValueChanged<OpenSlot> onFillSlot;
 
-  static const double _maxBoardWidth = 1760;
+  static const double _maxBoardWidth = 2100;
   static const double _gutter = 16;
 
   @override
@@ -1142,6 +1170,13 @@ class _BoardBody extends StatelessWidget {
                                 '${state.inboxNoActionCount == 1 ? "doesn't" : "don't"}',
                         children: [for (final c in needsAction) card(c)],
                       ),
+                    ),
+                    const SizedBox(width: _gutter),
+                    // Natural-language control gets a column of its own
+                    // here; in the narrow pane it sits under the ledger.
+                    const SizedBox(
+                      width: 340,
+                      child: CommitmentsAssistant(compact: false),
                     ),
                   ],
                 ),

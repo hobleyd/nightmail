@@ -189,7 +189,44 @@ of day cards above the board — stacked bar of meetings / blocked / estimated
 against the working day, the numbers, Overloaded / Tight badges, Rebalance —
 with the open slot as its own callout at the end.
 
-Not built: natural-language control.
+## Natural-language control
+
+"Move everything non-urgent until Friday and give me two hours for the AWS
+work." `RunCommitmentsAgent` is a tool-calling agent on the model routed to
+**Compose** (the same route as the folder agent), with tools over the
+ledger and the week ahead: `list_commitments`, `get_forecast`,
+`find_free_slot`, `suggest_block`, `schedule_block` (books, or moves, a
+block through `ScheduleCommitment`), `mark_done`, `dismiss`. The
+instruction becomes a sequence of real tool calls, each a card in the
+transcript, and the answer reports what changed with weekday and time.
+
+* **One loop for every agent.** The tool-calling loop was lifted out of the
+  folder agent into `AgentLoop` (`domain/usecases/ai/agent/`), and the
+  transcript bookkeeping out of `AiFolderCubit` into `AgentChatCubit`;
+  both agents are thin subclasses/callers. `RunFolderAgent`'s constants
+  and behaviour are unchanged — its tests are the loop's regression suite.
+* **The agent works on a snapshot.** `CommitmentsCubit.agentSnapshot()`
+  hands the turn the ledger, the two-week calendar read and the task due
+  dates it already holds, so tool reads cost nothing and a turn reasons
+  about one consistent moment; `onTurnEnded` then calls
+  `CommitmentsCubit.reloadLedger()` because the tools wrote to disk.
+* **The prompt carries the clock.** A model does not know what day it is:
+  `systemPromptFor` states the weekday, date, time, working hours and slot
+  grid, and spells out the vocabulary — non-urgent is urgency 0–1 and not
+  overdue, "until Friday" means blocks in Friday's free slots, "give me N
+  hours for X" means find the matching commitment and block N hours on the
+  lightest suitable day, never past the due day — and asks for a two- or
+  three-sentence report rather than a confirmation dialogue.
+* **No tools, no control.** Unlike the folder agent there is no pre-stuffed
+  fallback: a model that cannot call tools would only *describe* changes, so
+  the agent fails closed with an `UnsupportedFailure` that says what to
+  route Compose to. The tool-capability test mirrors the folder agent's
+  (catalog flag for cloud, optimistic for local/BYO).
+
+`CommitmentsAssistant` is the UI: in the side pane an input bar pinned under
+the ledger, with the transcript folding out above it once there is one; in
+the detached window a full-height Assistant column at the right of the
+board. Example instructions are offered while the transcript is empty.
 
 ## Deliberate limits
 

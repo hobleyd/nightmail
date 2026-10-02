@@ -106,6 +106,54 @@ those:
 The sub-window has no `MailPollerCubit`; the pane's poll listener is
 optional, so there the ledger refreshes on open and on the Refresh button.
 
+## Scheduling a time block
+
+Every row and card has **Schedule** beside Done and Dismiss. It books a
+calendar event for the commitment, chosen by `SuggestTimeBlock` (pure, under
+`domain/usecases/commitments/`) from a quick look at the coming days:
+
+* **Horizon from the due reading**: *today* → today only (or the next
+  working day once the working window has passed); *this week* → through
+  Friday, never fewer than two days; *later* / *none* → the next five working
+  days. Weekends are skipped.
+* **Load** is busy minutes inside the working window (9–17), overlapping
+  meetings merged; free and all-day events do not count.
+* **Least load wins, earliest day on a tie**, then the first run of the
+  requested length (default 1 h, on a 30-minute grid, after now) that no
+  meeting overlaps. If the lightest day has no gap the next lightest is
+  tried; if nothing fits anywhere the block opens the lightest day flagged
+  `hasConflict`.
+
+The suggestion is only a starting point. `ScheduleCommitmentDialog` lets the
+user move it, in two layouts chosen by window width (1100 px):
+
+* **Compact** (the docked pane, phones): the candidate days as a list with
+  load bars, a start-time dropdown with the busy slots marked, and length
+  chips (30 min – 2 h).
+* **Wide** (the detached window): a week grid — one column per candidate
+  day against an hour axis, meetings drawn to scale, the proposed block in
+  accent, the now-line — where a click in a day column puts the block there
+  (snapped to the grid, kept inside the working window), beside a details
+  column with the reason, the chosen time, length chips and the conflict
+  warning.
+
+Confirming calls `CommitmentsCubit.schedule`, which creates the event through
+`CreateCalendarEvent` with a subject that reads in a week view ("Migration
+numbers — for Sarah", "Reply to James: …", "Follow up with AWS: …"), the
+excerpt in the description, a 15-minute reminder and the local IANA timezone
+(`localIanaTimezone`). The event id and times are recorded on the ledger
+(schema v19: `scheduled_event_id`, `scheduled_start_ms`, `scheduled_end_ms`)
+and survive re-detection like the status does. Scheduling again **moves** the
+same event (`UpdateCalendarEvent`); if that fails because the event was
+deleted by hand, a new one is created. The row then shows the block's day and
+time in place of its age. The main window's reminder reconciler picks the new
+event up on its next cycle, so the cubit does not touch the notification
+plugin (which must not be initialised from a sub-window anyway).
+
+Not built, still: "Future Me" workload forecasting (warning on Tuesday that
+Thursday is overloaded) and natural-language control. The load-per-day data
+this feature computes is the foundation either would need.
+
 ## Deliberate limits
 
 * Active account only, like the Tasks pane. `EmailRepository.getEmail` has

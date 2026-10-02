@@ -30,6 +30,15 @@ abstract interface class CommitmentLocalDatasource {
     required DateTime now,
   });
 
+  /// Records (or moves) the calendar block scheduled for a commitment.
+  Future<void> setSchedule({
+    required String accountId,
+    required String id,
+    required String eventId,
+    required DateTime start,
+    required DateTime end,
+  });
+
   Future<Set<String>> getScannedEmailIds(String accountId);
 
   Future<void> markScanned({
@@ -72,10 +81,17 @@ class CommitmentLocalDatasourceImpl implements CommitmentLocalDatasource {
         final existing = await (_db.select(_db.commitments)
               ..where((t) => t.accountId.equals(c.accountId) & t.id.equals(c.id)))
             .getSingleOrNull();
-        // Preserve the user's verdict on a row that is already there.
+        // Preserve the user's verdict — and the time they blocked — on a row
+        // that is already there.
         final status = existing?.status ?? c.status.name;
         final resolvedAtMs =
             existing?.resolvedAtMs ?? c.resolvedAt?.millisecondsSinceEpoch;
+        final scheduledEventId =
+            existing?.scheduledEventId ?? c.scheduledEventId;
+        final scheduledStartMs = existing?.scheduledStartMs ??
+            c.scheduledStart?.millisecondsSinceEpoch;
+        final scheduledEndMs =
+            existing?.scheduledEndMs ?? c.scheduledEnd?.millisecondsSinceEpoch;
         await _db.into(_db.commitments).insertOnConflictUpdate(
               CommitmentsCompanion(
                 id: Value(c.id),
@@ -90,6 +106,9 @@ class CommitmentLocalDatasourceImpl implements CommitmentLocalDatasource {
                 emailDateMs: Value(c.emailDate.millisecondsSinceEpoch),
                 detectedAtMs: Value(c.detectedAt.millisecondsSinceEpoch),
                 resolvedAtMs: Value(resolvedAtMs),
+                scheduledEventId: Value(scheduledEventId),
+                scheduledStartMs: Value(scheduledStartMs),
+                scheduledEndMs: Value(scheduledEndMs),
                 encryptedData: Value(await _encryption.encrypt(jsonEncode({
                   'subject': c.subject,
                   'snippet': c.snippet,
@@ -117,6 +136,25 @@ class CommitmentLocalDatasourceImpl implements CommitmentLocalDatasource {
         resolvedAtMs: Value(
           status == CommitmentStatus.open ? null : now.millisecondsSinceEpoch,
         ),
+      ),
+    );
+  }
+
+  @override
+  Future<void> setSchedule({
+    required String accountId,
+    required String id,
+    required String eventId,
+    required DateTime start,
+    required DateTime end,
+  }) async {
+    await (_db.update(_db.commitments)
+          ..where((t) => t.accountId.equals(accountId) & t.id.equals(id)))
+        .write(
+      CommitmentsCompanion(
+        scheduledEventId: Value(eventId),
+        scheduledStartMs: Value(start.millisecondsSinceEpoch),
+        scheduledEndMs: Value(end.millisecondsSinceEpoch),
       ),
     );
   }
@@ -197,6 +235,13 @@ class CommitmentLocalDatasourceImpl implements CommitmentLocalDatasource {
       resolvedAt: row.resolvedAtMs == null
           ? null
           : DateTime.fromMillisecondsSinceEpoch(row.resolvedAtMs!),
+      scheduledEventId: row.scheduledEventId,
+      scheduledStart: row.scheduledStartMs == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(row.scheduledStartMs!),
+      scheduledEnd: row.scheduledEndMs == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(row.scheduledEndMs!),
     );
   }
 }

@@ -17,6 +17,7 @@ import '../blocs/email_list/email_list_bloc.dart';
 import '../blocs/email_list/email_list_event.dart';
 import '../blocs/home/home_cubit.dart';
 import '../blocs/mail_poller/mail_poller_cubit.dart';
+import '../widgets/commitments/schedule_commitment_dialog.dart';
 import 'settings_page.dart';
 
 /// The Commitments pane: mail, calendar and tasks read as one stream of
@@ -151,6 +152,31 @@ class _CommitmentsDayPanelState extends State<CommitmentsDayPanel> {
     } catch (_) {}
   }
 
+  /// Blocks time for [commitment]: asks the cubit for a suggestion from the
+  /// coming week's calendar, lets the user move it in the scheduling dialog
+  /// (a day list here, a week grid in the detached window), then books it.
+  Future<void> _schedule(Commitment commitment) async {
+    final suggestion = await _cubit.suggestTimeBlock(commitment);
+    if (!mounted) return;
+    final scheduled = await ScheduleCommitmentDialog.show(
+      context,
+      commitment: commitment,
+      suggestion: suggestion,
+      suggester: _cubit.suggester,
+      onSchedule: (start, end) =>
+          _cubit.schedule(commitment, start: start, end: end),
+    );
+    if (scheduled && mounted) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(
+          content: Text(
+            'Time blocked for ${commitment.counterpart.displayName}.',
+          ),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -198,6 +224,7 @@ class _CommitmentsDayPanelState extends State<CommitmentsDayPanel> {
                                 onDone: (c) => unawaited(_cubit.markDone(c.id)),
                                 onDismiss: (c) =>
                                     unawaited(_cubit.dismiss(c.id)),
+                                onSchedule: (c) => unawaited(_schedule(c)),
                               )
                             : _LoadedBody(
                                 state: state,
@@ -206,6 +233,7 @@ class _CommitmentsDayPanelState extends State<CommitmentsDayPanel> {
                                 onDone: (c) => unawaited(_cubit.markDone(c.id)),
                                 onDismiss: (c) =>
                                     unawaited(_cubit.dismiss(c.id)),
+                                onSchedule: (c) => unawaited(_schedule(c)),
                               );
                       },
                     );
@@ -329,6 +357,7 @@ class _LoadedBody extends StatelessWidget {
     required this.onOpenTasks,
     required this.onDone,
     required this.onDismiss,
+    required this.onSchedule,
   });
 
   final CommitmentsState state;
@@ -336,6 +365,7 @@ class _LoadedBody extends StatelessWidget {
   final VoidCallback onOpenTasks;
   final ValueChanged<Commitment> onDone;
   final ValueChanged<Commitment> onDismiss;
+  final ValueChanged<Commitment> onSchedule;
 
   @override
   Widget build(BuildContext context) {
@@ -351,6 +381,7 @@ class _LoadedBody extends StatelessWidget {
           onTap: () => onOpen(c),
           onDone: () => onDone(c),
           onDismiss: () => onDismiss(c),
+          onSchedule: () => onSchedule(c),
         );
 
     return ListView(
@@ -672,6 +703,7 @@ class _CommitmentRow extends StatelessWidget {
     required this.onTap,
     required this.onDone,
     required this.onDismiss,
+    required this.onSchedule,
   });
 
   final Commitment commitment;
@@ -679,6 +711,7 @@ class _CommitmentRow extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback onDone;
   final VoidCallback onDismiss;
+  final VoidCallback onSchedule;
 
   IconData get _icon => switch (commitment.kind) {
         CommitmentKind.iOwe => Icons.outbox_outlined,
@@ -732,11 +765,30 @@ class _CommitmentRow extends StatelessWidget {
               children: [
                 _DueChip(commitment: commitment, overdue: overdue),
                 const SizedBox(height: 2),
-                Text(
-                  ageLabel(commitment.ageAt(now)),
-                  style: TextStyle(color: c.textMuted, fontSize: 11),
-                ),
+                if (commitment.isScheduled)
+                  _ScheduledLabel(commitment: commitment)
+                else
+                  Text(
+                    ageLabel(commitment.ageAt(now)),
+                    style: TextStyle(color: c.textMuted, fontSize: 11),
+                  ),
               ],
+            ),
+            IconButton(
+              icon: Icon(
+                commitment.isScheduled
+                    ? Icons.event_rounded
+                    : Icons.event_available_outlined,
+                size: 16,
+                color: commitment.isScheduled ? AppColors.accent : c.textMuted,
+              ),
+              tooltip: commitment.isScheduled ? 'Move time block' : 'Schedule time',
+              padding: EdgeInsets.zero,
+              constraints: BoxConstraints(
+                minWidth: touchTarget(28),
+                minHeight: touchTarget(28),
+              ),
+              onPressed: onSchedule,
             ),
             IconButton(
               icon: Icon(Icons.check_rounded, size: 16, color: c.textMuted),
@@ -811,6 +863,38 @@ class _DueChip extends StatelessWidget {
   }
 }
 
+/// When a commitment's time block is: `Thu 10:00 AM`.
+String scheduledLabel(Commitment c) {
+  final start = c.scheduledStart!;
+  return '${DateFormat('EEE').format(start)} ${DateFormat.jm().format(start)}';
+}
+
+/// The scheduled block, as a small accent label with a calendar glyph.
+class _ScheduledLabel extends StatelessWidget {
+  const _ScheduledLabel({required this.commitment});
+
+  final Commitment commitment;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.event_rounded, size: 11, color: AppColors.accent),
+        const SizedBox(width: 3),
+        Text(
+          scheduledLabel(commitment),
+          style: const TextStyle(
+            color: AppColors.accent,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 /// `2 h`, `3 days`, `2 wk` — how long a commitment has been outstanding.
 String ageLabel(Duration age) {
   if (age.isNegative) return 'now';
@@ -863,6 +947,7 @@ class _BoardBody extends StatelessWidget {
     required this.onOpenTasks,
     required this.onDone,
     required this.onDismiss,
+    required this.onSchedule,
   });
 
   final CommitmentsState state;
@@ -870,6 +955,7 @@ class _BoardBody extends StatelessWidget {
   final VoidCallback onOpenTasks;
   final ValueChanged<Commitment> onDone;
   final ValueChanged<Commitment> onDismiss;
+  final ValueChanged<Commitment> onSchedule;
 
   static const double _maxBoardWidth = 1760;
   static const double _gutter = 16;
@@ -888,6 +974,7 @@ class _BoardBody extends StatelessWidget {
           onOpen: () => onOpen(c),
           onDone: () => onDone(c),
           onDismiss: () => onDismiss(c),
+          onSchedule: () => onSchedule(c),
         );
 
     return Column(
@@ -1102,6 +1189,7 @@ class _CommitmentCard extends StatelessWidget {
     required this.onOpen,
     required this.onDone,
     required this.onDismiss,
+    required this.onSchedule,
   });
 
   final Commitment commitment;
@@ -1109,6 +1197,7 @@ class _CommitmentCard extends StatelessWidget {
   final VoidCallback onOpen;
   final VoidCallback onDone;
   final VoidCallback onDismiss;
+  final VoidCallback onSchedule;
 
   IconData get _icon => switch (commitment.kind) {
         CommitmentKind.iOwe => Icons.outbox_outlined,
@@ -1190,6 +1279,13 @@ class _CommitmentCard extends StatelessWidget {
                     ageLabel(commitment.ageAt(now)),
                     style: TextStyle(color: c.textMuted, fontSize: 11),
                   ),
+                  if (commitment.isScheduled) ...[
+                    Text(
+                      '  ·  ',
+                      style: TextStyle(color: c.textMuted, fontSize: 11),
+                    ),
+                    _ScheduledLabel(commitment: commitment),
+                  ],
                   const Spacer(),
                   IconButton(
                     icon: Icon(Icons.open_in_new_rounded,
@@ -1199,6 +1295,24 @@ class _CommitmentCard extends StatelessWidget {
                     constraints:
                         const BoxConstraints(minWidth: 28, minHeight: 28),
                     onPressed: onOpen,
+                  ),
+                  IconButton(
+                    icon: Icon(
+                      commitment.isScheduled
+                          ? Icons.event_rounded
+                          : Icons.event_available_outlined,
+                      size: 15,
+                      color: commitment.isScheduled
+                          ? AppColors.accent
+                          : c.textMuted,
+                    ),
+                    tooltip: commitment.isScheduled
+                        ? 'Move time block'
+                        : 'Schedule time',
+                    padding: EdgeInsets.zero,
+                    constraints:
+                        const BoxConstraints(minWidth: 28, minHeight: 28),
+                    onPressed: onSchedule,
                   ),
                   IconButton(
                     icon: Icon(Icons.check_rounded, size: 16, color: c.textMuted),

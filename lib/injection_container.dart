@@ -608,6 +608,8 @@ Future<void> configureDependencies() async {
         detectCommitments: sl<DetectCommitments>(),
         getCachedCalendarEvents: sl<GetCachedCalendarEvents>(),
         taskReminders: sl<TaskReminderScheduleLocalDatasource>(),
+        createCalendarEvent: sl<CreateCalendarEvent>(),
+        updateCalendarEvent: sl<UpdateCalendarEvent>(),
       ));
   sl.registerFactory(() => EventEditBloc(
         createCalendarEvent: sl<CreateCalendarEvent>(),

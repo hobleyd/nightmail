@@ -49,6 +49,9 @@ class Commitment extends Equatable {
     required this.emailDate,
     required this.detectedAt,
     this.resolvedAt,
+    this.scheduledEventId,
+    this.scheduledStart,
+    this.scheduledEnd,
   });
 
   /// `'<kind>:<emailId>'`.
@@ -90,7 +93,16 @@ class Commitment extends Equatable {
   final DateTime detectedAt;
   final DateTime? resolvedAt;
 
+  /// The calendar event that blocks time for this commitment, once the user
+  /// has scheduled it — see `SuggestTimeBlock` and `CommitmentsCubit.schedule`.
+  /// Rescheduling moves that event rather than adding another.
+  final String? scheduledEventId;
+  final DateTime? scheduledStart;
+  final DateTime? scheduledEnd;
+
   bool get isOpen => status == CommitmentStatus.open;
+
+  bool get isScheduled => scheduledEventId != null && scheduledStart != null;
 
   /// How long this has been outstanding.
   Duration ageAt(DateTime now) => now.difference(emailDate);
@@ -123,6 +135,10 @@ class Commitment extends Equatable {
     CommitmentStatus? status,
     DateTime? resolvedAt,
     bool clearResolvedAt = false,
+    String? scheduledEventId,
+    DateTime? scheduledStart,
+    DateTime? scheduledEnd,
+    bool clearSchedule = false,
   }) {
     return Commitment(
       id: id,
@@ -140,6 +156,11 @@ class Commitment extends Equatable {
       emailDate: emailDate,
       detectedAt: detectedAt,
       resolvedAt: clearResolvedAt ? null : (resolvedAt ?? this.resolvedAt),
+      scheduledEventId:
+          clearSchedule ? null : (scheduledEventId ?? this.scheduledEventId),
+      scheduledStart:
+          clearSchedule ? null : (scheduledStart ?? this.scheduledStart),
+      scheduledEnd: clearSchedule ? null : (scheduledEnd ?? this.scheduledEnd),
     );
   }
 
@@ -160,5 +181,8 @@ class Commitment extends Equatable {
         emailDate,
         detectedAt,
         resolvedAt,
+        scheduledEventId,
+        scheduledStart,
+        scheduledEnd,
       ];
 }

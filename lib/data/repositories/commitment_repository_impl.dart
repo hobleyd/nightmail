@@ -46,6 +46,25 @@ class CommitmentRepositoryImpl implements CommitmentRepository {
       });
 
   @override
+  Future<Either<Failure, Unit>> setSchedule({
+    required String accountId,
+    required String id,
+    required String eventId,
+    required DateTime start,
+    required DateTime end,
+  }) =>
+      _guard(() async {
+        await _local.setSchedule(
+          accountId: accountId,
+          id: id,
+          eventId: eventId,
+          start: start,
+          end: end,
+        );
+        return unit;
+      });
+
+  @override
   Future<Either<Failure, Set<String>>> getScannedEmailIds({
     required String accountId,
   }) =>

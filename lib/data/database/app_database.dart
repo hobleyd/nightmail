@@ -392,6 +392,12 @@ class Commitments extends Table {
   IntColumn get resolvedAtMs => integer().nullable()();
   TextColumn get encryptedData => text()();
 
+  /// The calendar block the user scheduled for this commitment (v19). Null
+  /// until scheduled; rescheduling moves the same event.
+  TextColumn get scheduledEventId => text().nullable()();
+  IntColumn get scheduledStartMs => integer().nullable()();
+  IntColumn get scheduledEndMs => integer().nullable()();
+
   @override
   Set<Column> get primaryKey => {accountId, id};
 }
@@ -428,7 +434,7 @@ class AppDatabase extends _$AppDatabase
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 18;
+  int get schemaVersion => 19;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -555,6 +561,15 @@ class AppDatabase extends _$AppDatabase
             await m.createTable(commitments);
             await m.createTable(commitmentScans);
             await _createCommitmentIndexes();
+          }
+          if (from == 18) {
+            // Additive: the scheduled time block a commitment was given.
+            // Only for a database that already has the v18 table — an older
+            // one just created it above with the current columns, and adding
+            // them again would fail on the duplicate column.
+            await m.addColumn(commitments, commitments.scheduledEventId);
+            await m.addColumn(commitments, commitments.scheduledStartMs);
+            await m.addColumn(commitments, commitments.scheduledEndMs);
           }
         },
       );

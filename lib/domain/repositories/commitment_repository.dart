@@ -29,6 +29,16 @@ abstract interface class CommitmentRepository {
     required DateTime now,
   });
 
+  /// Records the calendar event that blocks time for a commitment (or moves
+  /// the block, when the same event is rescheduled).
+  Future<Either<Failure, Unit>> setSchedule({
+    required String accountId,
+    required String id,
+    required String eventId,
+    required DateTime start,
+    required DateTime end,
+  });
+
   /// Ids of the messages already shown to the model for [accountId].
   Future<Either<Failure, Set<String>>> getScannedEmailIds({
     required String accountId,

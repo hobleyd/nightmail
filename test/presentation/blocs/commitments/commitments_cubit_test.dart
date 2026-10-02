@@ -12,7 +12,10 @@ import 'package:nightmail/domain/entities/email_folder.dart';
 import 'package:nightmail/domain/repositories/commitment_repository.dart';
 import 'package:nightmail/domain/repositories/email_repository.dart';
 import 'package:nightmail/domain/usecases/commitments/detect_commitments.dart';
+import 'package:nightmail/domain/usecases/create_calendar_event.dart';
 import 'package:nightmail/domain/usecases/get_cached_calendar_events.dart';
+import 'package:nightmail/domain/usecases/get_calendar_events.dart';
+import 'package:nightmail/domain/usecases/update_calendar_event.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 import 'package:nightmail/presentation/blocs/commitments/commitments_cubit.dart';
@@ -27,6 +30,8 @@ import 'commitments_cubit_test.mocks.dart';
   DetectCommitments,
   GetCachedCalendarEvents,
   TaskReminderScheduleLocalDatasource,
+  CreateCalendarEvent,
+  UpdateCalendarEvent,
 ])
 void main() {
   late MockAccountManager accounts;
@@ -35,6 +40,8 @@ void main() {
   late MockDetectCommitments detect;
   late MockGetCachedCalendarEvents calendar;
   late MockTaskReminderScheduleLocalDatasource taskReminders;
+  late MockCreateCalendarEvent createEvent;
+  late MockUpdateCalendarEvent updateEvent;
   late CommitmentsCubit cubit;
 
   final now = DateTime(2026, 10, 2, 9);
@@ -91,6 +98,15 @@ void main() {
     provideDummy<Either<Failure, List<EmailFolder>>>(const Right([]));
     provideDummy<Either<Failure, List<Email>>>(const Right([]));
     provideDummy<Either<Failure, List<CalendarEvent>>>(const Right([]));
+    provideDummy<Either<Failure, CalendarEvent>>(
+      Right(CalendarEvent(
+        id: 'dummy',
+        subject: '',
+        start: now,
+        end: now,
+        isAllDay: false,
+      )),
+    );
     provideDummy<Either<Failure, DetectCommitmentsResult>>(
       const Right(DetectCommitmentsResult(
         commitments: [],
@@ -106,6 +122,8 @@ void main() {
     detect = MockDetectCommitments();
     calendar = MockGetCachedCalendarEvents();
     taskReminders = MockTaskReminderScheduleLocalDatasource();
+    createEvent = MockCreateCalendarEvent();
+    updateEvent = MockUpdateCalendarEvent();
 
     when(accounts.activeAccount).thenReturn(account);
     when(ledger.getCommitments(accountId: anyNamed('accountId')))
@@ -161,6 +179,8 @@ void main() {
       detectCommitments: detect,
       getCachedCalendarEvents: calendar,
       taskReminders: taskReminders,
+      createCalendarEvent: createEvent,
+      updateCalendarEvent: updateEvent,
       now: () => now,
     );
   });
@@ -279,5 +299,155 @@ void main() {
     await Future.wait([cubit.scan(), cubit.scan()]);
 
     verify(detect(any)).called(1);
+  });
+
+  group('scheduling', () {
+    CalendarEvent meeting(String id, DateTime start, DateTime end) =>
+        CalendarEvent(id: id, subject: id, start: start, end: end, isAllDay: false);
+
+    // `now` is Friday 2 Oct 2026 09:00: Friday is busy all day, Monday is
+    // clear, so the lightest day in a "this week" horizon is Monday 5 Oct.
+    final friday = DateTime(2026, 10, 2);
+    final monday = DateTime(2026, 10, 5);
+
+    test('suggestTimeBlock reads two weeks of cached calendar and picks the '
+        'lightest day', () async {
+      when(calendar(any)).thenAnswer((_) async => Right([
+            meeting('fri', DateTime(2026, 10, 2, 9), DateTime(2026, 10, 2, 17)),
+          ]));
+      await cubit.load();
+      await pumpEventQueue();
+
+      final c = open('s1', CommitmentKind.iOwe);
+      final s = await cubit.suggestTimeBlock(c);
+
+      expect(s.start, DateTime(2026, 10, 5, 9));
+      expect(s.hasConflict, isFalse);
+      final params = verify(calendar(captureAny)).captured.last as GetCalendarEventsParams;
+      expect(params.startDateTime, friday);
+      expect(params.endDateTime, friday.add(CommitmentsCubit.scheduleLookahead));
+      expect(params.accountId, 'acc');
+      expect(s.days.first.day, friday);
+      expect(s.days.map((d) => d.day), contains(monday));
+    });
+
+    test('schedule books a readable block and records it on the ledger',
+        () async {
+      await cubit.load();
+      await pumpEventQueue();
+      when(ledger.setSchedule(
+        accountId: anyNamed('accountId'),
+        id: anyNamed('id'),
+        eventId: anyNamed('eventId'),
+        start: anyNamed('start'),
+        end: anyNamed('end'),
+      )).thenAnswer((_) async => Right(unit));
+      final start = DateTime(2026, 10, 5, 9);
+      final end = DateTime(2026, 10, 5, 10);
+      when(createEvent(any)).thenAnswer(
+        (_) async => Right(meeting('ev-1', start, end)),
+      );
+
+      final ok = await cubit.schedule(
+        cubit.state.commitments.single,
+        start: start,
+        end: end,
+      );
+
+      expect(ok, isTrue);
+      final params =
+          verify(createEvent(captureAny)).captured.single as CreateCalendarEventParams;
+      expect(params.subject, 's — for x@y.com');
+      expect(params.start, start);
+      expect(params.end, end);
+      expect(params.isAllDay, isFalse);
+      expect(params.reminderMinutes, CommitmentsCubit.blockReminderMinutes);
+      expect(params.description, contains('Something you promised'));
+      verify(ledger.setSchedule(
+        accountId: 'acc',
+        id: 'iOwe:s1',
+        eventId: 'ev-1',
+        start: start,
+        end: end,
+      )).called(1);
+      final c = cubit.state.commitments.single;
+      expect(c.isScheduled, isTrue);
+      expect(c.scheduledEventId, 'ev-1');
+      expect(c.scheduledStart, start);
+      verifyNever(updateEvent(any));
+    });
+
+    test('rescheduling moves the existing event, creating anew only if the '
+        'move fails', () async {
+      final scheduled = open('s1', CommitmentKind.iOwe).copyWith(
+        scheduledEventId: 'ev-old',
+        scheduledStart: DateTime(2026, 10, 5, 9),
+        scheduledEnd: DateTime(2026, 10, 5, 10),
+      );
+      when(detect(any)).thenAnswer((_) async => Right(DetectCommitmentsResult(
+            commitments: [scheduled],
+            classified: 0,
+            remaining: 0,
+            resolved: 0,
+          )));
+      when(ledger.setSchedule(
+        accountId: anyNamed('accountId'),
+        id: anyNamed('id'),
+        eventId: anyNamed('eventId'),
+        start: anyNamed('start'),
+        end: anyNamed('end'),
+      )).thenAnswer((_) async => Right(unit));
+      await cubit.load();
+      await pumpEventQueue();
+      final start = DateTime(2026, 10, 6, 14);
+      final end = DateTime(2026, 10, 6, 15);
+
+      // The move succeeds: no create.
+      when(updateEvent(any)).thenAnswer(
+        (_) async => Right(meeting('ev-old', start, end)),
+      );
+      expect(await cubit.schedule(scheduled, start: start, end: end), isTrue);
+      final moved =
+          verify(updateEvent(captureAny)).captured.single as UpdateCalendarEventParams;
+      expect(moved.id, 'ev-old');
+      expect(moved.start, start);
+      verifyNever(createEvent(any));
+
+      // The event was deleted by hand: the move fails, a new block is made.
+      when(updateEvent(any)).thenAnswer(
+        (_) async => const Left(ServerFailure(message: 'gone')),
+      );
+      when(createEvent(any)).thenAnswer(
+        (_) async => Right(meeting('ev-new', start, end)),
+      );
+      expect(await cubit.schedule(scheduled, start: start, end: end), isTrue);
+      verify(createEvent(any)).called(1);
+      expect(cubit.state.commitments.single.scheduledEventId, 'ev-new');
+    });
+
+    test('a calendar refusal is reported and nothing is recorded', () async {
+      await cubit.load();
+      await pumpEventQueue();
+      when(createEvent(any)).thenAnswer(
+        (_) async => const Left(ServerFailure(message: 'calendar down')),
+      );
+
+      final ok = await cubit.schedule(
+        cubit.state.commitments.single,
+        start: DateTime(2026, 10, 5, 9),
+        end: DateTime(2026, 10, 5, 10),
+      );
+
+      expect(ok, isFalse);
+      expect(cubit.state.message, 'calendar down');
+      expect(cubit.state.commitments.single.isScheduled, isFalse);
+      verifyNever(ledger.setSchedule(
+        accountId: anyNamed('accountId'),
+        id: anyNamed('id'),
+        eventId: anyNamed('eventId'),
+        start: anyNamed('start'),
+        end: anyNamed('end'),
+      ));
+    });
   });
 }

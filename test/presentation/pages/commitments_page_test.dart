@@ -14,7 +14,9 @@ import 'package:nightmail/domain/entities/email_folder.dart';
 import 'package:nightmail/domain/repositories/commitment_repository.dart';
 import 'package:nightmail/domain/repositories/email_repository.dart';
 import 'package:nightmail/domain/usecases/commitments/detect_commitments.dart';
+import 'package:nightmail/domain/usecases/create_calendar_event.dart';
 import 'package:nightmail/domain/usecases/get_cached_calendar_events.dart';
+import 'package:nightmail/domain/usecases/update_calendar_event.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 import 'package:nightmail/presentation/blocs/commitments/commitments_cubit.dart';
@@ -32,6 +34,8 @@ import 'commitments_page_test.mocks.dart';
   DetectCommitments,
   GetCachedCalendarEvents,
   TaskReminderScheduleLocalDatasource,
+  CreateCalendarEvent,
+  UpdateCalendarEvent,
 ])
 void main() {
   late MockAccountManager accounts;
@@ -40,6 +44,8 @@ void main() {
   late MockDetectCommitments detect;
   late MockGetCachedCalendarEvents calendar;
   late MockTaskReminderScheduleLocalDatasource taskReminders;
+  late MockCreateCalendarEvent createEvent;
+  late MockUpdateCalendarEvent updateEvent;
 
   const account = MicrosoftAccount(
     id: 'acc',
@@ -130,6 +136,15 @@ void main() {
     provideDummy<Either<Failure, List<EmailFolder>>>(const Right([]));
     provideDummy<Either<Failure, List<Email>>>(const Right([]));
     provideDummy<Either<Failure, List<CalendarEvent>>>(const Right([]));
+    provideDummy<Either<Failure, CalendarEvent>>(
+      Right(CalendarEvent(
+        id: 'dummy',
+        subject: '',
+        start: now,
+        end: now,
+        isAllDay: false,
+      )),
+    );
     provideDummy<Either<Failure, DetectCommitmentsResult>>(
       const Right(DetectCommitmentsResult(
         commitments: [],
@@ -145,6 +160,8 @@ void main() {
     detect = MockDetectCommitments();
     calendar = MockGetCachedCalendarEvents();
     taskReminders = MockTaskReminderScheduleLocalDatasource();
+    createEvent = MockCreateCalendarEvent();
+    updateEvent = MockUpdateCalendarEvent();
 
     when(accounts.activeAccount).thenReturn(account);
     when(ledger.getCommitments(accountId: 'acc'))
@@ -211,6 +228,8 @@ void main() {
         detectCommitments: detect,
         getCachedCalendarEvents: calendar,
         taskReminders: taskReminders,
+        createCalendarEvent: createEvent,
+        updateCalendarEvent: updateEvent,
       );
 
   /// Pumps the pane at [width] (a side pane by default) — or, with [width]
@@ -395,5 +414,51 @@ void main() {
     expect(ageLabel(const Duration(days: 6)), '6 days');
     expect(ageLabel(const Duration(days: 20)), '2 wk');
     expect(ageLabel(const Duration(days: 90)), '3 mo');
+  });
+
+  testWidgets('Schedule on a row proposes a block and books it', (tester) async {
+    when(ledger.setSchedule(
+      accountId: anyNamed('accountId'),
+      id: anyNamed('id'),
+      eventId: anyNamed('eventId'),
+      start: anyNamed('start'),
+      end: anyNamed('end'),
+    )).thenAnswer((_) async => Right(unit));
+    when(createEvent(any)).thenAnswer((inv) async {
+      final p = inv.positionalArguments.first as CreateCalendarEventParams;
+      return Right(CalendarEvent(
+        id: 'ev-1',
+        subject: p.subject,
+        start: p.start,
+        end: p.end,
+        isAllDay: false,
+      ));
+    });
+    await pumpPane(tester);
+
+    // The first Schedule button is on the first Today row: Sarah's promise.
+    await tester.tap(find.byIcon(Icons.event_available_outlined).first);
+    await tester.pumpAndSettle();
+    expect(find.text('Schedule time'), findsOneWidget);
+    expect(find.textContaining('Migration numbers'), findsWidgets);
+
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Schedule'));
+    await tester.pumpAndSettle();
+
+    final params =
+        verify(createEvent(captureAny)).captured.single as CreateCalendarEventParams;
+    expect(params.subject, 'Migration numbers — for Sarah');
+    expect(params.end.difference(params.start), const Duration(hours: 1));
+    verify(ledger.setSchedule(
+      accountId: 'acc',
+      id: 'iOwe:s1',
+      eventId: 'ev-1',
+      start: params.start,
+      end: params.end,
+    )).called(1);
+    // The dialog closed and the row now carries its block.
+    expect(find.text('Schedule time'), findsNothing);
+    expect(find.text('Time blocked for Sarah.'), findsOneWidget);
+    expect(find.byIcon(Icons.event_rounded), findsWidgets);
   });
 }

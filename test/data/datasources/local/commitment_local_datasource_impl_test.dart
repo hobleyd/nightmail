@@ -65,7 +65,7 @@ void main() {
   tearDown(() => db.close());
 
   test('schema v18 creates the commitment tables', () async {
-    expect(db.schemaVersion, greaterThanOrEqualTo(18));
+    expect(db.schemaVersion, greaterThanOrEqualTo(19));
     final rows = await db.customSelect(
       "SELECT name FROM sqlite_master WHERE type = 'table' "
       "AND name IN ('commitments', 'commitment_scans')",
@@ -161,5 +161,30 @@ void main() {
     expect(await ds.getCommitments('acc'), isEmpty);
     expect(await ds.getScannedEmailIds('acc'), isEmpty);
     expect(await ds.getCommitments('other'), hasLength(1));
+  });
+
+  test('a scheduled block round-trips and survives re-detection', () async {
+    await ds.upsertCommitments([commitment()]);
+    final start = DateTime(2026, 10, 5, 9);
+    final end = DateTime(2026, 10, 5, 10);
+
+    await ds.setSchedule(
+      accountId: 'acc',
+      id: 'iOwe:e1',
+      eventId: 'ev-1',
+      start: start,
+      end: end,
+    );
+    var back = (await ds.getCommitments('acc')).single;
+    expect(back.isScheduled, isTrue);
+    expect(back.scheduledEventId, 'ev-1');
+    expect(back.scheduledStart, start);
+    expect(back.scheduledEnd, end);
+
+    // A re-scan writes the row again without a schedule: the block stays.
+    await ds.upsertCommitments([commitment()]);
+    back = (await ds.getCommitments('acc')).single;
+    expect(back.scheduledEventId, 'ev-1');
+    expect(back.scheduledStart, start);
   });
 }

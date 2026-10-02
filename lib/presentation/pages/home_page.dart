@@ -44,6 +44,7 @@ import '../blocs/home/folder_auto_selection.dart';
 import '../blocs/home/home_cubit.dart';
 import '../blocs/mail_poller/mail_poller_cubit.dart';
 import '../blocs/mail_poller/mail_poller_state.dart';
+import '../blocs/commitments/commitments_cubit.dart';
 import '../blocs/ai/ai_folder_cubit.dart';
 import '../blocs/email_list/email_list_state.dart';
 import '../widgets/ai_day_panel.dart';
@@ -52,6 +53,7 @@ import '../widgets/email_selection.dart';
 import '../widgets/folder_panel.dart';
 import '../widgets/reading_pane.dart';
 import 'calendar_page.dart';
+import 'commitments_page.dart';
 import 'compose_window.dart';
 import 'settings_page.dart';
 import 'tasks_page.dart';
@@ -102,6 +104,7 @@ class HomePage extends StatelessWidget {
         BlocProvider(create: (_) => sl<EmailDetailBloc>()),
         BlocProvider(create: (_) => HomeCubit(sl<AppSettings>())..load()),
         BlocProvider(create: (_) => sl<AiFolderCubit>()),
+        BlocProvider(create: (_) => sl<CommitmentsCubit>()),
         BlocProvider(create: (_) => sl<CalendarBloc>()),
         BlocProvider(
           create: (_) =>
@@ -746,6 +749,38 @@ class _MobileLayoutState extends State<_MobileLayout> {
     );
   }
 
+  void _openCommitments() {
+    final commitmentsCubit = context.read<CommitmentsCubit>();
+    final emailDetailBloc = context.read<EmailDetailBloc>();
+    final emailListBloc = context.read<EmailListBloc>();
+    final homeCubit = context.read<HomeCubit>();
+    final pollerCubit = context.read<MailPollerCubit>();
+    final accountCubit = context.read<AccountCubit>();
+    _nav?.push<void>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (ctx) => Scaffold(
+          body: SafeArea(
+            child: MultiBlocProvider(
+              providers: [
+                BlocProvider.value(value: commitmentsCubit),
+                BlocProvider.value(value: emailDetailBloc),
+                BlocProvider.value(value: emailListBloc),
+                BlocProvider.value(value: homeCubit),
+                BlocProvider.value(value: pollerCubit),
+                BlocProvider.value(value: accountCubit),
+              ],
+              child: CommitmentsDayPanel(
+                onClose: () => Navigator.of(ctx).pop(),
+                useBackNavigation: true,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   void _openAi() {
     final aiFolderCubit = context.read<AiFolderCubit>();
     final emailListBloc = context.read<EmailListBloc>();
@@ -782,6 +817,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
           onCalendarTapped: _openCalendar,
           onTasksTapped: _openTasks,
           onAiTapped: _openAi,
+          onCommitmentsTapped: _openCommitments,
           onFolderChosen: _showEmailList,
         ),
       _MobileRoute.emailList => _EmailListScreen(
@@ -789,6 +825,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
           onCalendarTapped: _openCalendar,
           onTasksTapped: _openTasks,
           onAiTapped: _openAi,
+          onCommitmentsTapped: _openCommitments,
           onEmailOpened: _showReadingPane,
         ),
       _MobileRoute.readingPane => ReadingPane(onBack: _back),
@@ -893,12 +930,14 @@ class _FoldersScreen extends StatelessWidget {
     required this.onCalendarTapped,
     required this.onTasksTapped,
     required this.onAiTapped,
+    required this.onCommitmentsTapped,
     required this.onFolderChosen,
   });
 
   final VoidCallback onCalendarTapped;
   final VoidCallback onTasksTapped;
   final VoidCallback onAiTapped;
+  final VoidCallback onCommitmentsTapped;
   final VoidCallback onFolderChosen;
 
   @override
@@ -933,6 +972,7 @@ class _FoldersScreen extends StatelessWidget {
           onCalendarTapped: onCalendarTapped,
           onTasksTapped: onTasksTapped,
           onAiTapped: onAiTapped,
+          onCommitmentsTapped: onCommitmentsTapped,
         );
       },
     );
@@ -946,6 +986,7 @@ class _EmailListScreen extends StatelessWidget {
     required this.onCalendarTapped,
     required this.onTasksTapped,
     required this.onAiTapped,
+    required this.onCommitmentsTapped,
     required this.onEmailOpened,
   });
 
@@ -953,6 +994,7 @@ class _EmailListScreen extends StatelessWidget {
   final VoidCallback onCalendarTapped;
   final VoidCallback onTasksTapped;
   final VoidCallback onAiTapped;
+  final VoidCallback onCommitmentsTapped;
   final VoidCallback onEmailOpened;
 
   @override
@@ -976,6 +1018,7 @@ class _EmailListScreen extends StatelessWidget {
               onCalendarTapped: onCalendarTapped,
               onTasksTapped: onTasksTapped,
               onAiTapped: onAiTapped,
+              onCommitmentsTapped: onCommitmentsTapped,
             );
           },
         );
@@ -1205,7 +1248,79 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                   homeCubit.showAi();
                 }
               },
+              onCommitmentsTapped: () {
+                if (homeState.view == HomeView.commitments) {
+                  homeCubit.showEmail();
+                } else {
+                  homeCubit.showCommitments();
+                }
+              },
             );
+
+            if (homeState.view == HomeView.commitments) {
+              return Row(
+                children: [
+                  SizedBox(width: _folderWidth, child: folderPanel),
+                  _ResizeHandle(
+                    onDrag: (delta) {
+                      setState(() {
+                        final max = totalWidth -
+                            _handleWidth * 3 -
+                            _emailListWidth -
+                            _minReadingPaneWidth -
+                            _calendarPaneWidth;
+                        _folderWidth =
+                            (_folderWidth + delta).clamp(_minPanelWidth, max);
+                      });
+                    },
+                  ),
+                  SizedBox(
+                    width: _emailListWidth,
+                    child: EmailListPanel(
+                      folderName: selectedFolder?.displayName ?? 'Inbox',
+                      folder: selectedFolder,
+                      selectedEmailId: homeState.selectedEmailId,
+                      onEmailSelected: onEmailSelected,
+                      onEmailDoubleTapped:
+                          _isMobilePlatform ? null : openEmailInWindow,
+                    ),
+                  ),
+                  _ResizeHandle(
+                    onDrag: (delta) {
+                      setState(() {
+                        final max = totalWidth -
+                            _handleWidth * 3 -
+                            _folderWidth -
+                            _minReadingPaneWidth -
+                            _calendarPaneWidth;
+                        _emailListWidth =
+                            (_emailListWidth + delta).clamp(_minPanelWidth, max);
+                      });
+                    },
+                  ),
+                  const Expanded(child: ReadingPane()),
+                  _ResizeHandle(
+                    onDrag: (delta) {
+                      setState(() {
+                        final max = totalWidth -
+                            _handleWidth * 3 -
+                            _folderWidth -
+                            _emailListWidth -
+                            _minReadingPaneWidth;
+                        _calendarPaneWidth = (_calendarPaneWidth - delta)
+                            .clamp(_minCalendarPaneWidth, max);
+                      });
+                    },
+                  ),
+                  SizedBox(
+                    width: calendarWidth,
+                    child: CommitmentsDayPanel(
+                      onClose: () => context.read<HomeCubit>().showEmail(),
+                    ),
+                  ),
+                ],
+              );
+            }
 
             if (homeState.view == HomeView.ai) {
               return Row(

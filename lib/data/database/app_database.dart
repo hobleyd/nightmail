@@ -372,7 +372,44 @@ class MigrationMessageLedger extends Table {
   IntColumn get updatedAtMs => integer()();
 }
 
-@DriftDatabase(tables: [CachedEmails, CachedEmailDetails, KnownSenders, SenderAliases, CachedContacts, ContactSyncStates, DeltaSyncTokens, CachedFolders, LocalDrafts, CatalogCache, AiConfig, CapabilityRouting, ScheduledReminders, ScheduledTaskReminders, PendingOperations, CachedCalendarEvents, PendingCalendarOperations, MigrationJobs, MigrationMessageLedger])
+/// The commitment ledger — see `DetectCommitments`. One row per kind and
+/// message, keyed `kind:emailId`. Query columns (kind, status, due, dates,
+/// ids) are plaintext; who/subject/excerpt live in `encryptedData`, like
+/// message content in [CachedEmails].
+@DataClassName('CommitmentRow')
+class Commitments extends Table {
+  TextColumn get id => text()();
+  TextColumn get accountId => text()();
+  TextColumn get emailId => text()();
+  TextColumn get conversationId => text().nullable()();
+  TextColumn get kind => text()(); // iOwe | theyOweMe | needsAction
+  TextColumn get status => text()(); // open | done | dismissed
+  TextColumn get due => text()(); // today | thisWeek | later | none
+  IntColumn get urgency => integer()();
+  RealColumn get confidence => real()();
+  IntColumn get emailDateMs => integer()();
+  IntColumn get detectedAtMs => integer()();
+  IntColumn get resolvedAtMs => integer().nullable()();
+  TextColumn get encryptedData => text()();
+
+  @override
+  Set<Column> get primaryKey => {accountId, id};
+}
+
+/// Which messages the commitments scan has already shown to the model, so a
+/// message judged uninteresting is not sent again on every refresh. Separate
+/// from [Commitments] because most messages produce no row there.
+@DataClassName('CommitmentScanRow')
+class CommitmentScans extends Table {
+  TextColumn get accountId => text()();
+  TextColumn get emailId => text()();
+  IntColumn get scannedAtMs => integer()();
+
+  @override
+  Set<Column> get primaryKey => {accountId, emailId};
+}
+
+@DriftDatabase(tables: [CachedEmails, CachedEmailDetails, KnownSenders, SenderAliases, CachedContacts, ContactSyncStates, DeltaSyncTokens, CachedFolders, LocalDrafts, CatalogCache, AiConfig, CapabilityRouting, ScheduledReminders, ScheduledTaskReminders, PendingOperations, CachedCalendarEvents, PendingCalendarOperations, MigrationJobs, MigrationMessageLedger, Commitments, CommitmentScans])
 class AppDatabase extends _$AppDatabase
     implements
         DeltaTokenDatasource,
@@ -391,7 +428,7 @@ class AppDatabase extends _$AppDatabase
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 17;
+  int get schemaVersion => 18;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -415,6 +452,7 @@ class AppDatabase extends _$AppDatabase
           );
           await _createCalendarCacheIndexes();
           await _createMigrationIndexes();
+          await _createCommitmentIndexes();
         },
         onUpgrade: (m, from, to) async {
           if (from < 2) {
@@ -513,8 +551,22 @@ class AppDatabase extends _$AppDatabase
             await m.createTable(migrationMessageLedger);
             await _createMigrationIndexes();
           }
+          if (from < 18) {
+            await m.createTable(commitments);
+            await m.createTable(commitmentScans);
+            await _createCommitmentIndexes();
+          }
         },
       );
+
+  Future<void> _createCommitmentIndexes() async {
+    // The pane asks "what is open for this account", and the scan asks for
+    // one account's whole ledger; both lead with account_id.
+    await customStatement(
+      'CREATE INDEX idx_commitments_account_status '
+      'ON commitments(account_id, status, email_date_ms DESC)',
+    );
+  }
 
   Future<void> _createMigrationIndexes() async {
     // UNIQUE, not a plain index: a second row for the same tuple would make

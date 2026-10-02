@@ -47,6 +47,7 @@ class FolderPanel extends StatefulWidget {
     required this.onCalendarTapped,
     required this.onTasksTapped,
     required this.onAiTapped,
+    required this.onCommitmentsTapped,
     this.initialExpandedIds = const {},
     this.onExpandedIdsChanged,
   });
@@ -56,6 +57,7 @@ class FolderPanel extends StatefulWidget {
   final VoidCallback onCalendarTapped;
   final VoidCallback onTasksTapped;
   final VoidCallback onAiTapped;
+  final VoidCallback onCommitmentsTapped;
   final Set<String> initialExpandedIds;
   final ValueChanged<Set<String>>? onExpandedIdsChanged;
 
@@ -363,6 +365,7 @@ class _FolderPanelState extends State<FolderPanel> {
             onCalendarTapped: widget.onCalendarTapped,
             onTasksTapped: widget.onTasksTapped,
             onAiTapped: widget.onAiTapped,
+            onCommitmentsTapped: widget.onCommitmentsTapped,
           ),
         ],
       ),
@@ -2127,11 +2130,13 @@ class _SettingsFooter extends StatelessWidget {
     required this.onCalendarTapped,
     required this.onTasksTapped,
     required this.onAiTapped,
+    required this.onCommitmentsTapped,
   });
 
   final VoidCallback onCalendarTapped;
   final VoidCallback onTasksTapped;
   final VoidCallback onAiTapped;
+  final VoidCallback onCommitmentsTapped;
 
   @override
   Widget build(BuildContext context) {
@@ -2149,12 +2154,23 @@ class _SettingsFooter extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 8),
         child: Row(
         children: [
-          ViewShortcutButtons(
-            onCalendarTapped: onCalendarTapped,
-            onTasksTapped: onTasksTapped,
-            onAiTapped: onAiTapped,
+          // Takes whatever width Settings and Sign-out leave, and scales the
+          // four view buttons down only when a pane is too narrow for four
+          // touch targets side by side — so a narrow phone never overflows.
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: ViewShortcutButtons(
+                  onCalendarTapped: onCalendarTapped,
+                  onTasksTapped: onTasksTapped,
+                  onAiTapped: onAiTapped,
+                  onCommitmentsTapped: onCommitmentsTapped,
+                ),
+              ),
+            ),
           ),
-          const Spacer(),
           IconButton(
             // Same dot as the Tasks icon's: an update is waiting behind
             // Settings → About, which is the only place it can be acted on.

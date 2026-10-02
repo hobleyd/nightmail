@@ -99,7 +99,11 @@ would re-break.
 - [`docs/claude/out-of-office.md`](docs/claude/out-of-office.md) — Settings
   > Out of Office, across Microsoft Graph and Gmail
 - [`docs/claude/ai-subsystem.md`](docs/claude/ai-subsystem.md) — deliberate
-  Clean-Architecture deviations in the AI compose/inference slice
+  Clean-Architecture deviations in the AI compose/inference slice; the
+  System One (typed decision) wire and the Laya-MLX bridge
+- [`docs/claude/commitments.md`](docs/claude/commitments.md) — the
+  Commitments pane: how a System One model lifts "I owe / they owe me /
+  needs action" out of cached mail, the scan budget, auto-resolution rules
 - [`lib/infrastructure/update/CLAUDE.md`](lib/infrastructure/update/CLAUDE.md)
   — in-app update mechanism (macOS/Windows/Android)
 - [`lib/infrastructure/contacts/CLAUDE.md`](lib/infrastructure/contacts/CLAUDE.md)

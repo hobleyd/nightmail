@@ -11,11 +11,11 @@ import '../../core/platform/window_utils.dart';
 import '../../core/theme/app_colors.dart';
 import '../blocs/tasks/overdue_tasks_cubit.dart';
 
-/// The Calendar, Tasks and AI buttons, as a row.
+/// The Calendar, Tasks, AI and Commitments buttons, as a row.
 ///
 /// Drawn at the foot of the folder panel everywhere, and on a phone also at
 /// the foot of the email list — which is where the app now opens, so the
-/// three views have to be reachable without first backing out to the folders.
+/// views have to be reachable without first backing out to the folders.
 /// One widget so the two feet cannot drift apart.
 ///
 /// On desktop a double-tap opens Calendar or Tasks in its own window.
@@ -25,11 +25,13 @@ class ViewShortcutButtons extends StatelessWidget {
     required this.onCalendarTapped,
     required this.onTasksTapped,
     required this.onAiTapped,
+    required this.onCommitmentsTapped,
   });
 
   final VoidCallback onCalendarTapped;
   final VoidCallback onTasksTapped;
   final VoidCallback onAiTapped;
+  final VoidCallback onCommitmentsTapped;
 
   static bool get _isMobile =>
       !kIsWeb && (Platform.isAndroid || Platform.isIOS);
@@ -113,6 +115,17 @@ class ViewShortcutButtons extends StatelessWidget {
             minHeight: touchTarget(28),
           ),
           onPressed: onAiTapped,
+        ),
+        IconButton(
+          icon: Icon(Icons.handshake_outlined,
+              size: touchIcon(16), color: c.textMuted),
+          tooltip: 'Commitments',
+          padding: EdgeInsets.zero,
+          constraints: BoxConstraints(
+            minWidth: touchTarget(28),
+            minHeight: touchTarget(28),
+          ),
+          onPressed: onCommitmentsTapped,
         ),
       ],
     );

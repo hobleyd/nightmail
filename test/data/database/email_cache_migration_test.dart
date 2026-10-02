@@ -183,10 +183,12 @@ void main() {
 
   // The tripwire: bumping the version without adding an `if (from < n)` branch
   // ships a schema the upgrade path never builds.
-  test('schema version is 17', () {
+  test('schema version is 18', () {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
-    expect(db.schemaVersion, 17);
+    // v18 adds the commitments ledger tables (see
+    // commitment_local_datasource_impl_test.dart for their round-trip).
+    expect(db.schemaVersion, 18);
   });
 }
 

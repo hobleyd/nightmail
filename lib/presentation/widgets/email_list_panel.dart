@@ -53,6 +53,7 @@ class EmailListPanel extends StatefulWidget {
     this.onCalendarTapped,
     this.onTasksTapped,
     this.onAiTapped,
+    this.onCommitmentsTapped,
   });
 
   final String folderName;
@@ -69,9 +70,13 @@ class EmailListPanel extends StatefulWidget {
   final VoidCallback? onCalendarTapped;
   final VoidCallback? onTasksTapped;
   final VoidCallback? onAiTapped;
+  final VoidCallback? onCommitmentsTapped;
 
   bool get _hasViewShortcuts =>
-      onCalendarTapped != null && onTasksTapped != null && onAiTapped != null;
+      onCalendarTapped != null &&
+      onTasksTapped != null &&
+      onAiTapped != null &&
+      onCommitmentsTapped != null;
 
   @override
   State<EmailListPanel> createState() => _EmailListPanelState();
@@ -747,6 +752,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
                         onCalendarTapped: widget.onCalendarTapped!,
                         onTasksTapped: widget.onTasksTapped!,
                         onAiTapped: widget.onAiTapped!,
+                        onCommitmentsTapped: widget.onCommitmentsTapped!,
                       )
                     : null,
               ),

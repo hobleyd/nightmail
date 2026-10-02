@@ -300,6 +300,7 @@ void main() {
               onCalendarTapped: () {},
               onTasksTapped: () {},
               onAiTapped: () {},
+              onCommitmentsTapped: () {},
               initialExpandedIds: expanded,
             ),
           ),

@@ -41,3 +41,19 @@ bool isOutgoingMailFolder(EmailFolder? folder) {
   if (_outgoingFolderIds.contains(folder.id.toUpperCase())) return true;
   return _outgoingFolderNames.contains(folder.displayName.trim().toLowerCase());
 }
+
+const _sentFolderNames = {
+  'sent',
+  'sent items',
+  'sent mail',
+  'sent messages',
+};
+
+/// Whether [folder] is specifically the Sent folder — [isOutgoingMailFolder]
+/// minus Drafts and Outbox. The commitments scan reads what was actually sent;
+/// a draft is not yet a promise.
+bool isSentMailFolder(EmailFolder? folder) {
+  if (folder == null) return false;
+  if (folder.id.toUpperCase() == 'SENT') return true;
+  return _sentFolderNames.contains(folder.displayName.trim().toLowerCase());
+}

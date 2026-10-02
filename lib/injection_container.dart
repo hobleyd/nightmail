@@ -62,6 +62,12 @@ import 'domain/usecases/ai/run_folder_agent.dart';
 import 'presentation/blocs/ai/ai_compose_cubit.dart';
 import 'presentation/blocs/ai/ai_folder_cubit.dart';
 import 'presentation/blocs/ai/ai_settings_cubit.dart';
+// Commitments (System One-driven ledger over mail)
+import 'data/datasources/local/commitment_local_datasource.dart';
+import 'data/repositories/commitment_repository_impl.dart';
+import 'domain/repositories/commitment_repository.dart';
+import 'domain/usecases/commitments/detect_commitments.dart';
+import 'presentation/blocs/commitments/commitments_cubit.dart';
 import 'presentation/blocs/out_of_office/meeting_sweep_cubit.dart';
 import 'presentation/blocs/out_of_office/out_of_office_cubit.dart';
 import 'domain/repositories/calendar_repository.dart';
@@ -595,6 +601,14 @@ Future<void> configureDependencies() async {
         downloadTaskAttachment: sl<DownloadTaskAttachment>(),
         taskReminders: sl<TaskReminderService>(),
       ));
+  sl.registerFactory(() => CommitmentsCubit(
+        accountManager: sl<AccountManager>(),
+        emailRepository: sl<EmailRepository>(),
+        commitmentRepository: sl<CommitmentRepository>(),
+        detectCommitments: sl<DetectCommitments>(),
+        getCachedCalendarEvents: sl<GetCachedCalendarEvents>(),
+        taskReminders: sl<TaskReminderScheduleLocalDatasource>(),
+      ));
   sl.registerFactory(() => EventEditBloc(
         createCalendarEvent: sl<CreateCalendarEvent>(),
         updateCalendarEvent: sl<UpdateCalendarEvent>(),
@@ -684,6 +698,24 @@ Future<void> configureDependencies() async {
       registry: sl<AiProviderRegistry>(),
       adapterFactory: sl<AiAdapterFactory>(),
       settingsRepository: sl<AiSettingsRepository>(),
+    ),
+  );
+
+  // Commitments: the ledger a System One model lifts out of recent mail.
+  sl.registerLazySingleton<CommitmentLocalDatasource>(
+    () => CommitmentLocalDatasourceImpl(
+      database: sl<AppDatabase>(),
+      encryption: sl<CacheEncryptionService>(),
+    ),
+  );
+  sl.registerLazySingleton<CommitmentRepository>(
+    () => CommitmentRepositoryImpl(sl<CommitmentLocalDatasource>()),
+  );
+  sl.registerLazySingleton(
+    () => DetectCommitments(
+      settingsRepository: sl<AiSettingsRepository>(),
+      inferenceRepository: sl<AiInferenceRepository>(),
+      commitmentRepository: sl<CommitmentRepository>(),
     ),
   );
 

@@ -20,8 +20,8 @@ import 'ai_adapter.dart';
 /// `probabilities`, or `score` + `legend` + `probabilities`, and a
 /// `confidence`. The same shape is served by the hosted API
 /// (`https://api.typesafe.ai/v1`), by the Jev-compatible local servers
-/// (local-jev, jevlocal, OpenJev) and by this repo's Laya-MLX bridge
-/// (`tool/laya_mlx_server.py`), so one instance covers every provider on
+/// (local-jev, jevlocal, OpenJev) and by the Laya-MLX bridge provisioned
+/// outside this repo, so one instance covers every provider on
 /// [AiWireProtocol.systemOne] — credentials and the endpoint are per call.
 ///
 /// System One models generate no text, so [run] and [stream] refuse with an

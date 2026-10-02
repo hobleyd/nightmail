@@ -19,10 +19,10 @@ enum AiProviderKind { cloud, local, selfHosted }
 /// [systemOne] is not a chat protocol at all: it is TypeSafe's Jev
 /// `POST {base}/systemone` typed-decision API (`{model, state, questions}` →
 /// `{model, answers, usage}`), also spoken by the Jev-compatible local servers
-/// (local-jev, jevlocal, OpenJev) and by this repo's Laya-MLX bridge
-/// (`tool/laya_mlx_server.py`). Providers on it answer typed questions
-/// (yes/no, choice, score) and cannot generate text — see
-/// [AiProvider.supportsChat] / [AiProvider.supportsDecisions].
+/// (local-jev, jevlocal, OpenJev) and by the Laya-MLX bridge provisioned
+/// outside this repo. Providers on it answer typed questions (yes/no, choice,
+/// score) and cannot generate text — see [AiProvider.supportsChat] /
+/// [AiProvider.supportsDecisions].
 enum AiWireProtocol { openai, anthropic, google, ollama, azure, systemOne }
 
 /// Where a provider descriptor originated.

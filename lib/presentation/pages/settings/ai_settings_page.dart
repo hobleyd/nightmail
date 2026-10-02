@@ -79,6 +79,12 @@ class _Feature {
 bool _isChatProvider(AiProvider p) => p.supportsChat;
 bool _isDecisionProvider(AiProvider p) => p.supportsDecisions;
 
+/// The catalog id of the synthesized Laya-MLX entry (see `AiCatalogMapper`).
+/// Its endpoint is a Jev-compatible bridge on this machine that is
+/// provisioned *outside* NightMail, so a refused connection there is
+/// explained as "not running" rather than left as a bare socket error.
+const String _layaMlxProviderId = 'laya-mlx';
+
 /// The Features table, top to bottom. New features slot in as new entries.
 const _features = <_Feature>[
   _Feature(
@@ -269,6 +275,16 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
           (failure) => errorMessage = failure.message,
           (ids) => liveIds = ids,
         );
+        // The Laya bridge is a local service; a refused connection means it
+        // is not running, which is the whole diagnosis.
+        final msg = errorMessage;
+        if (msg != null &&
+            provider.id == _layaMlxProviderId &&
+            msg.toLowerCase().contains('connection')) {
+          errorMessage =
+              'The Laya-MLX bridge is not running at $baseUrl. Start it, '
+              'then retry.';
+        }
       } else if (provider.source == AiProviderSource.catalog) {
         final result = await repo.getModelsForProvider(provider.id);
         catalogModels = result.getOrElse((_) => const []);
@@ -1038,11 +1054,6 @@ class _ProviderKeyEditor extends StatelessWidget {
   /// probe should send.
   final String? decisionProbeModelId;
 
-  /// The catalog id of the synthesized Laya-MLX entry (see
-  /// `AiCatalogMapper`). Its endpoint is this repo's bridge script, which the
-  /// user has to start — worth saying so right where the URL is shown.
-  static const String _layaMlxId = 'laya-mlx';
-
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -1062,12 +1073,11 @@ class _ProviderKeyEditor extends StatelessWidget {
           ),
           const SizedBox(height: 12),
         ],
-        if (provider.id == _layaMlxId) ...[
+        if (provider.id == _layaMlxProviderId) ...[
           Text(
-            'Runs the open Laya decision model on this Mac with Apple MLX. '
-            'Start the bridge first:  python3 tool/laya_mlx_server.py  '
-            '(in the NightMail repo; the first start downloads the ~850 MB '
-            'checkpoint).',
+            'Runs the open Laya decision model on this Mac with Apple MLX, '
+            'behind a Jev-compatible bridge at the address above. The bridge '
+            'is provisioned outside NightMail and has to be running.',
             style: TextStyle(color: c.textMuted, fontSize: 12),
           ),
           const SizedBox(height: 12),

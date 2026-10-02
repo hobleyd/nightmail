@@ -65,9 +65,12 @@ entries the way it does the local `ollama` one:
 
 **laya-mlx has no HTTP server.** It is a Python library (`agent.predict(state,
 questions)`), but its result dict is already byte-for-byte Jev's response
-shape, so `tool/laya_mlx_server.py` just puts the Jev routes in front of one
-loaded checkpoint (`python3 tool/laya_mlx_server.py`, or `uv run …` to have
-uv install laya-mlx). Port 8766 was chosen because the other Jev-compatible
+shape, so a bridge only has to put the Jev routes (`POST /v1/systemone`,
+`GET /v1/models`, `GET /healthz`) in front of one loaded checkpoint. **That
+bridge is provisioned outside this repo** (David's ansible project), and
+NightMail must never install, start or manage it — it only dials
+`http://127.0.0.1:8766/v1`; a refused connection there is reported as "the
+bridge is not running". Port 8766 was chosen because the other Jev-compatible
 local servers already took theirs (local-jev 8765, jevlocal 9011, OpenJev
 8080); any of those can be added as a *Custom endpoint* with the System One
 protocol — a loopback URL is classified `local`, anything else `selfHosted`.

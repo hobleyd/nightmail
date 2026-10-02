@@ -61,9 +61,10 @@ class AiCatalogMapper {
   /// * [_jevProvider] — TypeSafe's hosted Jev API. Keyed; the model list is
   ///   static because the API has no models-listing route.
   /// * [_layaMlxProvider] — the open Laya decision model running on Apple MLX
-  ///   behind this repo's Jev-compatible bridge (`tool/laya_mlx_server.py`,
-  ///   `127.0.0.1:8766`). Keyless and local; models are listed live from the
-  ///   bridge's `/v1/models`, so none are baked in here.
+  ///   behind a Jev-compatible bridge on `127.0.0.1:8766`, provisioned
+  ///   outside this repo (laya-mlx itself ships no HTTP server). Keyless and
+  ///   local; models are listed live from the bridge's `/v1/models`, so none
+  ///   are baked in here.
   static const List<AiProvider> _systemOneProviders = [
     _jevProvider,
     _layaMlxProvider,

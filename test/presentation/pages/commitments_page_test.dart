@@ -213,21 +213,33 @@ void main() {
         taskReminders: taskReminders,
       );
 
-  Future<void> pumpPane(WidgetTester tester) async {
+  /// Pumps the pane at [width] (a side pane by default) — or, with [width]
+  /// null, filling the test surface, which the board tests size like a screen.
+  Future<void> pumpPane(
+    WidgetTester tester, {
+    double? width = 420,
+    ValueChanged<Commitment>? onOpenEmail,
+  }) async {
+    final pane = CommitmentsDayPanel(onClose: () {}, onOpenEmail: onOpenEmail);
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: BlocProvider<CommitmentsCubit>(
             create: (_) => buildCubit(),
-            child: SizedBox(
-              width: 420,
-              child: CommitmentsDayPanel(onClose: () {}),
-            ),
+            child: width == null ? pane : SizedBox(width: width, child: pane),
           ),
         ),
       ),
     );
     await tester.pumpAndSettle();
+  }
+
+  /// A screen-sized surface for the board layout.
+  void useScreenSizedSurface(WidgetTester tester) {
+    tester.view.physicalSize = const Size(1680, 1050);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
   }
 
   testWidgets('shows the four sections with their rows, chips and counts',
@@ -309,6 +321,71 @@ void main() {
     await tester.pumpAndSettle();
 
     verify(detect(any)).called(1);
+  });
+
+  group('screen-sized window (board layout)', () {
+    testWidgets('lays the four sections out side by side as columns of cards',
+        (tester) async {
+      useScreenSizedSurface(tester);
+      await pumpPane(tester, width: null);
+
+      // Same four sections, now column headers with counts.
+      for (final title in ['TODAY', 'YOU OWE', 'WAITING ON', 'NEEDS A DECISION']) {
+        expect(find.text(title), findsOneWidget, reason: title);
+      }
+      // Cards carry an explicit Open action the narrow rows do not: Sarah
+      // and James appear twice (Today + their own column), AWS once → 5.
+      expect(find.byIcon(Icons.open_in_new_rounded), findsNWidgets(5));
+      // The meeting tile shows its time range, not just a start time.
+      expect(find.textContaining(' – '), findsOneWidget);
+      expect(find.text('Project meeting'), findsOneWidget);
+      expect(find.text('1 task due today'), findsOneWidget);
+      // The decision count sits in that column's footer.
+      expect(find.text("1 email needs action · 2 don't"), findsOneWidget);
+      // Nothing is cut off horizontally at a screen-sized width.
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('narrower than the board threshold it stays a single column',
+        (tester) async {
+      useScreenSizedSurface(tester);
+      await pumpPane(tester, width: CommitmentsDayPanel.kBoardMinWidth - 1);
+
+      // The narrow rows have Done/Dismiss but no Open icon.
+      expect(find.byIcon(Icons.open_in_new_rounded), findsNothing);
+      expect(find.byIcon(Icons.check_rounded), findsNWidgets(5));
+    });
+
+    testWidgets('Done on a card closes the commitment', (tester) async {
+      useScreenSizedSurface(tester);
+      await pumpPane(tester, width: null);
+
+      // The Today column lists Sarah's promise first (most urgent).
+      await tester.tap(find.byIcon(Icons.check_rounded).first);
+      await tester.pumpAndSettle();
+
+      verify(ledger.setStatus(
+        accountId: 'acc',
+        id: 'iOwe:s1',
+        status: CommitmentStatus.done,
+        now: anyNamed('now'),
+      )).called(1);
+      expect(find.text('Sarah'), findsNothing);
+    });
+  });
+
+  testWidgets('onOpenEmail overrides how a row opens its message',
+      (tester) async {
+    Commitment? opened;
+    await pumpPane(tester, onOpenEmail: (c) => opened = c);
+
+    // Tap the Waiting-on row (AWS appears once).
+    await tester.tap(find.text('AWS Support'));
+    await tester.pumpAndSettle();
+
+    expect(opened?.id, 'theyOweMe:s2');
+    // No reading-pane fallback hint, since the override handled it.
+    expect(find.textContaining('main window'), findsNothing);
   });
 
   test('ageLabel reads naturally at every scale', () {

@@ -30,6 +30,7 @@ import 'presentation/blocs/theme/theme_cubit.dart';
 import 'presentation/blocs/theme/theme_state.dart';
 import 'presentation/pages/account_selection_page.dart';
 import 'presentation/pages/calendar_window.dart';
+import 'presentation/pages/commitments_window.dart';
 import 'presentation/pages/compose_window.dart';
 import 'presentation/pages/email_view_window.dart';
 import 'presentation/pages/event_edit_window.dart';
@@ -226,6 +227,27 @@ void main(List<String> args) async {
         const WindowOptions(size: Size(640, 520), center: true, title: 'Tasks'),
       );
       runApp(const TasksWindowApp());
+      return;
+    }
+
+    if (arguments['type'] == 'commitments') {
+      // The board layout is designed for a screen-sized window, so the
+      // default is the frame of the screen it was opened from (centring a
+      // screen-sized window puts it at the screen's origin). A geometry the
+      // user left it at on a connected display wins, as for compose.
+      final screenInfoRaw =
+          arguments['_screenInfo'] as Map<dynamic, dynamic>?;
+      final screenSize = screenInfoRaw == null
+          ? const Size(1280, 800)
+          : Size(
+              (screenInfoRaw['width'] as num).toDouble(),
+              (screenInfoRaw['height'] as num).toDouble(),
+            );
+      await showSubWindow(
+        WindowOptions(size: screenSize, center: true, title: 'Commitments'),
+        restore: await commitmentsWindowBounds.loadValidatedBounds(),
+      );
+      runApp(const CommitmentsWindowApp());
       return;
     }
 

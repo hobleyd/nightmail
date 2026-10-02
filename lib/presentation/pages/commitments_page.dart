@@ -32,12 +32,17 @@ import 'settings_page.dart';
 /// mail does.
 ///
 /// Docked beside the reading pane on desktop (`HomeView.commitments`), pushed
-/// as a route on a phone (`useBackNavigation`), exactly like the Tasks pane.
+/// as a route on a phone (`useBackNavigation`), exactly like the Tasks pane —
+/// and, from a double-click on the footer button, in its own screen-sized
+/// window (`CommitmentsWindowApp`). The layout follows the width it is given:
+/// a single scrolling column in a side pane, a four-column board once there
+/// is room for one ([kBoardMinWidth]).
 class CommitmentsDayPanel extends StatefulWidget {
   const CommitmentsDayPanel({
     super.key,
     required this.onClose,
     this.useBackNavigation = false,
+    this.onOpenEmail,
   });
 
   final VoidCallback onClose;
@@ -46,6 +51,16 @@ class CommitmentsDayPanel extends StatefulWidget {
   /// pane — the mobile shell. It then dismisses through a leading back arrow,
   /// like the reading pane, instead of a trailing close button.
   final bool useBackNavigation;
+
+  /// Overrides how a row's message is opened. By default it goes to the
+  /// reading pane of the window the panel is in; the detached window has no
+  /// reading pane and opens an email-view window instead.
+  final ValueChanged<Commitment>? onOpenEmail;
+
+  /// The width from which the sections are laid out side by side as a board
+  /// rather than stacked. Four columns of cards need about this much to read
+  /// well; a screen-sized window has it, the side pane never does.
+  static const double kBoardMinWidth = 960;
 
   @override
   State<CommitmentsDayPanel> createState() => _CommitmentsDayPanelState();
@@ -103,6 +118,11 @@ class _CommitmentsDayPanelState extends State<CommitmentsDayPanel> {
   /// task's linked email takes. In a detached window there is no reading pane
   /// (no EmailDetailBloc), so fall back to a hint.
   void _openEmail(Commitment commitment) {
+    final override = widget.onOpenEmail;
+    if (override != null) {
+      override(commitment);
+      return;
+    }
     try {
       final detailBloc = context.read<EmailDetailBloc>();
       final listBloc = context.read<EmailListBloc>();
@@ -166,12 +186,28 @@ class _CommitmentsDayPanelState extends State<CommitmentsDayPanel> {
                     );
                   case CommitmentsStatus.scanning:
                   case CommitmentsStatus.loaded:
-                    return _LoadedBody(
-                      state: state,
-                      onOpen: _openEmail,
-                      onOpenTasks: _openTasks,
-                      onDone: (c) => unawaited(_cubit.markDone(c.id)),
-                      onDismiss: (c) => unawaited(_cubit.dismiss(c.id)),
+                    return LayoutBuilder(
+                      builder: (context, constraints) {
+                        final wide = constraints.maxWidth >=
+                            CommitmentsDayPanel.kBoardMinWidth;
+                        return wide
+                            ? _BoardBody(
+                                state: state,
+                                onOpen: _openEmail,
+                                onOpenTasks: _openTasks,
+                                onDone: (c) => unawaited(_cubit.markDone(c.id)),
+                                onDismiss: (c) =>
+                                    unawaited(_cubit.dismiss(c.id)),
+                              )
+                            : _LoadedBody(
+                                state: state,
+                                onOpen: _openEmail,
+                                onOpenTasks: _openTasks,
+                                onDone: (c) => unawaited(_cubit.markDone(c.id)),
+                                onDismiss: (c) =>
+                                    unawaited(_cubit.dismiss(c.id)),
+                              );
+                      },
                     );
                 }
               },
@@ -800,6 +836,494 @@ class _ErrorView extends StatelessWidget {
           message,
           textAlign: TextAlign.center,
           style: TextStyle(color: c.textMuted, fontSize: 13),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Board layout — a screen-sized window
+// ---------------------------------------------------------------------------
+
+/// The four sections side by side, each a column of cards, for a window wide
+/// enough to hold them ([CommitmentsDayPanel.kBoardMinWidth] and up).
+///
+/// The point of the extra room is that everything is visible at once with
+/// nothing to scroll past: the day on the left, the two sides of the ledger in
+/// the middle, the inbox decisions on the right. Cards carry what the narrow
+/// rows have to drop — the excerpt of what was actually said — and an explicit
+/// Open action. On very wide screens the board stops growing at
+/// [_maxBoardWidth] and sits centred, so four columns never stretch into
+/// unreadable lines.
+class _BoardBody extends StatelessWidget {
+  const _BoardBody({
+    required this.state,
+    required this.onOpen,
+    required this.onOpenTasks,
+    required this.onDone,
+    required this.onDismiss,
+  });
+
+  final CommitmentsState state;
+  final ValueChanged<Commitment> onOpen;
+  final VoidCallback onOpenTasks;
+  final ValueChanged<Commitment> onDone;
+  final ValueChanged<Commitment> onDismiss;
+
+  static const double _maxBoardWidth = 1760;
+  static const double _gutter = 16;
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final dueToday = state.dueTodayAt(now);
+    final iOwe = state.iOwe;
+    final waitingOn = state.waitingOn;
+    final needsAction = state.needsAction;
+
+    Widget card(Commitment c) => _CommitmentCard(
+          commitment: c,
+          now: now,
+          onOpen: () => onOpen(c),
+          onDone: () => onDone(c),
+          onDismiss: () => onDismiss(c),
+        );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Status strip: the setup card when Triage has no route, else any
+        // warning plus the scan line — left-aligned and width-capped so a
+        // single sentence does not run the length of a wide screen.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(_gutter, 12, _gutter, 0),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: state.needsTriageRoute
+                  ? _SetupCard(message: state.message)
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (state.message != null) _Notice(text: state.message!),
+                        _ScanLine(state: state),
+                      ],
+                    ),
+            ),
+          ),
+        ),
+        Expanded(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: _maxBoardWidth),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(_gutter, 4, _gutter, _gutter),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      child: _BoardColumn(
+                        title: 'Today',
+                        icon: Icons.today_rounded,
+                        count: dueToday.length +
+                            state.todayEvents.length +
+                            (state.tasksDueToday > 0 ? 1 : 0),
+                        emptyText: 'Nothing scheduled, nothing due.',
+                        children: [
+                          for (final e in state.todayEvents)
+                            _BoardEventTile(event: e),
+                          if (state.tasksDueToday > 0)
+                            _BoardTasksTile(
+                              count: state.tasksDueToday,
+                              onTap: onOpenTasks,
+                            ),
+                          for (final c in dueToday) card(c),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: _gutter),
+                    Expanded(
+                      child: _BoardColumn(
+                        title: 'You owe',
+                        icon: Icons.outbox_outlined,
+                        count: iOwe.length,
+                        emptyText: 'No open promises.',
+                        children: [for (final c in iOwe) card(c)],
+                      ),
+                    ),
+                    const SizedBox(width: _gutter),
+                    Expanded(
+                      child: _BoardColumn(
+                        title: 'Waiting on',
+                        icon: Icons.hourglass_bottom_rounded,
+                        count: waitingOn.length,
+                        emptyText: 'Nobody owes you anything.',
+                        children: [for (final c in waitingOn) card(c)],
+                      ),
+                    ),
+                    const SizedBox(width: _gutter),
+                    Expanded(
+                      child: _BoardColumn(
+                        title: 'Needs a decision',
+                        icon: Icons.reply_rounded,
+                        count: needsAction.length,
+                        emptyText: 'Nothing waiting on you.',
+                        footer: state.inboxScanned == 0
+                            ? null
+                            : '${needsAction.length} '
+                                '${needsAction.length == 1 ? 'email needs' : 'emails need'} '
+                                'action · ${state.inboxNoActionCount} '
+                                '${state.inboxNoActionCount == 1 ? "doesn't" : "don't"}',
+                        children: [for (final c in needsAction) card(c)],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// One column of the board: a header with the section's icon, name and count,
+/// then its cards in their own scroll view, so a long Needs-a-decision list
+/// never pushes Today off the screen.
+class _BoardColumn extends StatelessWidget {
+  const _BoardColumn({
+    required this.title,
+    required this.icon,
+    required this.count,
+    required this.children,
+    required this.emptyText,
+    this.footer,
+  });
+
+  final String title;
+  final IconData icon;
+  final int count;
+  final List<Widget> children;
+  final String emptyText;
+  final String? footer;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(color: c.separatorStrong),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 12, 10),
+            child: Row(
+              children: [
+                Icon(icon, size: 16, color: AppColors.accent),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    title.toUpperCase(),
+                    style: TextStyle(
+                      color: c.textSecondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                ),
+                if (count > 0)
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: c.surfaceBase,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: c.separatorStrong),
+                    ),
+                    child: Text(
+                      '$count',
+                      style: TextStyle(
+                        color: c.textSecondary,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Divider(height: 1, color: c.separatorStrong),
+          Expanded(
+            child: children.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Text(
+                      emptyText,
+                      style: TextStyle(color: c.textMuted, fontSize: 12),
+                    ),
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.all(10),
+                    itemCount: children.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    itemBuilder: (_, i) => children[i],
+                  ),
+          ),
+          if (footer != null) ...[
+            Divider(height: 1, color: c.separatorStrong),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
+              child: Text(
+                footer!,
+                style: TextStyle(color: c.textMuted, fontSize: 11),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// A commitment as a card: who, the subject, what was said, and when — with
+/// Open, Done and Dismiss along the bottom. The whole card opens the message.
+class _CommitmentCard extends StatelessWidget {
+  const _CommitmentCard({
+    required this.commitment,
+    required this.now,
+    required this.onOpen,
+    required this.onDone,
+    required this.onDismiss,
+  });
+
+  final Commitment commitment;
+  final DateTime now;
+  final VoidCallback onOpen;
+  final VoidCallback onDone;
+  final VoidCallback onDismiss;
+
+  IconData get _icon => switch (commitment.kind) {
+        CommitmentKind.iOwe => Icons.outbox_outlined,
+        CommitmentKind.theyOweMe => Icons.hourglass_bottom_rounded,
+        CommitmentKind.needsAction => Icons.reply_rounded,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final overdue = commitment.isOverdueAt(now);
+    final snippet = commitment.snippet.trim();
+    final showSnippet =
+        snippet.isNotEmpty && snippet != commitment.subject.trim();
+    return Material(
+      color: c.surfaceBase,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onOpen,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(12, 10, 8, 6),
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: overdue
+                  ? AppColors.notification.withAlpha(120)
+                  : c.separatorStrong,
+            ),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    _icon,
+                    size: 14,
+                    color: overdue ? AppColors.notification : c.textMuted,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      commitment.counterpart.displayName,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: c.textSecondary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  _DueChip(commitment: commitment, overdue: overdue),
+                ],
+              ),
+              if (commitment.subject.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  commitment.subject,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: c.textSecondary, fontSize: 13),
+                ),
+              ],
+              if (showSnippet) ...[
+                const SizedBox(height: 3),
+                Text(
+                  snippet,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: c.textMuted, fontSize: 12, height: 1.3),
+                ),
+              ],
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Text(
+                    ageLabel(commitment.ageAt(now)),
+                    style: TextStyle(color: c.textMuted, fontSize: 11),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: Icon(Icons.open_in_new_rounded,
+                        size: 15, color: c.textMuted),
+                    tooltip: 'Open message',
+                    padding: EdgeInsets.zero,
+                    constraints:
+                        const BoxConstraints(minWidth: 28, minHeight: 28),
+                    onPressed: onOpen,
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.check_rounded, size: 16, color: c.textMuted),
+                    tooltip: 'Done',
+                    padding: EdgeInsets.zero,
+                    constraints:
+                        const BoxConstraints(minWidth: 28, minHeight: 28),
+                    onPressed: onDone,
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.close_rounded, size: 16, color: c.textMuted),
+                    tooltip: 'Dismiss',
+                    padding: EdgeInsets.zero,
+                    constraints:
+                        const BoxConstraints(minWidth: 28, minHeight: 28),
+                    onPressed: onDismiss,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A meeting in the board's Today column: the time in a fixed gutter, the
+/// subject beside it, and the location when there is one.
+class _BoardEventTile extends StatelessWidget {
+  const _BoardEventTile({required this.event});
+
+  final CalendarEvent event;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final start = event.start.toLocal();
+    final end = event.end.toLocal();
+    final time = event.isAllDay
+        ? 'All day'
+        : '${DateFormat.jm().format(start)} – ${DateFormat.jm().format(end)}';
+    final location = event.location?.trim();
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        border: Border.all(color: c.separatorStrong),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.calendar_month_outlined, size: 14, color: c.textMuted),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  time,
+                  style: TextStyle(
+                    color: c.textMuted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  event.subject,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: c.textSecondary, fontSize: 13),
+                ),
+                if (location != null && location.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    location,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: c.textMuted, fontSize: 11),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The tasks-due count as a board tile; tapping it opens the Tasks view.
+class _BoardTasksTile extends StatelessWidget {
+  const _BoardTasksTile({required this.count, required this.onTap});
+
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+          decoration: BoxDecoration(
+            border: Border.all(color: c.separatorStrong),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.checklist_rounded, size: 14, color: c.textMuted),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '$count ${count == 1 ? 'task' : 'tasks'} due today',
+                  style: TextStyle(color: c.textSecondary, fontSize: 13),
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, size: 16, color: c.textMuted),
+            ],
+          ),
         ),
       ),
     );

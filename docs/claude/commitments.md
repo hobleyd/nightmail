@@ -80,6 +80,32 @@ absent.
 Triage without a System One route is a **setup card**, not an error: the
 pane stays usable and points at Settings › AI.
 
+### In its own window
+
+Double-clicking the footer button opens a `commitments` sub-window
+(`CommitmentsWindowApp`), like Calendar and Tasks. Two things differ from
+those:
+
+* **It is sized to the screen it was opened from** (`_screenInfo` in
+  `main()`), because the layout is designed for that: from
+  `CommitmentsDayPanel.kBoardMinWidth` (960 px) the pane stops stacking its
+  sections and lays them out as a four-column board (`_BoardBody`) — Today,
+  You owe, Waiting on, Needs a decision — each column scrolling on its own,
+  each item a card that also shows the excerpt of what was said and an
+  explicit Open action. The board stops growing at 1760 px and sits centred
+  on wider screens. The same `LayoutBuilder` switch applies to the docked
+  pane, so dragging it that wide gives the board too. The window's geometry
+  is remembered per display (`commitmentsWindowBounds`) and wins over the
+  screen-sized default once the user has moved it.
+* **It has no reading pane**, so a row opens its message in an email-view
+  window instead: `CommitmentsDayPanel.onOpenEmail` is the override, and the
+  window fetches the full body with `GetEmail` first (the ledger holds only
+  the message id), then hands the email-view window the same map the main
+  window's double-clicked list row does.
+
+The sub-window has no `MailPollerCubit`; the pane's poll listener is
+optional, so there the ledger refreshes on open and on the Refresh button.
+
 ## Deliberate limits
 
 * Active account only, like the Tasks pane. `EmailRepository.getEmail` has

@@ -41,6 +41,12 @@ const composeWindowBounds = WindowBoundsService.forWindowKind('compose');
 /// the window the same way [composeWindowBounds] is.
 const eventEditWindowBounds = WindowBoundsService.forWindowKind('event_edit');
 
+/// The detached Commitments window's saved geometry, shared between `main()`
+/// and the window the same way [composeWindowBounds] is. It opens sized to
+/// the screen it was launched from until the user has left it somewhere.
+const commitmentsWindowBounds =
+    WindowBoundsService.forWindowKind('commitments');
+
 class WindowBoundsService {
   /// The main window's geometry.
   const WindowBoundsService() : _boundsFile = 'window_bounds.json';

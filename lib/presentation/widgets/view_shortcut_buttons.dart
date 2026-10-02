@@ -18,7 +18,8 @@ import '../blocs/tasks/overdue_tasks_cubit.dart';
 /// views have to be reachable without first backing out to the folders.
 /// One widget so the two feet cannot drift apart.
 ///
-/// On desktop a double-tap opens Calendar or Tasks in its own window.
+/// On desktop a double-tap opens Calendar, Tasks or Commitments in its own
+/// window.
 class ViewShortcutButtons extends StatelessWidget {
   const ViewShortcutButtons({
     super.key,
@@ -116,16 +117,26 @@ class ViewShortcutButtons extends StatelessWidget {
           ),
           onPressed: onAiTapped,
         ),
-        IconButton(
-          icon: Icon(Icons.handshake_outlined,
-              size: touchIcon(16), color: c.textMuted),
-          tooltip: 'Commitments',
-          padding: EdgeInsets.zero,
-          constraints: BoxConstraints(
-            minWidth: touchTarget(28),
-            minHeight: touchTarget(28),
+        GestureDetector(
+          // A screen-sized window where the pane becomes a four-column board.
+          onDoubleTap: _isMobile
+              ? null
+              : () => createSubWindow(
+                    WindowConfiguration(
+                      arguments: jsonEncode({'type': 'commitments'}),
+                    ),
+                  ),
+          child: IconButton(
+            icon: Icon(Icons.handshake_outlined,
+                size: touchIcon(16), color: c.textMuted),
+            tooltip: 'Commitments',
+            padding: EdgeInsets.zero,
+            constraints: BoxConstraints(
+              minWidth: touchTarget(28),
+              minHeight: touchTarget(28),
+            ),
+            onPressed: onCommitmentsTapped,
           ),
-          onPressed: onCommitmentsTapped,
         ),
       ],
     );

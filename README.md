@@ -138,6 +138,7 @@ Settings → Accounts.
 - A reply from the other side closes a "waiting on" by itself and your own reply closes a "needs a decision"; a promise you made only closes when you mark it done
 - Detection runs through a System One typed-decision model routed under Settings › AI › Triage: TypeSafe Jev in the cloud, or the open Laya model entirely on-device through Apple MLX behind a local Jev-compatible bridge, so with a local model nothing leaves the machine
 - Each message is read by the model once; new mail is checked after every poll cycle
+- Double-click the Commitments button to open it in its own screen-sized window, where the four sections become a side-by-side board of cards, each with the excerpt of what was said; a card opens its message in an email window
 
 ### Contacts
 - Typeahead in the compose window drawing from three sources:

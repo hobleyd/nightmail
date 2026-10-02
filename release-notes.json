@@ -1,20 +1,45 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.38.1",
+  "version": "1.38.2",
   "sections": [
     {
       "type": "features",
       "title": "New features",
       "items": [
         {
-          "body": "open the pane in a screen-sized window with a board layout",
+          "body": "natural-language control over the ledger",
+          "title": "commitments"
+        },
+        {
+          "body": "Future Me — week-ahead forecast, rebalancing and freed slots",
+          "title": "commitments"
+        },
+        {
+          "body": "schedule a time block for a commitment",
           "title": "commitments"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.38.1",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "open the pane in a screen-sized window with a board layout",
+              "title": "commitments"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -465,23 +490,6 @@
             {
               "body": "swipe scrolls the folder list; hold then drag moves a folder",
               "title": "mobile"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.33.0",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "hide Tenant ID behind the custom-app-registration toggle too",
-              "title": "auth"
             }
           ]
         }

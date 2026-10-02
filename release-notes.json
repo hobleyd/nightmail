@@ -1,20 +1,41 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.37.5",
+  "version": "1.38.0",
   "sections": [
     {
-      "type": "fixes",
-      "title": "Fixes",
+      "type": "features",
+      "title": "New features",
       "items": [
         {
-          "body": "keep a read the server's folder count has not caught up with",
-          "title": "poller"
+          "body": "Commitments pane — I owe / waiting on / needs a decision",
+          "title": "commitments"
+        },
+        {
+          "body": "System One typed-decision providers (Jev, Laya-MLX) in AI settings",
+          "title": "ai"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.37.5",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "keep a read the server's folder count has not caught up with",
+              "title": "poller"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -503,23 +524,6 @@
             {
               "body": "open every cache connection in WAL mode with a busy timeout",
               "title": "database"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.31.1",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "cancel alerts left behind by an account this process does not have",
-              "title": "reminders"
             }
           ]
         }

@@ -106,6 +106,28 @@ absent.
 Triage without a System One route is a **setup card**, not an error: the
 pane stays usable and points at Settings › AI.
 
+### Tracking a message by hand
+
+No model catches every request, and a weak local one catches few (see the
+diagnostics note above), so the reading pane's toolbar has **Track as a
+commitment**. `TrackCommitmentDialog` offers the two kinds a message of that
+direction can be — received: *needs my action* (default) or *waiting on
+them*; sent: *I owe them* (default) or *waiting on them* — and a coarse due
+reading (this week by default). `TrackCommitment`
+(`domain/usecases/commitments/`) then builds the row exactly as detection
+would (`DetectCommitments.counterpartFor` / `snippetFor`, the same
+`<kind>:<emailId>` key) with `confidence` 1, urgency from the due reading,
+**reopens** the row if the user had closed it before (an explicit ask
+outranks an earlier Done, unlike a re-detection), **marks the message
+scanned** so the model is not asked about it, and leaves the effort estimate
+to the next scan's estimate pass. It then calls
+`CommitmentLedgerChanges.notify(accountId)` — a process-wide broadcast
+(`sl<CommitmentLedgerChanges>()`) that `CommitmentsCubit` listens to and
+answers with `reloadLedger()` when the account matches, so an open pane shows
+the row at once without a scan. The pane's own writes do not go through the
+notifier; it already knows about them. The reading pane only exists in the
+main window, so no cross-window relay is needed.
+
 ### In its own window
 
 Double-clicking the footer button opens a `commitments` sub-window
@@ -263,8 +285,7 @@ board. Example instructions are offered while the transcript is empty.
 * Folder matching by display name does not survive a localized Graph
   mailbox ("Posteingang", "Gesendete Elemente") — the same bet
   `MailPollerCubit` and `junk_folder.dart` make.
-* Time-blocking, "Future Me" workload forecasting and natural-language
-  control from the product vision are scheduling engines, not a pane; they
-  are not here.
+* Tracking by hand lives in the reading pane's toolbar only — the list rows
+  have no context menu, and the detached email window has no action bar.
 * `HomeView.commitments` is persisted through `AppSettings.saveActiveView`
   like the other views, so the pane reopens where it was left.

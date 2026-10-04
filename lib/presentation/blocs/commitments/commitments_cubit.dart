@@ -15,6 +15,7 @@ import '../../../domain/entities/time_block_suggestion.dart';
 import '../../../domain/entities/workload_forecast.dart';
 import '../../../domain/repositories/commitment_repository.dart';
 import '../../../domain/repositories/email_repository.dart';
+import '../../../domain/usecases/commitments/commitment_ledger_changes.dart';
 import '../../../domain/usecases/commitments/detect_commitments.dart';
 import '../../../domain/usecases/commitments/agent/commitment_agent_tools.dart';
 import '../../../domain/usecases/commitments/forecast_workload.dart';
@@ -48,6 +49,7 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
     required TaskReminderScheduleLocalDatasource taskReminders,
     required CreateCalendarEvent createCalendarEvent,
     required UpdateCalendarEvent updateCalendarEvent,
+    CommitmentLedgerChanges? ledgerChanges,
     this.suggester = const SuggestTimeBlock(),
     this.forecaster = const ForecastWorkload(),
     DateTime Function()? now,
@@ -63,7 +65,21 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
           commitmentRepository: commitmentRepository,
         ),
         _now = now ?? DateTime.now,
-        super(const CommitmentsState());
+        super(const CommitmentsState()) {
+    // A row written outside this cubit (the reading pane's Track action)
+    // for the account on screen: re-read the ledger, no model involved.
+    _changesSub = ledgerChanges?.stream.listen((accountId) {
+      if (accountId == state.accountId) unawaited(reloadLedger());
+    });
+  }
+
+  StreamSubscription<String>? _changesSub;
+
+  @override
+  Future<void> close() async {
+    await _changesSub?.cancel();
+    return super.close();
+  }
 
   final AccountManager _accounts;
   final EmailRepository _emails;

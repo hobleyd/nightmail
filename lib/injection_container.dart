@@ -66,9 +66,11 @@ import 'presentation/blocs/ai/ai_settings_cubit.dart';
 import 'data/datasources/local/commitment_local_datasource.dart';
 import 'data/repositories/commitment_repository_impl.dart';
 import 'domain/repositories/commitment_repository.dart';
+import 'domain/usecases/commitments/commitment_ledger_changes.dart';
 import 'domain/usecases/commitments/detect_commitments.dart';
 import 'domain/usecases/commitments/run_commitments_agent.dart';
 import 'domain/usecases/commitments/schedule_commitment.dart';
+import 'domain/usecases/commitments/track_commitment.dart';
 import 'presentation/blocs/commitments/commitments_cubit.dart';
 import 'presentation/blocs/out_of_office/meeting_sweep_cubit.dart';
 import 'presentation/blocs/out_of_office/out_of_office_cubit.dart';
@@ -612,6 +614,7 @@ Future<void> configureDependencies() async {
         taskReminders: sl<TaskReminderScheduleLocalDatasource>(),
         createCalendarEvent: sl<CreateCalendarEvent>(),
         updateCalendarEvent: sl<UpdateCalendarEvent>(),
+        ledgerChanges: sl<CommitmentLedgerChanges>(),
       ));
   sl.registerFactory(() => EventEditBloc(
         createCalendarEvent: sl<CreateCalendarEvent>(),
@@ -722,6 +725,15 @@ Future<void> configureDependencies() async {
       commitmentRepository: sl<CommitmentRepository>(),
       // One line per model call into diagnostics.log — ids and numbers only.
       log: debugPrint,
+    ),
+  );
+  // Lets a message tracked from the reading pane show up in an open
+  // Commitments pane without a rescan.
+  sl.registerLazySingleton(() => CommitmentLedgerChanges());
+  sl.registerLazySingleton(
+    () => TrackCommitment(
+      commitmentRepository: sl<CommitmentRepository>(),
+      ledgerChanges: sl<CommitmentLedgerChanges>(),
     ),
   );
   sl.registerLazySingleton(

@@ -13,6 +13,7 @@ import 'package:nightmail/domain/entities/workload_forecast.dart';
 import 'package:nightmail/domain/repositories/commitment_repository.dart';
 import 'package:nightmail/domain/repositories/email_repository.dart';
 import 'package:nightmail/domain/usecases/commitments/detect_commitments.dart';
+import 'package:nightmail/domain/usecases/commitments/commitment_ledger_changes.dart';
 import 'package:nightmail/domain/usecases/create_calendar_event.dart';
 import 'package:nightmail/domain/usecases/get_cached_calendar_events.dart';
 import 'package:nightmail/domain/usecases/get_calendar_events.dart';
@@ -43,6 +44,7 @@ void main() {
   late MockTaskReminderScheduleLocalDatasource taskReminders;
   late MockCreateCalendarEvent createEvent;
   late MockUpdateCalendarEvent updateEvent;
+  late CommitmentLedgerChanges ledgerChanges;
   late CommitmentsCubit cubit;
 
   final now = DateTime(2026, 10, 2, 9);
@@ -173,6 +175,7 @@ void main() {
       )),
     );
 
+    ledgerChanges = CommitmentLedgerChanges();
     cubit = CommitmentsCubit(
       accountManager: accounts,
       emailRepository: emails,
@@ -182,9 +185,12 @@ void main() {
       taskReminders: taskReminders,
       createCalendarEvent: createEvent,
       updateCalendarEvent: updateEvent,
+      ledgerChanges: ledgerChanges,
       now: () => now,
     );
   });
+
+  tearDown(() => ledgerChanges.dispose());
 
   tearDown(() => cubit.close());
 
@@ -300,6 +306,30 @@ void main() {
     await Future.wait([cubit.scan(), cubit.scan()]);
 
     verify(detect(any)).called(1);
+  });
+
+  test('a ledger change for the shown account re-reads the ledger without a '
+      'scan; another account\'s change is ignored', () async {
+    await cubit.load();
+    await pumpEventQueue();
+    expect(cubit.state.commitments.map((c) => c.id), ['iOwe:s1']);
+    clearInteractions(detect);
+
+    // Something (the reading pane's Track action) wrote a row.
+    when(ledger.getCommitments(accountId: anyNamed('accountId'))).thenAnswer(
+      (_) async => Right([
+        open('s1', CommitmentKind.iOwe),
+        open('i9', CommitmentKind.needsAction),
+      ]),
+    );
+    ledgerChanges.notify('someone-else');
+    await pumpEventQueue();
+    expect(cubit.state.commitments.map((c) => c.id), ['iOwe:s1']);
+
+    ledgerChanges.notify('acc');
+    await pumpEventQueue();
+    expect(cubit.state.commitments.map((c) => c.id), ['iOwe:s1', 'needsAction:i9']);
+    verifyNever(detect(any));
   });
 
   group('scheduling', () {

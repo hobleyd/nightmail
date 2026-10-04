@@ -60,6 +60,9 @@ import '../../domain/usecases/forward_meeting_from_email.dart';
 import '../../domain/usecases/propose_new_time_from_email.dart';
 import '../../domain/usecases/respond_to_meeting_invite.dart';
 import '../../domain/usecases/send_email.dart';
+import '../../domain/usecases/commitments/detect_commitments.dart';
+import '../../domain/usecases/commitments/track_commitment.dart';
+import 'commitments/track_commitment_dialog.dart';
 import 'package:intl/intl.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/accounts/account_manager.dart';
@@ -1193,6 +1196,51 @@ class _ReadingPaneToolbar extends StatelessWidget {
     );
   }
 
+  /// Puts this message on the commitments ledger by hand — the fallback for
+  /// a request the model did not pick up. The user chooses the kind and a
+  /// due reading; `TrackCommitment` reads the rest off the message.
+  Future<void> _trackCommitment(BuildContext context) async {
+    final account = sl<AccountManager>().activeAccount;
+    if (account == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sign in to an account to track mail.')),
+      );
+      return;
+    }
+    final self = {account.emailAddress.trim().toLowerCase()};
+    final outgoing = DetectCommitments.isFromSelf(email, self);
+    final choice = await TrackCommitmentDialog.show(
+      context,
+      email: email,
+      outgoing: outgoing,
+    );
+    if (choice == null || !context.mounted) return;
+
+    final result = await sl<TrackCommitment>()(TrackCommitmentParams(
+      accountId: account.id,
+      selfAddresses: self,
+      email: email,
+      kind: choice.kind,
+      due: choice.due,
+      now: DateTime.now(),
+    ));
+    if (!context.mounted) return;
+    result.fold(
+      (f) => ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(f.message)),
+      ),
+      (c) => ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Tracking ${c.counterpart.displayName} under '
+            '${commitmentSectionTitle(c.kind)} in Commitments.',
+          ),
+          duration: const Duration(seconds: 3),
+        ),
+      ),
+    );
+  }
+
   Future<void> _copyToClipboard(BuildContext context) async {
     await Clipboard.setData(ClipboardData(text: email.body));
     if (context.mounted) {
@@ -1244,6 +1292,12 @@ class _ReadingPaneToolbar extends StatelessWidget {
             tooltip: 'New meeting from this email',
             color: c.textMuted,
             onPressed: () => _openMeetingRequest(context),
+          ),
+          _ToolbarButton(
+            icon: Icons.handshake_outlined,
+            tooltip: 'Track as a commitment',
+            color: c.textMuted,
+            onPressed: () => _trackCommitment(context),
           ),
           // Takes the place of a Spacer: `reverse` pins the group to the right
           // edge exactly as one would, but scrolls instead of overflowing when

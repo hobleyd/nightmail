@@ -487,9 +487,7 @@ class DetectCommitments {
     final due = _dueFrom(response.answers['due']);
     final urgency = _urgencyFrom(response.answers['urgency']);
     final estimatedMinutes = minutesFrom(response.answers['effort']);
-    final counterpart = outgoing
-        ? _counterpartForSent(email, selfAddresses)
-        : email.from;
+    final counterpart = counterpartFor(email, selfAddresses, outgoing: outgoing);
 
     Commitment make(CommitmentKind kind, double confidence) => Commitment(
           id: Commitment.idFor(kind, email.id),
@@ -500,7 +498,7 @@ class DetectCommitments {
           status: CommitmentStatus.open,
           counterpart: counterpart,
           subject: email.subject,
-          snippet: _snippet(email),
+          snippet: snippetFor(email),
           due: due,
           urgency: urgency,
           confidence: confidence,
@@ -547,12 +545,16 @@ class DetectCommitments {
     return score.round().clamp(0, 2);
   }
 
-  /// For a sent message: the first recipient who is not the account holder
-  /// (To before Cc), falling back to the sender so the row still has a name.
-  static EmailAddress _counterpartForSent(
+  /// The other party on a commitment raised by [email]: its sender for a
+  /// received message; for a sent one the first recipient who is not the
+  /// account holder (To before Cc), falling back to the sender so the row
+  /// still has a name. Shared with `TrackCommitment`.
+  static EmailAddress counterpartFor(
     Email email,
-    Set<String> selfAddresses,
-  ) {
+    Set<String> selfAddresses, {
+    required bool outgoing,
+  }) {
+    if (!outgoing) return email.from;
     for (final list in [email.toRecipients, email.ccRecipients]) {
       for (final a in list) {
         if (!selfAddresses.contains(a.address.toLowerCase())) return a;
@@ -561,7 +563,9 @@ class DetectCommitments {
     return email.from;
   }
 
-  static String _snippet(Email email) {
+  /// The row's reminder of what was said: the body excerpt on one line,
+  /// capped at 160 characters.
+  static String snippetFor(Email email) {
     final text = bodyExcerpt(email).replaceAll(RegExp(r'\s+'), ' ').trim();
     return text.length <= 160 ? text : '${text.substring(0, 157)}…';
   }
@@ -611,8 +615,12 @@ class DetectCommitments {
   // Helpers
   // ---------------------------------------------------------------------------
 
+  /// Whether the account holder wrote [email].
+  static bool isFromSelf(Email email, Set<String> selfAddresses) =>
+      selfAddresses.contains(email.from.address.trim().toLowerCase());
+
   static bool _isFromSelf(Email email, Set<String> selfAddresses) =>
-      selfAddresses.contains(email.from.address.toLowerCase());
+      isFromSelf(email, selfAddresses);
 
   static DateTime _dateOf(Email email) =>
       email.sentDateTime ?? email.receivedDateTime;

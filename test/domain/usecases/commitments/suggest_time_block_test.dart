@@ -152,6 +152,26 @@ void main() {
       expect(s.events.map((e) => e.subject), ['Tue am', 'Wed', 'Fri all day']);
     });
 
+    test('with no length given the block is as long as the model\'s estimate, '
+        'else an hour', () {
+      expect(SuggestTimeBlock.durationFor(commitment()), const Duration(hours: 1));
+      final sized = commitment().copyWith(estimatedMinutes: 120);
+      expect(SuggestTimeBlock.durationFor(sized), const Duration(hours: 2));
+
+      final s = suggest(commitment: sized, events: events, now: tue);
+      expect(s.start, at(thu, 9));
+      expect(s.end, at(thu, 11));
+
+      // A quarter-hour estimate still starts on the slot grid.
+      final quick = suggest(
+        commitment: commitment().copyWith(estimatedMinutes: 15),
+        events: events,
+        now: tue,
+      );
+      expect(quick.end.difference(quick.start), const Duration(minutes: 15));
+      expect(quick.start.minute % 30, 0);
+    });
+
     test('due today → the first free slot today after now, on the slot grid',
         () {
       final s = suggest(

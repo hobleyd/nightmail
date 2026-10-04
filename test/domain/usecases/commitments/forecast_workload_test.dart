@@ -27,6 +27,7 @@ void main() {
     DateTime? scheduledEnd,
     String? eventId,
     CommitmentStatus status = CommitmentStatus.open,
+    int? estimatedMinutes,
   }) =>
       Commitment(
         id: 'iOwe:$id',
@@ -45,6 +46,7 @@ void main() {
         scheduledEventId: eventId,
         scheduledStart: scheduledStart,
         scheduledEnd: scheduledEnd,
+        estimatedMinutes: estimatedMinutes,
       );
 
   CalendarEvent meeting(String id, DateTime start, DateTime end) =>
@@ -115,6 +117,34 @@ void main() {
       expect(friday.demandMinutes, 60 + 30);
       // Closed commitments never count.
       expect(f.days.every((d) => !d.landing.any((c) => c.emailId == 'closed')), isTrue);
+    });
+
+    test('an unscheduled commitment counts at its own estimate, an hour when '
+        'it has none, and a move is as long as the estimate', () {
+      final f = forecast(
+        commitments: [
+          commitment(id: 'quick', due: CommitmentDue.thisWeek, estimatedMinutes: 15),
+          commitment(id: 'big', due: CommitmentDue.thisWeek, estimatedMinutes: 240),
+          commitment(id: 'unsized', due: CommitmentDue.thisWeek),
+        ],
+        // Friday: 9–16 busy → 60 min of capacity against 315 of demand.
+        events: [meeting('m', at(fri, 9), at(fri, 16))],
+        taskDueDates: const [],
+        now: now,
+      );
+      final friday = f.days.firstWhere((d) => d.day == fri);
+      expect(friday.unscheduledMinutes, 15 + 240 + 60);
+      expect(friday.demandMinutes, 315);
+      expect(friday.isOverloaded, isTrue);
+
+      // The rebalance moves each item at its own length.
+      final plan = f.plans.single;
+      final lengths = {
+        for (final m in plan.moves)
+          m.commitment.emailId: m.toEnd.difference(m.toStart).inMinutes,
+      };
+      expect(lengths['big'], 240);
+      expect(lengths['quick'], 15);
     });
 
     test('a day is overloaded when demand exceeds what meetings leave', () {

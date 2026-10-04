@@ -398,6 +398,10 @@ class Commitments extends Table {
   IntColumn get scheduledStartMs => integer().nullable()();
   IntColumn get scheduledEndMs => integer().nullable()();
 
+  /// The model's effort estimate for the item, in minutes (v20). Null until
+  /// a scan has asked; see `DetectCommitments.effortQuestion`.
+  IntColumn get estimatedMinutes => integer().nullable()();
+
   @override
   Set<Column> get primaryKey => {accountId, id};
 }
@@ -434,7 +438,7 @@ class AppDatabase extends _$AppDatabase
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 19;
+  int get schemaVersion => 20;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -570,6 +574,11 @@ class AppDatabase extends _$AppDatabase
             await m.addColumn(commitments, commitments.scheduledEventId);
             await m.addColumn(commitments, commitments.scheduledStartMs);
             await m.addColumn(commitments, commitments.scheduledEndMs);
+          }
+          if (from == 18 || from == 19) {
+            // Additive: the model's effort estimate. Same guard as above —
+            // a pre-v18 database created the table with this column already.
+            await m.addColumn(commitments, commitments.estimatedMinutes);
           }
         },
       );

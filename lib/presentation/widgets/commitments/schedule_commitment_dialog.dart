@@ -48,12 +48,23 @@ class ScheduleCommitmentDialog extends StatefulWidget {
   /// Window width from which the week-grid layout is used.
   static const double kWideMinWidth = 1100;
 
+  /// The lengths offered, spanning the model's effort rubric (a quarter
+  /// hour to half a day). [durationsFor] adds a stored estimate that is not
+  /// on this list so the selected chip always exists.
   static const List<Duration> durations = [
+    Duration(minutes: 15),
     Duration(minutes: 30),
     Duration(minutes: 60),
     Duration(minutes: 90),
     Duration(minutes: 120),
+    Duration(minutes: 240),
   ];
+
+  /// [durations] plus [extra] when it is not already among them, in order.
+  static List<Duration> durationsFor(Duration extra) {
+    if (durations.contains(extra)) return durations;
+    return [...durations, extra]..sort((a, b) => a.compareTo(b));
+  }
 
   /// Shows the dialog in the layout the window's width allows. Resolves to
   /// `true` when a block was scheduled.
@@ -224,26 +235,44 @@ class _ScheduleCommitmentDialogState extends State<ScheduleCommitmentDialog> {
 
   Widget _durationChips(BuildContext context) {
     final c = context.colors;
-    return Wrap(
-      spacing: 6,
+    final estimate = widget.commitment.estimate;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (final d in ScheduleCommitmentDialog.durations)
-          ChoiceChip(
-            label: Text(_durationLabel(d)),
-            selected: _duration == d,
-            onSelected: (_) => _pickDuration(d),
-            labelStyle: TextStyle(
-              fontSize: 12,
-              color: _duration == d ? AppColors.accent : c.textSecondary,
-            ),
-            selectedColor: AppColors.accent.withAlpha(28),
-            backgroundColor: c.surfaceBase,
-            side: BorderSide(
-              color: _duration == d ? AppColors.accent : c.separatorStrong,
-            ),
-            showCheckmark: false,
-            visualDensity: VisualDensity.compact,
-          ),
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          children: [
+            for (final d in ScheduleCommitmentDialog.durationsFor(_duration))
+              ChoiceChip(
+                label: Text(_durationLabel(d)),
+                selected: _duration == d,
+                onSelected: (_) => _pickDuration(d),
+                labelStyle: TextStyle(
+                  fontSize: 12,
+                  color: _duration == d ? AppColors.accent : c.textSecondary,
+                ),
+                selectedColor: AppColors.accent.withAlpha(28),
+                backgroundColor: c.surfaceBase,
+                side: BorderSide(
+                  color: _duration == d ? AppColors.accent : c.separatorStrong,
+                ),
+                showCheckmark: false,
+                visualDensity: VisualDensity.compact,
+                // Chips wrap onto two rows; the default 48 px tap target
+                // would let the first row swallow taps meant for the second.
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          estimate == null
+              ? 'No estimate from the model yet; an hour is assumed.'
+              : 'The model read this as about ${_durationLabel(estimate)} '
+                  'of work.',
+          style: TextStyle(color: c.textMuted, fontSize: 11),
+        ),
       ],
     );
   }

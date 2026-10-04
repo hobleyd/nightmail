@@ -259,7 +259,8 @@ class SuggestBlockTool implements AgentTool {
           'commitment_id': {'type': 'string'},
           'duration_minutes': {
             'type': 'integer',
-            'description': 'Length of the block (default 60).',
+            'description': 'Length of the block. Defaults to the '
+                "commitment's estimated_minutes.",
           },
         },
         'required': ['commitment_id'],
@@ -272,7 +273,7 @@ class SuggestBlockTool implements AgentTool {
   }) async {
     final c = _ctx.snapshot.byId(_asString(args['commitment_id']) ?? '');
     if (c == null) return Right(_unknownId(args['commitment_id']));
-    final minutes = (_asInt(args['duration_minutes']) ?? 60).clamp(15, 480);
+    final minutes = _blockMinutes(args, c);
     final s = _ctx.suggester(
       commitment: c,
       events: _ctx.snapshot.events,
@@ -321,7 +322,8 @@ class ScheduleBlockTool implements AgentTool {
           },
           'duration_minutes': {
             'type': 'integer',
-            'description': 'Length of the block (default 60).',
+            'description': 'Length of the block. Defaults to the '
+                "commitment's estimated_minutes.",
           },
         },
         'required': ['commitment_id', 'start'],
@@ -347,7 +349,7 @@ class ScheduleBlockTool implements AgentTool {
             'local time such as 2026-10-08T14:00.',
       }));
     }
-    final minutes = (_asInt(args['duration_minutes']) ?? 60).clamp(15, 480);
+    final minutes = _blockMinutes(args, c);
     final end = start.add(Duration(minutes: minutes));
     final wasScheduled = c.isScheduled;
     final overlaps = _ctx.suggester.conflicts(start, end, [
@@ -469,6 +471,7 @@ Map<String, dynamic> encodeCommitment(Commitment c, DateTime now) => {
       'urgency': c.urgency,
       'overdue': c.isOverdueAt(now),
       'age_days': now.difference(c.emailDate).inDays,
+      'estimated_minutes': c.estimatedMinutes,
       'scheduled': c.isScheduled
           ? {'start': _iso(c.scheduledStart!), 'end': _iso(c.scheduledEnd!)}
           : null,
@@ -599,6 +602,13 @@ String _weekday(DateTime t) => const [
       'Saturday',
       'Sunday',
     ][t.weekday - 1];
+
+/// The block length a tool call asks for, else the commitment's own
+/// estimate, else an hour — clamped to a quarter hour and a working day.
+int _blockMinutes(Map<String, dynamic> args, Commitment c) =>
+    (_asInt(args['duration_minutes']) ??
+            SuggestTimeBlock.durationFor(c).inMinutes)
+        .clamp(15, 480);
 
 String? _asString(Object? v) => v is String ? v : v?.toString();
 

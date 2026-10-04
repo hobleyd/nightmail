@@ -65,6 +65,17 @@ class CommitmentRepositoryImpl implements CommitmentRepository {
       });
 
   @override
+  Future<Either<Failure, Unit>> setEstimate({
+    required String accountId,
+    required String id,
+    required int minutes,
+  }) =>
+      _guard(() async {
+        await _local.setEstimate(accountId: accountId, id: id, minutes: minutes);
+        return unit;
+      });
+
+  @override
   Future<Either<Failure, Set<String>>> getScannedEmailIds({
     required String accountId,
   }) =>

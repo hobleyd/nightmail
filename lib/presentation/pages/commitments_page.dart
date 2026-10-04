@@ -533,6 +533,8 @@ class _ScanLine extends StatelessWidget {
         'Checked ${state.lastClassified} new '
             '${state.lastClassified == 1 ? 'email' : 'emails'}',
         if (state.remaining > 0) '${state.remaining} more to go',
+        // Which model answered: a weak local checkpoint explains a miss.
+        if (state.lastModel case final model? when model.isNotEmpty) model,
         DateFormat.jm().format(state.lastScanAt!),
       ];
       text = parts.join(' · ');
@@ -851,7 +853,11 @@ class _CommitmentRow extends StatelessWidget {
                   _ScheduledLabel(commitment: commitment)
                 else
                   Text(
-                    ageLabel(commitment.ageAt(now)),
+                    [
+                      ageLabel(commitment.ageAt(now)),
+                      if (commitment.estimate != null)
+                        effortLabel(commitment.estimate!),
+                    ].join(' · '),
                     style: TextStyle(color: c.textMuted, fontSize: 11),
                   ),
               ],
@@ -978,6 +984,14 @@ class _ScheduledLabel extends StatelessWidget {
 }
 
 /// `2 h`, `3 days`, `2 wk` — how long a commitment has been outstanding.
+/// The model's effort estimate as a short label: `~15 min`, `~1 h`, `~4 h`.
+String effortLabel(Duration estimate) {
+  final m = estimate.inMinutes;
+  if (m < 60) return '~$m min';
+  final h = m / 60;
+  return h == h.roundToDouble() ? '~${h.round()} h' : '~${h.toStringAsFixed(1)} h';
+}
+
 String ageLabel(Duration age) {
   if (age.isNegative) return 'now';
   if (age.inHours < 1) return '<1 h';
@@ -1387,18 +1401,32 @@ class _CommitmentCard extends StatelessWidget {
               const SizedBox(height: 4),
               Row(
                 children: [
-                  Text(
-                    ageLabel(commitment.ageAt(now)),
-                    style: TextStyle(color: c.textMuted, fontSize: 11),
-                  ),
-                  if (commitment.isScheduled) ...[
-                    Text(
-                      '  ·  ',
-                      style: TextStyle(color: c.textMuted, fontSize: 11),
+                  // The age/estimate text gives way first when a card is
+                  // narrow; the block label and the actions keep their size.
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            [
+                              ageLabel(commitment.ageAt(now)),
+                              if (commitment.estimate != null)
+                                effortLabel(commitment.estimate!),
+                            ].join(' · '),
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: c.textMuted, fontSize: 11),
+                          ),
+                        ),
+                        if (commitment.isScheduled) ...[
+                          Text(
+                            '  ·  ',
+                            style: TextStyle(color: c.textMuted, fontSize: 11),
+                          ),
+                          _ScheduledLabel(commitment: commitment),
+                        ],
+                      ],
                     ),
-                    _ScheduledLabel(commitment: commitment),
-                  ],
-                  const Spacer(),
+                  ),
                   IconButton(
                     icon: Icon(Icons.open_in_new_rounded,
                         size: 15, color: c.textMuted),

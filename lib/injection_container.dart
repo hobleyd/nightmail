@@ -1,7 +1,7 @@
 import 'dart:io' show Platform;
 
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb, kReleaseMode;
 import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:get_it/get_it.dart';
@@ -720,6 +720,8 @@ Future<void> configureDependencies() async {
       settingsRepository: sl<AiSettingsRepository>(),
       inferenceRepository: sl<AiInferenceRepository>(),
       commitmentRepository: sl<CommitmentRepository>(),
+      // One line per model call into diagnostics.log — ids and numbers only.
+      log: debugPrint,
     ),
   );
   sl.registerLazySingleton(

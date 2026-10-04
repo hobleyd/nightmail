@@ -183,13 +183,68 @@ void main() {
 
   // The tripwire: bumping the version without adding an `if (from < n)` branch
   // ships a schema the upgrade path never builds.
-  test('schema version is 19', () {
+  test('schema version is 20', () {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
     // v18 adds the commitments ledger tables (see
     // commitment_local_datasource_impl_test.dart for their round-trip).
-    // v19 adds the scheduled-block columns to commitments.
-    expect(db.schemaVersion, 19);
+    // v19 adds the scheduled-block columns to commitments; v20 the model's
+    // effort estimate.
+    expect(db.schemaVersion, 20);
+  });
+
+  // The additive commitments columns are guarded by `from` so that a pre-v18
+  // database — which just created the table with every column — does not
+  // add them a second time. Both paths must end in the same shape.
+  group('commitments columns', () {
+    Future<List<String>> commitmentColumns(AppDatabase db) async {
+      final rows = await db
+          .customSelect('SELECT name FROM pragma_table_info(?)',
+              variables: [Variable<String>('commitments')])
+          .get();
+      return rows.map((r) => r.read<String>('name')).toList();
+    }
+
+    test('a pre-v18 database gets the full table once', () async {
+      // The v14 fixture from setUp.
+      final db = AppDatabase.forTesting(NativeDatabase(file));
+      addTearDown(db.close);
+      expect(
+        await commitmentColumns(db),
+        containsAll(['scheduled_event_id', 'scheduled_end_ms', 'estimated_minutes']),
+      );
+    });
+
+    test('a v19 database gains estimated_minutes and keeps its rows', () async {
+      final v19File = File('${dir.path}/v19.sqlite');
+      final v19 = NativeDatabase(v19File);
+      await v19.ensureOpen(_NoMigration());
+      await v19.runCustom('''
+CREATE TABLE commitments (
+  id TEXT NOT NULL, account_id TEXT NOT NULL, email_id TEXT NOT NULL,
+  conversation_id TEXT NULL, kind TEXT NOT NULL, status TEXT NOT NULL,
+  due TEXT NOT NULL, urgency INTEGER NOT NULL, confidence REAL NOT NULL,
+  email_date_ms INTEGER NOT NULL, detected_at_ms INTEGER NOT NULL,
+  resolved_at_ms INTEGER NULL, encrypted_data TEXT NOT NULL,
+  scheduled_event_id TEXT NULL, scheduled_start_ms INTEGER NULL,
+  scheduled_end_ms INTEGER NULL,
+  PRIMARY KEY (account_id, id)
+)''', const []);
+      await v19.runCustom(
+        "INSERT INTO commitments VALUES ('iOwe:e1', 'acc', 'e1', NULL, 'iOwe', "
+        "'open', 'today', 2, 0.9, 1000, 1000, NULL, '{}', NULL, NULL, NULL)",
+        const [],
+      );
+      await v19.runCustom('PRAGMA user_version = 19', const []);
+      await v19.close();
+
+      final db = AppDatabase.forTesting(NativeDatabase(v19File));
+      addTearDown(db.close);
+      expect(await commitmentColumns(db), contains('estimated_minutes'));
+      final row = (await db.select(db.commitments).get()).single;
+      expect(row.id, 'iOwe:e1');
+      expect(row.estimatedMinutes, isNull);
+    });
   });
 }
 

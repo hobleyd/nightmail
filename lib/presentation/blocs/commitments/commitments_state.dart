@@ -21,6 +21,7 @@ class CommitmentsState extends Equatable {
     this.inboxScanned = 0,
     this.lastScanAt,
     this.lastClassified = 0,
+    this.lastModel,
     this.remaining = 0,
     this.message,
     this.needsTriageRoute = false,
@@ -49,6 +50,11 @@ class CommitmentsState extends Equatable {
 
   /// Messages shown to the model on the last scan.
   final int lastClassified;
+
+  /// The model that answered on the last scan, as the provider named it —
+  /// shown in the status line so a weak local checkpoint is visible as the
+  /// reason a request slipped through. Null when the scan asked nothing.
+  final String? lastModel;
 
   /// Unscanned messages still waiting for a later scan.
   final int remaining;
@@ -116,6 +122,7 @@ class CommitmentsState extends Equatable {
     int? inboxScanned,
     DateTime? lastScanAt,
     int? lastClassified,
+    Object? lastModel = _unset,
     int? remaining,
     Object? message = _unset,
     bool? needsTriageRoute,
@@ -130,6 +137,7 @@ class CommitmentsState extends Equatable {
       inboxScanned: inboxScanned ?? this.inboxScanned,
       lastScanAt: lastScanAt ?? this.lastScanAt,
       lastClassified: lastClassified ?? this.lastClassified,
+      lastModel: lastModel == _unset ? this.lastModel : lastModel as String?,
       remaining: remaining ?? this.remaining,
       message: message == _unset ? this.message : message as String?,
       needsTriageRoute: needsTriageRoute ?? this.needsTriageRoute,
@@ -147,6 +155,7 @@ class CommitmentsState extends Equatable {
         inboxScanned,
         lastScanAt,
         lastClassified,
+        lastModel,
         remaining,
         message,
         needsTriageRoute,

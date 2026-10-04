@@ -43,6 +43,32 @@ Sent + Inbox cache ─► DetectCommitments ─► System One model (Triage rout
   newsletter / notification veto, and the same due and urgency questions.
   A noul answer counts at ≥ 0.6. The due choice is coarse **on purpose**: a
   System One model picks an option, it cannot write a date.
+* **Effort.** Both sets also ask a five-level score — *a few minutes* /
+  *half an hour* / *an hour* / *a couple of hours* / *half a day or more*
+  (`DetectCommitments.effortQuestion`, `effortMinutes` = 15/30/60/120/240).
+  The nearest level becomes `Commitment.estimatedMinutes`, and that is the
+  one number every default is sized by: the proposed block, the forecast's
+  demand, a rebalance move, filling a freed slot, and the agent tools'
+  `duration_minutes`. Open rows that predate the question are filled in by
+  an **estimate pass** at the end of each scan (`maxToEstimate` = 20, one
+  request each, from the cached message when it is still in the recent
+  mail, else from the row's subject and excerpt). An hour is the fallback
+  wherever there is no estimate.
+* **Every model call is logged** through `DetectCommitments.log`
+  (`debugPrint` → `~/.nightmail/diagnostics.log`): the model that answered,
+  `in`/`out`/`estimate`, the message id and the raw numbers, never text —
+  `[Commitments] jev-1.13.0 in 1a1090ff97…: needs_action=0.15 commits=0.25
+  bulk=0.02 due=none urgency=1.24 effort=1.40 → none`. The pane's status
+  line names the model too. **Read these before touching the questions or
+  the threshold.** The October 2026 "Jesse's request wasn't picked up" report
+  was the local `laya-mlx` 322M checkpoint: replaying the exact questions
+  through the bridge gave `needs_action` 0.12–0.24 for unmistakable requests
+  ("could you approve it in Xero today?") and `commits` 0.74 for a message
+  that promised nothing — its noul answers carry no signal on this task,
+  while Jev's (the 2 Oct scans) sat at 0.62–0.93. Only its score answers
+  separate anything, which is why effort is a score. Lowering the threshold
+  would not have rescued it and would flood Jev with false positives; the
+  fix is the Triage route, or a stronger local checkpoint.
 
 ## The ledger
 
@@ -119,7 +145,8 @@ calendar event for the commitment, chosen by `SuggestTimeBlock` (pure, under
 * **Load** is busy minutes inside the working window (9–17), overlapping
   meetings merged; free and all-day events do not count.
 * **Least load wins, earliest day on a tie**, then the first run of the
-  requested length (default 1 h, on a 30-minute grid, after now) that no
+  requested length (default: the commitment's effort estimate, else 1 h; on
+  a 30-minute grid, after now) that no
   meeting overlaps. If the lightest day has no gap the next lightest is
   tried; if nothing fits anywhere the block opens the lightest day flagged
   `hasConflict`.
@@ -160,8 +187,9 @@ two-week calendar read that feeds Today, so it costs no extra I/O.
 * **Per day** (today and the next working days, five in all): *capacity* is
   the working window minus meetings — where the user's own commitment
   blocks are **not** meetings, they are demand already placed — and
-  *demand* is blocked time plus 60 min per unscheduled commitment landing
-  that day plus 30 min per task due. A commitment lands on its block's day
+  *demand* is blocked time plus each unscheduled commitment landing that
+  day at its own `estimatedMinutes` (60 when the model has not sized it)
+  plus 30 min per task due. A commitment lands on its block's day
   if it has one; otherwise today when due today or overdue, the week's last
   working day when due this week, nowhere when open-ended. **Overloaded**
   means demand exceeds capacity; *tight* means more than three quarters
@@ -180,7 +208,7 @@ two-week calendar read that feeds Today, so it costs no extra I/O.
   overlapped it at the previous forecast and is gone now — the cubit keeps
   the previous calendar snapshot for this, and `_freedSlotStarts` keeps the
   label on the slot across refreshes until it is filled or has passed.
-  `fillSlot` books an hour (or the whole gap if shorter).
+  `fillSlot` books the commitment's estimate (or the whole gap if shorter).
 
 `WorkloadStrip` shows it: in the side pane a "Week ahead" box with a
 pressure cell per day, a warning row per overloaded day with **Rebalance**,

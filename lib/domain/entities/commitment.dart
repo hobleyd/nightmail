@@ -52,6 +52,7 @@ class Commitment extends Equatable {
     this.scheduledEventId,
     this.scheduledStart,
     this.scheduledEnd,
+    this.estimatedMinutes,
   });
 
   /// `'<kind>:<emailId>'`.
@@ -100,9 +101,23 @@ class Commitment extends Equatable {
   final DateTime? scheduledStart;
   final DateTime? scheduledEnd;
 
+  /// The model's reading of how much focused time the item needs, in
+  /// minutes, on the rubric in `DetectCommitments.effortQuestion` (a quick
+  /// reply up to half a day). Null until estimated — a row written before
+  /// the estimate existed is filled in by the next scan.
+  final int? estimatedMinutes;
+
   bool get isOpen => status == CommitmentStatus.open;
 
   bool get isScheduled => scheduledEventId != null && scheduledStart != null;
+
+  /// The estimate as a duration, or null when there is none yet.
+  Duration? get estimate =>
+      estimatedMinutes == null ? null : Duration(minutes: estimatedMinutes!);
+
+  /// The estimate, or [fallback] when the model has not given one — what
+  /// every time-block default should size itself by.
+  Duration estimateOr(Duration fallback) => estimate ?? fallback;
 
   /// How long this has been outstanding.
   Duration ageAt(DateTime now) => now.difference(emailDate);
@@ -139,6 +154,7 @@ class Commitment extends Equatable {
     DateTime? scheduledStart,
     DateTime? scheduledEnd,
     bool clearSchedule = false,
+    int? estimatedMinutes,
   }) {
     return Commitment(
       id: id,
@@ -161,6 +177,7 @@ class Commitment extends Equatable {
       scheduledStart:
           clearSchedule ? null : (scheduledStart ?? this.scheduledStart),
       scheduledEnd: clearSchedule ? null : (scheduledEnd ?? this.scheduledEnd),
+      estimatedMinutes: estimatedMinutes ?? this.estimatedMinutes,
     );
   }
 
@@ -184,5 +201,6 @@ class Commitment extends Equatable {
         scheduledEventId,
         scheduledStart,
         scheduledEnd,
+        estimatedMinutes,
       ];
 }

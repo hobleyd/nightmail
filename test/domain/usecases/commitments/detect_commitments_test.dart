@@ -30,6 +30,9 @@ void main() {
   /// so the resolution pass sees what the scan just wrote.
   late List<Commitment> saved;
 
+  /// Diagnostic lines the use case emitted.
+  late List<String> logged;
+
   const me = 'me@example.com';
   const account = 'acc-1';
   final now = DateTime(2026, 10, 2, 9);
@@ -68,10 +71,16 @@ void main() {
     double bulk = 0,
     String due = 'none',
     double urgency = 0,
+    double? effort = 2, // "about an hour"
   }) {
     return AiDecisionResponse(
       model: 'jev-1.13.0',
       answers: {
+        if (effort != null)
+          'effort': AiDecisionAnswer(
+            type: AiDecisionQuestionType.score,
+            score: effort,
+          ),
         'commits': AiDecisionAnswer(
           type: AiDecisionQuestionType.noul,
           probability: commits,
@@ -165,11 +174,18 @@ void main() {
       status: anyNamed('status'),
       now: anyNamed('now'),
     )).thenAnswer((_) async => Right(unit));
+    when(ledger.setEstimate(
+      accountId: anyNamed('accountId'),
+      id: anyNamed('id'),
+      minutes: anyNamed('minutes'),
+    )).thenAnswer((_) async => Right(unit));
 
+    logged = [];
     detect = DetectCommitments(
       settingsRepository: settings,
       inferenceRepository: inference,
       commitmentRepository: ledger,
+      log: logged.add,
     );
   });
 
@@ -240,6 +256,8 @@ void main() {
       expect(c.conversationId, 'conv-1');
       expect(c.emailDate, sent.sentDateTime);
       expect(c.detectedAt, now);
+      expect(c.estimatedMinutes, 60); // effort 2 = "about an hour"
+      expect(r.model, 'jev-1.13.0');
 
       // The model saw the newest reply only, as structured state.
       final request =
@@ -252,7 +270,15 @@ void main() {
       expect(state['to'], contains('sarah@client.com'));
       expect(state['body'], "Hi Sarah,\n\nI'll send the migration numbers today.");
       expect(request.questions.keys,
-          containsAll(['commits', 'requests', 'due', 'urgency']));
+          containsAll(['commits', 'requests', 'due', 'urgency', 'effort']));
+
+      // One diagnostic line: model, direction, id, raw numbers, outcome — and
+      // nothing the message said.
+      expect(logged, hasLength(1));
+      expect(logged.single, startsWith('[Commitments] jev-1.13.0 out s1: '));
+      expect(logged.single, contains('commits=0.91 requests=0.20 due=today '
+          'urgency=1.60 effort=2.00 → iOwe'));
+      expect(logged.single, isNot(contains('migration')));
 
       verify(ledger.markScanned(
         accountId: account,
@@ -464,6 +490,7 @@ void main() {
         confidence: 0.9,
         emailDate: emailDate,
         detectedAt: emailDate,
+        estimatedMinutes: 60, // already sized: nothing for the estimate pass
       );
     }
 
@@ -568,6 +595,142 @@ void main() {
         status: anyNamed('status'),
         now: anyNamed('now'),
       ));
+    });
+  });
+
+  group('effort estimates', () {
+    Commitment unsized({
+      required CommitmentKind kind,
+      required String emailId,
+      String subject = 's',
+      String snippet = '',
+      CommitmentStatus status = CommitmentStatus.open,
+    }) {
+      return Commitment(
+        id: Commitment.idFor(kind, emailId),
+        accountId: account,
+        emailId: emailId,
+        kind: kind,
+        status: status,
+        counterpart: const EmailAddress(address: 'sarah@client.com'),
+        subject: subject,
+        snippet: snippet,
+        due: CommitmentDue.none,
+        urgency: 0,
+        confidence: 0.9,
+        emailDate: now.subtract(const Duration(days: 3)),
+        detectedAt: now.subtract(const Duration(days: 3)),
+      );
+    }
+
+    test('the nearest rubric level becomes minutes; no score, no estimate', () {
+      final e = email(id: 'x', from: me, to: ['a@x.com'], date: now);
+      int? minutes(double? effort) => DetectCommitments.commitmentsFrom(
+            e,
+            answers(commits: 0.9, effort: effort),
+            outgoing: true,
+            accountId: account,
+            selfAddresses: const {me},
+            now: now,
+          ).single.estimatedMinutes;
+
+      expect(minutes(0.4), 15);
+      expect(minutes(1.2), 30);
+      expect(minutes(2.0), 60);
+      expect(minutes(2.6), 120);
+      expect(minutes(3.6), 240);
+      expect(minutes(9), 240); // clamped to the top level
+      expect(minutes(null), isNull);
+    });
+
+    test('the estimate pass sizes older open rows — from the cached message '
+        'when it is on hand, else from the row itself', () async {
+      // s1's message is still in the recent Sent mail; i9's is long gone.
+      saved.add(unsized(kind: CommitmentKind.iOwe, emailId: 's1', subject: 'Numbers'));
+      saved.add(unsized(
+        kind: CommitmentKind.needsAction,
+        emailId: 'i9',
+        subject: 'Old request',
+        snippet: 'Can you review the contract?',
+      ));
+      // A done row and an already-sized row are left alone.
+      saved.add(unsized(
+        kind: CommitmentKind.theyOweMe,
+        emailId: 'i8',
+        subject: 'Closed',
+        status: CommitmentStatus.done,
+      ));
+      saved.add(unsized(kind: CommitmentKind.iOwe, emailId: 's7', subject: 'Sized')
+          .copyWith(estimatedMinutes: 30));
+      when(ledger.getScannedEmailIds(accountId: anyNamed('accountId')))
+          .thenAnswer((_) async => const Right({'s1'}));
+      final s1 = email(
+        id: 's1',
+        from: me,
+        to: ['sarah@client.com'],
+        subject: 'Numbers',
+        body: "I'll pull the full year's numbers together.",
+        date: now.subtract(const Duration(days: 3)),
+      );
+      final requests = <AiDecisionRequest>[];
+      when(inference.decide(any)).thenAnswer((inv) async {
+        final request = inv.positionalArguments.first as AiDecisionRequest;
+        requests.add(request);
+        final subject = (request.state as Map)['subject'];
+        return Right(answers(effort: subject == 'Numbers' ? 3.2 : 0.1));
+      });
+
+      final r = (await detect(params(sent: [s1]))).getOrElse((f) => fail('$f'));
+
+      // Only the effort question, once per unsized open row.
+      expect(requests, hasLength(2));
+      expect(requests.every((q) => q.questions.keys.single == 'effort'), isTrue);
+      final fromMail = requests[0].state as Map<String, Object?>;
+      expect(fromMail['direction'], contains('sent'));
+      expect(fromMail['body'], "I'll pull the full year's numbers together.");
+      final fromRow = requests[1].state as Map<String, Object?>;
+      expect(fromRow['kind'], contains('request'));
+      expect(fromRow['subject'], 'Old request');
+      expect(fromRow['body'], 'Can you review the contract?');
+
+      verify(ledger.setEstimate(accountId: account, id: 'iOwe:s1', minutes: 120))
+          .called(1);
+      verify(ledger.setEstimate(accountId: account, id: 'needsAction:i9', minutes: 15))
+          .called(1);
+      verifyNever(ledger.setEstimate(
+        accountId: anyNamed('accountId'),
+        id: argThat(anyOf('theyOweMe:i8', 'iOwe:s7'), named: 'id'),
+        minutes: anyNamed('minutes'),
+      ));
+      expect(r.estimated, 2);
+      expect(r.classified, 0);
+      expect(r.commitments.firstWhere((c) => c.id == 'iOwe:s1').estimatedMinutes, 120);
+      expect(r.commitments.firstWhere((c) => c.id == 'needsAction:i9').estimatedMinutes, 15);
+      expect(r.commitments.firstWhere((c) => c.id == 'iOwe:s7').estimatedMinutes, 30);
+      expect(logged.where((l) => l.contains(' estimate ')), hasLength(2));
+      expect(logged.first, contains('effort=3.20 → 120 min'));
+    });
+
+    test('the estimate pass is capped per run and skipped after a failure',
+        () async {
+      for (var i = 0; i < DetectCommitments.maxToEstimate + 5; i++) {
+        saved.add(unsized(kind: CommitmentKind.iOwe, emailId: 'e$i'));
+      }
+      when(inference.decide(any)).thenAnswer((_) async => Right(answers(effort: 1)));
+
+      var r = (await detect(params())).getOrElse((f) => fail('$f'));
+      expect(r.estimated, DetectCommitments.maxToEstimate);
+      verify(inference.decide(any)).called(DetectCommitments.maxToEstimate);
+
+      // A scan whose classification failed does not go on to estimate.
+      clearInteractions(inference);
+      when(inference.decide(any)).thenAnswer(
+        (_) async => const Left(ProviderUnreachable(message: 'down')),
+      );
+      final unscanned = email(id: 'n1', from: me, to: ['a@x.com'], date: now);
+      final result = await detect(params(sent: [unscanned]));
+      expect(result.isLeft(), isTrue);
+      verify(inference.decide(any)).called(1);
     });
   });
 

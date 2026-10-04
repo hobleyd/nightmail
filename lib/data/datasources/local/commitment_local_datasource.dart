@@ -39,6 +39,13 @@ abstract interface class CommitmentLocalDatasource {
     required DateTime end,
   });
 
+  /// Records the model's effort estimate for a commitment, in minutes.
+  Future<void> setEstimate({
+    required String accountId,
+    required String id,
+    required int minutes,
+  });
+
   Future<Set<String>> getScannedEmailIds(String accountId);
 
   Future<void> markScanned({
@@ -92,6 +99,8 @@ class CommitmentLocalDatasourceImpl implements CommitmentLocalDatasource {
             c.scheduledStart?.millisecondsSinceEpoch;
         final scheduledEndMs =
             existing?.scheduledEndMs ?? c.scheduledEnd?.millisecondsSinceEpoch;
+        // A fresh estimate wins; a re-detection without one keeps the old.
+        final estimatedMinutes = c.estimatedMinutes ?? existing?.estimatedMinutes;
         await _db.into(_db.commitments).insertOnConflictUpdate(
               CommitmentsCompanion(
                 id: Value(c.id),
@@ -109,6 +118,7 @@ class CommitmentLocalDatasourceImpl implements CommitmentLocalDatasource {
                 scheduledEventId: Value(scheduledEventId),
                 scheduledStartMs: Value(scheduledStartMs),
                 scheduledEndMs: Value(scheduledEndMs),
+                estimatedMinutes: Value(estimatedMinutes),
                 encryptedData: Value(await _encryption.encrypt(jsonEncode({
                   'subject': c.subject,
                   'snippet': c.snippet,
@@ -157,6 +167,17 @@ class CommitmentLocalDatasourceImpl implements CommitmentLocalDatasource {
         scheduledEndMs: Value(end.millisecondsSinceEpoch),
       ),
     );
+  }
+
+  @override
+  Future<void> setEstimate({
+    required String accountId,
+    required String id,
+    required int minutes,
+  }) async {
+    await (_db.update(_db.commitments)
+          ..where((t) => t.accountId.equals(accountId) & t.id.equals(id)))
+        .write(CommitmentsCompanion(estimatedMinutes: Value(minutes)));
   }
 
   @override
@@ -242,6 +263,7 @@ class CommitmentLocalDatasourceImpl implements CommitmentLocalDatasource {
       scheduledEnd: row.scheduledEndMs == null
           ? null
           : DateTime.fromMillisecondsSinceEpoch(row.scheduledEndMs!),
+      estimatedMinutes: row.estimatedMinutes,
     );
   }
 }

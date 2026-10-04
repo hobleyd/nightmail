@@ -140,6 +140,7 @@ Settings → Accounts.
 - Each message is read by the model once; new mail is checked after every poll cycle
 - Double-click the Commitments button to open it in its own screen-sized window, where the four sections become a side-by-side board of cards, each with the excerpt of what was said; a card opens its message in an email window
 - Schedule time for a commitment: a block is proposed on the lightest working day in its horizon at the first free slot, movable before booking — a day list with load bars in the pane, a week grid with meetings drawn to scale in the window — then booked as a real calendar event; scheduling again moves the same event
+- Each commitment carries the model's effort estimate (a quick reply up to half a day), shown on its row and used to size its proposed block, its share of the week-ahead load and the assistant's defaults instead of a flat hour; the scan status line names the model that answered
 - Week-ahead forecast ("Future Me"): each coming day's meetings, blocked time, commitments and tasks landing, with overloaded days flagged and a Rebalance plan that moves the least urgent items to lighter days their deadline allows
 - A gap a cancelled meeting leaves in today is flagged as just freed, paired with the most pressing unscheduled commitment, and filled with one click
 - Natural-language control: tell the assistant what to change ("Move everything non-urgent to Friday and give me 2 hours for the AWS work") and it books, moves and closes through the same actions, showing each step and reporting what changed

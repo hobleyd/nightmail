@@ -212,6 +212,7 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
           message: r.warning,
           lastScanAt: _now(),
           lastClassified: r.classified,
+          lastModel: r.model,
           remaining: r.remaining,
           todayEvents: ctx.events,
           tasksDueToday: ctx.tasksDue,
@@ -263,10 +264,11 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
   /// Proposes a time block for [commitment] from the cached calendar: the
   /// lightest working day in its horizon and the first free run on it (see
   /// `SuggestTimeBlock`). Also returns the days and meetings it considered so
-  /// the picker can show them and let the user move the block.
+  /// the picker can show them and let the user move the block. [duration]
+  /// defaults to the model's effort estimate for the commitment.
   Future<TimeBlockSuggestion> suggestTimeBlock(
     Commitment commitment, {
-    Duration duration = SuggestTimeBlock.defaultDuration,
+    Duration? duration,
   }) async {
     final now = _now();
     final start = DateTime(now.year, now.month, now.day);
@@ -351,14 +353,13 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
     return applied;
   }
 
-  /// Puts the slot's suggested commitment into the gap: an hour when the gap
-  /// has one, otherwise the whole gap.
+  /// Puts the slot's suggested commitment into the gap: its estimated length
+  /// when the gap has that much, otherwise the whole gap.
   Future<bool> fillSlot(OpenSlot slot) async {
     final target = slot.suggestion;
     if (target == null) return false;
-    final length = slot.length >= const Duration(hours: 1)
-        ? const Duration(hours: 1)
-        : slot.length;
+    final wanted = SuggestTimeBlock.durationFor(target);
+    final length = slot.length >= wanted ? wanted : slot.length;
     return schedule(target, start: slot.start, end: slot.start.add(length));
   }
 

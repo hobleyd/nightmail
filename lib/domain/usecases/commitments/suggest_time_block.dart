@@ -39,14 +39,22 @@ class SuggestTimeBlock {
   /// Granularity a block may start on.
   final int slotMinutes;
 
+  /// Block length for a commitment the model has not sized.
   static const Duration defaultDuration = Duration(minutes: 60);
 
+  /// How long a block for [commitment] should be when nobody says otherwise:
+  /// the model's effort estimate, else [defaultDuration].
+  static Duration durationFor(Commitment commitment) =>
+      commitment.estimateOr(defaultDuration);
+
+  /// [duration] defaults to [durationFor] the commitment.
   TimeBlockSuggestion call({
     required Commitment commitment,
     required List<CalendarEvent> events,
     required DateTime now,
-    Duration duration = defaultDuration,
+    Duration? duration,
   }) {
+    duration ??= durationFor(commitment);
     final days = candidateDays(commitment: commitment, now: now);
     final loads = [for (final d in days) loadFor(d, events)];
 

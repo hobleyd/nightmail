@@ -189,7 +189,7 @@ class ForecastWorkload {
       if (excess <= 0) break;
       final length = c.isScheduled
           ? c.scheduledEnd!.difference(c.scheduledStart!)
-          : Duration(minutes: minutesPerCommitment);
+          : c.estimateOr(Duration(minutes: minutesPerCommitment));
       final deadline = _deadlineDay(c, now, all.map((d) => d.day).toList());
 
       // Freest day first; on a tie the earlier day, so the choice is stable

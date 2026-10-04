@@ -64,8 +64,13 @@ void main() {
     WidgetTester tester, {
     required bool wide,
     bool accept = true,
+    Commitment? forCommitment,
   }) async {
     final h = _Harness();
+    final c = forCommitment ?? commitment;
+    final s = forCommitment == null
+        ? suggestion
+        : suggester(commitment: c, events: events, now: now);
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -76,8 +81,8 @@ void main() {
                   h.result = await showDialog<bool>(
                     context: context,
                     builder: (_) => ScheduleCommitmentDialog(
-                      commitment: commitment,
-                      suggestion: suggestion,
+                      commitment: c,
+                      suggestion: s,
                       suggester: suggester,
                       wide: wide,
                       now: () => now,
@@ -114,6 +119,11 @@ void main() {
       expect(find.textContaining('Tue 6 Oct'), findsOneWidget);
       expect(find.text('3 h busy'), findsOneWidget);
       expect(find.text('clear'), findsNWidgets(2)); // Thursday, Friday
+      // Lengths span the effort rubric; this commitment has no estimate.
+      expect(find.text('15 min'), findsOneWidget);
+      expect(find.text('4 h'), findsOneWidget);
+      expect(find.text('No estimate from the model yet; an hour is assumed.'),
+          findsOneWidget);
 
       await tester.tap(find.text('Schedule'));
       await tester.pumpAndSettle();
@@ -121,6 +131,21 @@ void main() {
       expect(h.calls, [(at(thu, 9), at(thu, 10))]);
       expect(h.result, isTrue);
       expect(find.text('Schedule time'), findsNothing);
+    });
+
+    testWidgets('opens on the model\'s estimate and says so', (tester) async {
+      final h = await pump(
+        tester,
+        wide: false,
+        forCommitment: commitment.copyWith(estimatedMinutes: 120),
+      );
+
+      expect(find.text('Thursday 8 October · ${range(at(thu, 9), at(thu, 11))}'), findsOneWidget);
+      expect(find.text('The model read this as about 2 h of work.'), findsOneWidget);
+
+      await tester.tap(find.text('Schedule'));
+      await tester.pumpAndSettle();
+      expect(h.calls, [(at(thu, 9), at(thu, 11))]);
     });
 
     testWidgets('picking another day moves the block to its first free slot',
@@ -132,7 +157,10 @@ void main() {
       // Wednesday is free at 9:00 (the review is at 10).
       expect(find.text('Wednesday 7 October · ${range(at(wed, 9), at(wed, 10))}'), findsOneWidget);
 
-      // A longer block from 9:00 now runs into the 10:00 review.
+      // A longer block from 9:00 now runs into the 10:00 review. The length
+      // chips sit under the day list, below the fold on a short window.
+      await tester.ensureVisible(find.text('1.5 h'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('1.5 h'));
       await tester.pumpAndSettle();
       expect(find.text('Overlaps a meeting on your calendar.'), findsOneWidget);

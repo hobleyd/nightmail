@@ -69,6 +69,7 @@ void main() {
     required DateTime emailDate,
     CommitmentDue due = CommitmentDue.none,
     int urgency = 0,
+    int? estimatedMinutes,
   }) {
     return Commitment(
       id: Commitment.idFor(kind, emailId),
@@ -85,6 +86,7 @@ void main() {
       confidence: 0.9,
       emailDate: emailDate,
       detectedAt: now,
+      estimatedMinutes: estimatedMinutes,
     );
   }
 
@@ -99,13 +101,15 @@ void main() {
       due: CommitmentDue.today,
       urgency: 2,
     ),
-    // Asked three days ago, no stated deadline → age only.
+    // Asked three days ago, no stated deadline → age, plus the model's
+    // effort estimate.
     commitment(
       kind: CommitmentKind.theyOweMe,
       emailId: 's2',
       who: 'AWS Support',
       subject: 'Case 4471',
       emailDate: now.subtract(const Duration(days: 3)),
+      estimatedMinutes: 120,
     ),
     // Received yesterday, needed a same-day reply → overdue.
     commitment(
@@ -299,10 +303,10 @@ void main() {
     expect(find.text('AWS Support'), findsOneWidget);
 
     // Chips: a same-day promise is "Today"; a day-old same-day request is
-    // "Overdue"; an undated wait shows only its age.
+    // "Overdue"; an undated wait shows its age and the model's estimate.
     expect(find.text('Today'), findsNWidgets(2));
     expect(find.text('Overdue'), findsNWidgets(2));
-    expect(find.text('3 days'), findsOneWidget);
+    expect(find.text('3 days · ~2 h'), findsOneWidget);
 
     // The decision count comes from the scan markers over the Inbox.
     expect(find.text("1 email needs action · 2 don't"), findsOneWidget);
@@ -431,6 +435,11 @@ void main() {
     expect(ageLabel(const Duration(days: 6)), '6 days');
     expect(ageLabel(const Duration(days: 20)), '2 wk');
     expect(ageLabel(const Duration(days: 90)), '3 mo');
+
+    expect(effortLabel(const Duration(minutes: 15)), '~15 min');
+    expect(effortLabel(const Duration(minutes: 60)), '~1 h');
+    expect(effortLabel(const Duration(minutes: 90)), '~1.5 h');
+    expect(effortLabel(const Duration(minutes: 240)), '~4 h');
   });
 
   testWidgets('Schedule on a row proposes a block and books it', (tester) async {

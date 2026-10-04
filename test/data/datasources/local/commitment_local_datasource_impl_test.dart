@@ -187,4 +187,24 @@ void main() {
     expect(back.scheduledEventId, 'ev-1');
     expect(back.scheduledStart, start);
   });
+
+  test('the effort estimate round-trips, can be set later, and a re-detection '
+      'without one keeps it', () async {
+    // Detected without an estimate (an older provider, say)…
+    await ds.upsertCommitments([commitment()]);
+    expect((await ds.getCommitments('acc')).single.estimatedMinutes, isNull);
+
+    // …sized by the estimate pass…
+    await ds.setEstimate(accountId: 'acc', id: 'iOwe:e1', minutes: 120);
+    expect((await ds.getCommitments('acc')).single.estimatedMinutes, 120);
+
+    // …kept through a re-detection that carries none, replaced by one that does.
+    await ds.upsertCommitments([commitment()]);
+    expect((await ds.getCommitments('acc')).single.estimatedMinutes, 120);
+    await ds.upsertCommitments([commitment().copyWith(estimatedMinutes: 30)]);
+    final back = (await ds.getCommitments('acc')).single;
+    expect(back.estimatedMinutes, 30);
+    expect(back.estimate, const Duration(minutes: 30));
+    expect(back.estimateOr(const Duration(hours: 1)), const Duration(minutes: 30));
+  });
 }

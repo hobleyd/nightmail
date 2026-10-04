@@ -330,6 +330,17 @@ void main() {
       expect(params.accountId, 'acc');
       expect(s.days.first.day, friday);
       expect(s.days.map((d) => d.day), contains(monday));
+      // No estimate on the commitment → an hour.
+      expect(s.end, DateTime(2026, 10, 5, 10));
+
+      // The model's estimate sizes the block when no length is passed.
+      final sized = await cubit.suggestTimeBlock(c.copyWith(estimatedMinutes: 120));
+      expect(sized.end, DateTime(2026, 10, 5, 11));
+      final told = await cubit.suggestTimeBlock(
+        c.copyWith(estimatedMinutes: 120),
+        duration: const Duration(minutes: 30),
+      );
+      expect(told.end, DateTime(2026, 10, 5, 9, 30));
     });
 
     test('schedule books a readable block and records it on the ledger',

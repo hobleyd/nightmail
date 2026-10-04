@@ -34,6 +34,7 @@ void main() {
     DateTime? scheduledStart,
     DateTime? scheduledEnd,
     CommitmentStatus status = CommitmentStatus.open,
+    int? estimatedMinutes,
   }) =>
       Commitment(
         id: Commitment.idFor(kind, id),
@@ -52,9 +53,11 @@ void main() {
         scheduledEventId: scheduledStart == null ? null : 'ev-$id',
         scheduledStart: scheduledStart,
         scheduledEnd: scheduledEnd,
+        estimatedMinutes: estimatedMinutes,
       );
 
-  final open = commitment(id: 'a');
+  // The model read this one as a quick reply.
+  final open = commitment(id: 'a', estimatedMinutes: 15);
   final scheduled = commitment(
     id: 'b',
     scheduledStart: at(wed, 10),
@@ -128,9 +131,11 @@ void main() {
       expect(a['overdue'], isFalse);
       expect(a['age_days'], 2);
       expect(a['scheduled'], isNull);
+      expect(a['estimated_minutes'], 15);
       final b = items.last;
       expect(b['kind'], 'needs_action');
       expect(b['scheduled'], {'start': '2026-10-07T10:00', 'end': '2026-10-07T11:00'});
+      expect(b['estimated_minutes'], isNull);
     });
 
     test('filters by kind and by scheduled state', () async {
@@ -171,7 +176,40 @@ void main() {
     });
   });
 
+  group('suggest_block', () {
+    test('sizes the block by the estimate unless told otherwise', () async {
+      final byEstimate = decode(await SuggestBlockTool(ctx).invoke({'commitment_id': open.id}));
+      expect(byEstimate['start'], '2026-10-06T09:00');
+      expect(byEstimate['end'], '2026-10-06T09:15');
+
+      final told = decode(await SuggestBlockTool(ctx).invoke({
+        'commitment_id': open.id,
+        'duration_minutes': 90,
+      }));
+      expect(told['end'], '2026-10-06T10:30');
+
+      // No estimate → an hour.
+      final unsized = decode(await SuggestBlockTool(ctx).invoke({'commitment_id': scheduled.id}));
+      expect(
+        DateTime.parse(unsized['end'] as String)
+            .difference(DateTime.parse(unsized['start'] as String)),
+        const Duration(hours: 1),
+      );
+    });
+  });
+
   group('schedule_block', () {
+    test('without a length, books the commitment\'s estimate', () async {
+      when(scheduler.call(any, start: anyNamed('start'), end: anyNamed('end')))
+          .thenAnswer((inv) async => Right(open));
+
+      await ScheduleBlockTool(ctx).invoke({
+        'commitment_id': open.id,
+        'start': '2026-10-07T11:00',
+      });
+      verify(scheduler.call(open, start: at(wed, 11), end: at(wed, 11, 15))).called(1);
+    });
+
     test('books through the scheduler and reports overlaps', () async {
       when(scheduler.call(any, start: anyNamed('start'), end: anyNamed('end')))
           .thenAnswer((inv) async {

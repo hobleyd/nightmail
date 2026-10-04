@@ -37,7 +37,8 @@ class DayForecast extends Equatable {
   /// Open tasks due this day.
   final int tasksDue;
 
-  /// Estimate for an unscheduled commitment / a task, in minutes.
+  /// Fallback estimate for an unscheduled commitment the model has not
+  /// sized, and the flat estimate per task, in minutes.
   final int minutesPerCommitment;
   final int minutesPerTask;
 
@@ -49,12 +50,20 @@ class DayForecast extends Equatable {
   List<Commitment> get unscheduledLanding =>
       [for (final c in landing) if (!c.isScheduled) c];
 
-  /// Time the day's commitments and tasks want: blocks as booked, the rest
-  /// estimated.
+  /// Time the day's commitments and tasks want: blocks as booked, each
+  /// unscheduled commitment at its own estimate (or the fallback), tasks
+  /// flat.
   int get demandMinutes =>
-      blockedMinutes +
-      unscheduledLanding.length * minutesPerCommitment +
-      tasksDue * minutesPerTask;
+      blockedMinutes + unscheduledMinutes + tasksDue * minutesPerTask;
+
+  /// What the unscheduled commitments landing here would take.
+  int get unscheduledMinutes {
+    var total = 0;
+    for (final c in unscheduledLanding) {
+      total += c.estimatedMinutes ?? minutesPerCommitment;
+    }
+    return total;
+  }
 
   /// Capacity left after demand; negative when overloaded.
   int get freeMinutes => capacityMinutes - demandMinutes;

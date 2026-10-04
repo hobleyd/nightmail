@@ -31,6 +31,15 @@ import '../../repositories/commitment_repository.dart';
 /// cannot be mistaken for the sender's own words — and so it fits the ~512
 /// token window of the smaller local Laya checkpoints.
 ///
+/// Every message is also asked **how much focused time** the item needs, on
+/// the five-level [effortQuestion] rubric (a quick reply up to half a day),
+/// and the level becomes [Commitment.estimatedMinutes] — what sizes its
+/// time block, its share of the week-ahead demand and the assistant's
+/// defaults. Open rows written before the question existed are filled in by
+/// an **estimate pass** at the end of each run, [maxToEstimate] at a time,
+/// from the cached message when it is still on hand and from the row's own
+/// subject and excerpt otherwise.
+///
 /// After detection a **resolution pass** closes what the mail itself has
 /// settled, with no model involved: a *they owe me* whose counterpart has
 /// since replied in the same thread, and a *needs action* I have since
@@ -41,22 +50,35 @@ import '../../repositories/commitment_repository.dart';
 /// Triage has no route). A provider failure *mid-scan* keeps what was
 /// classified before it and reports the failure as [DetectCommitmentsResult.warning],
 /// so a flaky local server costs a partial refresh, not the whole one.
+///
+/// Every model call is reported through [log] as one line — the model that
+/// answered, the direction, the message id and the raw answers — so a miss
+/// can be read off `diagnostics.log` rather than guessed at. Message text
+/// never goes in the line.
 class DetectCommitments {
   const DetectCommitments({
     required this.settingsRepository,
     required this.inferenceRepository,
     required this.commitmentRepository,
+    this.log,
   });
 
   final AiSettingsRepository settingsRepository;
   final AiInferenceRepository inferenceRepository;
   final CommitmentRepository commitmentRepository;
 
+  /// Receives one diagnostic line per model call (`debugPrint` in the app).
+  final void Function(String line)? log;
+
   /// A noul answer at or above this counts as "yes".
   static const double threshold = 0.6;
 
   /// Longest body excerpt shown to the model, in characters.
   static const int maxBodyChars = 1500;
+
+  /// Most open commitments given a missing estimate per run — each is one
+  /// request, like a classification.
+  static const int maxToEstimate = 20;
 
   Future<Either<Failure, DetectCommitmentsResult>> call(
     DetectCommitmentsParams params,
@@ -100,6 +122,7 @@ class DetectCommitments {
     final detected = <Commitment>[];
     final classifiedIds = <String>[];
     Failure? failure;
+    String? model;
 
     for (final candidate in toClassify) {
       final request = AiDecisionRequest(
@@ -112,20 +135,28 @@ class DetectCommitments {
       final stop = result.fold(
         (f) {
           failure = f;
+          log?.call('[Commitments] ${routing.modelId} '
+              '${candidate.outgoing ? 'out' : 'in'} '
+              '${_shortId(candidate.email.id)}: failed: ${f.message}');
           return true;
         },
         (response) {
-          detected.addAll(
-            commitmentsFrom(
-              candidate.email,
-              response,
-              outgoing: candidate.outgoing,
-              accountId: params.accountId,
-              selfAddresses: params.selfAddresses,
-              now: params.now,
-            ),
+          model = response.model;
+          final found = commitmentsFrom(
+            candidate.email,
+            response,
+            outgoing: candidate.outgoing,
+            accountId: params.accountId,
+            selfAddresses: params.selfAddresses,
+            now: params.now,
           );
+          detected.addAll(found);
           classifiedIds.add(candidate.email.id);
+          log?.call('[Commitments] ${response.model} '
+              '${candidate.outgoing ? 'out' : 'in'} '
+              '${_shortId(candidate.email.id)}: '
+              '${describeAnswers(response, outgoing: candidate.outgoing)} → '
+              '${found.isEmpty ? 'none' : found.map((c) => c.kind.name).join('+')}');
           return false;
         },
       );
@@ -186,12 +217,71 @@ class DetectCommitments {
       ];
     }
 
+    // Estimate pass: open rows that predate the effort question. Skipped
+    // when the provider already failed this run — no point hammering it.
+    final estimates = <String, int>{};
+    if (failure == null) {
+      final byId = {
+        for (final e in params.sentEmails) e.id: e,
+        for (final e in params.inboxEmails) e.id: e,
+      };
+      final pending = [
+        for (final c in all)
+          if (c.isOpen && c.estimatedMinutes == null) c,
+      ].take(maxToEstimate);
+      for (final c in pending) {
+        final result = await inferenceRepository.decide(AiDecisionRequest(
+          providerId: routing.providerId,
+          modelId: routing.modelId,
+          state: effortStateFor(c, byId[c.emailId], params.selfAddresses),
+          questions: const {'effort': effortQuestion},
+        ));
+        final stop = result.fold(
+          (f) {
+            failure = f;
+            log?.call('[Commitments] ${routing.modelId} estimate '
+                '${_shortId(c.emailId)}: failed: ${f.message}');
+            return true;
+          },
+          (response) {
+            model = response.model;
+            final minutes = minutesFrom(response.answers['effort']);
+            if (minutes != null) estimates[c.id] = minutes;
+            log?.call('[Commitments] ${response.model} estimate '
+                '${_shortId(c.emailId)} ${c.kind.name}: '
+                'effort=${_num(response.answers['effort'])} → '
+                '${minutes == null ? 'none' : '$minutes min'}');
+            return false;
+          },
+        );
+        if (stop) break;
+      }
+      for (final entry in estimates.entries) {
+        final set = await commitmentRepository.setEstimate(
+          accountId: params.accountId,
+          id: entry.key,
+          minutes: entry.value,
+        );
+        if (set.isLeft()) estimates.remove(entry.key);
+      }
+      if (estimates.isNotEmpty) {
+        all = [
+          for (final c in all)
+            estimates.containsKey(c.id)
+                ? c.copyWith(estimatedMinutes: estimates[c.id])
+                : c,
+        ];
+      }
+    }
+
     return Right(
       DetectCommitmentsResult(
         commitments: all,
         classified: classifiedIds.length,
         remaining: remaining + (toClassify.length - classifiedIds.length),
         resolved: resolvedIds.length,
+        estimated: estimates.length,
+        model: model,
         warning: failure?.message,
       ),
     );
@@ -221,6 +311,32 @@ class DetectCommitments {
     ],
   );
 
+  /// How much focused time the item needs. A score rubric, lowest first;
+  /// [effortMinutes] gives each level's length. Direction-neutral wording,
+  /// since the same question sizes a promise I made and a request I got.
+  static const AiDecisionQuestion effortQuestion = AiDecisionQuestion.score(
+    instructions: 'How much focused working time would it take to fully deal '
+        'with the request, promise or task in `body`?',
+    levels: [
+      'a few minutes — a quick reply, confirmation or forward',
+      'about half an hour',
+      'about an hour',
+      'a couple of hours',
+      'half a day or more',
+    ],
+  );
+
+  /// Minutes per [effortQuestion] level.
+  static const List<int> effortMinutes = [15, 30, 60, 120, 240];
+
+  /// The estimate an effort answer stands for: its nearest rubric level's
+  /// minutes, or null when the model gave no usable score.
+  static int? minutesFrom(AiDecisionAnswer? answer) {
+    final score = answer?.score;
+    if (score == null || score.isNaN) return null;
+    return effortMinutes[score.round().clamp(0, effortMinutes.length - 1)];
+  }
+
   /// Asked about a message the account holder sent.
   static const Map<String, AiDecisionQuestion> sentQuestions = {
     'commits': AiDecisionQuestion.noul(
@@ -237,6 +353,7 @@ class DetectCommitments {
     ),
     'due': _dueQuestion,
     'urgency': _urgencyQuestion,
+    'effort': effortQuestion,
   };
 
   /// Asked about a message the account holder received.
@@ -263,6 +380,7 @@ class DetectCommitments {
     ),
     'due': _dueQuestion,
     'urgency': _urgencyQuestion,
+    'effort': effortQuestion,
   };
 
   // ---------------------------------------------------------------------------
@@ -282,6 +400,59 @@ class DetectCommitments {
       'body': bodyExcerpt(email),
     };
   }
+
+  /// What the estimate pass shows the model for a commitment without an
+  /// estimate: the message itself when it is still in the recent mail, else
+  /// the row's own reading of it.
+  static Map<String, Object?> effortStateFor(
+    Commitment commitment,
+    Email? email,
+    Set<String> selfAddresses,
+  ) {
+    if (email != null) {
+      return stateFor(email, outgoing: _isFromSelf(email, selfAddresses));
+    }
+    return {
+      'kind': switch (commitment.kind) {
+        CommitmentKind.iOwe => 'a promise the account holder made',
+        CommitmentKind.theyOweMe =>
+          'something the account holder is waiting on',
+        CommitmentKind.needsAction => 'a request the account holder received',
+      },
+      'subject': commitment.subject,
+      'counterpart': _label(commitment.counterpart),
+      'date': commitment.emailDate.toIso8601String(),
+      'body': commitment.snippet,
+    };
+  }
+
+  /// The raw answers as one log fragment: `needs_action=0.15 commits=0.25
+  /// bulk=0.02 due=none urgency=1.24 effort=1.40` (sent mail lists
+  /// `commits` and `requests` instead).
+  static String describeAnswers(
+    AiDecisionResponse response, {
+    required bool outgoing,
+  }) {
+    final keys = outgoing
+        ? const ['commits', 'requests']
+        : const ['needs_action', 'commits', 'bulk'];
+    return [
+      for (final k in keys) '$k=${_num(response.answers[k])}',
+      'due=${response.answers['due']?.choice ?? '-'}',
+      'urgency=${_num(response.answers['urgency'])}',
+      'effort=${_num(response.answers['effort'])}',
+    ].join(' ');
+  }
+
+  static String _num(AiDecisionAnswer? answer) {
+    final v = answer?.probability ?? answer?.score;
+    return v == null ? '-' : v.toStringAsFixed(2);
+  }
+
+  /// Enough of a message id to find it in the cache; Graph ids run to 150
+  /// characters.
+  static String _shortId(String id) =>
+      id.length <= 16 ? id : '${id.substring(0, 12)}…';
 
   /// The newest reply in the message, as plain text, capped at
   /// [maxBodyChars]; falls back to the provider's preview when no body has
@@ -315,6 +486,7 @@ class DetectCommitments {
 
     final due = _dueFrom(response.answers['due']);
     final urgency = _urgencyFrom(response.answers['urgency']);
+    final estimatedMinutes = minutesFrom(response.answers['effort']);
     final counterpart = outgoing
         ? _counterpartForSent(email, selfAddresses)
         : email.from;
@@ -334,6 +506,7 @@ class DetectCommitments {
           confidence: confidence,
           emailDate: _dateOf(email),
           detectedAt: now,
+          estimatedMinutes: estimatedMinutes,
         );
 
     final out = <Commitment>[];
@@ -495,6 +668,8 @@ class DetectCommitmentsResult extends Equatable {
     required this.classified,
     required this.remaining,
     required this.resolved,
+    this.estimated = 0,
+    this.model,
     this.warning,
   });
 
@@ -511,10 +686,17 @@ class DetectCommitmentsResult extends Equatable {
   /// Commitments the resolution pass closed this run.
   final int resolved;
 
+  /// Older open commitments the estimate pass gave an effort estimate.
+  final int estimated;
+
+  /// The model that answered, as the provider named it (an alias such as
+  /// `jev-latest` resolved to its version) — null when nothing was asked.
+  final String? model;
+
   /// A provider failure that cut the scan short, when one did.
   final String? warning;
 
   @override
   List<Object?> get props =>
-      [commitments, classified, remaining, resolved, warning];
+      [commitments, classified, remaining, resolved, estimated, model, warning];
 }

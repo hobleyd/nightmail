@@ -39,6 +39,14 @@ abstract interface class CommitmentRepository {
     required DateTime end,
   });
 
+  /// Records the model's effort estimate for a commitment, in minutes —
+  /// filled in later for rows written before the estimate existed.
+  Future<Either<Failure, Unit>> setEstimate({
+    required String accountId,
+    required String id,
+    required int minutes,
+  });
+
   /// Ids of the messages already shown to the model for [accountId].
   Future<Either<Failure, Set<String>>> getScannedEmailIds({
     required String accountId,

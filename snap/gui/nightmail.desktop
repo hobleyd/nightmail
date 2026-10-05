@@ -2,7 +2,7 @@
 Name=NightMail
 Comment=A cross-platform email client for Microsoft 365, Gmail, and IMAP/SMTP
 Exec=nightmail %U
-Icon=nightmail
+Icon=${SNAP}/nightmail.png
 Type=Application
 Categories=Network;Email;
 MimeType=x-scheme-handler/mailto;

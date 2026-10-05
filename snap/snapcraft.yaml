@@ -40,6 +40,12 @@ parts:
   # Primes the desktop entry where `apps.nightmail.desktop` points. Only the
   # .desktop is staged: snap/gui/nightmail.png would otherwise collide with the
   # nightmail.png the release workflow writes into the Flutter bundle.
+  #
+  # That bundle copy is what the entry's `Icon=${SNAP}/nightmail.png` names,
+  # and the extension is load-bearing: snapcraft rewrites `Icon=` to
+  # `${SNAP}/<value>` whenever <value> is a file in prime/, and a bare
+  # `Icon=nightmail` matched the *executable* of the same name — so the
+  # launcher was handed an ELF binary and drew a black square.
   desktop-entry:
     plugin: dump
     source: snap/gui

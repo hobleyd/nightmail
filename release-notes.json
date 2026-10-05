@@ -1,24 +1,41 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.38.3",
+  "version": "1.38.4",
   "sections": [
     {
-      "type": "features",
-      "title": "New features",
+      "type": "fixes",
+      "title": "Fixes",
       "items": [
         {
-          "body": "track a message by hand from the reading pane",
-          "title": "commitments"
-        },
-        {
-          "body": "effort estimates size every time block; log each model call",
-          "title": "commitments"
+          "body": "point the launcher icon at the PNG, not the executable",
+          "title": "snap"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.38.3",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "track a message by hand from the reading pane",
+              "title": "commitments"
+            },
+            {
+              "body": "effort estimates size every time block; log each model call",
+              "title": "commitments"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -463,23 +480,6 @@
             {
               "body": "a non-release build drains its OS reminders instead of scheduling",
               "title": "reminders"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.34.1",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "drop a dragged folder as a sibling, including at the top level",
-              "title": "folders"
             }
           ]
         }

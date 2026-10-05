@@ -134,6 +134,25 @@ that normally does this can never arrive from a dead isolate).
 
 `test/core/platform/secondary_window_teardown_test.dart` pins the shape.
 
+### One Calendar, Tasks or Commitments window at a time
+
+A double-click on one of the view buttons (`view_shortcut_buttons.dart`)
+goes through `showOrCreateSubWindow` (`window_utils.dart`), which fronts the
+window of that type if one is open and creates one otherwise. The opener
+cannot keep that list itself — a sub-window closes on its own and its
+isolate dies untold — so it asks `WindowController.getAll()`: the plugin's
+registry drops a window as it closes and carries the JSON each one was
+created with, which is where `type` lives. The main window is in that list
+too, with empty arguments.
+
+The same buttons toggle the pane on a single click, so a click waits out the
+OS's double-click interval before it acts (`platformDoubleClickInterval`,
+answered by `MainFlutterWindow.swift` from `NSEvent.doubleClickInterval`).
+Flutter's `kDoubleTapTimeout` is 300 ms; macOS allows 500 by default, so with
+a `GestureDetector.onDoubleTap` an ordinary double-click arrived as two single
+taps — the pane toggled twice and no window opened. Windows and Linux have no
+handler yet and fall back to Flutter's 300 ms.
+
 ### Closing a sub-window is a request, not an act
 
 `windowManager.close()` *posts* the close (Windows `SC_CLOSE`) and reports

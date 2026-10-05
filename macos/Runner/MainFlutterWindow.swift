@@ -960,6 +960,10 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
           "height": frame.size.height,
           "mainScreenHeight": mainScreenHeight,
         ])
+      } else if call.method == "getDoubleClickIntervalMs" {
+        // The user's own setting (System Settings > Mouse), which Flutter's
+        // 300 ms DoubleTapGestureRecognizer is shorter than by default.
+        result(NSEvent.doubleClickInterval * 1000)
       } else {
         result(FlutterMethodNotImplemented)
       }

@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.38.7",
+  "version": "1.38.8",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "run snap install on a pseudo-terminal so the password prompt appears",
-          "title": "snap"
+          "body": "answer a forwarded invitation instead of \"Could not find this meeting\"",
+          "title": "calendar"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.38.7",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "run snap install on a pseudo-terminal so the password prompt appears",
+              "title": "snap"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -428,23 +445,6 @@
             },
             {
               "body": "stop the swipe-to-navigate gesture from stealing reading-pane scroll",
-              "title": "mobile"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.34.5",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "scroll the compose editor's own content while the keyboard is up",
               "title": "mobile"
             }
           ]

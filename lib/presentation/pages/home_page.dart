@@ -55,6 +55,7 @@ import '../widgets/reading_pane.dart';
 import 'calendar_page.dart';
 import 'commitments_page.dart';
 import 'compose_window.dart';
+import 'mail_sent_channel.dart';
 import 'settings_page.dart';
 import 'tasks_page.dart';
 
@@ -1076,12 +1077,23 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
         context.read<EmailListBloc>().add(const EmailListRefreshRequested());
       }
     });
+    // A send in the compose sub-window: the list re-reads the folder so the
+    // reply's Sent copy joins its thread. The drafts relay above fires before
+    // the send (the draft is deleted first), so it cannot carry this.
+    unawaited(MailSentChannel.listen(({conversationId, required sentAt}) {
+      if (!mounted) return;
+      context.read<EmailListBloc>().add(EmailListMessageSent(
+            conversationId: conversationId,
+            sentAt: sentAt,
+          ));
+    }));
   }
 
   @override
   void dispose() {
     _calendarRefreshChannel.setMethodCallHandler(null);
     _draftsRefreshChannel.setMethodCallHandler(null);
+    unawaited(MailSentChannel.stopListening());
     super.dispose();
   }
 

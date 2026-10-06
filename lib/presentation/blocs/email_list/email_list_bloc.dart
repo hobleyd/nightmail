@@ -56,10 +56,12 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     required this._spamDbSyncService,
     required this._outboxDrainService,
     this._staleRetryDelays = staleDataRetryDelays,
+    this._sentCopySettleDelay = _defaultSentCopySettleDelay,
   })  : super(const EmailListInitial()) {
     on<EmailListLoadRequested>(_onLoadRequested);
     on<EmailListLoadMoreRequested>(_onLoadMoreRequested);
     on<EmailListRefreshRequested>(_onRefreshRequested);
+    on<EmailListMessageSent>(_onMessageSent);
     on<EmailListCacheRefreshRequested>(_onCacheRefreshRequested);
     on<EmailListMarkReadRequested>(_onMarkReadRequested);
     on<EmailListMarkThreadReadRequested>(_onMarkThreadReadRequested);
@@ -101,6 +103,17 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   final SpamDbSyncService _spamDbSyncService;
   final OutboxDrainService _outboxDrainService;
   final List<Duration> _staleRetryDelays;
+
+  /// How long [_onMessageSent] gives a provider to file the Sent copy before
+  /// re-reading the listing once more.
+  final Duration _sentCopySettleDelay;
+  static const _defaultSentCopySettleDelay = Duration(seconds: 5);
+
+  /// Margin for this machine's clock against the server's stamp on the Sent
+  /// copy — see [_showsSentCopy].
+  static const _sentCopyClockSkew = Duration(minutes: 2);
+
+  Timer? _sentCopyRetry;
 
   /// Makes each reported failure a distinct state — see
   /// [EmailListActionFailure.sequence].
@@ -476,6 +489,12 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
           hasMore: emails.length >= _pageSize,
           currentFolderId: folderId,
           currentFolderName: folderName,
+          // A refresh replaces the rows, not what the user has opened. The
+          // thread they have just replied in is re-listed to show the reply
+          // (_onMessageSent); collapsing it here hid the very row the
+          // listing was fetched for.
+          expandedConversationIds:
+              s is EmailListLoaded ? s.expandedConversationIds : const {},
           emptyingFolderIds: s is EmailListLoaded ? s.emptyingFolderIds : const {},
         ));
         _recordSenders(emails, folderName);
@@ -484,6 +503,71 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     if (refreshed != null) {
       await _classifyAndTrainIfImap(emit, refreshed!);
     }
+  }
+
+  @override
+  Future<void> close() {
+    _sentCopyRetry?.cancel();
+    return super.close();
+  }
+
+  /// Re-reads the listing so the message's Sent copy joins its thread, and
+  /// once more a beat later if the thread still shows no sign of it.
+  ///
+  /// The poll cannot do this. Both providers' Inbox sync is a folder-scoped
+  /// delta — Graph's `/mailFolders/inbox/messages/delta`, Gmail's history
+  /// reduced to the `INBOX` label — and the copy lives in Sent, so neither
+  /// ever hands it to the Inbox's cache. Only a full folder listing carries
+  /// the cross-folder expansion that lists a thread's Sent copies beside the
+  /// message they answered, so a reply used to sit invisible until the user
+  /// pressed Refresh. This is that Refresh, made automatic.
+  ///
+  /// Gmail's `messages.send` is synchronous: the copy is in the thread by the
+  /// time the compose window hears back, and the first listing shows it.
+  /// Graph's `/reply` is a 202 — the Sent Items copy is filed a moment later,
+  /// or a listing is answered from a replica behind it — so the listing is
+  /// read once more after [_sentCopySettleDelay]. Once, and only when the
+  /// thread is known and shows no copy: a Gmail listing costs 1,010 quota
+  /// units, and a copy already on screen has nothing left to wait for. A new
+  /// message has no thread on screen to join, so it gets the one listing.
+  Future<void> _onMessageSent(
+    EmailListMessageSent event,
+    Emitter<EmailListState> emit,
+  ) async {
+    _sentCopyRetry?.cancel();
+    _sentCopyRetry = null;
+    await _onRefreshRequested(const EmailListRefreshRequested(), emit);
+    final threadId = event.conversationId;
+    if (threadId == null || _showsSentCopy(threadId, event.sentAt)) return;
+    _sentCopyRetry = Timer(_sentCopySettleDelay, () {
+      _sentCopyRetry = null;
+      if (!isClosed) add(const EmailListRefreshRequested());
+    });
+  }
+
+  /// Whether the listing on screen holds a message of [threadId] that the
+  /// user sent at or after [sentAt] — the Sent copy a refresh was waiting for.
+  ///
+  /// The server stamps the copy and this machine's clock said when the send
+  /// came back, so the comparison allows [_sentCopyClockSkew]. A clock ahead
+  /// of the server by more than that misses the copy and lists once more,
+  /// which is harmless; one behind can only be fooled by an earlier reply of
+  /// the user's own inside the margin. A from-less row is a draft, never a
+  /// sent copy, and an account with no address cannot tell its own mail.
+  bool _showsSentCopy(String threadId, DateTime sentAt) {
+    final s = state;
+    if (s is! EmailListLoaded) return false;
+    final self =
+        _accountManager.activeAccount?.emailAddress.trim().toLowerCase() ?? '';
+    if (self.isEmpty) return false;
+    final notBefore = sentAt.subtract(_sentCopyClockSkew);
+    for (final email in s.emails) {
+      if (email.conversationId != threadId) continue;
+      final from = email.from.address.trim().toLowerCase();
+      if (from.isEmpty || from != self) continue;
+      if (!email.receivedDateTime.isBefore(notBefore)) return true;
+    }
+    return false;
   }
 
   Future<void> _onCacheRefreshRequested(

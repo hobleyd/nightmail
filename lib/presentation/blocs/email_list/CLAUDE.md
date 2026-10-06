@@ -81,6 +81,60 @@ than 25; Gmail has no multi-thread get, so it is bounded to 8 in flight instead.
 25 at once is enough for either provider to throttle, and a 429 buys a second or
 more of `RetryInterceptor` backoff.
 
+## A Sent Reply Reaches Its Thread by a Re-Listing, Never by the Poll
+
+A reply sent from the compose window used to sit invisible in its thread
+until the user pressed Refresh. Two things combined, and both are
+load-bearing for the fix:
+
+- **The poll cannot bring the copy in.** Both providers' Inbox sync is a
+  folder-scoped delta — Graph's `/mailFolders/inbox/messages/delta`, Gmail's
+  history reduced to the `INBOX` label — and the reply's copy lives in Sent,
+  so neither ever writes it to the Inbox's cache, and a repaint from that
+  cache cannot show it. The expansion rows that put a thread's Sent copies
+  beside the message they answered only ever arrive on a full folder listing
+  (`getEmails`), which is what the manual Refresh does. (A non-Inbox folder on
+  screen *is* re-listed by `_syncWatchedFolder` every cycle, so there the
+  reply appeared within a poll interval; the Inbox never did.)
+- **Nothing told the main window a message had gone.** The compose window is
+  a separate engine (see [`lib/core/platform/CLAUDE.md`](../../../core/platform/CLAUDE.md)).
+  Its only signal to the main window was the drafts-refresh relay's
+  `notifyDraftChanged`, raised when the server draft is deleted — which is
+  *before* `ComposeSubmitted` is dispatched, so the refresh it causes lists
+  the thread without the reply, and only when a draft had been autosaved.
+
+`MailSentChannel` (`presentation/pages/mail_sent_channel.dart`) is the fix: a
+`WindowMethodChannel` the compose window invokes on `ComposeSent`, carrying
+the thread id and the send time, and awaits — bounded — before it closes,
+since the close tears its engine down. The main window turns it into
+`EmailListMessageSent`; on a phone, where compose runs in the main window,
+the reading pane's `onSent` callback dispatches the same event.
+
+`_onMessageSent` is a network refresh, plus one retry, and the retry's rule
+is what keeps it under the Gmail quota:
+
+- **Gmail needs one listing.** `messages.send` is synchronous and the copy is
+  in the thread by the time the compose window hears back.
+- **Graph may need two.** `/reply` is a 202 — the Sent Items copy is filed a
+  moment later, or the next listing is answered from a replica behind it (the
+  same shape as the move-tombstone note in the poller's doc) — so the folder
+  is listed once more after `_sentCopySettleDelay`.
+- **The retry runs only when the thread is known and shows no copy.**
+  `_showsSentCopy` looks for a row of that thread *from the account's own
+  address* dated at or after the send, less `_sentCopyClockSkew` for this
+  machine's clock against the server's stamp. A from-less row is a draft and
+  never counts. A new message has no thread on screen to join, so it gets the
+  one listing. Every listing is 1,010 units on Gmail
+  ([`docs/claude/gmail-quota.md`](../../../../docs/claude/gmail-quota.md)), so
+  "list until it shows" was never an option.
+
+**A refresh keeps the threads the user has open.** `_onRefreshRequested` used
+to build a fresh `EmailListLoaded` and so dropped `expandedConversationIds`
+— every Refresh collapsed every thread, and the automatic one here would
+have collapsed the thread the reply had just joined, hiding the very row it
+was fetched for. It now carries the prior state's set across; an id that no
+longer resolves to a thread on screen is simply unused.
+
 ## A Gmail Thread Can Be In a Folder When None of Its Messages Is
 
 A Gmail folder listing is `GET /users/me/threads?labelIds=<folder>` — it asks

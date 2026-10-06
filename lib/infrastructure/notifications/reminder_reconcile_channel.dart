@@ -15,9 +15,9 @@ import '../../core/platform/window_utils.dart';
 /// meeting's reminder still fire.
 ///
 /// Registered [ChannelMode.unidirectional]: the main window is the sole handler
-/// and every sub-window may invoke it. This is the app's only cross-window
-/// channel — sub-windows are otherwise fully autonomous, each with its own
-/// engine, isolate and service locator.
+/// and every sub-window may invoke it. The compose window's `MailSentChannel`
+/// is the only other cross-window channel — sub-windows are otherwise fully
+/// autonomous, each with its own engine, isolate and service locator.
 abstract final class ReminderReconcileChannel {
   static const _channel = WindowMethodChannel(
     'au.com.sharpblue.nightmail/reminders',

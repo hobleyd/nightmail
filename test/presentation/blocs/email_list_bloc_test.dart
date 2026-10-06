@@ -1908,6 +1908,212 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
+  // EmailListMessageSent — a reply's Sent copy reaches its thread by a
+  // re-listing, never by the poll
+  //
+  // Regression: a reply sent from the compose window did not show in its
+  // thread until the user pressed Refresh. Nothing told the main window a
+  // message had gone, and the Inbox's poll is a folder-scoped delta on both
+  // providers, so the copy in Sent never reached the Inbox listing. Only the
+  // folder listing's cross-folder expansion lists it beside the message it
+  // answered.
+  // ---------------------------------------------------------------------------
+
+  group('EmailListMessageSent', () {
+    /// The user's own reply as a Sent copy listed in the thread.
+    Email sentCopy(String id, {required DateTime at}) => Email(
+          id: id,
+          subject: 'Re: thread',
+          from: EmailAddress(address: _account.emailAddress, name: 'Me'),
+          toRecipients: const [_addr],
+          ccRecipients: const [],
+          bodyPreview: '',
+          body: '',
+          bodyType: EmailBodyType.text,
+          isRead: true,
+          receivedDateTime: at,
+          importance: EmailImportance.normal,
+          conversationId: 'thread-1',
+          parentFolderId: 'sent',
+        );
+
+    late EmailListBloc sentBloc;
+    late DateTime sentAt;
+
+    setUp(() {
+      fakeAccountManager.account = _account;
+      sentAt = DateTime(2026, 10, 7, 8, 25);
+      // A settle delay short enough to wait out in a test, long enough that a
+      // retry which should not happen cannot be mistaken for one that should.
+      sentBloc = EmailListBloc(
+        getEmails: mockGetEmails,
+        getCachedEmails: mockGetCachedEmails,
+        cacheEmails: mockCacheEmails,
+        forgetCachedEmails: mockForgetCachedEmails,
+        markEmailAsRead: mockMarkEmailAsRead,
+        moveEmail: mockMoveEmail,
+        removeConversationFromFolder: mockRemoveConversationFromFolder,
+        reportJunk: MockReportJunk(),
+        notJunk: MockNotJunk(),
+        deleteEmail: mockDeleteEmail,
+        emptyFolder: mockEmptyFolder,
+        accountManager: fakeAccountManager,
+        recordKnownSenders: mockRecordKnownSenders,
+        classifyEmails: MockClassifyEmails(),
+        trainSpamFilter: MockTrainSpamFilter(),
+        searchEmails: mockSearchEmails,
+        getEmail: mockGetEmail,
+        getConversationThread: mockGetConversationThread,
+        spamDbSyncService: MockSpamDbSyncService(),
+        outboxDrainService: MockOutboxDrainService(),
+        sentCopySettleDelay: const Duration(milliseconds: 50),
+      );
+      addTearDown(sentBloc.close);
+    });
+
+    /// Loads the Inbox with the correspondent's message, expanded, and then
+    /// answers every listing from [pages] in turn (the last one repeating).
+    Future<void> loadThread(List<List<Email>> pages) async {
+      when(mockGetCachedEmails(any)).thenAnswer((_) async => const Right([]));
+      when(mockGetEmails(any))
+          .thenAnswer((_) async => Right([_email('in1', conversationId: 'thread-1')]));
+      sentBloc.add(const EmailListLoadRequested(folderId: 'inbox'));
+      await sentBloc.stream.firstWhere(
+          (s) => s is EmailListLoaded && !s.isLoadingFresh);
+      sentBloc.add(const EmailListToggleConversation(conversationId: 'thread-1'));
+      await sentBloc.stream.firstWhere((s) =>
+          s is EmailListLoaded &&
+          s.expandedConversationIds.contains('thread-1'));
+
+      var call = 0;
+      when(mockGetEmails(any)).thenAnswer((_) async {
+        final page = pages[call < pages.length ? call : pages.length - 1];
+        call++;
+        return Right(page);
+      });
+    }
+
+    test('re-lists the folder from the network and keeps the thread open',
+        () async {
+      final reply = sentCopy('sent1', at: sentAt);
+      await loadThread([
+        [_email('in1', conversationId: 'thread-1'), reply],
+      ]);
+      clearInteractions(mockGetEmails);
+
+      sentBloc.add(
+          EmailListMessageSent(conversationId: 'thread-1', sentAt: sentAt));
+      final loaded = await sentBloc.stream.firstWhere((s) =>
+          s is EmailListLoaded &&
+          !s.isLoadingFresh &&
+          s.emails.any((e) => e.id == 'sent1')) as EmailListLoaded;
+
+      verify(mockGetEmails(any)).called(1);
+      expect(loaded.expandedConversationIds, contains('thread-1'),
+          reason: 'the refresh must not collapse the thread the reply joined');
+    });
+
+    test('lists once more after the settle delay when the copy is not there yet',
+        () async {
+      // Graph: the reply is a 202 and the Sent Items copy is filed a beat
+      // later, so the first listing shows the thread as it was.
+      final reply = sentCopy('sent1', at: sentAt);
+      await loadThread([
+        [_email('in1', conversationId: 'thread-1')],
+        [_email('in1', conversationId: 'thread-1'), reply],
+      ]);
+      clearInteractions(mockGetEmails);
+
+      sentBloc.add(
+          EmailListMessageSent(conversationId: 'thread-1', sentAt: sentAt));
+      final loaded = await sentBloc.stream
+          .firstWhere((s) =>
+              s is EmailListLoaded &&
+              !s.isLoadingFresh &&
+              s.emails.any((e) => e.id == 'sent1'))
+          .timeout(const Duration(seconds: 2)) as EmailListLoaded;
+
+      verify(mockGetEmails(any)).called(2);
+      expect(loaded.emails.map((e) => e.id), contains('sent1'));
+    });
+
+    test('does not list again once the copy is on screen', () async {
+      // Gmail: messages.send is synchronous and the first listing has the
+      // copy. A second listing would be 1,010 quota units for nothing.
+      final reply = sentCopy('sent1', at: sentAt);
+      await loadThread([
+        [_email('in1', conversationId: 'thread-1'), reply],
+      ]);
+      clearInteractions(mockGetEmails);
+
+      sentBloc.add(
+          EmailListMessageSent(conversationId: 'thread-1', sentAt: sentAt));
+      await sentBloc.stream.firstWhere((s) =>
+          s is EmailListLoaded &&
+          !s.isLoadingFresh &&
+          s.emails.any((e) => e.id == 'sent1'));
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+
+      verify(mockGetEmails(any)).called(1);
+    });
+
+    test('an earlier reply of the user\'s own does not count as the copy',
+        () async {
+      // The thread already held a reply sent yesterday; the one just sent is
+      // still on its way. The old copy must not satisfy the wait.
+      final old = sentCopy('sent0', at: sentAt.subtract(const Duration(days: 1)));
+      final reply = sentCopy('sent1', at: sentAt);
+      await loadThread([
+        [_email('in1', conversationId: 'thread-1'), old],
+        [_email('in1', conversationId: 'thread-1'), old, reply],
+      ]);
+      clearInteractions(mockGetEmails);
+
+      sentBloc.add(
+          EmailListMessageSent(conversationId: 'thread-1', sentAt: sentAt));
+      await sentBloc.stream
+          .firstWhere((s) =>
+              s is EmailListLoaded &&
+              !s.isLoadingFresh &&
+              s.emails.any((e) => e.id == 'sent1'))
+          .timeout(const Duration(seconds: 2));
+
+      verify(mockGetEmails(any)).called(2);
+    });
+
+    test('a new message with no thread gets one listing and no retry',
+        () async {
+      await loadThread([
+        [_email('in1', conversationId: 'thread-1')],
+      ]);
+      clearInteractions(mockGetEmails);
+
+      sentBloc.add(EmailListMessageSent(sentAt: sentAt));
+      await sentBloc.stream
+          .firstWhere((s) => s is EmailListLoaded && !s.isLoadingFresh);
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+
+      verify(mockGetEmails(any)).called(1);
+    });
+
+    test('closing the bloc cancels a pending retry', () async {
+      await loadThread([
+        [_email('in1', conversationId: 'thread-1')],
+      ]);
+      clearInteractions(mockGetEmails);
+
+      sentBloc.add(
+          EmailListMessageSent(conversationId: 'thread-1', sentAt: sentAt));
+      await sentBloc.stream
+          .firstWhere((s) => s is EmailListLoaded && !s.isLoadingFresh);
+      await sentBloc.close();
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+
+      verify(mockGetEmails(any)).called(1);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // EmailListRefreshRequested — search guard
   // ---------------------------------------------------------------------------
 

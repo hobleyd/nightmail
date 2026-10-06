@@ -28,6 +28,24 @@ final class EmailListRefreshRequested extends EmailListEvent {
   List<Object?> get props => [folderId];
 }
 
+/// A message has just been sent from the active account — a reply or forward
+/// from the compose window, or a new message. The listing is re-read so the
+/// message's Sent copy joins its thread; see `EmailListBloc._onMessageSent`
+/// for why the poll cannot do that and when it is read a second time.
+final class EmailListMessageSent extends EmailListEvent {
+  const EmailListMessageSent({this.conversationId, required this.sentAt});
+
+  /// The thread the message answered, or null for a new message — which has
+  /// no thread on screen to join, so nothing is waited for.
+  final String? conversationId;
+
+  /// When the send was acknowledged, by this machine's clock.
+  final DateTime sentAt;
+
+  @override
+  List<Object?> get props => [conversationId, sentAt];
+}
+
 /// Re-reads the current folder from the local cache only — no network call.
 /// Dispatched when something else (background poll, delta sync) has already
 /// written fresh data into the cache, so the list can repaint instantly.

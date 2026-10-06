@@ -27,6 +27,7 @@ import '../blocs/theme/theme_cubit.dart';
 import '../blocs/theme/theme_state.dart';
 import '../widgets/compose_dialog.dart';
 import '../widgets/error_snack_bar.dart';
+import 'mail_sent_channel.dart';
 
 class ComposeWindowApp extends StatelessWidget {
   const ComposeWindowApp({
@@ -102,6 +103,9 @@ class ComposeWindowApp extends StatelessWidget {
     if (originalEmail != null) {
       args['originalEmail'] = {
         'id': originalEmail.id,
+        // The thread the reply joins: the main window waits for the reply's
+        // Sent copy to show up in it — see [MailSentChannel].
+        'conversationId': originalEmail.conversationId,
         'subject': originalEmail.subject,
         'from': {
           'address': originalEmail.from.address,
@@ -400,6 +404,20 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage>
     form.requestClose();
   }
 
+  /// Tells the main window the message went, then closes.
+  ///
+  /// In that order: the close tears this engine down, and the main window is
+  /// the one with a folder listing to re-read — the reply's Sent copy only
+  /// reaches its thread through that listing. [MailSentChannel.notify] is
+  /// bounded, so an unanswered call cannot hold the window open.
+  Future<void> _onSent() async {
+    await MailSentChannel.notify(
+      conversationId: _originalEmail()?.conversationId,
+      sentAt: DateTime.now(),
+    );
+    await _close();
+  }
+
   /// `windowManager.destroy()` is not an option here: on macOS it is
   /// `NSApp.terminate` and on Windows `PostQuitMessage`, either of which would
   /// take the whole app down with the compose window. Drop the guard instead
@@ -468,6 +486,7 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage>
 
     return Email(
       id: map['id'] as String,
+      conversationId: map['conversationId'] as String?,
       subject: map['subject'] as String,
       from: parseAddress(map['from'] as Map<String, dynamic>),
       toRecipients: (map['toRecipients'] as List<dynamic>)
@@ -558,7 +577,7 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage>
           listener: (context, state) {
             // [ComposeError] is the form's own to show — see
             // [ComposeFormState._notice].
-            if (state is ComposeSent) _close();
+            if (state is ComposeSent) _onSent();
           },
           child: ComposeForm(
             key: _formKey,

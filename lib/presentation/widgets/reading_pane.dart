@@ -1054,7 +1054,22 @@ class _ReadingPaneToolbar extends StatelessWidget {
   final VoidCallback? onPrint;
 
   Future<void> _openComposeWindow(BuildContext context, ComposeMode mode) async {
-    await ComposeWindowApp.open(context, mode: mode, originalEmail: email, onSent: onBack);
+    // [onSent] is the phone's path only — there the compose screen runs in
+    // this window. The desktop sub-window reports its send over
+    // [MailSentChannel] instead and never calls back.
+    final emailList = context.read<EmailListBloc>();
+    await ComposeWindowApp.open(
+      context,
+      mode: mode,
+      originalEmail: email,
+      onSent: () {
+        onBack?.call();
+        emailList.add(EmailListMessageSent(
+          conversationId: email.conversationId,
+          sentAt: DateTime.now(),
+        ));
+      },
+    );
   }
 
   Future<void> _confirmAndDelete(BuildContext context) async {

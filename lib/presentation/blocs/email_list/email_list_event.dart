@@ -177,6 +177,17 @@ final class EmailListJunkReported extends EmailListEvent {
   List<Object?> get props => [emailIds];
 }
 
+/// [EmailListJunkReported] with a report to the provider first: each of
+/// [emailIds] is submitted as phishing where the account can (Microsoft), then
+/// filed as junk. See `EmailRepository.reportPhishing`.
+final class EmailListPhishingReported extends EmailListEvent {
+  const EmailListPhishingReported({required this.emailIds});
+  final List<String> emailIds;
+
+  @override
+  List<Object?> get props => [emailIds];
+}
+
 /// The Junk-folder counterpart to [EmailListJunkReported]: reports each of
 /// [emailIds] as not junk, moving it back to the inbox.
 final class EmailListNotJunkReported extends EmailListEvent {

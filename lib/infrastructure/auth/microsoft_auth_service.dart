@@ -180,6 +180,36 @@ class MicrosoftAuthService implements AuthService {
         s == mailboxSettingsWriteScope || s == 'MailboxSettings.ReadWrite');
   }
 
+  /// Reporting a message to Microsoft as phishing — Graph's threat submission
+  /// API, the channel Outlook's own Report button feeds. Requested
+  /// incrementally — see [extraScopes].
+  ///
+  /// Two reasons it can never join [_scopes]. Microsoft marks it *admin
+  /// consent required*, so an authorization request naming it fails outright
+  /// (AADSTS65001) in every tenant whose administrator has not approved it —
+  /// which would mean nobody in that tenant could add an account at all, over
+  /// a button they may never press. And the API behind it is still `/beta`,
+  /// which is no reason to put its consent screen in front of signing in.
+  /// Asked for the first time the user reports phishing from a Microsoft
+  /// account; see `AccountManager.requestThreatSubmissionAccess`.
+  static const threatSubmissionScope =
+      'https://graph.microsoft.com/ThreatSubmission.ReadWrite';
+
+  /// Whether a token's granted `scope` carries [threatSubmissionScope].
+  ///
+  /// Microsoft echoes granted scopes back on the token and every refresh, so
+  /// the stored token is the record of the grant. Matched on whole tokens, not
+  /// by substring: `ThreatSubmission.Read` is a prefix of the scope wanted
+  /// here. The `.All` variant is deliberately *not* accepted — a token could
+  /// only carry it if it had been asked for, and [_refreshScopes] re-requests
+  /// exactly this scope, which a tenant that consented to the other would
+  /// refuse.
+  static bool grantsThreatSubmission(String? scope) {
+    if (scope == null || scope.isEmpty) return false;
+    return scope.split(RegExp(r'\s+')).any((s) =>
+        s == threatSubmissionScope || s == 'ThreatSubmission.ReadWrite');
+  }
+
   /// The scopes a refresh must ask for: the base set, plus any incremental
   /// scope this token already carries.
   ///
@@ -193,6 +223,7 @@ class MicrosoftAuthService implements AuthService {
         ..._scopes,
         if (grantsFileAccess(token.scope)) filesReadScope,
         if (grantsMailboxSettingsWrite(token.scope)) mailboxSettingsWriteScope,
+        if (grantsThreatSubmission(token.scope)) threatSubmissionScope,
       ];
 
   /// [_refreshScopes], for tests. A refresh that drops an incremental scope

@@ -10,6 +10,7 @@ import 'package:nightmail/data/datasources/local/email_local_datasource.dart';
 import 'package:nightmail/data/datasources/local/folder_local_datasource.dart';
 import 'package:nightmail/data/datasources/local/pending_operations_datasource.dart';
 import 'package:nightmail/data/datasources/remote/email_remote_datasource.dart';
+import 'package:nightmail/data/datasources/remote/phishing_report_datasource.dart';
 import 'package:nightmail/data/models/email_address_model.dart';
 import 'package:nightmail/data/models/email_folder_model.dart';
 import 'package:nightmail/data/models/email_model.dart';
@@ -26,6 +27,28 @@ import 'package:nightmail/infrastructure/sync/outbox_drain_service.dart';
 import 'package:nightmail/infrastructure/sync/recent_mutation_store.dart';
 
 import 'email_repository_impl_test.mocks.dart';
+
+/// What the Graph datasource is to the repository: a mail datasource that can
+/// also report phishing. Mockito's `MockEmailRemoteDatasource` is deliberately
+/// *not* one, which is how the Gmail/IMAP path is exercised.
+class _FakePhishingCapableDatasource extends Fake
+    implements EmailRemoteDatasource, PhishingReportDatasource {
+  final submitted = <String>[];
+  final junked = <String>[];
+  Object? submitError;
+
+  @override
+  Future<void> submitPhishingReport(String id) async {
+    if (submitError != null) throw submitError!;
+    submitted.add(id);
+  }
+
+  @override
+  Future<String?> reportJunk(String id) async {
+    junked.add(id);
+    return null;
+  }
+}
 
 @GenerateMocks([
   AccountManager,
@@ -1858,6 +1881,143 @@ void main() {
         bodyType: anyNamed('bodyType'),
         newAttachments: anyNamed('newAttachments'),
       )).called(1);
+    });
+  });
+
+  group('reportPhishing', () {
+    const tMicrosoft = MicrosoftAccount(
+      id: 'ms-1',
+      displayName: 'Work',
+      emailAddress: 'me@contoso.com',
+      tenantId: 'common',
+    );
+
+    test('on a provider with no report channel it is reportJunk under another '
+        'name — nothing is asked for, nothing is submitted', () async {
+      // MockEmailRemoteDatasource is not a PhishingReportDatasource.
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      when(mockLocalDatasource.deleteEmailFromCache(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async {});
+
+      final result = await repository.reportPhishing('email-1');
+
+      expect(result.isRight(), isTrue);
+      verifyNever(mockAccountManager.hasThreatSubmissionAccess(any));
+      verify(mockPendingOperations.enqueue(
+        accountId: 'account-1',
+        emailId: 'email-1',
+        folderId: anyNamed('folderId'),
+        opType: PendingOperationType.junk,
+        payload: anyNamed('payload'),
+      )).called(1);
+    });
+
+    test('submits to the provider first, then files as junk through the outbox',
+        () async {
+      final ds = _FakePhishingCapableDatasource();
+      when(mockAccountManager.emailDatasource).thenReturn(ds);
+      when(mockAccountManager.activeAccount).thenReturn(tMicrosoft);
+      when(mockAccountManager.hasThreatSubmissionAccess('ms-1'))
+          .thenAnswer((_) async => true);
+      when(mockLocalDatasource.deleteEmailFromCache(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async {});
+
+      final result = await repository.reportPhishing('email-1');
+
+      expect(result.isRight(), isTrue);
+      expect(ds.submitted, ['email-1']);
+      // The move itself is the junk path: queued, cache row dropped, drained.
+      verify(mockPendingOperations.enqueue(
+        accountId: 'ms-1',
+        emailId: 'email-1',
+        folderId: anyNamed('folderId'),
+        opType: PendingOperationType.junk,
+        payload: anyNamed('payload'),
+      )).called(1);
+      verify(mockLocalDatasource.deleteEmailFromCache(
+        accountId: 'ms-1',
+        emailId: 'email-1',
+      )).called(1);
+      verify(mockOutboxDrainService.drainForAccount('ms-1')).called(1);
+    });
+
+    test('answers PhishingReportAccessNotGranted — and touches nothing — when '
+        'the account has never been asked for the scope', () async {
+      final ds = _FakePhishingCapableDatasource();
+      when(mockAccountManager.emailDatasource).thenReturn(ds);
+      when(mockAccountManager.activeAccount).thenReturn(tMicrosoft);
+      when(mockAccountManager.hasThreatSubmissionAccess('ms-1'))
+          .thenAnswer((_) async => false);
+
+      final result = await repository.reportPhishing('email-1');
+
+      final failure = result.getLeft().toNullable();
+      expect(failure, isA<PhishingReportAccessNotGranted>());
+      expect((failure as PhishingReportAccessNotGranted).accountId, 'ms-1');
+      expect(failure.accountEmail, 'me@contoso.com');
+      expect(ds.submitted, isEmpty);
+      verifyNever(mockPendingOperations.enqueue(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+        folderId: anyNamed('folderId'),
+        opType: anyNamed('opType'),
+        payload: anyNamed('payload'),
+      ));
+      verifyNever(mockLocalDatasource.deleteEmailFromCache(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      ));
+    });
+
+    test('a submission the provider refuses leaves the message where it is',
+        () async {
+      final ds = _FakePhishingCapableDatasource()
+        ..submitError = const ServerException(
+            message: 'Insufficient privileges', statusCode: 403);
+      when(mockAccountManager.emailDatasource).thenReturn(ds);
+      when(mockAccountManager.activeAccount).thenReturn(tMicrosoft);
+      when(mockAccountManager.hasThreatSubmissionAccess('ms-1'))
+          .thenAnswer((_) async => true);
+
+      final result = await repository.reportPhishing('email-1');
+
+      expect(
+        result.getLeft().toNullable(),
+        isA<ServerFailure>().having((f) => f.statusCode, 'statusCode', 403),
+      );
+      verifyNever(mockPendingOperations.enqueue(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+        folderId: anyNamed('folderId'),
+        opType: anyNamed('opType'),
+        payload: anyNamed('payload'),
+      ));
+    });
+
+    test('offline, the report is a failure to show rather than a mutation to '
+        'queue — unlike junk, which works offline', () async {
+      final ds = _FakePhishingCapableDatasource();
+      when(mockAccountManager.emailDatasource).thenReturn(ds);
+      when(mockAccountManager.activeAccount).thenReturn(tMicrosoft);
+      when(mockAccountManager.hasThreatSubmissionAccess('ms-1'))
+          .thenAnswer((_) async => true);
+      when(mockConnectivityService.isOnline).thenAnswer((_) async => false);
+
+      final result = await repository.reportPhishing('email-1');
+
+      expect(result.getLeft().toNullable(), isA<NetworkFailure>());
+      expect(ds.submitted, isEmpty);
+      verifyNever(mockPendingOperations.enqueue(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+        folderId: anyNamed('folderId'),
+        opType: anyNamed('opType'),
+        payload: anyNamed('payload'),
+      ));
     });
   });
 }

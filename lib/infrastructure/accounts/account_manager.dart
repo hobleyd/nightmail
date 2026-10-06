@@ -527,6 +527,56 @@ class AccountManager {
     };
   }
 
+  /// Whether [accountId]'s stored token can report a message to Microsoft as
+  /// phishing (Graph's threat submission API).
+  ///
+  /// Microsoft only. Gmail has no API for the "Report phishing" its web client
+  /// offers and IMAP has nothing of the kind, so for both the report is a plain
+  /// move to Junk that needs no scope — the repository never asks for them.
+  Future<bool> hasThreatSubmissionAccess(String accountId) async {
+    // The owner's token, not the shared mailbox's: see
+    // [hasOutOfOfficeWriteAccess] for why asking the shared account directly
+    // reads no token at all.
+    final account = _credentialOwnerFor(accountById(accountId));
+    if (account is! MicrosoftAccount) return false;
+    final authService = _buildOAuthServiceForAccount(account);
+    if (authService == null) return false;
+    final token = await authService.getStoredToken();
+    if (token == null) return false;
+    return MicrosoftAuthService.grantsThreatSubmission(token.scope);
+  }
+
+  /// Runs the interactive sign-in again for [accountId], this time also asking
+  /// for [MicrosoftAuthService.threatSubmissionScope].
+  ///
+  /// Returns whether it came back granted — the user can decline in the
+  /// browser and the flow still "succeeds". A tenant that reserves the scope
+  /// for administrator consent answers the request with an error instead,
+  /// which surfaces here as the sign-in's exception; the caller reports it and
+  /// the message stays where it was. Nothing else about the account changes:
+  /// the new token lands under the same per-account key and Microsoft
+  /// re-requests its base set, so the scopes already held come back with it.
+  /// Same shape as [requestOutOfOfficeWriteAccess]; see [requestCloudDriveAccess]
+  /// for why no incremental scope may move into the base list.
+  Future<bool> requestThreatSubmissionAccess(String accountId) async {
+    final account = _credentialOwnerFor(accountById(accountId));
+    if (account == null) throw StateError('Unknown account: $accountId');
+    if (account is! MicrosoftAccount) return false;
+
+    final token = await _signInExistingAccount(
+      account,
+      extraScopes: const [MicrosoftAuthService.threatSubmissionScope],
+    );
+    // Rebuild the active pipeline so the new token is used now rather than
+    // after the next refresh — either id can be the active one, the mailbox
+    // being read or the owner whose token was just replaced.
+    final activeId = activeAccount?.id;
+    if (accountId == activeId || account.id == activeId) {
+      _buildDatasourcesForActiveAccount();
+    }
+    return MicrosoftAuthService.grantsThreatSubmission(token.scope);
+  }
+
   /// A datasource that can fetch cloud documents as [accountId], or null when
   /// that account belongs to neither drive provider.
   CloudDriveDatasource? cloudDriveDatasourceForAccount(String accountId) {

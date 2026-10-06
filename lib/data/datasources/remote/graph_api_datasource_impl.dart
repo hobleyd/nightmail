@@ -31,6 +31,7 @@ import '../../models/todo_task_model.dart';
 import 'calendar_remote_datasource.dart';
 import 'contact_bulk_parser.dart';
 import 'email_remote_datasource.dart';
+import 'phishing_report_datasource.dart';
 import 'graph_import_parser.dart';
 import 'mail_delta_datasource.dart';
 import 'graph_message_parser.dart';
@@ -102,7 +103,8 @@ class GraphApiDatasourceImpl
         CalendarRemoteDatasource,
         TasksRemoteDatasource,
         MailDeltaDatasource,
-        OutOfOfficeDatasource {
+        OutOfOfficeDatasource,
+        PhishingReportDatasource {
   GraphApiDatasourceImpl({required GraphHttpClient client, String? mailboxAddress})
       : _dio = client.dio,
         _base = mailboxAddress == null ? '/me' : '/users/$mailboxAddress';
@@ -2601,6 +2603,73 @@ class GraphApiDatasourceImpl
         data: {'destinationId': 'inbox'},
       );
       return response.data?['id'] as String?;
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  /// Graph's threat submission endpoint. Still `/beta`: Microsoft never
+  /// promoted the threat submission API to v1.0 (v1.0's `$metadata` carries
+  /// only the older, admin-oriented `threatAssessmentRequests`), and it is the
+  /// one programmatic channel that lands a user's report where Outlook's own
+  /// Report button does — the tenant's Submissions portal, "User reported".
+  /// Needs `ThreatSubmission.ReadWrite`, asked for incrementally; see
+  /// `MicrosoftAuthService.threatSubmissionScope`.
+  @visibleForTesting
+  static const threatSubmissionEndpoint =
+      'https://graph.microsoft.com/beta/security/threatSubmission/emailThreats';
+
+  /// Who this instance's mailbox is, for [submitPhishingReport]: the `users/…`
+  /// path segment Graph resolves the message under, and the address the
+  /// submission names as the recipient. Resolved once per instance.
+  ({String userPath, String recipient})? _mailboxIdentity;
+
+  /// Resolves [_mailboxIdentity].
+  ///
+  /// A shared mailbox already names its address in [_base]. The signed-in
+  /// user's own mailbox is `/me`, which the submission cannot be given: it is
+  /// resolved through `/me` into the user's directory id for the path (an
+  /// alias in `mail` need not be a `users/{…}` key, the id always is) and
+  /// `mail` — falling back to the UPN — for the recipient address.
+  Future<({String userPath, String recipient})> _resolveMailboxIdentity() async {
+    final cached = _mailboxIdentity;
+    if (cached != null) return cached;
+    if (_base.startsWith('/users/')) {
+      final address = _base.substring('/users/'.length);
+      return _mailboxIdentity = (userPath: 'users/$address', recipient: address);
+    }
+    final response = await _dio.get<Map<String, dynamic>>(
+      '/me',
+      queryParameters: const {r'$select': 'id,mail,userPrincipalName'},
+    );
+    final data = response.data ?? const <String, dynamic>{};
+    final id = (data['id'] as String?)?.trim() ?? '';
+    final mail = (data['mail'] as String?)?.trim() ?? '';
+    final upn = (data['userPrincipalName'] as String?)?.trim() ?? '';
+    final recipient = mail.isNotEmpty ? mail : upn;
+    if (id.isEmpty || recipient.isEmpty) {
+      throw const ServerException(
+          message: 'Could not resolve the mailbox address for this account');
+    }
+    return _mailboxIdentity = (userPath: 'users/$id', recipient: recipient);
+  }
+
+  @override
+  Future<void> submitPhishingReport(String id) async {
+    try {
+      final mailbox = await _resolveMailboxIdentity();
+      await _dio.post<Map<String, dynamic>>(
+        threatSubmissionEndpoint,
+        data: {
+          '@odata.type': '#microsoft.graph.security.emailUrlThreatSubmission',
+          'category': 'phishing',
+          'recipientEmailAddress': mailbox.recipient,
+          // `messageUrl`, not `messageUri`: the beta resource's property. The
+          // v1.0 spelling belongs to threatAssessmentRequests, a different API.
+          'messageUrl':
+              'https://graph.microsoft.com/beta/${mailbox.userPath}/messages/$id',
+        },
+      );
     } on DioException catch (e) {
       throw _mapDioException(e);
     }

@@ -19,6 +19,7 @@ import '../datasources/local/email_local_datasource.dart';
 import '../datasources/local/folder_local_datasource.dart';
 import '../datasources/local/pending_operations_datasource.dart';
 import '../datasources/remote/conversation_folder_datasource.dart';
+import '../datasources/remote/phishing_report_datasource.dart';
 import '../datasources/remote/email_remote_datasource.dart';
 
 class EmailRepositoryImpl implements EmailRepository {
@@ -612,6 +613,38 @@ class EmailRepositoryImpl implements EmailRepository {
       unawaited(_outboxDrainService.drainForAccount(accountId));
       return unit;
     });
+  }
+
+  @override
+  Future<Either<Failure, Unit>> reportPhishing(String id) async {
+    final datasource = _accountManager.emailDatasource;
+    if (datasource is PhishingReportDatasource) {
+      final account = _accountManager.activeAccount;
+      if (account != null &&
+          !await _accountManager.hasThreatSubmissionAccess(account.id)) {
+        // The ordinary first-run answer, not a failed attempt: the caller
+        // offers the grant and retries. Nothing has been moved.
+        return Left(PhishingReportAccessNotGranted(
+          message: 'NightMail needs permission to report phishing to Microsoft',
+          accountId: account.id,
+          accountEmail: account.emailAddress,
+        ));
+      }
+      // Bound outside the closure: a captured local loses its promotion inside
+      // one, so the call would be against EmailRemoteDatasource again.
+      final capable = datasource as PhishingReportDatasource;
+      // Report *before* filing. The move that follows mints a new id on Graph,
+      // and the submission names the message by the id it has now. Through
+      // [_execute] rather than the outbox on purpose: a report that cannot be
+      // sent is a settled failure to show the user, not a mutation to replay
+      // later, and until it has gone the message stays exactly where it is.
+      final reported = await _execute(() async {
+        await capable.submitPhishingReport(id);
+        return unit;
+      });
+      if (reported.isLeft()) return reported;
+    }
+    return reportJunk(id);
   }
 
   @override

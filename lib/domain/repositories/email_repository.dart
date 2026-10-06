@@ -117,6 +117,16 @@ abstract interface class EmailRepository {
   /// Reports [id] as not junk (moves it back to the inbox).
   Future<Either<Failure, Unit>> notJunk(String id);
 
+  /// Reports [id] as a phishing attempt: tells the provider, where it offers a
+  /// channel for that (Microsoft's threat submission), then files the message
+  /// as junk exactly as [reportJunk] does. Gmail and IMAP have no such
+  /// channel, so for them this is [reportJunk] under its honest name.
+  ///
+  /// Answers [PhishingReportAccessNotGranted] when the account could report
+  /// but has never been asked for the scope to — nothing has been moved, and
+  /// the caller offers the grant and retries.
+  Future<Either<Failure, Unit>> reportPhishing(String id);
+
   /// Deletes (moves to Deleted Items) an email by [id].
   ///
   /// [accountId] targets a specific, possibly-non-active account — see

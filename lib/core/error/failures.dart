@@ -35,6 +35,27 @@ final class UnsupportedFailure extends Failure {
   const UnsupportedFailure({required super.message});
 }
 
+/// A Microsoft account is signed in, but has never been asked for the scope
+/// that lets it send a phishing report to Microsoft.
+///
+/// `ThreatSubmission.ReadWrite` is requested incrementally rather than at
+/// sign-in (see `AccountManager.requestThreatSubmissionAccess`), so this is the
+/// ordinary first-run state, not an error: the caller offers the grant and
+/// retries. Nothing has been done to the message — it is still where it was.
+final class PhishingReportAccessNotGranted extends Failure {
+  const PhishingReportAccessNotGranted({
+    required super.message,
+    required this.accountId,
+    required this.accountEmail,
+  });
+
+  final String accountId;
+  final String accountEmail;
+
+  @override
+  List<Object?> get props => [message, accountId, accountEmail];
+}
+
 /// Base type for failures originating from the AI subsystem.
 sealed class AiFailure extends Failure {
   const AiFailure({required super.message});

@@ -14,6 +14,7 @@ import '../../../domain/usecases/get_conversation_thread.dart';
 import '../../../domain/usecases/get_email.dart';
 import '../../../domain/usecases/not_junk.dart';
 import '../../../domain/usecases/report_junk.dart';
+import '../../../domain/usecases/report_phishing.dart';
 import '../../../domain/usecases/search_emails.dart';
 import '../../../domain/usecases/train_spam_filter.dart';
 import '../../../infrastructure/accounts/account.dart';
@@ -43,6 +44,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     required this._moveEmail,
     required this._removeConversationFromFolder,
     required this._reportJunk,
+    required this._reportPhishing,
     required this._notJunk,
     required this._deleteEmail,
     required this._emptyFolder,
@@ -72,6 +74,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     on<EmailListEmailsBulkDeleted>(_onEmailsBulkDeleted);
     on<EmailListConversationDeleted>(_onConversationDeleted);
     on<EmailListJunkReported>(_onJunkReported);
+    on<EmailListPhishingReported>(_onPhishingReported);
     on<EmailListNotJunkReported>(_onNotJunkReported);
     on<EmailListFolderEmptied>(_onFolderEmptied);
     on<EmailListCleared>(_onCleared);
@@ -90,6 +93,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   final MoveEmail _moveEmail;
   final RemoveConversationFromFolder _removeConversationFromFolder;
   final ReportJunk _reportJunk;
+  final ReportPhishing _reportPhishing;
   final NotJunk _notJunk;
   final DeleteEmail _deleteEmail;
   final EmptyFolder _emptyFolder;
@@ -1054,6 +1058,68 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         await _trainSpamFilter(TrainSpamFilterParams(
           accountId: accountId,
           emails: junkEmails,
+          isSpam: true,
+        ));
+        await _spamDbSyncService.enqueuePush(accountId);
+        unawaited(_outboxDrainService.drainForAccount(accountId));
+      }
+    }
+  }
+
+  /// [_onJunkReported] with the provider told first — `reportPhishing` submits
+  /// the message to Microsoft and then files it as junk; on Gmail and IMAP it
+  /// is the junk move alone. Differs from junk in one respect: a failure is
+  /// *reported*, not just undone. A junk move that failed is queued in the
+  /// outbox and will be retried, so the row coming back says enough; a
+  /// phishing report that could not be sent is settled (offline, a tenant
+  /// that refused the scope, the message gone) and a row silently reappearing
+  /// would read as the button doing nothing.
+  Future<void> _onPhishingReported(
+    EmailListPhishingReported event,
+    Emitter<EmailListState> emit,
+  ) async {
+    final current = state;
+    if (current is! EmailListLoaded) return;
+    final ids = event.emailIds.toSet();
+    final reportedEmails =
+        current.emails.where((e) => ids.contains(e.id)).toList();
+    emit(current.copyWith(
+      emails: current.emails.where((e) => !ids.contains(e.id)).toList(),
+    ));
+    final results = await Future.wait(
+      event.emailIds.map((id) => _reportPhishing(ReportPhishingParams(id: id))),
+    );
+    final failedIds = <String>{};
+    Failure? firstFailure;
+    for (var i = 0; i < event.emailIds.length; i++) {
+      final failure = results[i].getLeft().toNullable();
+      if (failure == null) continue;
+      failedIds.add(event.emailIds[i]);
+      firstFailure ??= failure;
+    }
+    if (firstFailure != null) {
+      final after = state;
+      if (after is EmailListLoaded) {
+        final failedEmails =
+            reportedEmails.where((e) => failedIds.contains(e.id)).toList();
+        emit(after.copyWith(
+          emails: [...after.emails, ...failedEmails],
+          actionFailure: EmailListActionFailure(
+            message: 'Could not report as phishing: ${firstFailure.message}',
+            sequence: ++_actionFailureSequence,
+          ),
+        ));
+      }
+    }
+    if (_accountManager.activeAccount is ImapAccount) {
+      final accountId = _accountManager.activeAccount?.id;
+      if (accountId != null && reportedEmails.isNotEmpty) {
+        // Same ordering constraint as [_onJunkReported]: training must finish
+        // writing before enqueuePush's next read of it, and the push runs
+        // through the drain for the one-live-connection reason given there.
+        await _trainSpamFilter(TrainSpamFilterParams(
+          accountId: accountId,
+          emails: reportedEmails,
           isSpam: true,
         ));
         await _spamDbSyncService.enqueuePush(accountId);

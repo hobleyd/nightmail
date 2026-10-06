@@ -22,6 +22,7 @@ import 'package:nightmail/domain/usecases/not_junk.dart';
 import 'package:nightmail/domain/usecases/remove_conversation_from_folder.dart';
 import 'package:nightmail/domain/usecases/record_known_senders.dart';
 import 'package:nightmail/domain/usecases/report_junk.dart';
+import 'package:nightmail/domain/usecases/report_phishing.dart';
 import 'package:nightmail/domain/usecases/search_emails.dart';
 import 'package:nightmail/domain/usecases/train_spam_filter.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
@@ -106,6 +107,7 @@ const _otherAccount = MicrosoftAccount(
   MoveEmail,
   RemoveConversationFromFolder,
   ReportJunk,
+  ReportPhishing,
   NotJunk,
   DeleteEmail,
   EmptyFolder,
@@ -133,6 +135,7 @@ void main() {
   late MockRecordKnownSenders mockRecordKnownSenders;
   late MockCacheEmails mockCacheEmails;
   late MockForgetCachedEmails mockForgetCachedEmails;
+  late MockReportPhishing mockReportPhishing;
   late _FakeAccountManager fakeAccountManager;
 
   setUpAll(() {
@@ -158,6 +161,7 @@ void main() {
     mockCacheEmails = MockCacheEmails();
     mockForgetCachedEmails = MockForgetCachedEmails();
     when(mockForgetCachedEmails(any)).thenAnswer((_) async => const Right(unit));
+    mockReportPhishing = MockReportPhishing();
     fakeAccountManager = _FakeAccountManager();
     when(mockRecordKnownSenders(any)).thenAnswer((_) async => const Right(unit));
     when(mockCacheEmails(any)).thenAnswer((_) async => const Right(unit));
@@ -171,6 +175,7 @@ void main() {
       moveEmail: mockMoveEmail,
       removeConversationFromFolder: mockRemoveConversationFromFolder,
       reportJunk: MockReportJunk(),
+      reportPhishing: mockReportPhishing,
       notJunk: MockNotJunk(),
       deleteEmail: mockDeleteEmail,
       emptyFolder: mockEmptyFolder,
@@ -194,6 +199,75 @@ void main() {
     bloc.add(EmailListLoadRequested(folderId: folderId));
     await bloc.stream.firstWhere((s) => s is EmailListLoaded);
   }
+
+  // ---------------------------------------------------------------------------
+  // EmailListPhishingReported
+  // ---------------------------------------------------------------------------
+
+  group('EmailListPhishingReported', () {
+    test('takes the rows out at once and reports each id', () async {
+      await loadEmails([_email('id1'), _email('id2'), _email('id3')]);
+      when(mockReportPhishing(any)).thenAnswer((_) async => const Right(unit));
+
+      bloc.add(const EmailListPhishingReported(emailIds: ['id1', 'id3']));
+
+      final state = await bloc.stream
+          .firstWhere((s) => s is EmailListLoaded) as EmailListLoaded;
+      expect(state.emails.map((e) => e.id), ['id2']);
+
+      await pumpEventQueue();
+      verify(mockReportPhishing(const ReportPhishingParams(id: 'id1')));
+      verify(mockReportPhishing(const ReportPhishingParams(id: 'id3')));
+      verifyNever(mockReportPhishing(const ReportPhishingParams(id: 'id2')));
+    });
+
+    test(
+        'a report that could not be sent puts its row back and says so — '
+        'unlike junk, whose failures are retried from the outbox', () async {
+      await loadEmails([_email('id1'), _email('id2')]);
+      when(mockReportPhishing(const ReportPhishingParams(id: 'id1')))
+          .thenAnswer((_) async => const Right(unit));
+      when(mockReportPhishing(const ReportPhishingParams(id: 'id2')))
+          .thenAnswer((_) async => const Left(
+              NetworkFailure(message: 'No network connection')));
+
+      bloc.add(const EmailListPhishingReported(emailIds: ['id1', 'id2']));
+
+      final states = await bloc.stream
+          .where((s) => s is EmailListLoaded)
+          .cast<EmailListLoaded>()
+          .take(2)
+          .toList();
+      // Optimistically gone...
+      expect(states[0].emails, isEmpty);
+      // ...then the failed one is back, with the reason attached to the list.
+      expect(states[1].emails.map((e) => e.id), ['id2']);
+      expect(states[1].actionFailure, isNotNull);
+      expect(states[1].actionFailure!.message,
+          'Could not report as phishing: No network connection');
+    });
+
+    test('the first-run "needs permission" answer is reported like any other',
+        () async {
+      await loadEmails([_email('id1')]);
+      when(mockReportPhishing(any)).thenAnswer((_) async => const Left(
+            PhishingReportAccessNotGranted(
+              message: 'NightMail needs permission to report phishing',
+              accountId: 'account-1',
+              accountEmail: 'test@example.com',
+            ),
+          ));
+
+      bloc.add(const EmailListPhishingReported(emailIds: ['id1']));
+
+      final state = await bloc.stream
+          .where((s) => s is EmailListLoaded)
+          .cast<EmailListLoaded>()
+          .firstWhere((s) => s.actionFailure != null);
+      expect(state.emails.map((e) => e.id), ['id1']);
+      expect(state.actionFailure!.message, contains('needs permission'));
+    });
+  });
 
   // ---------------------------------------------------------------------------
   // EmailListEmailsMoved
@@ -1528,6 +1602,7 @@ void main() {
         moveEmail: mockMoveEmail,
         removeConversationFromFolder: mockRemoveConversationFromFolder,
         reportJunk: MockReportJunk(),
+        reportPhishing: MockReportPhishing(),
         notJunk: MockNotJunk(),
         deleteEmail: MockDeleteEmail(),
         emptyFolder: mockEmptyFolder,
@@ -1679,6 +1754,7 @@ void main() {
         moveEmail: mockMoveEmail,
         removeConversationFromFolder: mockRemoveConversationFromFolder,
         reportJunk: MockReportJunk(),
+        reportPhishing: MockReportPhishing(),
         notJunk: MockNotJunk(),
         deleteEmail: MockDeleteEmail(),
         emptyFolder: mockEmptyFolder,
@@ -1954,6 +2030,7 @@ void main() {
         moveEmail: mockMoveEmail,
         removeConversationFromFolder: mockRemoveConversationFromFolder,
         reportJunk: MockReportJunk(),
+        reportPhishing: MockReportPhishing(),
         notJunk: MockNotJunk(),
         deleteEmail: mockDeleteEmail,
         emptyFolder: mockEmptyFolder,

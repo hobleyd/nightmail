@@ -25,6 +25,8 @@ import 'contact_hover_card.dart';
 import 'forward_meeting_dialog.dart';
 import 'cloud_document_preview_host.dart';
 import 'invite_banner_parts.dart';
+import 'report_junk_button.dart';
+import 'report_phishing_consent.dart';
 import 'date_time_fields.dart';
 import 'event_edit_dialog.dart';
 
@@ -36,6 +38,7 @@ import '../../core/utils/cloud_document_format.dart';
 import '../../core/utils/latest_reply.dart';
 import '../../core/utils/markdown_file.dart';
 import '../../core/utils/meeting_conflicts.dart';
+import '../../core/utils/junk_folder.dart';
 import '../../core/utils/outgoing_folder.dart';
 import '../../data/services/eml_parser.dart';
 import '../../data/services/markdown_preview_service.dart';
@@ -1269,6 +1272,53 @@ class _ReadingPaneToolbar extends StatelessWidget {
     }
   }
 
+  /// Whether the folder the list is showing is Junk, which turns the report
+  /// button into *Not junk*. A search hit or a focused thread is no folder to
+  /// be in, and reads as not-Junk — the same answer [isJunkMailFolder] gives
+  /// the list header for an unscoped view.
+  static bool _isShowingJunkFolder(BuildContext context) {
+    final listState = context.read<EmailListBloc>().state;
+    if (listState is! EmailListLoaded || !listState.isShowingFolder) {
+      return false;
+    }
+    return isJunkMailFolder(_ThreadSwipeNavigatorState._folderById(
+        context.read<FolderListBloc>().state, listState.currentFolderId));
+  }
+
+  /// Reports this message as junk or phishing and leaves it, the way the list
+  /// header's button does for a selection: the list handler takes the row
+  /// out (and puts it back, with a word, if the report fails), and this pane
+  /// clears itself and settles the folder's counts at once.
+  Future<void> _report(BuildContext context, {required bool phishing}) async {
+    if (phishing && !await ensurePhishingReportAccess(context)) return;
+    if (!context.mounted) return;
+    _leaveFolder(context);
+    context.read<EmailListBloc>().add(phishing
+        ? EmailListPhishingReported(emailIds: [email.id])
+        : EmailListJunkReported(emailIds: [email.id]));
+  }
+
+  void _notJunk(BuildContext context) {
+    _leaveFolder(context);
+    context
+        .read<EmailListBloc>()
+        .add(EmailListNotJunkReported(emailIds: [email.id]));
+  }
+
+  /// The pane's half of removing this message from its folder — what the
+  /// success branch of [_confirmAndDelete] does, with the same count deltas.
+  void _leaveFolder(BuildContext context) {
+    context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+    context.read<HomeCubit>().clearEmail();
+    final folderId = email.parentFolderId;
+    if (folderId == null) return;
+    context.read<FolderListBloc>().add(FolderListUnreadCountChanged(
+          folderId: folderId,
+          unreadCountDelta: email.isRead ? 0 : -1,
+          totalCountDelta: -1,
+        ));
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -1324,6 +1374,14 @@ class _ReadingPaneToolbar extends StatelessWidget {
               reverse: true,
               child: Row(
                 children: [
+                  ReportJunkButton(
+                    isJunkFolder: _isShowingJunkFolder(context),
+                    color: c.textMuted,
+                    iconSize: 20,
+                    onReportJunk: () => _report(context, phishing: false),
+                    onReportPhishing: () => _report(context, phishing: true),
+                    onNotJunk: () => _notJunk(context),
+                  ),
                   _ToolbarButton(
                     icon: Icons.content_copy_outlined,
                     tooltip: 'Debug: copy body to clipboard',

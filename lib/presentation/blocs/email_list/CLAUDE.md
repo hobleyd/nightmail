@@ -1,6 +1,6 @@
 # Email List
 
-How the email list groups threads across folders, decides which message heads a thread, labels rows from other folders, and guards against the account-switch race. See [../../../../CLAUDE.md](../../../../CLAUDE.md) for architecture-wide rules and [../folder_list/CLAUDE.md](../folder_list/CLAUDE.md) for the folder panel's own guard.
+How the email list groups threads across folders, decides which message heads a thread, labels rows from other folders, reports junk and phishing, and guards against the account-switch race. See [../../../../CLAUDE.md](../../../../CLAUDE.md) for architecture-wide rules and [../folder_list/CLAUDE.md](../folder_list/CLAUDE.md) for the folder panel's own guard.
 
 ## A Folder Listing Expands Its Threads Across Folders
 
@@ -328,6 +328,64 @@ Five things here are load-bearing:
   share rather than what it asks for. Hence the `LayoutBuilder`: an inflexible
   child of a Row is measured against an unbounded width and cannot work its own
   share out.
+
+## Report Phishing Tells the Provider First, Then Files as Junk
+
+The Report-junk toolbar button is a dropdown on desktop (`ReportJunkButton`):
+*Report junk* and *Report phishing*, the split Outlook's own Report button
+makes. Both end with the message in Junk; phishing differs in what happens
+*before* the move, and in how a failure is told.
+
+- **Microsoft is the only provider with a report channel.** Graph's threat
+  submission API (`PhishingReportDatasource`, implemented by Graph alone and
+  tested for with `is`, the `ConversationFolderDatasource` precedent) is the
+  same channel Outlook's Report button feeds, so the report lands in the
+  tenant's Submissions portal under *User reported*. **Gmail has no API for
+  the "Report phishing" its web client offers** — the Gmail API's only lever
+  is the `SPAM` label — and IMAP has nothing, so for both `reportPhishing` is
+  `reportJunk` under its honest name. Say so if asked; do not invent a channel
+  (forwarding to a third-party address sends the user's mail somewhere they
+  did not choose).
+- **The API is `/beta`, and its scope needs admin consent.** v1.0's
+  `$metadata` carries no `threatSubmission` at all (only the older,
+  admin-oriented `threatAssessmentRequests`), and `ThreatSubmission.ReadWrite`
+  is marked admin-consent-required. That is why the scope is incremental
+  (`MicrosoftAuthService.threatSubmissionScope`), asked for by the button on
+  first use through `AccountManager.requestThreatSubmissionAccess` — an
+  authorization request naming an unconsented admin scope fails outright
+  (AADSTS65001), and in the base set that would break *adding an account* in
+  every tenant that has not approved it. `tool/grant_threat_submission_scope.sh`
+  adds the permission to the registration and grants a tenant's admin consent
+  (or opens the admin-consent URL for a tenant that does not own the
+  registration). Same traps as the other incremental scopes: `_refreshScopes` must re-request it once the token proves it, and
+  the grant check matches whole tokens because `ThreatSubmission.Read` is a
+  prefix of it.
+- **Submit before moving.** The junk move mints a new id on Graph, and the
+  submission names the message by `messageUrl` — the id it has *now*. The
+  repository submits synchronously through `_execute`, then hands over to
+  `reportJunk` (outbox, tombstone, cache drop, drain) for the move itself. A
+  report is therefore **online-only and never queued**: a report that cannot
+  be sent is a settled failure to show, not a mutation to replay, and until it
+  has gone the message stays exactly where it was. `messageUrl` is the beta
+  property name; `messageUri` is v1.0's threatAssessmentRequests and is wrong
+  here. The user's own mailbox is named by its directory *id* in the URL
+  (`mail` may be an alias, which is not a `users/{…}` key) and by `mail` as
+  the recipient; a shared mailbox is named by the address its base path
+  already carries, with no `/me` lookup — `/me` would be the owner.
+- **The consent prompt lives in presentation, before the event.**
+  `ensurePhishingReportAccess` (shared by the list header and the reading
+  pane) checks the grant and runs the dialog, then the `EmailListPhishingReported`
+  event is dispatched. The repository still answers
+  `PhishingReportAccessNotGranted` when the scope is missing — defence in
+  depth, so a path that forgot the prompt gets a legible message rather than a
+  raw 403 — and `_onPhishingReported` surfaces *every* failure as an
+  `actionFailure` snack bar, where `_onJunkReported` only puts the rows back.
+  A failed junk move is queued and will be retried, so the row returning says
+  enough; a failed report is final, and a row silently reappearing reads as
+  the button doing nothing.
+- **Not from the Junk folder.** There the button stays a plain *Not junk*: the
+  list handler takes the row out on the assumption the message is leaving the
+  folder, which in Junk it would not be.
 
 ## Which Folder an Account Switch Lands On
 

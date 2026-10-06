@@ -40,6 +40,8 @@ import 'email_list_conversations.dart';
 import 'email_list_correspondent.dart';
 import 'email_list_item.dart';
 import 'flag_icon_button.dart';
+import 'report_junk_button.dart';
+import 'report_phishing_consent.dart';
 
 class EmailListPanel extends StatefulWidget {
   const EmailListPanel({
@@ -551,6 +553,27 @@ class _EmailListPanelState extends State<EmailListPanel> {
     _clearSelection();
   }
 
+  /// [_toggleJunkSelection]'s phishing counterpart. The ids are taken before
+  /// the consent prompt so a selection the user changes while the dialog is
+  /// up still reports what they clicked on; nothing moves until it answers.
+  Future<void> _reportPhishingSelection() async {
+    final ids = _selectedEmailIds.isNotEmpty
+        ? List.of(_selectedEmailIds)
+        : [if (widget.selectedEmailId != null) widget.selectedEmailId!];
+    if (ids.isEmpty) return;
+    if (!await ensurePhishingReportAccess(context) || !mounted) return;
+    final removed = _emailsById(ids);
+    if (ids.contains(widget.selectedEmailId)) {
+      context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+      context.read<HomeCubit>().clearEmail();
+    }
+    context
+        .read<EmailListBloc>()
+        .add(EmailListPhishingReported(emailIds: ids));
+    _applyRemovalCountChange(removed);
+    _clearSelection();
+  }
+
   void _markUnreadSelection() {
     final ids = _selectedEmailIds.isNotEmpty
         ? Set.of(_selectedEmailIds)
@@ -665,6 +688,8 @@ class _EmailListPanelState extends State<EmailListPanel> {
                   },
                   onDelete: hasSelection ? _deleteSelection : null,
                   onReportJunk: hasSelection ? _toggleJunkSelection : null,
+                  onReportPhishing:
+                      hasSelection ? _reportPhishingSelection : null,
                   isJunkFolder: _isJunkFolder,
                   onMarkUnread: hasSelection ? _markUnreadSelection : null,
                 );
@@ -961,6 +986,7 @@ class _ListHeader extends StatelessWidget {
     this.onBack,
     this.onDelete,
     this.onReportJunk,
+    this.onReportPhishing,
     this.isJunkFolder = false,
     this.onMarkUnread,
   });
@@ -975,7 +1001,12 @@ class _ListHeader extends StatelessWidget {
   final VoidCallback onCompose;
   final VoidCallback? onBack;
   final VoidCallback? onDelete;
+  /// Reports the selection as junk — or, in the Junk folder, as not junk.
   final VoidCallback? onReportJunk;
+
+  /// Reports the selection as phishing. Offered from the same button's
+  /// dropdown on desktop; see [ReportJunkButton].
+  final VoidCallback? onReportPhishing;
   final bool isJunkFolder;
   final VoidCallback? onMarkUnread;
 
@@ -1133,16 +1164,12 @@ class _ListHeader extends StatelessWidget {
               onPressed: onMarkUnread,
             ),
           if (onReportJunk != null)
-            IconButton(
-              icon: Icon(isJunkFolder ? Icons.report_off_outlined : Icons.report_outlined,
-                  size: touchIcon(20), color: c.textMuted),
-              tooltip: isJunkFolder ? 'Not junk' : 'Report junk',
-              padding: EdgeInsets.zero,
-              constraints: BoxConstraints(
-                minWidth: touchTarget(32),
-                minHeight: touchTarget(32),
-              ),
-              onPressed: onReportJunk,
+            ReportJunkButton(
+              isJunkFolder: isJunkFolder,
+              color: c.textMuted,
+              onReportJunk: onReportJunk!,
+              onNotJunk: onReportJunk!,
+              onReportPhishing: onReportPhishing ?? onReportJunk!,
             ),
           if (onDelete != null)
             IconButton(

@@ -24,25 +24,57 @@ import 'email_remote_datasource.dart';
 import 'gmail_message_parser.dart';
 import 'mail_delta_datasource.dart';
 import 'out_of_office_datasource.dart';
+import 'thread_index_datasource.dart';
+
+/// What a Gmail account's label counts were last read as, and the point in the
+/// mailbox's history they were read at.
+///
+/// Held by `AccountManager` per account and handed to every
+/// [GmailDatasourceImpl] built for it, because the poller builds a fresh
+/// datasource each cycle (the HTTP client is stateless) while the point of this
+/// is to carry what the *last* cycle learned into the next one. See
+/// [GmailDatasourceImpl._refreshLabelCounts] for how it is used.
+class GmailLabelCountMemo {
+  /// `(unread, total)` as each label last actually reported it.
+  ///
+  /// Counts come from one request per label, so a single transient failure in
+  /// that burst must not be reported as a count of 0: the badge clears, the
+  /// poller reads the drop as a change and recaches the folder, then overwrites
+  /// its baseline with the zero — so the true count is never noticed again.
+  /// A label whose request failed keeps its last known count instead, and is
+  /// listed in [stale] so the next refresh asks again.
+  final Map<String, (int, int)> counts = {};
+
+  /// The mailbox `historyId` [counts] is complete as of, or null when the
+  /// counts have never been read in full against a known point in history.
+  String? historyId;
+
+  /// Labels whose last count request failed.
+  final Set<String> stale = {};
+}
 
 class GmailDatasourceImpl
     implements
         EmailRemoteDatasource,
         MailDeltaDatasource,
         ConversationFolderDatasource,
-        OutOfOfficeDatasource {
+        OutOfOfficeDatasource,
+        ThreadIndexDatasource {
   GmailDatasourceImpl({
     required GmailHttpClient client,
     this.displayName = '',
     this.accountEmail = '',
-  }) : _dio = client.dio;
+    GmailLabelCountMemo? labelCounts,
+  })  : _dio = client.dio,
+        _counts = labelCounts ?? GmailLabelCountMemo();
 
   @visibleForTesting
   GmailDatasourceImpl.withDio(
     this._dio, {
     this.displayName = '',
     this.accountEmail = '',
-  });
+    GmailLabelCountMemo? labelCounts,
+  }) : _counts = labelCounts ?? GmailLabelCountMemo();
 
   final Dio _dio;
   final String displayName;
@@ -55,14 +87,10 @@ class GmailDatasourceImpl
   /// Cleared on skip==0 (new list load); used on skip>0 (load-more).
   final Map<String?, String> _pageTokens = {};
 
-  /// `(unread, total)` as each label last actually reported it.
-  ///
-  /// Counts come from one request per label, so a single transient failure in
-  /// that burst must not be reported as a count of 0: the badge clears, the
-  /// poller reads the drop as a change and recaches the folder, then overwrites
-  /// its baseline with the zero — so the true count is never noticed again.
-  /// A folder whose request failed keeps its last known count instead.
-  final Map<String, (int, int)> _labelCounts = {};
+  /// Label counts, and the point in the mailbox's history they are good for.
+  /// Shared by every datasource built for the same account — see
+  /// [GmailLabelCountMemo].
+  final GmailLabelCountMemo _counts;
 
   @override
   Future<List<EmailFolderModel>> getMailFolders() async {
@@ -152,22 +180,18 @@ class GmailDatasourceImpl
         }
       }
 
-      // The labels list endpoint omits message counts. Fetch them for all real
-      // (non-virtual) labels so the poller and folder list are correct —
-      // concurrently, but a chunk at a time (see [_labelCountConcurrency]).
+      // The labels list endpoint omits message counts, and they cost a request
+      // per label — so only the labels the mailbox's history says have moved
+      // are asked for (see [_refreshLabelCounts]).
       final realIds = folders
           .where((f) => !f.id.startsWith('__virtual__'))
           .map((f) => f.id)
           .toList();
-      for (var i = 0; i < realIds.length; i += _labelCountConcurrency) {
-        final chunk = realIds.sublist(
-            i, (i + _labelCountConcurrency).clamp(0, realIds.length));
-        await Future.wait(chunk.map(_fetchLabelCount));
-      }
+      await _refreshLabelCounts(realIds);
 
       return folders.map((f) {
         final childCount = childCountByParent[f.id] ?? 0;
-        final counts = _labelCounts[f.id];
+        final counts = _counts.counts[f.id];
         if (childCount == 0 && counts == null) return f;
         return EmailFolderModel(
           id: f.id,
@@ -209,7 +233,105 @@ class GmailDatasourceImpl
   /// modify.
   static const _emptyFolderPageSize = 500;
 
-  /// Reads one label's message counts into [_labelCounts]. Never throws: a label
+  /// Brings [_counts] up to date for [labelIds], asking Gmail for as few
+  /// labels as the mailbox's history allows.
+  ///
+  /// A label's counts are not in the labels list; `labels.get` is one request
+  /// — and one quota unit — per label, which on a mailbox with 129 labels was
+  /// 130 units for every folder-list load, including the one every 30 s poll
+  /// cycle makes. Under the 6,000 units/minute per-user quota that is a
+  /// twentieth of the budget spent re-reading counts that had not changed.
+  ///
+  /// The mailbox's `historyId` (`getProfile`, 1 unit) says whether *anything*
+  /// changed since the counts were last read, and `history.list` from that id
+  /// (2 units a page) says which labels it touched — every record names the
+  /// labels it added or removed and the current labels of the message it
+  /// changed, and a count can only move for one of those. So a quiet cycle
+  /// costs 1 unit, a busy one costs the labels that actually moved, and only a
+  /// memo with no history to walk from — the first call, or history Gmail has
+  /// expired or that runs past the page budget — pays the full per-label round.
+  ///
+  /// Never leaves the listing without counts it could have had: any failure on
+  /// the cheap path falls back to reading every label, and a label whose own
+  /// read fails keeps its last known count and is asked again next time
+  /// ([GmailLabelCountMemo.stale]).
+  Future<void> _refreshLabelCounts(List<String> labelIds) async {
+    final current = labelIds.toSet();
+    _counts.counts.removeWhere((id, _) => !current.contains(id));
+    _counts.stale.removeWhere((id) => !current.contains(id));
+
+    // Read *before* the counts are: a change that lands while they are being
+    // fetched is then walked again next time rather than lost. Re-reading a
+    // count is harmless; skipping one is not.
+    String? now;
+    try {
+      now = (await _profile())['historyId']?.toString();
+    } catch (_) {
+      now = null;
+    }
+    if (now == null || now.isEmpty) {
+      // Nothing to remember the counts against — read them all, as before.
+      await _fetchLabelCounts(labelIds);
+      _counts.historyId = null;
+      return;
+    }
+
+    final since = _counts.historyId;
+    // Null means "every label": no point in history to walk from, or a walk
+    // that cannot be trusted to be complete.
+    final touched = since == null
+        ? null
+        : since == now
+            ? const <String>{}
+            : await _touchedLabelsSince(since);
+
+    await _fetchLabelCounts([
+      for (final id in labelIds)
+        if (touched == null ||
+            touched.contains(id) ||
+            _counts.stale.contains(id) ||
+            !_counts.counts.containsKey(id))
+          id,
+    ]);
+    _counts.historyId = now;
+  }
+
+  /// Every label a history record since [since] names, or null when the walk
+  /// cannot be trusted to be complete — history Gmail no longer holds (404),
+  /// more pages than [_historyPageBudget], a page that will not decode, any
+  /// failure — in which case every label is re-read.
+  Future<Set<String>?> _touchedLabelsSince(String since) async {
+    final rawPages = <String>[];
+    String? pageToken;
+    try {
+      for (var page = 0;; page++) {
+        if (page >= _historyPageBudget) return null;
+        final resp = await _dio.get<String>(
+          '/users/me/history',
+          queryParameters: {
+            'startHistoryId': since,
+            'maxResults': _historyPageSize,
+            'pageToken': ?pageToken,
+          },
+          options: Options(responseType: ResponseType.plain),
+        );
+        final raw = resp.data ?? '';
+        if (raw.isNotEmpty) rawPages.add(raw);
+        pageToken = raw.isEmpty ? null : googleNextPageToken(raw);
+        if (pageToken == null) break;
+      }
+    } catch (_) {
+      return null;
+    }
+    return compute(parseGmailHistoryTouchedLabels, rawPages);
+  }
+
+  /// Reads the counts of [ids], a chunk at a time (see
+  /// [_labelCountConcurrency]).
+  Future<void> _fetchLabelCounts(List<String> ids) =>
+      _fetchInChunks(ids, _labelCountConcurrency, _fetchLabelCount);
+
+  /// Reads one label's message counts into [_counts]. Never throws: a label
   /// that could not be counted keeps its last known figures rather than failing
   /// the whole folder listing.
   Future<void> _fetchLabelCount(String id) async {
@@ -217,14 +339,41 @@ class GmailDatasourceImpl
       final resp = await _dio.get<Map<String, dynamic>>('/users/me/labels/$id');
       final d = resp.data;
       if (d == null) return;
-      _labelCounts[id] = (
+      _counts.counts[id] = (
         d['messagesUnread'] as int? ?? 0,
         d['messagesTotal'] as int? ?? 0,
       );
+      _counts.stale.remove(id);
     } catch (e) {
-      // Leave the last known count in place — see [_labelCounts].
-      debugPrint('[Gmail] label count fetch failed for $id: $e');
+      // Leave the last known count in place — see [GmailLabelCountMemo].
+      _counts.stale.add(id);
+      final reason = e is DioException
+          ? _extractGoogleErrorMessage(e) ??
+              'HTTP ${e.response?.statusCode ?? '?'}'
+          : '$e';
+      debugPrint('[Gmail] label count fetch failed for $id: $reason');
     }
+  }
+
+  /// Runs [fetch] over [ids] with at most [concurrency] in flight, keeping
+  /// the results in [ids]' order.
+  ///
+  /// Gmail has no multi-get for messages or threads, so every expansion costs
+  /// one request per id and the only lever is how many go out together. Past
+  /// about eight Gmail starts closing connections mid-header and throttling,
+  /// and each 429 buys a second or more of `RetryInterceptor` backoff — so
+  /// firing a whole page at once made the page slower rather than faster.
+  Future<List<T>> _fetchInChunks<T>(
+    List<String> ids,
+    int concurrency,
+    Future<T> Function(String id) fetch,
+  ) async {
+    final out = <T>[];
+    for (var i = 0; i < ids.length; i += concurrency) {
+      final chunk = ids.sublist(i, (i + concurrency).clamp(0, ids.length));
+      out.addAll(await Future.wait(chunk.map(fetch)));
+    }
+    return out;
   }
 
   @override
@@ -290,42 +439,105 @@ class GmailDatasourceImpl
       // have been trashed or marked as spam — they belong to those folders and
       // must not be re-cached under the current folder (the cache primary key
       // is (emailId, accountId), so an insertOrReplace would move them here).
-      final excludeLabels = (folderId == 'TRASH' || folderId == 'SPAM')
-          ? const <String>{}
-          : const {'TRASH', 'SPAM'};
-
-      // Fetch every thread's messages concurrently (network only — no
-      // decoding), then parse the whole page in a single background isolate. One
-      // compute() for the page rather than one per thread: each call spawns its
-      // own isolate, and paying that 25 times over would cost more than the
-      // parse.
-      //
-      // A chunk at a time, for the same reason the label counts are chunked
-      // (see [_labelCountConcurrency]) — and it is worse here, because a 429
-      // costs `RetryInterceptor` a second or more of backoff, so firing a whole
-      // page at once made the page slower rather than faster.
       final threadIds = [
         for (final t in threads) (t as Map<String, dynamic>)['id'] as String,
       ];
-      final rawBodies = <String?>[];
-      for (var i = 0; i < threadIds.length; i += _threadFetchConcurrency) {
-        final chunk = threadIds.sublist(
-          i,
-          (i + _threadFetchConcurrency).clamp(0, threadIds.length),
-        );
-        rawBodies.addAll(await Future.wait(chunk.map(_fetchThreadRaw)));
-      }
-
-      return await compute(
-        parseGmailThreads,
-        GmailThreadParseParams(
-          rawThreadBodies: rawBodies,
-          excludeLabels: excludeLabels,
-        ),
+      return await _fetchThreads(
+        threadIds,
+        excludeLabels: _excludedWhenListing(folderId),
       );
     } on DioException catch (e) {
       throw _mapException(e);
     }
+  }
+
+  /// Labels whose messages must not be re-cached under [folderId] — see
+  /// [getEmails].
+  static Set<String> _excludedWhenListing(String? folderId) =>
+      (folderId == 'TRASH' || folderId == 'SPAM')
+          ? const <String>{}
+          : const {'TRASH', 'SPAM'};
+
+  /// Fetches every thread in [threadIds] (network only — no decoding), then
+  /// parses them all in a single background isolate. One compute() for the
+  /// page rather than one per thread: each call spawns its own isolate, and
+  /// paying that 25 times over would cost more than the parse.
+  ///
+  /// A chunk at a time — see [_fetchInChunks] and [_threadFetchConcurrency].
+  ///
+  /// A thread whose fetch fails is skipped, as a listing always has; with
+  /// [complete] it fails the whole fetch instead.
+  Future<List<EmailModel>> _fetchThreads(
+    List<String> threadIds, {
+    required Set<String> excludeLabels,
+    bool complete = false,
+  }) async {
+    final rawBodies = await _fetchInChunks(
+      threadIds,
+      _threadFetchConcurrency,
+      complete ? _fetchThreadRawOrThrow : _fetchThreadRaw,
+    );
+    return compute(
+      parseGmailThreads,
+      GmailThreadParseParams(
+        rawThreadBodies: rawBodies,
+        excludeLabels: excludeLabels,
+      ),
+    );
+  }
+
+  @override
+  Future<List<ThreadIndexEntry>> listThreadIndex(
+    String folderId, {
+    int top = 25,
+  }) async {
+    try {
+      // Nothing here touches [_pageTokens]: the list on screen may be part way
+      // through loading more of this very folder.
+      //
+      // `fields` trims each entry to the two values the index is made of; the
+      // snippet a listing otherwise carries is most of the response.
+      final resp = await _dio.get<String>(
+        '/users/me/threads',
+        queryParameters: {
+          'maxResults': top,
+          'labelIds': folderId,
+          'fields': 'threads(id,historyId)',
+        },
+        options: Options(responseType: ResponseType.plain),
+      );
+      final raw = resp.data;
+      if (raw == null || raw.isEmpty) return const [];
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      return [
+        for (final t in data['threads'] as List<dynamic>? ?? const [])
+          if (t is Map<String, dynamic> && t['id'] is String)
+            ThreadIndexEntry(
+              threadId: t['id'] as String,
+              historyId: t['historyId']?.toString() ?? '',
+            ),
+      ];
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  /// Fails rather than skipping a thread that could not be fetched, unlike a
+  /// listing. A page built from an index is a receipt for the cache it
+  /// replaces: a thread silently missing from it would be dropped from the
+  /// folder and — its stamp recorded as seen — not fetched again until it next
+  /// changed. A failed cycle costs nothing but the next cycle's retry.
+  @override
+  Future<List<EmailModel>> getThreadMessages(
+    List<String> threadIds, {
+    required String folderId,
+  }) async {
+    if (threadIds.isEmpty) return const [];
+    return _fetchThreads(
+      threadIds,
+      excludeLabels: _excludedWhenListing(folderId),
+      complete: true,
+    );
   }
 
   /// Gmail's conversationId *is* the thread id, so this is a direct thread
@@ -371,6 +583,16 @@ class GmailDatasourceImpl
   /// decode. Returns null when the fetch fails, which the batch parser skips.
   Future<String?> _fetchThreadRaw(String threadId) async {
     try {
+      return await _fetchThreadRawOrThrow(threadId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// [_fetchThreadRaw] that fails instead of skipping — for a page that has to
+  /// be complete or not be at all (see [getThreadMessages]).
+  Future<String?> _fetchThreadRawOrThrow(String threadId) async {
+    try {
       final resp = await _dio.get<String>(
         '/users/me/threads/$threadId',
         queryParameters: {
@@ -380,8 +602,8 @@ class GmailDatasourceImpl
         options: Options(responseType: ResponseType.plain),
       );
       return resp.data;
-    } catch (_) {
-      return null;
+    } on DioException catch (e) {
+      throw _mapException(e);
     }
   }
 
@@ -407,11 +629,15 @@ class GmailDatasourceImpl
       final messages = data['messages'] as List<dynamic>? ?? [];
       if (messages.isEmpty) return [];
 
-      final futures = messages.map((m) =>
-          _fetchMessageMetadataRaw((m as Map<String, dynamic>)['id'] as String));
+      final ids = [
+        for (final m in messages) (m as Map<String, dynamic>)['id'] as String,
+      ];
 
-      // As in getEmails: fetch concurrently, decode once off the UI isolate.
-      final rawBodies = await Future.wait(futures);
+      // As in getEmails: a bounded number in flight, decoded once off the UI
+      // isolate. This used to fire every result at once — up to 100 requests
+      // at 20 quota units each, a third of the per-minute quota in one burst.
+      final rawBodies = await _fetchInChunks(
+          ids, _threadFetchConcurrency, _fetchMessageMetadataRaw);
       return await compute(parseGmailMetadataMessages, rawBodies);
     } on DioException catch (e) {
       throw _mapException(e);
@@ -1651,12 +1877,8 @@ class GmailDatasourceImpl
   /// the cursor being stored, so the next poll reports it properly.
   Future<List<EmailModel>> _fetchHistoryMessages(List<String> ids) async {
     if (ids.isEmpty) return const [];
-    final rawBodies = <String?>[];
-    for (var i = 0; i < ids.length; i += _historyFetchConcurrency) {
-      final chunk = ids.sublist(
-          i, (i + _historyFetchConcurrency).clamp(0, ids.length));
-      rawBodies.addAll(await Future.wait(chunk.map(_fetchMessageMetadataRaw)));
-    }
+    final rawBodies = await _fetchInChunks(
+        ids, _historyFetchConcurrency, _fetchMessageMetadataRaw);
     // One compute() for the whole change set rather than one per message: each
     // call spawns an isolate, so per-message would cost more than the parse.
     return compute(parseGmailMetadataMessages, rawBodies);

@@ -74,6 +74,9 @@ would re-break.
   cloud-document link handling in a message body
 - [`docs/claude/imap.md`](docs/claude/imap.md) — serialising IMAP commands
   through one connection/mailbox selection
+- [`docs/claude/gmail-quota.md`](docs/claude/gmail-quota.md) — what every
+  Gmail request costs against the 6,000 units/minute per-user quota, and the
+  rules that keep the poller, folder list and search under it
 
 ### Mail List & Folders
 

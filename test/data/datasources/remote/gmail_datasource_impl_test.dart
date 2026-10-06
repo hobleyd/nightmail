@@ -1857,4 +1857,331 @@ void main() {
       expect(sentSubject(data), 'Re: Budget');
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Quota: label counts, the thread index, and the search fan-out
+  // ---------------------------------------------------------------------------
+
+  // Gmail's per-user quota is 6,000 units a minute and a label's counts cost a
+  // request each — 130 units per folder-list load on a mailbox with 129
+  // labels, every 30 s poll cycle. The mailbox's historyId says whether
+  // anything changed since the counts were last read, and the history feed
+  // says which labels it touched, so only those are re-read.
+  group('getMailFolders — label counts via the history feed', () {
+    late List<String> counted;
+    late String historyId;
+    late Map<String, dynamic> Function(Map<String, dynamic> query) history;
+
+    void stub({
+      List<Map<String, dynamic>>? labels,
+      Set<String> failing = const {},
+    }) {
+      counted = [];
+      when(mockDio.get<Map<String, dynamic>>(any)).thenAnswer((inv) async {
+        final path = inv.positionalArguments.first as String;
+        if (path == '/users/me/labels') {
+          return _labelsResp(labels ??
+              [for (var i = 1; i <= 3; i++) _label('Label_$i', 'Label $i')]);
+        }
+        final id = path.substring('/users/me/labels/'.length);
+        counted.add(id);
+        if (failing.contains(id)) {
+          throw DioException(
+            requestOptions: RequestOptions(path: path),
+            response: Response(
+                statusCode: 500, requestOptions: RequestOptions(path: path)),
+          );
+        }
+        return _jsonResp({'messagesUnread': 1, 'messagesTotal': 2}, path);
+      });
+      // By path, because a Dart Invocation carries no type argument: a stub
+      // for get<String>(any, …) would answer the labels' get<Map> calls too.
+      when(mockDio.get<String>('/users/me/profile',
+              options: anyNamed('options')))
+          .thenAnswer((_) async =>
+              _plainResp({'historyId': historyId}, '/users/me/profile'));
+      when(mockDio.get<String>(
+        '/users/me/history',
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((inv) async => _plainResp(
+          history(
+              inv.namedArguments[#queryParameters] as Map<String, dynamic>),
+          '/users/me/history'));
+    }
+
+    setUp(() {
+      historyId = '100';
+      history = (_) => fail('no history walk expected');
+    });
+
+    test('reads every label once, then none while the history id is unchanged',
+        () async {
+      stub();
+
+      final first = await datasource.getMailFolders();
+      expect(counted, unorderedEquals(['Label_1', 'Label_2', 'Label_3']));
+      expect(first.every((f) => f.unreadItemCount == 1), isTrue);
+
+      counted.clear();
+      final second = await datasource.getMailFolders();
+
+      expect(counted, isEmpty, reason: 'nothing changed — nothing to re-read');
+      expect(second.every((f) => f.unreadItemCount == 1), isTrue,
+          reason: 'the counts last read are still the counts');
+      expect(second.every((f) => f.totalItemCount == 2), isTrue);
+    });
+
+    test('after a change, re-reads only the labels the history names',
+        () async {
+      stub();
+      await datasource.getMailFolders();
+      counted.clear();
+
+      // A message in Label_2 was read: UNREAD came off it.
+      historyId = '101';
+      history = (query) {
+        expect(query['startHistoryId'], '100',
+            reason: 'walked from the point the counts were read at');
+        return {
+          'historyId': '101',
+          'history': [
+            {
+              'id': '101',
+              'labelsRemoved': [
+                {
+                  'labelIds': ['UNREAD'],
+                  'message': {
+                    'id': 'm1',
+                    'labelIds': ['Label_2'],
+                  },
+                },
+              ],
+            },
+          ],
+        };
+      };
+
+      await datasource.getMailFolders();
+
+      expect(counted, ['Label_2']);
+    });
+
+    test('reads every label again when the history has expired', () async {
+      stub();
+      await datasource.getMailFolders();
+      counted.clear();
+
+      historyId = '101';
+      history = (_) => throw DioException(
+            requestOptions: RequestOptions(path: '/users/me/history'),
+            response: Response(
+                statusCode: 404,
+                requestOptions: RequestOptions(path: '/users/me/history')),
+          );
+
+      await datasource.getMailFolders();
+
+      expect(counted, unorderedEquals(['Label_1', 'Label_2', 'Label_3']));
+    });
+
+    test('asks again for a label whose count could not be read, even when quiet',
+        () async {
+      stub(failing: {'Label_2'});
+      final first = await datasource.getMailFolders();
+      expect(first.firstWhere((f) => f.id == 'Label_2').unreadItemCount, 0,
+          reason: 'no last known count to keep');
+      counted.clear();
+
+      stub();
+      final second = await datasource.getMailFolders();
+
+      expect(counted, ['Label_2']);
+      expect(second.firstWhere((f) => f.id == 'Label_2').unreadItemCount, 1);
+    });
+
+    // The poller builds a fresh datasource every cycle, so what a cycle learns
+    // has to travel in the memo or every cycle is a first cycle.
+    test('carries what it learned to another datasource sharing the memo',
+        () async {
+      stub();
+      final memo = GmailLabelCountMemo();
+      await GmailDatasourceImpl.withDio(mockDio, labelCounts: memo)
+          .getMailFolders();
+      counted.clear();
+
+      final folders = await GmailDatasourceImpl.withDio(mockDio,
+              labelCounts: memo)
+          .getMailFolders();
+
+      expect(counted, isEmpty);
+      expect(folders.every((f) => f.totalItemCount == 2), isTrue);
+    });
+  });
+
+  group('ThreadIndexDatasource', () {
+    Map<String, dynamic> message(String id, String threadId,
+            {List<String> labelIds = const ['Label_1']}) =>
+        {
+          'id': id,
+          'threadId': threadId,
+          'labelIds': labelIds,
+          'internalDate': '1780000000000',
+          'payload': {
+            'mimeType': 'text/plain',
+            'headers': [
+              {'name': 'Subject', 'value': 'hello'},
+              {'name': 'From', 'value': 'alice@example.com'},
+            ],
+            'parts': <dynamic>[],
+          },
+        };
+
+    test('listThreadIndex reads each thread and its stamp from threads.list',
+        () async {
+      when(mockDio.get<String>(
+        any,
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((inv) async => _plainResp({
+            'threads': [
+              {'id': 't1', 'historyId': '101', 'snippet': 'hi'},
+              {'id': 't2', 'historyId': '95'},
+            ],
+          }, inv.positionalArguments.first as String));
+
+      final index = await datasource.listThreadIndex('Label_1', top: 25);
+
+      expect(index.map((e) => e.threadId), ['t1', 't2']);
+      expect(index.map((e) => e.historyId), ['101', '95']);
+      final query = verify(mockDio.get<String>(
+        '/users/me/threads',
+        queryParameters: captureAnyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).captured.single as Map<String, dynamic>;
+      expect(query['labelIds'], 'Label_1');
+      expect(query['maxResults'], 25);
+      expect(query['fields'], contains('historyId'),
+          reason: 'the snippet is most of the response and none of the index');
+    });
+
+    test('getThreadMessages fetches a bounded number at a time and excludes '
+        'Trash and Spam like a listing does', () async {
+      var inFlight = 0;
+      var peakInFlight = 0;
+      when(mockDio.get<String>(
+        any,
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((inv) async {
+        final path = inv.positionalArguments.first as String;
+        final threadId = path.substring('/users/me/threads/'.length);
+        inFlight++;
+        if (inFlight > peakInFlight) peakInFlight = inFlight;
+        await Future<void>.delayed(Duration.zero);
+        inFlight--;
+        return _plainResp({
+          'id': threadId,
+          'messages': [
+            message('$threadId-m', threadId),
+            if (threadId == 't1')
+              message('$threadId-trashed', threadId, labelIds: ['TRASH']),
+          ],
+        }, path);
+      });
+      final ids = [for (var i = 1; i <= 20; i++) 't$i'];
+
+      final emails =
+          await datasource.getThreadMessages(ids, folderId: 'Label_1');
+
+      expect(peakInFlight, lessThanOrEqualTo(8));
+      expect(emails.map((e) => e.id), [for (final id in ids) '$id-m'],
+          reason: 'every thread, in order, without the trashed message');
+      expect(emails.every((e) => e.conversationId != null), isTrue);
+    });
+
+    // A listing skips a thread it could not fetch. An index-built page must
+    // not: it replaces the folder's cache and its stamps are recorded as seen,
+    // so a thread missing from it would stay missing until it next changed.
+    test('getThreadMessages fails rather than returning a page with a thread '
+        'missing', () async {
+      when(mockDio.get<String>(
+        any,
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((inv) async {
+        final path = inv.positionalArguments.first as String;
+        if (path.endsWith('/t2')) {
+          throw DioException(
+            requestOptions: RequestOptions(path: path),
+            response: Response(
+                statusCode: 403, requestOptions: RequestOptions(path: path)),
+          );
+        }
+        final threadId = path.substring('/users/me/threads/'.length);
+        return _plainResp({
+          'id': threadId,
+          'messages': [message('$threadId-m', threadId)],
+        }, path);
+      });
+
+      await expectLater(
+        datasource.getThreadMessages(['t1', 't2', 't3'], folderId: 'Label_1'),
+        throwsA(isA<ServerException>()),
+      );
+    });
+
+    test('getThreadMessages fetches nothing for no threads', () async {
+      expect(await datasource.getThreadMessages([], folderId: 'Label_1'),
+          isEmpty);
+      verifyNever(mockDio.get<String>(any,
+          queryParameters: anyNamed('queryParameters'),
+          options: anyNamed('options')));
+    });
+  });
+
+  // A search used to fire one fetch per result at once — up to 100 requests at
+  // 20 quota units each, a third of the per-minute quota in one burst.
+  group('searchEmails', () {
+    test('fetches results a bounded number at a time', () async {
+      var inFlight = 0;
+      var peakInFlight = 0;
+      when(mockDio.get<String>(
+        any,
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((inv) async {
+        final path = inv.positionalArguments.first as String;
+        if (path == '/users/me/messages') {
+          return _plainResp({
+            'messages': [
+              for (var i = 0; i < 30; i++) {'id': 'm$i'},
+            ],
+          }, path);
+        }
+        inFlight++;
+        if (inFlight > peakInFlight) peakInFlight = inFlight;
+        await Future<void>.delayed(Duration.zero);
+        inFlight--;
+        final id = path.substring('/users/me/messages/'.length);
+        return _plainResp({
+          'id': id,
+          'threadId': 'thread-$id',
+          'labelIds': ['INBOX'],
+          'internalDate': '1780000000000',
+          'payload': {
+            'headers': [
+              {'name': 'Subject', 'value': 'hello'},
+              {'name': 'From', 'value': 'alice@example.com'},
+            ],
+          },
+        }, path);
+      });
+
+      final emails = await datasource.searchEmails(query: 'hello');
+
+      expect(peakInFlight, lessThanOrEqualTo(8));
+      expect(emails, hasLength(30), reason: 'bounded, not truncated');
+    });
+  });
 }

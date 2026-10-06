@@ -106,6 +106,13 @@ class AccountManager {
   // server's per-user connection cap.
   final Map<String, ImapDatasourceImpl> _imapDatasourceCache = {};
 
+  // What each Gmail account's label counts were last read as, and the point in
+  // the mailbox's history they were read at. The datasource itself is rebuilt
+  // per call, so this is what lets a folder-list load re-read only the labels
+  // whose counts can have moved since the last one — see
+  // GmailDatasourceImpl._refreshLabelCounts.
+  final Map<String, GmailLabelCountMemo> _labelCountMemos = {};
+
   List<Account> get accounts => List.unmodifiable(_accounts);
   bool get hasAccounts => _accounts.isNotEmpty;
   int get activeIndex => _activeIndex;
@@ -826,6 +833,7 @@ class AccountManager {
 
     await _clearCredentials(_accounts[idx]);
     _contactsDatasourceCache.remove(accountId);
+    _labelCountMemos.remove(accountId);
     _directoryDatasourceCache.remove(accountId);
     await _imapDatasourceCache.remove(accountId)?.disconnect();
 
@@ -1055,6 +1063,8 @@ class AccountManager {
           ),
           displayName: account.senderName,
           accountEmail: account.emailAddress,
+          labelCounts: _labelCountMemos.putIfAbsent(
+              account.id, GmailLabelCountMemo.new),
         );
 
       case ImapAccount():
@@ -1171,6 +1181,8 @@ class AccountManager {
           client: gmailClient,
           displayName: account.senderName,
           accountEmail: account.emailAddress,
+          labelCounts: _labelCountMemos.putIfAbsent(
+              account.id, GmailLabelCountMemo.new),
         );
         _calendarDatasource = GoogleCalendarDatasourceImpl(
           client: calendarClient,

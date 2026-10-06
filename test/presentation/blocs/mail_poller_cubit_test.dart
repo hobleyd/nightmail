@@ -14,8 +14,10 @@ import 'package:nightmail/data/datasources/local/folder_local_datasource.dart';
 import 'package:nightmail/data/datasources/local/pending_operations_datasource.dart';
 import 'package:nightmail/data/datasources/remote/email_remote_datasource.dart';
 import 'package:nightmail/data/datasources/remote/graph_api_datasource_impl.dart';
+import 'package:nightmail/data/datasources/remote/thread_index_datasource.dart';
 import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/data/models/email_folder_model.dart';
+import 'package:nightmail/domain/entities/email.dart';
 import 'package:nightmail/domain/entities/email_folder.dart';
 import 'package:nightmail/domain/usecases/get_cached_folders.dart';
 import 'package:nightmail/data/models/email_model.dart';
@@ -73,6 +75,7 @@ EmailModel _email(
   bool isRead = false,
   String receivedDateTime = '2026-06-11T10:00:00Z',
   List<Map<String, dynamic>> attachments = const [],
+  String conversationId = 'c1',
 }) =>
     EmailModel.fromJson({
       'id': id,
@@ -88,7 +91,7 @@ EmailModel _email(
       'receivedDateTime': receivedDateTime,
       'sentDateTime': '2026-06-11T09:59:00Z',
       'importance': 'normal',
-      'conversationId': 'c1',
+      'conversationId': conversationId,
       'hasAttachments': false,
       'parentFolderId': 'inbox-id',
     });
@@ -98,6 +101,33 @@ MailDeltaResult _emptyDelta() => MailDeltaResult(
       removedIds: [],
       deltaLink: _newToken,
     );
+
+/// A Gmail-shaped datasource: the mock for everything the cycle asks of any
+/// provider, plus a scripted thread index.
+class _IndexedGmailDs extends MockEmailRemoteDatasource
+    implements ThreadIndexDatasource {
+  List<ThreadIndexEntry> index = const [];
+  Map<String, List<EmailModel>> threads = const {};
+  final fetched = <List<String>>[];
+  int indexReads = 0;
+
+  @override
+  Future<List<ThreadIndexEntry>> listThreadIndex(String folderId,
+      {int top = 25}) async {
+    indexReads++;
+    return index;
+  }
+
+  @override
+  Future<List<EmailModel>> getThreadMessages(List<String> threadIds,
+      {required String folderId}) async {
+    fetched.add(threadIds);
+    return [for (final id in threadIds) ...?threads[id]];
+  }
+}
+
+ThreadIndexEntry _stamp(String threadId, String historyId) =>
+    ThreadIndexEntry(threadId: threadId, historyId: historyId);
 
 // ---------------------------------------------------------------------------
 // @GenerateMocks
@@ -2000,6 +2030,157 @@ void main() {
         replaceFolder: true,
       )).called(1);
       expect(cubit.state.syncedFolderIds, contains('archive-id'));
+    });
+
+    // Under Gmail's 6,000 units/minute per-user quota, re-paging the folder on
+    // screen every cycle (threads.list + 25 threads.get = 1,010 units) was a
+    // third of the budget spent on a folder where nothing had happened. The
+    // index (10 units) says which threads moved; only those are fetched.
+    test('reads a Gmail folder as a thread index and fetches only what changed',
+        () async {
+      final ds = _IndexedGmailDs();
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(ds);
+      when(ds.getMailFolders()).thenAnswer((_) async => [_inbox(unread: 3)]);
+      final t1 = _email('t1-m1', conversationId: 't1');
+      final t2 = _email('t2-m1', conversationId: 't2');
+      ds.index = [_stamp('t1', '10'), _stamp('t2', '20')];
+      ds.threads = {
+        't1': [t1],
+        't2': [t2],
+      };
+      final written = <List<Email>>[];
+      when(mockEmailLocalDatasource.cacheEmails(
+        accountId: anyNamed('accountId'),
+        folderId: 'archive-id',
+        emails: anyNamed('emails'),
+        replaceFolder: true,
+      )).thenAnswer((inv) async {
+        written.add(inv.namedArguments[#emails] as List<Email>);
+      });
+      // The body prefetch a changed page queues must not hold `_polling`
+      // across the next resume: with nothing cached it skips at once.
+      when(mockEmailLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => null);
+
+      final cubit = makeCubit();
+      addTearDown(cubit.close);
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      cubit.setWatchedFolder('archive-id');
+      await pumpEventQueue();
+
+      // First sight of the folder: every thread is fetched, as a page would be
+      // — but through the index, never as a page.
+      expect(ds.fetched, [
+        ['t1', 't2']
+      ]);
+      verifyNever(ds.getEmails(
+          folderId: anyNamed('folderId'), top: anyNamed('top')));
+      expect(written, hasLength(1));
+      expect(written.single.map((e) => e.id), ['t1-m1', 't2-m1']);
+      expect(cubit.state.syncedFolderIds, contains('archive-id'));
+
+      // The cache now holds what was written.
+      when(mockEmailLocalDatasource.getCachedEmails(
+        accountId: anyNamed('accountId'),
+        folderId: 'archive-id',
+      )).thenAnswer((_) async => [t2, t1]);
+
+      // Nothing moved: the index is read, nothing is fetched or written.
+      cubit.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await pumpEventQueue();
+
+      expect(ds.indexReads, 2);
+      expect(ds.fetched, hasLength(1));
+      expect(written, hasLength(1));
+      expect(cubit.state.syncedFolderIds, contains('archive-id'),
+          reason: 'a repaint from this cache is still valid');
+
+      // t2 was read on another machine: its stamp moves, t1's does not.
+      final t2Read = _email('t2-m1', isRead: true, conversationId: 't2');
+      ds.index = [_stamp('t1', '10'), _stamp('t2', '21')];
+      ds.threads = {
+        't1': [t1],
+        't2': [t2Read],
+      };
+      cubit.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await pumpEventQueue();
+
+      expect(ds.fetched.last, ['t2']);
+      expect(written, hasLength(2));
+      final page = {for (final e in written.last) e.id: e.isRead};
+      expect(page, {'t1-m1': false, 't2-m1': true},
+          reason: 't1 came from the cache, t2 from the fetch');
+    });
+
+    // A thread whose every message is in Trash is still listed under its label
+    // and parses to no rows. It must be reported as having none — not kept
+    // from the cache — and must not be fetched again on every cycle after.
+    test('a thread that fetches as no rows is dropped, then left alone',
+        () async {
+      final ds = _IndexedGmailDs();
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(ds);
+      when(ds.getMailFolders()).thenAnswer((_) async => [_inbox(unread: 3)]);
+      final t1 = _email('t1-m1', conversationId: 't1');
+      final t2 = _email('t2-m1', conversationId: 't2');
+      ds.index = [_stamp('t1', '10'), _stamp('t2', '20')];
+      ds.threads = {
+        't1': [t1],
+        't2': [t2],
+      };
+      final written = <List<Email>>[];
+      when(mockEmailLocalDatasource.cacheEmails(
+        accountId: anyNamed('accountId'),
+        folderId: 'archive-id',
+        emails: anyNamed('emails'),
+        replaceFolder: true,
+      )).thenAnswer((inv) async {
+        written.add(inv.namedArguments[#emails] as List<Email>);
+      });
+      // The body prefetch a changed page queues must not hold `_polling`
+      // across the next resume: with nothing cached it skips at once.
+      when(mockEmailLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => null);
+
+      final cubit = makeCubit();
+      addTearDown(cubit.close);
+      await cubit.initialize();
+      await pumpEventQueue();
+      cubit.setWatchedFolder('archive-id');
+      await pumpEventQueue();
+      when(mockEmailLocalDatasource.getCachedEmails(
+        accountId: anyNamed('accountId'),
+        folderId: 'archive-id',
+      )).thenAnswer((_) async => [t2, t1]);
+
+      // t2's only message was trashed: still indexed, no rows.
+      ds.index = [_stamp('t1', '10'), _stamp('t2', '21')];
+      ds.threads = {
+        't1': [t1],
+      };
+      cubit.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await pumpEventQueue();
+
+      expect(ds.fetched.last, ['t2']);
+      expect(written.last.map((e) => e.id), ['t1-m1'],
+          reason: 'the trashed message is gone from the page');
+
+      // The cache reflects that; the next cycle is quiet.
+      when(mockEmailLocalDatasource.getCachedEmails(
+        accountId: anyNamed('accountId'),
+        folderId: 'archive-id',
+      )).thenAnswer((_) async => [t1]);
+      cubit.didChangeAppLifecycleState(AppLifecycleState.resumed);
+      await pumpEventQueue();
+
+      expect(ds.fetched, hasLength(2), reason: 't2 is not fetched again');
     });
 
     // The Inbox is synced every cycle whether or not it is showing, so naming it

@@ -70,6 +70,35 @@ Failures are reported on `lastPollAt`/`lastPollErrors`, including the
 offline skip. A silent `catch (_)` here is how a deterministic failure came to
 look like a quiet mailbox for the life of an install.
 
+## A Gmail Folder Is Re-Read as an Index, Not as a Page
+
+The watched-folder sync used to call `getEmails` every cycle: for Gmail that is
+`threads.list` plus one `threads.get` per thread, 1,010 quota units for 25
+threads, every 30 s — a third of the account's 6,000 units/minute on a folder
+where nothing had happened (see [`docs/claude/gmail-quota.md`](../../../../docs/claude/gmail-quota.md)).
+A provider that implements `ThreadIndexDatasource` (Gmail only) is read as an
+**index** instead — each thread's id and the `historyId` of its last change,
+10 units — and `_watchedPageFromIndex` fetches only the threads whose stamp
+moved since `_watchedIndex` last saw the folder, taking the rest from the
+folder's cache. A quiet cycle costs the index and nothing else.
+
+Three rules keep that honest:
+
+- **The index is a receipt, like a delta cursor.** `_watchedIndex` is written
+  only after `cacheEmails` has landed; remembered before the write, a failed
+  write would read as a quiet folder until something else moved a thread.
+- **An unchanged thread is trusted even when the cache holds no rows for it.**
+  A thread whose every message is in Trash is still listed under its label
+  and parses to no rows; fetching it again because it is "missing" would cost
+  40 units a cycle for the thirty days Trash keeps it. Only an *empty* folder
+  cache — cleared by a recovery, or never written — refetches everything, and
+  the unchanged-index shortcut is skipped for the same reason.
+- **A thread that was fetched and came back empty is reported empty**, not
+  patched from the cache: that is how a trashed message leaves the list.
+
+`listThreadIndex` must not touch the datasource's page tokens — the list on
+screen may be mid-way through loading more of the same folder.
+
 ## A Re-Sign-In Clears the Re-Auth Flag Now, Not at the Next Tick
 
 `accountsNeedingReauth` is rewritten at the end of each cycle, and that used

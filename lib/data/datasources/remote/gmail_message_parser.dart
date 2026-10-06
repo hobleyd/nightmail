@@ -334,6 +334,48 @@ GmailHistoryChanges parseGmailHistoryPages(GmailHistoryParseParams params) {
 
 enum _GmailHistoryVerdict { upsert, removed, movedOut }
 
+/// Every label the history records in [rawPages] name, or null when a page
+/// would not decode and the answer could therefore be short.
+///
+/// A record names the labels it added or removed and the current labels of
+/// each message it touched, and a label's message counts cannot have moved
+/// without the label appearing in one of those places: an arrival or deletion
+/// names the message's labels, a read or a star is an `UNREAD`/`STARRED`
+/// change recorded against a message whose own labels come with it, and a
+/// move or archive names the label gained and the label lost. This is what
+/// lets a folder-list load re-read only the counts that can have changed —
+/// see `GmailDatasourceImpl._refreshLabelCounts`. `compute()` entry point.
+Set<String>? parseGmailHistoryTouchedLabels(List<String> rawPages) {
+  final touched = <String>{};
+  for (final raw in rawPages) {
+    Map<String, dynamic> page;
+    try {
+      page = jsonDecode(raw) as Map<String, dynamic>;
+    } catch (_) {
+      // Unlike a sync, a lost page here would silently freeze a count: better
+      // to say so and have every label re-read.
+      return null;
+    }
+    for (final record in (page['history'] as List<dynamic>? ?? [])
+        .whereType<Map<String, dynamic>>()) {
+      for (final key in const ['messagesAdded', 'messagesDeleted']) {
+        for (final m in _historyMessages(record[key])) {
+          touched.addAll(_labelsOf(m));
+        }
+      }
+      for (final key in const ['labelsAdded', 'labelsRemoved']) {
+        for (final entry in _historyEntries(record[key])) {
+          touched.addAll(
+              (entry['labelIds'] as List<dynamic>? ?? []).cast<String>());
+          final m = entry['message'];
+          if (m is Map<String, dynamic>) touched.addAll(_labelsOf(m));
+        }
+      }
+    }
+  }
+  return touched;
+}
+
 /// `messagesAdded`/`messagesDeleted` entries, unwrapped to their messages.
 List<Map<String, dynamic>> _historyMessages(dynamic entries) {
   final out = <Map<String, dynamic>>[];

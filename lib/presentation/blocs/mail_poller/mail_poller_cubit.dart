@@ -17,6 +17,7 @@ import '../../../data/datasources/remote/email_remote_datasource.dart';
 import '../../../data/datasources/remote/imap_datasource_impl.dart';
 import '../../../data/datasources/remote/mail_delta_datasource.dart';
 import '../../../data/datasources/remote/spam_db_sync_datasource.dart';
+import '../../../data/datasources/remote/thread_index_datasource.dart';
 import '../../../data/models/mail_delta_result.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/email_folder.dart';
@@ -172,6 +173,12 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   /// How much of a folder a poll re-fetches. Matches EmailListBloc's page size,
   /// so the cache the list repaints from holds exactly one page.
   static const _watchedPageSize = 25;
+
+  /// The thread index each watched folder's cache was last written from, by
+  /// [_folderKey]. What lets a cycle on a Gmail folder cost 10 quota units when
+  /// nothing there has changed, instead of the 1,010 of re-reading the page —
+  /// see [_watchedPageFromIndex].
+  final Map<String, List<ThreadIndexEntry>> _watchedIndex = {};
 
   /// Graph's well-known name for the Inbox, which it resolves itself. Used as
   /// the delta path segment and the delta-token key — deliberately not the
@@ -1115,6 +1122,12 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   /// token per browsed folder would leave a growing pile of tokens to expire and
   /// recover. The Inbox — the one folder that is synced every cycle whether or
   /// not it is on screen — keeps the delta stream.
+  ///
+  /// A provider that can list the folder as a thread *index*
+  /// ([ThreadIndexDatasource] — Gmail) is not re-paged every cycle: the index
+  /// says which threads changed since the cache was last written, and only
+  /// those are fetched. That is the difference between 10 and 1,010 quota
+  /// units a cycle on a quiet folder, out of Gmail's 6,000 a minute.
   Future<bool> _syncWatchedFolder({
     required Account account,
     required EmailRemoteDatasource ds,
@@ -1127,8 +1140,29 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
             })>
         prefetchJobs,
   }) async {
-    final fresh =
-        await ds.getEmails(folderId: folderId, top: _watchedPageSize);
+    final cached = await _emailLocalDatasource.getCachedEmails(
+      accountId: account.id,
+      folderId: folderId,
+    );
+
+    final key = _folderKey(account.id, folderId);
+    List<Email> fresh;
+    List<ThreadIndexEntry>? index;
+    if (ds is ThreadIndexDatasource) {
+      final page = await _watchedPageFromIndex(
+        ds: ds as ThreadIndexDatasource,
+        folderId: folderId,
+        last: _watchedIndex[key],
+        cached: cached,
+      );
+      // The index is the one the cache was written from: nothing to fetch,
+      // compare or write.
+      if (page == null) return false;
+      fresh = page.emails;
+      index = page.index;
+    } else {
+      fresh = await ds.getEmails(folderId: folderId, top: _watchedPageSize);
+    }
     final reconciled = await _reconcileAgainstPendingOps(account.id, fresh);
 
     // Compared against the *cache* rather than a count, because there is no
@@ -1136,10 +1170,6 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     // and because the page is already in hand, so the comparison is free.
     // Equality is Email's own, which now includes isFlagged, so a flag or
     // read-state change on another machine registers as a change.
-    final cached = await _emailLocalDatasource.getCachedEmails(
-      accountId: account.id,
-      folderId: folderId,
-    );
     final changed = !_samePage(cached, reconciled);
 
     await _emailLocalDatasource.cacheEmails(
@@ -1148,6 +1178,11 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
       emails: reconciled,
       replaceFolder: true,
     );
+    // Only now that the write has landed. The index is a receipt for the cache
+    // it describes, exactly as a delta cursor is: remembered before the write,
+    // a failed write would read as a quiet folder until something else moved
+    // one of its threads.
+    if (index != null) _watchedIndex[key] = index;
     if (changed) {
       prefetchJobs.add((
         accountId: account.id,
@@ -1156,6 +1191,83 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
       ));
     }
     return changed;
+  }
+
+  /// The watched folder's page built from its thread index: threads whose
+  /// stamp has moved since [last] — the index the cache was written from — are
+  /// fetched, and the rest are taken from [cached]. Null when the index *is*
+  /// [last]: nothing has changed and nothing is fetched.
+  ///
+  /// An unchanged thread is taken from the cache even when the cache holds no
+  /// rows for it. A thread whose every message is in Trash is still listed
+  /// under the label it carries, parses to no rows, and would otherwise be
+  /// fetched again on every cycle for the thirty days Trash keeps it. Only an
+  /// *empty* folder cache — cleared by a recovery, or never written — means
+  /// every thread has to be fetched again. A thread that *was* fetched and
+  /// came back with no rows is reported as having none, not as whatever the
+  /// cache last held for it.
+  Future<({List<Email> emails, List<ThreadIndexEntry> index})?>
+      _watchedPageFromIndex({
+    required ThreadIndexDatasource ds,
+    required String folderId,
+    required List<ThreadIndexEntry>? last,
+    required List<Email> cached,
+  }) async {
+    final index = await ds.listThreadIndex(folderId, top: _watchedPageSize);
+    // An unchanged index is only "nothing to do" while the cache still holds
+    // the page it was written from; a cleared cache has to be refilled.
+    if (last != null && cached.isNotEmpty && _sameIndex(last, index)) {
+      return null;
+    }
+
+    final lastStamp = {
+      for (final entry in last ?? const <ThreadIndexEntry>[])
+        entry.threadId: entry.historyId,
+    };
+    final toFetch = {
+      for (final entry in index)
+        if (cached.isEmpty || lastStamp[entry.threadId] != entry.historyId)
+          entry.threadId,
+    };
+
+    final cachedByThread = <String, List<Email>>{};
+    for (final email in cached) {
+      final thread = email.conversationId;
+      if (thread != null) {
+        cachedByThread.putIfAbsent(thread, () => []).add(email);
+      }
+    }
+    final fetchedByThread = <String, List<Email>>{};
+    for (final email
+        in await ds.getThreadMessages(toFetch.toList(), folderId: folderId)) {
+      fetchedByThread
+          .putIfAbsent(email.conversationId ?? '', () => [])
+          .add(email);
+    }
+
+    return (
+      emails: [
+        for (final entry in index)
+          ...(toFetch.contains(entry.threadId)
+                  ? fetchedByThread[entry.threadId]
+                  : cachedByThread[entry.threadId]) ??
+              const <Email>[],
+      ],
+      index: index,
+    );
+  }
+
+  /// Whether two thread indexes name the same threads at the same stamps, in
+  /// the same order.
+  static bool _sameIndex(List<ThreadIndexEntry> a, List<ThreadIndexEntry> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].threadId != b[i].threadId ||
+          a[i].historyId != b[i].historyId) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /// Whether two pages are the same mail in the same state.

@@ -7,10 +7,13 @@ import 'package:nightmail/infrastructure/http/retry_interceptor.dart';
 // Fake adapter that replays a scripted sequence of status codes, one per
 // call, repeating the final entry once the script is exhausted.
 class _ScriptedAdapter implements HttpClientAdapter {
-  _ScriptedAdapter(this.statusCodes, {this.retryAfterHeader});
+  _ScriptedAdapter(this.statusCodes, {this.retryAfterHeader, this.body = '{}'});
 
   final List<int> statusCodes;
   final String? retryAfterHeader;
+
+  /// The body every response carries — what a 403 has to say to be retried.
+  final String body;
   int callCount = 0;
 
   @override
@@ -25,7 +28,7 @@ class _ScriptedAdapter implements HttpClientAdapter {
     final headers = statusCode == 429 && retryAfterHeader != null
         ? {'retry-after': [retryAfterHeader!]}
         : <String, List<String>>{};
-    return ResponseBody.fromString('{}', statusCode, headers: headers);
+    return ResponseBody.fromString(body, statusCode, headers: headers);
   }
 
   @override
@@ -41,6 +44,45 @@ void main() {
     final response = await dio.get<String>('/messages');
 
     expect(response.statusCode, 200);
+  });
+
+  // Gmail's per-user quota refusal is a 403, not a 429 — the one error every
+  // request gets once an account's 6,000 units a minute are spent. Letting it
+  // through failed the folder list and the page on screen outright instead of
+  // waiting the few seconds the window takes to roll over.
+  test('retries a 403 that is Gmail saying the per-user quota is spent',
+      () async {
+    const quotaBody = '{"error": {"code": 403, "message": "Quota exceeded for '
+        'quota metric \'Total Query Cost\' and limit \'Units per minute per '
+        'user\' of service \'gmail.googleapis.com\'", "errors": [{"domain": '
+        '"global", "reason": "rateLimitExceeded"}], "status": '
+        '"PERMISSION_DENIED"}}';
+    final dio = Dio(BaseOptions(baseUrl: 'https://example.test'));
+    final adapter = _ScriptedAdapter([403, 403, 200], body: quotaBody);
+    dio.httpClientAdapter = adapter;
+    dio.interceptors.add(RetryInterceptor(dio: dio));
+
+    final response = await dio.get<String>('/users/me/labels');
+
+    expect(response.statusCode, 200);
+    expect(adapter.callCount, 3);
+  }, timeout: const Timeout(Duration(seconds: 30)));
+
+  test('does not retry a 403 for any other reason', () async {
+    const forbiddenBody = '{"error": {"code": 403, "message": "Insufficient '
+        'Permission", "errors": [{"domain": "global", "reason": '
+        '"insufficientPermissions"}]}}';
+    final dio = Dio(BaseOptions(baseUrl: 'https://example.test'));
+    final adapter = _ScriptedAdapter([403, 200], body: forbiddenBody);
+    dio.httpClientAdapter = adapter;
+    dio.interceptors.add(RetryInterceptor(dio: dio));
+
+    await expectLater(
+      dio.get<String>('/users/me/labels'),
+      throwsA(isA<DioException>()
+          .having((e) => e.response?.statusCode, 'statusCode', 403)),
+    );
+    expect(adapter.callCount, 1);
   });
 
   test('gives up after maxRetries and surfaces the failure', () async {

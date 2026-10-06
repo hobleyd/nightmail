@@ -439,6 +439,17 @@ bundle directory in place, and a snap's files are a read-only squashfs.
   refuses a manual refresh of a snap with running apps — the app doing the
   installing is one. The flag is hidden from `snap install --help` but present
   (`cmd/snapd/cli/cmd_snap_op.go`, honoured by the sideload endpoint).
+- **`snap` is run under `script`, because the prompt needs a terminal.** The
+  `snap` client only sends snapd `X-Allow-Interactive-Auth` when its stdin is a
+  terminal, and without it snapd never asks polkit to prompt. A child of a GUI
+  app has a pipe there, so the bare command came back `access denied` in under
+  100 ms with no dialog — reported by the app as a cancelled prompt, with a
+  retry button that could never work. `script -qec '<command>' /dev/null` gives
+  it a pseudo-terminal and passes the exit code through. Reproduce either side
+  harmlessly with `snap abort 999999 </dev/null` (denied at once) against the
+  same under `script` (waits on the dialog). The output then arrives on stdout
+  with carriage returns and escape sequences, which `describeInstallFailure`
+  strips.
 - **Relaunch** — the new revision cannot be started beside the running one, so
   `relaunch()` leaves a detached `sh` waiting on this pid and then `exec`ing
   `/snap/bin/nightmail`, and calls `exit(0)`. Its environment is this process's
@@ -453,10 +464,9 @@ bundle directory in place, and a snap's files are a read-only squashfs.
   nightmail`; a `flutter run` or plain-bundle Linux build has nothing snapd
   could install over and stays `unsupported`.
 
-Unverified on a real snap install at the time of writing — the Linux job is
-CI-only and this machine is a Mac — which is why every external touch point
-(process runner, detached start, exit, download directory, installed version,
-environment) is injected and pinned in `snap_updater_test.dart`.
+Written on a Mac with the Linux job CI-only, which is why every external touch
+point (process runner, detached start, exit, download directory, installed
+version, environment) is injected and pinned in `snap_updater_test.dart`.
 
 ### Where the Android APK Goes
 

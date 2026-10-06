@@ -232,10 +232,37 @@ class SnapUpdater {
         snap.path,
       ];
 
+  /// [installArguments] as `script` arguments that run `snap` on a
+  /// pseudo-terminal.
+  ///
+  /// The terminal is what makes the password prompt possible at all. `snap`
+  /// only sends snapd `X-Allow-Interactive-Auth` when its stdin is a terminal,
+  /// and without that header snapd never asks polkit to prompt: it answers
+  /// `access denied` at once. A process started from a GUI app has a pipe for
+  /// stdin, so a bare `snap install` was refused in under 100 ms with no
+  /// dialog ever shown, and pressing the button again could not help. `-e`
+  /// carries snap's exit code through; `script` is in util-linux, so it is
+  /// wherever snapd is.
+  @visibleForTesting
+  static List<String> installViaTerminalArguments(File snap) => [
+        '-qec',
+        ['snap', ...installArguments(snap)].map(_shellQuote).join(' '),
+        '/dev/null',
+      ];
+
+  static String _shellQuote(String value) =>
+      "'${value.replaceAll("'", r"'\''")}'";
+
   /// Hands [snap] to snapd. The desktop asks for the user's password on the
   /// way; a refused or cancelled prompt comes back as `access denied`.
   Future<void> install(File snap) async {
-    final result = await _runProcess('snap', installArguments(snap));
+    ProcessResult result;
+    try {
+      result = await _runProcess('script', installViaTerminalArguments(snap));
+    } on ProcessException {
+      // No `script` on this system: snap's own error is better than ours.
+      result = await _runProcess('snap', installArguments(snap));
+    }
     if (result.exitCode == 0) return;
     throw SnapInstallException(describeInstallFailure(
       exitCode: result.exitCode,
@@ -251,18 +278,27 @@ class SnapUpdater {
     required String stderr,
     required String stdout,
   }) {
-    final text = '$stderr\n$stdout';
+    // On a terminal snap draws progress with carriage returns and escape
+    // sequences, and everything arrives on stdout.
+    final text = '$stderr\n$stdout'
+        .replaceAll(RegExp(r'\x1B\[[0-9;?]*[ -/]*[@-~]'), '');
     if (text.contains('access denied')) {
       return 'NightMail needs your password to install the update, and the '
           'prompt was cancelled or refused. Press Restart and install to try '
           'again.';
     }
-    for (final raw in text.split('\n')) {
-      var line = raw.trim();
-      if (line.startsWith('error:')) line = line.substring(6).trim();
-      if (line.isNotEmpty) return 'snap install failed: $line';
-    }
-    return 'snap install failed with exit code $exitCode.';
+    final lines = text
+        .split(RegExp(r'[\r\n]+'))
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList();
+    if (lines.isEmpty) return 'snap install failed with exit code $exitCode.';
+    final line = lines.firstWhere(
+      (line) => line.startsWith('error:'),
+      orElse: () => lines.first,
+    );
+    return 'snap install failed: '
+        '${line.startsWith('error:') ? line.substring(6).trim() : line}';
   }
 
   /// The environment the relaunch helper runs with: this process's, minus the

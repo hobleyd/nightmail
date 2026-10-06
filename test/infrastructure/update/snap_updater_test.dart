@@ -258,7 +258,8 @@ void main() {
       );
     });
 
-    test('runs snap with those arguments and is quiet on success', () async {
+    test('runs snap on a pseudo-terminal, so snapd may ask for the password',
+        () async {
       String? exe;
       List<String>? args;
       final updater = _updater(
@@ -269,9 +270,42 @@ void main() {
           return ProcessResult(1, 0, 'nightmail 1.31.0 installed', '');
         },
       );
+      await updater.install(File("/tmp/it's here/x.snap"));
+      expect(exe, 'script');
+      expect(args, [
+        '-qec',
+        "'snap' 'install' '--dangerous' '--classic' '--ignore-running' "
+            r"'/tmp/it'\''s here/x.snap'",
+        '/dev/null',
+      ]);
+    });
+
+    test('falls back to snap itself where there is no script', () async {
+      final calls = <String>[];
+      final updater = _updater(
+        adapter: _FakeAdapter(release: _release(), bytes: _snapBytes),
+        run: (e, a) async {
+          calls.add(e);
+          if (e == 'script') throw ProcessException(e, a, 'not found', 2);
+          expect(a, SnapUpdater.installArguments(File('/tmp/x.snap')));
+          return ProcessResult(1, 0, '', '');
+        },
+      );
       await updater.install(File('/tmp/x.snap'));
-      expect(exe, 'snap');
-      expect(args, SnapUpdater.installArguments(File('/tmp/x.snap')));
+      expect(calls, ['script', 'snap']);
+    });
+
+    test('a failure on the terminal is read past its progress output', () {
+      expect(
+        SnapUpdater.describeInstallFailure(
+          exitCode: 1,
+          stderr: '',
+          stdout: '\x1B[?25l\rMount snap "nightmail" (x11) |\r\x1B[K'
+              'error: cannot perform the following tasks:\r\n'
+              '- Mount snap "nightmail" (x11) (no space left)\r\n',
+        ),
+        'snap install failed: cannot perform the following tasks:',
+      );
     });
 
     test('a refused or cancelled password prompt reads as one', () async {

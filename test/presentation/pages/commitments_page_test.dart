@@ -204,8 +204,10 @@ void main() {
         CalendarEvent(
           id: 'e1',
           subject: 'Project meeting',
-          start: today.add(const Duration(hours: 9)),
-          end: today.add(const Duration(hours: 10)),
+          // Under way as the test runs: Today drops a meeting once it has
+          // ended, and this file uses the real clock.
+          start: now,
+          end: now.add(const Duration(hours: 1)),
           isAllDay: false,
         ),
       ]),

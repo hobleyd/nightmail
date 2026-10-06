@@ -470,9 +470,13 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
       accountId: accountId,
     )))
         .getOrElse((_) => const []);
+    // Today is what is still to come: a meeting that has ended is dropped,
+    // one in progress stays, and an all-day event lasts until midnight. The
+    // forecast below still sees the whole day — a past meeting is capacity
+    // already spent.
     final todayEvents = [
       for (final e in events)
-        if (e.start.toLocal().isBefore(tomorrow) && e.end.toLocal().isAfter(start))
+        if (e.start.toLocal().isBefore(tomorrow) && e.end.toLocal().isAfter(now))
           e,
     ]..sort((a, b) => a.start.compareTo(b.start));
 
@@ -501,6 +505,20 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
     forecast = _withStickyFreed(forecast, now);
 
     return (events: todayEvents, tasksDue: tasksDue, forecast: forecast);
+  }
+
+  /// Drops the Today meetings that have ended since the last refresh. The
+  /// pane calls this once a minute: a refresh only happens on a poll cycle
+  /// or by hand, and the detached window has no poller at all, so without
+  /// it a finished meeting would sit in Today until the next scan.
+  void dropEndedEvents() {
+    final now = _now();
+    final remaining = [
+      for (final e in state.todayEvents)
+        if (e.end.toLocal().isAfter(now)) e,
+    ];
+    if (remaining.length == state.todayEvents.length) return;
+    emit(state.copyWith(todayEvents: remaining));
   }
 
   /// Keeps a slot labelled *freed* across refreshes until it is filled or its

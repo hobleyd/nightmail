@@ -48,6 +48,8 @@ void main() {
   late CommitmentsCubit cubit;
 
   final now = DateTime(2026, 10, 2, 9);
+  // The cubit's clock; a test moves it forward to pass the time.
+  late DateTime clock;
   const account = MicrosoftAccount(
     id: 'acc',
     displayName: 'Work',
@@ -175,6 +177,7 @@ void main() {
       )),
     );
 
+    clock = now;
     ledgerChanges = CommitmentLedgerChanges();
     cubit = CommitmentsCubit(
       accountManager: accounts,
@@ -186,7 +189,7 @@ void main() {
       createCalendarEvent: createEvent,
       updateCalendarEvent: updateEvent,
       ledgerChanges: ledgerChanges,
-      now: () => now,
+      now: () => clock,
     );
   });
 
@@ -490,6 +493,52 @@ void main() {
         start: anyNamed('start'),
         end: anyNamed('end'),
       ));
+    });
+  });
+
+  group('Today', () {
+    CalendarEvent meeting(String id, DateTime start, DateTime end) =>
+        CalendarEvent(id: id, subject: id, start: start, end: end, isAllDay: false);
+
+    test('lists only the meetings still to come, and the minute tick drops '
+        'one that has since ended', () async {
+      final day = DateTime(2026, 10, 2);
+      when(calendar(any)).thenAnswer((_) async => Right([
+            // 08:00–08:30: over before `now` (09:00).
+            meeting('ended', day.add(const Duration(hours: 8)),
+                day.add(const Duration(hours: 8, minutes: 30))),
+            // 08:30–09:30: in progress.
+            meeting('running', day.add(const Duration(hours: 8, minutes: 30)),
+                day.add(const Duration(hours: 9, minutes: 30))),
+            meeting('later', day.add(const Duration(hours: 11)),
+                day.add(const Duration(hours: 12))),
+            CalendarEvent(
+              id: 'allday',
+              subject: 'allday',
+              start: day,
+              end: day.add(const Duration(days: 1)),
+              isAllDay: true,
+            ),
+            meeting('tomorrow', day.add(const Duration(days: 1, hours: 9)),
+                day.add(const Duration(days: 1, hours: 10))),
+          ]));
+
+      await cubit.load();
+      await pumpEventQueue();
+      expect(cubit.state.todayEvents.map((e) => e.id), ['allday', 'running', 'later']);
+      // The forecast still sees the whole day: the running meeting's half
+      // hour inside the working window plus the hour at 11.
+      expect(cubit.state.forecast!.days.first.meetingMinutes, 90);
+
+      // 09:31 — the running meeting has finished.
+      clock = DateTime(2026, 10, 2, 9, 31);
+      cubit.dropEndedEvents();
+      expect(cubit.state.todayEvents.map((e) => e.id), ['allday', 'later']);
+
+      // Nothing has ended since: no new state.
+      final before = cubit.state;
+      cubit.dropEndedEvents();
+      expect(identical(cubit.state, before), isTrue);
     });
   });
 

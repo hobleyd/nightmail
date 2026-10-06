@@ -84,6 +84,7 @@ class _CommitmentsDayPanelState extends State<CommitmentsDayPanel> {
   late final CommitmentsAgentCubit _agent;
   StreamSubscription<void>? _pollSub;
   StreamSubscription<void>? _accountSub;
+  Timer? _clock;
   int? _lastPollGeneration;
   String? _lastAccountId;
 
@@ -120,6 +121,11 @@ class _CommitmentsDayPanelState extends State<CommitmentsDayPanel> {
         if (mounted) unawaited(_cubit.load());
       });
     } catch (_) {}
+    // Today lists only the meetings still to come, so it has to move with
+    // the clock between refreshes.
+    _clock = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) _cubit.dropEndedEvents();
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) unawaited(_cubit.load());
     });
@@ -127,6 +133,7 @@ class _CommitmentsDayPanelState extends State<CommitmentsDayPanel> {
 
   @override
   void dispose() {
+    _clock?.cancel();
     _pollSub?.cancel();
     _accountSub?.cancel();
     _agent.close();

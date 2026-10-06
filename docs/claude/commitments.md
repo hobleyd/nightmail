@@ -92,8 +92,11 @@ never auto-resolved.
 
 ## The pane
 
-Today (cached calendar events for the day, the count of task-reminder rows
-due today across every list, and every commitment due today or overdue),
+Today (the day's cached calendar events that have not yet ended — a meeting
+in progress stays, a finished one is dropped, and the pane ticks once a
+minute (`dropEndedEvents`) so this holds between refreshes — the count of
+task-reminder rows due today across every list, and every commitment due
+today or overdue),
 You owe, Waiting on (with age), Needs a decision (with "N emails need action
 · M don't", where M is scanned Inbox messages that produced no row). Tapping
 a row opens its message exactly as a task's linked mail does

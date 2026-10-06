@@ -47,6 +47,27 @@ class MeetingForwardUnsupportedException implements Exception {
   String toString() => 'MeetingForwardUnsupportedException: $message';
 }
 
+/// The provider holds no copy of the meeting an invitation is for, so there is
+/// nothing on the calendar for an RSVP to be applied to.
+///
+/// A settled answer, not a transient one: the lookups by `UID` and by start
+/// time have both come up empty. It is what a *forwarded* invitation looks
+/// like — somebody passed the organizer's invitation on by email, this account
+/// is not on its guest list, and so the provider never filed the meeting.
+/// `CalendarRepositoryImpl.respondToMeetingInvite` answers that case by
+/// keeping a private copy and emailing the organizer; any other not-found is
+/// reported as the failure it is.
+///
+/// Still a [ServerException] with a 404, because that is the calendar outbox's
+/// drop signal: a queued RSVP that lands here can never start succeeding.
+class MeetingNotOnCalendarException extends ServerException {
+  const MeetingNotOnCalendarException({required super.message})
+      : super(statusCode: 404);
+
+  @override
+  String toString() => 'MeetingNotOnCalendarException: $message';
+}
+
 /// The cloud document a body link points at is not something the reading pane
 /// can show — an archive, a video, an unknown binary.
 ///

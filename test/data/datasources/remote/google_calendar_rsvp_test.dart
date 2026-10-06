@@ -4,6 +4,7 @@ import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/error/exceptions.dart';
 import 'package:nightmail/data/datasources/remote/google_calendar_datasource_impl.dart';
+import 'package:nightmail/data/models/calendar_event_model.dart';
 import 'package:nightmail/domain/entities/meeting_invite.dart';
 import 'package:nightmail/infrastructure/http/google_calendar_http_client.dart';
 
@@ -18,6 +19,13 @@ import 'google_calendar_rsvp_test.mocks.dart';
 /// lookup missed, which a recurring invitation makes likely: the ICS carries
 /// the series' bare UID while Google files the expanded instance under
 /// `<masterUid>_<instanceStart>@google.com`.
+///
+/// A *forwarded* invitation — one this account is not on the guest list of, so
+/// Google never filed it — is kept through `importMeetingInvite` instead, and
+/// the second half of this file pins how that differs: an imported copy names
+/// the invitation's own organizer, carries its UID and recurrence, and is
+/// never an insert. The RSVP path itself still only reports the miss; the
+/// repository decides whether the miss is a forwarded invitation.
 @GenerateMocks([Dio, GoogleCalendarHttpClient])
 void main() {
   late MockDio mockDio;
@@ -137,11 +145,12 @@ void main() {
     stubUidLookup(const []);
     stubWindowLookup(const []);
 
-    // 404 so the calendar outbox drops the queued op rather than retrying a
-    // lookup that cannot start succeeding.
+    // Typed, so the repository can tell a forwarded invitation from any other
+    // failure — and a 404 so the calendar outbox drops the queued op rather
+    // than retrying a lookup that cannot start succeeding.
     await expectLater(
       accept(),
-      throwsA(isA<ServerException>()
+      throwsA(isA<MeetingNotOnCalendarException>()
           .having((e) => e.statusCode, 'statusCode', 404)),
     );
 
@@ -227,17 +236,23 @@ void main() {
     );
   });
 
-  test('declining an invitation nothing on the calendar matches does nothing',
-      () async {
+  test('declining an invitation nothing on the calendar matches reports it, '
+      'removing nothing', () async {
     stubUidLookup(const []);
     stubWindowLookup(const []);
 
-    await datasource.respondToMeetingInvite(
-      emailId: 'msg-1',
-      response: MeetingInviteResponseType.decline,
-      icsData: ics,
-      meetingStart: meetingStart,
-      userEmail: 'me@example.com',
+    // The same typed miss as an accept: a forwarded invitation declined still
+    // owes the organizer a reply, and only the repository knows whether this
+    // was one. Nothing is patched or deleted on the way out.
+    await expectLater(
+      datasource.respondToMeetingInvite(
+        emailId: 'msg-1',
+        response: MeetingInviteResponseType.decline,
+        icsData: ics,
+        meetingStart: meetingStart,
+        userEmail: 'me@example.com',
+      ),
+      throwsA(isA<MeetingNotOnCalendarException>()),
     );
 
     verifyNever(mockDio.post<void>(
@@ -255,15 +270,19 @@ void main() {
   test('declining never acts on a start-time guess', () async {
     // A decline answers *and* deletes, and an instance's answer belongs on its
     // master — so the heuristic match is not offered a whole series to remove.
+    // What it reports instead is the typed miss, the same as finding nothing.
     stubUidLookup(const []);
     stubWindowLookup([recurringInstance()]);
 
-    await datasource.respondToMeetingInvite(
-      emailId: 'msg-1',
-      response: MeetingInviteResponseType.decline,
-      icsData: ics,
-      meetingStart: meetingStart,
-      userEmail: 'me@example.com',
+    await expectLater(
+      datasource.respondToMeetingInvite(
+        emailId: 'msg-1',
+        response: MeetingInviteResponseType.decline,
+        icsData: ics,
+        meetingStart: meetingStart,
+        userEmail: 'me@example.com',
+      ),
+      throwsA(isA<MeetingNotOnCalendarException>()),
     );
 
     verifyNever(mockDio.patch<void>(
@@ -393,5 +412,212 @@ void main() {
     )).captured;
     expect(
         deleted.single, '/calendars/primary/events/master-1_20260910T010000Z');
+  });
+
+  group('importMeetingInvite', () {
+    /// An invitation somebody forwarded on: the roster is the organizer's,
+    /// and this account is not on it.
+    const forwardedIcs = 'BEGIN:VCALENDAR\r\n'
+        'METHOD:REQUEST\r\n'
+        'BEGIN:VEVENT\r\n'
+        'UID:fwd-uid-1\r\n'
+        'SEQUENCE:2\r\n'
+        'DTSTART:20260910T010000Z\r\n'
+        'DTEND:20260910T020000Z\r\n'
+        'SUMMARY:Discovery call\r\n'
+        'DESCRIPTION:Agenda attached\r\n'
+        'LOCATION:Teams\r\n'
+        'ORGANIZER;CN=Boss:mailto:boss@example.com\r\n'
+        'ATTENDEE:mailto:boss@example.com\r\n'
+        'ATTENDEE:mailto:someone.else@example.com\r\n'
+        'RRULE:FREQ=WEEKLY;COUNT=4\r\n'
+        'EXDATE;TZID=AUS Eastern Standard Time:20260917T110000\r\n'
+        'END:VEVENT\r\n'
+        'END:VCALENDAR';
+
+    Map<String, dynamic> imported() => {
+          'id': 'kept-1',
+          'iCalUID': 'fwd-uid-1',
+          'summary': 'Discovery call',
+          'start': {'dateTime': '2026-09-10T01:00:00Z'},
+          'end': {'dateTime': '2026-09-10T02:00:00Z'},
+          'organizer': {'email': 'boss@example.com'},
+          'attendees': [
+            {'email': 'me@example.com', 'self': true, 'responseStatus': 'accepted'},
+          ],
+        };
+
+    /// Stubs the import endpoint; [statuses] are what successive calls do —
+    /// an int is a failure with that status, null a success. Returns the
+    /// bodies posted, in order; [queries] collects their query parameters.
+    final queries = <Object?>[];
+    List<Map<String, dynamic>> stubImport([List<int?> statuses = const [null]]) {
+      final bodies = <Map<String, dynamic>>[];
+      var call = 0;
+      when(mockDio.post<Map<String, dynamic>>(
+        '/calendars/primary/events/import',
+        data: anyNamed('data'),
+      )).thenAnswer((inv) async {
+        bodies.add(
+            Map<String, dynamic>.from(inv.namedArguments[#data] as Map));
+        queries.add(inv.namedArguments[#queryParameters]);
+        final status = call < statuses.length ? statuses[call] : null;
+        call++;
+        if (status != null) {
+          throw DioException(
+            requestOptions: RequestOptions(path: '/calendars/primary/events/import'),
+            response: Response(
+              statusCode: status,
+              requestOptions:
+                  RequestOptions(path: '/calendars/primary/events/import'),
+            ),
+          );
+        }
+        return Response(
+          data: imported(),
+          statusCode: 200,
+          requestOptions:
+              RequestOptions(path: '/calendars/primary/events/import'),
+        );
+      });
+      return bodies;
+    }
+
+    Future<CalendarEventModel> keep({
+      String icsData = forwardedIcs,
+      MeetingInviteResponseType response = MeetingInviteResponseType.accept,
+      String? message,
+    }) =>
+        datasource.importMeetingInvite(
+          icsData: icsData,
+          response: response,
+          userEmail: 'me@example.com',
+          message: message,
+        );
+
+    test('imports a copy under the organizer and UID, and never inserts',
+        () async {
+      final bodies = stubImport();
+
+      final kept = await keep();
+
+      expect(kept.id, 'kept-1');
+      final body = bodies.single;
+      expect(body['iCalUID'], 'fwd-uid-1');
+      expect((body['organizer'] as Map)['email'], 'boss@example.com');
+      expect((body['organizer'] as Map)['displayName'], 'Boss');
+      expect(body['summary'], 'Discovery call');
+      expect(body['description'], 'Agenda attached');
+      expect(body['location'], 'Teams');
+      expect(body['sequence'], 2);
+      // No insert, and no `sendUpdates`: an imported copy emails nobody.
+      verifyNever(mockDio.post<Map<String, dynamic>>(
+        '/calendars/primary/events',
+        data: anyNamed('data'),
+        queryParameters: anyNamed('queryParameters'),
+      ));
+      expect(queries.single, isNull);
+    });
+
+    test('records the answer on this account alone and lists the rest unanswered',
+        () async {
+      final bodies = stubImport();
+
+      await keep(
+          response: MeetingInviteResponseType.tentative, message: 'Maybe');
+
+      final attendees =
+          (bodies.single['attendees'] as List).cast<Map<String, dynamic>>();
+      final me = attendees.singleWhere((a) => a['email'] == 'me@example.com');
+      expect(me['responseStatus'], 'tentative');
+      expect(me['comment'], 'Maybe');
+      for (final other in attendees.where((a) => a['email'] != 'me@example.com')) {
+        expect(other.containsKey('responseStatus'), isFalse,
+            reason: 'their real answers live on the organizer\'s copy');
+      }
+      expect(attendees.map((a) => a['email']),
+          containsAll(['boss@example.com', 'someone.else@example.com']));
+    });
+
+    test('carries the recurrence through, with a named time zone', () async {
+      final bodies = stubImport();
+
+      await keep();
+
+      final body = bodies.single;
+      expect(body['recurrence'], [
+        'RRULE:FREQ=WEEKLY;COUNT=4',
+        'EXDATE;TZID=AUS Eastern Standard Time:20260917T110000',
+      ]);
+      expect((body['start'] as Map)['timeZone'], isNotEmpty);
+      expect((body['end'] as Map)['timeZone'], isNotEmpty);
+    });
+
+    test('an exception date Google rejects costs the exceptions, not the copy',
+        () async {
+      final bodies = stubImport([400, null]);
+
+      await keep();
+
+      expect(bodies, hasLength(2));
+      expect(bodies.last['recurrence'], ['RRULE:FREQ=WEEKLY;COUNT=4']);
+    });
+
+    test('anything but a rejected body is reported, not retried', () async {
+      final bodies = stubImport([500]);
+
+      await expectLater(keep(), throwsA(isA<ServerException>()));
+
+      expect(bodies, hasLength(1));
+    });
+
+    test('a rejected body with nothing left to drop is reported', () async {
+      const single = 'BEGIN:VCALENDAR\r\n'
+          'BEGIN:VEVENT\r\n'
+          'UID:fwd-uid-2\r\n'
+          'DTSTART:20260910T010000Z\r\n'
+          'DTEND:20260910T020000Z\r\n'
+          'ORGANIZER:mailto:boss@example.com\r\n'
+          'END:VEVENT\r\n'
+          'END:VCALENDAR';
+      final bodies = stubImport([400]);
+
+      await expectLater(keep(icsData: single), throwsA(isA<ServerException>()));
+
+      expect(bodies, hasLength(1));
+      expect(bodies.single.containsKey('recurrence'), isFalse);
+    });
+
+    test('writes an all-day meeting as dates', () async {
+      const allDay = 'BEGIN:VCALENDAR\r\n'
+          'BEGIN:VEVENT\r\n'
+          'UID:fwd-uid-3\r\n'
+          'DTSTART;VALUE=DATE:20260910\r\n'
+          'DTEND;VALUE=DATE:20260911\r\n'
+          'ORGANIZER:mailto:boss@example.com\r\n'
+          'END:VEVENT\r\n'
+          'END:VCALENDAR';
+      final bodies = stubImport();
+
+      await keep(icsData: allDay);
+
+      expect(bodies.single['start'], {'date': '2026-09-10'});
+      expect(bodies.single['end'], {'date': '2026-09-11'});
+    });
+
+    test('an invitation with no UID cannot be kept', () async {
+      const noUid = 'BEGIN:VCALENDAR\r\n'
+          'BEGIN:VEVENT\r\n'
+          'DTSTART:20260910T010000Z\r\n'
+          'DTEND:20260910T020000Z\r\n'
+          'ORGANIZER:mailto:boss@example.com\r\n'
+          'END:VEVENT\r\n'
+          'END:VCALENDAR';
+      final bodies = stubImport();
+
+      await expectLater(keep(icsData: noUid), throwsA(isA<ServerException>()));
+
+      expect(bodies, isEmpty);
+    });
   });
 }

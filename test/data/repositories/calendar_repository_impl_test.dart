@@ -20,6 +20,7 @@ import 'package:nightmail/domain/entities/local_attachment.dart';
 import 'package:nightmail/domain/entities/meeting_forward.dart';
 import 'package:nightmail/domain/entities/meeting_invite.dart';
 import 'package:nightmail/domain/entities/meeting_notify_scope.dart';
+import 'package:nightmail/domain/entities/meeting_response.dart';
 import 'package:nightmail/domain/entities/meeting_room.dart';
 import 'package:nightmail/domain/usecases/update_calendar_event.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
@@ -2377,6 +2378,335 @@ END:VCALENDAR''';
 
       expect(result.getRight().toNullable(), MeetingForwardMode.fromMe);
       verify(mockDatasource.getCalendarEvent(id: 'event-1')).called(1);
+    });
+  });
+
+  group('CalendarRepositoryImpl.respondToMeetingInvite', () {
+    late MockEmailRemoteDatasource mockEmailDatasource;
+
+    /// Somebody forwarded Dana's invitation on: the roster is Dana's, and the
+    /// account answering (sam@) is not on it.
+    const forwarded = '''
+BEGIN:VCALENDAR
+VERSION:2.0
+METHOD:REQUEST
+BEGIN:VEVENT
+UID:evt-1@example.com
+SEQUENCE:2
+SUMMARY:Quarterly review
+LOCATION:Board room
+ORGANIZER;CN="Dana Chen":mailto:dana@example.com
+ATTENDEE:mailto:dana@example.com
+ATTENDEE:mailto:ravi@example.com
+DTSTART:20260803T230000Z
+DTEND:20260803T234500Z
+END:VEVENT
+END:VCALENDAR''';
+
+    /// The same invitation sent to sam@ directly.
+    const direct = '''
+BEGIN:VCALENDAR
+VERSION:2.0
+METHOD:REQUEST
+BEGIN:VEVENT
+UID:evt-1@example.com
+SEQUENCE:2
+SUMMARY:Quarterly review
+ORGANIZER;CN="Dana Chen":mailto:dana@example.com
+ATTENDEE:mailto:dana@example.com
+ATTENDEE:mailto:Sam@Example.com
+DTSTART:20260803T230000Z
+DTEND:20260803T234500Z
+END:VEVENT
+END:VCALENDAR''';
+
+    final kept = CalendarEventModel(
+      id: 'kept-1',
+      subject: 'Quarterly review',
+      start: DateTime.utc(2026, 8, 3, 23),
+      end: DateTime.utc(2026, 8, 3, 23, 45),
+      isAllDay: false,
+      iCalUid: 'evt-1@example.com',
+      organizerEmail: 'dana@example.com',
+    );
+
+    setUp(() {
+      mockEmailDatasource = MockEmailRemoteDatasource();
+      when(mockAccountManager.calendarDatasource).thenReturn(mockDatasource);
+      when(mockAccountManager.emailDatasource).thenReturn(mockEmailDatasource);
+      when(mockAccountManager.activeAccount).thenReturn(const GmailAccount(
+        id: 'acct-1',
+        displayName: 'Sam Patel',
+        emailAddress: 'sam@example.com',
+      ));
+      when(mockDatasource.importMeetingInvite(
+        icsData: anyNamed('icsData'),
+        response: anyNamed('response'),
+        userEmail: anyNamed('userEmail'),
+        message: anyNamed('message'),
+      )).thenAnswer((_) async => kept);
+      when(mockEmailDatasource.sendEmail(
+        toAddresses: anyNamed('toAddresses'),
+        ccAddresses: anyNamed('ccAddresses'),
+        bccAddresses: anyNamed('bccAddresses'),
+        subject: anyNamed('subject'),
+        body: anyNamed('body'),
+        bodyType: anyNamed('bodyType'),
+        newAttachments: anyNamed('newAttachments'),
+      )).thenAnswer((_) async {});
+    });
+
+    /// The provider holds no copy of the meeting.
+    void givenNotOnCalendar() {
+      when(mockDatasource.respondToMeetingInvite(
+        emailId: anyNamed('emailId'),
+        response: anyNamed('response'),
+        icsData: anyNamed('icsData'),
+        meetingStart: anyNamed('meetingStart'),
+        userEmail: anyNamed('userEmail'),
+        message: anyNamed('message'),
+      )).thenThrow(const MeetingNotOnCalendarException(
+          message: 'Could not find this meeting on your calendar'));
+    }
+
+    void givenAnswered() {
+      when(mockDatasource.respondToMeetingInvite(
+        emailId: anyNamed('emailId'),
+        response: anyNamed('response'),
+        icsData: anyNamed('icsData'),
+        meetingStart: anyNamed('meetingStart'),
+        userEmail: anyNamed('userEmail'),
+        message: anyNamed('message'),
+      )).thenAnswer((_) async {});
+    }
+
+    Future<Either<Failure, MeetingResponseMode>> respond({
+      String icsData = forwarded,
+      MeetingInviteResponseType response = MeetingInviteResponseType.accept,
+      String? message,
+    }) =>
+        repository.respondToMeetingInvite(
+          emailId: 'msg-1',
+          response: response,
+          icsData: icsData,
+          meetingStart: DateTime.utc(2026, 8, 3, 23),
+          message: message,
+        );
+
+    /// The single mail the repository sent, as its captured named arguments.
+    Map<Symbol, dynamic> capturedMail() {
+      final call = verify(mockEmailDatasource.sendEmail(
+        toAddresses: captureAnyNamed('toAddresses'),
+        subject: captureAnyNamed('subject'),
+        body: captureAnyNamed('body'),
+        newAttachments: captureAnyNamed('newAttachments'),
+        ccAddresses: anyNamed('ccAddresses'),
+        bccAddresses: anyNamed('bccAddresses'),
+        bodyType: anyNamed('bodyType'),
+      ));
+      call.called(1);
+      return {
+        #toAddresses: call.captured[0],
+        #subject: call.captured[1],
+        #body: call.captured[2],
+        #newAttachments: call.captured[3],
+      };
+    }
+
+    String replyIcsOf(Map<Symbol, dynamic> mail) {
+      final attachment =
+          (mail[#newAttachments] as List<LocalAttachment>).single;
+      expect(attachment.mimeType, 'text/calendar; method=REPLY');
+      return _unfoldIcs(utf8.decode(attachment.bytes));
+    }
+
+    void verifyNothingKept() => verifyNever(mockDatasource.importMeetingInvite(
+          icsData: anyNamed('icsData'),
+          response: anyNamed('response'),
+          userEmail: anyNamed('userEmail'),
+          message: anyNamed('message'),
+        ));
+
+    void verifyNoMail() => verifyNever(mockEmailDatasource.sendEmail(
+          toAddresses: anyNamed('toAddresses'),
+          ccAddresses: anyNamed('ccAddresses'),
+          bccAddresses: anyNamed('bccAddresses'),
+          subject: anyNamed('subject'),
+          body: anyNamed('body'),
+          bodyType: anyNamed('bodyType'),
+          newAttachments: anyNamed('newAttachments'),
+        ));
+
+    test('the provider answering is reported as such, and nobody is emailed',
+        () async {
+      givenAnswered();
+
+      final result = await respond(icsData: direct);
+
+      expect(result.getRight().toNullable(), MeetingResponseMode.viaProvider);
+      verifyNothingKept();
+      verifyNoMail();
+    });
+
+    test('a forwarded invitation is kept as a copy and the organizer emailed',
+        () async {
+      givenNotOnCalendar();
+
+      final result = await respond();
+
+      expect(
+          result.getRight().toNullable(), MeetingResponseMode.emailedOrganizer);
+      verify(mockDatasource.importMeetingInvite(
+        icsData: forwarded,
+        response: MeetingInviteResponseType.accept,
+        userEmail: 'sam@example.com',
+        message: null,
+      )).called(1);
+      // The copy is on screen before the next sync.
+      expect(capturedUpsert().id, 'kept-1');
+
+      final mail = capturedMail();
+      expect(mail[#toAddresses], ['dana@example.com']);
+      expect(mail[#subject], 'Accepted: Quarterly review');
+      expect(mail[#body], contains('Sam Patel <sam@example.com> has accepted'));
+      expect(mail[#body], contains('not on the guest list'));
+      final reply = replyIcsOf(mail);
+      expect(reply, contains('METHOD:REPLY'));
+      expect(reply, contains('UID:evt-1@example.com'));
+      expect(reply, contains('SEQUENCE:2'));
+      expect(reply,
+          contains('PARTSTAT=ACCEPTED;RSVP=FALSE:mailto:sam@example.com'));
+      expect(reply, isNot(contains('mailto:ravi@example.com')));
+    });
+
+    test('an invitation this account is on the roster of is reported, '
+        'not answered by email', () async {
+      // Being invited and not finding the meeting is a settled failure: the
+      // old create fallback is exactly what must not come back here, and
+      // emailing the organizer would duplicate what the provider sends.
+      givenNotOnCalendar();
+
+      final result = await respond(icsData: direct);
+
+      expect(
+        result.getLeft().toNullable(),
+        isA<ServerFailure>().having((f) => f.statusCode, 'statusCode', 404),
+      );
+      verifyNothingKept();
+      verifyNoMail();
+    });
+
+    test('a meeting this account organizes is never answered by email',
+        () async {
+      const own = '''
+BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:evt-9
+SUMMARY:My own
+ORGANIZER:mailto:sam@example.com
+ATTENDEE:mailto:ravi@example.com
+DTSTART:20260803T230000Z
+DTEND:20260803T234500Z
+END:VEVENT
+END:VCALENDAR''';
+      givenNotOnCalendar();
+
+      final result = await respond(icsData: own);
+
+      expect(result.isLeft(), isTrue);
+      verifyNothingKept();
+      verifyNoMail();
+    });
+
+    test('declining a forwarded invitation emails the organizer and keeps '
+        'nothing', () async {
+      givenNotOnCalendar();
+
+      final result = await respond(
+          response: MeetingInviteResponseType.decline, message: 'Clashes');
+
+      expect(
+          result.getRight().toNullable(), MeetingResponseMode.emailedOrganizer);
+      verifyNothingKept();
+      final mail = capturedMail();
+      expect(mail[#subject], 'Declined: Quarterly review');
+      expect(mail[#body], contains('has declined'));
+      expect(mail[#body], contains('Clashes'));
+      final reply = replyIcsOf(mail);
+      expect(reply, contains('PARTSTAT=DECLINED'));
+      expect(reply, contains('COMMENT:Clashes'));
+    });
+
+    test('a tentative answer says so in the subject and the REPLY', () async {
+      givenNotOnCalendar();
+
+      await respond(response: MeetingInviteResponseType.tentative);
+
+      final mail = capturedMail();
+      expect(mail[#subject], 'Tentative: Quarterly review');
+      expect(replyIcsOf(mail), contains('PARTSTAT=TENTATIVE'));
+    });
+
+    test('declining a meeting the provider does not hold stays a quiet no-op',
+        () async {
+      givenNotOnCalendar();
+
+      final result = await respond(
+          icsData: direct, response: MeetingInviteResponseType.decline);
+
+      expect(result.getRight().toNullable(), MeetingResponseMode.viaProvider);
+      verifyNothingKept();
+      verifyNoMail();
+    });
+
+    test('a reply that cannot be sent fails, saying the copy was kept',
+        () async {
+      givenNotOnCalendar();
+      when(mockEmailDatasource.sendEmail(
+        toAddresses: anyNamed('toAddresses'),
+        ccAddresses: anyNamed('ccAddresses'),
+        bccAddresses: anyNamed('bccAddresses'),
+        subject: anyNamed('subject'),
+        body: anyNamed('body'),
+        bodyType: anyNamed('bodyType'),
+        newAttachments: anyNamed('newAttachments'),
+      )).thenThrow(
+          const ServerException(message: 'SMTP down', statusCode: 502));
+
+      final result = await respond();
+
+      final failure = result.getLeft().toNullable();
+      expect(failure, isA<ServerFailure>());
+      expect(failure!.message, contains('added to your calendar'));
+      expect(failure.message, contains('dana@example.com'));
+      expect(failure.message, contains('SMTP down'));
+    });
+
+    test('a copy that cannot be kept fails before anybody is emailed',
+        () async {
+      givenNotOnCalendar();
+      when(mockDatasource.importMeetingInvite(
+        icsData: anyNamed('icsData'),
+        response: anyNamed('response'),
+        userEmail: anyNamed('userEmail'),
+        message: anyNamed('message'),
+      )).thenThrow(const AuthException(message: 'Token expired'));
+
+      final result = await respond();
+
+      expect(result.getLeft().toNullable(), isA<AuthFailure>());
+      verifyNoMail();
+    });
+
+    test('a miss with no ICS is reported, since it cannot be told from a '
+        'lost invitation', () async {
+      givenNotOnCalendar();
+
+      final result = await respond(icsData: '');
+
+      expect(result.isLeft(), isTrue);
+      verifyNothingKept();
+      verifyNoMail();
     });
   });
 }

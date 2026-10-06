@@ -4,16 +4,18 @@ import 'package:fpdart/fpdart.dart';
 import '../../core/error/failures.dart';
 import '../../core/usecases/usecase.dart';
 import '../entities/meeting_invite.dart';
+import '../entities/meeting_response.dart';
 import '../repositories/calendar_repository.dart';
 
 class RespondToMeetingInvite
-    implements UseCase<void, RespondToMeetingInviteParams> {
+    implements UseCase<MeetingResponseMode, RespondToMeetingInviteParams> {
   const RespondToMeetingInvite(this._repository);
 
   final CalendarRepository _repository;
 
   @override
-  Future<Either<Failure, void>> call(RespondToMeetingInviteParams params) {
+  Future<Either<Failure, MeetingResponseMode>> call(
+      RespondToMeetingInviteParams params) {
     return _repository.respondToMeetingInvite(
       emailId: params.emailId,
       response: params.response,

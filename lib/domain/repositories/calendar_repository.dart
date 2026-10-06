@@ -5,6 +5,7 @@ import '../entities/attendee_availability.dart';
 import '../entities/calendar_event.dart';
 import '../entities/meeting_forward.dart';
 import '../entities/meeting_invite.dart';
+import '../entities/meeting_response.dart';
 import '../entities/meeting_room.dart';
 import '../usecases/create_calendar_event.dart';
 import '../usecases/update_calendar_event.dart';
@@ -75,7 +76,13 @@ abstract interface class CalendarRepository {
     String? accountId,
   });
 
-  Future<Either<Failure, void>> respondToMeetingInvite({
+  /// Answers an invitation. The returned [MeetingResponseMode] says how: on
+  /// the provider's own copy of the meeting, or — for a *forwarded*
+  /// invitation, which this account is not on the guest list of and the
+  /// provider therefore never filed — by keeping a private copy and emailing
+  /// the organizer a `METHOD:REPLY`. The two leave the user in materially
+  /// different positions, so the banner says which happened.
+  Future<Either<Failure, MeetingResponseMode>> respondToMeetingInvite({
     required String emailId,
     required MeetingInviteResponseType response,
     String? icsData,

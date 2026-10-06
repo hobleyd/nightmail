@@ -46,11 +46,14 @@ is not listed at all without `showHiddenInvitations`.
 Four things now hold this together:
 
 - **Nothing on the RSVP path creates an event.** A meeting that cannot be found
-  throws, the same as `GraphApiDatasourceImpl.respondToMeetingInvite` does after
-  its own three lookups. Making the create "safe" instead — no attendees, or
+  throws `MeetingNotOnCalendarException`, the same as
+  `GraphApiDatasourceImpl.respondToMeetingInvite` does after its own three
+  lookups. Making the create "safe" instead — no attendees, or
   `sendUpdates: 'none'` — was rejected: a copy with no attendees never delivers
   the RSVP to the organizer and still cannot carry the recurrence, which trades
-  a loud wrong answer for a quiet one.
+  a loud wrong answer for a quiet one. (A *forwarded* invitation is kept as a
+  copy by a different method, `importMeetingInvite`, which the repository
+  reaches only after that throw — see the next section.)
 - **A missed UID falls back to the meeting's start time**, `_findInviteEvent` —
   the shape Graph uses as its last resort and `_findCachedMeeting` uses locally.
   A UID match within the window wins (normalised through `isSameMeetingUid`, so
@@ -63,8 +66,10 @@ Four things now hold this together:
   deletes; what it can remove off a heuristic match is therefore held to one
   occurrence, since a series invitation would be promoted to its master and
   "remove a recurring series" may not sit behind a guess. Not finding the
-  meeting stays the silent no-op it has always been on that path — there is
-  nothing to remove.
+  meeting throws the same typed miss as the accept path — a forwarded
+  invitation declined still owes the organizer a reply — and the repository
+  keeps it the quiet no-op it has always been where there was nothing to
+  answer either; there is nothing to remove.
 - **A master id that 404s retries the instance.** Editing a series as "this and
   following" splits it, and the instances after the split name a master
   `<id>_R<UTC occurrence start>` that an attendee's calendar holds no copy of
@@ -100,6 +105,57 @@ message or event id, and it has never had anything that could create.
 
 `test/data/datasources/remote/google_calendar_rsvp_test.dart` pins it — chiefly
 that an accept whose lookups come up empty issues **no** POST.
+
+## A Forwarded Invitation Is Answered by Email
+
+"Fwd: <meeting>" from a colleague carries the organizer's `METHOD:REQUEST`
+part, and Gmail classifies every REQUEST part as an invitation, so the banner
+offers Accept. But this account is not on that part's `ATTENDEE` roster, so
+Google never filed the meeting — and both lookups above miss. That used to end
+in "Could not find this meeting on your calendar to respond to", which is true
+and useless: Gmail and Outlook both answer a forwarded invitation, by keeping a
+copy and telling the organizer.
+
+`CalendarRepositoryImpl.respondToMeetingInvite` now does the same, and returns
+a `MeetingResponseMode` so the banner can say which happened:
+
+- **The decision is made after the provider's miss, not at classification.**
+  "Forwarded" means `MeetingNotOnCalendarException` *and* the ICS names an
+  organizer who is not this account *and* this account is not on the roster
+  (`_isForwardedInvitation`). Reclassifying on the roster alone would be
+  wrong: a guest invited through a group address is not on it either, but
+  Google expands the group and files the meeting, so the lookup finds it and
+  the question never arises. An invitation this account *is* on the roster of
+  that still cannot be found stays the 404 failure it was.
+- **The copy is an `events.import`, never an insert.** Import is the one call
+  on which `organizer` is writable, so the copy names the real organizer and
+  carries their `iCalUID` — a later update from them lands on it instead of
+  beside it — and the endpoint has no `sendUpdates`: Google emails nobody. The
+  roster rides along without answers (theirs live on the organizer's copy),
+  this account's entry carries the answer, and `RRULE`/`EXDATE`/`RDATE` pass
+  through from the ICS so a forwarded series stays a series. An `EXDATE`
+  Google rejects (a Windows `TZID`, typically) is retried without, once;
+  anything but a 400 is reported. A decline keeps nothing.
+- **The organizer is emailed a `METHOD:REPLY`** (`buildReplyIcs`, the third
+  iMIP builder beside REQUEST and COUNTER), "Accepted: <title>" from this
+  account, with the body saying plainly they were not on the guest list. That
+  is what Exchange shows against the right meeting and what Outlook answers by
+  offering to add the sender to the attendee list — the only way an update
+  will ever reach them. The copy is written before the mail goes out, so a
+  reply that fails still leaves the answered meeting on the calendar, and the
+  failure says so.
+- **The banner keeps the message and says what happened.** Every other answer
+  deletes the invitation and tidies the ones it supersedes; a forwarded one is
+  somebody's message *about* the meeting, nothing supersedes it, and the
+  banner is the one place that can say "emailed, not on their guest list yet".
+- **Declining a meeting the provider does not hold is still a quiet no-op** for
+  a non-forwarded invitation — the datasource now throws the typed miss on the
+  decline path too (a forwarded decline owes the organizer a reply), and the
+  repository swallows it where there was nothing to answer either.
+
+Graph never reaches any of this: a calendar part on a message Exchange did not
+process is reclassified as a published event and only ever *added*. CalDAV and
+EventKit answer every invitation with a local copy and never throw the miss.
 
 ## Answering an Invitation Deletes the Ones It Supersedes
 

@@ -12,6 +12,7 @@ import '../../core/utils/calendar_event_patch.dart';
 import '../../core/utils/ics_cancel_builder.dart';
 import '../../core/utils/ics_counter_builder.dart';
 import '../../core/utils/ics_parser.dart';
+import '../../core/utils/ics_reply_builder.dart';
 import '../../core/utils/ics_request_builder.dart';
 import '../../core/utils/ics_writer.dart';
 import '../../core/utils/rrule.dart';
@@ -22,6 +23,7 @@ import '../../domain/entities/local_attachment.dart';
 import '../../domain/entities/meeting_forward.dart';
 import '../../domain/entities/meeting_invite.dart';
 import '../../domain/entities/meeting_notify_scope.dart';
+import '../../domain/entities/meeting_response.dart';
 import '../../domain/entities/meeting_room.dart';
 import '../../domain/repositories/calendar_repository.dart';
 import '../../domain/usecases/create_calendar_event.dart';
@@ -721,7 +723,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
       );
 
   @override
-  Future<Either<Failure, void>> respondToMeetingInvite({
+  Future<Either<Failure, MeetingResponseMode>> respondToMeetingInvite({
     required String emailId,
     required MeetingInviteResponseType response,
     String? icsData,
@@ -747,7 +749,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
           );
 
     if (resolvedAccountId != null && cached != null) {
-      return _cacheFirstVoid(
+      return _cacheFirst(
         accountId: resolvedAccountId,
         targetId: emailId,
         opType: PendingCalendarOperationType.respondToInvite,
@@ -761,24 +763,53 @@ class CalendarRepositoryImpl implements CalendarRepository {
           accountId: resolvedAccountId,
           event: applyRsvp(cached, response),
         ),
+        value: MeetingResponseMode.viaProvider,
       );
     }
 
     // No cached copy of the meeting to move — most often an invitation the
     // provider has not put on the calendar yet. There is nothing to show
     // optimistically, so wait for the provider and report what it says.
-    final userEmail = _resolveAccount(accountId)?.emailAddress;
+    final account = _resolveAccount(accountId);
+    final userEmail = account?.emailAddress;
 
     try {
-      await ds.respondToMeetingInvite(
-        emailId: emailId,
-        response: response,
-        icsData: icsData,
-        meetingStart: meetingStart,
-        userEmail: userEmail,
-        message: message,
-      );
-      return const Right(null);
+      try {
+        await ds.respondToMeetingInvite(
+          emailId: emailId,
+          response: response,
+          icsData: icsData,
+          meetingStart: meetingStart,
+          userEmail: userEmail,
+          message: message,
+        );
+        return const Right(MeetingResponseMode.viaProvider);
+      } on MeetingNotOnCalendarException {
+        // The provider holds no copy. For an invitation this account is on
+        // the guest list of that is a failure to report; for one somebody
+        // *forwarded* it is the expected shape, and is answered below.
+        final forwarded = icsData != null &&
+            userEmail != null &&
+            _isForwardedInvitation(icsData, userEmail);
+        if (!forwarded) {
+          // Declining a meeting the provider does not hold has always been a
+          // quiet no-op — there is nothing to remove.
+          if (response == MeetingInviteResponseType.decline) {
+            return const Right(MeetingResponseMode.viaProvider);
+          }
+          rethrow;
+        }
+        await _answerForwardedInvitation(
+          ds: ds,
+          accountId: resolvedAccountId,
+          icsData: icsData,
+          response: response,
+          userEmail: userEmail,
+          displayName: account?.senderName,
+          message: message,
+        );
+        return const Right(MeetingResponseMode.emailedOrganizer);
+      }
     } on AuthException catch (e) {
       return Left(AuthFailure(message: e.message));
     } on NetworkException catch (e) {
@@ -787,6 +818,169 @@ class CalendarRepositoryImpl implements CalendarRepository {
       return Left(ServerFailure(message: e.message, statusCode: e.statusCode));
     } catch (e) {
       return Left(ServerFailure(message: e.toString()));
+    }
+  }
+
+  /// Whether an invitation reached this account by being passed on, rather
+  /// than from its organizer: there is an organizer to answer to, it is not
+  /// this account, and this account is not on the guest list.
+  ///
+  /// Only consulted once the provider has said it holds no copy of the
+  /// meeting. A guest invited through a group address is not on the roster
+  /// either, but Google expands the group and files the meeting, so the lookup
+  /// finds it and this is never asked.
+  bool _isForwardedInvitation(String icsData, String userEmail) {
+    final IcsEvent event;
+    try {
+      event = IcsParser.parse(icsData);
+    } catch (_) {
+      return false;
+    }
+    final self = userEmail.trim().toLowerCase();
+    final organizer = event.organizer?.trim().toLowerCase();
+    if (organizer == null || organizer.isEmpty || organizer == self) {
+      return false;
+    }
+    return !event.attendees.any((a) => a.trim().toLowerCase() == self);
+  }
+
+  /// Answers a forwarded invitation the way Outlook and Gmail do: a private
+  /// copy of the meeting is kept on this calendar with the answer on it, and
+  /// the organizer is emailed a `METHOD:REPLY` from this account — the only
+  /// route by which they can learn of it, since nothing the provider holds
+  /// involves them.
+  ///
+  /// A decline keeps nothing; there is nothing to keep. The copy is written
+  /// before the mail goes out, so a reply that fails to send still leaves the
+  /// answered meeting on the calendar, and the failure says so.
+  Future<void> _answerForwardedInvitation({
+    required CalendarRemoteDatasource ds,
+    required String? accountId,
+    required String icsData,
+    required MeetingInviteResponseType response,
+    required String userEmail,
+    required String? displayName,
+    required String? message,
+  }) async {
+    final kept = response != MeetingInviteResponseType.decline;
+    if (kept) {
+      final copy = await ds.importMeetingInvite(
+        icsData: icsData,
+        response: response,
+        userEmail: userEmail,
+        message: message,
+      );
+      if (accountId != null) {
+        try {
+          await _localDatasource.upsertEvent(accountId: accountId, event: copy);
+        } catch (e) {
+          // The next sync pass paints it; the copy itself is on the server.
+          debugPrint('[Calendar] could not cache the kept invitation: $e');
+        }
+      }
+    }
+    await _emailInviteReply(
+      icsData: icsData,
+      response: response,
+      userEmail: userEmail,
+      displayName: displayName,
+      message: message,
+      kept: kept,
+    );
+  }
+
+  /// Emails the organizer this account's answer to a forwarded invitation.
+  ///
+  /// The `METHOD:REPLY` part is what Exchange and Google process: the
+  /// organizer's client shows "Accepted: …" against the right meeting and —
+  /// in Outlook — offers to add the sender to the attendee list, which is the
+  /// only way updates will ever reach them. The body says the same in plain
+  /// text, for a client that ignores the part, and says plainly that the
+  /// sender is not on the guest list.
+  Future<void> _emailInviteReply({
+    required String icsData,
+    required MeetingInviteResponseType response,
+    required String userEmail,
+    required String? displayName,
+    required String? message,
+    required bool kept,
+  }) async {
+    final event = IcsParser.parse(icsData);
+    final organizer = event.organizer;
+    if (organizer == null) return; // Nobody to answer to.
+    final note = message?.trim();
+    final who = (displayName == null || displayName.trim().isEmpty)
+        ? userEmail
+        : '${displayName.trim()} <$userEmail>';
+    final title = event.summary ?? '(No title)';
+    final (verb, prefix, partStat) = switch (response) {
+      MeetingInviteResponseType.accept => ('accepted', 'Accepted', 'ACCEPTED'),
+      MeetingInviteResponseType.tentative => (
+          'tentatively accepted',
+          'Tentative',
+          'TENTATIVE'
+        ),
+      MeetingInviteResponseType.decline => ('declined', 'Declined', 'DECLINED'),
+    };
+
+    final body = StringBuffer()
+      ..writeln('$who has $verb the invitation to "$title".')
+      ..writeln()
+      ..writeln('When: ${_formatRange(event.start, event.end)}');
+    if (event.location != null && event.location!.trim().isNotEmpty) {
+      body.writeln('Where: ${event.location!.trim()}');
+    }
+    if (note != null && note.isNotEmpty) {
+      body
+        ..writeln()
+        ..writeln(note);
+    }
+    body
+      ..writeln()
+      ..writeln('This invitation was forwarded to them, so they are not on '
+          'the guest list. Add them to the meeting if they should receive '
+          'updates to it.');
+
+    final reply = buildReplyIcs(
+      originalIcs: icsData,
+      attendeeEmail: userEmail,
+      attendeeName: displayName,
+      partStat: partStat,
+      comment: note,
+    );
+
+    String failed(String reason) => kept
+        ? 'The meeting was added to your calendar, but your reply could not '
+            'be emailed to the organiser ($organizer): $reason'
+        : 'Your reply could not be emailed to the organiser ($organizer): '
+            '$reason';
+    try {
+      await _accountManager.emailDatasource.sendEmail(
+        toAddresses: [organizer],
+        subject: '$prefix: $title',
+        body: body.toString(),
+        newAttachments: [
+          LocalAttachment(
+            name: 'reply.ics',
+            // The `method` parameter is what makes a client read the part as
+            // an answer to act on rather than a file to save.
+            mimeType: 'text/calendar; method=REPLY',
+            bytes: Uint8List.fromList(utf8.encode(reply)),
+          ),
+        ],
+      );
+      // Each exception is re-thrown as its own type so the caller still maps
+      // it to the right Failure — an expired token has to stay an
+      // AuthFailure for the re-auth prompt to appear.
+    } on AuthException catch (e) {
+      throw AuthException(message: failed(e.message));
+    } on NetworkException catch (e) {
+      throw NetworkException(message: failed(e.message));
+    } on ServerException catch (e) {
+      throw ServerException(
+          message: failed(e.message), statusCode: e.statusCode);
+    } catch (e) {
+      throw ServerException(message: failed(e.toString()));
     }
   }
 

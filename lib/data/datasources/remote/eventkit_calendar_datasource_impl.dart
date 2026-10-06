@@ -124,6 +124,22 @@ class EventKitCalendarDatasourceImpl implements CalendarRemoteDatasource {
     }
   }
 
+
+  // Never reached: an invitation here is always answered with a local copy
+  // (see [respondToMeetingInvite]), so the repository never has a
+  // not-on-calendar answer to act on.
+  @override
+  Future<CalendarEventModel> importMeetingInvite({
+    required String icsData,
+    required MeetingInviteResponseType response,
+    String? userEmail,
+    String? message,
+  }) async {
+    throw const ServerException(
+        message: 'Keeping a copy of a forwarded invitation is not supported '
+            'for EventKit');
+  }
+
   @override
   Future<void> removeMeetingFromCalendar({
     required String emailId,

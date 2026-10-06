@@ -45,6 +45,7 @@ import '../../domain/entities/email_address.dart';
 import '../../domain/entities/email_attachment.dart';
 import '../../domain/entities/email_folder.dart';
 import '../../domain/entities/meeting_invite.dart';
+import '../../domain/entities/meeting_response.dart';
 import '../../domain/usecases/check_sender_anomaly.dart';
 import '../../domain/usecases/delete_email.dart';
 import '../../domain/usecases/delete_superseded_meeting_invites.dart';
@@ -1390,6 +1391,7 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
   _InviteState _state = _InviteState.idle;
   String? _errorMessage;
   MeetingInviteResponseType? _responded;
+  MeetingResponseMode? _responseMode;
   bool _proposedNewTime = false;
   List<CalendarEvent> _conflicts = [];
   bool _addNote = false;
@@ -1458,9 +1460,10 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
         _state = _InviteState.error;
         _errorMessage = failure.message;
       }),
-      (_) => setState(() {
+      (mode) => setState(() {
         _state = _InviteState.done;
         _responded = response;
+        _responseMode = mode;
       }),
     );
 
@@ -1469,6 +1472,14 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
       context.read<CalendarBloc>().add(
             CalendarWeekLoadRequested(weekStart: calendarState.weekStart),
           );
+
+      // A forwarded invitation stays in the mailbox. It is somebody's message
+      // *about* the meeting — their note is the context — and no earlier
+      // invitation to the same meeting is superseded by answering it, because
+      // the organizer never sent one here. The banner stays too: it is the
+      // one place that says the organizer was emailed rather than told by the
+      // provider, which the user needs to know before expecting updates.
+      if (_responseMode == MeetingResponseMode.emailedOrganizer) return;
 
       final email = widget.email;
       final emailListBloc = context.read<EmailListBloc>();
@@ -1928,20 +1939,50 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
             ],
           ),
         _InviteState.done => Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.check_circle_outline_rounded,
-                  size: 14, color: AppColors.accent),
+              Padding(
+                padding: const EdgeInsets.only(top: 1),
+                child: Icon(Icons.check_circle_outline_rounded,
+                    size: 14, color: AppColors.accent),
+              ),
               const SizedBox(width: 8),
-              Text(
-                _proposedNewTime
-                    ? 'Proposal sent'
-                    : switch (_responded!) {
-                        MeetingInviteResponseType.accept => 'Accepted',
-                        MeetingInviteResponseType.tentative =>
-                          'Tentatively accepted',
-                        MeetingInviteResponseType.decline => 'Declined',
-                      },
-                style: TextStyle(color: c.textTertiary, fontSize: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _proposedNewTime
+                          ? 'Proposal sent'
+                          : switch (_responded!) {
+                              MeetingInviteResponseType.accept => 'Accepted',
+                              MeetingInviteResponseType.tentative =>
+                                'Tentatively accepted',
+                              MeetingInviteResponseType.decline => 'Declined',
+                            },
+                      style: TextStyle(color: c.textTertiary, fontSize: 12),
+                    ),
+                    // Said here because it is the only place it can be: the
+                    // organizer was emailed, not told by the provider, and
+                    // until they add this account to the guest list a change
+                    // to the meeting is not sent here.
+                    if (_responseMode == MeetingResponseMode.emailedOrganizer)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          _responded == MeetingInviteResponseType.decline
+                              ? 'This invitation was forwarded to you, so your '
+                                  'reply was emailed to the organiser.'
+                              : 'This invitation was forwarded to you, so a '
+                                  'copy was added to your calendar and your '
+                                  'reply emailed to the organiser. You will '
+                                  'only receive updates to the meeting once '
+                                  'they add you to it.',
+                          style: TextStyle(color: c.textDimmed, fontSize: 11),
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ],
           ),

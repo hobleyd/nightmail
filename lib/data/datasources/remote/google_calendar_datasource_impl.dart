@@ -4,9 +4,11 @@ import 'package:uuid/uuid.dart';
 
 import '../../../core/error/exceptions.dart';
 import '../../../core/utils/ics_parser.dart';
+import '../../../core/utils/ics_writer.dart';
 import '../../../core/utils/meeting_conflicts.dart';
 import '../../../core/utils/online_meeting_url.dart';
 import '../../../core/utils/rrule.dart';
+import '../../../core/utils/timezone_utils.dart';
 import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/calendar_event.dart';
 import '../../../domain/entities/calendar_event_attendee.dart';
@@ -301,15 +303,22 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
         // an invitation naming a `RECURRENCE-ID` is answered on the instance
         // (see [_sendRsvp]), while a series invitation would be promoted to its
         // master — and "delete a recurring series" may not sit behind a guess.
-        // Not finding the meeting stays the silent no-op it has always been
-        // here; there is nothing to remove.
+        // Not finding the meeting is reported the same way the accept path
+        // reports it, below: there is nothing to remove, but the caller is the
+        // one who knows whether there was nothing to *answer* either — a
+        // forwarded invitation declined still owes the organizer a reply.
         final target = await _findInviteEvent(
           uid: event.uid,
           start: meetingStart ?? event.start,
           userEmail: userEmail,
           allowStartTimeMatch: event.recurrenceId != null,
         );
-        if (target == null) return; // Not on the calendar — nothing to decline.
+        if (target == null) {
+          throw const MeetingNotOnCalendarException(
+            message:
+                'Could not find this meeting on your calendar to respond to',
+          );
+        }
         // 1. Send the decline RSVP to the organizer.
         final eventId = await _sendRsvp(
           serverEvent: target,
@@ -358,15 +367,19 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       throw _mapException(e);
     }
     if (target == null) {
-      // 404 is the calendar outbox's drop signal (`OutboxDrainService` treats
-      // 404/410 as "no retry can ever succeed"), and that is what this is: a
-      // queued RSVP only ever reaches here when a *cached* copy of the meeting
-      // was found to answer optimistically, so the provider not holding one is
-      // settled rather than propagation lag. Without it the op would be retried
-      // 25 times and then dropped just as silently.
-      throw const ServerException(
+      // Typed so the repository can tell a forwarded invitation — one this
+      // account is not on the guest list of, which Google therefore never
+      // filed — from any other failure, and answer it by keeping a private
+      // copy ([importMeetingInvite]) and emailing the organizer.
+      //
+      // It carries a 404, the calendar outbox's drop signal (`OutboxDrainService`
+      // treats 404/410 as "no retry can ever succeed"), and that is what this
+      // is: a queued RSVP only ever reaches here when a *cached* copy of the
+      // meeting was found to answer optimistically, so the provider not holding
+      // one is settled rather than propagation lag. Without it the op would be
+      // retried 25 times and then dropped just as silently.
+      throw const MeetingNotOnCalendarException(
         message: 'Could not find this meeting on your calendar to respond to',
-        statusCode: 404,
       );
     }
 
@@ -582,6 +595,126 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       data: {'attendees': attendees},
       queryParameters: {'sendUpdates': 'all'},
     );
+  }
+
+  /// Keeps a private copy of a forwarded invitation's meeting, answered.
+  ///
+  /// `events.import` rather than `events.insert`, and the difference is the
+  /// whole point. An inserted event is organized by this account: Google mails
+  /// every address on it "Invitation: <title>" for a meeting they are already
+  /// in, and anything done to it later — a drag, a removal — invites or cancels
+  /// them again. That is the fallback the RSVP path used to have and must not
+  /// get back. An *imported* event is a copy of somebody else's meeting: the
+  /// `organizer` is writable only here and is set to the invitation's, the
+  /// `iCalUID` is the organizer's own so their next update is filed against
+  /// this copy, and the endpoint has no `sendUpdates` — nobody is emailed.
+  ///
+  /// The roster travels with it, without answers, so the user can see who else
+  /// is in the meeting; this account's own entry carries the answer. The
+  /// recurrence is passed through from the ICS so a forwarded series stays a
+  /// series — the other thing the old create fallback lost. An `EXDATE` or
+  /// `RDATE` Google will not read (one naming a Windows time zone, typically)
+  /// costs a retry with the `RRULE` alone rather than the whole answer.
+  @override
+  Future<CalendarEventModel> importMeetingInvite({
+    required String icsData,
+    required MeetingInviteResponseType response,
+    String? userEmail,
+    String? message,
+  }) async {
+    final event = IcsParser.parse(icsData);
+    final uid = event.uid;
+    if (uid == null || uid.isEmpty) {
+      throw const ServerException(
+          message: 'Cannot keep this invitation: it has no iCalendar UID');
+    }
+    final self = (userEmail ?? _accountEmail).trim();
+    final selfLower = self.toLowerCase();
+    final responseStatus = switch (response) {
+      MeetingInviteResponseType.accept => 'accepted',
+      MeetingInviteResponseType.tentative => 'tentative',
+      MeetingInviteResponseType.decline => 'declined',
+    };
+
+    final body = <String, dynamic>{
+      'iCalUID': uid,
+      'summary': event.summary ?? '(No title)',
+      if (event.description != null && event.description!.isNotEmpty)
+        'description': event.description,
+      if (event.location != null && event.location!.isNotEmpty)
+        'location': event.location,
+      if (event.organizer != null)
+        'organizer': {
+          'email': event.organizer,
+          if (event.organizerName != null && event.organizerName!.isNotEmpty)
+            'displayName': event.organizerName,
+        },
+      'attendees': [
+        for (final a in event.attendees)
+          if (a.trim().toLowerCase() != selfLower) {'email': a.trim()},
+        {
+          'email': self,
+          'responseStatus': responseStatus,
+          ..._responseComment(message),
+        },
+      ],
+      if (event.sequence != null) 'sequence': event.sequence,
+    };
+    if (event.isAllDay) {
+      // `IcsParser` renders an all-day DTSTART as UTC midnight, so the UTC
+      // reading is the date it meant — see [_startsAt].
+      body['start'] = {'date': _dateKey(event.start.toUtc())};
+      body['end'] = {'date': _dateKey(event.end.toUtc())};
+    } else {
+      // Rendered the way [_buildEventBody] renders a created event: in the
+      // reader's own zone, named, which is what a recurrence has to be expanded
+      // in — Google requires a `timeZone` on a recurring event's start.
+      final timezone = localIanaTimezone();
+      body['start'] = {
+        'dateTime': _formatLocalDateTime(event.start),
+        'timeZone': timezone,
+      };
+      body['end'] = {
+        'dateTime': _formatLocalDateTime(event.end),
+        'timeZone': timezone,
+      };
+    }
+
+    final recurrence =
+        icsPassthroughLines(icsData, const {'RRULE', 'EXDATE', 'RDATE'});
+    final rruleOnly = recurrence
+        .where((l) => l.toUpperCase().startsWith('RRULE'))
+        .toList();
+
+    Future<CalendarEventModel> postImport(List<String> rules) async {
+      final response = await _dio.post<Map<String, dynamic>>(
+        '/calendars/primary/events/import',
+        data: {
+          ...body,
+          if (rules.isNotEmpty) 'recurrence': rules,
+        },
+      );
+      if (response.data == null) {
+        throw const ServerException(message: 'Empty response from server');
+      }
+      return _parseEvent(response.data!, const []);
+    }
+
+    try {
+      return await postImport(recurrence);
+    } on DioException catch (e) {
+      // Only a rejected body is retried, and only when there is something to
+      // leave out: a 401, a timeout or a 500 is reported as what it is.
+      final nothingToDrop = rruleOnly.length == recurrence.length;
+      if (e.response?.statusCode != 400 || nothingToDrop) {
+        throw _mapException(e);
+      }
+      try {
+        return await postImport(rruleOnly);
+      } on DioException catch (e) {
+        throw _mapException(e);
+      }
+    }
   }
 
   @override

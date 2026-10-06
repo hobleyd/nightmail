@@ -36,11 +36,37 @@ abstract interface class CalendarRemoteDatasource {
   /// leaver.
   bool get notifiesChangedAttendeesItself;
 
+  /// Answers an invitation on the provider's own copy of the meeting.
+  ///
+  /// Throws [MeetingNotOnCalendarException] when the provider holds no such
+  /// copy — the shape of a *forwarded* invitation, which this account is not
+  /// on the guest list of. That is a settled answer, not a failure:
+  /// [CalendarRepositoryImpl] keeps a private copy through
+  /// [importMeetingInvite] and emails the organizer a `METHOD:REPLY` instead.
   Future<void> respondToMeetingInvite({
     required String emailId,
     required MeetingInviteResponseType response,
     String? icsData,
     DateTime? meetingStart,
+    String? userEmail,
+    String? message,
+  });
+
+  /// Keeps a private copy of a forwarded invitation's meeting on this
+  /// calendar, with this account's answer recorded on it.
+  ///
+  /// The copy names the invitation's *real* organizer and carries its `UID`,
+  /// so a later update or cancellation from them is filed against it rather
+  /// than beside it — and, unlike [createCalendarEvent], it is not a meeting
+  /// this account organizes: the provider emails nobody for it, and nothing
+  /// done to it later can invite or cancel the people on its roster.
+  ///
+  /// Only Google implements this (`events.import`). Graph never offers an RSVP
+  /// on a calendar part it did not process into a meeting, and CalDAV and
+  /// EventKit answer every invitation with a local copy already.
+  Future<CalendarEventModel> importMeetingInvite({
+    required String icsData,
+    required MeetingInviteResponseType response,
     String? userEmail,
     String? message,
   });

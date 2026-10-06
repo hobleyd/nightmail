@@ -1138,6 +1138,22 @@ class GraphApiDatasourceImpl
     }
   }
 
+
+  // Never reached: Graph only offers an RSVP on a message Exchange processed into
+  // a meeting, and a calendar part on any other message is reclassified as a
+  // published event (`unprocessedRequest`), which is added, not answered.
+  @override
+  Future<CalendarEventModel> importMeetingInvite({
+    required String icsData,
+    required MeetingInviteResponseType response,
+    String? userEmail,
+    String? message,
+  }) async {
+    throw const ServerException(
+        message: 'Keeping a copy of a forwarded invitation is not supported '
+            'for Microsoft 365');
+  }
+
   @override
   Future<void> removeMeetingFromCalendar({
     required String emailId,

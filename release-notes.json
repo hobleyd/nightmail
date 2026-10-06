@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.38.6",
+  "version": "1.38.7",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "drop finished meetings from Today",
-          "title": "commitments"
+          "body": "run snap install on a pseudo-terminal so the password prompt appears",
+          "title": "snap"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.38.6",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "drop finished meetings from Today",
+              "title": "commitments"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -428,27 +445,6 @@
           "items": [
             {
               "body": "scroll the compose editor's own content while the keyboard is up",
-              "title": "mobile"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.34.4",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "drop redundant refresh UI now that pull-to-refresh works",
-              "title": "mobile"
-            },
-            {
-              "body": "open the Inbox on an account switch instead of the folder list",
               "title": "mobile"
             }
           ]

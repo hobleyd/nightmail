@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.38.5",
+  "version": "1.38.6",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "double-click fronts the open view window and never toggles the pane",
-          "title": "windows"
+          "body": "drop finished meetings from Today",
+          "title": "commitments"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.38.5",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "double-click fronts the open view window and never toggles the pane",
+              "title": "windows"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -432,31 +449,6 @@
             },
             {
               "body": "open the Inbox on an account switch instead of the folder list",
-              "title": "mobile"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.34.3",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "actually hide the HTML editor's webview behind a native alert",
-              "title": "mobile"
-            },
-            {
-              "body": "opaque backdrop behind native alerts so they read as one colour",
-              "title": "ios"
-            },
-            {
-              "body": "compose body scrolls with the keyboard; fix plain-text switch",
               "title": "mobile"
             }
           ]

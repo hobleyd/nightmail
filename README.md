@@ -180,6 +180,10 @@ Settings → Accounts.
 - **Migrate Account** copies mail from one configured account into another,
   mapping special folders by kind rather than name; resumable, with a status
   dialog reporting live progress and any permanent per-message failures
+- **Migrate Inbox** (right-click the Inbox; not Google accounts) copies just
+  that folder's messages into another account's Inbox, with the same resume
+  and status reporting; mail it has copied is not copied again by a later
+  Migrate Account
 
 ### Out of Office
 - **Settings → Out of Office** sets the mailbox's own automatic reply — a start

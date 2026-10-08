@@ -18,6 +18,7 @@ The app provides a desktop based three-pane layout (folders, message list, readi
 - Move messages between folders
 - Mark as read/unread
 - Report junk/spam
+- Report phishing, from the junk dropdown or the reading pane: Microsoft 365 submits it to the tenant's threat submissions (admin consent asked once); Gmail and IMAP file it as junk
 - Full-text search within folders
 - Sender anomaly and spam detection
 - Spam filter synced across IMAP clients via a dedicated server-side folder

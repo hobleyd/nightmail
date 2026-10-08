@@ -1226,7 +1226,7 @@ class _ReadingPaneToolbar extends StatelessWidget {
       );
       return;
     }
-    final self = {account.emailAddress.trim().toLowerCase()};
+    final self = account.allAddresses;
     final outgoing = DetectCommitments.isFromSelf(email, self);
     final choice = await TrackCommitmentDialog.show(
       context,

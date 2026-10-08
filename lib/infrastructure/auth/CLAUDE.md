@@ -188,3 +188,27 @@ Four things here are load-bearing:
   fill it), so their re-sign-ins carried no `login_hint` at all — the hint
   needs the address, and so does this check. Adding a Gmail account now learns
   the address through the same lookup, best-effort.
+
+## The Account Keeps Every Address Its Mailbox Answers For
+
+`Account.aliases` holds what the same lookup lists beyond the primary (Gmail
+send-as, Graph `proxyAddresses`), and `Account.allAddresses` is the set a
+reply-all strips from its recipients (`compose_dialog.dart`, `_ownAddresses`)
+and Commitments reads mail from as outgoing. Three places feed it, all through
+`Account.withMailboxAddresses`: adding an account, every verified re-sign-in
+(`mailboxGuard` reports the whole list, not just a missing primary), and
+`AccountManager.ensureEmailPopulated` at each launch, for any OAuth account
+with no address or `aliases == null`. Null means never answered; an empty list
+means asked. Both lookups have an `addressesWith(Dio)` entry for the backfill,
+which goes through the account's own `AuthInterceptor` client because the
+stored token may need the refresh that client knows how to do — the opposite
+of the sign-in check above, which must *not* trust the stored token.
+
+Why: the October 2026 phone report. A Gmail account added before 1.37.4 had
+no address on record, its token refreshed silently so no re-sign-in ever
+learned one, and the compose form rendered the sender as `Name <>` — which
+matches no recipient, so every Reply All kept the user in it. The desktop had
+re-signed in once and was fine, which is what made it look platform-specific.
+Comparing against one string also kept the user whenever mail had come to an
+alias. IMAP accounts have no provider to ask; a shared mailbox's credentials
+answer for its owner, so both are left alone.

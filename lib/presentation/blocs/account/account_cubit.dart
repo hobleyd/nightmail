@@ -209,9 +209,10 @@ class AccountCubit extends Cubit<AccountState> {
     await _accountManager.initialize();
     if (_accountManager.hasAccounts) {
       await _emitLoaded();
-      // Best-effort email backfill for legacy-migrated Microsoft accounts that
-      // were recorded without an email address.  Runs after the loaded state is
-      // emitted so a slow/failing network request does not block startup.
+      // Best-effort backfill of what each mailbox answers for — a primary
+      // address the account was recorded without, and the provider's aliases
+      // (see AccountManager.ensureEmailPopulated). Runs after the loaded state
+      // is emitted so a slow/failing network request does not block startup.
       unawaited(
         _accountManager.ensureEmailPopulated().then((_) async {
           try {

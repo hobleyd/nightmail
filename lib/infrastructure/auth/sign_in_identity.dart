@@ -28,8 +28,11 @@ String? signInIdentityRefusal({
 }
 
 /// The [SignInVerifier] for an account that already exists: refuses a token
-/// that belongs to another mailbox and, for an account recorded without an
-/// address, reports the one that signed in through [onAddressLearned].
+/// that belongs to another mailbox and otherwise reports, through
+/// [onAddressesLearned], every address the provider says the mailbox answers
+/// for, primary first — the address itself for an account recorded without
+/// one, and the aliases for every account, so they stay current with each
+/// sign-in (see `Account.withMailboxAddresses`).
 ///
 /// An empty answer from [lookup] accepts the token, as every sign-in used to
 /// be accepted. A failed lookup right after a successful code exchange is a
@@ -38,20 +41,17 @@ String? signInIdentityRefusal({
 SignInVerifier mailboxGuard({
   required String accountEmail,
   required SignedInMailboxLookup lookup,
-  required void Function(String address) onAddressLearned,
+  required void Function(List<String> addresses) onAddressesLearned,
 }) {
   return (token) async {
     final addresses = await lookup.addressesFor(token);
     if (addresses.isEmpty) return;
-    if (accountEmail.trim().isEmpty) {
-      onAddressLearned(addresses.first);
-      return;
-    }
     final refusal = signInIdentityRefusal(
       accountEmail: accountEmail,
       signedInAddresses: addresses,
     );
     if (refusal != null) throw AuthException(message: refusal);
+    onAddressesLearned(addresses);
   };
 }
 

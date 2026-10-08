@@ -105,6 +105,29 @@ void main() {
         ['me@htw.com.au'],
       );
     });
+
+    test('addressesWith asks through the given client, which signs its own '
+        'requests — no bearer of its own', () async {
+      final seen = <RequestOptions>[];
+      final dio = stub({
+        profile: {'emailAddress': 'me@htw.com.au'},
+        sendAs: {
+          'sendAs': [
+            {'sendEmail': 'me@htw.com.au', 'isPrimary': true},
+            {'sendEmail': 'alias@htw.com.au'},
+          ],
+        },
+      }, seen: seen);
+
+      expect(
+        await GmailMailboxLookup().addressesWith(dio),
+        ['me@htw.com.au', 'alias@htw.com.au'],
+      );
+      expect(seen, hasLength(2));
+      for (final request in seen) {
+        expect(request.headers.containsKey('Authorization'), isFalse);
+      }
+    });
   });
 
   group('GraphMailboxLookup', () {
@@ -155,6 +178,26 @@ void main() {
       final dio = stub({}, failing: {me});
 
       expect(await GraphMailboxLookup(http: dio).addressesFor(token), isEmpty);
+    });
+
+    test('addressesWith asks through the given client, which signs its own '
+        'requests — no bearer of its own', () async {
+      final seen = <RequestOptions>[];
+      final dio = stub({
+        me: {
+          'mail': 'me@contoso.com',
+          'userPrincipalName': 'me@contoso.com',
+          'proxyAddresses': ['SMTP:me@contoso.com', 'smtp:alias@contoso.com'],
+        },
+      }, seen: seen);
+
+      expect(
+        await GraphMailboxLookup().addressesWith(dio),
+        ['me@contoso.com', 'alias@contoso.com'],
+      );
+      expect(seen.single.headers.containsKey('Authorization'), isFalse);
+      expect(seen.single.uri.queryParameters[r'$select'],
+          'mail,userPrincipalName,proxyAddresses');
     });
   });
 }

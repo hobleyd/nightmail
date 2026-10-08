@@ -37,6 +37,7 @@ sealed class Account extends Equatable {
     required this.id,
     required this.displayName,
     required this.emailAddress,
+    this.aliases,
     this.firstName = '',
     this.lastName = '',
     this.jobTitle = '',
@@ -49,6 +50,14 @@ sealed class Account extends Equatable {
   final String id;
   final String displayName;
   final String emailAddress;
+
+  /// The other addresses this mailbox receives mail at, as the provider last
+  /// listed them — Microsoft's `proxyAddresses`, Gmail's send-as list — less
+  /// [emailAddress]. Null until a lookup has answered: an account recorded
+  /// before aliases were kept, or one whose every lookup has failed so far,
+  /// which `AccountManager.ensureEmailPopulated` asks again at each launch.
+  /// Learned, never typed — Settings edits [emailAddress] only.
+  final List<String>? aliases;
   // Profile fields used as email signature merge tags ({{first_name}} etc.)
   // and the raw signature template (with merge tags unresolved) — both
   // allocated per account rather than globally.
@@ -70,9 +79,43 @@ sealed class Account extends Equatable {
     return full.isNotEmpty ? full : displayName;
   }
 
+  /// Every address this account receives mail at, trimmed and lower-cased:
+  /// [emailAddress] and [aliases]. What "is this recipient me" compares
+  /// against — a reply-all drops these from its recipients, and Commitments
+  /// reads mail from any of them as outgoing. Empty while no address is
+  /// recorded, so that nothing matches rather than the empty string.
+  Set<String> get allAddresses => {
+        for (final address in [emailAddress, ...?aliases])
+          if (address.trim().isNotEmpty) address.trim().toLowerCase(),
+      };
+
+  /// Records what the provider says this mailbox answers for, primary
+  /// address first: adopts that as [emailAddress] when none is recorded and
+  /// keeps the rest as [aliases]. An [emailAddress] already recorded stays,
+  /// listed by the provider or not — it may have been typed into Settings —
+  /// and every listed address that differs from it becomes an alias. An
+  /// empty [addresses] is "could not tell" and changes nothing.
+  Account withMailboxAddresses(List<String> addresses) {
+    final listed = [
+      for (final address in addresses)
+        if (address.trim().isNotEmpty) address.trim(),
+    ];
+    if (listed.isEmpty) return this;
+    final primary = emailAddress.trim().isEmpty ? listed.first : emailAddress;
+    final seen = {primary.trim().toLowerCase()};
+    return copyWith(
+      emailAddress: primary,
+      aliases: [
+        for (final address in listed)
+          if (seen.add(address.toLowerCase())) address,
+      ],
+    );
+  }
+
   Account copyWith({
     String? displayName,
     String? emailAddress,
+    List<String>? aliases,
     String? firstName,
     String? lastName,
     String? jobTitle,
@@ -99,6 +142,7 @@ final class MicrosoftAccount extends Account {
     required super.id,
     required super.displayName,
     required super.emailAddress,
+    super.aliases,
     required this.tenantId,
     this.clientId,
     this.parentAccountId,
@@ -138,6 +182,7 @@ final class MicrosoftAccount extends Account {
   MicrosoftAccount copyWith({
     String? displayName,
     String? emailAddress,
+    List<String>? aliases,
     String? firstName,
     String? lastName,
     String? jobTitle,
@@ -152,6 +197,7 @@ final class MicrosoftAccount extends Account {
       id: id,
       displayName: displayName ?? this.displayName,
       emailAddress: emailAddress ?? this.emailAddress,
+      aliases: aliases ?? this.aliases,
       firstName: firstName ?? this.firstName,
       lastName: lastName ?? this.lastName,
       jobTitle: jobTitle ?? this.jobTitle,
@@ -170,6 +216,7 @@ final class MicrosoftAccount extends Account {
       id: json['id'] as String,
       displayName: json['displayName'] as String,
       emailAddress: json['emailAddress'] as String,
+      aliases: _aliasesFromJson(json),
       tenantId: json['tenantId'] as String? ?? 'common',
       clientId: json['clientId'] as String?,
       parentAccountId: json['parentAccountId'] as String?,
@@ -189,6 +236,7 @@ final class MicrosoftAccount extends Account {
         'id': id,
         'displayName': displayName,
         'emailAddress': emailAddress,
+        if (aliases != null) 'aliases': aliases,
         'tenantId': tenantId,
         if (clientId != null) 'clientId': clientId,
         if (parentAccountId != null) 'parentAccountId': parentAccountId,
@@ -206,6 +254,7 @@ final class MicrosoftAccount extends Account {
         id,
         displayName,
         emailAddress,
+        aliases,
         tenantId,
         clientId,
         parentAccountId,
@@ -224,6 +273,7 @@ final class MicrosoftAccount extends Account {
     required super.id,
     required super.displayName,
     required super.emailAddress,
+    super.aliases,
     this.clientId,
     this.clientSecret,
     super.firstName,
@@ -248,6 +298,7 @@ final class MicrosoftAccount extends Account {
   GmailAccount copyWith({
     String? displayName,
     String? emailAddress,
+    List<String>? aliases,
     String? firstName,
     String? lastName,
     String? jobTitle,
@@ -262,6 +313,7 @@ final class MicrosoftAccount extends Account {
       id: id,
       displayName: displayName ?? this.displayName,
       emailAddress: emailAddress ?? this.emailAddress,
+      aliases: aliases ?? this.aliases,
       firstName: firstName ?? this.firstName,
       lastName: lastName ?? this.lastName,
       jobTitle: jobTitle ?? this.jobTitle,
@@ -281,6 +333,7 @@ final class MicrosoftAccount extends Account {
       id: json['id'] as String,
       displayName: json['displayName'] as String,
       emailAddress: json['emailAddress'] as String,
+      aliases: _aliasesFromJson(json),
       clientId: json['clientId'] as String?,
       clientSecret: json['clientSecret'] as String?,
       firstName: json['firstName'] as String? ?? '',
@@ -299,6 +352,7 @@ final class MicrosoftAccount extends Account {
         'id': id,
         'displayName': displayName,
         'emailAddress': emailAddress,
+        if (aliases != null) 'aliases': aliases,
         if (clientId != null) 'clientId': clientId,
         if (clientSecret != null) 'clientSecret': clientSecret,
         'firstName': firstName,
@@ -315,6 +369,7 @@ final class MicrosoftAccount extends Account {
         id,
         displayName,
         emailAddress,
+        aliases,
         clientId,
         clientSecret,
         firstName,
@@ -332,6 +387,7 @@ final class ImapAccount extends Account {
     required super.id,
     required super.displayName,
     required super.emailAddress,
+    super.aliases,
     required this.host,
     required this.port,
     required this.useSsl,
@@ -360,6 +416,7 @@ final class ImapAccount extends Account {
   ImapAccount copyWith({
     String? displayName,
     String? emailAddress,
+    List<String>? aliases,
     String? firstName,
     String? lastName,
     String? jobTitle,
@@ -379,6 +436,7 @@ final class ImapAccount extends Account {
       id: id,
       displayName: displayName ?? this.displayName,
       emailAddress: emailAddress ?? this.emailAddress,
+      aliases: aliases ?? this.aliases,
       firstName: firstName ?? this.firstName,
       lastName: lastName ?? this.lastName,
       jobTitle: jobTitle ?? this.jobTitle,
@@ -406,6 +464,7 @@ final class ImapAccount extends Account {
       id: json['id'] as String,
       displayName: json['displayName'] as String,
       emailAddress: json['emailAddress'] as String,
+      aliases: _aliasesFromJson(json),
       host: imapHost,
       port: json['port'] as int,
       useSsl: json['useSsl'] as bool? ?? true,
@@ -431,6 +490,7 @@ final class ImapAccount extends Account {
         'id': id,
         'displayName': displayName,
         'emailAddress': emailAddress,
+        if (aliases != null) 'aliases': aliases,
         'host': host,
         'port': port,
         'useSsl': useSsl,
@@ -453,6 +513,7 @@ final class ImapAccount extends Account {
         id,
         displayName,
         emailAddress,
+        aliases,
         host,
         port,
         useSsl,
@@ -472,3 +533,7 @@ final class ImapAccount extends Account {
 
 // Sentinel for distinguishing "not passed" from "explicitly null" in copyWith.
 const _sentinel = Object();
+
+/// Absent means never asked, not "none" — see [Account.aliases].
+List<String>? _aliasesFromJson(Map<String, dynamic> json) =>
+    (json['aliases'] as List<dynamic>?)?.cast<String>();

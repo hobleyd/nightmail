@@ -46,7 +46,8 @@ class AccountManager {
     required this._accountStorage,
     required this._secureStorage,
     required this._clientIdStorage,
-  });
+    Future<List<String>> Function(Account account)? mailboxAddresses,
+  }) : _mailboxAddressesOverride = mailboxAddresses;
 
   final AccountStorage _accountStorage;
   final FlutterSecureStorage _secureStorage;
@@ -55,6 +56,12 @@ class AccountManager {
   // live on the Account itself (MicrosoftAccount.clientId, GmailAccount.
   // clientId/clientSecret) now, not here.
   final OAuthClientIdStorage _clientIdStorage;
+
+  /// What the provider says a stored account's mailbox answers for, asked with
+  /// the account's own credentials — or a canned answer, in tests. See
+  /// [ensureEmailPopulated].
+  final Future<List<String>> Function(Account account)?
+      _mailboxAddressesOverride;
 
   List<Account> _accounts = [];
   int _activeIndex = 0;
@@ -1005,7 +1012,8 @@ class AccountManager {
 
   /// The interactive sign-in for an account that already exists, keeping the
   /// token only if the mailbox that signed in is [account]'s. Every re-sign-in
-  /// and every incremental-scope flow comes through here.
+  /// and every incremental-scope flow comes through here, and every one of
+  /// them leaves the account knowing the addresses its mailbox answers for.
   ///
   /// Google's `login_hint` (and Microsoft's account picker) only *suggest* an
   /// account. After a forced password reset the browser's session for this
@@ -1021,7 +1029,9 @@ class AccountManager {
   /// mailbox into this account's cache. An account recorded without an address
   /// (every Gmail account added before addresses were learned on add) adopts
   /// the one that signed in, which is also what gives its next sign-in a
-  /// `login_hint`.
+  /// `login_hint`; and every account keeps the aliases the provider lists
+  /// alongside it, which a reply-all strips from its recipients — see
+  /// [Account.aliases].
   Future<AuthToken> _signInExistingAccount(
     Account account, {
     List<String> extraScopes = const [],
@@ -1031,7 +1041,7 @@ class AccountManager {
       GmailAccount() => GmailMailboxLookup(),
       ImapAccount() => null,
     };
-    String? learned;
+    List<String>? learned;
     final authService = lookup == null
         ? null
         : _buildOAuthServiceForAccount(
@@ -1040,7 +1050,7 @@ class AccountManager {
             verifySignIn: mailboxGuard(
               accountEmail: account.emailAddress,
               lookup: lookup,
-              onAddressLearned: (address) => learned = address,
+              onAddressesLearned: (addresses) => learned = addresses,
             ),
           );
     if (authService == null) {
@@ -1048,9 +1058,13 @@ class AccountManager {
     }
 
     final token = await authService.signIn();
-    final address = learned;
-    if (address != null) {
-      await updateAccount(account.copyWith(emailAddress: address));
+    final addresses = learned;
+    if (addresses != null) {
+      // Re-read: the browser round trip is long enough for Settings to have
+      // saved an edit this must not clobber.
+      final current = accountById(account.id) ?? account;
+      final updated = current.withMailboxAddresses(addresses);
+      if (updated != current) await updateAccount(updated);
     }
     // The stored token is this account's and works: say so, the same way the
     // interceptor does after a refresh, so every "needs re-authentication"
@@ -1075,42 +1089,14 @@ class AccountManager {
   EmailRemoteDatasource buildEmailDatasourceForAccount(Account account) {
     switch (account) {
       case MicrosoftAccount():
-        final cfg = _microsoftAuthConfig(account);
-        final authSvc = MicrosoftAuthService(
-          clientId: cfg.clientId ?? AppConfig.microsoftClientId,
-          tenantId: cfg.tenantId,
-          redirectUri: AppConfig.microsoftRedirectUri,
-          tokenStorage: cfg.tokenStorage,
-        );
         return GraphApiDatasourceImpl(
-          mailboxAddress: cfg.mailboxAddress,
-          client: GraphHttpClient(
-            authService: authSvc,
-            onAuthFailure: () =>
-                _authFailureController.add(cfg.credentialOwnerId),
-            onAuthSuccess: () =>
-                _authSuccessController.add(cfg.credentialOwnerId),
-          ),
+          mailboxAddress: _microsoftAuthConfig(account).mailboxAddress,
+          client: _graphClientFor(account),
         );
 
       case GmailAccount():
-        final tokenStorage = TokenStorage(
-          _secureStorage,
-          storageKey: 'token_${account.id}',
-        );
-        final authSvc = GmailAuthService(
-          clientId: account.clientId ?? AppConfig.gmailClientId,
-          clientSecret: account.clientSecret ?? AppConfig.gmailClientSecret,
-          redirectUri: AppConfig.gmailRedirectUri,
-          tokenStorage: tokenStorage,
-          accountEmail: account.emailAddress,
-        );
         return GmailDatasourceImpl(
-          client: GmailHttpClient(
-            authService: authSvc,
-            onAuthFailure: () => _authFailureController.add(account.id),
-            onAuthSuccess: () => _authSuccessController.add(account.id),
-          ),
+          client: _gmailClientFor(account),
           displayName: account.senderName,
           accountEmail: account.emailAddress,
           labelCounts: _labelCountMemos.putIfAbsent(
@@ -1130,22 +1116,93 @@ class AccountManager {
     }
   }
 
-  /// Public trigger for the email backfill, called from secondary windows where
-  /// the stored account might still have an empty email from legacy migration.
-  Future<void> ensureEmailPopulated() => _backfillActiveAccountEmailIfNeeded();
+  /// A Graph client authenticating as [account] — with the parent's
+  /// credentials for a shared mailbox, see [_microsoftAuthConfig]. A fresh
+  /// one each call: it is stateless, unlike the IMAP datasource.
+  GraphHttpClient _graphClientFor(MicrosoftAccount account) {
+    final cfg = _microsoftAuthConfig(account);
+    final authSvc = MicrosoftAuthService(
+      clientId: cfg.clientId ?? AppConfig.microsoftClientId,
+      tenantId: cfg.tenantId,
+      redirectUri: AppConfig.microsoftRedirectUri,
+      tokenStorage: cfg.tokenStorage,
+    );
+    return GraphHttpClient(
+      authService: authSvc,
+      onAuthFailure: () => _authFailureController.add(cfg.credentialOwnerId),
+      onAuthSuccess: () => _authSuccessController.add(cfg.credentialOwnerId),
+    );
+  }
 
-  /// If the active Microsoft account has no stored email address, fetch it from
-  /// the Graph API profile endpoint and persist it. Fails silently.
-  Future<void> _backfillActiveAccountEmailIfNeeded() async {
-    final account = activeAccount;
-    if (account is! MicrosoftAccount || account.emailAddress.isNotEmpty) return;
-    try {
-      final ds = _emailDatasource;
-      if (ds is! GraphApiDatasourceImpl) return;
-      final profile = await ds.fetchUserProfile();
-      if (profile.email.isEmpty) return;
-      await updateAccount(account.copyWith(emailAddress: profile.email));
-    } catch (_) {}
+  /// A Gmail client authenticating as [account]; likewise stateless.
+  GmailHttpClient _gmailClientFor(GmailAccount account) {
+    final tokenStorage = TokenStorage(
+      _secureStorage,
+      storageKey: 'token_${account.id}',
+    );
+    final authSvc = GmailAuthService(
+      clientId: account.clientId ?? AppConfig.gmailClientId,
+      clientSecret: account.clientSecret ?? AppConfig.gmailClientSecret,
+      redirectUri: AppConfig.gmailRedirectUri,
+      tokenStorage: tokenStorage,
+      accountEmail: account.emailAddress,
+    );
+    return GmailHttpClient(
+      authService: authSvc,
+      onAuthFailure: () => _authFailureController.add(account.id),
+      onAuthSuccess: () => _authSuccessController.add(account.id),
+    );
+  }
+
+  /// Learns, for every OAuth account that does not yet know them, the
+  /// addresses its mailbox receives mail at — see [Account.aliases]: the
+  /// primary address for an account recorded without one (a legacy-migrated
+  /// Microsoft account, or a Gmail account added before 1.37.4 started
+  /// learning it on add) and the provider's aliases for any account never
+  /// asked. They are what a reply-all strips from its recipients, so an
+  /// account missing them kept putting the user in their own Reply All —
+  /// on a phone that never re-signed in, long after the desktop had.
+  ///
+  /// Best-effort and silent: a failed or empty lookup leaves the account as
+  /// it was, to be asked again at the next launch. Runs after the loaded
+  /// state is emitted (see AccountCubit) so a slow network never holds up
+  /// startup. IMAP accounts have no provider to ask, and a shared mailbox's
+  /// credentials answer for its owner, so both are left alone. Also called
+  /// from secondary windows, which load the stored accounts on their own.
+  Future<void> ensureEmailPopulated() async {
+    for (final account in List<Account>.of(_accounts)) {
+      if (!_lacksMailboxAddresses(account)) continue;
+      List<String> addresses;
+      try {
+        addresses = await _mailboxAddressesOf(account);
+      } catch (_) {
+        continue;
+      }
+      // Re-read: the lookup was a network round trip, during which Settings
+      // may have saved an edit this must not clobber.
+      final current = accountById(account.id);
+      if (current == null) continue;
+      final updated = current.withMailboxAddresses(addresses);
+      if (updated != current) await updateAccount(updated);
+    }
+  }
+
+  static bool _lacksMailboxAddresses(Account account) => switch (account) {
+        ImapAccount() => false,
+        MicrosoftAccount(isSharedMailbox: true) => false,
+        _ => account.emailAddress.trim().isEmpty || account.aliases == null,
+      };
+
+  Future<List<String>> _mailboxAddressesOf(Account account) {
+    final override = _mailboxAddressesOverride;
+    if (override != null) return override(account);
+    return switch (account) {
+      MicrosoftAccount() =>
+        GraphMailboxLookup().addressesWith(_graphClientFor(account).dio),
+      GmailAccount() =>
+        GmailMailboxLookup().addressesWith(_gmailClientFor(account).dio),
+      ImapAccount() => Future.value(const []),
+    };
   }
 
   void _sortAccounts() {

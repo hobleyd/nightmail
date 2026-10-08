@@ -733,4 +733,173 @@ void main() {
       expect(unauth, isEmpty);
     });
   });
+
+  /// A Gmail account added before 1.37.4 was recorded with no address, and a
+  /// token that refreshes silently never re-signs in to learn one — so the
+  /// phone's reply-all kept the user in the recipients for months after the
+  /// desktop, re-signed-in once, had stopped. The startup backfill asks the
+  /// provider for every account that does not know what its mailbox answers
+  /// for, aliases included, and records the answer so it is asked once.
+  group('ensureEmailPopulated learns what each mailbox answers for', () {
+    const unaddressed = GmailAccount(
+      id: 'g',
+      displayName: 'HTW',
+      emailAddress: '',
+    );
+    const primaryOnly = MicrosoftAccount(
+      id: 'm',
+      displayName: 'SharpBlue',
+      emailAddress: 'me@sharpblue.com.au',
+      tenantId: 'common',
+    );
+    const shared = MicrosoftAccount(
+      id: 's',
+      displayName: 'Support',
+      emailAddress: 'support@sharpblue.com.au',
+      tenantId: 'common',
+      parentAccountId: 'm',
+    );
+    const imap = ImapAccount(
+      id: 'i',
+      displayName: 'IMAP',
+      emailAddress: 'me@example.com',
+      host: 'imap.example.com',
+      port: 993,
+      useSsl: true,
+      smtpHost: 'smtp.example.com',
+      smtpPort: 587,
+      smtpUseSsl: false,
+    );
+
+    late List<String> asked;
+
+    /// A manager over [accounts] whose provider lookup answers from [answers]
+    /// by account id — an empty list for anyone else — or throws when
+    /// [failing].
+    Future<AccountManager> loaded(
+      List<Account> accounts, {
+      Map<String, List<String>> answers = const {},
+      bool failing = false,
+    }) async {
+      asked = [];
+      when(mockAccountStorage.loadAccounts())
+          .thenAnswer((_) async => accounts);
+      when(mockAccountStorage.loadActiveIndex()).thenAnswer((_) async => 0);
+      stubStorageEmpty();
+      stubSave();
+      final manager = AccountManager(
+        accountStorage: mockAccountStorage,
+        secureStorage: mockSecureStorage,
+        clientIdStorage: OAuthClientIdStorage(mockSecureStorage),
+        mailboxAddresses: (account) async {
+          asked.add(account.id);
+          if (failing) throw Exception('offline');
+          return answers[account.id] ?? const [];
+        },
+      );
+      await manager.initialize();
+      clearInteractions(mockAccountStorage);
+      return manager;
+    }
+
+    test('an account recorded without an address adopts the primary, keeps '
+        'the aliases, and is saved so the next launch does not ask', () async {
+      final manager = await loaded([unaddressed], answers: {
+        'g': ['me@htw.com.au', 'alias@htw.com.au'],
+      });
+
+      await manager.ensureEmailPopulated();
+
+      final account = manager.accountById('g')!;
+      expect(account.emailAddress, 'me@htw.com.au');
+      expect(account.aliases, ['alias@htw.com.au']);
+      final saved = verify(mockAccountStorage.saveAccounts(captureAny))
+          .captured
+          .last as List<Account>;
+      expect(saved.single.allAddresses, {'me@htw.com.au', 'alias@htw.com.au'});
+
+      await manager.ensureEmailPopulated();
+      expect(asked, ['g']);
+    });
+
+    test('an account that knows its primary but was never asked for aliases '
+        'is asked once, even when the answer is "none"', () async {
+      final manager = await loaded([primaryOnly], answers: {
+        'm': ['me@sharpblue.com.au'],
+      });
+
+      await manager.ensureEmailPopulated();
+      await manager.ensureEmailPopulated();
+
+      expect(asked, ['m']);
+      expect(manager.accountById('m')!.aliases, isEmpty);
+      verify(mockAccountStorage.saveAccounts(any)).called(1);
+    });
+
+    test('asks for every account, not only the active one', () async {
+      final manager = await loaded([primaryOnly, unaddressed], answers: {
+        'm': ['me@sharpblue.com.au', 'alias@sharpblue.com.au'],
+        'g': ['me@htw.com.au'],
+      });
+      expect(manager.activeAccount?.id, 'm');
+
+      await manager.ensureEmailPopulated();
+
+      expect(asked, unorderedEquals(['m', 'g']));
+      expect(manager.accountById('m')!.aliases, ['alias@sharpblue.com.au']);
+      expect(manager.accountById('g')!.emailAddress, 'me@htw.com.au');
+    });
+
+    test('leaves IMAP accounts, shared mailboxes and accounts that already '
+        'know alone', () async {
+      final manager = await loaded([
+        primaryOnly.copyWith(aliases: const []),
+        shared,
+        imap,
+      ]);
+
+      await manager.ensureEmailPopulated();
+
+      expect(asked, isEmpty);
+      verifyNever(mockAccountStorage.saveAccounts(any));
+    });
+
+    test('an empty answer changes nothing and is asked again next time',
+        () async {
+      final manager = await loaded([unaddressed]);
+
+      await manager.ensureEmailPopulated();
+      await manager.ensureEmailPopulated();
+
+      expect(asked, ['g', 'g']);
+      expect(manager.accountById('g'), unaddressed);
+      verifyNever(mockAccountStorage.saveAccounts(any));
+    });
+
+    test('a failed lookup is swallowed, and the next account is still asked',
+        () async {
+      final manager = await loaded([primaryOnly, unaddressed], failing: true);
+
+      await manager.ensureEmailPopulated();
+
+      expect(asked, unorderedEquals(['m', 'g']));
+      expect(manager.accountById('g'), unaddressed);
+      expect(manager.accountById('m'), primaryOnly);
+      verifyNever(mockAccountStorage.saveAccounts(any));
+    });
+
+    test('keeps an address typed into Settings as the primary, and every '
+        'address the provider lists as an alias of it', () async {
+      final typed = primaryOnly.copyWith(emailAddress: 'typed@sharpblue.com.au');
+      final manager = await loaded([typed], answers: {
+        'm': ['me@sharpblue.com.au', 'alias@sharpblue.com.au'],
+      });
+
+      await manager.ensureEmailPopulated();
+
+      final account = manager.accountById('m')!;
+      expect(account.emailAddress, 'typed@sharpblue.com.au');
+      expect(account.aliases, ['me@sharpblue.com.au', 'alias@sharpblue.com.au']);
+    });
+  });
 }

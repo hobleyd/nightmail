@@ -192,6 +192,15 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
   late List<String> _ccRecipients;
   late List<String> _bccRecipients;
 
+  /// Every address that is "me" for the account this message is from — its
+  /// primary and aliases ([Account.allAddresses]) plus the bare From address,
+  /// which is all a caller without the account list supplies. A reply-all
+  /// drops these from its recipients. Comparing against the one From string
+  /// alone kept the user in their own Reply All whenever the account had no
+  /// address on record (a Gmail account added before 1.37.4 learned it on
+  /// add, and never re-signed-in since) or the mail had come to an alias.
+  late final Set<String> _ownAddresses;
+
   /// Whether the user has opened the Bcc row. The row is also forced open
   /// while it holds recipients — see [_bccVisible] — so a list that will be
   /// sent to can never be out of sight.
@@ -346,11 +355,16 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _aiCubit = sl<AiComposeCubit>();
+    _selectedAccountId = widget.accountId ??
+        (widget.accounts.isNotEmpty ? widget.accounts.first.id : null);
+    final bareFrom = _bareAddress(widget.fromAddress).toLowerCase();
+    _ownAddresses = {
+      ...?_selectedAccount?.allAddresses,
+      if (bareFrom.isNotEmpty) bareFrom,
+    };
     _toRecipients = _parseAddresses(_initialTo());
     _ccRecipients = _parseAddresses(_initialCc());
     _bccRecipients = _parseAddresses(_initialBcc());
-    _selectedAccountId = widget.accountId ??
-        (widget.accounts.isNotEmpty ? widget.accounts.first.id : null);
     _subjectController = TextEditingController(text: _initialSubject());
 
     _bodyType = _determineInitialBodyType();
@@ -521,6 +535,9 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     return (match?.group(1) ?? address).trim();
   }
 
+  bool _isOwnAddress(String address) =>
+      _ownAddresses.contains(address.trim().toLowerCase());
+
   Account? get _selectedAccount => widget.accounts
       .cast<Account?>()
       .firstWhere((a) => a?.id == _selectedAccountId, orElse: () => null);
@@ -549,7 +566,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
       ComposeMode.replyAll => _dedupAddresses([
           email.from.address,
           ...email.toRecipients.map((r) => r.address),
-        ].where((a) => a.toLowerCase() != _bareAddress(widget.fromAddress).toLowerCase()).toList()).join(', '),
+        ].where((a) => !_isOwnAddress(a)).toList()).join(', '),
       ComposeMode.forward => '',
       ComposeMode.newEmail => '',
     };
@@ -563,7 +580,6 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     if (email == null) return '';
     return switch (widget.mode) {
       ComposeMode.replyAll => () {
-          final myAddress = _bareAddress(widget.fromAddress).toLowerCase();
           final toSet = {
             email.from.address.toLowerCase(),
             ...email.toRecipients.map((r) => r.address.toLowerCase()),
@@ -571,7 +587,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
           return _dedupAddresses(
             email.ccRecipients
                 .map((r) => r.address)
-                .where((a) => a.toLowerCase() != myAddress && !toSet.contains(a.toLowerCase()))
+                .where((a) => !_isOwnAddress(a) && !toSet.contains(a.toLowerCase()))
                 .toList(),
           ).join(', ');
         }(),

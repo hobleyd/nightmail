@@ -85,12 +85,16 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
         tokenStorage: tokenStorage,
       );
 
-      await authService.signIn();
+      final token = await authService.signIn();
 
       final ds = GraphApiDatasourceImpl(
         client: GraphHttpClient(authService: authService),
       );
       final profile = await ds.fetchUserProfile();
+      // And the aliases the mailbox also answers for, so a reply-all strips
+      // them from its recipients from the first message — see Account.aliases.
+      // Best-effort: the account is still added without them.
+      final addresses = await GraphMailboxLookup().addressesFor(token);
 
       final account = MicrosoftAccount(
         id: id,
@@ -98,7 +102,7 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
         emailAddress: profile.email,
         tenantId: tenantId,
         clientId: clientId,
-      );
+      ).withMailboxAddresses(addresses);
 
       if (mounted) {
         await accountCubit.addAccount(account);
@@ -163,19 +167,21 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
       );
 
       final token = await authService.signIn();
-      // Learn the mailbox's address now rather than leaving it blank: it is
-      // what pins a later re-sign-in to this account (`login_hint`) and what
-      // that sign-in is checked against — see AccountManager. Best-effort:
-      // the account is still added without it, as it always was.
+      // Learn the mailbox's addresses now rather than leaving them blank: the
+      // primary is what pins a later re-sign-in to this account (`login_hint`)
+      // and what that sign-in is checked against — see AccountManager — and
+      // with its aliases it is what a reply-all strips from the recipients.
+      // Best-effort: the account is still added without them, as it always
+      // was, and the next launch asks again.
       final addresses = await GmailMailboxLookup().addressesFor(token);
 
       final account = GmailAccount(
         id: id,
         displayName: 'Gmail Account',
-        emailAddress: addresses.isEmpty ? '' : addresses.first,
+        emailAddress: '',
         clientId: credentials.clientId,
         clientSecret: credentials.clientSecret,
-      );
+      ).withMailboxAddresses(addresses);
 
       if (mounted) {
         await accountCubit.addAccount(account);

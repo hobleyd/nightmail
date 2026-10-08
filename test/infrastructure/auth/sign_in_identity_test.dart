@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/core/error/exceptions.dart';
 import 'package:nightmail/infrastructure/auth/auth_token.dart';
@@ -15,6 +16,9 @@ class _FakeLookup implements SignedInMailboxLookup {
     askedWith = token;
     return addresses;
   }
+
+  @override
+  Future<List<String>> addressesWith(Dio http) async => addresses;
 }
 
 /// `login_hint` only suggests an account: after a forced password reset the
@@ -93,20 +97,23 @@ void main() {
   });
 
   group('mailboxGuard', () {
-    test("passes a token for the account's own mailbox", () async {
+    test("passes a token for the account's own mailbox, reporting what the "
+        'mailbox answers for so the aliases stay current', () async {
+      List<String>? learned;
       final guard = mailboxGuard(
         accountEmail: 'me@htw.com.au',
-        lookup: _FakeLookup(const ['me@htw.com.au']),
-        onAddressLearned: (_) => fail('nothing to learn'),
+        lookup: _FakeLookup(const ['me@htw.com.au', 'alias@htw.com.au']),
+        onAddressesLearned: (addresses) => learned = addresses,
       );
       await guard(token);
+      expect(learned, ['me@htw.com.au', 'alias@htw.com.au']);
     });
 
     test('refuses a token for another mailbox with an AuthException', () async {
       final guard = mailboxGuard(
         accountEmail: 'me@htw.com.au',
         lookup: _FakeLookup(const ['me@sharpblue.com.au']),
-        onAddressLearned: (_) => fail('nothing to learn'),
+        onAddressesLearned: (_) => fail('a refused token teaches nothing'),
       );
       await expectLater(
         guard(token),
@@ -118,16 +125,16 @@ void main() {
       );
     });
 
-    test('adopts the primary address for an account recorded without one',
-        () async {
-      String? learned;
+    test('reports every address, primary first, for an account recorded '
+        'without one — it adopts the first', () async {
+      List<String>? learned;
       final guard = mailboxGuard(
         accountEmail: '',
         lookup: _FakeLookup(const ['me@htw.com.au', 'alias@htw.com.au']),
-        onAddressLearned: (address) => learned = address,
+        onAddressesLearned: (addresses) => learned = addresses,
       );
       await guard(token);
-      expect(learned, 'me@htw.com.au');
+      expect(learned, ['me@htw.com.au', 'alias@htw.com.au']);
     });
 
     test('accepts, and learns nothing, when the provider could not say',
@@ -135,7 +142,7 @@ void main() {
       final guard = mailboxGuard(
         accountEmail: '',
         lookup: _FakeLookup(const []),
-        onAddressLearned: (_) => fail('an unknown answer teaches nothing'),
+        onAddressesLearned: (_) => fail('an unknown answer teaches nothing'),
       );
       await guard(token);
     });
@@ -146,7 +153,7 @@ void main() {
       await mailboxGuard(
         accountEmail: 'me@htw.com.au',
         lookup: lookup,
-        onAddressLearned: (_) {},
+        onAddressesLearned: (_) {},
       )(token);
       expect(lookup.askedWith, same(token));
     });

@@ -17,6 +17,14 @@ abstract interface class SignedInMailboxLookup {
   /// say — a network failure, a token without the scope — which callers must
   /// read as "unknown", never as "nobody".
   Future<List<String>> addressesFor(AuthToken token);
+
+  /// The same answer, asked through [http]: a client that signs its own
+  /// requests from the account's stored credentials (an `AuthInterceptor`
+  /// pipeline), so no token is passed. For learning a stored account's
+  /// addresses after the fact — see `AccountManager.ensureEmailPopulated` —
+  /// where the token on disk may first need the refresh that client knows
+  /// how to do.
+  Future<List<String>> addressesWith(Dio http);
 }
 
 /// Gmail: `users.getProfile` for the primary address, `settings.sendAs` for
@@ -29,11 +37,16 @@ class GmailMailboxLookup implements SignedInMailboxLookup {
   static const _base = 'https://gmail.googleapis.com/gmail/v1/users/me';
 
   @override
-  Future<List<String>> addressesFor(AuthToken token) async {
-    final options = _bearer(token);
+  Future<List<String>> addressesFor(AuthToken token) =>
+      _addresses(_http, _bearer(token));
+
+  @override
+  Future<List<String>> addressesWith(Dio http) => _addresses(http, null);
+
+  Future<List<String>> _addresses(Dio http, Options? options) async {
     final addresses = <String>[];
     try {
-      final response = await _http.get<Map<String, dynamic>>(
+      final response = await http.get<Map<String, dynamic>>(
         '$_base/profile',
         options: options,
       );
@@ -47,7 +60,7 @@ class GmailMailboxLookup implements SignedInMailboxLookup {
     // Aliases are a nicety — an account recorded under one must still match
     // — so a failure here costs nothing but that.
     try {
-      final response = await _http.get<Map<String, dynamic>>(
+      final response = await http.get<Map<String, dynamic>>(
         '$_base/settings/sendAs',
         options: options,
       );
@@ -74,14 +87,20 @@ class GraphMailboxLookup implements SignedInMailboxLookup {
   static const _url = 'https://graph.microsoft.com/v1.0/me';
 
   @override
-  Future<List<String>> addressesFor(AuthToken token) async {
+  Future<List<String>> addressesFor(AuthToken token) =>
+      _addresses(_http, _bearer(token));
+
+  @override
+  Future<List<String>> addressesWith(Dio http) => _addresses(http, null);
+
+  Future<List<String>> _addresses(Dio http, Options? options) async {
     try {
-      final response = await _http.get<Map<String, dynamic>>(
+      final response = await http.get<Map<String, dynamic>>(
         _url,
         queryParameters: {
           r'$select': 'mail,userPrincipalName,proxyAddresses',
         },
-        options: _bearer(token),
+        options: options,
       );
       final data = response.data ?? const <String, dynamic>{};
       final addresses = <String>[];

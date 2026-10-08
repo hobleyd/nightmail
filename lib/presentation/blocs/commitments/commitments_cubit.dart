@@ -186,7 +186,7 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
 
     final result = await _detect(DetectCommitmentsParams(
       accountId: account.id,
-      selfAddresses: {account.emailAddress.toLowerCase()},
+      selfAddresses: account.allAddresses,
       sentEmails: mail.sent,
       inboxEmails: mail.inbox,
       now: _now(),

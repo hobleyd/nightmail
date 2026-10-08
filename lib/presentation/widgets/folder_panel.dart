@@ -1178,58 +1178,68 @@ class _AccountMenuState extends State<AccountMenu> {
     final target = targets.firstWhere((a) => a.id == selectedId);
     await _openMigrationStatus(context, activeAccount, target.id);
   }
-
-  /// Starts/resumes [sourceAccountId] → [targetAccountId] (a harmless no-op
-  /// against an already-running job — and the way a job left `paused` for
-  /// re-authentication picks back up, since there's no listener that resumes
-  /// one automatically) and shows its status dialog. Shared by the
-  /// "Migrate Account…" submenu's target pick and by "Migration Status",
-  /// which already knows the target and skips the picker entirely.
-  Future<void> _openMigrationStatus(
-    BuildContext context,
-    Account sourceAccount,
-    String targetAccountId,
-  ) async {
-    final accountState = context.read<AccountCubit>().state;
-    String targetLabel = targetAccountId;
-    if (accountState is AccountsLoaded) {
-      final target = accountState.accounts.cast<Account?>().firstWhere(
-            (a) => a?.id == targetAccountId,
-            orElse: () => null,
-          );
-      if (target != null) {
-        targetLabel =
-            target.emailAddress.isEmpty ? target.displayName : target.emailAddress;
-      }
-    }
-
-    final migrationCubit = sl<MigrationCubit>();
-    await migrationCubit.startOrResume(sourceAccount.id, targetAccountId);
-    if (!context.mounted) return;
-
-    final sourceLabel = sourceAccount.emailAddress.isEmpty
-        ? sourceAccount.displayName
-        : sourceAccount.emailAddress;
-    // Awaited (unlike the fire-and-forget dialogs elsewhere in this file) so
-    // the caller's post-action refresh lands once the dialog closes rather
-    // than the moment it opens — a job that finishes while the dialog is
-    // open only reads back as 'completed' after this returns, which is what
-    // flips the menu item back to "Migrate Account…" on its own instead of
-    // being stuck on "Migration Status" until an unrelated account switch.
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => BlocProvider.value(
-        value: migrationCubit,
-        child: MigrationStatusDialog(
-          sourceAccountLabel: sourceLabel,
-          targetAccountLabel: targetLabel,
-        ),
-      ),
-    );
-  }
 }
 
-enum _FolderAction { addFolder, rename, deleteFolder, deleteAll }
+/// Starts/resumes [sourceAccount] → [targetAccountId] (a harmless no-op
+/// against an already-running job — and the way a job left `paused` for
+/// re-authentication picks back up, since there's no listener that resumes
+/// one automatically) and shows its status dialog. Shared by the account
+/// menu's "Migrate Account…" target pick and "Migration Status" (which
+/// already knows the target and skips the picker entirely), and by the same
+/// two items for an Inbox-only job on the Inbox's context menu.
+Future<void> _openMigrationStatus(
+  BuildContext context,
+  Account sourceAccount,
+  String targetAccountId, {
+  MigrationScope scope = MigrationScope.account,
+}) async {
+  final accountState = context.read<AccountCubit>().state;
+  String targetLabel = targetAccountId;
+  if (accountState is AccountsLoaded) {
+    final target = accountState.accounts.cast<Account?>().firstWhere(
+          (a) => a?.id == targetAccountId,
+          orElse: () => null,
+        );
+    if (target != null) {
+      targetLabel = _migrationLabel(target);
+    }
+  }
+
+  final migrationCubit = sl<MigrationCubit>();
+  await migrationCubit.startOrResume(sourceAccount.id, targetAccountId,
+      scope: scope);
+  if (!context.mounted) return;
+
+  // Awaited (unlike the fire-and-forget dialogs elsewhere in this file) so
+  // the caller's post-action refresh lands once the dialog closes rather
+  // than the moment it opens — a job that finishes while the dialog is
+  // open only reads back as 'completed' after this returns, which is what
+  // flips the menu item back to "Migrate Account…" on its own instead of
+  // being stuck on "Migration Status" until an unrelated account switch.
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => BlocProvider.value(
+      value: migrationCubit,
+      child: MigrationStatusDialog(
+        sourceAccountLabel: _migrationLabel(sourceAccount),
+        targetAccountLabel: targetLabel,
+        scope: scope,
+      ),
+    ),
+  );
+}
+
+String _migrationLabel(Account account) =>
+    account.emailAddress.isEmpty ? account.displayName : account.emailAddress;
+
+enum _FolderAction {
+  addFolder,
+  rename,
+  deleteFolder,
+  deleteAll,
+  migrateInbox,
+  inboxMigrationStatus,
+}
 
 class _FolderItem extends StatefulWidget {
   const _FolderItem({
@@ -1313,6 +1323,12 @@ class _FolderItemState extends State<_FolderItem>
 
   bool get _isTrashFolder => ['deleted items', 'trash']
       .contains(widget.folder.displayName.toLowerCase());
+
+  /// The account's own Inbox — the one folder "Migrate Inbox…" is offered on.
+  /// Top level only: a folder someone has named "Inbox" further down the tree
+  /// is not what an Inbox-only migration would copy.
+  bool get _isInboxFolder =>
+      widget.depth == 0 && widget.folder.displayName.toLowerCase() == 'inbox';
 
   /// The active account, when it is a Gmail one — the only kind that has to be
   /// asked for a scope before it can permanently delete.
@@ -1803,15 +1819,53 @@ class _FolderItemState extends State<_FolderItem>
     );
   }
 
+  /// What "Migrate Inbox…" needs to know before the menu can be drawn: the
+  /// account being migrated, where it may go, and any Inbox-only job already
+  /// under way for it. Null when the item does not apply to this row at all.
+  ///
+  /// Inbox-only migration is withheld from Google accounts for now, at both
+  /// ends: not offered on a Gmail account's Inbox, and a Gmail account is
+  /// not offered as somewhere to migrate to.
+  Future<
+      ({
+        Account source,
+        List<Account> targets,
+        MigrationJobRecord? activeJob,
+      })?> _inboxMigrationOptions(BuildContext context) async {
+    if (!_isInboxFolder) return null;
+    final accountState = context.read<AccountCubit>().state;
+    if (accountState is! AccountsLoaded) return null;
+    final source = accountState.activeAccount;
+    if (source is GmailAccount) return null;
+    final targets = [
+      for (final a in accountState.accounts)
+        if (a.id != source.id && a is! GmailAccount) a,
+    ];
+    // A plain DB read, looked up as the menu opens rather than tracked: it
+    // only decides which of two items this one menu shows.
+    final activeJob = await sl<AccountMigrationService>()
+        .getActiveJobForSource(source.id, scope: MigrationScope.inbox);
+    return (source: source, targets: targets, activeJob: activeJob);
+  }
+
   Future<void> _showContextMenu(BuildContext context, Offset position) async {
     final overlay =
         Overlay.of(context).context.findRenderObject()! as RenderBox;
+    final menuPosition = RelativeRect.fromRect(
+      position & const Size(40, 40),
+      Offset.zero & overlay.size,
+    );
+    final migration = await _inboxMigrationOptions(context);
+    if (!context.mounted) return;
+    final migrationSource = migration?.source;
+    final migrationTargets = migration?.targets ?? const <Account>[];
+    // A job already running is offered whatever accounts exist now — its
+    // status item is the only way back to it.
+    final activeInboxMigration = migration?.activeJob;
+
     final result = await showMenu<_FolderAction>(
       context: context,
-      position: RelativeRect.fromRect(
-        position & const Size(40, 40),
-        Offset.zero & overlay.size,
-      ),
+      position: menuPosition,
       items: [
         PopupMenuItem(
           value: _FolderAction.addFolder,
@@ -1860,10 +1914,71 @@ class _FolderItemState extends State<_FolderItem>
             ],
           ),
         ),
+        if (activeInboxMigration != null) ...[
+          const PopupMenuDivider(),
+          PopupMenuItem(
+            value: _FolderAction.inboxMigrationStatus,
+            child: Row(
+              children: const [
+                Icon(Icons.drive_file_move_outline, size: 16),
+                SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    'Inbox Migration Status',
+                    style: TextStyle(fontSize: 13),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ] else if (migrationTargets.isNotEmpty) ...[
+          const PopupMenuDivider(),
+          PopupMenuItem(
+            value: _FolderAction.migrateInbox,
+            child: Row(
+              children: const [
+                Icon(Icons.drive_file_move_outline, size: 16),
+                SizedBox(width: 8),
+                Text('Migrate Inbox…', style: TextStyle(fontSize: 13)),
+              ],
+            ),
+          ),
+        ],
       ],
     );
 
     if (!context.mounted) return;
+    if (result == _FolderAction.migrateInbox && migrationSource != null) {
+      // The same stand-in for a submenu the account menu's "Migrate
+      // Account…" uses: a second menu, opened where the first one was.
+      final targetId = await showMenu<String>(
+        context: context,
+        position: menuPosition,
+        items: [
+          for (final target in migrationTargets)
+            PopupMenuItem<String>(
+              value: target.id,
+              child: Text(
+                _migrationLabel(target),
+                style: const TextStyle(fontSize: 13),
+              ),
+            ),
+        ],
+      );
+      if (targetId == null || !context.mounted) return;
+      await _openMigrationStatus(context, migrationSource, targetId,
+          scope: MigrationScope.inbox);
+      return;
+    }
+    if (result == _FolderAction.inboxMigrationStatus &&
+        migrationSource != null &&
+        activeInboxMigration != null) {
+      await _openMigrationStatus(
+          context, migrationSource, activeInboxMigration.targetAccountId,
+          scope: MigrationScope.inbox);
+      return;
+    }
     if (result == _FolderAction.addFolder) {
       widget.onAddFolder();
     } else if (result == _FolderAction.rename) {

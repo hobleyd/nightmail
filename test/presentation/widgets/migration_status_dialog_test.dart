@@ -44,15 +44,29 @@ void main() {
     when(mockCubit.stream).thenAnswer((_) => const Stream.empty());
   });
 
-  Widget wrap() => MaterialApp(
+  Widget wrap({MigrationScope scope = MigrationScope.account}) => MaterialApp(
         home: BlocProvider<MigrationCubit>.value(
           value: mockCubit,
-          child: const MigrationStatusDialog(
+          child: MigrationStatusDialog(
             sourceAccountLabel: 'Woodgate Beach',
             targetAccountLabel: 'O365',
+            scope: scope,
           ),
         ),
       );
+
+  testWidgets('an Inbox-only job says so, and where to find it again',
+      (tester) async {
+    when(mockCubit.state)
+        .thenReturn(MigrationState(job: _job(MigrationJobStatus.running)));
+
+    await tester.pumpWidget(wrap(scope: MigrationScope.inbox));
+
+    expect(find.text('Migrating Inbox: Woodgate Beach → O365'), findsOneWidget);
+    // The account menu only lists whole-account jobs.
+    expect(find.textContaining("Inbox's right-click menu"), findsOneWidget);
+    expect(find.textContaining('account menu.'), findsNothing);
+  });
 
   testWidgets('a clean completion shows the plain success headline',
       (tester) async {

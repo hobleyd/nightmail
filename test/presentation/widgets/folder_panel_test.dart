@@ -10,6 +10,7 @@ import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/core/usecases/usecase.dart';
+import 'package:nightmail/data/datasources/local/migration_local_datasource.dart';
 import 'package:nightmail/domain/entities/email_folder.dart';
 import 'package:nightmail/domain/usecases/create_folder.dart';
 import 'package:nightmail/domain/usecases/delete_folder.dart';
@@ -31,6 +32,8 @@ import 'package:nightmail/presentation/blocs/folder_list/folder_list_bloc.dart';
 import 'package:nightmail/presentation/blocs/folder_list/folder_list_event.dart';
 import 'package:nightmail/presentation/blocs/mail_poller/mail_poller_cubit.dart';
 import 'package:nightmail/presentation/blocs/mail_poller/mail_poller_state.dart';
+import 'package:nightmail/presentation/blocs/migration/migration_cubit.dart';
+import 'package:nightmail/presentation/blocs/migration/migration_state.dart';
 import 'package:nightmail/presentation/blocs/tasks/overdue_tasks_cubit.dart';
 import 'package:nightmail/presentation/blocs/update/update_cubit.dart';
 import 'package:nightmail/presentation/widgets/email_drag_data.dart';
@@ -54,6 +57,20 @@ const _account = GmailAccount(
   id: 'acct-1',
   displayName: 'Alice',
   emailAddress: 'a@gmail.com',
+);
+
+const _o365 = MicrosoftAccount(
+  id: 'o365',
+  displayName: 'Bob',
+  emailAddress: 'bob@o365.example',
+  tenantId: 'common',
+);
+
+const _otherO365 = MicrosoftAccount(
+  id: 'o365-2',
+  displayName: 'Carol',
+  emailAddress: 'carol@o365.example',
+  tenantId: 'common',
 );
 
 const _emptyPollerState =
@@ -165,6 +182,7 @@ class _FakeMoveFolder extends Fake implements MoveFolder {
   EmailListBloc,
   OverdueTasksCubit,
   UpdateCubit,
+  MigrationCubit,
 ])
 // Read from the confirm dialog to clear the reading pane; a nice mock is
 // enough, since nothing here asserts on it.
@@ -1197,6 +1215,145 @@ void main() {
 
       expect(accountManager.grantCalls, 0);
       expect(emptied().single.permanentDelete, isTrue);
+    });
+  });
+
+  group('Migrate Inbox…', () {
+    late MockMigrationCubit migrationCubit;
+
+    void accounts(List<Account> all) => when(accountCubit.state)
+        .thenReturn(AccountsLoaded(accounts: all, activeIndex: 0));
+
+    MockAccountMigrationService migrationService() =>
+        sl<AccountMigrationService>() as MockAccountMigrationService;
+
+    setUp(() {
+      provideDummy<MigrationState>(const MigrationState());
+      migrationCubit = MockMigrationCubit();
+      when(migrationCubit.stream).thenAnswer((_) => const Stream.empty());
+      // A finished job, so the status dialog draws no spinner for
+      // pumpAndSettle to wait on.
+      when(migrationCubit.state).thenReturn(const MigrationState(
+        job: MigrationJobRecord(
+          id: 'o365|o365-2|inbox',
+          sourceAccountId: 'o365',
+          targetAccountId: 'o365-2',
+          status: MigrationJobStatus.completed,
+          createdAtMs: 0,
+          updatedAtMs: 0,
+          lastError: null,
+          scope: MigrationScope.inbox,
+        ),
+      ));
+      when(migrationCubit.startOrResume(any, any, scope: anyNamed('scope')))
+          .thenAnswer((_) async {});
+      sl.registerLazySingleton<MigrationCubit>(() => migrationCubit);
+      serverFolders = [
+        _folder('inbox-id', 'Inbox'),
+        _folder('projects-id', 'Projects'),
+      ];
+    });
+
+    Future<void> openMenu(WidgetTester tester, String folderName) async {
+      await tester.tap(find.text(folderName), buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('migrates the Inbox, and only the Inbox, to the account picked',
+        (tester) async {
+      accounts(const [_o365, _otherO365]);
+      await pumpPanel(tester);
+
+      await openMenu(tester, 'Inbox');
+      await tester.tap(find.text('Migrate Inbox…'));
+      await tester.pumpAndSettle();
+      // The account being migrated is never offered as its own destination.
+      expect(find.text('bob@o365.example'), findsNothing);
+      await tester.tap(find.text('carol@o365.example'));
+      await tester.pumpAndSettle();
+
+      verify(migrationCubit.startOrResume('o365', 'o365-2',
+              scope: MigrationScope.inbox))
+          .called(1);
+      expect(
+        find.text('Migrating Inbox: bob@o365.example → carol@o365.example'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('is only on the Inbox', (tester) async {
+      accounts(const [_o365, _otherO365]);
+      await pumpPanel(tester);
+
+      await openMenu(tester, 'Projects');
+
+      expect(find.text('Add Folder'), findsOneWidget);
+      expect(find.text('Migrate Inbox…'), findsNothing);
+    });
+
+    testWidgets('is not offered on a Google account', (tester) async {
+      accounts(const [_account, _o365]);
+      await pumpPanel(tester);
+
+      await openMenu(tester, 'Inbox');
+
+      expect(find.text('Add Folder'), findsOneWidget);
+      expect(find.text('Migrate Inbox…'), findsNothing);
+    });
+
+    testWidgets('does not offer a Google account to migrate to',
+        (tester) async {
+      accounts(const [_o365, _account, _otherO365]);
+      await pumpPanel(tester);
+
+      await openMenu(tester, 'Inbox');
+      await tester.tap(find.text('Migrate Inbox…'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('carol@o365.example'), findsOneWidget);
+      expect(find.text('a@gmail.com'), findsNothing);
+    });
+
+    testWidgets('is not offered with nowhere to migrate to', (tester) async {
+      // A Google account is the only other one.
+      accounts(const [_o365, _account]);
+      await pumpPanel(tester);
+
+      await openMenu(tester, 'Inbox');
+
+      expect(find.text('Add Folder'), findsOneWidget);
+      expect(find.text('Migrate Inbox…'), findsNothing);
+    });
+
+    testWidgets('gives way to the status of one already running, and reopens '
+        'it without asking where to', (tester) async {
+      accounts(const [_o365, _otherO365]);
+      when(migrationService()
+              .getActiveJobForSource('o365', scope: MigrationScope.inbox))
+          .thenAnswer((_) async => const MigrationJobRecord(
+                id: 'o365|o365-2|inbox',
+                sourceAccountId: 'o365',
+                targetAccountId: 'o365-2',
+                status: MigrationJobStatus.running,
+                createdAtMs: 0,
+                updatedAtMs: 0,
+                lastError: null,
+                scope: MigrationScope.inbox,
+              ));
+      await pumpPanel(tester);
+
+      await openMenu(tester, 'Inbox');
+      expect(find.text('Migrate Inbox…'), findsNothing);
+      await tester.tap(find.text('Inbox Migration Status'));
+      await tester.pumpAndSettle();
+
+      verify(migrationCubit.startOrResume('o365', 'o365-2',
+              scope: MigrationScope.inbox))
+          .called(1);
+      expect(
+        find.text('Migrating Inbox: bob@o365.example → carol@o365.example'),
+        findsOneWidget,
+      );
     });
   });
 }

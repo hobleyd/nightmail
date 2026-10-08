@@ -564,4 +564,205 @@ void main() {
     expect(job?.status, MigrationJobStatus.paused);
     expect(job?.lastError, 'token expired');
   });
+
+  group('Inbox-only migration', () {
+    /// An IMAP source with an Inbox and a Sent folder, one message in each,
+    /// and an O365 target that has both.
+    void wireInboxAndSent() {
+      when(sourceDs.getMailFolders()).thenAnswer((_) async => [
+            _folder('INBOX', 'Inbox', totalItemCount: 1),
+            _folder('Sent', 'Sent'),
+          ]);
+      when(sourceDs.getSpecialFolderIds()).thenAnswer((_) async => {
+            SpecialFolderKind.inbox: 'INBOX',
+            SpecialFolderKind.sent: 'Sent',
+          });
+      when(targetDs.getMailFolders()).thenAnswer((_) async => [
+            _folder('inbox-id', 'Inbox'),
+            _folder('sent-id', 'Sent Items'),
+          ]);
+      when(targetDs.getSpecialFolderIds()).thenAnswer((_) async => {
+            SpecialFolderKind.inbox: 'inbox-id',
+            SpecialFolderKind.sent: 'sent-id',
+          });
+      oneCleanPage(sourceDs, 'INBOX', [_email('inbox-msg-1')]);
+      oneCleanPage(sourceDs, 'Sent', [_email('sent-msg-1')]);
+      when(sourceDs.getRawEmailBytes(any)).thenAnswer((_) async => _rawBytes);
+      when(targetDs.insertRawMessage(
+        folderId: anyNamed('folderId'),
+        rawBytes: anyNamed('rawBytes'),
+        receivedAt: anyNamed('receivedAt'),
+        isRead: anyNamed('isRead'),
+      )).thenAnswer((_) async => 'dest-msg');
+      wireAccounts(_woodgateBeach, _o365,
+          sourceDatasource: sourceDs, targetDatasource: targetDs);
+    }
+
+    List<Object?> insertedInto() => verify(targetDs.insertRawMessage(
+          folderId: captureAnyNamed('folderId'),
+          rawBytes: anyNamed('rawBytes'),
+          receivedAt: anyNamed('receivedAt'),
+          isRead: anyNamed('isRead'),
+        )).captured;
+
+    test("copies the source's Inbox into the target's Inbox and nothing else",
+        () async {
+      wireInboxAndSent();
+
+      await service.startOrResume(_woodgateBeach.id, _o365.id,
+          scope: MigrationScope.inbox);
+
+      expect(insertedInto(), ['inbox-id']);
+      verify(sourceDs.getRawEmailBytes('inbox-msg-1')).called(1);
+      verifyNever(sourceDs.getRawEmailBytes('sent-msg-1'));
+      // Never builds a folder at the destination: the Inbox is already there.
+      verifyNever(targetDs.createFolder(
+        parentFolderId: anyNamed('parentFolderId'),
+        displayName: anyNamed('displayName'),
+      ));
+
+      final job = await service.getJob(_woodgateBeach.id, _o365.id,
+          scope: MigrationScope.inbox);
+      expect(job?.status, MigrationJobStatus.completed);
+      expect(job?.scope, MigrationScope.inbox);
+      // Its own job, not the whole-account one for the same pair.
+      expect(await service.getJob(_woodgateBeach.id, _o365.id), isNull);
+      expect(
+        service.getProgress(_woodgateBeach.id, _o365.id,
+            scope: MigrationScope.inbox),
+        const MigrationProgress(
+            folderName: 'Inbox', processedCount: 1, totalCount: 1),
+      );
+    });
+
+    // The regression that matters most: a job only ever asked for the Inbox
+    // must not come back from a restart as a whole-account migration.
+    test('a job left running is resumed as Inbox-only', () async {
+      wireInboxAndSent();
+      await db.upsertJob(
+        jobId: AccountMigrationService.jobIdFor(
+            _woodgateBeach.id, _o365.id, MigrationScope.inbox),
+        sourceAccountId: _woodgateBeach.id,
+        targetAccountId: _o365.id,
+        status: MigrationJobStatus.running,
+        scope: MigrationScope.inbox,
+      );
+
+      await service.resumeAll();
+      // resumeAll doesn't wait for the jobs it kicks; queueing behind the one
+      // it started for this id does.
+      await service.startOrResume(_woodgateBeach.id, _o365.id,
+          scope: MigrationScope.inbox);
+      await pumpEventQueue();
+
+      expect(insertedInto(), ['inbox-id']);
+      verifyNever(sourceDs.getRawEmailBytes('sent-msg-1'));
+      expect(await service.getJob(_woodgateBeach.id, _o365.id), isNull);
+    });
+
+    test('a whole-account migration afterwards does not copy the Inbox again',
+        () async {
+      wireInboxAndSent();
+
+      await service.startOrResume(_woodgateBeach.id, _o365.id,
+          scope: MigrationScope.inbox);
+      expect(insertedInto(), ['inbox-id']);
+
+      // A second pass over the same folders, as a fresh run would see them.
+      oneCleanPage(sourceDs, 'INBOX', [_email('inbox-msg-1')]);
+      await service.startOrResume(_woodgateBeach.id, _o365.id);
+
+      expect(insertedInto(), ['sent-id']);
+      verify(sourceDs.getRawEmailBytes('inbox-msg-1')).called(1);
+      expect((await service.getJob(_woodgateBeach.id, _o365.id))?.status,
+          MigrationJobStatus.completed);
+    });
+
+    test('an Inbox migration after a whole-account one copies only what is new',
+        () async {
+      wireInboxAndSent();
+      await service.startOrResume(_woodgateBeach.id, _o365.id);
+      expect(insertedInto(), ['inbox-id', 'sent-id']);
+
+      oneCleanPage(sourceDs, 'INBOX',
+          [_email('inbox-msg-2'), _email('inbox-msg-1')]);
+      await service.startOrResume(_woodgateBeach.id, _o365.id,
+          scope: MigrationScope.inbox);
+
+      expect(insertedInto(), ['inbox-id']);
+      verify(sourceDs.getRawEmailBytes('inbox-msg-2')).called(1);
+      verify(sourceDs.getRawEmailBytes('inbox-msg-1')).called(1);
+    });
+
+    // Started from two different menus, so nothing stops both being asked for
+    // at once — and each only trusts what the other has *finished*.
+    test('started alongside a whole-account migration, the Inbox is still '
+        'copied once', () async {
+      wireInboxAndSent();
+      // Served afresh to each job, as the provider would.
+      when(sourceDs.getEmails(
+        folderId: 'INBOX',
+        top: anyNamed('top'),
+        skip: anyNamed('skip'),
+        orderBy: anyNamed('orderBy'),
+      )).thenAnswer((invocation) async =>
+          invocation.namedArguments[#skip] == 0
+              ? [_email('inbox-msg-1')]
+              : const <EmailModel>[]);
+
+      final inboxJob = service.startOrResume(_woodgateBeach.id, _o365.id,
+          scope: MigrationScope.inbox);
+      final accountJob = service.startOrResume(_woodgateBeach.id, _o365.id);
+      await Future.wait([inboxJob, accountJob]);
+
+      verify(sourceDs.getRawEmailBytes('inbox-msg-1')).called(1);
+      expect(insertedInto(), ['inbox-id', 'sent-id']);
+    });
+
+    test('fails, rather than creating one, when the target has no Inbox',
+        () async {
+      wireInboxAndSent();
+      when(targetDs.getSpecialFolderIds())
+          .thenAnswer((_) async => {SpecialFolderKind.sent: 'sent-id'});
+
+      await service.startOrResume(_woodgateBeach.id, _o365.id,
+          scope: MigrationScope.inbox);
+
+      final job = await service.getJob(_woodgateBeach.id, _o365.id,
+          scope: MigrationScope.inbox);
+      expect(job?.status, MigrationJobStatus.failed);
+      expect(job?.lastError, contains('Inbox'));
+      verifyNever(targetDs.createFolder(
+        parentFolderId: anyNamed('parentFolderId'),
+        displayName: anyNamed('displayName'),
+      ));
+      verifyNever(targetDs.insertRawMessage(
+        folderId: anyNamed('folderId'),
+        rawBytes: anyNamed('rawBytes'),
+        receivedAt: anyNamed('receivedAt'),
+        isRead: anyNamed('isRead'),
+      ));
+    });
+
+    // Each menu item reopens — and so re-kicks — the job it finds, so neither
+    // may be handed the other's.
+    test('the active job is looked up per scope', () async {
+      await db.upsertJob(
+        jobId: AccountMigrationService.jobIdFor(
+            _woodgateBeach.id, _o365.id, MigrationScope.inbox),
+        sourceAccountId: _woodgateBeach.id,
+        targetAccountId: _o365.id,
+        status: MigrationJobStatus.running,
+        scope: MigrationScope.inbox,
+      );
+
+      expect(await service.getActiveJobForSource(_woodgateBeach.id), isNull);
+      expect(
+        (await service.getActiveJobForSource(_woodgateBeach.id,
+                scope: MigrationScope.inbox))
+            ?.targetAccountId,
+        _o365.id,
+      );
+    });
+  });
 }

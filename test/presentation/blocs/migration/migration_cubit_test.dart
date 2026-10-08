@@ -115,6 +115,29 @@ void main() {
       verify(mockService.startOrResume('src', 'dst')).called(1);
       expect(cubit.state.job, isNull); // watch() had already run its refresh
     });
+
+    test('an Inbox-only job is started and watched as one', () async {
+      when(mockService.getJob('src', 'dst', scope: MigrationScope.inbox))
+          .thenAnswer((_) async => _job);
+      when(mockService.getFailures('src', 'dst', scope: MigrationScope.inbox))
+          .thenAnswer((_) async => const []);
+      when(mockService.getProgress('src', 'dst', scope: MigrationScope.inbox))
+          .thenReturn(null);
+      when(mockService.startOrResume('src', 'dst',
+              scope: MigrationScope.inbox))
+          .thenAnswer((_) async {});
+
+      await cubit.startOrResume('src', 'dst', scope: MigrationScope.inbox);
+      await Future<void>.delayed(Duration.zero);
+
+      verify(mockService.startOrResume('src', 'dst',
+              scope: MigrationScope.inbox))
+          .called(1);
+      // Never the whole-account job for the same pair.
+      verifyNever(mockService.startOrResume('src', 'dst'));
+      verifyNever(mockService.getJob('src', 'dst'));
+      expect(cubit.state.job, isNotNull);
+    });
   });
 
   group('after close', () {

@@ -1,42 +1,59 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.39.1",
+  "version": "1.39.2",
   "sections": [
-    {
-      "type": "features",
-      "title": "New features",
-      "items": [
-        {
-          "body": "report phishing from the junk dropdown and the reading pane",
-          "title": "mail"
-        }
-      ]
-    },
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "let a meeting window's Notes field fill the space below it",
-          "title": "calendar"
-        },
-        {
-          "body": "strip every address the account answers for from a reply-all",
-          "title": "compose"
-        },
-        {
-          "body": "show a sent reply in its thread without a manual refresh",
-          "title": "compose"
-        },
-        {
-          "body": "stay under the 6,000-unit/minute per-user quota",
-          "title": "gmail"
+          "body": "a double-click on Reply opens one window, not two",
+          "title": "windows"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.39.1",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "report phishing from the junk dropdown and the reading pane",
+              "title": "mail"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "let a meeting window's Notes field fill the space below it",
+              "title": "calendar"
+            },
+            {
+              "body": "strip every address the account answers for from a reply-all",
+              "title": "compose"
+            },
+            {
+              "body": "show a sent reply in its thread without a manual refresh",
+              "title": "compose"
+            },
+            {
+              "body": "stay under the 6,000-unit/minute per-user quota",
+              "title": "gmail"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -433,23 +450,6 @@
             {
               "body": "show send errors in the form, not under the editor",
               "title": "compose"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.35.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "new meeting from this email",
-              "title": "reading-pane"
             }
           ]
         }

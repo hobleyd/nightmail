@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 3,
+  "packageId": "au.com.sharpblue.nightmail",
+  "appName": "NightMail.app",
+  "version": "1.39.2",
+  "buildNumber": 220,
+  "platform": "macos",
+  "channel": "stable",
+  "artifact": {
+    "kind": "zip",
+    "url": "https://hobleyd.github.io/nightmail/releases/1.39.2+220-macos/NightMail-1.39.2-macos.zip",
+    "sha256": "c729515bc128039e73c471a0d7c635ca89bcbef91aad0e119c68f695085895be",
+    "length": 41193241
+  },
+  "install": {
+    "strategy": "wholeBundleReplace"
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "publicKeyId": "release-b53948b0e36b895fa047a8f4",
+    "value": "geDLAEcH+q+gtGuic5864vGi4e7n7PZCpNpxejDOhJWBy24xqtkI+MqdEhxgWy2LED2aud7UViTnzJu7Khq6Ag=="
+  },
+  "minimumUpdaterVersion": "2.0.0",
+  "generatedAt": "2026-10-09T06:11:57.473706Z"
+}

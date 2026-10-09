@@ -1138,6 +1138,33 @@ class _EventEditFormState extends State<EventEditForm> {
     // on the bottom edge of the window instead of floating over dead space.
     final fillHeight = _showSchedulePane || widget.fillsWindow;
 
+    // When the form fills its height the Notes are the row that grows: a
+    // four-line box under a window's worth of dead space was the complaint,
+    // and a Teams meeting's join block alone overran four lines. The in-app
+    // dialog keeps the fixed box, since it sizes itself to the form.
+    final notesField = _LabeledField(
+      label: 'Notes',
+      child: _readOnly
+          ? _LinkifiedText(
+              text: _descriptionController.text,
+              style: TextStyle(color: c.textPrimary, fontSize: 13),
+            )
+          : TextField(
+              controller: _descriptionController,
+              maxLines: fillHeight ? null : 4,
+              expands: fillHeight,
+              textAlignVertical: fillHeight ? TextAlignVertical.top : null,
+              style: TextStyle(color: c.textPrimary, fontSize: 13),
+              decoration: InputDecoration(
+                hintText: 'Add notes',
+                hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
+                border: InputBorder.none,
+                contentPadding: EdgeInsets.zero,
+                isDense: true,
+              ),
+            ),
+    );
+
     final formColumn = Column(
       mainAxisSize: fillHeight ? MainAxisSize.max : MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1146,8 +1173,8 @@ class _EventEditFormState extends State<EventEditForm> {
         Divider(height: 1, color: c.border),
         Flexible(
           fit: fillHeight ? FlexFit.tight : FlexFit.loose,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
+          child: _FormScroller(
+            fillHeight: fillHeight,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -1376,27 +1403,7 @@ class _EventEditFormState extends State<EventEditForm> {
                 const SizedBox(height: 10),
                 Divider(height: 1, color: c.separator),
                 const SizedBox(height: 10),
-                _LabeledField(
-                  label: 'Notes',
-                  child: _readOnly
-                      ? _LinkifiedText(
-                          text: _descriptionController.text,
-                          style: TextStyle(color: c.textPrimary, fontSize: 13),
-                        )
-                      : TextField(
-                          controller: _descriptionController,
-                          maxLines: 4,
-                          style: TextStyle(color: c.textPrimary, fontSize: 13),
-                          decoration: InputDecoration(
-                            hintText: 'Add notes',
-                            hintStyle:
-                                TextStyle(color: c.textMuted, fontSize: 13),
-                            border: InputBorder.none,
-                            contentPadding: EdgeInsets.zero,
-                            isDense: true,
-                          ),
-                        ),
-                ),
+                if (fillHeight) Expanded(child: notesField) else notesField,
                 if (_proposing) ...[
                   const SizedBox(height: 10),
                   Divider(height: 1, color: c.separator),
@@ -3048,6 +3055,43 @@ class _ReminderDropdown extends StatelessWidget {
 }
 
 // ─── Labeled field ────────────────────────────────────────────────────────────
+
+/// The form's scrolling body.
+///
+/// Shrink-wrapped by default, for the in-app dialog that sizes itself to the
+/// form. With [fillHeight] the content is at least as tall as the viewport, so
+/// the column's one [Expanded] row — the Notes — reaches the footer instead of
+/// leaving dead space under it. Notes taller than the window grow the content
+/// and the whole form scrolls, rather than the field scrolling inside itself.
+class _FormScroller extends StatelessWidget {
+  const _FormScroller({required this.fillHeight, required this.child});
+  final bool fillHeight;
+  final Widget child;
+
+  static const _padding = EdgeInsets.all(16);
+
+  @override
+  Widget build(BuildContext context) {
+    if (!fillHeight) {
+      return SingleChildScrollView(padding: _padding, child: child);
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            minHeight: constraints.hasBoundedHeight ? constraints.maxHeight : 0,
+          ),
+          // Measures the column at its content height before the Expanded
+          // row claims the rest — what lets long notes push the content past
+          // the viewport instead of being squeezed to fit it.
+          child: IntrinsicHeight(
+            child: Padding(padding: _padding, child: child),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _LabeledField extends StatelessWidget {
   const _LabeledField({required this.label, required this.child});

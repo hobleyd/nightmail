@@ -150,6 +150,7 @@ CalendarEvent _event({
   bool isOrganizer = true,
   String id = 'event-1',
   int? reminderMinutes,
+  String? notes,
 }) =>
     CalendarEvent(
       id: id,
@@ -159,6 +160,7 @@ CalendarEvent _event({
       isAllDay: isAllDay,
       isOrganizer: isOrganizer,
       reminderMinutes: reminderMinutes,
+      bodyPreview: notes,
       attendees: [
         for (final g in guests) CalendarEventAttendee(email: g),
       ],
@@ -538,6 +540,58 @@ void main() {
           (w) => w.runtimeType.toString() == '_ScheduleGrid'));
       expect(grid.width, kSchedulePaneWidth);
       expect(grid.height, 800);
+    });
+
+    Finder notesField() => find.byWidgetPredicate(
+        (w) => w is TextField && w.decoration?.hintText == 'Add notes');
+
+    testWidgets('the Notes field reaches down to the footer', (tester) async {
+      // Opening a meeting in its window used to show a four-line Notes box
+      // with the rest of the window empty under it.
+      await useLargeSurface(tester);
+
+      await pumpForm(tester, event: _event(), fillsWindow: true, loose: true);
+      await settleDebounce(tester);
+
+      final notes = tester.getRect(notesField());
+      final body = tester.getRect(find.byType(SingleChildScrollView).first);
+      expect(notes.bottom, closeTo(body.bottom - 16, 0.5));
+    });
+
+    testWidgets('long notes read in full and scroll the form, not the box',
+        (tester) async {
+      // A Teams meeting's join block alone overruns four lines; the field
+      // takes its content height and the form scrolls as a whole.
+      await useLargeSurface(tester);
+
+      final notes = List.generate(120, (i) => 'line $i').join('\n');
+      await pumpForm(tester,
+          event: _event(notes: notes), fillsWindow: true, loose: true);
+      await settleDebounce(tester);
+
+      final inner = tester.state<ScrollableState>(find.descendant(
+          of: notesField(), matching: find.byType(Scrollable)));
+      expect(inner.position.maxScrollExtent, 0);
+      final outer = tester.state<ScrollableState>(find
+          .descendant(
+              of: find.byType(SingleChildScrollView).first,
+              matching: find.byType(Scrollable))
+          .first);
+      expect(outer.position.maxScrollExtent, greaterThan(0));
+    });
+
+    testWidgets('the in-app dialog keeps its four-line Notes box',
+        (tester) async {
+      // The dialog sizes itself to the form, so a Notes field that filled the
+      // height on offer would open it full-screen.
+      await useLargeSurface(tester);
+
+      await pumpForm(tester, event: _event(), loose: true);
+      await settleDebounce(tester);
+
+      final field = tester.widget<TextField>(notesField());
+      expect(field.expands, isFalse);
+      expect(field.maxLines, 4);
     });
   });
 

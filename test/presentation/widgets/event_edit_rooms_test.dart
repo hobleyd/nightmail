@@ -179,6 +179,7 @@ void main() {
     WidgetTester tester, {
     CalendarEvent? event,
     bool withRoomLoader = true,
+    bool fillsWindow = false,
   }) async {
     await tester.binding.setSurfaceSize(const Size(1000, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -199,6 +200,7 @@ void main() {
                     CheckAttendeesAvailability(repository),
                 getMeetingRooms:
                     withRoomLoader ? GetMeetingRooms(repository) : null,
+                fillsWindow: fillsWindow,
               ),
             ),
           ),
@@ -447,6 +449,21 @@ void main() {
       expect(find.text('Boardroom'), findsOneWidget);
       expect(find.text('guest@example.com'), findsOneWidget);
       expect(find.text('boardroom@example.com'), findsNothing);
+    });
+
+    testWidgets('lays out under the window\'s stretching Notes field',
+        (tester) async {
+      // A window measures the form's content height before giving the Notes
+      // the rest (see `_FormScroller`); the room picker's chips and overlay
+      // have to answer that measurement rather than assert on it.
+      repository.rooms = const [_boardroom];
+      await pumpForm(tester, event: _eventWithRoom(), fillsWindow: true);
+
+      expect(find.text('Boardroom'), findsOneWidget);
+      final notes = tester.getRect(find.byWidgetPredicate(
+          (w) => w is TextField && w.decoration?.hintText == 'Add notes'));
+      final body = tester.getRect(find.byType(SingleChildScrollView).first);
+      expect(notes.bottom, closeTo(body.bottom - 16, 0.5));
     });
 
     testWidgets('strips the room name from the free-text location so it is not '

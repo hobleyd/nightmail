@@ -44,23 +44,101 @@ Future<Map<String, double>?> _getMyScreenInfo() async {
 
 /// Creates a sub-window, embedding the calling window's screen frame in the
 /// arguments so the sub-window can center itself on the same screen.
+///
+/// Asked for the same window twice within the OS's double-click interval, it
+/// creates one and answers the second request with that — see [_lastCreated].
 Future<WindowController> createSubWindow(WindowConfiguration config) async {
-  final screenInfo = await _getMyScreenInfo();
+  final hash = config.arguments.hashCode;
+  final pending = _creating[hash];
+  if (pending != null) {
+    debugPrint('[Window] asked for a window still being created — same click');
+    return pending;
+  }
+  final create = _createSubWindow(config, hash);
+  _creating[hash] = create;
+  try {
+    return await create;
+  } finally {
+    _creating.remove(hash);
+  }
+}
 
+/// A create still on the wire, by the hash of its arguments. The native side
+/// builds the window's engine synchronously on the main thread, so a second
+/// click queues behind the first and lands here the moment it returns; it is
+/// answered with the first's result rather than a window of its own.
+final Map<int, Future<WindowController>> _creating = {};
+
+/// The window [createSubWindow] last opened: when, for what arguments, and
+/// its id.
+///
+/// Every control that pops a window out — Reply, Reply All, Forward, New
+/// Email, an inline image, a calendar event — is a plain button, and a
+/// button fires once per click: macOS hands Flutter a double-click as two
+/// clicks and nothing folds them, so a double-click (or a mouse whose switch
+/// bounces) opened the same window twice. Two sub-window engines starting
+/// 65 ms apart after one Reply was the symptom (2026-10-07). The OS's figure for
+/// "two clicks that are one gesture" bounds the repeat; a request after that
+/// is a deliberate second window and is honoured. The id is kept rather than
+/// the controller because a controller carries the arguments it was created
+/// with — for a compose window, the whole quoted message and its images.
+({int hash, DateTime at, String windowId})? _lastCreated;
+
+/// The clock the repeat check reads. Replaced by tests.
+@visibleForTesting
+DateTime Function() subWindowClock = DateTime.now;
+
+/// Forgets the last window opened, so a test starts from nothing. A widget
+/// test that opens the same window in two consecutive tests needs this in
+/// `setUp`, or the second open is folded into the first.
+@visibleForTesting
+void resetLastSubWindowCreate() {
+  _lastCreated = null;
+  _creating.clear();
+}
+
+Future<WindowController> _createSubWindow(
+  WindowConfiguration config,
+  int hash,
+) async {
   Map<String, dynamic> args;
   try {
     args = jsonDecode(config.arguments) as Map<String, dynamic>;
   } catch (_) {
     args = {};
   }
+  final label =
+      args['type'] as String? ?? 'compose(${args['mode'] ?? 'newEmail'})';
 
+  final last = _lastCreated;
+  if (last != null && last.hash == hash) {
+    final age = subWindowClock().difference(last.at);
+    final interval = await platformDoubleClickInterval();
+    if (!age.isNegative && age <= interval) {
+      debugPrint(
+        '[Window] $label asked for again ${age.inMilliseconds} ms after it '
+        'opened (double-click interval ${interval.inMilliseconds} ms) — '
+        'same click',
+      );
+      return WindowController.fromWindowId(last.windowId);
+    }
+  }
+
+  final screenInfo = await _getMyScreenInfo();
   if (screenInfo != null) {
     args['_screenInfo'] = screenInfo;
   }
 
-  return WindowController.create(
+  debugPrint('[Window] opening $label');
+  final controller = await WindowController.create(
     WindowConfiguration(arguments: jsonEncode(args)),
   );
+  _lastCreated = (
+    hash: hash,
+    at: subWindowClock(),
+    windowId: controller.windowId,
+  );
+  return controller;
 }
 
 /// The `type` a sub-window was created with, read back from the arguments

@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/core/platform/window_utils.dart';
@@ -14,6 +16,15 @@ import 'package:nightmail/core/platform/window_utils.dart';
 // duplicated, anything else in the registry — the main window's empty
 // arguments, another kind of window — is passed over, and a window that
 // vanishes between lookup and show is replaced rather than left for dead.
+//
+// createSubWindow — a double-click opens one window.
+//
+// Reply, Forward, New Email, an inline image: each is a plain button that
+// fires once per click, and macOS hands Flutter a double-click as two clicks.
+// Pinned: the same window asked for again within the OS's double-click
+// interval of the first opening — or while the first is still being created —
+// is answered with the first; after the interval, or for a different window,
+// a second one opens; a create that failed is not remembered.
 // ---------------------------------------------------------------------------
 
 void main() {
@@ -155,6 +166,98 @@ void main() {
       resetPlatformDoubleClickInterval();
       expect(await platformDoubleClickInterval(),
           const Duration(milliseconds: 300));
+    });
+  });
+
+  group('createSubWindow treats a double-click as one click', () {
+    var now = DateTime(2026, 10, 7, 7, 57, 50);
+
+    setUp(() {
+      resetPlatformDoubleClickInterval();
+      resetLastSubWindowCreate();
+      now = DateTime(2026, 10, 7, 7, 57, 50);
+      subWindowClock = () => now;
+      mock(utilsChannel, (call) async =>
+          call.method == 'getDoubleClickIntervalMs' ? 500.0 : null);
+    });
+
+    tearDown(() {
+      subWindowClock = DateTime.now;
+      resetLastSubWindowCreate();
+      resetPlatformDoubleClickInterval();
+    });
+
+    WindowConfiguration reply({String mode = 'reply'}) => WindowConfiguration(
+          arguments: jsonEncode({
+            'mode': mode,
+            'originalEmail': {'id': 'm1'},
+          }),
+        );
+
+    test('a repeat while the first is still being created is answered with it',
+        () async {
+      final gate = Completer<String>();
+      mock(windowChannel, (call) async {
+        created.add((call.arguments as Map)['arguments'] as String);
+        return gate.future;
+      });
+
+      final first = createSubWindow(reply());
+      final second = createSubWindow(reply());
+      // Let both requests reach the channel before the native side answers.
+      await Future<void>.delayed(Duration.zero);
+      gate.complete('9');
+      final controllers = await Future.wait([first, second]);
+
+      expect(created, hasLength(1));
+      expect(controllers.map((c) => c.windowId), ['9', '9']);
+    });
+
+    test('a repeat inside the double-click interval of the first opening is '
+        'the same click', () async {
+      final first = await createSubWindow(reply());
+      now = now.add(const Duration(milliseconds: 400));
+
+      final second = await createSubWindow(reply());
+
+      expect(created, hasLength(1));
+      expect(second.windowId, first.windowId);
+      expect(shown, isEmpty, reason: 'the window is still coming up');
+    });
+
+    test('a request after the interval is a second window', () async {
+      await createSubWindow(reply());
+      now = now.add(const Duration(milliseconds: 501));
+
+      await createSubWindow(reply());
+
+      expect(created, hasLength(2));
+    });
+
+    test('a different window inside the interval is opened', () async {
+      await createSubWindow(reply());
+      now = now.add(const Duration(milliseconds: 100));
+
+      await createSubWindow(reply(mode: 'replyAll'));
+
+      expect(created, hasLength(2));
+      expect(jsonDecode(created.last), containsPair('mode', 'replyAll'));
+    });
+
+    test('a create that failed is not remembered', () async {
+      var fails = true;
+      mock(windowChannel, (call) async {
+        if (fails) throw PlatformException(code: '-1', message: 'no engine');
+        created.add((call.arguments as Map)['arguments'] as String);
+        return '9';
+      });
+
+      await expectLater(
+          createSubWindow(reply()), throwsA(isA<PlatformException>()));
+      fails = false;
+      await createSubWindow(reply());
+
+      expect(created, hasLength(1));
     });
   });
 }

@@ -153,6 +153,27 @@ a `GestureDetector.onDoubleTap` an ordinary double-click arrived as two single
 taps — the pane toggled twice and no window opened. Windows and Linux have no
 handler yet and fall back to Flutter's 300 ms.
 
+### A double-click on Reply opens one window
+
+Reply, Reply All, Forward, New Email, an inline image, a calendar event: each
+pops a window out from a plain button, and a button fires once per click.
+macOS hands Flutter a double-click as two clicks and nothing in the framework
+folds them, so a double-click — or a mouse whose switch bounces, which is
+intermittent and invisible to the user — opened the same window twice. The
+diagnostics log showed it as two sub-window engines starting 65 ms apart
+after one Reply (2026-10-07): the native `createWindow` builds the engine
+synchronously on the main thread, so the second click queued behind the
+first and was served the moment it returned.
+
+`createSubWindow` (`window_utils.dart`) is therefore the one place that
+dedupes: a request whose arguments hash to the last window's, made while that
+create is still on the wire or within `platformDoubleClickInterval()` of it
+returning, is answered with that window's id instead of a new one. It is the
+OS's own figure for "two clicks that are one gesture", so a request after it
+is a deliberate second window and opens. Every create logs `[Window] opening
+<type>` and every fold logs why, so a report of two windows can be read off
+`diagnostics.log`. `window_utils_test.dart` pins it.
+
 ### Closing a sub-window is a request, not an act
 
 `windowManager.close()` *posts* the close (Windows `SC_CLOSE`) and reports

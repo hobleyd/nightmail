@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.39.5",
+  "version": "1.39.6",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "clear the marker a completed install leaves behind, which refused every later install",
-          "title": "update"
+          "body": "unread mail no longer downloads on click after a wake from sleep",
+          "title": "mail"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.39.5",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "clear the marker a completed install leaves behind, which refused every later install",
+              "title": "update"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -406,23 +423,6 @@
           "items": [
             {
               "body": "Bcc recipients, collapsed behind an expander on the Cc row",
-              "title": "compose"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.36.3",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "resolve a pasted list of names against the directory",
               "title": "compose"
             }
           ]

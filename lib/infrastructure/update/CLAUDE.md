@@ -225,6 +225,58 @@ update (`readyToInstall`, `helperApprovalRequired`) and any busy phase alone:
 on the snap path `_checkSnap` nulls `_snapFile`, so a check there would throw
 away the verified download and put the user back to "Download update".
 
+### A Running App Whose Bundle Was Replaced Underneath It
+
+"Unable to prepare update installation" is the *other* sentence. On
+2026-10-09 one Mac said it (the other said the handoff one) with a staged
+build that passed every check and a helper log showing each transaction reach
+`prepared` and then `cancelled` 11–150 ms later. Between `prepared` and the
+commit the plugin reserves its own restart: `prepareCurrentApplicationRestart`
+spawns the current executable and compares the child's file (device and
+inode, via `proc_pidpath` and `lstat`) with the executable the running process
+has mapped (`PROC_PIDREGIONPATHINFO`). Any difference throws
+`executableIdentityMismatch`; the reservation deallocates, and its `deinit`
+sends the helper `cancelReservation` — which is the `cancelled` entry.
+
+They differed because `../ansible`'s `roles/sharpblue` had, at 14:25 that
+day, `ditto`ed the then-latest DMG — the same 1.38.8 — over
+`/Applications/NightMail.app` while the app ran. `ditto` into an existing
+bundle keeps the directories and replaces every file, so each file got a new
+inode and the process kept the deleted ones:
+
+    lsof -p <pid> | awk '$4=="txt"'            # mapped:  inode 180943090
+    stat -f %i .../Contents/MacOS/NightMail    # on disk: inode 182009020
+
+Nothing in the bundle or the stage is wrong; the *process* is, and quitting
+and relaunching is the whole fix. Three things changed so that is not dug out
+of the system log again:
+
+- `tool/diagnose_macos_update.sh` has a "The running app" section that makes
+  exactly that comparison, and judges the helper log by its **last install
+  attempt** rather than by any failure it ever recorded — the old whole-log
+  grep found a `stageAuthenticationFailed` from three weeks earlier and
+  reported "the helper refused". A `cancelled` transaction is named for what
+  it is. The helper's launch-time recovery passes (`detailCode: recovery`) are
+  reported separately: one with nothing after it only means the app has been
+  relaunched since.
+- `AppUpdateService` writes `[Update]` lines to `diagnostics.log`: the release
+  found, the install attempted (what over what, by which mechanism), every
+  status change that carries a new error with the phase it interrupted, and a
+  native error's `code` and `details` map, which the panel's text omits by
+  design. The log had held nothing about updates at all.
+- The ansible role compares build numbers before writing anything, quits a
+  running app first (and leaves one that will not quit alone), stages the new
+  bundle beside the old and swaps it in rather than copying over it, and
+  relaunches.
+
+Since desktop_updater 3.2.0 the restart child comes back through
+`/usr/bin/open` of the bundle (upstream PR #75, raised from here), which ends
+the duplicate Dock tile. The identity check above is unchanged, so this still
+applies. The 3.2.1 bump (2026-10-12) changed nothing else here: the install
+helper's `main.swift` is byte-identical to 3.1.6, so the build phase's patch
+still lands, and 3.2.0's breaking changes are confined to Windows Inno
+installs, which the Windows release does not use (`wholeDirectoryReplace`).
+
 ### The service starts at launch, not when Settings opens
 
 `../inkworm` — which this is modelled on — builds its `DesktopUpdaterController`

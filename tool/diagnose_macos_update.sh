@@ -12,6 +12,15 @@
 # ever repeat that sentence, and the install helper — which is where the
 # rejection actually happens — records nothing when it refuses.
 #
+# "Unable to prepare update installation" is everything *before* the handoff:
+# the stage failing verification inside the app, or the app failing to reserve
+# its own restart. That reservation fails whenever the executable the process
+# is running is no longer the file on disk — a bundle replaced underneath a
+# running app by ditto, rsync, Finder or the ansible sharpblue role
+# (2026-10-09) — and the helper's log then shows the transaction reach
+# `prepared` and get cancelled within a few hundred milliseconds. "The running
+# app" below is the check for it.
+#
 # This re-runs, from outside, the same chain of checks the helper performs, in
 # the order it performs them, and names the first one that does not hold. It
 # changes nothing: everything below is a read.
@@ -111,6 +120,40 @@ ls -d /private/var/folders/*/*/T/AppTranslocation/*/d/NightMail.app 2>/dev/null 
   && bad "the app is translocated" || note "not translocated"
 note "version $(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist" 2>/dev/null)+$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$APP/Contents/Info.plist" 2>/dev/null)"
 
+rule "The running app"
+# Before committing, the app reserves its restart by spawning its own
+# executable and comparing the child's file (device and inode) with the one it
+# has mapped itself. They differ when every file in the bundle was replaced
+# while the app ran, and the app then abandons the transaction the helper had
+# already accepted. Nothing in the bundle or the stage is wrong; the process
+# is. lsof's DEVICE and NODE columns are what the kernel reports for the
+# mapping, in the same major,minor and inode form stat prints here.
+EXE=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$APP/Contents/Info.plist" 2>/dev/null)
+EXE=${EXE:-NightMail}
+PIDS=$(pgrep -x "$EXE" 2>/dev/null || true)
+if [ -z "$PIDS" ]; then
+  note "not running"
+else
+  ON_DISK=$(stat -f '%Hd,%Ld %i' "$APP/Contents/MacOS/$EXE" 2>/dev/null)
+  for pid in $PIDS; do
+    STARTED=$(ps -o lstart= -p "$pid" 2>/dev/null | sed 's/^ *//; s/ *$//')
+    MAPPED=$(lsof -p "$pid" 2>/dev/null \
+      | awk -v exe="$APP/Contents/MacOS/$EXE" '$4=="txt" && $9==exe {print $6" "$8; exit}')
+    if [ -z "$MAPPED" ]; then
+      note "pid $pid (started $STARTED): could not read what it has mapped"
+    elif [ "$MAPPED" = "$ON_DISK" ]; then
+      ok "pid $pid (started $STARTED) runs the executable that is on disk"
+    else
+      bad "pid $pid (started $STARTED) runs an executable that is no longer on disk"
+      note "mapped device,inode $MAPPED — on disk $ON_DISK"
+      note "The bundle was replaced underneath it. The restart step refuses"
+      note "such a process before the commit, and the app reports 'Unable to"
+      note "prepare update installation'. Quit NightMail, relaunch it from"
+      note "/Applications, and install the update again."
+    fi
+  done
+fi
+
 rule "The caller: what the helper checks about the running app"
 REQ=$(/usr/libexec/PlistBuddy -c 'Print DesktopUpdaterInstallHelperRequirement' \
   "$APP/Contents/Info.plist" 2>/dev/null)
@@ -162,22 +205,98 @@ rule "The helper's own diagnostics"
 # helper writes here, not to /Library/Logs/DesktopUpdater. /Library/Logs is
 # root-only, so an absent directory there says nothing at all.
 if [ -f "$HELPER_LOG" ]; then
-  say "$HELPER_LOG:"
-  tail -20 "$HELPER_LOG"
-  say ""
-  if grep -q '"resultCode":"failure"' "$HELPER_LOG"; then
-    say ""
-    bad "the helper refused — detailCode above names the check that failed:"
-    note "invalidHelperIdentity     the helper's own signature or sealed policy"
-    note "targetAuthenticationFailed  the install target against the policy"
-    note "callerAuthenticationFailed  the running app's identity"
-    note "stageAuthenticationFailed   the staged update or its provenance"
-    note "unsupportedStrategy         the artifact kind has no native strategy"
-  else
-    note "'helper scheduled' means the helper launched and authenticated itself."
-    note "Nothing after it means it refused and exited without saying why —"
-    note "that is a build older than the one whose helper records its reason."
-  fi
+  say "$HELPER_LOG — the last attempt:"
+  python3 - "$HELPER_LOG" <<'PY'
+import datetime
+import json
+import sys
+
+entries = []
+for line in open(sys.argv[1], encoding="utf-8"):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        entries.append(json.loads(line))
+    except ValueError:
+        pass
+
+# An attempt begins with the helper being launched to serve an install
+# (detailCode oneShot or daemon), so the attempt being asked about is
+# everything after the last such entry. Judging the whole log instead once
+# found a refusal from three weeks earlier and blamed it for the day's. The
+# app also launches the helper for a recovery pass every time it starts
+# (detailCode recovery); one of those with nothing after it is routine, not a
+# refusal, and only says the app has been relaunched since.
+
+
+def when(entry):
+    stamp = datetime.datetime.fromtimestamp(entry.get("timestampUnixMilliseconds", 0) / 1000)
+    return stamp.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def scheduled(entry):
+    return entry.get("event") == "helper scheduled"
+
+
+starts = [i for i, e in enumerate(entries)
+          if scheduled(e) and e.get("detailCode") != "recovery"]
+attempt = entries[starts[-1]:] if starts else entries[-20:]
+later_recoveries = [e for e in attempt[1:] if scheduled(e)]
+attempt = [e for e in attempt if e is attempt[0] or not scheduled(e)]
+for e in attempt:
+    print("  %s  %-26s state=%-15s result=%-8s detail=%s" % (
+        when(e), e.get("event", ""), e.get("state", ""),
+        e.get("resultCode", ""), e.get("detailCode", "")))
+print()
+
+
+def ok(text):
+    print("  ok    " + text)
+
+
+def bad(text):
+    print("  FAIL  " + text)
+
+
+def note(text):
+    print("        " + text)
+
+
+states = [e.get("state") for e in attempt]
+failed = [e for e in attempt if e.get("resultCode") == "failure"]
+if failed:
+    bad("the helper refused — detailCode %s names the check that failed:"
+        % failed[-1].get("detailCode"))
+    note("invalidHelperIdentity       the helper's own signature or sealed policy")
+    note("targetAuthenticationFailed  the install target against the policy")
+    note("callerAuthenticationFailed  the running app's identity")
+    note("stageAuthenticationFailed   the staged update or its provenance")
+    note("unsupportedStrategy         the artifact kind has no native strategy")
+elif "cancelled" in states:
+    bad("the app gave the reservation back after the helper had accepted it")
+    note("Nothing the helper checks failed. Between 'prepared' and the commit")
+    note("the app reserves its own restart; when that fails it abandons the")
+    note("transaction and reports 'Unable to prepare update installation'.")
+    note("The usual reason is under 'The running app' above. A commit the")
+    note("helper rejected would show here as a failure, not a cancellation.")
+elif any(s in ("commitAccepted", "executing", "backupCreated", "targetActivated",
+               "completed") for s in states):
+    ok("the handoff was accepted and the install went ahead")
+elif "prepared" in states:
+    note("prepared and never committed — the app may still be running, or it")
+    note("exited before the commit was sent")
+elif len(attempt) == 1:
+    bad("nothing after 'helper scheduled': the helper refused without saying why")
+    note("That is a build older than the one whose helper records its reason.")
+else:
+    note("no verdict for this sequence of states; read the entries above")
+if later_recoveries:
+    note("the app has launched %d time(s) since, last at %s, and ran its"
+         % (len(later_recoveries), when(later_recoveries[-1])))
+    note("recovery pass each time — so the process above is not the one that")
+    note("made this attempt")
+PY
 else
   note "no log — the helper has never been launched by the app"
 fi
@@ -299,7 +418,11 @@ fi
 rule "Reading this"
 cat <<'GUIDE'
   Every FAIL above is a reason the helper would refuse the handoff and the app
-  would report "Unable to confirm update installation handoff".
+  would report "Unable to confirm update installation handoff" — except two.
+  A running app whose executable is no longer on disk, and a transaction the
+  app cancelled after 'prepared', are the restart step giving up before the
+  commit, which the app reports as "Unable to prepare update installation".
+  Quit the app and relaunch it; the stage is fine and is used as it is.
 
   All ok, and "helper scheduled" is the last thing in the helper's log: the
   refusal is in a check this script cannot see from outside — the caller's

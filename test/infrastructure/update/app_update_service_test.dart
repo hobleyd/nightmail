@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 import 'package:desktop_updater/desktop_updater.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/infrastructure/update/app_update_service.dart';
@@ -64,6 +66,32 @@ void main() {
     });
 
     tearDown(() => service.dispose());
+
+    test('a release found and a failure both reach the diagnostics log',
+        () async {
+      // The panel's text is gone once the user moves on. A report of "Unable
+      // to prepare update installation" is read against diagnostics.log, which
+      // used to hold nothing about updates at all.
+      final lines = <String>[];
+      final original = debugPrint;
+      debugPrint = (String? message, {int? wrapWidth}) {
+        lines.add(message ?? '');
+      };
+      addTearDown(() => debugPrint = original);
+
+      snap.next = _check(installed: '1.30.4', release: '1.31.0');
+      await service.checkForUpdate();
+      snap.downloadError = SnapInstallException('no space left on device');
+      await service.downloadUpdate();
+
+      expect(service.status.phase, AppUpdatePhase.failed);
+      expect(lines, contains('[Update] 1.31.0 is available'));
+      expect(
+        lines,
+        contains(matches(
+            r'^\[Update\] failed after \w+: no space left on device$')),
+      );
+    });
 
     test('a newer release is offered by its semver, as on Android', () async {
       snap.next = _check(installed: '1.30.4', release: '1.31.0');

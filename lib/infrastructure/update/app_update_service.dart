@@ -69,6 +69,18 @@ String _describeUpdateError(Object error) {
   return error.toString();
 }
 
+/// Puts what the method channel carried besides the message into the
+/// diagnostics log: the code, and the details map that for an install failure
+/// says whether recovery is required and which transaction it was.
+/// [_describeUpdateError] keeps those off the screen on purpose; the log is
+/// where they are read.
+void _logNativeError(Object error) {
+  if (error is PlatformException) {
+    debugPrint('[Update] native ${error.code}: ${error.message} '
+        'details=${error.details}');
+  }
+}
+
 /// The error code macOS raises when the privileged install helper has not been
 /// approved yet. `desktop_updater` documents the remedy in the error's own
 /// `details` map, which names [DesktopUpdaterController.openMacOSBackgroundItemsSettings].
@@ -295,6 +307,7 @@ class AppUpdateService {
           await _checkDesktop();
       }
     } catch (error) {
+      _logNativeError(error);
       _emit(_status.copyWith(
         phase: AppUpdatePhase.failed,
         error: _describeUpdateError(error),
@@ -438,6 +451,7 @@ class AppUpdateService {
           await controller.downloadUpdate();
       }
     } catch (error) {
+      _logNativeError(error);
       _emit(_status.copyWith(
         phase: AppUpdatePhase.failed,
         error: _describeUpdateError(error),
@@ -460,6 +474,7 @@ class AppUpdateService {
       final controller = await _desktopController();
       await controller.openFreshInstallDownload();
     } catch (error) {
+      _logNativeError(error);
       _emit(_status.copyWith(
         phase: AppUpdatePhase.failed,
         error: _describeUpdateError(error),
@@ -481,6 +496,8 @@ class AppUpdateService {
         _status.phase != AppUpdatePhase.readyToInstall) {
       return;
     }
+    debugPrint('[Update] installing ${_status.availableVersion} over '
+        '${_status.installedVersion} via ${_mechanism.name}');
     _emit(_status.copyWith(phase: AppUpdatePhase.installing, clearError: true));
     if (_mechanism == UpdateMechanism.snap) {
       try {
@@ -505,6 +522,7 @@ class AppUpdateService {
       final controller = await _desktopController();
       await controller.restartApp();
     } on PlatformException catch (error) {
+      _logNativeError(error);
       // Not a failure: macOS asks the user to approve the privileged install
       // helper the first time it is registered, which is the normal path on a
       // first install rather than something that went wrong. Reporting it as a
@@ -518,6 +536,7 @@ class AppUpdateService {
         error: _describeUpdateError(error),
       ));
     } catch (error) {
+      _logNativeError(error);
       _emit(_status.copyWith(
         phase: AppUpdatePhase.failed,
         error: _describeUpdateError(error),
@@ -543,6 +562,7 @@ class AppUpdateService {
       // stage changed, and the same button is what finishes the job.
       _emit(_status.copyWith(phase: AppUpdatePhase.readyToInstall));
     } catch (error) {
+      _logNativeError(error);
       _emit(_status.copyWith(
         phase: AppUpdatePhase.failed,
         error: _describeUpdateError(error),
@@ -607,8 +627,27 @@ class AppUpdateService {
 
   void _emit(AppUpdateStatus next) {
     if (next == _status) return;
+    _logTransition(_status, next);
     _status = next;
     if (!_controller.isClosed) _controller.add(next);
+  }
+
+  /// The diagnostics log's view of an update: the release found, and every
+  /// error, with the phase it interrupted. The panel's text is gone the moment
+  /// the user moves on; when two Macs refused an update on 2026-10-09 the log
+  /// held nothing about it at all, and the cause had to be dug out of the
+  /// install helper's log and the system log instead.
+  static void _logTransition(AppUpdateStatus from, AppUpdateStatus to) {
+    if (to.phase == AppUpdatePhase.available &&
+        to.availableVersion != from.availableVersion) {
+      final installed = to.installedVersion;
+      debugPrint('[Update] ${to.availableVersion} is available'
+          '${installed == null ? '' : ' (installed $installed)'}');
+    }
+    final error = to.error;
+    if (error != null && error != from.error) {
+      debugPrint('[Update] ${to.phase.name} after ${from.phase.name}: $error');
+    }
   }
 
 

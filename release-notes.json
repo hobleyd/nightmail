@@ -1,30 +1,47 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.39.3",
+  "version": "1.39.4",
   "sections": [
-    {
-      "type": "features",
-      "title": "New features",
-      "items": [
-        {
-          "body": "numbered lists from \"1. \" and *bold*, _italic_, ~struck~ as you type",
-          "title": "compose"
-        }
-      ]
-    },
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "name a running app whose bundle was replaced underneath it",
-          "title": "update"
+          "body": "text typed after *bold* is plain again",
+          "title": "compose"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.39.3",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "numbered lists from \"1. \" and *bold*, _italic_, ~struck~ as you type",
+              "title": "compose"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "name a running app whose bundle was replaced underneath it",
+              "title": "update"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -407,33 +424,6 @@
             {
               "body": "stop a deleted O365 message coming back after a slow outbox drain",
               "title": "sync"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.36.1",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "move New Meeting button beside Forward",
-              "title": "reading-pane"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "keep the notification delegate through sub-windows; fold replayed countdowns",
-              "title": "macos"
             }
           ]
         }

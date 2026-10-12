@@ -1,20 +1,47 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.39.2",
+  "version": "1.39.3",
   "sections": [
+    {
+      "type": "features",
+      "title": "New features",
+      "items": [
+        {
+          "body": "numbered lists from \"1. \" and *bold*, _italic_, ~struck~ as you type",
+          "title": "compose"
+        }
+      ]
+    },
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "a double-click on Reply opens one window, not two",
-          "title": "windows"
+          "body": "name a running app whose bundle was replaced underneath it",
+          "title": "update"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.39.2",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "a double-click on Reply opens one window, not two",
+              "title": "windows"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -407,49 +434,6 @@
             {
               "body": "keep the notification delegate through sub-windows; fold replayed countdowns",
               "title": "macos"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.36.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "Cmd-A / Ctrl-A selects every email in the folder",
-              "title": "list"
-            },
-            {
-              "body": "a Sent row names who the message went to, not the sender",
-              "title": "list"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "a recipient named \"Last, First\" no longer breaks send and drafts",
-              "title": "gmail"
-            },
-            {
-              "body": "a reply or forward carries one prefix, never a stack",
-              "title": "compose"
-            },
-            {
-              "body": "show a rename at once and write it to the folder cache",
-              "title": "folders"
-            },
-            {
-              "body": "show send errors in the form, not under the editor",
-              "title": "compose"
             }
           ]
         }

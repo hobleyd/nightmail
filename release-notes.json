@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.39.4",
+  "version": "1.39.5",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "text typed after *bold* is plain again",
-          "title": "compose"
+          "body": "clear the marker a completed install leaves behind, which refused every later install",
+          "title": "update"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.39.4",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "text typed after *bold* is plain again",
+              "title": "compose"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -407,23 +424,6 @@
             {
               "body": "resolve a pasted list of names against the directory",
               "title": "compose"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.36.2",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "stop a deleted O365 message coming back after a slow outbox drain",
-              "title": "sync"
             }
           ]
         }

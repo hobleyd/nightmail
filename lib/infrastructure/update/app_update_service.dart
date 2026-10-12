@@ -10,6 +10,7 @@ import '../../core/platform/window_utils.dart';
 import '../../core/platform/app_data_directory.dart';
 import 'android_apk_updater.dart';
 import 'app_update_status.dart';
+import 'completed_install_marker.dart';
 import 'release_notes_fetcher.dart';
 import 'snap_updater.dart';
 import 'update_recovery_store.dart';
@@ -263,6 +264,22 @@ class AppUpdateService {
       if (_status.hasActionableUpdate) return;
       unawaited(checkForUpdate());
     });
+  }
+
+  /// See [clearCompletedInstallMarker]: the marker a completed install leaves
+  /// behind would otherwise refuse every later install, and the package's own
+  /// recovery pass — run right after this — can never clear it.
+  Future<void> _clearCompletedInstallMarker(File marker) async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      await clearCompletedInstallMarker(
+        marker: marker,
+        installedVersion: info.version,
+        installedBuildNumber: info.buildNumber,
+      );
+    } catch (error) {
+      debugPrint('[Update] could not inspect the pending-install marker: $error');
+    }
   }
 
   Future<void> _loadInstalledVersion({bool unsupported = false}) async {
@@ -606,6 +623,7 @@ class AppUpdateService {
       '${supportDir.path}${Platform.pathSeparator}'
       'desktop_updater_pending_install.json',
     );
+    await _clearCompletedInstallMarker(recoveryFile);
 
     final controller = DesktopUpdaterController(
       appArchiveUrl: kAppArchiveUrl,

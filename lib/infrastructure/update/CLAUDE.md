@@ -277,6 +277,46 @@ helper's `main.swift` is byte-identical to 3.1.6, so the build phase's patch
 still lands, and 3.2.0's breaking changes are confined to Windows Inno
 installs, which the Windows release does not use (`wholeDirectoryReplace`).
 
+### A Completed Install Leaves a Marker the Package Cannot Clear
+
+"A pending install must be recovered before another install" (2026-10-12,
+installing 1.39.4 over 1.39.3) is not a failed install. It is the *previous*
+install having succeeded: `/Applications` held exactly the version the
+marker named, and every launch since had logged `[Update] failed after
+checking: Completed install stage cleanup failed.`
+
+The chain, from `desktop_updater` 3.2.1's `updater_controller.dart`:
+`recoverPendingInstall` confirms the running version matches the marker
+(`_matchesRecoveredTarget`), then will only clear the marker if
+`_cleanupRecoveredOwnedStage` deletes the stage directory — and
+`deleteOwnedStagingDirectory` re-verifies the stage's recorded inventory,
+all 224 entries including `NightMail.app`, before it will delete anything.
+The install helper has *renamed* that bundle into `/Applications`
+(`renameatx_np` in `MacFileTransaction.swift`), so the stage holds only the
+artifact zip, the release manifest and the provenance file, and the inventory
+can never match again. Every successful macOS install ends in this state:
+`$TMPDIR/desktop_updater_stage_*` held a dozen such leftovers, 41 MB of zip
+each, back to 5 October.
+
+3.1.6 had the same leak but `_writePendingRecoveryMarker` overwrote a stale
+marker; 3.2.1 throws instead, so the first build on it — 1.39.3 — was the
+first that could never update again. Upstream had no issue for it.
+
+Two things now stand between this and a user:
+
+- `completed_install_marker.dart` runs before the package's recovery pass. If
+  the marker's target is the running version and the staged bundle is gone, it
+  deletes the stage directory — only one the package named,
+  `desktop_updater_stage_<nonce>`, a downloaded copy — and the marker, and
+  logs that it did. A stage that still holds its bundle, another version,
+  another platform and a torn marker are all left to the package.
+  `test/infrastructure/update/completed_install_marker_test.dart` pins each.
+- `tool/diagnose_macos_update.sh` names the case under "The staged update",
+  and `--reset` is the manual version of the same cleanup.
+
+The upstream fix is the same idea in `recoverPendingInstall`: a confirmed
+install clears its marker whether or not the stage could be deleted.
+
 ### The service starts at launch, not when Settings opens
 
 `../inkworm` — which this is modelled on — builds its `DesktopUpdaterController`

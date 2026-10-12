@@ -118,7 +118,8 @@ rule "Where the app is, and what it is"
 ls -d /Applications/*.app 2>/dev/null | grep -i nightmail || note "(none listed)"
 ls -d /private/var/folders/*/*/T/AppTranslocation/*/d/NightMail.app 2>/dev/null \
   && bad "the app is translocated" || note "not translocated"
-note "version $(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist" 2>/dev/null)+$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$APP/Contents/Info.plist" 2>/dev/null)"
+INSTALLED_VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist" 2>/dev/null)+$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$APP/Contents/Info.plist" 2>/dev/null)"
+note "version $INSTALLED_VERSION"
 
 rule "The running app"
 # Before committing, the app reserves its restart by spawning its own
@@ -305,9 +306,10 @@ rule "The staged update"
 if [ ! -f "$MARKER" ]; then
   note "no pending install marker; nothing is staged"
 else
-  python3 - "$MARKER" <<'PY'
+  python3 - "$MARKER" "$INSTALLED_VERSION" <<'PY'
 import sys, json, os, hashlib
 marker = json.load(open(sys.argv[1]))
+installed = sys.argv[2] if len(sys.argv) > 2 else ""
 stage_app = marker.get("stagingPath", "")
 root = os.path.dirname(stage_app)
 print(f"        staged: {stage_app}")
@@ -338,6 +340,19 @@ else:
     print(f"  FAIL  stage inventory differs: {len(missing)} missing, {len(extra)} unexpected")
     for p in (missing[:5] + ["..."] if len(missing) > 5 else missing): print(f"          - {p}")
     for p in (extra[:5] + ["..."] if len(extra) > 5 else extra): print(f"          + {p}")
+# The case every successful install ends in (2026-10-12): the helper renamed
+# the bundle into /Applications, so the stage is only its three dot files and
+# can never match the inventory again. The package confirms the installed
+# version, insists on deleting the stage before it clears the marker, and
+# fails — "Completed install stage cleanup failed." on every launch — and since
+# 3.2.1 refuses the next install while the marker exists.
+target = f"{marker.get('updateVersion')}+{marker.get('updateBuildNumber')}"
+if os.path.basename(stage_app) in missing and installed == target:
+    print(f"  FAIL  the install COMPLETED ({installed} is what is running) but its marker is stuck:")
+    print(f"        the helper consumed the staged bundle, so the stage can never match its")
+    print(f"        inventory again and desktop_updater refuses every later install.")
+    print(f"        --reset clears it; NightMail builds after 1.39.4 clear it at launch")
+    print(f"        (completed_install_marker.dart). Not a signing or helper problem.")
 man = os.path.join(root, ".desktop_updater_release_manifest.json")
 d = json.load(open(man))
 print(f"        manifest appName={d['appName']!r} version={d['version']} build={d.get('buildNumber')}")

@@ -69,7 +69,7 @@ would re-break.
   place
 - [`docs/claude/webviews.md`](docs/claude/webviews.md) — reading-pane and
   compose-editor webviews: CSP, remote-image blocking, linkification, focus
-  handling, HTML sanitisation
+  handling, HTML sanitisation, format-as-you-type (`- `, `1. `, `*bold*`)
 - [`docs/claude/body-links.md`](docs/claude/body-links.md) — `mailto:` and
   cloud-document link handling in a message body
 - [`docs/claude/imap.md`](docs/claude/imap.md) — serialising IMAP commands

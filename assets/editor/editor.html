@@ -1396,10 +1396,224 @@ editor.addEventListener('paste', function(e) {
   scheduleChange();
 });
 
-editor.addEventListener('input', function() {
+editor.addEventListener('input', function(e) {
   _checkOrdinalSuffix();
+  _checkInlineMarker(e);
+  _settleUndoneMarker(e);
   scheduleChange();
 });
+
+// --- Formatting as you type ------------------------------------------------
+// Two Markdown-shaped habits a mail composer inherits from Word, Outlook,
+// Docs and every chat client: a list marker at the start of a line becomes
+// the list when the space after it is typed, and a word wrapped in markers
+// takes the style the marker names when the closing marker is typed.
+//
+//   "- "        bullet list          "1. " / "1) "   numbered list
+//   *bold*  **bold**     _italic_  __italic__     ~struck~  ~~struck~~
+//
+// The list triggers run on the keydown of the space, which is then swallowed:
+// the marker is deleted and the block becomes a list item, so the space never
+// had anywhere to go. The inline markers run from the `input` event *after*
+// the engine has inserted the closing marker, not from keydown. That makes
+// the conversion a separate undo step from the typing, so Cmd+Z hands back
+// the literal `*bold*` the user typed, closing marker included, rather than
+// a `*bold` with its last keystroke lost — and `input` is the one event a
+// soft keyboard reliably sends with the character in it.
+const LIST_TRIGGERS = {
+  '-': 'insertUnorderedList',
+  '1.': 'insertOrderedList',
+  '1)': 'insertOrderedList',
+};
+const INLINE_MARKERS = {'*': 'bold', '_': 'italic', '~': 'strikeThrough'};
+// The element each command wraps the span in — the same one the engine's own
+// execCommand produces, so a span formatted by marker and one formatted by
+// the toolbar are indistinguishable afterwards.
+const INLINE_MARKER_TAGS = {bold: 'b', italic: 'i', strikeThrough: 'strike'};
+// What a marker-formatted span may contain besides text. The span's markup is
+// serialised and handed to insertHTML, which is a re-parse, so this must never
+// admit the namespace-switching trio (svg, math, noscript) the sanitiser drops
+// for the same reason; a <br>, an image or a block boundary simply ends the
+// span's reach, keeping a conversion to one line of inline text.
+const INLINE_MARKER_CONTENT = new Set([
+  'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'DEL', 'A', 'SPAN', 'FONT',
+  'CODE', 'SUB', 'SUP', 'MARK', 'SMALL', 'BIG',
+]);
+
+// The nearest P/DIV/LI/BLOCKQUOTE around [node], or the editor itself when
+// the text sits directly in it (WebKit leaves the first line that way until
+// Enter is pressed).
+function _containingBlock(node) {
+  let block = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+  while (block && block !== editor &&
+         !['P', 'DIV', 'LI', 'BLOCKQUOTE'].includes(block.tagName)) {
+    block = block.parentElement;
+  }
+  return (block && block !== editor) ? block : editor;
+}
+
+// The text of [block] up to the caret, with every element that is not inline
+// formatting — a <br>, an image, a nested block — standing in as '\n', plus
+// the text node each stretch came from so an index in the string can be
+// turned back into a DOM position. Returns null if the caret node is not in
+// the block.
+function _textBeforeCaret(block, caretNode, caretOffset) {
+  const acc = {text: '', pieces: []};
+  const walk = function(parent) {
+    for (let n = parent.firstChild; n; n = n.nextSibling) {
+      if (n.nodeType === Node.TEXT_NODE) {
+        const atCaret = n === caretNode;
+        const s = atCaret ? n.textContent.slice(0, caretOffset) : n.textContent;
+        acc.pieces.push({node: n, start: acc.text.length, length: s.length});
+        acc.text += s;
+        if (atCaret) return true;
+      } else if (n.nodeType === Node.ELEMENT_NODE) {
+        const inline = INLINE_MARKER_CONTENT.has(n.tagName);
+        if (!inline) acc.text += '\n';
+        if (walk(n)) return true;
+        if (!inline) acc.text += '\n';
+      }
+    }
+    return false;
+  };
+  return walk(block) ? acc : null;
+}
+
+// The DOM position of index [idx] in a _textBeforeCaret() result. A boundary
+// between two text nodes maps to the start of the later one.
+function _positionAt(scan, idx) {
+  for (let i = scan.pieces.length - 1; i >= 0; i--) {
+    const p = scan.pieces[i];
+    if (idx >= p.start && idx <= p.start + p.length) {
+      return {node: p.node, offset: idx - p.start};
+    }
+  }
+  return null;
+}
+
+// Where in [text] the opener for a span closed at its end starts, or -1. A
+// marker opens a span only where a word starts — at the start of the line,
+// after whitespace or after an opening bracket or quote — and only when
+// something other than whitespace or another marker follows it. That is what
+// keeps `my_var_name`, `5*3*2`, `*.txt and *.doc` and a lone footnote `*`
+// literal, and it is the rule Word applies. The opener nearest the caret
+// wins, and the span it opens stays on one line.
+function _findMarkerOpener(text, marker, len) {
+  const opener = marker.repeat(len);
+  let i = text.lastIndexOf(opener);
+  while (i >= 0) {
+    const before = i === 0 ? '' : text[i - 1];
+    const after = text[i + len];
+    const startsWord = before === '' || /[\s(\[{"'\u200B]/.test(before);
+    const opensSpan = after !== undefined && !/\s/.test(after) && after !== marker;
+    if (startsWord && opensSpan) {
+      return text.indexOf('\n', i) === -1 ? i : -1;
+    }
+    i = i === 0 ? -1 : text.lastIndexOf(opener, i - 1);
+  }
+  return -1;
+}
+
+// The literal text the last conversion replaced, so an undo of it can be
+// recognised — see _settleUndoneMarker.
+let lastMarkerSpan = null;
+
+// Runs on every input event; converts `*bold*` and friends the moment the
+// closing marker lands. Only a typed character qualifies: insertHTML and the
+// other commands this file issues report `insertText` with a null `data` in
+// WebKit, which is what keeps the conversion from re-entering itself.
+function _checkInlineMarker(e) {
+  if (!e || e.inputType !== 'insertText' || e.isComposing) return;
+  if (typeof e.data !== 'string' || e.data.length === 0) return;
+  const marker = e.data[e.data.length - 1];
+  const cmd = INLINE_MARKERS[marker];
+  if (!cmd) return;
+
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  const range = sel.getRangeAt(0);
+  if (!range.collapsed) return;
+  const node = range.startContainer;
+  const offset = range.startOffset;
+  if (node.nodeType !== Node.TEXT_NODE || !editor.contains(node)) return;
+
+  const scan = _textBeforeCaret(_containingBlock(node), node, offset);
+  if (!scan) return;
+  const text = scan.text;
+  if (text[text.length - 1] !== marker) return;
+
+  // `**bold**` closes with two; `*bold*` with one. A closer must end a word,
+  // so whitespace or a third marker in front of it means this is not one.
+  const len = text.length >= 2 && text[text.length - 2] === marker ? 2 : 1;
+  const body = text.slice(0, -len);
+  const last = body[body.length - 1];
+  if (last === undefined || /\s/.test(last) || last === marker) return;
+  const start = _findMarkerOpener(body, marker, len);
+  if (start < 0) return;
+
+  const spanStart = _positionAt(scan, start);
+  const innerStart = _positionAt(scan, start + len);
+  const innerEnd = _positionAt(scan, body.length);
+  if (!spanStart || !innerStart || !innerEnd) return;
+
+  const inner = document.createRange();
+  inner.setStart(innerStart.node, innerStart.offset);
+  inner.setEnd(innerEnd.node, innerEnd.offset);
+  const clone = inner.cloneContents();
+  const walker = document.createTreeWalker(clone, NodeFilter.SHOW_ELEMENT);
+  let el;
+  while ((el = walker.nextNode()) !== null) {
+    if (!INLINE_MARKER_CONTENT.has(el.tagName)) return;
+  }
+  const holder = document.createElement('div');
+  holder.appendChild(clone);
+  const tag = INLINE_MARKER_TAGS[cmd];
+  const html = '<' + tag + '>' + holder.innerHTML + '</' + tag + '>';
+
+  // Replace the markers and everything between them in one command, so one
+  // undo step is the whole conversion. An engine can refuse the command —
+  // Blink does while another execCommand is still running — and the span
+  // would then be left selected for the next keystroke to delete, so a
+  // refusal puts the caret back where it was and gives up.
+  const span = document.createRange();
+  span.setStart(spanStart.node, spanStart.offset);
+  span.setEnd(node, offset);
+  sel.removeAllRanges();
+  sel.addRange(span);
+  if (!document.execCommand('insertHTML', false, html)) {
+    sel.removeAllRanges();
+    sel.addRange(range);
+    return;
+  }
+
+  // Measured in WKWebView: the caret lands *inside* the new element at its
+  // end, so the next character typed would carry the style into the following
+  // word. Toggling the command on the collapsed caret is exactly what the
+  // toolbar does to change what typing will do, and the engine then puts the
+  // next character after the element as plain text. (The ordinal-suffix path
+  // above parks a zero-width space after its <sup> for the same job; that
+  // leaves an invisible character for Backspace and the arrow keys to stumble
+  // over, which a toggle does not.)
+  if (document.queryCommandState(cmd)) document.execCommand(cmd, false, null);
+  lastMarkerSpan = text.slice(start);
+  scheduleToolbarUpdate();
+  scheduleChange();
+}
+
+// Undoing a conversion gives back the literal `*bold*`, but both engines also
+// give back the selection the replacement ran over, so the next keystroke
+// would wipe the span. Collapsing to its end puts the caret where the user
+// left it: after the closing marker, free to carry on typing (and typing a
+// marker there does not convert — the closer has to be what was just typed).
+function _settleUndoneMarker(e) {
+  if (!e || e.inputType !== 'historyUndo' || !lastMarkerSpan) return;
+  const sel = window.getSelection();
+  const span = lastMarkerSpan;
+  lastMarkerSpan = null;
+  if (sel && sel.rangeCount > 0 && !sel.isCollapsed && sel.toString() === span) {
+    sel.collapseToEnd();
+  }
+}
 
 editor.addEventListener('keydown', function(e) {
   if (e.key === 'Tab') {
@@ -1430,18 +1644,13 @@ editor.addEventListener('keydown', function(e) {
     const offset = range.startOffset;
     if (node.nodeType !== Node.TEXT_NODE || offset < 1) return;
 
-    // Only trigger when the text before the cursor is exactly '-'
-    if (node.textContent.slice(0, offset) !== '-') return;
-
-    // Find the containing block (P, DIV, LI, BLOCKQUOTE, or the editor itself)
-    let block = node.parentElement;
-    while (block && block !== editor &&
-           !['P','DIV','LI','BLOCKQUOTE'].includes(block.tagName)) {
-      block = block.parentElement;
-    }
-    const searchRoot = (block && block !== editor) ? block : editor;
+    // Only trigger when the text before the cursor is exactly a list marker
+    const typed = node.textContent.slice(0, offset);
+    const listCmd = LIST_TRIGGERS[typed];
+    if (!listCmd) return;
 
     // Confirm nothing precedes this text node in the block
+    const searchRoot = _containingBlock(node);
     let textBeforeNode = '';
     const walker = document.createTreeWalker(searchRoot, NodeFilter.SHOW_TEXT);
     let t;
@@ -1452,15 +1661,15 @@ editor.addEventListener('keydown', function(e) {
     if (textBeforeNode !== '') return;
 
     e.preventDefault();
-    // Select and delete the '-' character
+    // Select and delete the marker
     const delRange = document.createRange();
     delRange.setStart(node, 0);
-    delRange.setEnd(node, 1);
+    delRange.setEnd(node, typed.length);
     sel.removeAllRanges();
     sel.addRange(delRange);
     document.execCommand('delete', false, null);
-    // Convert the current block into a bullet list item
-    document.execCommand('insertUnorderedList', false, null);
+    // Convert the current block into a list item
+    document.execCommand(listCmd, false, null);
     scheduleChange();
   }
 });

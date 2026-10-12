@@ -289,6 +289,91 @@ it. Measured: `<ul><li>one</li><li>two</li></ul>` → `<ul><li>one</li></ul>two`
 `test/presentation/widgets/editor_keyboard_shortcuts_test.dart` pins the
 binding table, since the behaviour itself only exists inside a real engine.
 
+## Formatting As You Type
+
+Two Markdown-shaped habits a mail composer inherits from Word, Outlook, Docs
+and the chat clients, both under "Formatting as you type" in
+`assets/editor/editor.html`:
+
+- **A list marker and a space start a list.** `- ` has done this for a while;
+  `1. ` and `1) ` start a numbered list the same way. The marker has to be the
+  whole of the line so far, and only `1` counts: Word and Docs accept any
+  number and turn `2026. ` at the start of a line into a list counting from
+  2026, and once a list exists Enter continues it, so nobody types `2. ` by
+  hand. The triggers are the `LIST_TRIGGERS` table; the handler names none.
+- **A word wrapped in markers takes the style when the closing marker is
+  typed.** `*bold*` or `**bold**`, `_italic_`, `~struck~`. Nesting works
+  (`*a _b_ c*`), brackets and quotes around the span are fine, and the result
+  is the same `<b>`/`<i>`/`<strike>` the toolbar's own command produces, so
+  nothing downstream can tell the two apart.
+
+**The inline conversion runs from the `input` event, after the engine has
+inserted the closing marker — not from keydown.** The conversion is then its
+own undo step: Cmd+Z hands back the literal `*bold*` the user typed, closing
+marker included, where swallowing the keydown would have lost that keystroke;
+and because the closer has to be the character just typed, the undone text
+does not convert again. `input` also carries the character in `e.data`, where
+an Android soft keyboard's keydown carries `Unidentified` — though a composing
+keyboard is *unverified*: a word it commits as one `insertText` ending in the
+marker converts, one committed with its trailing space does not. (The list triggers
+stay on the space keydown: the marker is deleted and the block becomes an
+item, so the space has nowhere to land and is swallowed.)
+
+Measured in a bare WKWebView over the asset and in Chrome with real
+keystrokes, and the two engines agree on all of it:
+
+- **After `insertHTML('<b>bold</b>')` the caret is inside the new element at
+  its end**, `queryCommandState('bold')` is true, and the next character
+  typed would be bold. Toggling the command on that collapsed caret — exactly
+  what the toolbar does to change what typing will do — makes both engines
+  put the next character after the element as plain text: `<b>bold</b> next`.
+  The ordinal-suffix path parks a zero-width space after its `<sup>` for the
+  same job; that leaves an invisible character for Backspace and the arrow
+  keys to stumble over, so it was not copied.
+- **`insertHTML` fires its own `input` event with `inputType: 'insertText'`
+  and `data: null`** in WebKit. The `data` check is therefore the re-entrancy
+  guard; a change that matches on anything else needs its own.
+- **Blink refuses `execCommand` while another `execCommand` is running** — it
+  returns false and does nothing. Real typing never goes through
+  `execCommand`, so a keystroke never hits this, but a harness that types with
+  `execCommand('insertText')` does, and by then the span is selected: left
+  that way, the next character deletes the user's text. A refusal puts the
+  caret back and gives up, which is what makes the failure harmless.
+- **Undo gives back the selection the replacement ran over** — `*bold*`
+  selected, so the next keystroke would wipe it. `_settleUndoneMarker`
+  recognises the undo of the last conversion (`inputType: 'historyUndo'` with
+  that literal selected) and collapses the caret to its end.
+
+What keeps ordinary text literal is all in `_findMarkerOpener`: a marker opens
+a span only where a word starts (start of line, whitespace, or an opening
+bracket or quote before it) and only with something other than whitespace or
+another marker after it; it closes one only where a word ends; the opener
+nearest the caret wins; and the span stays on one line — a `<br>`, an image
+or a block boundary ends the search, and the span may hold only inline
+formatting (`INLINE_MARKER_CONTENT`). That is what leaves `my_var_name`,
+`5*3*2`, `*.txt and *.doc`, `a * b * c` and `rated ****` as typed. It is the
+rule Word applies, and like Word it will still bold the stretch between a
+footnote `*` after one word and another `*` after a later one; Cmd+Z is the
+answer there.
+
+`INLINE_MARKER_CONTENT` is also a security boundary. The span's markup is
+serialised and handed to `insertHTML`, which is a re-parse, so the
+namespace-switching trio (`svg`, `math`, `noscript`) that the sanitiser
+section below drops for exactly that reason must never be let into it.
+
+Left out on purpose: `* ` as a bullet trigger (Word and Markdown both do it;
+one table entry if wanted), backtick for monospace (no toolbar command to
+mirror, so nothing to switch the style off with afterwards), and list numbers
+other than `1`.
+
+**The bare WKWebView harness cannot measure undo.** Every editing command run
+from one `evaluateJavaScript` lands in one NSUndoManager group, even across
+`setTimeout` turns, so `execCommand('undo')` there reverts the page to its
+load. Chrome with real keystrokes is where the undo story was checked.
+
+`test/presentation/widgets/editor_auto_format_test.dart` pins the trigger
+tables, the `input`-event routing and the guards.
+
 ## The Quote Wrapper Is Contained, Never `content-visibility: auto`
 
 `ComposeBodyBuilder` wraps the quoted original in a `<blockquote>` (reply) or

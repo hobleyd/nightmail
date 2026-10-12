@@ -324,12 +324,14 @@ keystrokes, and the two engines agree on all of it:
 
 - **After `insertHTML('<b>bold</b>')` the caret is inside the new element at
   its end**, `queryCommandState('bold')` is true, and the next character
-  typed would be bold. Toggling the command on that collapsed caret — exactly
-  what the toolbar does to change what typing will do — makes both engines
-  put the next character after the element as plain text: `<b>bold</b> next`.
-  The ordinal-suffix path parks a zero-width space after its `<sup>` for the
-  same job; that leaves an invisible character for Backspace and the arrow
-  keys to stumble over, so it was not copied.
+  typed is bold. Toggling the command on that collapsed caret — what the
+  toolbar does to change what typing will do — fixes that for an
+  `execCommand('insertText')` in both engines, and shipped that way; with a
+  **real keystroke in WKWebView the toggle is gone before the next character
+  arrives**, even in a bare contenteditable with no page script, so the text
+  after `*bold*` stayed bold in the app. The conversion therefore ends with a
+  zero-width space after the element, the anchor the ordinal-suffix path
+  already uses, and the next character lands after it as plain text.
 - **`insertHTML` fires its own `input` event with `inputType: 'insertText'`
   and `data: null`** in WebKit. The `data` check is therefore the re-entrancy
   guard; a change that matches on anything else needs its own.
@@ -356,18 +358,35 @@ rule Word applies, and like Word it will still bold the stretch between a
 footnote `*` after one word and another `*` after a later one; Cmd+Z is the
 answer there.
 
+**The anchor costs a keystroke unless something steps over it.** Measured
+with real keystrokes: Backspace straight after a conversion removed only the
+zero-width space, so nothing visible happened, and an arrow key needed two
+presses to pass it. `_stepOverZws` runs first on every keydown: an arrow moves
+the caret across the anchor and then the engine moves it as normal, Backspace
+and Delete remove the anchor and then the engine deletes as normal. The
+removal is an `execCommand('delete')`, never a direct DOM edit: the anchor
+was inserted by the conversion's `ReplaceSelectionCommand`, which may have
+merged it into a neighbouring text node, and undoing that command later would
+delete one character at the recorded offset — the user's, if the anchor had
+been taken out from under it. Adjacency stops at a `<br>` or a block
+boundary, so Left at the start of a line still lands at the end of the one
+above. The ordinal `<sup>` gets the same treatment for free.
+
 `INLINE_MARKER_CONTENT` is also a security boundary. The span's markup is
 serialised and handed to `insertHTML`, which is a re-parse, so the
 namespace-switching trio (`svg`, `math`, `noscript`) that the sanitiser
 section below drops for exactly that reason must never be let into it.
 
 Left out on purpose: `* ` as a bullet trigger (Word and Markdown both do it;
-one table entry if wanted), backtick for monospace (no toolbar command to
-mirror, so nothing to switch the style off with afterwards), and list numbers
-other than `1`.
+one table entry if wanted), backtick for monospace (no toolbar command or
+element of the editor's own to mirror), and list numbers other than `1`.
 
-**The bare WKWebView harness cannot measure undo.** Every editing command run
-from one `evaluateJavaScript` lands in one NSUndoManager group, even across
+**Drive the harness with real key events, not `execCommand('insertText')`.**
+The two differ in exactly the way that matters here — the typing-style
+toggle above survived one and not the other — so a WKWebView harness has to
+synthesise `NSEvent` key events and send them to the view's `keyDown`. It
+also cannot measure undo: every editing command run from one
+`evaluateJavaScript` lands in one NSUndoManager group, even across
 `setTimeout` turns, so `execCommand('undo')` there reverts the page to its
 load. Chrome with real keystrokes is where the undo story was checked.
 

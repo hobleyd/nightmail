@@ -1568,7 +1568,15 @@ function _checkInlineMarker(e) {
   const holder = document.createElement('div');
   holder.appendChild(clone);
   const tag = INLINE_MARKER_TAGS[cmd];
-  const html = '<' + tag + '>' + holder.innerHTML + '</' + tag + '>';
+  // The zero-width space after the element is what the next character typed
+  // lands after, so it is plain. Measured in WKWebView with real keystrokes:
+  // without it the caret sits inside the new element at its end and WebKit
+  // carries the style into the next word — and toggling the command on the
+  // collapsed caret, which works for an execCommand('insertText'), is
+  // discarded by WebKit on the real key path before the next character
+  // arrives, even in a bare contenteditable. Same trick, same reason, as the
+  // ordinal-suffix path above; _cleanHtml strips it from the output.
+  const html = '<' + tag + '>' + holder.innerHTML + '</' + tag + '>\u200B';
 
   // Replace the markers and everything between them in one command, so one
   // undo step is the whole conversion. An engine can refuse the command —
@@ -1586,15 +1594,6 @@ function _checkInlineMarker(e) {
     return;
   }
 
-  // Measured in WKWebView: the caret lands *inside* the new element at its
-  // end, so the next character typed would carry the style into the following
-  // word. Toggling the command on the collapsed caret is exactly what the
-  // toolbar does to change what typing will do, and the engine then puts the
-  // next character after the element as plain text. (The ordinal-suffix path
-  // above parks a zero-width space after its <sup> for the same job; that
-  // leaves an invisible character for Backspace and the arrow keys to stumble
-  // over, which a toggle does not.)
-  if (document.queryCommandState(cmd)) document.execCommand(cmd, false, null);
   lastMarkerSpan = text.slice(start);
   scheduleToolbarUpdate();
   scheduleChange();
@@ -1615,7 +1614,76 @@ function _settleUndoneMarker(e) {
   }
 }
 
+// --- Zero-width anchors ----------------------------------------------------
+// Two conversions above leave a zero-width space after the element they made
+// (the ordinal <sup>, a marker-formatted span): it is what the next character
+// typed lands after, so that character is plain. The engine treats it as a
+// character, though — measured with real keystrokes, Backspace straight after
+// a conversion deleted nothing visible, and an arrow key needed two presses to
+// pass it. The keydown handler below steps over it: an arrow moves the caret
+// across it first and then moves as normal; Backspace and Delete remove it
+// first — as an edit command, so undo stays consistent — and then delete as
+// normal. The output never carries it: _cleanHtml strips it.
+const ZWS = '\u200B';
+
+// The text node and offset of a zero-width space next to the collapsed caret
+// in the direction given, looking through inline formatting but never past a
+// <br> or a block boundary; null if there is none.
+function _zwsNextTo(range, backward) {
+  if (!range.collapsed) return null;
+  const node = range.startContainer;
+  const offset = range.startOffset;
+  if (node.nodeType !== Node.TEXT_NODE) return null;
+  const text = node.textContent;
+  if (backward && offset > 0) {
+    return text[offset - 1] === ZWS ? {node: node, offset: offset - 1} : null;
+  }
+  if (!backward && offset < text.length) {
+    return text[offset] === ZWS ? {node: node, offset: offset} : null;
+  }
+  const walker = document.createTreeWalker(
+      _containingBlock(node), NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  walker.currentNode = node;
+  let n;
+  while ((n = backward ? walker.previousNode() : walker.nextNode()) !== null) {
+    if (n.nodeType === Node.ELEMENT_NODE) {
+      if (!INLINE_MARKER_CONTENT.has(n.tagName)) return null;
+      continue;
+    }
+    if (n.textContent.length === 0) continue;
+    const i = backward ? n.textContent.length - 1 : 0;
+    return n.textContent[i] === ZWS ? {node: n, offset: i} : null;
+  }
+  return null;
+}
+
+function _stepOverZws(e) {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const arrow = e.key === 'ArrowLeft' || e.key === 'ArrowRight';
+  const erase = e.key === 'Backspace' || e.key === 'Delete';
+  if (!(arrow || erase) || (arrow && e.shiftKey)) return;
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  const range = sel.getRangeAt(0);
+  if (!editor.contains(range.startContainer)) return;
+  const backward = e.key === 'ArrowLeft' || e.key === 'Backspace';
+  const z = _zwsNextTo(range, backward);
+  if (!z) return;
+  if (arrow) {
+    sel.collapse(z.node, backward ? z.offset : z.offset + 1);
+    return;
+  }
+  const r = document.createRange();
+  r.setStart(z.node, z.offset);
+  r.setEnd(z.node, z.offset + 1);
+  sel.removeAllRanges();
+  sel.addRange(r);
+  document.execCommand('delete', false, null);
+}
+
 editor.addEventListener('keydown', function(e) {
+  _stepOverZws(e);
+
   if (e.key === 'Tab') {
     // Cmd/Ctrl/Alt+Tab belong to the window manager; only a bare Tab is ours.
     if (e.metaKey || e.ctrlKey || e.altKey) return;

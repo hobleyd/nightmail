@@ -95,14 +95,35 @@ void main() {
           contains('sel.addRange(range);'));
     });
 
-    test('the style is switched off again after the span', () {
-      // The caret lands inside the new element, so without this the next
-      // word typed would carry the style too.
+    test('the span is followed by a zero-width space the next character '
+        'lands after', () {
+      // Without it the caret lands inside the new element and WebKit carries
+      // the style into the next word; toggling the style off on the caret
+      // does not survive a real keystroke in WKWebView. Same anchor as the
+      // ordinal-suffix path, and the output strips it.
       final body = functionBody('_checkInlineMarker');
-      expect(
-          body,
-          contains('if (document.queryCommandState(cmd)) '
-              'document.execCommand(cmd, false, null);'));
+      expect(body, contains("'</' + tag + '>\\u200B'"));
+      expect(body, isNot(contains('document.execCommand(cmd, false, null)')),
+          reason: 'a typing-style toggle is discarded by WebKit before the '
+              'next real keystroke arrives');
+      expect(functionBody('_cleanHtml'), contains('​'));
+    });
+
+    test('Backspace, Delete and the arrow keys step over the anchor', () {
+      // The engine treats the zero-width space as a character: measured with
+      // real keystrokes, Backspace straight after a conversion deleted
+      // nothing visible and an arrow key needed two presses to pass it.
+      expect(editor, contains('_stepOverZws(e);'));
+      final body = functionBody('_stepOverZws');
+      expect(body, contains("e.key === 'ArrowLeft' || e.key === 'ArrowRight'"));
+      expect(body, contains("e.key === 'Backspace' || e.key === 'Delete'"));
+      expect(body, contains("document.execCommand('delete', false, null);"),
+          reason: 'the anchor is removed as an edit command so undo stays '
+              'consistent, never by editing the DOM directly');
+      expect(functionBody('_zwsNextTo'),
+          contains('if (!INLINE_MARKER_CONTENT.has(n.tagName)) return null;'),
+          reason: 'an anchor across a <br> or a block boundary is not '
+              'adjacent');
     });
 
     test('a marker only opens a span where a word starts', () {

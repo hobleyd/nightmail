@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../../data/datasources/local/email_local_datasource.dart';
 import '../../data/datasources/remote/email_remote_datasource.dart';
 import '../../domain/entities/email.dart';
@@ -19,6 +21,12 @@ import '../../domain/entities/email.dart';
 /// images and attachment metadata, not attachment payloads); regular file
 /// attachments still download on demand when opened. That keeps the prefetch
 /// "body + inline images" rather than a full offline mirror of every payload.
+///
+/// Who calls it: `MailPollerCubit`, with the page each sync wrote (the delta
+/// branch, a bootstrap's window, a count-change re-page, a changed watched
+/// folder), and `EmailListBloc`, with the unread rows of each folder page it
+/// lists. Every batch logs one `[BodyPrefetch]` line to the diagnostics log,
+/// so "it downloaded on click" can be checked against what was warmed.
 class BodyPrefetchService {
   BodyPrefetchService({required EmailLocalDatasource localDatasource})
       : _local = localDatasource;
@@ -32,6 +40,10 @@ class BodyPrefetchService {
 
   /// Upper bound on messages fetched per batch, so a large sync can't turn
   /// into a long serial run of round-trips that starves the poll loop.
+  ///
+  /// On Gmail each fetch is a `messages.get` at 20 quota units, so a full
+  /// batch is 400 of the account's 6,000 a minute — see
+  /// `docs/claude/gmail-quota.md` before raising it.
   static const _maxPerBatch = 20;
 
   /// One frame, yielded to between messages so the batch never runs as one
@@ -61,6 +73,14 @@ class BodyPrefetchService {
   /// the message may be listed in several, and the upgrade is addressed to the
   /// message alone — handing a folder down here is what used to re-file the row
   /// and empty another folder's cache of it.
+  ///
+  /// The batch is taken **unread first, newest first**, not in list order. The
+  /// cap means a page can carry more thin rows than one batch fetches, and the
+  /// order a page arrives in is the provider's (a Graph delta is not sorted by
+  /// date at all), so the newest unread message — the one the user is about
+  /// to click — used to be able to sit behind twenty read ones and miss the
+  /// batch. It is also the first fetch to start, which is what closes the
+  /// window between the list repainting a new arrival and its body landing.
   Future<void> prefetchBodies({
     required String accountId,
     required EmailRemoteDatasource datasource,
@@ -68,10 +88,16 @@ class BodyPrefetchService {
   }) async {
     if (_inFlight.contains(accountId)) return;
 
-    final candidates =
-        emails.where((e) => e.body.isEmpty).take(_maxPerBatch).toList();
+    final candidates = emails.where((e) => e.body.isEmpty).toList()
+      ..sort(_unreadThenNewest);
+    if (candidates.length > _maxPerBatch) {
+      candidates.length = _maxPerBatch;
+    }
     if (candidates.isEmpty) return;
 
+    final started = DateTime.now();
+    var fetched = 0;
+    var failed = 0;
     _inFlight.add(accountId);
     try {
       for (final candidate in candidates) {
@@ -101,8 +127,10 @@ class BodyPrefetchService {
             accountId: accountId,
             email: full,
           );
+          fetched++;
         } catch (_) {
           // Best-effort: leave this one to load lazily on tap.
+          failed++;
         }
         // Outside the catch so a failed fetch still yields, but after the
         // `continue`s above, which skip it — those did no parsing to yield for.
@@ -110,6 +138,17 @@ class BodyPrefetchService {
       }
     } finally {
       _inFlight.remove(accountId);
+      final skipped = candidates.length - fetched - failed;
+      debugPrint('[BodyPrefetch] $accountId: warmed $fetched of '
+          '${candidates.length} (${emails.length} on the page, '
+          '$skipped already warm or gone, $failed failed) in '
+          '${DateTime.now().difference(started).inMilliseconds} ms');
     }
+  }
+
+  /// Unread before read; within each, newest first.
+  static int _unreadThenNewest(Email a, Email b) {
+    if (a.isRead != b.isRead) return a.isRead ? 1 : -1;
+    return b.receivedDateTime.compareTo(a.receivedDateTime);
   }
 }

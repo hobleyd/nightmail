@@ -15,6 +15,7 @@ EmailModel _email(
   String body = '',
   String folderId = 'INBOX',
   bool isRead = false,
+  DateTime? receivedDateTime,
 }) =>
     EmailModel(
       id: id,
@@ -26,7 +27,7 @@ EmailModel _email(
       body: body,
       bodyType: EmailBodyType.text,
       isRead: isRead,
-      receivedDateTime: DateTime(2026, 6, 1),
+      receivedDateTime: receivedDateTime ?? DateTime(2026, 6, 1),
       importance: EmailImportance.normal,
       parentFolderId: folderId,
     );
@@ -233,6 +234,50 @@ void main() {
     gate.complete(_email('m1', body: 'DONE'));
     await first;
     expect(local.cached['m1']!.body, 'DONE');
+  });
+
+  // The page arrives in the provider's order (a Graph delta is not sorted by
+  // date at all), and the cap meant the newest unread message — the one about
+  // to be clicked — could sit behind twenty read ones and miss the batch.
+  test('fetches unread before read, newest first within each', () async {
+    final rows = [
+      _email('read-old', isRead: true, receivedDateTime: DateTime(2026, 1, 1)),
+      _email('unread-old',
+          isRead: false, receivedDateTime: DateTime(2026, 1, 2)),
+      _email('read-new', isRead: true, receivedDateTime: DateTime(2026, 1, 9)),
+      _email('unread-new',
+          isRead: false, receivedDateTime: DateTime(2026, 1, 8)),
+    ];
+    for (final row in rows) {
+      local.cached[row.id] = row;
+    }
+
+    await run(rows);
+
+    expect(remote.getEmailCalls,
+        ['unread-new', 'unread-old', 'read-new', 'read-old']);
+  });
+
+  test('the cap keeps the unread rows, wherever the page lists them',
+      () async {
+    final candidates = <Email>[];
+    for (var i = 0; i < 25; i++) {
+      final id = 'read$i';
+      local.cached[id] = _email(id, isRead: true);
+      candidates.add(_email(id, isRead: true));
+    }
+    // Listed last, as a delta page might.
+    for (var i = 0; i < 3; i++) {
+      final id = 'unread$i';
+      local.cached[id] = _email(id, isRead: false);
+      candidates.add(_email(id, isRead: false));
+    }
+
+    await run(candidates);
+
+    expect(remote.getEmailCalls, hasLength(20));
+    expect(remote.getEmailCalls.take(3),
+        unorderedEquals(['unread0', 'unread1', 'unread2']));
   });
 }
 

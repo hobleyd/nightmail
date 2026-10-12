@@ -3145,7 +3145,7 @@ class GraphApiDatasourceImpl
       throw _mapDioException(e);
     }
 
-    throw const ServerException(
+    throw const DeltaResyncRequiredException(
         message: 'Delta query completed without returning a delta link');
   }
 

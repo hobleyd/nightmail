@@ -1829,7 +1829,7 @@ class GmailDatasourceImpl
               deltaLink;
 
       if (changes.upsertedIds.length > _historyUpsertBudget) {
-        throw ServerException(
+        throw DeltaResyncRequiredException(
           message: '${changes.upsertedIds.length} messages changed since the '
               'last sync — re-bootstrapping instead of fetching them all',
         );
@@ -1859,10 +1859,11 @@ class GmailDatasourceImpl
   Future<String> _currentHistoryId() async {
     final historyId = (await _profile())['historyId']?.toString();
     if (historyId == null || historyId.isEmpty) {
-      // Without a cursor there is no incremental sync at all. No status code,
-      // so the poller treats it as fatal and tries a fresh bootstrap rather
-      // than counting it towards a streak against a token it never got.
-      throw const ServerException(message: 'Gmail profile carried no historyId');
+      // Without a cursor there is no incremental sync at all: there is nothing
+      // to continue from, so the poller is told to bootstrap again rather than
+      // count this towards a streak against a token it never got.
+      throw const DeltaResyncRequiredException(
+          message: 'Gmail profile carried no historyId');
     }
     return historyId;
   }

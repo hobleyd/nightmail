@@ -38,6 +38,7 @@ What NightMail's paths cost under that table:
 | 50-result search (`messages.list` + 50 × `messages.get`) | 1,005 |
 | History delta re-fetch at its 250-message budget | 5,000 |
 | Body prefetch batch (20 × `messages.get`) | 400 |
+| Unread-body warm after a folder listing (≤ 20 × `messages.get`, unread rows only) | ≤ 400 |
 
 ## The Error
 
@@ -64,5 +65,12 @@ cycles inside one minute, when the poll re-paged the folder on screen every
 - **Bound every fan-out.** Thread, message and label fetches go through
   `_fetchInChunks` at 8 in flight (25 for the history re-fetch). A search used
   to fire all 100 of its results at once.
+- **Warm bodies for unread rows only when a listing triggers it.**
+  `EmailListBloc` hands `BodyPrefetchService` the unread rows of each page it
+  lists, so a folder page costs 1,010 plus 20 per unread message rather than
+  plus 400 flat; a user flipping between four folders in a minute would
+  otherwise have spent 5,600 before the poller had its turn. The poller's own
+  warms are bounded by what a sync wrote. See
+  [`lib/presentation/blocs/mail_poller/CLAUDE.md`](../../lib/presentation/blocs/mail_poller/CLAUDE.md).
 - **Cost a change in units before shipping it**: a new per-row or per-poll
   request is multiplied by 25 rows and by two cycles a minute.

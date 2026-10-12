@@ -25,8 +25,10 @@ import 'package:nightmail/domain/usecases/report_junk.dart';
 import 'package:nightmail/domain/usecases/report_phishing.dart';
 import 'package:nightmail/domain/usecases/search_emails.dart';
 import 'package:nightmail/domain/usecases/train_spam_filter.dart';
+import 'package:nightmail/data/datasources/remote/email_remote_datasource.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
+import 'package:nightmail/infrastructure/sync/body_prefetch_service.dart';
 import 'package:nightmail/infrastructure/sync/outbox_drain_service.dart';
 import 'package:nightmail/infrastructure/sync/spam_db_sync_service.dart';
 import 'package:nightmail/presentation/blocs/email_list/email_list_bloc.dart';
@@ -51,6 +53,7 @@ Email _email(
   String? parentFolderId,
   List<String> folderIds = const [],
   DateTime? receivedDateTime,
+  String body = '',
 }) =>
     Email(
       id: id,
@@ -59,7 +62,7 @@ Email _email(
       toRecipients: const [],
       ccRecipients: const [],
       bodyPreview: '',
-      body: '',
+      body: body,
       bodyType: EmailBodyType.text,
       isRead: isRead,
       receivedDateTime: receivedDateTime ?? DateTime(2026),
@@ -75,8 +78,32 @@ Email _email(
 class _FakeAccountManager extends Fake implements AccountManager {
   Account? account;
 
+  /// What the body warm fetches through. Left null, the getter throws the
+  /// StateError the real manager throws with no active account.
+  EmailRemoteDatasource? datasource;
+
   @override
   Account? get activeAccount => account;
+
+  @override
+  EmailRemoteDatasource get emailDatasource =>
+      datasource ?? (throw StateError('No active account'));
+}
+
+class _FakeRemote extends Fake implements EmailRemoteDatasource {}
+
+/// Records what the bloc asks to be warmed, without fetching anything.
+class _RecordingBodyPrefetch extends Fake implements BodyPrefetchService {
+  final List<({String accountId, List<Email> emails})> calls = [];
+
+  @override
+  Future<void> prefetchBodies({
+    required String accountId,
+    required EmailRemoteDatasource datasource,
+    required List<Email> emails,
+  }) async {
+    calls.add((accountId: accountId, emails: emails));
+  }
 }
 
 const _account = MicrosoftAccount(
@@ -137,6 +164,7 @@ void main() {
   late MockForgetCachedEmails mockForgetCachedEmails;
   late MockReportPhishing mockReportPhishing;
   late _FakeAccountManager fakeAccountManager;
+  late _RecordingBodyPrefetch bodyPrefetch;
 
   setUpAll(() {
     // Mockito needs dummy values for sealed/generic types it can't construct.
@@ -163,6 +191,7 @@ void main() {
     when(mockForgetCachedEmails(any)).thenAnswer((_) async => const Right(unit));
     mockReportPhishing = MockReportPhishing();
     fakeAccountManager = _FakeAccountManager();
+    bodyPrefetch = _RecordingBodyPrefetch();
     when(mockRecordKnownSenders(any)).thenAnswer((_) async => const Right(unit));
     when(mockCacheEmails(any)).thenAnswer((_) async => const Right(unit));
 
@@ -188,6 +217,7 @@ void main() {
       getConversationThread: mockGetConversationThread,
       spamDbSyncService: MockSpamDbSyncService(),
       outboxDrainService: MockOutboxDrainService(),
+      bodyPrefetchService: bodyPrefetch,
     );
   });
 
@@ -1615,6 +1645,7 @@ void main() {
         getConversationThread: MockGetConversationThread(),
         spamDbSyncService: MockSpamDbSyncService(),
         outboxDrainService: MockOutboxDrainService(),
+        bodyPrefetchService: _RecordingBodyPrefetch(),
       );
       addTearDown(orderedBloc.close);
 
@@ -1767,6 +1798,7 @@ void main() {
         getConversationThread: MockGetConversationThread(),
         spamDbSyncService: MockSpamDbSyncService(),
         outboxDrainService: MockOutboxDrainService(),
+        bodyPrefetchService: _RecordingBodyPrefetch(),
         staleRetryDelays: retryDelays,
       );
     }
@@ -2043,6 +2075,7 @@ void main() {
         getConversationThread: mockGetConversationThread,
         spamDbSyncService: MockSpamDbSyncService(),
         outboxDrainService: MockOutboxDrainService(),
+        bodyPrefetchService: _RecordingBodyPrefetch(),
         sentCopySettleDelay: const Duration(milliseconds: 50),
       );
       addTearDown(sentBloc.close);
@@ -2332,9 +2365,93 @@ void main() {
       verify(mockGetEmails(any)).called(1);
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Unread bodies are warmed after a fresh page
+  //
+  // A listing carries no bodies, and the poller only warms what a *sync*
+  // writes — so the Inbox at launch, a folder or account just switched to and
+  // a manual Refresh all put thin rows on screen that opened with a download.
+  // ---------------------------------------------------------------------------
+
+  group('Body warm after a fresh page', () {
+    setUp(() {
+      fakeAccountManager.account = _account;
+      fakeAccountManager.datasource = _FakeRemote();
+    });
+
+    test('warms the unread, body-less rows of a freshly listed page',
+        () async {
+      await loadEmails([
+        _email('unread-thin', isRead: false),
+        _email('read-thin', isRead: true),
+        _email('unread-full', isRead: false, body: '<p>already here</p>'),
+        _email('unread-thin-2', isRead: false),
+      ], folderId: 'INBOX');
+      await pumpEventQueue();
+
+      expect(bodyPrefetch.calls, hasLength(1));
+      expect(bodyPrefetch.calls.single.accountId, _account.id);
+      expect(bodyPrefetch.calls.single.emails.map((e) => e.id),
+          ['unread-thin', 'unread-thin-2']);
+    });
+
+    test('asks for nothing when the page has no unread thin rows', () async {
+      await loadEmails([
+        _email('read', isRead: true),
+        _email('unread-full', isRead: false, body: 'x'),
+      ], folderId: 'INBOX');
+      await pumpEventQueue();
+
+      expect(bodyPrefetch.calls, isEmpty);
+    });
+
+    test('warms again after a Refresh re-lists the folder', () async {
+      await loadEmails([_email('a', isRead: false)], folderId: 'INBOX');
+      await pumpEventQueue();
+      expect(bodyPrefetch.calls, hasLength(1));
+
+      when(mockGetEmails(any)).thenAnswer((_) async => Right([
+            _email('a', isRead: false),
+            _email('b', isRead: false),
+          ]));
+      bloc.add(const EmailListRefreshRequested());
+      await bloc.stream.firstWhere((s) =>
+          s is EmailListLoaded && s.emails.any((e) => e.id == 'b'));
+      await pumpEventQueue();
+
+      expect(bodyPrefetch.calls, hasLength(2));
+      expect(bodyPrefetch.calls.last.emails.map((e) => e.id), ['a', 'b']);
+    });
+
+    test('a failed listing warms nothing', () async {
+      when(mockGetCachedEmails(any))
+          .thenAnswer((_) async => Right([_email('cached', isRead: false)]));
+      when(mockGetEmails(any)).thenAnswer(
+          (_) async => const Left(NetworkFailure(message: 'offline')));
+
+      bloc.add(const EmailListLoadRequested(folderId: 'INBOX'));
+      await bloc.stream.firstWhere(
+          (s) => s is EmailListLoaded && !s.isLoadingFresh);
+      await pumpEventQueue();
+
+      expect(bodyPrefetch.calls, isEmpty);
+    });
+
+    test('warms nothing with no active account', () async {
+      fakeAccountManager.account = null;
+      await loadEmails([_email('a', isRead: false)], folderId: 'INBOX');
+      await pumpEventQueue();
+
+      expect(bodyPrefetch.calls, isEmpty);
+    });
+  });
 }
 
 class _FakeActiveAccountManager extends Fake implements AccountManager {
   @override
   Account? get activeAccount => _account;
+
+  @override
+  EmailRemoteDatasource get emailDatasource => _FakeRemote();
 }

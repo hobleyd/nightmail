@@ -25,7 +25,9 @@ import '../../../domain/usecases/mark_email_as_read.dart';
 import '../../../domain/usecases/move_email.dart';
 import '../../../domain/usecases/remove_conversation_from_folder.dart';
 import '../../../domain/usecases/record_known_senders.dart';
+import '../../../data/datasources/remote/email_remote_datasource.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
+import '../../../infrastructure/sync/body_prefetch_service.dart';
 import '../../../infrastructure/sync/outbox_drain_service.dart';
 import '../../../infrastructure/sync/spam_db_sync_service.dart';
 import 'email_list_event.dart';
@@ -57,9 +59,11 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     required this._getConversationThread,
     required this._spamDbSyncService,
     required this._outboxDrainService,
+    required BodyPrefetchService bodyPrefetchService,
     this._staleRetryDelays = staleDataRetryDelays,
     this._sentCopySettleDelay = _defaultSentCopySettleDelay,
-  })  : super(const EmailListInitial()) {
+  })  : _bodyPrefetch = bodyPrefetchService,
+        super(const EmailListInitial()) {
     on<EmailListLoadRequested>(_onLoadRequested);
     on<EmailListLoadMoreRequested>(_onLoadMoreRequested);
     on<EmailListRefreshRequested>(_onRefreshRequested);
@@ -86,6 +90,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   }
 
   final GetEmails _getEmails;
+  final BodyPrefetchService _bodyPrefetch;
   final GetCachedEmails _getCachedEmails;
   final CacheEmails _cacheEmails;
   final ForgetCachedEmails _forgetCachedEmails;
@@ -187,6 +192,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     _lastLoadedFolderName = event.folderDisplayName;
     final myGeneration = ++_activeRequestGeneration;
     final accountId = _accountManager.activeAccount?.id;
+    final warmDatasource = _datasourceForWarming(accountId);
     // This load is what binds the folder to an account — see
     // [_folderBelongsToAnotherAccount].
     _loadedAccountId = accountId;
@@ -283,6 +289,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
             emptyingFolderIds: s is EmailListLoaded ? s.emptyingFolderIds : priorEmptyingIds,
           ));
           _recordSenders(freshEmails, event.folderDisplayName);
+          _warmUnreadBodies(accountId, warmDatasource, freshEmails);
         },
       );
 
@@ -435,6 +442,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     final folderName =
         prior != null ? prior.currentFolderName : _lastLoadedFolderName;
     final accountId = _accountManager.activeAccount?.id;
+    final warmDatasource = _datasourceForWarming(accountId);
 
     if (prior != null) {
       emit(prior.copyWith(isLoadingFresh: true));
@@ -502,11 +510,64 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
           emptyingFolderIds: s is EmailListLoaded ? s.emptyingFolderIds : const {},
         ));
         _recordSenders(emails, folderName);
+        _warmUnreadBodies(accountId, warmDatasource, emails);
       },
     );
     if (refreshed != null) {
       await _classifyAndTrainIfImap(emit, refreshed!);
     }
+  }
+
+  /// The active account's datasource, captured beside [accountId] *before* the
+  /// listing's await for the same reason the repository captures its own: an
+  /// account switch mid-fetch must not warm one account's rows through the
+  /// other's client. Null when there is no active account.
+  EmailRemoteDatasource? _datasourceForWarming(String? accountId) {
+    if (accountId == null) return null;
+    try {
+      return _accountManager.emailDatasource;
+    } on StateError {
+      return null;
+    }
+  }
+
+  /// Warms the bodies of the unread rows on a page that has just been listed
+  /// from the network, so the mail the user is about to click opens from the
+  /// cache instead of with a download.
+  ///
+  /// A listing carries no bodies on any provider, and the poller's own warm
+  /// only covers what a *sync* writes — new arrivals, a changed watched
+  /// folder. What it never sees is the page a load or refresh fetched: the
+  /// Inbox at launch, the folder just switched to, the account just switched
+  /// to, the one Refresh re-listed. Each of those put thin rows on screen that
+  /// opened with a round-trip.
+  ///
+  /// Unread rows only, and not the pages Load More fetches. Read mail the
+  /// user never opened here is rarely opened later, and on Gmail every body
+  /// is a `messages.get` at 20 units: a folder page already costs 1,010, and a
+  /// user flipping between folders would spend a further 400 on each one's
+  /// read mail. Unread rows are what gets clicked, and they bound the cost by
+  /// how much new mail there is. Fire-and-forget: the service caps and orders
+  /// the batch, swallows per-message failures and drops a batch that overlaps
+  /// one already running for the account (the poller's, typically).
+  void _warmUnreadBodies(
+    String? accountId,
+    EmailRemoteDatasource? datasource,
+    List<Email> page,
+  ) {
+    if (accountId == null || datasource == null) return;
+    final unread =
+        page.where((e) => !e.isRead && e.body.isEmpty).toList(growable: false);
+    if (unread.isEmpty) return;
+    unawaited(_bodyPrefetch
+        .prefetchBodies(
+          accountId: accountId,
+          datasource: datasource,
+          emails: unread,
+        )
+        .catchError((Object e) {
+      debugPrint('[EmailList] body warm failed for $accountId: $e');
+    }));
   }
 
   @override

@@ -19,10 +19,24 @@ of each message they carry.
 
 A **delta cursor is a one-shot receipt**: save it only after the page it
 acknowledges has been applied, or a failed write loses those changes for good.
-400/404/410 and a missing delta link all clear it, as does any three consecutive
-failures — nothing else in the app ever clears one, and the table is persistent.
+400/404/410 from the server and a `DeltaResyncRequiredException` from the
+datasource (a Graph walk that ended without a delta link, a Gmail history
+range too large to replay) clear it, as does any three consecutive failures —
+nothing else in the app ever clears one, and the table is persistent.
 `MailDeltaDatasource` is the provider-neutral interface (Graph delta link, Gmail
 `historyId`); both store their cursor under the `'inbox'` key.
+
+**A status-less `ServerException` is a failure, not a reset.** It used to be
+read as "no delta link", but it is also what a failure *before the request is
+sent* looks like: at wake from sleep the keychain is still locked, the token
+read in `AuthInterceptor.onRequest` throws, Dio wraps that as an error with no
+response, and every datasource maps it to `ServerException(null): Unknown
+server error`. Every account's cursor was dropped on every wake (the
+diagnostics log showed four `delta token rejected (status null)` lines per
+wake), and each was followed by a bootstrap — whose window of new mail was, at
+the time, the one sync that never warmed its bodies. The morning's unread mail
+therefore downloaded on click. The reset signal is now its own type, and a
+null status joins the three-strike streak.
 
 **Not every delta item is a message.** Graph answers a read-state or flag change
 with the id and the changed property alone; parsed as a message it becomes a
@@ -69,6 +83,36 @@ would have corrected it.
 Failures are reported on `lastPollAt`/`lastPollErrors`, including the
 offline skip. A silent `catch (_)` here is how a deterministic failure came to
 look like a quiet mailbox for the life of an install.
+
+## Bodies Are Warmed Wherever a Page Lands
+
+A list or delta fetch carries no body on any provider, so a row cached from
+one opens with a round-trip the first time (`EmailRepositoryImpl.getEmail`
+only trusts a cached row whose body is non-empty). `BodyPrefetchService`
+closes that gap by fetching full copies in the background through the same
+single-message `getEmail` the tap would run, and every path that puts thin
+rows in front of the user hands it the page:
+
+- the delta branch, with the cycle's upserts;
+- a **bootstrap**, with the window it cached — this was the one sync that did
+  not, "for fear of the page budget", and every cursor reset lands here;
+- the Gmail/IMAP count-change re-page and a changed watched folder (active
+  account only);
+- `EmailListBloc`, with the **unread** rows of a page it listed from the
+  network — the Inbox at launch, the folder or account just switched to, a
+  manual Refresh. The poller never sees those pages. Unread only because on
+  Gmail every body is a `messages.get` at 20 units on top of the page's 1,010,
+  and a user flipping folders would spend 400 more on each one's read mail.
+
+The service takes a batch of at most 20 **unread first, newest first**, not in
+list order: a Graph delta page is not sorted by date, and the newest unread
+message could sit behind twenty read ones and miss the cap. It is also the
+first fetch to start, which is what closes the window between a new arrival
+repainting the list and its body landing. Every batch writes one
+`[BodyPrefetch] <account>: warmed N of M …` line to the diagnostics log; a
+report of "it downloaded on click" is checked against those lines before
+anything else. A second batch for an account already running one is dropped,
+not queued — the next sync re-supplies whatever is still thin.
 
 ## A Gmail Folder Is Re-Read as an Index, Not as a Page
 

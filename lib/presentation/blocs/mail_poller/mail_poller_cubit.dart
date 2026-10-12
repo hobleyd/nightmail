@@ -516,7 +516,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                 }
               }
 
-              unawaited(_bootstrapDeltaToken(account.id, deltaDs));
+              unawaited(_bootstrapDeltaToken(account.id, ds, deltaDs));
             } else {
               // Incremental delta sync — only fetch changes since last call.
               final result = await deltaDs.syncMailDelta('inbox',
@@ -824,12 +824,23 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
           // 400 and 404 are the undocumented but real equivalents: Graph
           // escapes its own separators inside a delta link, so a link the app
           // stored and replayed verbatim can be rejected outright — and
-          // graph_message_parser's unescaping only covers some of them. A
-          // statusCode of null is the "delta query completed without returning
-          // a delta link" case. All three used to leave the bad token on disk
-          // in the persistent DeltaSyncTokens table, so the account did nothing
-          // at all on every cycle for the rest of the install's life.
-          final fatal = e.statusCode == null ||
+          // graph_message_parser's unescaping only covers some of them.
+          // DeltaResyncRequiredException is the datasource's own verdict (a
+          // delta walk that ended without a delta link, a history range too
+          // large to replay). All of these used to leave the bad token on
+          // disk in the persistent DeltaSyncTokens table, so the account did
+          // nothing at all on every cycle for the rest of the install's life.
+          //
+          // A *status-less* ServerException is deliberately not in the list
+          // any more. It used to stand for "no delta link", but it is also
+          // what a failure before the request is sent looks like — at wake
+          // from sleep the keychain is still locked, the token read throws,
+          // and every account's cursor was dropped on every wake. The cycle
+          // after each one then bootstrapped, and a bootstrap's window of new
+          // mail used to be cached without its bodies, so the morning's unread
+          // mail downloaded on click. Such a failure now counts towards the
+          // three-strike streak like any other transport fault.
+          final fatal = e is DeltaResyncRequiredException ||
               e.statusCode == 410 ||
               e.statusCode == 400 ||
               e.statusCode == 404;
@@ -1340,14 +1351,19 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
 
   /// Performs the initial full delta sync for [accountId] to establish a delta
   /// token. Runs in the background so it does not block the poll cycle.
+  ///
+  /// [ds] and [deltaDs] are the same datasource seen through its two
+  /// interfaces: the delta one answers the sync, the plain one fetches the
+  /// bodies afterwards.
   Future<void> _bootstrapDeltaToken(
     String accountId,
-    MailDeltaDatasource ds,
+    EmailRemoteDatasource ds,
+    MailDeltaDatasource deltaDs,
   ) async {
     if (_bootstrapping.contains(accountId)) return;
     _bootstrapping.add(accountId);
     try {
-      final result = await ds.syncMailDelta('inbox');
+      final result = await deltaDs.syncMailDelta('inbox');
       // The bootstrap fetch already pulled a first window of messages to
       // establish the delta token — cache them now instead of discarding,
       // so a fresh account is usable offline without a separate fetch.
@@ -1363,6 +1379,28 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
       // so force a UI refresh now that we have a reliable baseline.
       if (!isClosed && accountId == _accountManager.activeAccount?.id) {
         emit(state.copyWith(pollGeneration: state.pollGeneration + 1));
+      }
+      // The window just cached is what the list now shows as the newest mail,
+      // and the steady-state delta branch warms its bodies — this one used to
+      // skip that for fear of the page budget, but the service caps a batch
+      // and takes the unread, newest rows first, so the budget never reaches
+      // it. Every cursor reset lands here (a real 410, or three failed
+      // cycles), and without this the morning's mail opened with a download.
+      // After the emit so the list repaints before the fetches start; outside
+      // the cycle's _polling window, which is fine for the HTTP providers
+      // that have a delta path. Gmail's bootstrap carries no messages, so its
+      // warm comes from the listing the pollGeneration bump triggers.
+      if (!isClosed && result.upserted.isNotEmpty) {
+        try {
+          await _bodyPrefetch.prefetchBodies(
+            accountId: accountId,
+            datasource: ds,
+            emails: result.upserted,
+          );
+        } catch (_) {
+          // The token is saved and the bootstrap has succeeded; a warm that
+          // fails is not a bootstrap failure and must not count as one.
+        }
       }
     } catch (e) {
       // The next cycle retries, because savedToken stays null. Counted and

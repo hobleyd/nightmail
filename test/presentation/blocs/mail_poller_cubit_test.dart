@@ -76,10 +76,12 @@ EmailModel _email(
   String receivedDateTime = '2026-06-11T10:00:00Z',
   List<Map<String, dynamic>> attachments = const [],
   String conversationId = 'c1',
+  String? body,
 }) =>
     EmailModel.fromJson({
       'id': id,
       'subject': 'Subj',
+      if (body != null) 'body': {'contentType': 'text', 'content': body},
       'from': {
         'emailAddress': {'address': 's@example.com', 'name': 'S'}
       },
@@ -314,6 +316,45 @@ void main() {
       await pumpEventQueue();
 
       verify(mockDatabase.saveDeltaToken(_msId, 'inbox', _newToken)).called(1);
+    });
+
+    // The window a bootstrap caches is what the list shows as the newest mail,
+    // and it used to be the one sync whose rows were never warmed — every
+    // cursor reset (a real 410, or three failed cycles) was followed by a
+    // morning's mail that downloaded on click.
+    test('bootstrap warms the bodies of the window it cached', () async {
+      when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
+          .thenAnswer((_) async => MailDeltaResult(
+                upserted: [_email('msg-1', isRead: false)],
+                removedIds: const [],
+                deltaLink: _newToken,
+              ));
+      when(mockEmailLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => _email('msg-1', isRead: false));
+      when(mockGraphDs.getEmail('msg-1')).thenAnswer(
+          (_) async => _email('msg-1', isRead: false, body: 'FULL'));
+      when(mockEmailLocalDatasource.upgradeCachedEmailBody(
+        accountId: anyNamed('accountId'),
+        email: anyNamed('email'),
+      )).thenAnswer((_) async {});
+
+      final cubit = makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+      // The service yields a real frame between messages.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      verify(mockDatabase.saveDeltaToken(_msId, 'inbox', _newToken)).called(1);
+      verify(mockGraphDs.getEmail('msg-1')).called(1);
+      final upgraded = verify(mockEmailLocalDatasource.upgradeCachedEmailBody(
+        accountId: _msId,
+        email: captureAnyNamed('email'),
+      )).captured.single as Email;
+      expect(upgraded.body, 'FULL');
     });
   });
 
@@ -1462,11 +1503,13 @@ void main() {
       });
     }
 
-    // "Delta query completed without returning a delta link" arrives with no
-    // status at all, and was the one case that could never recover.
-    test('a status-less ServerException clears the stored token', () async {
+    // "Delta query completed without returning a delta link" is the
+    // datasource's own verdict and arrives as its own type: it was the one
+    // case that could never recover.
+    test('a DeltaResyncRequiredException clears the stored token', () async {
       when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
-          .thenThrow(const ServerException(message: 'no delta link'));
+          .thenThrow(const DeltaResyncRequiredException(
+              message: 'no delta link'));
 
       final cubit = makeCubit();
       addTearDown(cubit.close);
@@ -1474,6 +1517,34 @@ void main() {
       await cubit.initialize();
       await pumpEventQueue();
 
+      verify(mockDatabase.clearDeltaTokensForAccount(_msAccount.id)).called(1);
+    });
+
+    // A status-less ServerException used to be read as "no delta link" too,
+    // but it is also what a failure before the request is sent looks like: at
+    // wake from sleep the keychain is still locked, the token read throws
+    // inside the auth interceptor, and every account's cursor was dropped on
+    // every wake — each one followed by a bootstrap whose window of new mail
+    // was cached without bodies. It is a transport fault: three in a row.
+    test('a status-less ServerException counts towards the streak, '
+        'not as a reset', () async {
+      when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
+          .thenThrow(const ServerException(message: 'Unknown server error'));
+
+      final cubit = makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+      verifyNever(mockDatabase.clearDeltaTokensForAccount(any));
+      expect(cubit.state.lastPollErrors, contains(_msAccount.id));
+
+      await cubit.updatePollInterval(9999);
+      await pumpEventQueue();
+      verifyNever(mockDatabase.clearDeltaTokensForAccount(any));
+
+      await cubit.updatePollInterval(9998);
+      await pumpEventQueue();
       verify(mockDatabase.clearDeltaTokensForAccount(_msAccount.id)).called(1);
     });
 

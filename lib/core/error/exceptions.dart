@@ -7,6 +7,27 @@ class ServerException implements Exception {
   String toString() => 'ServerException($statusCode): $message';
 }
 
+/// A mail delta cursor that cannot be continued: the poller must drop it and
+/// bootstrap a fresh one on its next cycle.
+///
+/// Thrown by a `MailDeltaDatasource` for the cases it decides itself — a
+/// Graph delta walk that ended without a delta link, a Gmail history range
+/// too large to replay — as opposed to the 400/404/410 the server answers,
+/// which travel as a plain [ServerException] with that status.
+///
+/// Its own type because "no status code" used to be the signal, and a
+/// *transport* failure arrives with no status code too: at wake from sleep
+/// the keychain is still locked, the token read fails before any request is
+/// sent, and every account's cursor was dropped for a fault that would have
+/// cleared itself by the next cycle. A status-less [ServerException] is now
+/// an ordinary failure that counts towards the poller's retry streak.
+class DeltaResyncRequiredException extends ServerException {
+  const DeltaResyncRequiredException({required super.message});
+
+  @override
+  String toString() => 'DeltaResyncRequiredException: $message';
+}
+
 class AuthException implements Exception {
   const AuthException({required this.message});
   final String message;

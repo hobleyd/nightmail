@@ -576,6 +576,7 @@ Future<void> configureDependencies() async {
         getConversationThread: sl<GetConversationThread>(),
         spamDbSyncService: sl<SpamDbSyncService>(),
         outboxDrainService: sl<OutboxDrainService>(),
+        bodyPrefetchService: sl<BodyPrefetchService>(),
       ));
   sl.registerFactory(() => EmailDetailBloc(
         getEmail: sl<GetEmail>(),

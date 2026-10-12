@@ -387,6 +387,19 @@ makes. Both end with the message in Junk; phishing differs in what happens
   list handler takes the row out on the assumption the message is leaving the
   folder, which in Junk it would not be.
 
+## A Fresh Page Warms Its Unread Bodies
+
+A listing carries no bodies, and the poller only warms what a *sync* writes,
+so the Inbox at launch, a folder or account just switched to and a manual
+Refresh all put thin rows on screen that opened with a download. After a
+network page lands in `_onLoadRequested` or `_onRefreshRequested` the bloc
+hands its unread, body-less rows to `BodyPrefetchService` (fire-and-forget,
+through the active account's datasource captured *before* the listing's await,
+for the account-switch reason the repository captures its own). Unread only,
+and never for Load More: the why — Gmail's per-body quota — and the service's
+own ordering and cap are in
+[`../mail_poller/CLAUDE.md`](../mail_poller/CLAUDE.md).
+
 ## Which Folder an Account Switch Lands On
 
 `HomePage`'s `AccountCubit` listener owns the whole switch — it files the

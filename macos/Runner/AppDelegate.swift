@@ -1,8 +1,34 @@
 import Cocoa
+import DesktopUpdaterKit
 import FlutterMacOS
 
 @main
 class AppDelegate: FlutterAppDelegate {
+  // Replaces the `main()` that `@main` would otherwise synthesise, only to
+  // run desktop_updater's restart wait *before* NSApplicationMain.
+  //
+  // After an in-app update the outgoing app spawns this executable as a
+  // restart child, which waits for the old app to exit and the bundle to be
+  // replaced, then turns itself into `/usr/bin/open` of the bundle. The plugin
+  // runs that wait from its `register(with:)`, which comes after
+  // NSApplication has checked this process in with LaunchServices as
+  // NightMail. `open`, in the same pid, then found NightMail "already
+  // running", brought that pid forward and exited — the update installed and
+  // the app never came back (desktop_updater 3.2.x; see
+  // lib/infrastructure/update/CLAUDE.md). Waiting here, before AppKit exists,
+  // means nothing is registered when `open` runs. The env vars are consumed,
+  // so the plugin's own call later returns at once.
+  //
+  // Takes effect from the update *after* the one that installs this build:
+  // the restart child is always the outgoing app's executable.
+  static func main() {
+    guard MacApplicationRestarter.awaitRestartParentExitIfRequested() else {
+      // What the plugin does on the same failure.
+      _exit(78)
+    }
+    _ = NSApplicationMain(CommandLine.argc, CommandLine.unsafeArgv)
+  }
+
   // Let the main window control app lifecycle — closing a compose window
   // should not quit the app. MainFlutterWindow calls NSApp.terminate when
   // the main window itself closes.

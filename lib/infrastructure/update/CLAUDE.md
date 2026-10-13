@@ -277,6 +277,40 @@ helper's `main.swift` is byte-identical to 3.1.6, so the build phase's patch
 still lands, and 3.2.0's breaking changes are confined to Windows Inno
 installs, which the Windows release does not use (`wholeDirectoryReplace`).
 
+### 3.2.x Installs, Then Never Relaunches
+
+Every update on desktop_updater 3.2.1 installed (the helper log ends at
+`cleanup success`, `/Applications` holds the new build) and the app stayed
+closed. The system log of the 1.39.5 to 1.39.6 install on 2026-10-13 shows
+why, in one pid:
+
+    launchservicesd  CHECKIN:0x0-0xf19f19 28927 au.com.sharpblue.nightmail
+    open[28927]      LAUNCH: Asking CSUI to launch 0 items
+    launchservicesd  SETFRONT: pid=28927 asn=0x-0xf19f19
+    launchservicesd  QUITTING: pid=28927
+
+The restart child is this executable, and the plugin only runs its wait from
+`register(with:)`. By then NSApplication has checked the child in with
+LaunchServices as NightMail. When it `execve`s `/usr/bin/open` in the same
+pid, LaunchServices answered "already running", brought that pid forward and
+launched nothing. The old app had fully exited about 180 ms earlier, and
+no new instance started and crashed.
+
+`AppDelegate.main()` now runs `awaitRestartParentExitIfRequested()` before
+`NSApplicationMain`, so nothing is registered when `open` runs. The plugin's
+own call later finds the environment consumed and returns at once.
+
+**Unconfirmed, and how to confirm it.** A harness in which a
+LaunchServices-launched parent spawns the child, swaps the bundle and exits
+could not make the *unfixed* build fail. It relaunched every time, so the
+harness is missing some condition of a real `/Applications` install. With the
+fix, the waiting child is provably unregistered, which is the condition the
+log blames. The real test is in the wild, and it costs two releases: the
+restart child is the *outgoing* app's executable, so the release carrying
+this still fails to relaunch, and only the update after it exercises the fix.
+If that one also stays closed, run `/usr/bin/log show` around the helper's
+`cleanup success` timestamp and look for the four lines above.
+
 ### A Completed Install Leaves a Marker the Package Cannot Clear
 
 "A pending install must be recovered before another install" (2026-10-12,

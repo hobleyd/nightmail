@@ -174,7 +174,10 @@ void main() {
   });
 
   group('GraphApiDatasourceImpl.insertRawMessage — dates', () {
-    test('sets receivedDateTime and sentDateTime from receivedAt', () async {
+    // Graph ignores receivedDateTime/sentDateTime on a create and stamps the
+    // copy with "now"; only the MAPI properties behind them stick.
+    test('carries the original time as the delivery and submit properties',
+        () async {
       when(mockDio.post<Map<String, dynamic>>(any, data: anyNamed('data')))
           .thenAnswer((_) async => _createdResp());
 
@@ -189,8 +192,12 @@ void main() {
               data: captureAnyNamed('data')))
           .captured
           .single as Map<String, dynamic>;
-      expect(body['receivedDateTime'], '2026-03-04T05:06:07.000Z');
-      expect(body['sentDateTime'], '2026-03-04T05:06:07.000Z');
+      expect(body['singleValueExtendedProperties'], [
+        {'id': 'SystemTime 0x0E06', 'value': '2026-03-04T05:06:07.000Z'},
+        {'id': 'SystemTime 0x0039', 'value': '2026-03-04T05:06:07.000Z'},
+      ]);
+      expect(body.containsKey('receivedDateTime'), isFalse);
+      expect(body.containsKey('sentDateTime'), isFalse);
       expect(body['isRead'], isFalse);
     });
   });

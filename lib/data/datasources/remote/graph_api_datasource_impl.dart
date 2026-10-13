@@ -3511,8 +3511,16 @@ class GraphApiDatasourceImpl
               'ccRecipients': parsed.ccAddresses
                   .map((a) => {'emailAddress': {'address': a}})
                   .toList(),
-            'receivedDateTime': iso,
-            'sentDateTime': iso,
+            // Not `receivedDateTime`/`sentDateTime`: Graph accepts both on a
+            // create and then ignores them, stamping the message with the
+            // moment it was copied — a migrated mailbox sorted as if every
+            // message had arrived today. The MAPI properties behind them
+            // (PR_MESSAGE_DELIVERY_TIME, PR_CLIENT_SUBMIT_TIME) are writable
+            // at creation, and are what those two fields then read back.
+            'singleValueExtendedProperties': [
+              {'id': 'SystemTime 0x0E06', 'value': iso},
+              {'id': 'SystemTime 0x0039', 'value': iso},
+            ],
             'isRead': isRead,
           };
 

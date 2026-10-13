@@ -1,5 +1,10 @@
 enum MigrationJobStatus { running, paused, completed, failed }
 
+/// How much of the source account a job copies. Persisted on the job row —
+/// a job resumed after a restart has to know it was only ever asked for the
+/// Inbox, or it would come back as a whole-account migration.
+enum MigrationScope { account, inbox }
+
 /// A ledger row's lifecycle: pending -> inProgress -> written -> done (or ->
 /// failed at any point after inProgress). `written` is a distinct step from
 /// `done` so a crash between the destination provider call succeeding and
@@ -17,6 +22,7 @@ class MigrationJobRecord {
     required this.createdAtMs,
     required this.updatedAtMs,
     required this.lastError,
+    this.scope = MigrationScope.account,
   });
 
   final String id;
@@ -26,6 +32,7 @@ class MigrationJobRecord {
   final int createdAtMs;
   final int updatedAtMs;
   final String? lastError;
+  final MigrationScope scope;
 }
 
 class MigrationLedgerRecord {
@@ -55,7 +62,7 @@ class MigrationLedgerRecord {
 }
 
 /// Durable state for `AccountMigrationService`: one job row per (source,
-/// target) account pair, and a per-message ledger that is both the
+/// target, scope), and a per-message ledger that is both the
 /// resumability checkpoint and the guard against copying the same source
 /// message twice.
 abstract interface class MigrationLocalDatasource {
@@ -68,6 +75,7 @@ abstract interface class MigrationLocalDatasource {
     required String sourceAccountId,
     required String targetAccountId,
     required MigrationJobStatus status,
+    MigrationScope scope = MigrationScope.account,
   });
 
   Future<MigrationJobRecord?> getJob(String jobId);

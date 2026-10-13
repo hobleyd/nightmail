@@ -18,15 +18,22 @@ class MigrationStatusDialog extends StatelessWidget {
     super.key,
     required this.sourceAccountLabel,
     required this.targetAccountLabel,
+    this.scope = MigrationScope.account,
   });
 
   final String sourceAccountLabel;
   final String targetAccountLabel;
+  final MigrationScope scope;
 
   @override
   Widget build(BuildContext context) {
     return AdaptiveAlertDialog(
-      title: Text('Migrating $sourceAccountLabel → $targetAccountLabel'),
+      title: Text(switch (scope) {
+        MigrationScope.account =>
+          'Migrating $sourceAccountLabel → $targetAccountLabel',
+        MigrationScope.inbox =>
+          'Migrating Inbox: $sourceAccountLabel → $targetAccountLabel',
+      }),
       content: SizedBox(
         width: 420,
         child: Column(
@@ -77,8 +84,8 @@ class MigrationStatusDialog extends StatelessWidget {
                         'This migration is stalled — one of the two '
                         'accounts needs to be signed in again before it can '
                         'continue. Switch to it in the account menu (marked '
-                        'with a red icon) to sign in, then reopen Migration '
-                        'Status to pick up where it left off.',
+                        'with a red icon) to sign in, then reopen this '
+                        'dialog to pick up where it left off.',
                         style: TextStyle(fontSize: 12),
                       ),
                       if (job.lastError != null) ...[
@@ -141,10 +148,17 @@ class MigrationStatusDialog extends StatelessWidget {
             // migration lives in a singleton service independent of this
             // dialog's lifetime either way, so this stays true whether it's
             // still copying, paused for re-auth, or already finished.
-            const Text(
-              'This dialog is safe to close — the migration keeps running '
-              'in the background. Reopen it from the account menu.',
-              style: TextStyle(fontSize: 11, color: Colors.grey),
+            Text(
+              switch (scope) {
+                MigrationScope.account =>
+                  'This dialog is safe to close — the migration keeps running '
+                      'in the background. Reopen it from the account menu.',
+                MigrationScope.inbox =>
+                  'This dialog is safe to close — the migration keeps running '
+                      "in the background. Reopen it from the Inbox's "
+                      'right-click menu.',
+              },
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
             ),
           ],
         ),

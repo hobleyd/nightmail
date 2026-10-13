@@ -49,6 +49,13 @@ class MigrationProgress extends Equatable {
 /// only: the source is never modified, so the user can keep using it
 /// (including deleting mail) for the whole, possibly multi-hour, run.
 ///
+/// A job is either the whole account or, with [MigrationScope.inbox], just
+/// the source's Inbox into the target's Inbox — the Inbox's own messages,
+/// not the folders nested under it. The two are separate jobs for the same
+/// account pair, each with its own row, status and ledger, but each reads
+/// the other's ledger before copying, so running both never lands the same
+/// Inbox message at the destination twice.
+///
 /// Modeled on [OutboxDrainService]: a per-(source,target) in-flight chain so
 /// concurrent start/resume calls serialize rather than race each other, and
 /// a persisted per-message ledger ([MigrationLocalDatasource]) that is both
@@ -75,7 +82,8 @@ class AccountMigrationService {
   static const _maxMessageAttempts = 3;
   static const _pageSize = 50;
 
-  /// Chains concurrent [startOrResume] calls for the same account pair —
+  /// Chains concurrent [startOrResume] calls for the same account pair,
+  /// whatever their scope —
   /// same reasoning as `OutboxDrainService._inFlight`: callers (the account
   /// menu, [resumeAll] at startup) don't coordinate with each other.
   final Map<String, Future<void>> _inFlight = {};
@@ -83,26 +91,48 @@ class AccountMigrationService {
   /// Keyed the same as [_inFlight] — see [MigrationProgress].
   final Map<String, MigrationProgress> _progress = {};
 
-  static String jobIdFor(String sourceAccountId, String targetAccountId) =>
-      '$sourceAccountId|$targetAccountId';
+  /// The whole-account id is the bare pair, as it was before there was any
+  /// other scope — jobs already on disk keep their id.
+  static String jobIdFor(
+    String sourceAccountId,
+    String targetAccountId, [
+    MigrationScope scope = MigrationScope.account,
+  ]) =>
+      switch (scope) {
+        MigrationScope.account => '$sourceAccountId|$targetAccountId',
+        MigrationScope.inbox => '$sourceAccountId|$targetAccountId|inbox',
+      };
 
   /// The current folder and how far through it a running job's latest pass
   /// has reached — null before the first folder of a run has started.
   MigrationProgress? getProgress(
-          String sourceAccountId, String targetAccountId) =>
-      _progress[jobIdFor(sourceAccountId, targetAccountId)];
+    String sourceAccountId,
+    String targetAccountId, {
+    MigrationScope scope = MigrationScope.account,
+  }) =>
+      _progress[jobIdFor(sourceAccountId, targetAccountId, scope)];
 
   /// Starts a new migration or resumes an existing one for this account
   /// pair. Safe to call repeatedly: a job already `running`/`paused` just
   /// gets its worker re-kicked; a `completed` job re-scans for source mail
   /// added since and retries any prior failures against the same ledger.
-  Future<void> startOrResume(String sourceAccountId, String targetAccountId) {
-    final id = jobIdFor(sourceAccountId, targetAccountId);
-    final prior = _inFlight[id] ?? Future.value();
+  Future<void> startOrResume(
+    String sourceAccountId,
+    String targetAccountId, {
+    MigrationScope scope = MigrationScope.account,
+  }) {
+    // Chained per account pair, not per job: the pair's Inbox-only and
+    // whole-account jobs both write into the same target Inbox, and each
+    // trusts only the other's *finished* ledger rows (see _copyFolder). Run
+    // side by side, both would find a message the other is still midway
+    // through and copy it twice. The cost is that the second one to be
+    // started has no job row — and so no status — until the first is done.
+    final pair = jobIdFor(sourceAccountId, targetAccountId);
+    final prior = _inFlight[pair] ?? Future.value();
     final next = prior
-        .then((_) => _run(sourceAccountId, targetAccountId))
+        .then((_) => _run(sourceAccountId, targetAccountId, scope))
         .catchError((_) {});
-    _inFlight[id] = next;
+    _inFlight[pair] = next;
     return next;
   }
 
@@ -117,26 +147,40 @@ class AccountMigrationService {
     _resumedOnce = true;
     final jobs = await _localDatasource.getResumableJobs();
     for (final job in jobs) {
-      unawaited(startOrResume(job.sourceAccountId, job.targetAccountId));
+      // With the job's own scope: resuming an Inbox-only job as anything
+      // else would quietly turn it into a whole-account migration.
+      unawaited(startOrResume(job.sourceAccountId, job.targetAccountId,
+          scope: job.scope));
     }
   }
 
   Future<MigrationJobRecord?> getJob(
-          String sourceAccountId, String targetAccountId) =>
-      _localDatasource.getJob(jobIdFor(sourceAccountId, targetAccountId));
+    String sourceAccountId,
+    String targetAccountId, {
+    MigrationScope scope = MigrationScope.account,
+  }) =>
+      _localDatasource
+          .getJob(jobIdFor(sourceAccountId, targetAccountId, scope));
 
-  /// The one job currently `running` or `paused` for [sourceAccountId], if
-  /// any — lets the account menu offer "Migration Status" in place of
-  /// "Migrate Account…" without the caller needing to already know which
-  /// target it's running against. [sourceAccountId] can have more than one
-  /// simultaneous migration (a distinct job per target is allowed); this
-  /// returns whichever [getResumableJobs] happens to list first rather than
-  /// offering a chooser for that rare case.
+  /// The one [scope] job currently `running` or `paused` for
+  /// [sourceAccountId], if any — lets the account menu offer "Migration
+  /// Status" in place of "Migrate Account…" (and the Inbox's context menu
+  /// the same for "Migrate Inbox…") without the caller needing to already
+  /// know which target it's running against. Matched on [scope] because
+  /// each of those menu items reopens — and so re-kicks — the job it finds,
+  /// and must not do that to a job of the other kind. [sourceAccountId] can
+  /// have more than one simultaneous migration (a distinct job per target
+  /// is allowed); this returns whichever [getResumableJobs] happens to list
+  /// first rather than offering a chooser for that rare case.
   Future<MigrationJobRecord?> getActiveJobForSource(
-      String sourceAccountId) async {
+    String sourceAccountId, {
+    MigrationScope scope = MigrationScope.account,
+  }) async {
     final jobs = await _localDatasource.getResumableJobs();
     for (final job in jobs) {
-      if (job.sourceAccountId == sourceAccountId) return job;
+      if (job.sourceAccountId == sourceAccountId && job.scope == scope) {
+        return job;
+      }
     }
     return null;
   }
@@ -144,11 +188,27 @@ class AccountMigrationService {
   /// Permanently-failed messages for this pair — the migration status
   /// dialog's failure list ("reported on").
   Future<List<MigrationLedgerRecord>> getFailures(
-          String sourceAccountId, String targetAccountId) =>
-      _localDatasource.getFailedRows(jobIdFor(sourceAccountId, targetAccountId));
+    String sourceAccountId,
+    String targetAccountId, {
+    MigrationScope scope = MigrationScope.account,
+  }) =>
+      _localDatasource
+          .getFailedRows(jobIdFor(sourceAccountId, targetAccountId, scope));
 
-  Future<void> _run(String sourceAccountId, String targetAccountId) async {
-    final id = jobIdFor(sourceAccountId, targetAccountId);
+  Future<void> _run(
+    String sourceAccountId,
+    String targetAccountId,
+    MigrationScope scope,
+  ) async {
+    final id = jobIdFor(sourceAccountId, targetAccountId, scope);
+    // The same pair's job of the other scope — see _copyFolder.
+    final siblingJobId = jobIdFor(
+      sourceAccountId,
+      targetAccountId,
+      scope == MigrationScope.inbox
+          ? MigrationScope.account
+          : MigrationScope.inbox,
+    );
 
     // Not treated as a failure — connectivity coming back is exactly what
     // the next explicit startOrResume/resumeAll call is for.
@@ -166,6 +226,7 @@ class AccountMigrationService {
         sourceAccountId: sourceAccountId,
         targetAccountId: targetAccountId,
         status: MigrationJobStatus.failed,
+        scope: scope,
       );
       await _localDatasource.setJobStatus(
         jobId: id,
@@ -180,6 +241,7 @@ class AccountMigrationService {
       sourceAccountId: sourceAccountId,
       targetAccountId: targetAccountId,
       status: MigrationJobStatus.running,
+      scope: scope,
     );
 
     final sourceDs = _accountManager.buildEmailDatasourceForAccount(source);
@@ -192,12 +254,65 @@ class AccountMigrationService {
     final targetIsImap = target is ImapAccount;
 
     try {
-      final sourceFolders =
-          await _allFolders(sourceDs, sourceIsImap, sourceAccountId);
       final sourceSpecialIds =
           await _guarded(sourceIsImap, sourceAccountId, sourceDs.getSpecialFolderIds);
       final targetSpecialIds =
           await _guarded(targetIsImap, targetAccountId, targetDs.getSpecialFolderIds);
+
+      if (scope == MigrationScope.inbox) {
+        // Both ends come from the provider's own answer to "which folder is
+        // the Inbox", not from the row that was right-clicked: a resumed job
+        // has only the two account ids to go on. And a side with no Inbox
+        // fails the job outright — creating a folder called "Inbox" next to
+        // wherever the real one is would be worse than not copying.
+        final sourceInboxId = sourceSpecialIds[SpecialFolderKind.inbox];
+        final destInboxId = targetSpecialIds[SpecialFolderKind.inbox];
+        if (sourceInboxId == null || destInboxId == null) {
+          await _localDatasource.setJobStatus(
+            jobId: id,
+            status: MigrationJobStatus.failed,
+            lastError: sourceInboxId == null
+                ? 'Could not find the Inbox of the account being migrated'
+                : 'Could not find the Inbox of the account being migrated to',
+          );
+          return;
+        }
+        // Only for the status dialog's name and total — the copy itself
+        // needs nothing but the id, so an Inbox the root listing somehow
+        // doesn't carry still migrates, just without a total.
+        EmailFolder sourceInbox = EmailFolder(
+          id: sourceInboxId,
+          displayName: 'Inbox',
+          totalItemCount: 0,
+          unreadItemCount: 0,
+        );
+        final roots =
+            await _guarded(sourceIsImap, sourceAccountId, sourceDs.getMailFolders);
+        for (final folder in roots) {
+          if (folder.id == sourceInboxId) sourceInbox = folder;
+        }
+
+        final finished = await _copyFolder(
+          jobId: id,
+          siblingJobId: siblingJobId,
+          sourceDs: sourceDs,
+          targetDs: targetDs,
+          sourceAccountId: sourceAccountId,
+          targetAccountId: targetAccountId,
+          sourceIsImap: sourceIsImap,
+          targetIsImap: targetIsImap,
+          dedupeAcrossFolders: dedupeAcrossFolders,
+          sourceFolder: sourceInbox,
+          destFolderId: destInboxId,
+        );
+        if (!finished) return; // offline mid-run; next call resumes
+        await _localDatasource.setJobStatus(
+            jobId: id, status: MigrationJobStatus.completed);
+        return;
+      }
+
+      final sourceFolders =
+          await _allFolders(sourceDs, sourceIsImap, sourceAccountId);
 
       final sourceFolderKind = <String, SpecialFolderKind>{
         for (final e in sourceSpecialIds.entries) e.value: e.key,
@@ -237,6 +352,7 @@ class AccountMigrationService {
 
         final shouldContinue = await _copyFolder(
           jobId: id,
+          siblingJobId: kind == SpecialFolderKind.inbox ? siblingJobId : null,
           sourceDs: sourceDs,
           targetDs: targetDs,
           sourceAccountId: sourceAccountId,
@@ -328,8 +444,18 @@ class AccountMigrationService {
   /// (connectivity dropped mid-folder) rather than continue to the next
   /// folder; true once this folder is fully resolved (every message done or
   /// permanently failed).
+  ///
+  /// [siblingJobId] is the same account pair's job of the other scope, given
+  /// only for the source's Inbox — the one folder both jobs copy. A message
+  /// that one already landed at the destination is treated as resolved here
+  /// too, so an Inbox-only migration followed by (or following) a
+  /// whole-account one doesn't copy the Inbox twice. Both jobs send a source
+  /// Inbox message to the same place — the target's Inbox — which is what
+  /// makes one's copy stand in for the other's. Only a finished row counts:
+  /// trusting one left `inProgress` by a crash would silently drop the mail.
   Future<bool> _copyFolder({
     required String jobId,
+    required String? siblingJobId,
     required EmailRemoteDatasource sourceDs,
     required EmailRemoteDatasource targetDs,
     required String sourceAccountId,
@@ -424,6 +550,21 @@ class AccountMigrationService {
             publishProgress();
             continue;
           }
+        }
+        final sibling = siblingJobId == null
+            ? null
+            : await _localDatasource.findLedgerRow(
+                jobId: siblingJobId,
+                sourceFolderId: sourceFolder.id,
+                sourceMessageId: email.id,
+                matchSourceFolderId: true,
+              );
+        if (sibling != null &&
+            (sibling.status == MigrationMessageStatus.done ||
+                sibling.status == MigrationMessageStatus.written)) {
+          processed++;
+          publishProgress();
+          continue;
         }
 
         try {

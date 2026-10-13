@@ -30,6 +30,16 @@ CREATE TABLE cached_emails (
   PRIMARY KEY (email_id, account_id)
 )''';
 
+/// `migration_jobs` as v17 created it, before Inbox-only jobs gave it a scope.
+const _v17MigrationJobs = '''
+CREATE TABLE migration_jobs (
+  id TEXT NOT NULL, source_account_id TEXT NOT NULL,
+  target_account_id TEXT NOT NULL, status TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL,
+  last_error TEXT NULL,
+  PRIMARY KEY (id)
+)''';
+
 void main() {
   late Directory dir;
   late File file;
@@ -183,14 +193,55 @@ void main() {
 
   // The tripwire: bumping the version without adding an `if (from < n)` branch
   // ships a schema the upgrade path never builds.
-  test('schema version is 20', () {
+  test('schema version is 21', () {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
     // v18 adds the commitments ledger tables (see
     // commitment_local_datasource_impl_test.dart for their round-trip).
     // v19 adds the scheduled-block columns to commitments; v20 the model's
-    // effort estimate.
-    expect(db.schemaVersion, 20);
+    // effort estimate. v21 adds the scope column to migration_jobs.
+    expect(db.schemaVersion, 21);
+  });
+
+  // v21 adds `scope` to migration_jobs for Inbox-only jobs. Guarded by `from`
+  // like the commitments columns below, and for the same reason.
+  group('migration job scope', () {
+    test('a pre-v17 database gets the column once, with the table', () async {
+      // The v14 fixture from setUp.
+      final db = AppDatabase.forTesting(NativeDatabase(file));
+      addTearDown(db.close);
+
+      await db.upsertJob(
+        jobId: 'src|tgt|inbox',
+        sourceAccountId: 'src',
+        targetAccountId: 'tgt',
+        status: MigrationJobStatus.running,
+        scope: MigrationScope.inbox,
+      );
+      expect((await db.getJob('src|tgt|inbox'))?.scope, MigrationScope.inbox);
+    });
+
+    // The job that matters most: one left running by a version that had only
+    // whole-account migrations must still resume as one.
+    test('a v20 job reads back as a whole-account job', () async {
+      final v20File = File('${dir.path}/v20.sqlite');
+      final v20 = NativeDatabase(v20File);
+      await v20.ensureOpen(_NoMigration());
+      await v20.runCustom(_v17MigrationJobs, const []);
+      await v20.runCustom(
+        "INSERT INTO migration_jobs VALUES "
+        "('src|tgt', 'src', 'tgt', 'running', 1, 1, NULL)",
+        const [],
+      );
+      await v20.runCustom('PRAGMA user_version = 20', const []);
+      await v20.close();
+
+      final db = AppDatabase.forTesting(NativeDatabase(v20File));
+      addTearDown(db.close);
+      final job = (await db.getResumableJobs()).single;
+      expect(job.id, 'src|tgt');
+      expect(job.scope, MigrationScope.account);
+    });
   });
 
   // The additive commitments columns are guarded by `from` so that a pre-v18
@@ -235,6 +286,9 @@ CREATE TABLE commitments (
         "'open', 'today', 2, 0.9, 1000, 1000, NULL, '{}', NULL, NULL, NULL)",
         const [],
       );
+      // Every database since v17 has this table, and the v21 upgrade alters
+      // it — see the 'migration job scope' group below.
+      await v19.runCustom(_v17MigrationJobs, const []);
       await v19.runCustom('PRAGMA user_version = 19', const []);
       await v19.close();
 

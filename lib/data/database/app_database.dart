@@ -334,11 +334,12 @@ class PendingCalendarOperations extends Table {
   TextColumn get lastError => text().nullable()();
 }
 
-/// One row per (source account, target account) account-migration job — see
-/// AccountMigrationService. [id] is `'<sourceAccountId>|<targetAccountId>'`,
-/// upserted rather than appended: re-running a completed job just catches up
-/// any new source mail and retries prior failures, so there is only ever one
-/// row per pair, not one per run.
+/// One row per (source account, target account, scope) migration job — see
+/// AccountMigrationService. [id] is `'<sourceAccountId>|<targetAccountId>'`
+/// for a whole-account job and the same with `|inbox` appended for an
+/// Inbox-only one, upserted rather than appended: re-running a completed job
+/// just catches up any new source mail and retries prior failures, so there
+/// is only ever one row per pair and scope, not one per run.
 class MigrationJobs extends Table {
   TextColumn get id => text()();
   TextColumn get sourceAccountId => text()();
@@ -347,6 +348,10 @@ class MigrationJobs extends Table {
   IntColumn get createdAtMs => integer()();
   IntColumn get updatedAtMs => integer()();
   TextColumn get lastError => text().nullable()();
+
+  /// A `MigrationScope` name. Defaulted so every job written before the
+  /// column existed reads back as the whole-account job it was.
+  TextColumn get scope => text().withDefault(const Constant('account'))();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -438,7 +443,7 @@ class AppDatabase extends _$AppDatabase
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 20;
+  int get schemaVersion => 21;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -579,6 +584,11 @@ class AppDatabase extends _$AppDatabase
             // Additive: the model's effort estimate. Same guard as above —
             // a pre-v18 database created the table with this column already.
             await m.addColumn(commitments, commitments.estimatedMinutes);
+          }
+          if (from >= 17 && from < 21) {
+            // Additive: Inbox-only migration jobs. Same guard again — a
+            // pre-v17 database created the table with this column already.
+            await m.addColumn(migrationJobs, migrationJobs.scope);
           }
         },
       );
@@ -1007,6 +1017,7 @@ class AppDatabase extends _$AppDatabase
         createdAtMs: row.createdAtMs,
         updatedAtMs: row.updatedAtMs,
         lastError: row.lastError,
+        scope: MigrationScope.values.byName(row.scope),
       );
 
   MigrationLedgerRecord _toLedgerRecord(MigrationMessageLedgerRow row) =>
@@ -1029,6 +1040,7 @@ class AppDatabase extends _$AppDatabase
     required String sourceAccountId,
     required String targetAccountId,
     required MigrationJobStatus status,
+    MigrationScope scope = MigrationScope.account,
   }) async {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final existing =
@@ -1043,6 +1055,7 @@ class AppDatabase extends _$AppDatabase
         status: status.name,
         createdAtMs: createdAtMs,
         updatedAtMs: nowMs,
+        scope: Value(scope.name),
       ),
     );
     return MigrationJobRecord(
@@ -1053,6 +1066,7 @@ class AppDatabase extends _$AppDatabase
       createdAtMs: createdAtMs,
       updatedAtMs: nowMs,
       lastError: null,
+      scope: scope,
     );
   }
 

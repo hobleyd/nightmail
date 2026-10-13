@@ -412,3 +412,35 @@ nothing but a manual refresh to take it away — no cache was poisoned, because
 the fetch caches under the folder it asked for, which is why refreshing fixed
 it.
 
+
+## "Migrate Inbox…" on the Inbox's Context Menu
+
+The Inbox row — top level, named Inbox — offers "Migrate Inbox…", which copies
+that folder's own messages (not the folders nested under it) into another
+account's Inbox. It is `AccountMigrationService` with `MigrationScope.inbox`,
+not a second service; what is specific to it:
+
+- **It is its own job, and the scope is persisted.** The id is the account
+  pair with `|inbox` appended, and `migration_jobs.scope` records which kind a
+  row is. `resumeAll` at startup has only the row to go on — without the
+  column a half-finished Inbox job comes back as a whole-account migration.
+- **Each menu only sees its own kind of job.** `getActiveJobForSource` takes
+  the scope, because both "Migration Status" (account menu) and "Inbox
+  Migration Status" (here) *re-kick* the job they reopen. The Inbox item is the
+  only way back to an Inbox job, and the status dialog says so.
+- **Both ends are resolved by `getSpecialFolderIds`, never by the row that was
+  right-clicked** — a resumed job has no row. A target with no Inbox fails the
+  job; nothing is created.
+- **The two jobs read each other's ledger.** Both send a source Inbox message
+  to the target's Inbox, so one having landed it counts for the other; running
+  an Inbox migration and then the whole account does not duplicate the Inbox.
+  Only a *finished* row counts, which is why `startOrResume` chains by account
+  pair rather than by job: side by side, each would copy what the other was
+  midway through. The second one started shows no status until the first ends.
+- **No Google accounts, at either end, for now.** Not offered on a Gmail
+  account's Inbox, and Gmail accounts are left out of the target list — both in
+  `_inboxMigrationOptions`. (Whole-account migration only withholds Gmail as
+  the *source*.)
+- The lookup for a running job is awaited *before* `showMenu`, and the
+  overlay is read before that await — `Overlay.of(context).context` after an
+  async gap is a `State.context` use the analyzer rightly objects to.

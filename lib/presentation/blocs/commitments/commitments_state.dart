@@ -2,6 +2,7 @@ import 'package:equatable/equatable.dart';
 
 import '../../../domain/entities/calendar_event.dart';
 import '../../../domain/entities/commitment.dart';
+import '../../../domain/entities/todo_task.dart';
 import '../../../domain/entities/workload_forecast.dart';
 
 /// Lifecycle of the Commitments pane.
@@ -18,6 +19,9 @@ class CommitmentsState extends Equatable {
     this.commitments = const [],
     this.todayEvents = const [],
     this.tasksDueToday = 0,
+    this.todayTasks,
+    this.todayTasksLoading = false,
+    this.todayTasksError,
     this.inboxScanned = 0,
     this.lastScanAt,
     this.lastClassified = 0,
@@ -41,6 +45,17 @@ class CommitmentsState extends Equatable {
 
   /// Open tasks due today, across every list of the account.
   final int tasksDueToday;
+
+  /// The tasks behind [tasksDueToday], fetched from the provider only once
+  /// the Today row is expanded — the reminder rows the count comes from hold
+  /// ids, not titles. Null until then.
+  final List<TodoTask>? todayTasks;
+
+  /// A fetch of [todayTasks] is in flight.
+  final bool todayTasksLoading;
+
+  /// Why the last fetch of [todayTasks] failed, if it did.
+  final String? todayTasksError;
 
   /// How many of the Inbox messages on hand the model has looked at — the
   /// denominator behind "N emails need action · M don't".
@@ -119,6 +134,9 @@ class CommitmentsState extends Equatable {
     List<Commitment>? commitments,
     List<CalendarEvent>? todayEvents,
     int? tasksDueToday,
+    Object? todayTasks = _unset,
+    bool? todayTasksLoading,
+    Object? todayTasksError = _unset,
     int? inboxScanned,
     DateTime? lastScanAt,
     int? lastClassified,
@@ -134,6 +152,13 @@ class CommitmentsState extends Equatable {
       commitments: commitments ?? this.commitments,
       todayEvents: todayEvents ?? this.todayEvents,
       tasksDueToday: tasksDueToday ?? this.tasksDueToday,
+      todayTasks: todayTasks == _unset
+          ? this.todayTasks
+          : todayTasks as List<TodoTask>?,
+      todayTasksLoading: todayTasksLoading ?? this.todayTasksLoading,
+      todayTasksError: todayTasksError == _unset
+          ? this.todayTasksError
+          : todayTasksError as String?,
       inboxScanned: inboxScanned ?? this.inboxScanned,
       lastScanAt: lastScanAt ?? this.lastScanAt,
       lastClassified: lastClassified ?? this.lastClassified,
@@ -152,6 +177,9 @@ class CommitmentsState extends Equatable {
         commitments,
         todayEvents,
         tasksDueToday,
+        todayTasks,
+        todayTasksLoading,
+        todayTasksError,
         inboxScanned,
         lastScanAt,
         lastClassified,

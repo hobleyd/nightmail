@@ -11,12 +11,14 @@ import 'package:nightmail/domain/entities/commitment.dart';
 import 'package:nightmail/domain/entities/email.dart';
 import 'package:nightmail/domain/entities/email_address.dart';
 import 'package:nightmail/domain/entities/email_folder.dart';
+import 'package:nightmail/domain/entities/todo_task.dart';
 import 'package:nightmail/domain/repositories/commitment_repository.dart';
 import 'package:nightmail/domain/repositories/email_repository.dart';
 import 'package:nightmail/domain/usecases/commitments/detect_commitments.dart';
 import 'package:nightmail/domain/usecases/create_calendar_event.dart';
 import 'package:nightmail/domain/usecases/commitments/run_commitments_agent.dart';
 import 'package:nightmail/domain/usecases/get_cached_calendar_events.dart';
+import 'package:nightmail/domain/usecases/get_tasks.dart';
 import 'package:nightmail/domain/usecases/update_calendar_event.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
@@ -236,7 +238,7 @@ void main() {
 
   tearDown(() => sl.reset());
 
-  CommitmentsCubit buildCubit() => CommitmentsCubit(
+  CommitmentsCubit buildCubit({GetTasks? getTasks}) => CommitmentsCubit(
         accountManager: accounts,
         emailRepository: emails,
         commitmentRepository: ledger,
@@ -245,6 +247,7 @@ void main() {
         taskReminders: taskReminders,
         createCalendarEvent: createEvent,
         updateCalendarEvent: updateEvent,
+        getTasks: getTasks,
       );
 
   /// Pumps the pane at [width] (a side pane by default) — or, with [width]
@@ -253,6 +256,7 @@ void main() {
     WidgetTester tester, {
     double? width = 420,
     ValueChanged<Commitment>? onOpenEmail,
+    GetTasks? getTasks,
   }) async {
     if (width != null) {
       // A tall pane, so every section is built: the list is lazy, and a
@@ -267,7 +271,7 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: BlocProvider<CommitmentsCubit>(
-            create: (_) => buildCubit(),
+            create: (_) => buildCubit(getTasks: getTasks),
             child: width == null ? pane : SizedBox(width: width, child: pane),
           ),
         ),
@@ -498,4 +502,60 @@ void main() {
     final days = find.byTooltip(RegExp(r'.*'));
     expect(days, findsWidgets);
   });
+
+  group('tasks due today', () {
+    final getTasks = _FakeGetTasks(const [
+      TodoTask(id: 't1', listId: 'l', title: 'Submit timesheet'),
+      TodoTask(id: 't9', listId: 'l', title: 'Not due today'),
+    ]);
+
+    setUp(getTasks.calls.clear);
+
+    testWidgets('the row expands in place to list the tasks', (tester) async {
+      await pumpPane(tester, getTasks: getTasks);
+
+      expect(find.text('Submit timesheet'), findsNothing);
+      expect(getTasks.calls, isEmpty, reason: 'titles are fetched on demand');
+
+      await tester.tap(find.text('1 task due today'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Submit timesheet'), findsOneWidget);
+      expect(find.text('Not due today'), findsNothing);
+      expect(getTasks.calls, ['l']);
+
+      // Collapsing hides them again; reopening does not re-fetch.
+      await tester.tap(find.text('1 task due today'));
+      await tester.pumpAndSettle();
+      expect(find.text('Submit timesheet'), findsNothing);
+      await tester.tap(find.text('1 task due today'));
+      await tester.pumpAndSettle();
+      expect(find.text('Submit timesheet'), findsOneWidget);
+      expect(getTasks.calls, ['l']);
+    });
+
+    testWidgets('the board tile expands too', (tester) async {
+      useScreenSizedSurface(tester);
+      await pumpPane(tester, width: null, getTasks: getTasks);
+
+      await tester.tap(find.text('1 task due today'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Submit timesheet'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  });
+}
+
+class _FakeGetTasks implements GetTasks {
+  _FakeGetTasks(this.tasks);
+
+  final List<TodoTask> tasks;
+  final List<String> calls = [];
+
+  @override
+  Future<Either<Failure, List<TodoTask>>> call(GetTasksParams params) async {
+    calls.add(params.listId);
+    return Right(tasks);
+  }
 }

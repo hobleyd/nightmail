@@ -12,6 +12,7 @@ import '../../../domain/entities/calendar_event.dart';
 import '../../../domain/entities/commitment.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/time_block_suggestion.dart';
+import '../../../domain/entities/todo_task.dart';
 import '../../../domain/entities/workload_forecast.dart';
 import '../../../domain/repositories/commitment_repository.dart';
 import '../../../domain/repositories/email_repository.dart';
@@ -25,6 +26,7 @@ import '../../../domain/usecases/create_calendar_event.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
 import '../../../domain/usecases/get_cached_calendar_events.dart';
 import '../../../domain/usecases/get_calendar_events.dart';
+import '../../../domain/usecases/get_tasks.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
 import 'commitments_state.dart';
 
@@ -50,6 +52,7 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
     required CreateCalendarEvent createCalendarEvent,
     required UpdateCalendarEvent updateCalendarEvent,
     CommitmentLedgerChanges? ledgerChanges,
+    GetTasks? getTasks,
     this.suggester = const SuggestTimeBlock(),
     this.forecaster = const ForecastWorkload(),
     DateTime Function()? now,
@@ -59,6 +62,7 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
         _detect = detectCommitments,
         _calendar = getCachedCalendarEvents,
         _taskReminders = taskReminders, // ignore: prefer_initializing_formals
+        _getTasks = getTasks, // ignore: prefer_initializing_formals
         _scheduler = ScheduleCommitment(
           createCalendarEvent: createCalendarEvent,
           updateCalendarEvent: updateCalendarEvent,
@@ -87,6 +91,7 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
   final DetectCommitments _detect;
   final GetCachedCalendarEvents _calendar;
   final TaskReminderScheduleLocalDatasource _taskReminders;
+  final GetTasks? _getTasks;
   final ScheduleCommitment _scheduler;
   final DateTime Function() _now;
 
@@ -104,6 +109,10 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
 
   /// Task due dates as of the last context read, for the agent snapshot.
   List<DateTime> _lastTaskDueDates = const [];
+
+  /// The tasks due today as of the last context read, by list — the ids
+  /// [loadTodayTasks] resolves into titles.
+  Map<String, Set<String>> _todayTaskIds = const {};
 
   /// Gap starts once recognised as freed. The comparison above only sees the
   /// disappearance at the first refresh after it; this keeps the label on the
@@ -138,6 +147,9 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
       status: CommitmentsStatus.loading,
       accountId: account.id,
       message: null,
+      // Another account's task titles must not survive a switch.
+      todayTasks: null,
+      todayTasksError: null,
     ));
 
     final ledger = await _ledger.getCommitments(accountId: account.id);
@@ -481,18 +493,26 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
     ]..sort((a, b) => a.start.compareTo(b.start));
 
     final taskDueDates = <DateTime>[];
+    final todayIds = <String, Set<String>>{};
     try {
       final rows = await _taskReminders.getScheduledTaskReminders(accountId);
       for (final r in rows) {
-        taskDueDates.add(
-          taskDueDay(DateTime.fromMillisecondsSinceEpoch(r.dueAtMs)),
-        );
+        final day = taskDueDay(DateTime.fromMillisecondsSinceEpoch(r.dueAtMs));
+        taskDueDates.add(day);
+        if (day == start) (todayIds[r.listId] ??= {}).add(r.taskId);
       }
     } catch (e) {
       debugPrint('CommitmentsCubit: task reminder rows unavailable: $e');
     }
     _lastTaskDueDates = taskDueDates;
     final tasksDue = taskDueDates.where((d) => d == start).length;
+    final todayChanged = !_sameTaskIds(todayIds, _todayTaskIds);
+    _todayTaskIds = todayIds;
+    // Titles already on screen (the row was expanded) follow the set: a
+    // task added, finished or moved off today re-fetches them.
+    if (todayChanged && state.todayTasks != null) {
+      unawaited(Future.microtask(loadTodayTasks));
+    }
 
     var forecast = forecaster(
       commitments: commitments,
@@ -505,6 +525,65 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
     forecast = _withStickyFreed(forecast, now);
 
     return (events: todayEvents, tasksDue: tasksDue, forecast: forecast);
+  }
+
+  /// Whether [loadTodayTasks] can fetch anything — false where no tasks
+  /// use case was wired.
+  bool get canLoadTodayTasks => _getTasks != null;
+
+  /// Fetches the titles of the tasks due today, for the expanded Today row.
+  /// One provider request per task list involved; the reminder rows the
+  /// count comes from carry only ids.
+  Future<void> loadTodayTasks() async {
+    final getTasks = _getTasks;
+    if (getTasks == null || isClosed || state.todayTasksLoading) return;
+    final wanted = _todayTaskIds;
+    if (wanted.isEmpty) {
+      emit(state.copyWith(todayTasks: const <TodoTask>[], todayTasksError: null));
+      return;
+    }
+    emit(state.copyWith(todayTasksLoading: true, todayTasksError: null));
+    final tasks = <TodoTask>[];
+    String? error;
+    for (final entry in wanted.entries) {
+      final result = await getTasks(GetTasksParams(listId: entry.key));
+      if (isClosed) return;
+      result.fold(
+        (f) => error ??= f.message,
+        (list) => tasks.addAll([
+          for (final t in list)
+            if (entry.value.contains(t.id) && !t.isCompleted) t,
+        ]),
+      );
+    }
+    tasks.sort(_byImportanceThenTitle);
+    emit(state.copyWith(
+      todayTasks: tasks,
+      todayTasksLoading: false,
+      todayTasksError: error,
+    ));
+  }
+
+  static int _byImportanceThenTitle(TodoTask a, TodoTask b) {
+    final i = b.importance.index.compareTo(a.importance.index);
+    if (i != 0) return i;
+    return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+  }
+
+  static bool _sameTaskIds(
+    Map<String, Set<String>> a,
+    Map<String, Set<String>> b,
+  ) {
+    if (a.length != b.length) return false;
+    for (final e in a.entries) {
+      final other = b[e.key];
+      if (other == null ||
+          other.length != e.value.length ||
+          !other.containsAll(e.value)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /// Drops the Today meetings that have ended since the last refresh. The

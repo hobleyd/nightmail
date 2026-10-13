@@ -619,6 +619,7 @@ Future<void> configureDependencies() async {
         createCalendarEvent: sl<CreateCalendarEvent>(),
         updateCalendarEvent: sl<UpdateCalendarEvent>(),
         ledgerChanges: sl<CommitmentLedgerChanges>(),
+        getTasks: sl<GetTasks>(),
       ));
   sl.registerFactory(() => EventEditBloc(
         createCalendarEvent: sl<CreateCalendarEvent>(),

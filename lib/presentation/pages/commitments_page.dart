@@ -8,6 +8,7 @@ import '../../core/platform/touch_metrics.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/calendar_event.dart';
 import '../../domain/entities/commitment.dart';
+import '../../domain/entities/todo_task.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/commitments/commitments_cubit.dart';
 import '../blocs/commitments/commitments_state.dart';
@@ -86,12 +87,20 @@ class _CommitmentsDayPanelState extends State<CommitmentsDayPanel> {
   StreamSubscription<void>? _accountSub;
   Timer? _clock;
   int? _lastPollGeneration;
+  bool _canOpenTasks = false;
   String? _lastAccountId;
 
   @override
   void initState() {
     super.initState();
     _cubit = context.read<CommitmentsCubit>();
+    // Whether this window has a Tasks view to switch to. The detached
+    // Commitments window has no HomeCubit, so there the Today tasks only
+    // expand in place.
+    try {
+      context.read<HomeCubit>();
+      _canOpenTasks = true;
+    } catch (_) {}
     _agent = CommitmentsAgentCubit(
       runAgent: sl<RunCommitmentsAgent>(),
       snapshot: _cubit.agentSnapshot,
@@ -289,7 +298,7 @@ class _CommitmentsDayPanelState extends State<CommitmentsDayPanel> {
                             ? _BoardBody(
                                 state: state,
                                 onOpen: _openEmail,
-                                onOpenTasks: _openTasks,
+                                onOpenTasks: _canOpenTasks ? _openTasks : null,
                                 onDone: (c) => unawaited(_cubit.markDone(c.id)),
                                 onDismiss: (c) =>
                                     unawaited(_cubit.dismiss(c.id)),
@@ -300,7 +309,7 @@ class _CommitmentsDayPanelState extends State<CommitmentsDayPanel> {
                             : _LoadedBody(
                                 state: state,
                                 onOpen: _openEmail,
-                                onOpenTasks: _openTasks,
+                                onOpenTasks: _canOpenTasks ? _openTasks : null,
                                 onDone: (c) => unawaited(_cubit.markDone(c.id)),
                                 onDismiss: (c) =>
                                     unawaited(_cubit.dismiss(c.id)),
@@ -431,7 +440,7 @@ class _LoadedBody extends StatelessWidget {
   const _LoadedBody({
     required this.state,
     required this.onOpen,
-    required this.onOpenTasks,
+    this.onOpenTasks,
     required this.onDone,
     required this.onDismiss,
     required this.onSchedule,
@@ -441,7 +450,7 @@ class _LoadedBody extends StatelessWidget {
 
   final CommitmentsState state;
   final ValueChanged<Commitment> onOpen;
-  final VoidCallback onOpenTasks;
+  final VoidCallback? onOpenTasks;
   final ValueChanged<Commitment> onDone;
   final ValueChanged<Commitment> onDismiss;
   final ValueChanged<Commitment> onSchedule;
@@ -490,7 +499,7 @@ class _LoadedBody extends StatelessWidget {
           children: [
             for (final e in state.todayEvents) _EventRow(event: e),
             if (state.tasksDueToday > 0)
-              _TasksRow(count: state.tasksDueToday, onTap: onOpenTasks),
+              _TodayTasks(state: state, onOpenTasks: onOpenTasks),
             for (final c in dueToday) row(c),
           ],
         ),
@@ -756,37 +765,6 @@ class _EventRow extends StatelessWidget {
   }
 }
 
-class _TasksRow extends StatelessWidget {
-  const _TasksRow({required this.count, required this.onTap});
-
-  final int count;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          children: [
-            Icon(Icons.checklist_rounded, size: 14, color: c.textMuted),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                '$count ${count == 1 ? 'task' : 'tasks'} due today',
-                style: TextStyle(color: c.textSecondary, fontSize: 12),
-              ),
-            ),
-            Icon(Icons.chevron_right_rounded, size: 16, color: c.textMuted),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _CommitmentRow extends StatelessWidget {
   const _CommitmentRow({
     required this.commitment,
@@ -1047,7 +1025,7 @@ class _BoardBody extends StatelessWidget {
   const _BoardBody({
     required this.state,
     required this.onOpen,
-    required this.onOpenTasks,
+    this.onOpenTasks,
     required this.onDone,
     required this.onDismiss,
     required this.onSchedule,
@@ -1057,7 +1035,7 @@ class _BoardBody extends StatelessWidget {
 
   final CommitmentsState state;
   final ValueChanged<Commitment> onOpen;
-  final VoidCallback onOpenTasks;
+  final VoidCallback? onOpenTasks;
   final ValueChanged<Commitment> onDone;
   final ValueChanged<Commitment> onDismiss;
   final ValueChanged<Commitment> onSchedule;
@@ -1148,9 +1126,10 @@ class _BoardBody extends StatelessWidget {
                           for (final e in state.todayEvents)
                             _BoardEventTile(event: e),
                           if (state.tasksDueToday > 0)
-                            _BoardTasksTile(
-                              count: state.tasksDueToday,
-                              onTap: onOpenTasks,
+                            _TodayTasks(
+                              state: state,
+                              board: true,
+                              onOpenTasks: onOpenTasks,
                             ),
                           for (final c in dueToday) card(c),
                         ],
@@ -1551,40 +1530,228 @@ class _BoardEventTile extends StatelessWidget {
   }
 }
 
-/// The tasks-due count as a board tile; tapping it opens the Tasks view.
-class _BoardTasksTile extends StatelessWidget {
-  const _BoardTasksTile({required this.count, required this.onTap});
+/// "N tasks due today" in the Today section — a row in the pane, a tile on
+/// the board — that expands in place to list the tasks. The count comes from
+/// the task-reminder rows, which hold ids only, so the titles are fetched
+/// from the provider the first time it is opened (and again after a failed
+/// fetch). Tapping a task switches to the Tasks view where this window has
+/// one.
+class _TodayTasks extends StatefulWidget {
+  const _TodayTasks({
+    required this.state,
+    this.board = false,
+    this.onOpenTasks,
+  });
 
-  final int count;
-  final VoidCallback onTap;
+  final CommitmentsState state;
+  final bool board;
+  final VoidCallback? onOpenTasks;
+
+  @override
+  State<_TodayTasks> createState() => _TodayTasksState();
+}
+
+class _TodayTasksState extends State<_TodayTasks> {
+  bool _expanded = false;
+
+  void _toggle() {
+    setState(() => _expanded = !_expanded);
+    final s = widget.state;
+    if (_expanded && !s.todayTasksLoading && s.todayTasksError != null) {
+      // Opening it again is the retry after a failed fetch.
+      unawaited(context.read<CommitmentsCubit>().loadTodayTasks());
+    } else {
+      _fetchIfNeeded();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _TodayTasks oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // An account switch clears the titles while the row may be open.
+    _fetchIfNeeded();
+  }
+
+  void _fetchIfNeeded() {
+    final s = widget.state;
+    if (!_expanded || s.todayTasks != null || s.todayTasksLoading) return;
+    final cubit = context.read<CommitmentsCubit>();
+    if (!cubit.canLoadTodayTasks) return;
+    // Not during build: loading emits at once.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(cubit.loadTodayTasks());
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    // The reminder rows can still list a task finished since the last
+    // reconcile; once the titles are in, they are the truer count.
+    final fetched = widget.state.todayTasks;
+    final count = fetched != null && widget.state.todayTasksError == null
+        ? fetched.length
+        : widget.state.tasksDueToday;
+    final board = widget.board;
+    final fontSize = board ? 13.0 : 12.0;
+
+    final header = Padding(
+      padding: board
+          ? const EdgeInsets.fromLTRB(12, 10, 10, 10)
+          : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Row(
+        children: [
+          Icon(Icons.checklist_rounded, size: 14, color: c.textMuted),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '$count ${count == 1 ? 'task' : 'tasks'} due today',
+              style: TextStyle(color: c.textSecondary, fontSize: fontSize),
+            ),
+          ),
+          AnimatedRotation(
+            turns: _expanded ? 0.25 : 0,
+            duration: const Duration(milliseconds: 150),
+            child: Icon(
+              Icons.chevron_right_rounded,
+              size: 16,
+              color: c.textMuted,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Semantics(
+          button: true,
+          expanded: _expanded,
+          child: InkWell(
+            key: const ValueKey('commitments-today-tasks'),
+            onTap: _toggle,
+            borderRadius: board ? BorderRadius.circular(8) : null,
+            child: header,
+          ),
+        ),
+        if (_expanded)
+          Padding(
+            padding: EdgeInsets.fromLTRB(12, 0, 10, board ? 8 : 4),
+            child: _list(context, fontSize),
+          ),
+      ],
+    );
+
+    if (!board) return content;
     return Material(
       color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
-          decoration: BoxDecoration(
-            border: Border.all(color: c.separatorStrong),
-            borderRadius: BorderRadius.circular(8),
-          ),
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border.all(color: c.separatorStrong),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: content,
+      ),
+    );
+  }
+
+  Widget _list(BuildContext context, double fontSize) {
+    final c = context.colors;
+    final s = widget.state;
+    final tasks = s.todayTasks;
+    final muted = TextStyle(color: c.textMuted, fontSize: fontSize - 1);
+
+    Widget note(String text) => Padding(
+          padding: const EdgeInsets.fromLTRB(22, 4, 0, 4),
+          child: Text(text, style: muted),
+        );
+
+    if (tasks == null) {
+      if (s.todayTasksLoading ||
+          context.read<CommitmentsCubit>().canLoadTodayTasks) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(22, 4, 0, 4),
           child: Row(
             children: [
-              Icon(Icons.checklist_rounded, size: 14, color: c.textMuted),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  '$count ${count == 1 ? 'task' : 'tasks'} due today',
-                  style: TextStyle(color: c.textSecondary, fontSize: 13),
+              SizedBox(
+                width: 10,
+                height: 10,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.5,
+                  color: c.textMuted,
                 ),
               ),
-              Icon(Icons.chevron_right_rounded, size: 16, color: c.textMuted),
+              const SizedBox(width: 8),
+              Text('Loading tasks…', style: muted),
             ],
           ),
+        );
+      }
+      return note('Tasks are not available here.');
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final t in tasks)
+          _TodayTaskLine(
+            task: t,
+            fontSize: fontSize,
+            onTap: widget.onOpenTasks,
+          ),
+        if (tasks.isEmpty && s.todayTasksError == null)
+          note('No open tasks due today.'),
+        if (s.todayTasksError != null)
+          note('Could not load tasks: ${s.todayTasksError}'),
+      ],
+    );
+  }
+}
+
+class _TodayTaskLine extends StatelessWidget {
+  const _TodayTaskLine({
+    required this.task,
+    required this.fontSize,
+    this.onTap,
+  });
+
+  final TodoTask task;
+  final double fontSize;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final high = task.importance == TodoTaskImportance.high;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(4),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(22, 4, 0, 4),
+        child: Row(
+          children: [
+            Icon(
+              Icons.radio_button_unchecked_rounded,
+              size: 12,
+              color: c.textMuted,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                task.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: c.textSecondary, fontSize: fontSize),
+              ),
+            ),
+            if (high) ...[
+              const SizedBox(width: 6),
+              Icon(Icons.priority_high_rounded, size: 13, color: c.textMuted),
+            ],
+          ],
         ),
       ),
     );

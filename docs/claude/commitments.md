@@ -106,6 +106,16 @@ cycle (`MailPollerState.pollGeneration`) triggers a scan; an account switch
 reloads. Both listeners are optional so the pane works where those blocs are
 absent.
 
+The tasks row ("3 tasks due today", a tile on the board) **expands in
+place** to list the tasks. The reminder rows behind the count hold only
+list and task ids, and tasks have no local cache, so
+`CommitmentsCubit.loadTodayTasks` fetches titles through `GetTasks` — one
+provider request per list involved — the first time the row is opened, and
+again only after a failed fetch or when a refresh changes which tasks are due
+today. Completed tasks are dropped; important ones sort first. A task line
+switches to the Tasks view where the window has a `HomeCubit`; the detached
+window has none, so there it only lists.
+
 Triage without a System One route is a **setup card**, not an error: the
 pane stays usable and points at Settings › AI.
 

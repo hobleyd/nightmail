@@ -9,6 +9,7 @@ import 'package:nightmail/domain/entities/commitment.dart';
 import 'package:nightmail/domain/entities/email.dart';
 import 'package:nightmail/domain/entities/email_address.dart';
 import 'package:nightmail/domain/entities/email_folder.dart';
+import 'package:nightmail/domain/entities/todo_task.dart';
 import 'package:nightmail/domain/entities/workload_forecast.dart';
 import 'package:nightmail/domain/repositories/commitment_repository.dart';
 import 'package:nightmail/domain/repositories/email_repository.dart';
@@ -17,6 +18,7 @@ import 'package:nightmail/domain/usecases/commitments/commitment_ledger_changes.
 import 'package:nightmail/domain/usecases/create_calendar_event.dart';
 import 'package:nightmail/domain/usecases/get_cached_calendar_events.dart';
 import 'package:nightmail/domain/usecases/get_calendar_events.dart';
+import 'package:nightmail/domain/usecases/get_tasks.dart';
 import 'package:nightmail/domain/usecases/update_calendar_event.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
@@ -658,4 +660,114 @@ void main() {
       expect(cubit.state.message, 'full');
     });
   });
+
+  group('loadTodayTasks', () {
+    CommitmentsCubit withTasks(_FakeGetTasks getTasks) => CommitmentsCubit(
+          accountManager: accounts,
+          emailRepository: emails,
+          commitmentRepository: ledger,
+          detectCommitments: detect,
+          getCachedCalendarEvents: calendar,
+          taskReminders: taskReminders,
+          createCalendarEvent: createEvent,
+          updateCalendarEvent: updateEvent,
+          getTasks: getTasks,
+          now: () => clock,
+        );
+
+    test('lists only the open tasks the reminder rows say are due today',
+        () async {
+      final getTasks = _FakeGetTasks({
+        'l': const Right([
+          TodoTask(id: 't-tomorrow', listId: 'l', title: 'Tomorrow'),
+          TodoTask(id: 't-today', listId: 'l', title: 'File the BAS'),
+          TodoTask(id: 'other', listId: 'l', title: 'Not due'),
+        ]),
+      });
+      final c = withTasks(getTasks);
+      await c.load();
+      await pumpEventQueue();
+      expect(c.state.tasksDueToday, 1);
+      expect(c.state.todayTasks, isNull, reason: 'fetched only on demand');
+      expect(getTasks.calls, isEmpty);
+
+      await c.loadTodayTasks();
+
+      expect(getTasks.calls, ['l']);
+      expect(c.state.todayTasks!.map((t) => t.title), ['File the BAS']);
+      expect(c.state.todayTasksLoading, isFalse);
+      expect(c.state.todayTasksError, isNull);
+      await c.close();
+    });
+
+    test('a provider failure is surfaced, not an empty list', () async {
+      final getTasks = _FakeGetTasks({
+        'l': const Left(NetworkFailure(message: 'offline')),
+      });
+      final c = withTasks(getTasks);
+      await c.load();
+      await pumpEventQueue();
+
+      await c.loadTodayTasks();
+
+      expect(c.state.todayTasks, isEmpty);
+      expect(c.state.todayTasksError, 'offline');
+      await c.close();
+    });
+
+    test('drops completed tasks and puts important ones first', () async {
+      when(taskReminders.getScheduledTaskReminders('acc')).thenAnswer(
+        (_) async => [
+          for (final id in ['a', 'b', 'c'])
+            ScheduledTaskReminderRecord(
+              accountId: 'acc',
+              listId: 'l',
+              taskId: id,
+              triggerAtMs: 0,
+              dueAtMs: DateTime(2026, 10, 2, 17).millisecondsSinceEpoch,
+              osScheduled: false,
+            ),
+        ],
+      );
+      final getTasks = _FakeGetTasks({
+        'l': const Right([
+          TodoTask(id: 'a', listId: 'l', title: 'Alpha'),
+          TodoTask(
+            id: 'b',
+            listId: 'l',
+            title: 'Bravo',
+            importance: TodoTaskImportance.high,
+          ),
+          TodoTask(
+            id: 'c',
+            listId: 'l',
+            title: 'Charlie',
+            status: TodoTaskStatus.completed,
+          ),
+        ]),
+      });
+      final c = withTasks(getTasks);
+      await c.load();
+      await pumpEventQueue();
+      expect(c.state.tasksDueToday, 3);
+
+      await c.loadTodayTasks();
+
+      expect(c.state.todayTasks!.map((t) => t.title), ['Bravo', 'Alpha']);
+      await c.close();
+    });
+  });
+}
+
+class _FakeGetTasks implements GetTasks {
+  _FakeGetTasks(this.byList);
+
+  final Map<String, Either<Failure, List<TodoTask>>> byList;
+  final List<String> calls = [];
+
+  @override
+  Future<Either<Failure, List<TodoTask>>> call(GetTasksParams params) async {
+    calls.add(params.listId);
+    return byList[params.listId] ?? const Right([]);
+  }
 }

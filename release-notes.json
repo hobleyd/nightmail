@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.40.0",
+  "version": "1.40.1",
   "sections": [
     {
-      "type": "features",
-      "title": "New features",
+      "type": "fixes",
+      "title": "Fixes",
       "items": [
         {
-          "body": "migrate just the Inbox from the folder's right-click menu",
+          "body": "mail copied into Microsoft 365 keeps its original time",
           "title": "migration"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.40.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "migrate just the Inbox from the folder's right-click menu",
+              "title": "migration"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -399,23 +416,6 @@
             {
               "body": "stop an account switch filing one mailbox's folder tree under the other",
               "title": "accounts"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.37.3",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "release a closed sub-window's engine after its last frame has presented",
-              "title": "macos"
             }
           ]
         }

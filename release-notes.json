@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.39.7",
+  "version": "1.39.8",
   "sections": [
     {
-      "type": "fixes",
-      "title": "Fixes",
+      "type": "features",
+      "title": "New features",
       "items": [
         {
-          "body": "relaunch after an in-app update on macOS",
-          "title": "update"
+          "body": "expand the Today tasks row to list the tasks",
+          "title": "commitments"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.39.7",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "relaunch after an in-app update on macOS",
+              "title": "update"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -403,27 +420,6 @@
             {
               "body": "keep a message's attachments when another folder lists it thin",
               "title": "cache"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.37.1",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "select the Inbox behind a message a notification tap opened",
-              "title": "mail"
-            },
-            {
-              "body": "deliver a notification tap when the background poll raised it",
-              "title": "ios"
             }
           ]
         }

@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.39.8",
+  "version": "1.40.0",
   "sections": [
     {
       "type": "features",
       "title": "New features",
       "items": [
         {
-          "body": "expand the Today tasks row to list the tasks",
-          "title": "commitments"
+          "body": "migrate just the Inbox from the folder's right-click menu",
+          "title": "migration"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.39.8",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "expand the Today tasks row to list the tasks",
+              "title": "commitments"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -399,27 +416,6 @@
             {
               "body": "release a closed sub-window's engine after its last frame has presented",
               "title": "macos"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.37.2",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "page the Graph folder listings instead of stopping at 100",
-              "title": "folders"
-            },
-            {
-              "body": "keep a message's attachments when another folder lists it thin",
-              "title": "cache"
             }
           ]
         }

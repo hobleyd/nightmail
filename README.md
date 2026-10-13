@@ -134,6 +134,7 @@ Settings → Accounts.
 ### Commitments
 - Commitments pane beside Calendar, Tasks and AI: mail, calendar and tasks read as one stream of obligations
 - Today view of the day's meetings, the tasks falling due, and every commitment due or overdue
+- The tasks-due row in Today expands in place to list the tasks themselves, in the pane and the detached window alike
 - You owe: promises detected in your sent mail ("I'll send it Friday"), most urgent first
 - Waiting on: what you asked others for, or they promised you, with how long it has been outstanding
 - Needs a decision: received mail that still wants an action or reply, against the count of mail that needs none

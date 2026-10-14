@@ -11,7 +11,10 @@ import '../../core/platform/touch_metrics.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/meeting_load.dart';
 import '../../domain/entities/calendar_event.dart';
+import '../../domain/entities/email.dart';
+import '../../domain/entities/email_address.dart';
 import '../../domain/usecases/get_calendar_event.dart';
+import '../../domain/usecases/send_email.dart' show ComposeMode;
 import '../../infrastructure/accounts/account.dart';
 import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
@@ -21,6 +24,7 @@ import '../blocs/calendar/calendar_state.dart';
 import '../widgets/calendar_overlap_layout.dart';
 import '../widgets/event_edit_dialog.dart';
 import '../widgets/event_hover_card.dart';
+import 'compose_window.dart';
 
 class CalendarPage extends StatefulWidget {
   const CalendarPage({super.key});
@@ -2669,6 +2673,9 @@ void _showEventContextMenu(
 
   final isRecurring = event.isRecurringOccurrence;
 
+  final recipients = meetingEmailRecipients(event, _selfEmail(context));
+  final canEmailAttendees = recipients.isNotEmpty;
+
   if (event.isOrganizer) {
     showMenu<_EventMenuAction>(
       context: context,
@@ -2679,6 +2686,14 @@ void _showEventContextMenu(
             value: _EventMenuAction.joinMeeting,
             height: 36,
             child: Text('Join Meeting', style: TextStyle(fontSize: 13)),
+          ),
+          const PopupMenuDivider(height: 1),
+        ],
+        if (canEmailAttendees) ...[
+          const PopupMenuItem(
+            value: _EventMenuAction.emailAttendees,
+            height: 36,
+            child: Text('Email Attendees', style: TextStyle(fontSize: 13)),
           ),
           const PopupMenuDivider(height: 1),
         ],
@@ -2724,6 +2739,8 @@ void _showEventContextMenu(
         case _EventMenuAction.joinMeeting:
           unawaited(launchUrl(Uri.parse(meetingUrl!),
               mode: LaunchMode.externalApplication));
+        case _EventMenuAction.emailAttendees:
+          await _emailAttendees(context, event, recipients);
         case _EventMenuAction.edit:
         case _EventMenuAction.editInstance:
           await _openInstanceEditor(context, event);
@@ -2753,6 +2770,14 @@ void _showEventContextMenu(
         ),
         const PopupMenuDivider(height: 1),
       ],
+      if (canEmailAttendees) ...[
+        const PopupMenuItem(
+          value: _EventMenuAction.emailAttendees,
+          height: 36,
+          child: Text('Email Attendees', style: TextStyle(fontSize: 13)),
+        ),
+        const PopupMenuDivider(height: 1),
+      ],
       const PopupMenuItem(
         value: _EventMenuAction.decline,
         height: 36,
@@ -2776,6 +2801,8 @@ void _showEventContextMenu(
       case _EventMenuAction.joinMeeting:
         unawaited(launchUrl(Uri.parse(meetingUrl!),
             mode: LaunchMode.externalApplication));
+      case _EventMenuAction.emailAttendees:
+        await _emailAttendees(context, event, recipients);
       case _EventMenuAction.decline:
         context
             .read<CalendarBloc>()
@@ -2784,6 +2811,65 @@ void _showEventContextMenu(
         await _openProposeNewTime(context, event);
     }
   });
+}
+
+/// Everyone on a meeting other than this account, organizer first, as the To
+/// line of an email to them all. Rooms are resources, not people. Graph keeps
+/// the organizer out of `attendees` and Google lists them among their own
+/// guests, so the organizer is added from [CalendarEvent.organizerEmail] and
+/// the roster is deduped by address.
+@visibleForTesting
+List<EmailAddress> meetingEmailRecipients(
+  CalendarEvent event,
+  String? selfEmail,
+) {
+  final self = selfEmail?.toLowerCase();
+  final seen = <String>{};
+  final recipients = <EmailAddress>[];
+  void add(String email, String? name) {
+    final key = email.trim().toLowerCase();
+    if (key.isEmpty || key == self || !seen.add(key)) return;
+    recipients.add(EmailAddress(address: email.trim(), name: name));
+  }
+
+  final organizer = event.organizerEmail;
+  if (organizer != null) add(organizer, event.organizerName);
+  for (final a in event.attendees) {
+    if (!a.isResource) add(a.email, a.displayName);
+  }
+  return recipients;
+}
+
+/// The active account's address, or null where no [AccountCubit] is above
+/// [context] — the menu tests open it bare.
+String? _selfEmail(BuildContext context) {
+  final state = context.read<AccountCubit?>()?.state;
+  return state is AccountsLoaded ? state.activeAccount.emailAddress : null;
+}
+
+/// Opens a new email to everyone on [event], titled after the meeting.
+Future<void> _emailAttendees(
+  BuildContext context,
+  CalendarEvent event,
+  List<EmailAddress> recipients,
+) {
+  return ComposeWindowApp.open(
+    context,
+    mode: ComposeMode.newEmail,
+    draftEmail: Email(
+      id: '',
+      subject: event.subject,
+      from: const EmailAddress(address: ''),
+      toRecipients: recipients,
+      ccRecipients: const [],
+      bodyPreview: '',
+      body: '',
+      bodyType: EmailBodyType.text,
+      isRead: false,
+      receivedDateTime: DateTime.now(),
+      importance: EmailImportance.normal,
+    ),
+  );
 }
 
 /// Opens the event form in counter-proposal mode for somebody else's meeting.
@@ -2814,6 +2900,7 @@ enum _EventMenuAction {
   cancel,
   cancelSeries,
   joinMeeting,
+  emailAttendees,
   decline,
   proposeNewTime,
 }

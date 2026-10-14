@@ -4,6 +4,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/domain/entities/calendar_event.dart';
+import 'package:nightmail/domain/entities/calendar_event_attendee.dart';
 import 'package:nightmail/presentation/pages/calendar_page.dart';
 
 const _meetUrl = 'https://meet.google.com/abc-defg-hij';
@@ -12,6 +13,8 @@ CalendarEvent _event({
   String? location,
   String? onlineMeetingUrl,
   bool isOrganizer = true,
+  String? organizerEmail,
+  List<CalendarEventAttendee> attendees = const [],
 }) =>
     CalendarEvent(
       id: 'e1',
@@ -22,6 +25,8 @@ CalendarEvent _event({
       isOrganizer: isOrganizer,
       location: location,
       onlineMeetingUrl: onlineMeetingUrl,
+      organizerEmail: organizerEmail,
+      attendees: attendees,
     );
 
 void main() {
@@ -99,6 +104,54 @@ void main() {
 
       expect(find.text('Join Meeting'), findsNothing);
       expect(find.text('Decline Meeting'), findsOneWidget);
+    });
+  });
+
+  group('Email Attendees', () {
+    const guest = CalendarEventAttendee(email: 'kim@example.com');
+    const room = CalendarEventAttendee(
+        email: 'boardroom@example.com', isResource: true);
+
+    testWidgets('is offered to the organizer of a meeting with guests',
+        (tester) async {
+      await openMenu(tester, _event(attendees: const [guest]));
+
+      expect(find.text('Email Attendees'), findsOneWidget);
+    });
+
+    testWidgets('is offered to an attendee, who can always reach the organizer',
+        (tester) async {
+      await openMenu(
+          tester,
+          _event(
+              isOrganizer: false, organizerEmail: 'boss@example.com'));
+
+      expect(find.text('Email Attendees'), findsOneWidget);
+    });
+
+    testWidgets('is not offered when only a room is booked', (tester) async {
+      await openMenu(tester, _event(attendees: const [room]));
+
+      expect(find.text('Email Attendees'), findsNothing);
+    });
+
+    test('addresses the organizer and guests, minus rooms, self and repeats',
+        () {
+      final recipients = meetingEmailRecipients(
+        _event(
+          organizerEmail: 'boss@example.com',
+          attendees: const [
+            CalendarEventAttendee(email: 'Boss@example.com'),
+            CalendarEventAttendee(email: 'me@example.com'),
+            guest,
+            room,
+          ],
+        ),
+        'ME@example.com',
+      );
+
+      expect(recipients.map((r) => r.address),
+          ['boss@example.com', 'kim@example.com']);
     });
   });
 }

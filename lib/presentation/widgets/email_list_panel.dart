@@ -14,6 +14,7 @@ import '../../domain/entities/email.dart';
 import '../../domain/entities/email_address.dart';
 import '../../domain/entities/task_email_link.dart';
 import 'email_drag_data.dart';
+import 'email_task_flag.dart';
 import 'email_folder_label.dart';
 import '../../domain/entities/email_folder.dart';
 import '../../infrastructure/accounts/account_manager.dart';
@@ -30,6 +31,7 @@ import '../blocs/folder_list/folder_list_event.dart';
 import '../blocs/folder_list/folder_list_state.dart';
 import '../blocs/home/home_cubit.dart';
 import '../blocs/mail_poller/mail_poller_cubit.dart';
+import '../blocs/tasks/overdue_tasks_cubit.dart';
 import '../blocs/tasks/tasks_bloc.dart';
 import '../blocs/tasks/tasks_event.dart';
 import '../blocs/tasks/tasks_state.dart';
@@ -1293,6 +1295,13 @@ class _EmailListView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tasksState = context.watch<TasksBloc>().state;
+    // Not read — watched so a flag turns red when its task goes overdue at the
+    // day boundary: the overdue count moves then, and nothing in TasksBloc does.
+    context.watch<OverdueTasksCubit>();
+    final taskFlags = tasksState is TasksLoaded
+        ? emailTaskFlags(tasksState.tasks)
+        : const <String, EmailTaskFlag>{};
     final items = _buildListItems(
       emails,
       expandedConversationIds,
@@ -1363,6 +1372,7 @@ class _EmailListView extends StatelessWidget {
             onLongPress: () => onEmailLongPressed?.call(email, i),
             onDelete: onDelete,
             onFlag: onFlag,
+            taskFlag: EmailTaskFlag.of(email.id, taskFlags),
             // Withheld from the echo along with the buttons they drive: one
             // FocusNode cannot be attached to two widgets at once, and the
             // header row is already holding these.
@@ -1452,6 +1462,7 @@ class _EmailListView extends StatelessWidget {
           onToggleExpand: () => onToggleConversation(conv.conversationId),
           onDelete: onConvDelete,
           onFlag: onConvFlag,
+          taskFlag: EmailTaskFlag.ofAll(conv.allEmailIds, taskFlags),
           flagFocusNode: isConvSelected ? flagFocusNode : null,
           deleteFocusNode: isConvSelected ? deleteFocusNode : null,
         );
@@ -1515,6 +1526,7 @@ class _ConversationHeader extends StatefulWidget {
     this.onLongPress,
     this.flagFocusNode,
     this.deleteFocusNode,
+    this.taskFlag = EmailTaskFlag.none,
   });
 
   /// The message the row stands for — the thread's newest that the user did not
@@ -1540,6 +1552,9 @@ class _ConversationHeader extends StatefulWidget {
   final void Function(DateTime? dueDate) onFlag;
   final FocusNode? flagFocusNode;
   final FocusNode? deleteFocusNode;
+
+  /// The most urgent follow-up task open on any message in the thread.
+  final EmailTaskFlag taskFlag;
 
   @override
   State<_ConversationHeader> createState() => _ConversationHeaderState();
@@ -1743,7 +1758,8 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
                       children: [
                         FlagIconButton(
                           focusNode: widget.flagFocusNode ?? _localFlagFn,
-                          color: c.textMuted,
+                          color: widget.taskFlag.color(c.textMuted),
+                          filled: widget.taskFlag != EmailTaskFlag.none,
                           onTap: () => widget.onFlag(null),
                           onSchedule: (date) => widget.onFlag(date),
                         ),

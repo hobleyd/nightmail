@@ -524,3 +524,15 @@ thorough**, because the folder list it judges rows by may itself be wrong:
 Its marker is its own sentinel (`__foreign_folder_prune__`), because an install
 that has run the older membership repair has not necessarily run this.
 
+
+## The Row's Flag Colours From Open Tasks
+
+A row's flag button (desktop only) is drawn solid in the accent colour when an
+open task's notes carry that message's `TaskEmailLink` marker, and in
+`AppColors.notification` once the task is past due by `isTaskOverdue` — a
+thread takes the most urgent of its messages' (`email_task_flag.dart`). The
+source is `TasksBloc`, which holds **one list of one account**: a task filed
+while another list was selected, or with the Tasks pane switched to another
+list, leaves the flag plain. The reminder rows `OverdueTasksCubit` reads cover
+every list but carry no email id, so they cannot answer this; the list watches
+that cubit only so the day boundary repaints a flag red.

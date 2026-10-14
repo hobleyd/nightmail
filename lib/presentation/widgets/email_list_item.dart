@@ -6,6 +6,7 @@ import '../../domain/entities/email.dart';
 import 'email_date_formatter.dart';
 import 'email_folder_label.dart';
 import 'email_list_correspondent.dart';
+import 'email_task_flag.dart';
 import 'flag_icon_button.dart';
 
 class EmailListItem extends StatefulWidget {
@@ -28,6 +29,7 @@ class EmailListItem extends StatefulWidget {
     this.onDoubleTap,
     this.flagFocusNode,
     this.deleteFocusNode,
+    this.taskFlag = EmailTaskFlag.none,
   });
 
   final Email email;
@@ -58,6 +60,9 @@ class EmailListItem extends StatefulWidget {
   final double indent;
   final FocusNode? flagFocusNode;
   final FocusNode? deleteFocusNode;
+
+  /// Whether a follow-up task is open on this message — colours the flag.
+  final EmailTaskFlag taskFlag;
 
   @override
   State<EmailListItem> createState() => _EmailListItemState();
@@ -265,7 +270,8 @@ class _EmailListItemState extends State<EmailListItem> {
                   children: [
                     FlagIconButton(
                       focusNode: widget.flagFocusNode ?? _localFlagFn,
-                      color: c.textMuted,
+                      color: widget.taskFlag.color(c.textMuted),
+                      filled: widget.taskFlag != EmailTaskFlag.none,
                       onTap: () => widget.onFlag(null),
                       onSchedule: (date) => widget.onFlag(date),
                     ),

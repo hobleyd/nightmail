@@ -17,6 +17,7 @@ class FlagIconButton extends StatelessWidget {
     required this.onTap,
     required this.onSchedule,
     this.color,
+    this.filled = false,
     this.size = 15,
     this.focusNode,
   });
@@ -24,6 +25,9 @@ class FlagIconButton extends StatelessWidget {
   final VoidCallback onTap;
   final void Function(DateTime dueDate) onSchedule;
   final Color? color;
+
+  /// Draws the solid glyph — the row's message already has a follow-up task.
+  final bool filled;
   final double size;
   final FocusNode? focusNode;
 
@@ -41,7 +45,7 @@ class FlagIconButton extends StatelessWidget {
       child: IconButton(
         focusNode: focusNode,
         icon: Icon(
-          Icons.flag_outlined,
+          filled ? Icons.flag_rounded : Icons.flag_outlined,
           size: size,
           color: color ?? AppColors.accent.withValues(alpha: 0.7),
         ),

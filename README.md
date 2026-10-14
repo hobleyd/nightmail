@@ -130,6 +130,7 @@ Settings → Accounts.
 - Attach emails to tasks (or link the source email in notes for providers without an attachment API)
 - Expandable task notes with a link back to the source email — opens the email's conversation thread in the list pane
 - Red dot on the Tasks icon when the active account has an overdue task
+- A message list row's flag is coloured when its thread has an open task, and turns red once the task is overdue
 
 ### Commitments
 - Commitments pane beside Calendar, Tasks and AI: mail, calendar and tasks read as one stream of obligations

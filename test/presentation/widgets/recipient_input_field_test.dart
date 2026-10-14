@@ -897,4 +897,112 @@ void main() {
       expect(recipients, ['alice@example.com']);
     });
   });
+
+  group('RecipientInputField — chip context menu', () {
+    late List<String> copied;
+
+    setUp(() {
+      copied = [];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+            if (call.method == 'Clipboard.setData') {
+              copied.add((call.arguments as Map)['text'] as String);
+            }
+            return null;
+          });
+    });
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    Widget field({
+      required List<String> recipients,
+      ValueChanged<List<String>>? onChanged,
+      bool readOnly = false,
+    }) {
+      return MaterialApp(
+        home: Scaffold(
+          body: RecipientInputField(
+            label: 'Guests',
+            recipients: recipients,
+            onChanged: onChanged ?? (_) {},
+            readOnly: readOnly,
+          ),
+        ),
+      );
+    }
+
+    Future<void> rightClick(WidgetTester tester, Finder finder) async {
+      await tester.tap(
+        finder,
+        kind: PointerDeviceKind.mouse,
+        buttons: kSecondaryMouseButton,
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('copies the bare address of a named recipient', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        field(recipients: ['Alice Smith <alice@example.com>']),
+      );
+
+      await rightClick(tester, find.text('Alice Smith'));
+      await tester.tap(find.text('Copy Email Address'));
+      await tester.pumpAndSettle();
+
+      expect(copied, ['alice@example.com']);
+      expect(find.text('Copied to clipboard'), findsOneWidget);
+    });
+
+    testWidgets('works on a read-only field', (tester) async {
+      await tester.pumpWidget(
+        field(recipients: ['bob@example.com'], readOnly: true),
+      );
+
+      await rightClick(tester, find.text('bob@example.com'));
+      await tester.tap(find.text('Copy Email Address'));
+      await tester.pumpAndSettle();
+
+      expect(copied, ['bob@example.com']);
+    });
+
+    testWidgets('offers nothing for a chip with no address', (tester) async {
+      await tester.pumpWidget(field(recipients: ['Unknown Person']));
+
+      await rightClick(tester, find.text('Unknown Person'));
+
+      expect(find.text('Copy Email Address'), findsNothing);
+    });
+
+    testWidgets('a read-only field has no input and cannot delete a chip', (
+      tester,
+    ) async {
+      var recipients = ['alice@example.com', 'bob@example.com'];
+      await tester.pumpWidget(
+        StatefulBuilder(
+          builder: (_, setState) => field(
+            recipients: recipients,
+            readOnly: true,
+            onChanged: (r) => setState(() => recipients = r),
+          ),
+        ),
+      );
+
+      expect(find.byType(TextField), findsNothing);
+      await tester.tap(
+        find.text('alice@example.com'),
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pump();
+
+      expect(recipients, ['alice@example.com', 'bob@example.com']);
+    });
+  });
 }

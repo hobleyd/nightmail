@@ -38,6 +38,7 @@ class RecipientInputField extends StatefulWidget {
     this.chipBadgeBuilder,
     this.leading,
     this.onLabelTap,
+    this.readOnly = false,
   }) : assert(
          fieldId == null || onDropAccepted != null,
          'onDropAccepted is required when fieldId is set',
@@ -72,6 +73,15 @@ class RecipientInputField extends StatefulWidget {
 
   /// Makes the whole label cell (leading and text) a tap target.
   final VoidCallback? onLabelTap;
+
+  /// Shows the recipients without letting them be changed: no input, no chip
+  /// selection or drag. A chip's context menu still works, so an address can
+  /// be copied out of a meeting the user did not organise — which an
+  /// `AbsorbPointer` around the field would have swallowed along with the
+  /// edits.
+  final bool readOnly;
+
+  bool get _showsInput => showInput && !readOnly;
 
   /// How long a lookup may take before the dropdown stops waiting for it.
   ///
@@ -119,7 +129,7 @@ class RecipientInputFieldState extends State<RecipientInputField> {
   void initState() {
     super.initState();
     _inputFocus.addListener(_onInputFocusChanged);
-    if (widget.showInput && widget.accountId != null) {
+    if (widget._showsInput && widget.accountId != null) {
       sl<SystemContactsRepository>().warmUp().catchError(
         (e) => debugPrint('[NightMail] contacts warmUp: $e'),
       );
@@ -184,7 +194,7 @@ class RecipientInputFieldState extends State<RecipientInputField> {
     _flushInput();
     _clearSuggestions();
     setState(() => _selectedIndex = index);
-    if (widget.showInput) {
+    if (widget._showsInput) {
       _inputFocus.requestFocus();
     } else {
       _chipKeyFocus.requestFocus();
@@ -196,7 +206,7 @@ class RecipientInputFieldState extends State<RecipientInputField> {
     if (idx == null) return;
     widget.onChanged(List.from(widget.recipients)..removeAt(idx));
     setState(() => _selectedIndex = null);
-    if (widget.showInput) _inputFocus.requestFocus();
+    if (widget._showsInput) _inputFocus.requestFocus();
   }
 
   void _onTextChanged(String val) {
@@ -396,7 +406,7 @@ class RecipientInputFieldState extends State<RecipientInputField> {
               }
               if (event.logicalKey == LogicalKeyboardKey.escape) {
                 setState(() => _selectedIndex = null);
-                if (widget.showInput) _inputFocus.requestFocus();
+                if (widget._showsInput) _inputFocus.requestFocus();
                 return KeyEventResult.handled;
               }
               return KeyEventResult.ignored;
@@ -447,7 +457,7 @@ class RecipientInputFieldState extends State<RecipientInputField> {
         behavior: HitTestBehavior.translucent,
         onTap: () {
           setState(() => _selectedIndex = null);
-          if (widget.showInput) _inputFocus.requestFocus();
+          if (widget._showsInput) _inputFocus.requestFocus();
         },
         child: Container(
           constraints: const BoxConstraints(minHeight: 28),
@@ -469,7 +479,7 @@ class RecipientInputFieldState extends State<RecipientInputField> {
           behavior: HitTestBehavior.translucent,
           onTap: () {
             setState(() => _selectedIndex = null);
-            if (widget.showInput) _inputFocus.requestFocus();
+            if (widget._showsInput) _inputFocus.requestFocus();
           },
           child: Container(
             constraints: const BoxConstraints(minHeight: 28),
@@ -495,7 +505,7 @@ class RecipientInputFieldState extends State<RecipientInputField> {
       children: [
         for (int i = 0; i < widget.recipients.length; i++)
           _buildChip(i, c, draggable: draggable),
-        if (widget.showInput)
+        if (widget._showsInput)
           IntrinsicWidth(
             child: Focus(
               onKeyEvent: (_, event) {
@@ -652,10 +662,15 @@ class RecipientInputFieldState extends State<RecipientInputField> {
     // the *field's* own tap, which clears the selection, from winning the
     // arena and undoing it on the way back up. That is what the chip's tap
     // was quietly doing before.
+    //
+    // The secondary tap opens the chip's context menu, read-only or not.
+    final readOnly = widget.readOnly;
     final Widget chip = Listener(
-      onPointerDown: (_) => _selectChip(index),
+      onPointerDown: readOnly ? null : (_) => _selectChip(index),
       child: GestureDetector(
-        onTap: () => _selectChip(index),
+        onTap: readOnly ? null : () => _selectChip(index),
+        onSecondaryTapUp: (details) =>
+            _showChipMenu(address, details.globalPosition),
         child: _RecipientChip(
           address: address,
           isSelected: isSelected,
@@ -664,7 +679,7 @@ class RecipientInputFieldState extends State<RecipientInputField> {
       ),
     );
 
-    if (!draggable) return chip;
+    if (!draggable || readOnly) return chip;
 
     return Draggable<_RecipientDrag>(
       data: (address: address, sourceFieldId: widget.fieldId!),
@@ -691,6 +706,56 @@ class RecipientInputFieldState extends State<RecipientInputField> {
         badge: badge,
       ),
       child: chip,
+    );
+  }
+
+  static final _angleAddressRe = RegExp(r'<([^>]+)>\s*$');
+
+  /// The bare address of a `Name <address>` recipient, or the recipient
+  /// itself when it is already just an address.
+  static String _bareAddress(String recipient) =>
+      _angleAddressRe.firstMatch(recipient)?.group(1)?.trim() ??
+      recipient.trim();
+
+  Future<void> _showChipMenu(String recipient, Offset position) async {
+    final address = _bareAddress(recipient);
+    // A name the directory did not resolve has no address to copy.
+    if (!address.contains('@')) return;
+    final overlay =
+        Overlay.of(context).context.findRenderObject()! as RenderBox;
+    final copy = await showMenu<bool>(
+      context: context,
+      position: RelativeRect.fromRect(
+        position & const Size(40, 40),
+        Offset.zero & overlay.size,
+      ),
+      items: const [
+        PopupMenuItem(
+          value: true,
+          child: Row(
+            children: [
+              Icon(Icons.copy_rounded, size: 16),
+              SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  'Copy Email Address',
+                  style: TextStyle(fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (copy != true) return;
+    await Clipboard.setData(ClipboardData(text: address));
+    if (!mounted) return;
+    // A meeting window is its own engine; don't assume it has a messenger.
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(
+        content: Text('Copied to clipboard'),
+        duration: Duration(milliseconds: 1200),
+      ),
     );
   }
 }

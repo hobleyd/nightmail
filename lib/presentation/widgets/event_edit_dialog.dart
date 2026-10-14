@@ -1342,23 +1342,21 @@ class _EventEditFormState extends State<EventEditForm> {
                 if (widget.event?.onlineMeetingUrl case final url?)
                   _JoinLinkRow(url: url),
                 const SizedBox(height: 10),
-                AbsorbPointer(
-                  absorbing: _readOnly,
-                  child: RecipientInputField(
-                    label: 'Guests',
-                    labelWidth: 68,
-                    recipients: _attendees,
-                    chipBadgeBuilder: _guestStatusBadge,
-                    onChanged: (a) {
-                      setState(() {
-                        _attendees = a;
-                        _availabilities = null;
-                      });
-                      _scheduleAvailabilityCheck();
-                    },
-                    hintText: 'Add guests by email',
-                    accountId: widget.accountId,
-                  ),
+                RecipientInputField(
+                  label: 'Guests',
+                  labelWidth: 68,
+                  recipients: _attendees,
+                  readOnly: _readOnly,
+                  chipBadgeBuilder: _guestStatusBadge,
+                  onChanged: (a) {
+                    setState(() {
+                      _attendees = a;
+                      _availabilities = null;
+                    });
+                    _scheduleAvailabilityCheck();
+                  },
+                  hintText: 'Add guests by email',
+                  accountId: widget.accountId,
                 ),
                 // All-day events have no time to negotiate, so the availability
                 // readout and the schedule pane are both meaningless for them.

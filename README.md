@@ -66,6 +66,8 @@ The app provides a desktop based three-pane layout (folders, message list, readi
 - Editing a meeting you organize notifies attendees of the change
 - Inline **Join** button on a meeting tile from 3 minutes before it starts until it ends, for meetings with a video-call link
 - Guest RSVP status (accepted / declined / tentative) shown on each guest chip
+- Right-click a guest chip to copy their email address, including on meetings you didn't organise
+- **Email Attendees** from a meeting's right-click menu opens a new email to the organiser and every guest, titled after the meeting
 - Calendar window cycles Working Week → Full Week → Month; the month view shows each day's share of 9am–5pm already committed to meetings
 - Answering an invitation deletes the older invitation emails for that meeting it supersedes
 - Timezone-aware scheduling

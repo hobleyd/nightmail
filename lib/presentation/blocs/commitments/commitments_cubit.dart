@@ -29,6 +29,7 @@ import '../../../domain/usecases/get_calendar_events.dart';
 import '../../../domain/usecases/get_tasks.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
 import 'commitments_state.dart';
+import '../../../core/utils/calendar_days.dart';
 
 /// Drives the Commitments pane for the active account.
 ///
@@ -474,7 +475,7 @@ class CommitmentsCubit extends Cubit<CommitmentsState> {
       _contextFor(String accountId, List<Commitment> commitments) async {
     final now = _now();
     final start = DateTime(now.year, now.month, now.day);
-    final tomorrow = start.add(const Duration(days: 1));
+    final tomorrow = addCalendarDays(start, 1);
 
     final events = (await _calendar(GetCalendarEventsParams(
       startDateTime: start,

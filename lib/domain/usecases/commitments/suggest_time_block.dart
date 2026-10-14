@@ -1,6 +1,7 @@
 import '../../entities/calendar_event.dart';
 import '../../entities/commitment.dart';
 import '../../entities/time_block_suggestion.dart';
+import '../../../core/utils/calendar_days.dart';
 
 /// Picks a time block for a commitment from a quick look at the coming days:
 /// the working day with the least committed time, and the first free slot of
@@ -144,21 +145,21 @@ class SuggestTimeBlock {
       case CommitmentDue.today:
         // Today if any of it is left, else the next working day.
         if (todayUsable && _isWorkingDay(today)) return [today];
-        return [_nextWorkingDay(today.add(const Duration(days: 1)))];
+        return [_nextWorkingDay(addCalendarDays(today, 1))];
       case CommitmentDue.thisWeek:
         final days = <DateTime>[];
         var d = today;
         // Through Friday of this week…
         while (d.weekday <= DateTime.friday) {
           if (_isWorkingDay(d) && (d != today || todayUsable)) days.add(d);
-          d = d.add(const Duration(days: 1));
+          d = addCalendarDays(d, 1);
         }
         // …but never fewer than two working days, so a Friday-afternoon
         // "this week" (or a weekend) still has somewhere to go.
         d = _nextWorkingDay(d);
         while (days.length < 2) {
           days.add(d);
-          d = _nextWorkingDay(d.add(const Duration(days: 1)));
+          d = _nextWorkingDay(addCalendarDays(d, 1));
         }
         return days;
       case CommitmentDue.later:
@@ -167,7 +168,7 @@ class SuggestTimeBlock {
         var d = today;
         while (days.length < 5) {
           if (_isWorkingDay(d) && (d != today || todayUsable)) days.add(d);
-          d = d.add(const Duration(days: 1));
+          d = addCalendarDays(d, 1);
         }
         return days;
     }
@@ -244,7 +245,7 @@ class SuggestTimeBlock {
   static DateTime _nextWorkingDay(DateTime from) {
     var d = DateTime(from.year, from.month, from.day);
     while (!_isWorkingDay(d)) {
-      d = d.add(const Duration(days: 1));
+      d = addCalendarDays(d, 1);
     }
     return d;
   }
@@ -272,7 +273,7 @@ class SuggestTimeBlock {
   ) {
     if (days.isEmpty) return const [];
     final first = days.first;
-    final last = days.last.add(const Duration(days: 1));
+    final last = addCalendarDays(days.last, 1);
     return [
       for (final e in events)
         if (e.start.toLocal().isBefore(last) && e.end.toLocal().isAfter(first))

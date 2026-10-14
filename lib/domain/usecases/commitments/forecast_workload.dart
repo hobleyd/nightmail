@@ -2,6 +2,7 @@ import '../../entities/calendar_event.dart';
 import '../../entities/commitment.dart';
 import '../../entities/workload_forecast.dart';
 import 'suggest_time_block.dart';
+import '../../../core/utils/calendar_days.dart';
 
 /// "Future Me": reads the week ahead and says where it is going to hurt.
 ///
@@ -89,7 +90,7 @@ class ForecastWorkload {
     var d = DateTime(now.year, now.month, now.day);
     while (out.length < horizonWorkingDays) {
       if (_isWorkingDay(d)) out.add(d);
-      d = d.add(const Duration(days: 1));
+      d = addCalendarDays(d, 1);
     }
     return out;
   }
@@ -349,8 +350,7 @@ class ForecastWorkload {
 
   /// Monday of the week [d] is in, as a comparable day.
   static DateTime _weekOf(DateTime d) {
-    final day = DateTime(d.year, d.month, d.day);
-    return day.subtract(Duration(days: day.weekday - 1));
+    return addCalendarDays(d, -(d.weekday - 1));
   }
 
   DateTime _workingStart(DateTime day) =>

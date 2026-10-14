@@ -11,6 +11,7 @@ import '../../ai/agent/agent_tool.dart';
 import '../forecast_workload.dart';
 import '../schedule_commitment.dart';
 import '../suggest_time_block.dart';
+import '../../../../core/utils/calendar_days.dart';
 
 /// What the commitments agent knows at the start of a turn: the ledger, the
 /// calendar ahead and the task due dates, as the pane already holds them.
@@ -525,7 +526,7 @@ DateTime? resolveDay(Object? raw, DateTime now) {
   if (text == null || text.isEmpty) return null;
   final today = DateTime(now.year, now.month, now.day);
   if (text == 'today') return today;
-  if (text == 'tomorrow') return today.add(const Duration(days: 1));
+  if (text == 'tomorrow') return addCalendarDays(today, 1);
   const names = [
     'monday',
     'tuesday',
@@ -539,7 +540,7 @@ DateTime? resolveDay(Object? raw, DateTime now) {
     if (names[i].startsWith(text) && text.length >= 3) {
       var d = today;
       while (d.weekday != i + 1) {
-        d = d.add(const Duration(days: 1));
+        d = addCalendarDays(d, 1);
       }
       return d;
     }

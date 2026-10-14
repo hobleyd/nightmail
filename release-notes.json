@@ -1,30 +1,51 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.40.2",
+  "version": "1.40.3",
   "sections": [
     {
       "type": "features",
       "title": "New features",
       "items": [
         {
-          "body": "colour the flag on rows with an open task",
-          "title": "email-list"
-        }
-      ]
-    },
-    {
-      "type": "fixes",
-      "title": "Fixes",
-      "items": [
+          "body": "email a meeting's attendees from its context menu",
+          "title": "calendar"
+        },
         {
-          "body": "step days by calendar date, not 24 hours",
-          "title": "commitments"
+          "body": "copy a guest's email address from its right-click menu",
+          "title": "meetings"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.40.2",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "colour the flag on rows with an open task",
+              "title": "email-list"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "step days by calendar date, not 24 hours",
+              "title": "commitments"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -391,23 +412,6 @@
             {
               "body": "System One typed-decision providers (Jev, Laya-MLX) in AI settings",
               "title": "ai"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.37.5",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "keep a read the server's folder count has not caught up with",
-              "title": "poller"
             }
           ]
         }

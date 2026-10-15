@@ -1,24 +1,51 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.40.3",
+  "version": "1.40.5",
   "sections": [
     {
       "type": "features",
       "title": "New features",
       "items": [
         {
-          "body": "email a meeting's attendees from its context menu",
-          "title": "calendar"
-        },
+          "body": "add a Google Workspace sign-in that requests the room scope up front",
+          "title": "accounts"
+        }
+      ]
+    },
+    {
+      "type": "fixes",
+      "title": "Fixes",
+      "items": [
         {
-          "body": "copy a guest's email address from its right-click menu",
-          "title": "meetings"
+          "body": "keep a moved O365 message from reappearing in the folder it left",
+          "title": "mail"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.40.3",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "email a meeting's attendees from its context menu",
+              "title": "calendar"
+            },
+            {
+              "body": "copy a guest's email address from its right-click menu",
+              "title": "meetings"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -391,27 +418,6 @@
             {
               "body": "open the pane in a screen-sized window with a board layout",
               "title": "commitments"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.38.0",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "Commitments pane — I owe / waiting on / needs a decision",
-              "title": "commitments"
-            },
-            {
-              "body": "System One typed-decision providers (Jev, Laya-MLX) in AI settings",
-              "title": "ai"
             }
           ]
         }

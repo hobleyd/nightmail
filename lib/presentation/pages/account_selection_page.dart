@@ -116,7 +116,11 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
     }
   }
 
-  Future<void> _signInGmail() async {
+  /// [workspace] is the "Google Workspace" button: the account's address is
+  /// not known until after this sign-in, so the button is what lets it ask for
+  /// the room-directory scope now rather than on a later re-auth — see
+  /// `GmailAuthService.workspace`.
+  Future<void> _signInGmail({bool workspace = false}) async {
     final accountCubit = context.read<AccountCubit>();
 
     final initialId = AppConfig.gmailClientId != 'YOUR_GOOGLE_CLIENT_ID'
@@ -135,7 +139,7 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
     if (!mounted) return;
     final credentials = await showClientIdDialog(
       context,
-      provider: 'Gmail',
+      provider: workspace ? 'Google Workspace' : 'Gmail',
       helpText: isMobile
           ? 'Continue to sign in with Google. Only enter a Client ID if your '
               'organisation requires its own Google Cloud app registration — '
@@ -164,6 +168,7 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
         clientSecret: credentials.clientSecret ?? '',
         redirectUri: AppConfig.gmailRedirectUri,
         tokenStorage: tokenStorage,
+        workspace: workspace,
       );
 
       final token = await authService.signIn();
@@ -259,6 +264,13 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
                       icon: _GmailIcon(),
                       color: const Color(0xFFEA4335),
                       onTap: _signInGmail,
+                    ),
+                    const SizedBox(height: 12),
+                    _ProviderButton(
+                      label: 'Google Workspace',
+                      icon: _GmailIcon(),
+                      color: const Color(0xFF1A73E8),
+                      onTap: () => _signInGmail(workspace: true),
                     ),
                     const SizedBox(height: 12),
                     _ProviderButton(

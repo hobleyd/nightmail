@@ -305,12 +305,19 @@ Three things here are load-bearing:
   `admin.directory.*` scope is asked for on a personal @gmail.com account, so
   putting it in `GmailAuthService._scopes` would break adding one at all. It is
   appended only when the account's domain is already known not to be a consumer
-  one (`scopesForAccount`), which means: **adding** a Gmail account never
-  requests it and falls back to `calendarList`; **re-authenticating** a Workspace
-  account from Settings does. `login_hint` pins the flow to that account so a
-  browser session cannot land the admin scope on a personal one. The endpoint is
-  admin-only regardless, so a non-admin Workspace user 403s and takes the same
-  fallback.
+  one (`scopesForAccount`). A brand-new account has no address yet, so the
+  add-account screens offer two buttons: **Gmail** never requests it (that
+  account falls back to `calendarList` until it is re-authenticated from
+  Settings); **Google Workspace** (`GmailAuthService.workspace`) requests it on
+  the first sign-in, so a Workspace account no longer needs a second trip.
+  Once the address is known it overrules the button. Picking Workspace with a
+  personal account fails only that sign-in — Google refuses with
+  `invalid_scope`, either as an error page in the browser or as a redirect
+  `signIn()` turns into "use the Gmail button". **Re-authenticating** a
+  Workspace account from Settings requests the scope as before, and
+  `login_hint` pins that flow to the account so a browser session cannot land
+  the admin scope on a personal one. The endpoint is admin-only regardless, so
+  a non-admin Workspace user 403s and takes the same fallback.
 - **The dropdown never hits the network for the room list.** `getMeetingRooms`
   is memoised per account in `CalendarRepositoryImpl` for the process' lifetime
   (a room directory changes on the timescale of an office fit-out) and filtered

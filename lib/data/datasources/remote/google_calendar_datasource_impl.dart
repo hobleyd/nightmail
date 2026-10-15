@@ -1258,9 +1258,10 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
   ///  * the signed-in user is not a Workspace administrator — this endpoint is
   ///    admin-only, and there is no user-level equivalent;
   ///  * the token predates `admin.directory.resource.calendar.readonly`, which
-  ///    is only requested for accounts already known to be on a Workspace
-  ///    domain (see `GmailAuthService`), so it is absent for every account added
-  ///    before the room picker existed.
+  ///    is only requested for an account known to be on a Workspace domain or
+  ///    added with the "Google Workspace" button (see `GmailAuthService`), so it
+  ///    is absent for one added with the "Gmail" button and not yet signed in
+  ///    again from Settings.
   ///
   /// Absolute URL because the Admin SDK lives on a different host to the
   /// Calendar API this client is based at; the auth interceptor still applies.

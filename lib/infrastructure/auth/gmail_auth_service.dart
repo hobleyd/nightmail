@@ -31,6 +31,7 @@ class GmailAuthService implements AuthService {
     required this.redirectUri,
     required this._tokenStorage,
     this.accountEmail,
+    this.workspace = false,
     this.extraScopes = const [],
     this.verifySignIn,
     Dio? httpClient,
@@ -46,6 +47,13 @@ class GmailAuthService implements AuthService {
   /// except adding a brand-new account. Used only to decide whether the
   /// Workspace-admin room scope may be requested; see [_requestedScopes].
   final String? accountEmail;
+
+  /// The user said this is a Google Workspace account when adding it — the
+  /// "Google Workspace" button rather than "Gmail". Lets a brand-new account,
+  /// whose address is not known yet, ask for the room scope on its first
+  /// sign-in instead of only on a later re-auth. Ignored once [accountEmail]
+  /// is known: the address decides then. See [scopesForAccount].
+  final bool workspace;
 
   /// Scopes to request on top of the usual set, for a flow that exists *only*
   /// to ask for them — today, Drive read access for the cloud-document preview
@@ -98,7 +106,8 @@ class GmailAuthService implements AuthService {
   /// Deliberately *not* in [_scopes]: Google rejects the whole authorization
   /// request with `invalid_scope` when an `admin.directory.*` scope is asked for
   /// on a personal @gmail.com account, which would break adding one entirely.
-  /// So it is only appended once we know the account is on a Workspace domain —
+  /// So it is only appended once we know the account is on a Workspace domain,
+  /// or the user added it with the "Google Workspace" button ([workspace]) —
   /// see [_requestedScopes].
   /// Read-only access to Drive files, for previewing a document a message links
   /// to. Requested incrementally — see [extraScopes].
@@ -185,16 +194,19 @@ class GmailAuthService implements AuthService {
   /// The scopes to ask for, which depend on whether we already know who is
   /// signing in.
   ///
-  /// Adding a new account cannot know — the whole point of the flow is to find
-  /// out — so it asks for [_scopes] only, and that account's room picker falls
-  /// back to the resource calendars the user has subscribed to
-  /// (`GoogleCalendarDatasourceImpl._fetchRoomsFromCalendarList`). Signing the
-  /// same account in again from Settings *does* know, and a Workspace account
-  /// picks up [_roomDirectoryScope] then. Non-admin Workspace users are granted
-  /// the scope and still get 403 from the Admin SDK, which is handled the same
-  /// way as not having it.
-  List<String> get _requestedScopes =>
-      [...scopesForAccount(accountEmail), ...extraScopes];
+  /// Adding a new account cannot know from the address — the whole point of the
+  /// flow is to find it out — so it goes by which button the user pressed:
+  /// "Google Workspace" asks for [_roomDirectoryScope] up front, "Gmail" asks
+  /// for [_scopes] only and that account's room picker falls back to the
+  /// resource calendars the user has subscribed to
+  /// (`GoogleCalendarDatasourceImpl._fetchRoomsFromCalendarList`) until it is
+  /// signed in again from Settings, which *does* know the address. Non-admin
+  /// Workspace users are granted the scope and still get 403 from the Admin
+  /// SDK, which is handled the same way as not having it.
+  List<String> get _requestedScopes => [
+        ...scopesForAccount(accountEmail, workspace: workspace),
+        ...extraScopes,
+      ];
 
   /// The list above, for tests. What a sign-in *sends* is the thing that
   /// matters — an incremental scope that never reaches the authorization URL
@@ -205,7 +217,17 @@ class GmailAuthService implements AuthService {
   List<String> get requestedScopes => _requestedScopes;
 
   @visibleForTesting
-  static List<String> scopesForAccount(String? accountEmail) {
+  static List<String> scopesForAccount(
+    String? accountEmail, {
+    bool workspace = false,
+  }) {
+    // No address yet (adding an account): trust the button the user pressed.
+    // A wrong press of "Google Workspace" with a personal account costs that
+    // one sign-in an `invalid_scope` — see [signIn] — never a stored account.
+    final email = accountEmail?.trim() ?? '';
+    if (email.isEmpty) {
+      return workspace ? [..._scopes, _roomDirectoryScope] : _scopes;
+    }
     // Anything that is not a consumer domain is a Workspace (or Cloud
     // Identity) one, where the room scope is at worst refused by the API
     // rather than by the authorization endpoint. `isConsumerGoogleAddress` is
@@ -355,6 +377,17 @@ class GmailAuthService implements AuthService {
     final error = uri.queryParameters['error'];
 
     if (error != null) {
+      // Only reachable from the "Google Workspace" button: the room scope is
+      // the one thing Google refuses for a personal account, and it is never
+      // sent for an address already known to be one.
+      if (error == 'invalid_scope' &&
+          workspace &&
+          (accountEmail ?? '').isEmpty) {
+        throw const AuthException(
+          message: 'That looks like a personal Google account. Use the Gmail '
+              'button to add it.',
+        );
+      }
       final description = uri.queryParameters['error_description'] ?? error;
       throw AuthException(message: description);
     }

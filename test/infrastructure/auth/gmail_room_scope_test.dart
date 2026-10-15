@@ -1,5 +1,7 @@
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/infrastructure/auth/gmail_auth_service.dart';
+import 'package:nightmail/infrastructure/auth/token_storage.dart';
 
 /// The Admin SDK room-directory scope cannot be asked for unconditionally:
 /// Google rejects the *entire* authorization request with `invalid_scope` when an
@@ -40,6 +42,36 @@ void main() {
       expect(GmailAuthService.scopesForAccount('not-an-address'),
           isNot(contains(roomScope)));
       expect(GmailAuthService.scopesForAccount('trailing@'),
+          isNot(contains(roomScope)));
+    });
+
+    test('is requested for a new account added from the Google Workspace '
+        'button — the address is not known yet, so the button decides', () {
+      expect(GmailAuthService.scopesForAccount(null, workspace: true),
+          contains(roomScope));
+      expect(GmailAuthService.scopesForAccount('', workspace: true),
+          contains(roomScope));
+    });
+
+    test('lets a known address overrule the Workspace button — a personal '
+        'account must never be sent the scope', () {
+      expect(
+          GmailAuthService.scopesForAccount('someone@gmail.com',
+              workspace: true),
+          isNot(contains(roomScope)));
+    });
+
+    test('reaches the authorization request from the constructor flag', () {
+      GmailAuthService service({required bool workspace}) => GmailAuthService(
+            clientId: 'id',
+            clientSecret: 'secret',
+            redirectUri: 'http://127.0.0.1',
+            tokenStorage: TokenStorage(const FlutterSecureStorage()),
+            workspace: workspace,
+          );
+
+      expect(service(workspace: true).requestedScopes, contains(roomScope));
+      expect(service(workspace: false).requestedScopes,
           isNot(contains(roomScope)));
     });
 

@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mockito/annotations.dart';
+import 'package:nightmail/domain/entities/task_email_link.dart';
+import 'package:nightmail/domain/entities/todo_task.dart';
+import 'package:nightmail/domain/entities/todo_task_list.dart';
 import 'package:nightmail/domain/usecases/attach_email_to_task.dart';
 import 'package:nightmail/domain/usecases/create_task.dart';
 import 'package:nightmail/domain/usecases/download_task_attachment.dart';
@@ -13,6 +16,7 @@ import 'package:nightmail/domain/usecases/update_task_due_date.dart';
 import 'package:nightmail/domain/usecases/update_task_status.dart';
 import 'package:nightmail/infrastructure/notifications/task_reminder_service.dart';
 import 'package:nightmail/presentation/blocs/tasks/tasks_bloc.dart';
+import 'package:nightmail/presentation/blocs/tasks/tasks_state.dart';
 import 'package:nightmail/presentation/pages/tasks_page.dart';
 
 import 'tasks_day_panel_test.mocks.dart';
@@ -55,6 +59,7 @@ void main() {
     WidgetTester tester, {
     required bool useBackNavigation,
     Size? surfaceSize,
+    ValueChanged<String>? onOpenEmail,
   }) async {
     if (surfaceSize != null) {
       await tester.binding.setSurfaceSize(surfaceSize);
@@ -67,6 +72,7 @@ void main() {
           child: TasksDayPanel(
             onClose: () => closes++,
             useBackNavigation: useBackNavigation,
+            onOpenEmail: onOpenEmail,
           ),
         ),
       ),
@@ -110,6 +116,34 @@ void main() {
           .getTopLeft(find.byIcon(Icons.arrow_back_ios_new_rounded))
           .dx;
       expect(arrow, lessThan(tester.getTopLeft(find.text('Tasks')).dx));
+    });
+  });
+
+  group('TasksDayPanel — linked email', () {
+    // The phone shell's Tasks route sits over the reading pane, so loading the
+    // email there showed nothing; the shell takes the tap and pushes the thread.
+    testWidgets('a task\'s linked email goes to onOpenEmail when it is set',
+        (tester) async {
+      final opened = <String>[];
+      await pumpPanel(tester, useBackNavigation: true, onOpenEmail: opened.add);
+      bloc.emit(TasksLoaded(
+        lists: const [TodoTaskList(id: 'list-1', displayName: 'Tasks')],
+        tasks: [
+          TodoTask(
+            id: 'task-1',
+            listId: 'list-1',
+            title: 'Reply to Sam',
+            body: TaskEmailLink.marker('email-42'),
+          ),
+        ],
+        selectedListId: 'list-1',
+      ));
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('View source email'));
+      await tester.pump();
+
+      expect(opened, ['email-42']);
     });
   });
 

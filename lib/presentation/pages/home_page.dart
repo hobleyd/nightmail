@@ -303,7 +303,9 @@ class _HomeViewState extends State<_HomeView> {
             .read<TasksBloc>()
             .add(TaskFocusRequested(listId: listId, taskId: taskId));
       }
-      if (MediaQuery.of(context).size.width < 600) _pushMobileTasksRoute();
+      if (MediaQuery.of(context).size.width < 600) {
+        context.read<HomeCubit>().requestMobileTasksNav();
+      }
     }
 
     if (accountState is AccountsLoaded) {
@@ -322,32 +324,6 @@ class _HomeViewState extends State<_HomeView> {
       }
     }
     focusTask();
-  }
-
-  void _pushMobileTasksRoute() {
-    final tasksBloc = context.read<TasksBloc>();
-    final emailDetailBloc = context.read<EmailDetailBloc>();
-    final accountCubit = context.read<AccountCubit>();
-    Navigator.of(context).push<void>(
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (ctx) => Scaffold(
-          body: SafeArea(
-            child: MultiBlocProvider(
-              providers: [
-                BlocProvider.value(value: tasksBloc),
-                BlocProvider.value(value: emailDetailBloc),
-                BlocProvider.value(value: accountCubit),
-              ],
-              child: TasksDayPanel(
-                onClose: () => Navigator.of(ctx).pop(),
-                useBackNavigation: true,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
   }
 
   void _handleMailto(Uri uri) => ComposeWindowApp.openMailto(context, uri);
@@ -577,6 +553,11 @@ abstract final class _MobileRoute {
   static const folders = 'folders';
   static const emailList = 'emailList';
   static const readingPane = 'readingPane';
+  static const tasks = 'tasks';
+
+  /// The email list narrowed to one conversation, pushed over Tasks when a
+  /// task's linked email is tapped, so Back from it returns to the tasks.
+  static const thread = 'thread';
 }
 
 /// The phone shell: folder list, email list and reading pane as routes on a
@@ -606,7 +587,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
   late final _observer = _ShellRouteObserver(onChanged: _onRoutesChanged);
 
   /// Names of the routes on the shell navigator, bottom first. Unnamed routes
-  /// (compose, calendar, tasks pushed from inside the shell) are null entries.
+  /// (compose, calendar, AI pushed from inside the shell) are null entries.
   List<String?> _routeNames = const [
     _MobileRoute.folders,
     _MobileRoute.emailList,
@@ -639,18 +620,26 @@ class _MobileLayoutState extends State<_MobileLayout> {
     // from the reading pane) re-clears an already clear state, which emits
     // nothing.
     final leftMessage = popped?.settings.name == _MobileRoute.readingPane;
+    // The thread route narrows the one EmailListBloc every list route shares,
+    // so leaving it has to widen the list back to the folder — or the inbox
+    // under Tasks would still be showing the thread.
+    final leftThread = popped?.settings.name == _MobileRoute.thread;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       setState(() => _routeNames = names);
       _syncForegroundTimer();
       if (leftMessage) context.read<HomeCubit>().clearEmail();
+      if (leftThread) {
+        context.read<EmailListBloc>().add(const EmailListThreadFocusCleared());
+      }
     });
   }
 
   /// Keeps the email list current while it is the screen being looked at,
   /// and only then — not under a message, a compose or the folder list.
   void _syncForegroundTimer() {
-    final wanted = _topRoute == _MobileRoute.emailList;
+    final wanted = _topRoute == _MobileRoute.emailList ||
+        _topRoute == _MobileRoute.thread;
     if (wanted && _emailListForegroundTimer == null) {
       _emailListForegroundTimer = Timer.periodic(
         const Duration(seconds: 15),
@@ -690,10 +679,14 @@ class _MobileLayoutState extends State<_MobileLayout> {
 
   /// Opens the reading pane over the email list, putting the list under it if
   /// it is not there yet (a notification tapped while on the folder list), so
-  /// Back from the message lands on the list either way.
+  /// Back from the message lands on the list either way. A thread pushed over
+  /// Tasks is a list too: the message goes over it, keeping Tasks below.
   void _showReadingPane() {
     if (_topRoute == _MobileRoute.readingPane) return;
-    if (_topRoute != _MobileRoute.emailList) _showEmailList();
+    if (_topRoute != _MobileRoute.emailList &&
+        _topRoute != _MobileRoute.thread) {
+      _showEmailList();
+    }
     _nav?.pushNamed(_MobileRoute.readingPane);
   }
 
@@ -725,11 +718,13 @@ class _MobileLayoutState extends State<_MobileLayout> {
   }
 
   void _openTasks() {
+    if (_topRoute == _MobileRoute.tasks) return;
     final tasksBloc = context.read<TasksBloc>();
     final emailDetailBloc = context.read<EmailDetailBloc>();
     final accountCubit = context.read<AccountCubit>();
     _nav?.push<void>(
       MaterialPageRoute(
+        settings: const RouteSettings(name: _MobileRoute.tasks),
         fullscreenDialog: true,
         builder: (ctx) => Scaffold(
           body: SafeArea(
@@ -742,12 +737,23 @@ class _MobileLayoutState extends State<_MobileLayout> {
               child: TasksDayPanel(
                 onClose: () => Navigator.of(ctx).pop(),
                 useBackNavigation: true,
+                onOpenEmail: _openTaskThread,
               ),
             ),
           ),
         ),
       ),
     );
+  }
+
+  /// A task's linked email: the list narrowed to its conversation, pushed
+  /// over Tasks. Opening a message from there is the list's usual tap.
+  void _openTaskThread(String emailId) {
+    if (_topRoute == _MobileRoute.thread) return;
+    context
+        .read<EmailListBloc>()
+        .add(EmailListThreadFocusRequested(emailId: emailId));
+    _nav?.pushNamed(_MobileRoute.thread);
   }
 
   void _openCommitments() {
@@ -829,6 +835,14 @@ class _MobileLayoutState extends State<_MobileLayout> {
           onCommitmentsTapped: _openCommitments,
           onEmailOpened: _showReadingPane,
         ),
+      _MobileRoute.thread => _EmailListScreen(
+          onBack: _back,
+          onCalendarTapped: _openCalendar,
+          onTasksTapped: _back,
+          onAiTapped: _openAi,
+          onCommitmentsTapped: _openCommitments,
+          onEmailOpened: _showReadingPane,
+        ),
       _MobileRoute.readingPane => ReadingPane(onBack: _back),
       _ => throw ArgumentError.value(settings.name, 'name', 'unknown route'),
     };
@@ -860,6 +874,25 @@ class _MobileLayoutState extends State<_MobileLayout> {
             listener: (context, state) {
               context.read<HomeCubit>().clearNotificationNavigation();
               _showReadingPane();
+            },
+          ),
+          // The thread banner's close is "back to the folder" — on the thread
+          // route that is the route below it, Tasks.
+          BlocListener<EmailListBloc, EmailListState>(
+            listenWhen: (prev, curr) =>
+                prev is EmailListLoaded &&
+                prev.focusedThreadId != null &&
+                (curr is! EmailListLoaded || curr.focusedThreadId == null),
+            listener: (context, _) {
+              if (_topRoute == _MobileRoute.thread) _nav?.pop();
+            },
+          ),
+          BlocListener<HomeCubit, HomeState>(
+            listenWhen: (prev, curr) =>
+                curr.mobileTasksNavRequested && !prev.mobileTasksNavRequested,
+            listener: (context, state) {
+              context.read<HomeCubit>().clearMobileTasksNavRequest();
+              _openTasks();
             },
           ),
           BlocListener<HomeCubit, HomeState>(

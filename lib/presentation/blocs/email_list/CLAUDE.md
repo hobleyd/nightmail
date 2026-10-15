@@ -416,6 +416,26 @@ and never for Load More: the why — Gmail's per-body quota — and the service'
 own ordering and cap are in
 [`../mail_poller/CLAUDE.md`](../mail_poller/CLAUDE.md).
 
+## A Task's Thread on a Phone Is a Route of Its Own
+
+On a phone, tapping a task's linked email pushes a `thread` route (the list
+narrowed by `EmailListThreadFocusRequested`) over Tasks, so Back returns to
+the tasks rather than the inbox. Three things keep it honest:
+
+- **Every list route shares the one `EmailListBloc`.** The inbox route under
+  Tasks is narrowed too, so popping the thread route dispatches
+  `EmailListThreadFocusCleared` (`_MobileLayoutState._onRoutesChanged`).
+- **A clear can beat the thread.** Back while the thread is still fetching
+  arrives with no focus set yet; `_onThreadFocusCleared` cancels the pending
+  focus by its generation, or it lands later and narrows the inbox.
+- **The reading pane goes over the thread route**, not via `_showEmailList`
+  — that would `popUntil` the inbox and drop Tasks off the stack. The banner's
+  X ("Back to folder") pops the thread route rather than showing a folder in it.
+- **Tasks must be on the shell's navigator to get there.** A due-task
+  notification used to push Tasks on the app's root navigator, above
+  `HomePage`'s blocs, where the link could only show a "main window" hint; it
+  now asks the shell via `HomeCubit.requestMobileTasksNav`.
+
 ## Which Folder an Account Switch Lands On
 
 `HomePage`'s `AccountCubit` listener owns the whole switch — it files the

@@ -142,6 +142,10 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
   /// different folders can resolve out of order.
   int _activeRequestGeneration = 0;
 
+  /// The generation of a thread focus still fetching its thread, so a clear
+  /// that arrives first can cancel it — see [_onThreadFocusCleared].
+  int? _pendingFocusGeneration;
+
   /// The folder [_onLoadRequested] last asked for. A repaint that arrives while
   /// the list is in a non-loaded state has no state to read the folder off, so
   /// it reloads this one.
@@ -1455,6 +1459,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     // Focusing a thread is a view change like a folder switch: bump the
     // generation so a folder fetch already in flight can't land on top of it.
     final myGeneration = ++_activeRequestGeneration;
+    _pendingFocusGeneration = myGeneration;
     emit(current.copyWith(isLoadingFresh: true));
 
     // The email is usually already on screen (a task made from the inbox
@@ -1467,6 +1472,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       anchor = result.fold((_) => null, (email) => email);
     }
     if (anchor == null) {
+      _pendingFocusGeneration = null;
       final s = state;
       if (s is EmailListLoaded) emit(s.copyWith(isLoadingFresh: false));
       return;
@@ -1475,6 +1481,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     final threadId = anchor.conversationId ?? anchor.id;
     final thread = await _threadFor(anchor, current.emails);
     if (myGeneration != _activeRequestGeneration) return;
+    _pendingFocusGeneration = null;
 
     final s = state;
     if (s is! EmailListLoaded) return;
@@ -1498,7 +1505,18 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     Emitter<EmailListState> emit,
   ) async {
     final current = state;
-    if (current is! EmailListLoaded || current.focusedThreadId == null) return;
+    if (current is! EmailListLoaded) return;
+    if (current.focusedThreadId == null) {
+      // Cleared before the thread arrived (Back from the phone's thread route
+      // while it was still loading): cancel the focus, or it lands afterwards
+      // and narrows a list nobody asked to narrow.
+      if (_pendingFocusGeneration == _activeRequestGeneration) {
+        _pendingFocusGeneration = null;
+        ++_activeRequestGeneration;
+        emit(current.copyWith(isLoadingFresh: false));
+      }
+      return;
+    }
 
     final myGeneration = ++_activeRequestGeneration;
     final folderId = current.currentFolderId;

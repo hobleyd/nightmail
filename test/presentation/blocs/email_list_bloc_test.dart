@@ -1456,6 +1456,31 @@ void main() {
       expect(state.emails.map((e) => e.id), contains('id9'));
       expect(state.focusedThreadSubject, isNull);
     });
+
+    // Regression: Back from the phone's thread route while the thread was
+    // still loading let the focus land afterwards, narrowing the inbox below.
+    test('clearing before the thread arrives cancels the focus', () async {
+      await loadEmails([_email('id1', conversationId: 'conv-a')],
+          folderId: 'folder-1');
+      final threadCompleter = Completer<Either<Failure, List<Email>>>();
+      when(mockGetConversationThread(any))
+          .thenAnswer((_) => threadCompleter.future);
+
+      bloc.add(const EmailListThreadFocusRequested(emailId: 'id1'));
+      await pumpEventQueue();
+      bloc.add(const EmailListThreadFocusCleared());
+      await pumpEventQueue();
+      threadCompleter.complete(Right([
+        _email('id1', conversationId: 'conv-a'),
+        _email('id1-reply', conversationId: 'conv-a'),
+      ]));
+      await pumpEventQueue();
+
+      final state = bloc.state as EmailListLoaded;
+      expect(state.focusedThreadId, isNull);
+      expect(state.emails.map((e) => e.id), ['id1']);
+      expect(state.isLoadingFresh, isFalse);
+    });
   });
 
   group('folder switch races', () {

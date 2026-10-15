@@ -89,6 +89,17 @@ class HomeCubit extends Cubit<HomeState> {
     emit(state.copyWith(mobileInboxNavRequested: false));
   }
 
+  /// Tells _MobileLayout to push Tasks onto its own stack. A due-task
+  /// notification uses it rather than pushing on the app's root navigator,
+  /// where the route could not reach the email list to open a task's thread.
+  void requestMobileTasksNav() {
+    emit(state.copyWith(mobileTasksNavRequested: true));
+  }
+
+  void clearMobileTasksNavRequest() {
+    emit(state.copyWith(mobileTasksNavRequested: false));
+  }
+
   void clearEmail() {
     emit(state.copyWith(clearEmail: true));
   }
@@ -131,6 +142,7 @@ class HomeState extends Equatable {
     this.accountLabel = '',
     this.notificationEmailId,
     this.mobileInboxNavRequested = false,
+    this.mobileTasksNavRequested = false,
   });
 
   final String? selectedFolderId;
@@ -149,6 +161,9 @@ class HomeState extends Equatable {
   /// push the email list back to the top of its stack.
   final bool mobileInboxNavRequested;
 
+  /// Set transiently by [HomeCubit.requestMobileTasksNav].
+  final bool mobileTasksNavRequested;
+
   HomeState copyWith({
     String? selectedFolderId,
     String? selectedEmailId,
@@ -158,6 +173,7 @@ class HomeState extends Equatable {
     String? notificationEmailId,
     bool clearNotificationNav = false,
     bool? mobileInboxNavRequested,
+    bool? mobileTasksNavRequested,
   }) {
     return HomeState(
       selectedFolderId: selectedFolderId ?? this.selectedFolderId,
@@ -169,6 +185,8 @@ class HomeState extends Equatable {
           clearNotificationNav ? null : (notificationEmailId ?? this.notificationEmailId),
       mobileInboxNavRequested:
           mobileInboxNavRequested ?? this.mobileInboxNavRequested,
+      mobileTasksNavRequested:
+          mobileTasksNavRequested ?? this.mobileTasksNavRequested,
     );
   }
 
@@ -180,5 +198,6 @@ class HomeState extends Equatable {
         accountLabel,
         notificationEmailId,
         mobileInboxNavRequested,
+        mobileTasksNavRequested,
       ];
 }

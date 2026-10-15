@@ -25,6 +25,7 @@ class TasksDayPanel extends StatelessWidget {
     super.key,
     required this.onClose,
     this.useBackNavigation = false,
+    this.onOpenEmail,
   });
 
   final VoidCallback onClose;
@@ -33,6 +34,11 @@ class TasksDayPanel extends StatelessWidget {
   /// pane — the mobile shell. It then dismisses through a leading back arrow,
   /// like the reading pane, instead of a trailing close button.
   final bool useBackNavigation;
+
+  /// Opens a task's linked email instead of the default of loading it into
+  /// the reading pane beside the panel. The phone shell sets it: the reading
+  /// pane is under this route there, so the shell pushes the thread over it.
+  final ValueChanged<String>? onOpenEmail;
 
   @override
   Widget build(BuildContext context) {
@@ -81,6 +87,7 @@ class TasksDayPanel extends StatelessWidget {
                         tasks: tasks,
                         selectedListId: selectedListId,
                         focusedTaskId: focusedTaskId,
+                        onOpenEmail: onOpenEmail,
                       ),
                     TasksError(:final message, :final requiresReauth) =>
                       _ErrorView(message: message, requiresReauth: requiresReauth),
@@ -164,12 +171,14 @@ class _LoadedBody extends StatelessWidget {
     required this.tasks,
     required this.selectedListId,
     this.focusedTaskId,
+    this.onOpenEmail,
   });
 
   final List<TodoTaskList> lists;
   final List<TodoTask> tasks;
   final String selectedListId;
   final String? focusedTaskId;
+  final ValueChanged<String>? onOpenEmail;
 
   @override
   Widget build(BuildContext context) {
@@ -183,6 +192,7 @@ class _LoadedBody extends StatelessWidget {
                   tasks: tasks,
                   listId: selectedListId,
                   focusedTaskId: focusedTaskId,
+                  onOpenEmail: onOpenEmail,
                 ),
         ),
         if (selectedListId.isNotEmpty) _AddTaskBar(listId: selectedListId),
@@ -255,11 +265,13 @@ class _TaskList extends StatelessWidget {
     required this.tasks,
     required this.listId,
     this.focusedTaskId,
+    this.onOpenEmail,
   });
 
   final List<TodoTask> tasks;
   final String listId;
   final String? focusedTaskId;
+  final ValueChanged<String>? onOpenEmail;
 
   @override
   Widget build(BuildContext context) {
@@ -269,19 +281,28 @@ class _TaskList extends StatelessWidget {
         key: ValueKey(tasks[index].id),
         task: tasks[index],
         isFocused: tasks[index].id == focusedTaskId,
+        onOpenEmail: onOpenEmail,
       ),
     );
   }
 }
 
 class _TaskTile extends StatefulWidget {
-  const _TaskTile({super.key, required this.task, this.isFocused = false});
+  const _TaskTile({
+    super.key,
+    required this.task,
+    this.isFocused = false,
+    this.onOpenEmail,
+  });
 
   final TodoTask task;
 
   /// Set for the task a due notification was raised about, so the row the
   /// alert referred to stands out from the rest of the list.
   final bool isFocused;
+
+  /// See [TasksDayPanel.onOpenEmail].
+  final ValueChanged<String>? onOpenEmail;
 
   @override
   State<_TaskTile> createState() => _TaskTileState();
@@ -301,6 +322,11 @@ class _TaskTileState extends State<_TaskTile> {
   /// than on its own. In the detached Tasks window there is no reading pane
   /// (no EmailDetailBloc), so fall back to a hint.
   void _openLinkedEmail(String emailId) {
+    final override = widget.onOpenEmail;
+    if (override != null) {
+      override(emailId);
+      return;
+    }
     try {
       // Resolve every bloc before dispatching: in the detached window the
       // first read throws, and a partial dispatch would be worse than none.

@@ -1,20 +1,54 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.40.6",
+  "version": "1.40.8",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "open a task's linked email as a thread over Tasks on a phone",
-          "title": "tasks"
+          "body": "stop the endless 401 retry, flag rejected tokens, free the sign-in port",
+          "title": "auth"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.40.7",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "show a moved message in its destination folder straight away",
+              "title": "mail"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.40.6",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "open a task's linked email as a thread over Tasks on a phone",
+              "title": "tasks"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -372,52 +406,6 @@
             {
               "body": "point the launcher icon at the PNG, not the executable",
               "title": "snap"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.38.3",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "track a message by hand from the reading pane",
-              "title": "commitments"
-            },
-            {
-              "body": "effort estimates size every time block; log each model call",
-              "title": "commitments"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.38.2",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "natural-language control over the ledger",
-              "title": "commitments"
-            },
-            {
-              "body": "Future Me — week-ahead forecast, rebalancing and freed slots",
-              "title": "commitments"
-            },
-            {
-              "body": "schedule a time block for a commitment",
-              "title": "commitments"
             }
           ]
         }

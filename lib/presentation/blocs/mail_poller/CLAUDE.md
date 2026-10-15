@@ -80,6 +80,41 @@ ops — a folder listing that resolves after the op is dequeued would otherwise
 be *returned* to the bloc with the stale value even though the cache read
 would have corrected it.
 
+**A move is a removal from every folder but its destination**
+(`PendingRemovals`, `infrastructure/sync/pending_removals.dart`, shared by both
+paths). `EmailRepositoryImpl.moveEmail` re-files the cached row under the
+destination the moment the user drops it — body and inline images with it — so
+opening that folder shows the message before any network listing; it used to
+*delete* the row, which also left the drain's `_remapIfNeeded` rename nothing
+to rename, so the destination showed its stale cache until a refresh. Two
+things then threatened the re-filed row, both handled in reconciliation:
+
+- **Its own tombstone.** Gmail keeps the id across a move, so a folder-blind
+  tombstone dropped the message from the destination's listing — and the
+  folder-replacing write took the row with it. Tombstones (queued op payload,
+  and the store's `recordRemoval(destinationFolderId:)`) carry where the move
+  went; `tombstonedFor(folderId)` spares that one folder.
+- **A listing that does not name it yet** — the move still queued, a Graph
+  replica behind it, or IMAP, whose drain cannot learn the destination UID.
+  The first page *replaces* the folder's rows, so `withArrivals` puts the
+  cached copy back into a page that lacks it. Only on a replacing listing
+  (`keepArrivals`: the repository's skip-0 unfiltered page, the poller's
+  watched-folder and Inbox syncs) — a load-more page would repeat rows. The
+  drain records the id the server says the move landed under (Graph's minted
+  one, Gmail's unchanged one) as an *arrival* (`recordArrival`), never as a
+  removal, so the renamed row survives a lagging replica the same way.
+- **The Gmail history stream's "moved out".** It deletes the row by id, from
+  every folder — the destination copy included, since the id survived the
+  move. The delta loop skips an id `PendingRemovals.isArriving`.
+
+**An arrival is only an id known to exist in the destination**: a queued
+move's, or one the drain recorded. Never a recent removal's own id — on IMAP
+the drain learns no destination UID, so counting the acknowledged
+`INBOX:123` as an arrival put it beside the real `Archive:456` on every
+listing for 30 s. The IMAP row therefore keeps the source's `mailbox:uid`
+until the destination is next listed, which replaces it; opening the folder
+does that within seconds.
+
 Failures are reported on `lastPollAt`/`lastPollErrors`, including the
 offline skip. A silent `catch (_)` here is how a deterministic failure came to
 look like a quiet mailbox for the life of an install.

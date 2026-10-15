@@ -27,16 +27,35 @@ class RecentMutationStore {
   RecentMutationStore({
     Duration ttl = const Duration(seconds: 30),
     DateTime Function() now = DateTime.now,
-  })  : _removed = _ExpiringEntries<void>(ttl, now),
+  })  : _removed = _ExpiringEntries<String?>(ttl, now),
+        _arrivals = _ExpiringEntries<String>(ttl, now),
         _readStates = _ExpiringEntries<bool>(ttl, now);
 
-  final _ExpiringEntries<void> _removed;
+  final _ExpiringEntries<String?> _removed;
+  final _ExpiringEntries<String> _arrivals;
   final _ExpiringEntries<bool> _readStates;
 
   /// Records [emailId] as removed from view for [accountId]. Resets the expiry
   /// window if already present.
-  void recordRemoval(String accountId, String emailId) =>
-      _removed.record(accountId, emailId, null);
+  ///
+  /// [destinationFolderId] is where a *move* took it. The message has left
+  /// every folder but that one, and on Gmail it keeps its id there — so a
+  /// listing of the destination must not drop it (see `PendingRemovals`).
+  void recordRemoval(
+    String accountId,
+    String emailId, {
+    String? destinationFolderId,
+  }) =>
+      _removed.record(accountId, emailId, destinationFolderId);
+
+  /// Records that [emailId] has just been filed into [folderId] under that id —
+  /// the id the server reported for the move (minted on Graph, unchanged on
+  /// Gmail). Not a removal: nothing is dropped for it. A
+  /// listing of [folderId] from an Exchange replica still behind the move does
+  /// not name it yet, and this is what stops that listing's folder-replacing
+  /// cache write from taking the re-filed row away.
+  void recordArrival(String accountId, String emailId, String folderId) =>
+      _arrivals.record(accountId, emailId, folderId);
 
   /// Records that the user set [emailId]'s read state to [isRead] for
   /// [accountId]. A later change to the same message replaces the value.
@@ -47,6 +66,15 @@ class RecentMutationStore {
   /// The ids still tombstoned as removed for [accountId].
   Set<String> recentlyRemovedIds(String accountId) =>
       _removed.active(accountId).keys.toSet();
+
+  /// The ids still tombstoned for [accountId], each with the folder a move
+  /// took it to (null for a delete or junk).
+  Map<String, String?> recentRemovals(String accountId) =>
+      _removed.active(accountId);
+
+  /// The ids recently filed into a folder by a move, with that folder.
+  Map<String, String> recentArrivals(String accountId) =>
+      _arrivals.active(accountId);
 
   /// The read state the user recently set, by id, for [accountId]. Within the
   /// window this is the truth about those messages, whatever a cache row or a

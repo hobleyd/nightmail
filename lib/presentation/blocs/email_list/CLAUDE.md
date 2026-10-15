@@ -42,6 +42,12 @@ its new copy beside them, a Gmail thread listed with no message in the folder is
 left alone, and a folder id that does not compare equal to the rows' (see the
 encoding note above) makes it a no-op rather than a mass hide.
 
+**A move re-files the cached row into its destination at once**, so opening
+that folder shows the message before the drain or a listing catches up — and
+reconciliation spares it there (Gmail keeps the id) and keeps it in a page
+that does not list it yet. See "A move is a removal from every folder but its
+destination" in [`../mail_poller/CLAUDE.md`](../mail_poller/CLAUDE.md).
+
 **A load keeps only the cached rows that lie beyond the fresh page.** The first
 page comes from the network and the cache is merged in behind it so a folder
 the user has scrolled does not shrink back to a page on every open — but only

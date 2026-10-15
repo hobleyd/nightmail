@@ -357,6 +357,119 @@ void main() {
       expect(emails.map((e) => e.id), ['other']);
     });
 
+    group('a message just moved into the folder listed', () {
+      EmailModel row(String id, String folder, {int day = 15}) => EmailModel(
+            id: id,
+            subject: 'Test',
+            from: const EmailAddressModel(address: 'a@b.com'),
+            toRecipients: const [],
+            ccRecipients: const [],
+            bodyPreview: '',
+            body: '',
+            bodyType: EmailBodyType.text,
+            isRead: true,
+            receivedDateTime: DateTime(2026, 10, day),
+            importance: EmailImportance.normal,
+            conversationId: 'thread-$id',
+            parentFolderId: folder,
+            folderIds: [folder],
+          );
+
+      void stubListing(List<EmailModel> page) {
+        when(mockRemoteDatasource.getEmails(
+          folderId: anyNamed('folderId'),
+          top: anyNamed('top'),
+          skip: anyNamed('skip'),
+          filter: anyNamed('filter'),
+          orderBy: anyNamed('orderBy'),
+        )).thenAnswer((_) async => page);
+        when(mockLocalDatasource.cacheEmails(
+          accountId: anyNamed('accountId'),
+          folderId: anyNamed('folderId'),
+          emails: anyNamed('emails'),
+          replaceFolder: anyNamed('replaceFolder'),
+        )).thenAnswer((_) async {});
+        when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      }
+
+      // Gmail keeps a message's id across a move, so a folder-blind tombstone
+      // dropped it from the very folder it had been filed into.
+      test('is not dropped by its own tombstone (Gmail keeps the id)',
+          () async {
+        stubListing([row('moved', 'archive'), row('other', 'archive')]);
+        recentMutations.recordRemoval('account-1', 'moved',
+            destinationFolderId: 'archive');
+
+        final result = await repository.getEmails(folderId: 'archive');
+
+        expect(result.getOrElse((_) => []).map((e) => e.id),
+            ['moved', 'other']);
+      });
+
+      test('is still dropped from every other folder listed', () async {
+        stubListing([row('moved', 'inbox'), row('other', 'inbox')]);
+        recentMutations.recordRemoval('account-1', 'moved',
+            destinationFolderId: 'archive');
+
+        final result = await repository.getEmails(folderId: 'inbox');
+
+        expect(result.getOrElse((_) => []).map((e) => e.id), ['other']);
+      });
+
+      // The page replaces the folder's cached rows, so a listing that does not
+      // name the message yet — the move still queued, or answered by a replica
+      // behind it — wiped the copy the move had re-filed there.
+      test('keeps its re-filed copy when the page does not list it yet',
+          () async {
+        stubListing([row('newer', 'archive', day: 16), row('older', 'archive', day: 1)]);
+        when(mockPendingOperations.getPendingOperations('account-1'))
+            .thenAnswer((_) async => [
+                  const PendingOperationRecord(
+                    id: 1,
+                    accountId: 'account-1',
+                    emailId: 'moved',
+                    folderId: null,
+                    opType: PendingOperationType.move,
+                    payload: '{"destinationFolderId":"archive"}',
+                    createdAtMs: 0,
+                    retryCount: 0,
+                    lastError: null,
+                  ),
+                ]);
+        when(mockLocalDatasource.getCachedEmailById(
+          accountId: 'account-1',
+          emailId: 'moved',
+        )).thenAnswer((_) async => row('moved', 'archive'));
+
+        final result = await repository.getEmails(folderId: 'archive');
+        await Future.delayed(Duration.zero);
+
+        expect(result.getOrElse((_) => []).map((e) => e.id),
+            ['newer', 'moved', 'older']);
+        final written = verify(mockLocalDatasource.cacheEmails(
+          accountId: 'account-1',
+          folderId: 'archive',
+          emails: captureAnyNamed('emails'),
+          replaceFolder: true,
+        )).captured.single as List<Email>;
+        expect(written.map((e) => e.id), contains('moved'));
+      });
+
+      test('is not added to a load-more page', () async {
+        stubListing([row('older', 'archive', day: 1)]);
+        recentMutations.recordArrival('account-1', 'moved', 'archive');
+        when(mockLocalDatasource.getCachedEmailById(
+          accountId: anyNamed('accountId'),
+          emailId: anyNamed('emailId'),
+        )).thenAnswer((_) async => row('moved', 'archive'));
+
+        final result =
+            await repository.getEmails(folderId: 'archive', skip: 25);
+
+        expect(result.getOrElse((_) => []).map((e) => e.id), ['older']);
+      });
+    });
+
     // Regression: on Office 365 a message read in a folder went read → unread
     // → read. The markRead op drained and dequeued within a second, then a
     // folder listing built before the PATCH landed resolved with isRead:false
@@ -1727,11 +1840,16 @@ void main() {
   });
 
   group('moveEmail', () {
-    test('removes email from cache and enqueues an outbox op instead of '
-        'hitting the network', () async {
-      when(mockLocalDatasource.deleteEmailFromCache(
+    // Regression: the row used to be deleted here, which left the drain's
+    // re-file into the destination nothing to rename — so the destination
+    // folder showed its stale cache, without the message, until a refresh.
+    test('re-files the cached row into the destination and enqueues an outbox '
+        'op instead of hitting the network', () async {
+      when(mockLocalDatasource.renameCachedEmailId(
         accountId: anyNamed('accountId'),
-        emailId: anyNamed('emailId'),
+        oldEmailId: anyNamed('oldEmailId'),
+        newEmailId: anyNamed('newEmailId'),
+        newFolderId: anyNamed('newFolderId'),
       )).thenAnswer((_) async {});
       when(mockAccountManager.activeAccount).thenReturn(tAccount);
 
@@ -1745,16 +1863,30 @@ void main() {
         opType: PendingOperationType.move,
         payload: anyNamed('payload'),
       )).called(1);
-      verify(mockLocalDatasource.deleteEmailFromCache(
+      verify(mockLocalDatasource.renameCachedEmailId(
         accountId: 'account-1',
-        emailId: 'email-1',
+        oldEmailId: 'email-1',
+        newEmailId: 'email-1',
+        newFolderId: 'folder-2',
       )).called(1);
+      verifyNever(mockLocalDatasource.deleteEmailFromCache(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+        evictInlineAttachments: anyNamed('evictInlineAttachments'),
+      ));
+      // Tombstoned everywhere but the folder it went to.
+      expect(
+        recentMutations.recentRemovals('account-1'),
+        {'email-1': 'folder-2'},
+      );
     });
 
     test('still succeeds while offline', () async {
-      when(mockLocalDatasource.deleteEmailFromCache(
+      when(mockLocalDatasource.renameCachedEmailId(
         accountId: anyNamed('accountId'),
-        emailId: anyNamed('emailId'),
+        oldEmailId: anyNamed('oldEmailId'),
+        newEmailId: anyNamed('newEmailId'),
+        newFolderId: anyNamed('newFolderId'),
       )).thenAnswer((_) async {});
       when(mockAccountManager.activeAccount).thenReturn(tAccount);
       when(mockConnectivityService.isOnline).thenAnswer((_) async => false);
@@ -1777,9 +1909,11 @@ void main() {
       final result = await repository.moveEmail('email-1', 'folder-2');
 
       expect(result.isRight(), isTrue);
-      verifyNever(mockLocalDatasource.deleteEmailFromCache(
+      verifyNever(mockLocalDatasource.renameCachedEmailId(
         accountId: anyNamed('accountId'),
-        emailId: anyNamed('emailId'),
+        oldEmailId: anyNamed('oldEmailId'),
+        newEmailId: anyNamed('newEmailId'),
+        newFolderId: anyNamed('newFolderId'),
       ));
     });
   });

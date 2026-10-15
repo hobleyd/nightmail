@@ -31,6 +31,7 @@ import '../../../infrastructure/notifications/notification_service.dart';
 import '../../../infrastructure/sync/body_prefetch_service.dart';
 import '../../../infrastructure/sync/imap_connection_gate.dart';
 import '../../../infrastructure/sync/outbox_drain_service.dart';
+import '../../../infrastructure/sync/pending_removals.dart';
 import '../../../infrastructure/sync/recent_mutation_store.dart';
 import '../../../infrastructure/sync/spam_db_sync_service.dart';
 import 'mail_poller_state.dart';
@@ -564,7 +565,16 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                 // A move, not a delete: the message is still in the mailbox, so
                 // its cached inline images stay put rather than being downloaded
                 // again the first time the destination folder is opened.
+                //
+                // Except a move this app made: the repository has already
+                // re-filed that row under its destination, and on Gmail (same
+                // id across a move) deleting it by id here took it out of the
+                // destination too, before the user had opened it.
+                final pending = result.movedOutIds.isEmpty
+                    ? null
+                    : await _pendingMutations(account.id);
                 for (final movedId in result.movedOutIds) {
+                  if (pending?.removals.isArriving(movedId) ?? false) continue;
                   await _emailLocalDatasource.deleteEmailFromCache(
                     accountId: account.id,
                     emailId: movedId,
@@ -745,6 +755,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                   account.id,
                   freshEmails,
                   folderId: inboxes.first.id,
+                  keepArrivals: true,
                 );
                 // Replace the folder's rows rather than merge into them, the
                 // same way EmailListBloc's refresh does. A plain cacheEmails is
@@ -1183,6 +1194,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
       account.id,
       fresh,
       folderId: folderId,
+      keepArrivals: true,
     );
 
     // Compared against the *cache* rather than a count, because there is no
@@ -1497,20 +1509,22 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   /// one at a time — and for Exchange Online, whose folder listing lags a
   /// read-state PATCH by seconds as a matter of course. Shared by both
   /// reconciliation paths here too, so they cannot drift apart.
-  Future<({Set<String> tombstoned, Set<String> pendingReadIds})>
-      _pendingMutations(String accountId) async {
+  ///
+  /// [removals] is the same set with each move's destination, for a caller that
+  /// knows which folder it listed — see [PendingRemovals].
+  Future<
+      ({
+        Set<String> tombstoned,
+        PendingRemovals removals,
+        Set<String> pendingReadIds,
+      })> _pendingMutations(String accountId) async {
     final pendingOps = await _pendingOperations.getPendingOperations(accountId);
+    final removals =
+        PendingRemovals.from(accountId, pendingOps, _recentMutations);
 
     return (
-      tombstoned: <String>{
-        for (final op in pendingOps)
-          if (op.opType == PendingOperationType.delete ||
-              op.opType == PendingOperationType.move ||
-              op.opType == PendingOperationType.junk ||
-              op.opType == PendingOperationType.notJunk)
-            op.emailId,
-        ..._recentMutations.recentlyRemovedIds(accountId),
-      },
+      tombstoned: removals.all,
+      removals: removals,
       pendingReadIds: <String>{
         for (final op in pendingOps)
           if (op.opType == PendingOperationType.markRead) op.emailId,
@@ -1531,15 +1545,33 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   ///   (tombstoned) — it's being removed from this view and re-caching it
   ///   would put it right back. When [folderId] names the folder listed, the
   ///   thread's cross-folder rows go with it if nothing of it is left there —
-  ///   see [dropThreadsLeftOutsideFolder].
+  ///   see [dropThreadsLeftOutsideFolder]. A message *moved into* [folderId]
+  ///   is not a removal from it.
   /// - A message with a pending markRead op keeps whatever isRead value is
   ///   already in the cache rather than the server's (not-yet-updated) one.
+  /// - With [keepArrivals] — a listing about to replace the folder's cache — a
+  ///   message just moved into [folderId] that the server does not list yet
+  ///   keeps the copy the move re-filed there, rather than being wiped by the
+  ///   write. See [PendingRemovals].
   Future<List<Email>> _reconcileAgainstPendingOps(
     String accountId,
     List<Email> emails, {
     String? folderId,
+    bool keepArrivals = false,
   }) async {
-    final (:tombstoned, :pendingReadIds) = await _pendingMutations(accountId);
+    final (:removals, :pendingReadIds, tombstoned: _) =
+        await _pendingMutations(accountId);
+    final tombstoned = removals.tombstonedFor(folderId);
+    if (keepArrivals) {
+      emails = await removals.withArrivals(
+        emails,
+        folderId: folderId,
+        cachedById: (id) => _emailLocalDatasource.getCachedEmailById(
+          accountId: accountId,
+          emailId: id,
+        ),
+      );
+    }
     if (tombstoned.isEmpty && pendingReadIds.isEmpty) return emails;
 
     final reconciled = <Email>[];

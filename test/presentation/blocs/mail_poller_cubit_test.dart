@@ -1647,6 +1647,38 @@ void main() {
         evictInlineAttachments: false,
       )).called(1);
     });
+
+    // Regression: a move made here re-files the cached row under its
+    // destination at once. On Gmail the id survives the move, so the history
+    // stream's "left the Inbox" for it deleted that row by id — from the
+    // destination too — before the user had opened the folder.
+    test('a message this app just moved keeps its re-filed row', () async {
+      recentMutations.recordArrival(_msAccount.id, 'moved-here', 'archive-id');
+      when(mockGraphDs.syncMailDelta(any, deltaLink: anyNamed('deltaLink')))
+          .thenAnswer((_) async => MailDeltaResult(
+                upserted: const [],
+                removedIds: const [],
+                movedOutIds: const ['moved-here', 'moved-elsewhere'],
+                deltaLink: _newToken,
+              ));
+
+      final cubit = makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      verifyNever(mockEmailLocalDatasource.deleteEmailFromCache(
+        accountId: anyNamed('accountId'),
+        emailId: 'moved-here',
+        evictInlineAttachments: anyNamed('evictInlineAttachments'),
+      ));
+      verify(mockEmailLocalDatasource.deleteEmailFromCache(
+        accountId: _msAccount.id,
+        emailId: 'moved-elsewhere',
+        evictInlineAttachments: false,
+      )).called(1);
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -2425,6 +2457,55 @@ void main() {
         replaceFolder: true,
       )).captured.single as List<Email>;
       expect(cached.map((e) => e.id), ['kept']);
+    });
+
+    // A move re-files the cached row into its destination at once. This sync
+    // replaces that folder's rows, so a listing that does not name the message
+    // yet — the move still queued, or a replica behind it — used to wipe it,
+    // and on Gmail (same id across a move) its own tombstone dropped it.
+    test('keeps a message just moved into the watched folder', () async {
+      final ds = MockEmailRemoteDatasource();
+      when(mockAccountManager.accounts).thenReturn([_gmailAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(_gmailAccount);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(ds);
+      when(ds.getMailFolders()).thenAnswer((_) async => [_inbox(unread: 3)]);
+      when(ds.getEmails(folderId: 'archive-id', top: anyNamed('top')))
+          .thenAnswer((_) async => [
+                _email('listed', conversationId: 'c2', parentFolderId: 'archive-id'),
+                _email('same-id',
+                    conversationId: 'c3', parentFolderId: 'archive-id'),
+              ]);
+      when(mockEmailLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => null);
+      when(mockEmailLocalDatasource.getCachedEmailById(
+        accountId: _gmailAccount.id,
+        emailId: 'not-listed-yet',
+      )).thenAnswer((_) async => _email('not-listed-yet',
+          conversationId: 'c4', parentFolderId: 'archive-id'));
+      recentMutations.recordRemoval(_gmailAccount.id, 'same-id',
+          destinationFolderId: 'archive-id');
+      recentMutations.recordArrival(
+          _gmailAccount.id, 'not-listed-yet', 'archive-id');
+
+      final cubit = makeCubit();
+      addTearDown(cubit.close);
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      cubit.setWatchedFolder('archive-id');
+      await pumpEventQueue();
+
+      final cached = verify(mockEmailLocalDatasource.cacheEmails(
+        accountId: _gmailAccount.id,
+        folderId: 'archive-id',
+        emails: captureAnyNamed('emails'),
+        replaceFolder: true,
+      )).captured.single as List<Email>;
+      expect(cached.map((e) => e.id).toSet(),
+          {'listed', 'same-id', 'not-listed-yet'});
     });
   });
 

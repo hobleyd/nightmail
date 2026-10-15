@@ -171,7 +171,16 @@ class OutboxDrainService {
                   payload['destinationFolderId'] as String;
               final newId = await ds.moveEmail(emailId, destinationFolderId);
               await _remapIfNeeded(accountId, emailId, newId, destinationFolderId);
-              _tombstoneAcknowledgedRemoval(accountId, op.emailId, emailId);
+              _tombstoneAcknowledgedRemoval(
+                accountId,
+                op.emailId,
+                emailId,
+                destinationFolderId: destinationFolderId,
+              );
+              if (newId != null) {
+                _recentMutations.recordArrival(
+                    accountId, newId, destinationFolderId);
+              }
               // Keyed by the *original* queued id (not the already-resolved
               // emailId) so a message remapped twice in one pass still
               // resolves to its final id via this single lookup.
@@ -262,14 +271,25 @@ class OutboxDrainService {
   /// Deliberately *not* the id the server assigned the moved copy. That copy
   /// is the message's new home — tombstoning it would drop it from the
   /// destination folder's own listing for the life of the tombstone, so a
-  /// message filed into Archive would be missing from Archive for 30 s.
+  /// message filed into Archive would be missing from Archive for 30 s. It is
+  /// recorded as an *arrival* instead, so an Exchange replica still behind the
+  /// move cannot list Archive without it and wipe the row the rename filed.
+  ///
+  /// [destinationFolderId] is a move's destination. Gmail keeps the id across
+  /// a move, so the queued id *is* the new home; carrying the destination is
+  /// what keeps the tombstone out of that folder's listing.
   void _tombstoneAcknowledgedRemoval(
     String accountId,
     String queuedId,
-    String sentId,
-  ) {
-    _recentMutations.recordRemoval(accountId, queuedId);
-    if (sentId != queuedId) _recentMutations.recordRemoval(accountId, sentId);
+    String sentId, {
+    String? destinationFolderId,
+  }) {
+    _recentMutations.recordRemoval(accountId, queuedId,
+        destinationFolderId: destinationFolderId);
+    if (sentId != queuedId) {
+      _recentMutations.recordRemoval(accountId, sentId,
+          destinationFolderId: destinationFolderId);
+    }
   }
 
   Future<void> _remapIfNeeded(

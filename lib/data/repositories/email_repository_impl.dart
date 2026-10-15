@@ -15,6 +15,7 @@ import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../../infrastructure/network/connectivity_service.dart';
 import '../../infrastructure/sync/outbox_drain_service.dart';
+import '../../infrastructure/sync/pending_removals.dart';
 import '../../infrastructure/sync/recent_mutation_store.dart';
 import '../datasources/local/email_local_datasource.dart';
 import '../datasources/local/folder_local_datasource.dart';
@@ -100,10 +101,12 @@ class EmailRepositoryImpl implements EmailRepository {
         // the delete/move/junk would otherwise resurrect the just-removed
         // message into the cache, and the next poll's cache repaint would
         // put it back on screen. Mirrors MailPollerCubit's reconciliation.
+        final replacesFolder = skip == 0 && filter == null;
         final reconciled = await _reconcileAgainstPendingOps(
           accountId,
           emails,
           folderId: folderId,
+          keepArrivals: replacesFolder,
         );
         if (reconciled.isNotEmpty) {
           final effectiveFolderId = folderId ?? _defaultFolderKey;
@@ -119,7 +122,7 @@ class EmailRepositoryImpl implements EmailRepository {
             accountId: accountId,
             folderId: effectiveFolderId,
             emails: reconciled,
-            replaceFolder: skip == 0 && filter == null,
+            replaceFolder: replacesFolder,
           ));
         }
         return Right<Failure, List<Email>>(reconciled);
@@ -139,11 +142,16 @@ class EmailRepositoryImpl implements EmailRepository {
   ///
   /// [folderId] is the folder the listing was of, when it was one: a thread
   /// whose only message here was just removed loses its cross-folder rows too
-  /// — see [dropThreadsLeftOutsideFolder].
+  /// — see [dropThreadsLeftOutsideFolder] — and a message just *moved into* it
+  /// is not a removal here. [keepArrivals] is for a listing that will replace
+  /// the folder's cache: it puts back the moved-in messages the server does not
+  /// list yet, or that write would wipe the copy [moveEmail] re-filed there.
+  /// See [PendingRemovals].
   Future<List<Email>> _reconcileAgainstPendingOps(
     String accountId,
     List<Email> emails, {
     String? folderId,
+    bool keepArrivals = false,
   }) async {
     final pendingOps = await _pendingOperations.getPendingOperations(accountId);
 
@@ -152,20 +160,24 @@ class EmailRepositoryImpl implements EmailRepository {
     // resolves after the outbox drain removed the pending op. Read-state needs
     // it as much as removal: Exchange Online routinely answers a folder
     // listing from a replica seconds behind the PATCH the drain just made.
-    final tombstoned = <String>{
-      for (final op in pendingOps)
-        if (op.opType == PendingOperationType.delete ||
-            op.opType == PendingOperationType.move ||
-            op.opType == PendingOperationType.junk ||
-            op.opType == PendingOperationType.notJunk)
-          op.emailId,
-      ..._recentMutations.recentlyRemovedIds(accountId),
-    };
+    final removals =
+        PendingRemovals.from(accountId, pendingOps, _recentMutations);
+    final tombstoned = removals.tombstonedFor(folderId);
     final pendingReadIds = <String>{
       for (final op in pendingOps)
         if (op.opType == PendingOperationType.markRead) op.emailId,
       ..._recentMutations.recentReadStates(accountId).keys,
     };
+    if (keepArrivals) {
+      emails = await removals.withArrivals(
+        emails,
+        folderId: folderId,
+        cachedById: (id) => _localDatasource.getCachedEmailById(
+          accountId: accountId,
+          emailId: id,
+        ),
+      );
+    }
     if (tombstoned.isEmpty && pendingReadIds.isEmpty) return emails;
 
     final reconciled = <Email>[];
@@ -574,13 +586,23 @@ class EmailRepositoryImpl implements EmailRepository {
         opType: PendingOperationType.move,
         payload: jsonEncode({'destinationFolderId': destinationFolderId}),
       );
-      _tombstoneRemoval(accountId, id);
-      // The message leaves the folder currently being viewed; the drain
-      // engine re-files it into the destination folder's cache once the
-      // server confirms (and learns its possibly-new id in the process).
-      await _localDatasource.deleteEmailFromCache(
+      _recentMutations.recordRemoval(
+        accountId,
+        id,
+        destinationFolderId: destinationFolderId,
+      );
+      // Re-filed into the destination now rather than dropped, so opening that
+      // folder shows the message — body and inline images included — before
+      // the drain or a network listing has caught up. Deleting the row here
+      // used to leave the drain's own re-file (`_remapIfNeeded`, which renames
+      // to the id the server assigned) with nothing to rename, so the
+      // destination showed its stale cache until a refresh landed. Same id for
+      // now; the drain renames it when a Graph move mints a new one.
+      await _localDatasource.renameCachedEmailId(
         accountId: accountId,
-        emailId: id,
+        oldEmailId: id,
+        newEmailId: id,
+        newFolderId: destinationFolderId,
       );
       unawaited(_outboxDrainService.drainForAccount(accountId));
       return unit;

@@ -216,6 +216,12 @@ void main() {
       await service.drainForAccount('acct-1');
 
       expect(recentMutations.recentlyRemovedIds('acct-1'), {'old-id'});
+      // It is an arrival instead: a replica behind the move cannot list the
+      // destination without it and wipe the renamed row.
+      expect(recentMutations.recentArrivals('acct-1'), {'new-id': 'folder-2'});
+      // The old id's tombstone keeps out of the destination's listing — on
+      // Gmail the old id *is* the new home.
+      expect(recentMutations.recentRemovals('acct-1'), {'old-id': 'folder-2'});
     });
 
     // A later op on a message remapped earlier in the same pass is sent under
@@ -327,6 +333,58 @@ void main() {
 
       // Outbox drained clean.
       expect(await db.getPendingOperations('acct-1'), isEmpty);
+    });
+  });
+
+  // Regression: EmailRepositoryImpl.moveEmail deleted the cache row as it
+  // queued the move, so the rename above found nothing and the destination
+  // folder showed its stale cache until a network listing replaced it. The
+  // repository now re-files the row under the destination at once (same id),
+  // and the drain's rename carries it to the id the server assigned.
+  group('move after the repository has already re-filed the row', () {
+    test('ends with the message cached in the destination under its new id',
+        () async {
+      await localDatasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [_email('old-id')],
+      );
+      // What EmailRepositoryImpl.moveEmail does alongside the enqueue.
+      await localDatasource.renameCachedEmailId(
+        accountId: 'acct-1',
+        oldEmailId: 'old-id',
+        newEmailId: 'old-id',
+        newFolderId: 'folder-2',
+      );
+      expect(
+        (await localDatasource.getCachedEmails(
+                accountId: 'acct-1', folderId: 'folder-2'))
+            .map((e) => e.id),
+        ['old-id'],
+        reason: 'the destination shows it before the drain has run',
+      );
+      await db.enqueue(
+        accountId: 'acct-1',
+        emailId: 'old-id',
+        opType: PendingOperationType.move,
+        payload: jsonEncode({'destinationFolderId': 'folder-2'}),
+      );
+      when(mockRemoteDatasource.moveEmail('old-id', 'folder-2'))
+          .thenAnswer((_) async => 'new-id');
+
+      await service.drainForAccount('acct-1');
+
+      expect(
+        (await localDatasource.getCachedEmails(
+                accountId: 'acct-1', folderId: 'folder-2'))
+            .map((e) => e.id),
+        ['new-id'],
+      );
+      expect(
+        await localDatasource.getCachedEmails(
+            accountId: 'acct-1', folderId: 'folder-1'),
+        isEmpty,
+      );
     });
   });
 

@@ -174,6 +174,9 @@ Settings → Accounts.
 - Multiple accounts from different providers simultaneously
 - Per-account folder, calendar, and task views
 - Profile fields (name, title, phone) are filled from the Microsoft or Google directory when an account is added, so signature merge tags start out populated
+- Separate **Gmail** and **Google Workspace** sign-ins — Workspace asks for the
+  room-directory scope on the first sign-in, so room booking lists the whole
+  tenant without a later **Sign In Again**
 - Secure token storage (system Keychain / encrypted preferences)
 - Clear an account's local cache without removing the account
 - **Sign In Again** (Settings → Accounts) re-runs the OAuth consent flow for a

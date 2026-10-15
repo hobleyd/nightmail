@@ -36,6 +36,14 @@ class AuthException implements Exception {
   String toString() => 'AuthException: $message';
 }
 
+/// An interactive sign-in that a newer one replaced before it finished (a
+/// second click on "sign in" while the browser still had the first). Nothing
+/// went wrong, so a sign-in button shows nothing for it.
+class SignInSupersededException extends AuthException {
+  const SignInSupersededException()
+      : super(message: 'Replaced by a newer sign-in.');
+}
+
 class CacheException implements Exception {
   const CacheException({required this.message});
   final String message;

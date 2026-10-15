@@ -1003,6 +1003,8 @@ class _AccountsSectionState extends State<_AccountsSection> {
       messenger.showSnackBar(SnackBar(
         content: Text('Signed in again as ${account.emailAddress}.'),
       ));
+    } on SignInSupersededException {
+      // A second click took over; that attempt reports for itself.
     } catch (e) {
       // An AuthException's message is written for the user — "you signed in
       // as X, but this account is Y" — so show it without the type's prefix.

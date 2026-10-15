@@ -28,6 +28,10 @@ class LoopbackAuthFlow {
   /// `flutter_web_auth_2`'s own default.
   final Duration timeout;
 
+  /// The server each port's pending sign-in is listening on, so a newer
+  /// sign-in can take the port over — see [authenticate].
+  static final _listening = <int, HttpServer>{};
+
   /// Opens [authorizationUrl] and completes with the full redirect URL the
   /// provider sent back, query string included.
   ///
@@ -41,7 +45,13 @@ class LoopbackAuthFlow {
     required int port,
     required String expectedState,
   }) async {
+    // A sign-in abandoned in the browser holds the port until its timeout, and
+    // clicking sign-in again inside that window used to fail on "address
+    // already in use". The newer attempt wins: closing the older server ends
+    // its wait, and it fails with [SignInSupersededException].
+    await _listening.remove(port)?.close(force: true);
     final server = await _bind(port);
+    _listening[port] = server;
     try {
       await launcher.open(authorizationUrl);
       final redirect =
@@ -52,9 +62,16 @@ class LoopbackAuthFlow {
       throw const AuthException(
         message: 'Sign-in timed out waiting for the browser.',
       );
+    } on AuthException {
+      if (!identical(_listening[port], server)) {
+        throw const SignInSupersededException();
+      }
+      rethrow;
     } finally {
       // Unconditional: an abandoned sign-in that left the port bound would
-      // make every later attempt fail on "address already in use".
+      // make every later attempt fail on "address already in use". Only this
+      // flow's own entry is dropped — after a takeover it is the newer one's.
+      if (identical(_listening[port], server)) _listening.remove(port);
       await server.close(force: true);
     }
   }

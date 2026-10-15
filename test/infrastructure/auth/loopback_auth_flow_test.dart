@@ -186,6 +186,34 @@ void main() {
     await second.close(force: true);
   });
 
+  // Regression: clicking sign-in again while the browser still had the first
+  // attempt failed on "address already in use" until that one timed out.
+  test('a second sign-in takes the port over from one still waiting',
+      () async {
+    final first = LoopbackAuthFlow(launcher: launcher).authenticate(
+      authorizationUrl: Uri.parse('https://accounts.google.com/'),
+      port: port,
+      expectedState: 'state-of-the-abandoned-flow',
+    );
+    final firstOutcome = expectLater(
+        first, throwsA(isA<SignInSupersededException>()));
+    await launcher.opened.future;
+
+    final secondLauncher = _RecordingLauncher();
+    final second = LoopbackAuthFlow(launcher: secondLauncher).authenticate(
+      authorizationUrl: Uri.parse('https://accounts.google.com/'),
+      port: port,
+      expectedState: state,
+    );
+    await secondLauncher.opened.future;
+    await firstOutcome;
+
+    // Answered by the second flow: the first's cleanup left its server alone.
+    final response = await get('/?code=abc&state=$state');
+    await response.drain<void>();
+    expect(await second, 'http://127.0.0.1:$port/?code=abc&state=$state');
+  });
+
   test('reports a port it cannot bind as an AuthException, not a raw '
       'SocketException the UI would show as a stack trace', () async {
     final blocker = await HttpServer.bind(InternetAddress.loopbackIPv4, port);

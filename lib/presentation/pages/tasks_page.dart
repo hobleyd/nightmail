@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/error/exceptions.dart';
 import '../../core/platform/touch_metrics.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/task_due.dart';
@@ -723,6 +724,8 @@ class _ErrorView extends StatelessWidget {
                   try {
                     await accountCubit.reauthenticateActiveOAuth();
                     tasksBloc.add(const TasksLoadRequested());
+                  } on SignInSupersededException {
+                    // A second click took over; that attempt reports for itself.
                   } catch (e) {
                     // Surface the failure instead of swallowing it — a silent
                     // catch here left a cancelled/failed sign-in looking like

@@ -35,6 +35,13 @@ Four things here are load-bearing:
   abandoned sign-in that left 34572 bound would fail every later attempt on
   "address already in use", and nothing brings the window back from Chrome
   otherwise — the plugin path got that from `WindowToFront`.
+- **A newer sign-in takes the port over.** The `finally` only frees 34572
+  once a flow ends, and an abandoned one ends at its five-minute timeout — so
+  a second click inside that window failed on "address already in use" (the
+  October 2026 laptop re-auth). `LoopbackAuthFlow` keeps the pending server
+  per port and closes it before binding; the older flow fails with
+  `SignInSupersededException`, which the sign-in buttons show nothing for.
+  Completing the *older* browser tab afterwards fails on `state`, by design.
 
 Which request on that port is the redirect is decided twice over. A request
 carrying neither `code` nor `error` is answered 404 and ignored: the browser
@@ -212,3 +219,16 @@ re-signed in once and was fine, which is what made it look platform-specific.
 Comparing against one string also kept the user whenever mail had come to an
 alias. IMAP accounts have no provider to ask; a shared mailbox's credentials
 answer for its owner, so both are left alone.
+
+## A 401 Is Retried Once, and One That Survives a Refresh Flags the Account
+
+`AuthInterceptor.onError` answers a 401 by refreshing and retrying — and the
+retry comes back through the same interceptor. Unmarked, a provider that
+refuses even a freshly minted token was refreshed and retried without end: a
+poll cycle that never completed ("cycle abandoned after 5 min"), and no
+re-auth banner, because the banner (`AccountCubit.unauthenticatedAccountIds`)
+only ever heard about a *refresh* that failed. Only the Tasks pane, which maps
+its own 401s, said to sign in again. The retry now carries a mark and is not
+refreshed again; a 401 on it, or a 401 with no refresh token to try, fires
+`onAuthFailure`, and `onAuthSuccess` waits for a retry that is not refused.
+Both outcomes are `debugPrint`ed as `[Auth] …` lines in `diagnostics.log`.

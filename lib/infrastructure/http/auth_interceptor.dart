@@ -62,28 +62,61 @@ class AuthInterceptor extends Interceptor {
     DioException err,
     ErrorInterceptorHandler handler,
   ) async {
-    if (err.response?.statusCode == 401) {
+    final opts = err.requestOptions;
+    // The retry below comes back through here. Without the mark, a provider
+    // that refuses even a freshly refreshed token was refreshed and retried
+    // without end — a poll cycle that never completed, and no banner.
+    if (err.response?.statusCode == 401 && opts.extra[_retriedKey] != true) {
       try {
         final storedToken = await authService.getStoredToken();
-        if (storedToken?.refreshToken != null) {
+        if (storedToken?.refreshToken == null) {
+          // Nothing to refresh with, so nothing short of a sign-in fixes it.
+          debugPrint('[Auth] ${_describe(opts)} → 401 with no refresh token; '
+              'flagging for sign-in');
+          onAuthFailure?.call();
+        } else {
           final fresh = await authService.refreshToken(storedToken!);
-          onAuthSuccess?.call();
-          final opts = err.requestOptions;
           opts.headers['Authorization'] =
               '${fresh.tokenType} ${fresh.accessToken}';
-          final response = await dio.fetch(opts);
-          handler.resolve(response);
-          return;
+          opts.extra[_retriedKey] = true;
+          try {
+            final response = await dio.fetch(opts);
+            onAuthSuccess?.call();
+            handler.resolve(response);
+            return;
+          } on DioException catch (retryErr) {
+            if (retryErr.response?.statusCode == 401) {
+              // A token minted a moment ago and still refused: the grant
+              // behind it is what is no longer accepted.
+              debugPrint('[Auth] ${_describe(opts)} → 401 again on a freshly '
+                  'refreshed token; flagging for sign-in');
+              onAuthFailure?.call();
+            } else {
+              onAuthSuccess?.call();
+            }
+            handler.next(retryErr);
+            return;
+          }
         }
-      } on AuthException {
+      } on AuthException catch (e) {
+        debugPrint('[Auth] ${_describe(opts)} → 401, and the refresh was '
+            'refused: ${e.message}');
         onAuthFailure?.call();
       } on NetworkException {
         // Offline mid-retry: pass the original 401 on rather than flagging the
         // account. The credentials may well be fine — we never got to ask.
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('[Auth] ${_describe(opts)} → 401, and the refresh failed: '
+            '${e.runtimeType}: $e');
+      }
     }
     handler.next(err);
   }
+
+  /// Marks a request this interceptor has already refreshed and retried once.
+  static const _retriedKey = 'nightmail.authRetried';
+
+  static String _describe(RequestOptions o) => '${o.method} ${o.uri.path}';
 
   Future<AuthToken> _getValidToken() async {
     final stored = await authService.getStoredToken();

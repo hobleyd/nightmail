@@ -2119,6 +2119,9 @@ class _SignInPromptState extends State<_SignInPrompt> {
       } else {
         await context.read<AccountCubit>().reauthenticateActiveOAuth();
       }
+    } on SignInSupersededException {
+      // A second click took over; that attempt reports for itself.
+      return;
     } catch (e) {
       // An AuthException's message is written for the user — "you signed in
       // as X, but this account is Y" — so show it without the type's prefix.

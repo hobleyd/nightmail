@@ -8,6 +8,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/error/exceptions.dart';
 import '../../../core/platform/window_utils.dart';
+import '../../../core/utils/orphaned_thread_rows.dart';
 import '../../../core/settings/app_settings.dart';
 import '../../../data/datasources/local/delta_token_datasource.dart';
 import '../../../data/datasources/local/email_local_datasource.dart';
@@ -740,8 +741,11 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
               try {
                 final freshEmails = await ds.getEmails(
                     folderId: inboxes.first.id, top: _watchedPageSize);
-                final reconciled =
-                    await _reconcileAgainstPendingOps(account.id, freshEmails);
+                final reconciled = await _reconcileAgainstPendingOps(
+                  account.id,
+                  freshEmails,
+                  folderId: inboxes.first.id,
+                );
                 // Replace the folder's rows rather than merge into them, the
                 // same way EmailListBloc's refresh does. A plain cacheEmails is
                 // an upsert, so it can only ever *add* — a thread that has left
@@ -974,7 +978,8 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
         () => ds.getEmails(folderId: inbox.id, top: 10),
       );
       unawaited(
-        _reconcileAgainstPendingOps(account.id, emails).then((reconciled) =>
+        _reconcileAgainstPendingOps(account.id, emails, folderId: inbox.id)
+            .then((reconciled) =>
             _emailLocalDatasource.cacheEmails(
               accountId: account.id,
               folderId: inbox.id,
@@ -1174,7 +1179,11 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     } else {
       fresh = await ds.getEmails(folderId: folderId, top: _watchedPageSize);
     }
-    final reconciled = await _reconcileAgainstPendingOps(account.id, fresh);
+    final reconciled = await _reconcileAgainstPendingOps(
+      account.id,
+      fresh,
+      folderId: folderId,
+    );
 
     // Compared against the *cache* rather than a count, because there is no
     // per-folder count to compare for an arbitrary folder on every provider —
@@ -1520,19 +1529,26 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   ///
   /// - A message with a pending delete/move/junk op is dropped outright
   ///   (tombstoned) — it's being removed from this view and re-caching it
-  ///   would put it right back.
+  ///   would put it right back. When [folderId] names the folder listed, the
+  ///   thread's cross-folder rows go with it if nothing of it is left there —
+  ///   see [dropThreadsLeftOutsideFolder].
   /// - A message with a pending markRead op keeps whatever isRead value is
   ///   already in the cache rather than the server's (not-yet-updated) one.
   Future<List<Email>> _reconcileAgainstPendingOps(
     String accountId,
-    List<Email> emails,
-  ) async {
+    List<Email> emails, {
+    String? folderId,
+  }) async {
     final (:tombstoned, :pendingReadIds) = await _pendingMutations(accountId);
     if (tombstoned.isEmpty && pendingReadIds.isEmpty) return emails;
 
     final reconciled = <Email>[];
+    final removed = <Email>[];
     for (final email in emails) {
-      if (tombstoned.contains(email.id)) continue;
+      if (tombstoned.contains(email.id)) {
+        removed.add(email);
+        continue;
+      }
       if (pendingReadIds.contains(email.id)) {
         final cached = await _emailLocalDatasource.getCachedEmailById(
           accountId: accountId,
@@ -1545,7 +1561,11 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
       }
       reconciled.add(email);
     }
-    return reconciled;
+    return dropThreadsLeftOutsideFolder(
+      reconciled,
+      removed: removed,
+      folderId: folderId,
+    );
   }
 
   void decrementUnreadCount() {

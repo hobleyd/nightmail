@@ -6,6 +6,7 @@ import 'package:fpdart/fpdart.dart';
 
 import '../../core/error/exceptions.dart';
 import '../../core/error/failures.dart';
+import '../../core/utils/orphaned_thread_rows.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_folder.dart';
 import '../../domain/entities/local_attachment.dart';
@@ -99,7 +100,11 @@ class EmailRepositoryImpl implements EmailRepository {
         // the delete/move/junk would otherwise resurrect the just-removed
         // message into the cache, and the next poll's cache repaint would
         // put it back on screen. Mirrors MailPollerCubit's reconciliation.
-        final reconciled = await _reconcileAgainstPendingOps(accountId, emails);
+        final reconciled = await _reconcileAgainstPendingOps(
+          accountId,
+          emails,
+          folderId: folderId,
+        );
         if (reconciled.isNotEmpty) {
           final effectiveFolderId = folderId ?? _defaultFolderKey;
           // A plain cacheEmails is an upsert — it can only ever add. skip == 0
@@ -131,10 +136,15 @@ class EmailRepositoryImpl implements EmailRepository {
   /// still listing the deleted/moved message. Writing that snapshot to the
   /// cache un-reconciled is what makes a just-deleted email reappear until the
   /// drain finishes.
+  ///
+  /// [folderId] is the folder the listing was of, when it was one: a thread
+  /// whose only message here was just removed loses its cross-folder rows too
+  /// — see [dropThreadsLeftOutsideFolder].
   Future<List<Email>> _reconcileAgainstPendingOps(
     String accountId,
-    List<Email> emails,
-  ) async {
+    List<Email> emails, {
+    String? folderId,
+  }) async {
     final pendingOps = await _pendingOperations.getPendingOperations(accountId);
 
     // Recent mutations survive a short window past op dequeue, closing the
@@ -159,8 +169,12 @@ class EmailRepositoryImpl implements EmailRepository {
     if (tombstoned.isEmpty && pendingReadIds.isEmpty) return emails;
 
     final reconciled = <Email>[];
+    final removed = <Email>[];
     for (final email in emails) {
-      if (tombstoned.contains(email.id)) continue;
+      if (tombstoned.contains(email.id)) {
+        removed.add(email);
+        continue;
+      }
       if (pendingReadIds.contains(email.id)) {
         final cached = await _localDatasource.getCachedEmailById(
           accountId: accountId,
@@ -173,7 +187,11 @@ class EmailRepositoryImpl implements EmailRepository {
       }
       reconciled.add(email);
     }
-    return reconciled;
+    return dropThreadsLeftOutsideFolder(
+      reconciled,
+      removed: removed,
+      folderId: folderId,
+    );
   }
 
   @override

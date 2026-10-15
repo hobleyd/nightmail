@@ -77,6 +77,7 @@ EmailModel _email(
   List<Map<String, dynamic>> attachments = const [],
   String conversationId = 'c1',
   String? body,
+  String parentFolderId = 'inbox-id',
 }) =>
     EmailModel.fromJson({
       'id': id,
@@ -95,7 +96,7 @@ EmailModel _email(
       'importance': 'normal',
       'conversationId': conversationId,
       'hasAttachments': false,
-      'parentFolderId': 'inbox-id',
+      'parentFolderId': parentFolderId,
     });
 
 MailDeltaResult _emptyDelta() => MailDeltaResult(
@@ -2380,6 +2381,52 @@ void main() {
   // changed. A quiet mailbox reloaded the folder list and the message list on
   // every interval.
   // ---------------------------------------------------------------------------
+
+  // Regression: on Office 365 a message moved out of the folder on screen came
+  // back labelled with its destination until the next sync. The re-listing was
+  // answered from a replica behind the move, so it still named the old id —
+  // tombstoned and dropped — but the expansion had already fetched the thread,
+  // moved copy and all, under the new id Graph gave it.
+  group('MailPollerCubit — watched folder after a move', () {
+    test('does not cache the moved copy a stale listing expanded back in',
+        () async {
+      final ds = MockEmailRemoteDatasource();
+      when(mockAccountManager.accounts).thenReturn([_gmailAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(_gmailAccount);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(ds);
+      when(ds.getMailFolders()).thenAnswer((_) async => [_inbox(unread: 3)]);
+      when(ds.getEmails(folderId: 'archive-id', top: anyNamed('top')))
+          .thenAnswer((_) async => [
+                _email('old-id',
+                    conversationId: 'moved', parentFolderId: 'archive-id'),
+                _email('kept', conversationId: 'c2', parentFolderId: 'archive-id'),
+                _email('new-id',
+                    conversationId: 'moved', parentFolderId: 'projects-id'),
+              ]);
+      when(mockEmailLocalDatasource.getCachedEmailById(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async => null);
+      recentMutations.recordRemoval(_gmailAccount.id, 'old-id');
+
+      final cubit = makeCubit();
+      addTearDown(cubit.close);
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      cubit.setWatchedFolder('archive-id');
+      await pumpEventQueue();
+
+      final cached = verify(mockEmailLocalDatasource.cacheEmails(
+        accountId: _gmailAccount.id,
+        folderId: 'archive-id',
+        emails: captureAnyNamed('emails'),
+        replaceFolder: true,
+      )).captured.single as List<Email>;
+      expect(cached.map((e) => e.id), ['kept']);
+    });
+  });
 
   group('MailPollerCubit — quiet delta with the Inbox on screen', () {
     setUp(() {

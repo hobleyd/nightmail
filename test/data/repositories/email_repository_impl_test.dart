@@ -307,6 +307,56 @@ void main() {
       expect(result.getOrElse((_) => [tEmailModel]), isEmpty);
     });
 
+    // Regression: on Office 365 a message moved out of a folder vanished, came
+    // back labelled with its destination, and vanished at the next sync. A
+    // listing from a replica behind the move still named the old id, so the
+    // cross-folder expansion fetched the thread — including the moved copy
+    // under the new id Graph assigned it, which no tombstone covers.
+    test('drops the moved copy a stale listing expanded back into the folder',
+        () async {
+      EmailModel row(String id, String folder, String conversationId) =>
+          EmailModel(
+            id: id,
+            subject: 'Test',
+            from: const EmailAddressModel(address: 'a@b.com'),
+            toRecipients: const [],
+            ccRecipients: const [],
+            bodyPreview: '',
+            body: '',
+            bodyType: EmailBodyType.text,
+            isRead: true,
+            receivedDateTime: DateTime(2026, 10, 15),
+            importance: EmailImportance.normal,
+            conversationId: conversationId,
+            parentFolderId: folder,
+            folderIds: [folder],
+          );
+      when(mockRemoteDatasource.getEmails(
+        folderId: anyNamed('folderId'),
+        top: anyNamed('top'),
+        skip: anyNamed('skip'),
+        filter: anyNamed('filter'),
+        orderBy: anyNamed('orderBy'),
+      )).thenAnswer((_) async => [
+            row('old-id', 'folder-1', 'moved-thread'),
+            row('other', 'folder-1', 'other-thread'),
+            row('new-id', 'projects', 'moved-thread'),
+          ]);
+      when(mockLocalDatasource.cacheEmails(
+        accountId: anyNamed('accountId'),
+        folderId: anyNamed('folderId'),
+        emails: anyNamed('emails'),
+        replaceFolder: anyNamed('replaceFolder'),
+      )).thenAnswer((_) async {});
+      when(mockAccountManager.activeAccount).thenReturn(tAccount);
+      recentMutations.recordRemoval('account-1', 'old-id');
+
+      final result = await repository.getEmails(folderId: 'folder-1');
+
+      final emails = result.getOrElse((_) => []);
+      expect(emails.map((e) => e.id), ['other']);
+    });
+
     // Regression: on Office 365 a message read in a folder went read → unread
     // → read. The markRead op drained and dequeued within a second, then a
     // folder listing built before the PATCH landed resolved with isRead:false

@@ -26,6 +26,22 @@ expanded without the Deleted Items clause hands back that folder's copy of
 every thread on it, each under an id no tombstone knows. The listing goes out
 without its cross-folder rows once and the next one retries the lookup.
 
+**A thread that loses its last in-folder row to reconciliation loses its
+expansion rows too** (`dropThreadsLeftOutsideFolder`, called from both the
+repository's and the poller's `_reconcileAgainstPendingOps`). The expansion is
+decided on the server's page, *before* the tombstones are applied, and Exchange
+Online answers a listing from a replica seconds behind a move — so the page
+still named the moved message under its old id, the expansion fetched its
+thread, and the copy in the destination came back under the **new id** a Graph
+move assigns, which the drain deliberately does not tombstone (it is the
+message's new home). Observed on Office 365 as a moved message that vanished,
+came back labelled with its destination, and vanished at the next sync. The
+drop is limited to threads that lost a row *that was in this folder* and have
+no sibling left here: moving one message of a thread whose others stay keeps
+its new copy beside them, a Gmail thread listed with no message in the folder is
+left alone, and a folder id that does not compare equal to the rows' (see the
+encoding note above) makes it a no-op rather than a mass hide.
+
 **A load keeps only the cached rows that lie beyond the fresh page.** The first
 page comes from the network and the cache is merged in behind it so a folder
 the user has scrolled does not shrink back to a page on every open — but only

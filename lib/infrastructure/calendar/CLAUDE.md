@@ -369,6 +369,19 @@ Everything that decides joinability now reads `CalendarEvent.hasOnlineMeeting`.
 - `onlineMeetingPlatformName` — "Microsoft Teams" / "Google Meet" / "Zoom", shown
   wherever the URL itself would be meaningless noise (the hover card's own row,
   the event form's join line).
+- `teamsAppJoinUrl` — rewrites a `teams.microsoft.com/l/...` join link to the
+  `msteams:/l/...` deep link the Teams app registers.
+
+**Every Join affordance goes through `launchMeetingJoinUrl`**
+(`presentation/widgets/body_link_opener.dart`), never a bare `launchUrl`.
+Launching the https link opens a browser tab whose launcher page then hands off
+to Teams, leaving the tab behind. On macOS/Windows it tries `msteams:` first
+(behind `canLaunch`, so Windows doesn't offer a Store search for an unregistered
+scheme); on iOS/Android it launches the https link as
+`externalNonBrowserApplication` (universal/app link). Either falls back to the
+web link. The rewritten URL stays a **string** (`launchUrlString`): `Uri`
+uppercases the percent-escapes in the thread id and `context` JSON.
+`teams.live.com` links are deliberately left on the web.
 
 **Google must send `conferenceDataVersion=1` on every create and update**, not
 only when attaching a Meet. Version 0 declares that the client has no conference

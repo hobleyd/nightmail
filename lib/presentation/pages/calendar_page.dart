@@ -5,7 +5,6 @@ import '../widgets/adaptive_alert_dialog.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/platform/touch_metrics.dart';
 import '../../core/theme/app_colors.dart';
@@ -21,6 +20,7 @@ import '../blocs/account/account_cubit.dart';
 import '../blocs/calendar/calendar_bloc.dart';
 import '../blocs/calendar/calendar_event.dart';
 import '../blocs/calendar/calendar_state.dart';
+import '../widgets/body_link_opener.dart';
 import '../widgets/calendar_overlap_layout.dart';
 import '../widgets/event_edit_dialog.dart';
 import '../widgets/event_hover_card.dart';
@@ -2453,7 +2453,7 @@ class _JoinButton extends StatelessWidget {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => unawaited(
-          launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+          launchMeetingJoinUrl(url),
         ),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
@@ -2737,8 +2737,7 @@ void _showEventContextMenu(
       if (action == null || !context.mounted) return;
       switch (action) {
         case _EventMenuAction.joinMeeting:
-          unawaited(launchUrl(Uri.parse(meetingUrl!),
-              mode: LaunchMode.externalApplication));
+          unawaited(launchMeetingJoinUrl(meetingUrl!));
         case _EventMenuAction.emailAttendees:
           await _emailAttendees(context, event, recipients);
         case _EventMenuAction.edit:
@@ -2799,8 +2798,7 @@ void _showEventContextMenu(
       case _EventMenuAction.editSeries:
         break;
       case _EventMenuAction.joinMeeting:
-        unawaited(launchUrl(Uri.parse(meetingUrl!),
-            mode: LaunchMode.externalApplication));
+        unawaited(launchMeetingJoinUrl(meetingUrl!));
       case _EventMenuAction.emailAttendees:
         await _emailAttendees(context, event, recipients);
       case _EventMenuAction.decline:

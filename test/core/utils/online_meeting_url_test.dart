@@ -166,4 +166,39 @@ void main() {
           'Online meeting');
     });
   });
+
+  group('teamsAppJoinUrl', () {
+    const join = 'https://teams.microsoft.com/l/meetup-join/'
+        '19%3ameeting_NjE2ZTk4%40thread.v2/0'
+        '?context=%7b%22Tid%22%3a%22abc%22%2c%22Oid%22%3a%22def%22%7d';
+
+    test('carries the path and query over byte-for-byte', () {
+      expect(
+        teamsAppJoinUrl(join),
+        'msteams:/l/meetup-join/19%3ameeting_NjE2ZTk4%40thread.v2/0'
+        '?context=%7b%22Tid%22%3a%22abc%22%2c%22Oid%22%3a%22def%22%7d',
+      );
+    });
+
+    test('uses the msteams scheme with no authority', () {
+      final uri = Uri.parse(teamsAppJoinUrl(join)!);
+      expect(uri.scheme, 'msteams');
+      expect(uri.hasAuthority, isFalse);
+    });
+
+    test('tolerates surrounding whitespace', () {
+      expect(teamsAppJoinUrl('  $join  '), isNotNull);
+    });
+
+    test('leaves everything else on the web', () {
+      expect(teamsAppJoinUrl('https://teams.live.com/meet/9312345'), isNull);
+      expect(teamsAppJoinUrl('https://meet.google.com/abc-defg-hij'), isNull);
+      expect(teamsAppJoinUrl('https://acme.zoom.us/j/1234567890'), isNull);
+      expect(teamsAppJoinUrl('https://teams.microsoft.com/'), isNull);
+      expect(
+        teamsAppJoinUrl('https://evil.example/teams.microsoft.com/l/x'),
+        isNull,
+      );
+    });
+  });
 }

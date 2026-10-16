@@ -84,3 +84,26 @@ final _embeddedJoinUrl = RegExp(
     onlineMeetingUrl: (url == null || url.isEmpty) ? null : url,
   );
 }
+
+final _teamsWebJoin = RegExp(
+  r'^https://teams\.microsoft\.com(/l/[^\s]*)$',
+  caseSensitive: false,
+);
+
+/// The `msteams:` deep link that opens a Teams join link in the desktop app,
+/// or null when [url] is not one the app's scheme understands.
+///
+/// Opening the https link goes through the browser, whose launcher page then
+/// hands off to the app — a browser tab left behind for every meeting. The app
+/// registers `msteams:` and takes the same `/l/...` path directly. The path and
+/// query are carried over as raw text, and returned as a string rather than a
+/// `Uri`, which would re-normalise the escapes: the thread id
+/// (`19%3ameeting_…%40thread.v2`) and the JSON `context` arrive exactly as the
+/// server minted them.
+///
+/// Only `teams.microsoft.com/l/...` is rewritten. Personal `teams.live.com`
+/// links stay on the web, where the launcher page knows what to do with them.
+String? teamsAppJoinUrl(String url) {
+  final match = _teamsWebJoin.firstMatch(url.trim());
+  return match == null ? null : 'msteams:${match.group(1)}';
+}

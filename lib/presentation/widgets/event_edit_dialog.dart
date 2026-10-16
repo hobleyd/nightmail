@@ -13,7 +13,6 @@ import 'adaptive_switch.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/online_meeting_url.dart';
@@ -2978,7 +2977,7 @@ class _JoinLinkRow extends StatelessWidget {
             message: url,
             child: GestureDetector(
               onTap: () => unawaited(
-                launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+                launchMeetingJoinUrl(url),
               ),
               child: MouseRegion(
                 cursor: SystemMouseCursors.click,

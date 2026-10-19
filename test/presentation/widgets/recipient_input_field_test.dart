@@ -80,6 +80,19 @@ class _FakeSystemContacts implements SystemContactsRepository {
   Future<List<ContactSuggestion>> fetchAll() async => results;
 }
 
+/// Runs a test against the mouse-driven desktop field.
+///
+/// `flutter test` reports Android unless told otherwise, and on a touch
+/// screen a chip is neither selected on press, draggable nor right-clicked —
+/// so these would otherwise test the touch path, leaving the trackpad and
+/// webview-focus behaviour they pin unguarded.
+void _testOnDesktop(String description, WidgetTesterCallback callback) =>
+    testWidgets(
+      description,
+      callback,
+      variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+    );
+
 void main() {
   group('RecipientInputField.flush()', () {
     testWidgets('commits typed text and calls onChanged', (tester) async {
@@ -591,6 +604,43 @@ void main() {
         findsOneWidget,
       );
     });
+
+    // The Flutter-drawn toolbar calls pasteText directly, so it needs its own
+    // route to the list handling the keyboard shortcut gets.
+    testWidgets(
+      "a list pasted from the toolbar's Paste becomes a chip per line",
+      (tester) async {
+        List<String> committed = const [];
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          (call) async => switch (call.method) {
+            'Clipboard.getData' => {'text': 'Andrew Munro\nmatt@example.com'},
+            'Clipboard.hasStrings' => {'value': true},
+            _ => null,
+          },
+        );
+        addTearDown(
+          () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            SystemChannels.platform,
+            null,
+          ),
+        );
+        await tester.pumpWidget(
+          _wrap(recipients: const [], onChanged: (r) => committed = r),
+        );
+
+        await tester.longPress(find.byType(TextField));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Paste'));
+        await tester.pumpAndSettle();
+
+        expect(committed, [
+          'Andrew Munro <andrew.munro@example.com>',
+          'matt@example.com',
+        ]);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
   });
 
   group('RecipientInputField — dropdown placement', () {
@@ -701,7 +751,7 @@ void main() {
       await tester.pump();
     }
 
-    testWidgets('a drifting mouse click then Delete removes the chip', (
+    _testOnDesktop('a drifting mouse click then Delete removes the chip', (
       tester,
     ) async {
       var recipients = ['alice@example.com', 'bob@example.com'];
@@ -721,7 +771,7 @@ void main() {
       expect(recipients, ['bob@example.com']);
     });
 
-    testWidgets('a drifting mouse click then Backspace removes the chip', (
+    _testOnDesktop('a drifting mouse click then Backspace removes the chip', (
       tester,
     ) async {
       var recipients = ['alice@example.com', 'bob@example.com'];
@@ -741,7 +791,7 @@ void main() {
       expect(recipients, ['alice@example.com']);
     });
 
-    testWidgets('a still mouse click still selects', (tester) async {
+    _testOnDesktop('a still mouse click still selects', (tester) async {
       var recipients = ['alice@example.com', 'bob@example.com'];
       await tester.pumpWidget(
         StatefulBuilder(
@@ -762,7 +812,9 @@ void main() {
     // The chip-key Focus is an ancestor of the TextField, so a selection left
     // set answers Delete even once the user is typing again — and the field's
     // own tap, which clears it, never sees a tap the TextField took.
-    testWidgets('clicking into the input drops the selection', (tester) async {
+    _testOnDesktop('clicking into the input drops the selection', (
+      tester,
+    ) async {
       var recipients = ['alice@example.com', 'bob@example.com'];
       await tester.pumpWidget(
         StatefulBuilder(
@@ -783,7 +835,7 @@ void main() {
 
     // A completed drag takes the chip out of the list, so the index would name
     // whichever recipient shuffled up into its place.
-    testWidgets('dragging a chip to another field drops the selection', (
+    _testOnDesktop('dragging a chip to another field drops the selection', (
       tester,
     ) async {
       var to = ['alice@example.com', 'bob@example.com'];
@@ -829,7 +881,7 @@ void main() {
     // this to a bare node and the chip highlights while Delete edits the
     // message body — which is invisible to a test without a real webview, so
     // the focus target is what gets pinned instead.
-    testWidgets('selecting a chip leaves the keyboard on the input', (
+    _testOnDesktop('selecting a chip leaves the keyboard on the input', (
       tester,
     ) async {
       var recipients = ['alice@example.com', 'bob@example.com'];
@@ -848,7 +900,7 @@ void main() {
       expect(input.focusNode?.hasFocus, isTrue);
     });
 
-    testWidgets('typing drops the selection', (tester) async {
+    _testOnDesktop('typing drops the selection', (tester) async {
       var recipients = ['alice@example.com', 'bob@example.com'];
       await tester.pumpWidget(
         StatefulBuilder(
@@ -870,7 +922,7 @@ void main() {
 
     // The path that already worked before any of this, and which the
     // clear-on-input-focus rule sits directly beside.
-    testWidgets('Backspace in an empty input selects the last chip, and a '
+    _testOnDesktop('Backspace in an empty input selects the last chip, and a '
         'second Backspace removes it', (tester) async {
       var recipients = ['alice@example.com', 'bob@example.com'];
       await tester.pumpWidget(
@@ -943,7 +995,7 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('copies the bare address of a named recipient', (
+    _testOnDesktop('copies the bare address of a named recipient', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -958,7 +1010,7 @@ void main() {
       expect(find.text('Copied to clipboard'), findsOneWidget);
     });
 
-    testWidgets('works on a read-only field', (tester) async {
+    _testOnDesktop('works on a read-only field', (tester) async {
       await tester.pumpWidget(
         field(recipients: ['bob@example.com'], readOnly: true),
       );
@@ -970,7 +1022,7 @@ void main() {
       expect(copied, ['bob@example.com']);
     });
 
-    testWidgets('offers nothing for a chip with no address', (tester) async {
+    _testOnDesktop('offers nothing for a chip with no address', (tester) async {
       await tester.pumpWidget(field(recipients: ['Unknown Person']));
 
       await rightClick(tester, find.text('Unknown Person'));
@@ -978,7 +1030,7 @@ void main() {
       expect(find.text('Copy Email Address'), findsNothing);
     });
 
-    testWidgets('a read-only field has no input and cannot delete a chip', (
+    _testOnDesktop('a read-only field has no input and cannot delete a chip', (
       tester,
     ) async {
       var recipients = ['alice@example.com', 'bob@example.com'];
@@ -1004,5 +1056,246 @@ void main() {
 
       expect(recipients, ['alice@example.com', 'bob@example.com']);
     });
+  });
+
+  // A soft keyboard sends no key event for Backspace and changes no text on an
+  // empty field, and there is no right-click: tap, Backspace and long press
+  // have to work without either.
+  group('RecipientInputField — on a touch screen', () {
+    late List<String> copied;
+
+    setUp(() {
+      copied = [];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+            if (call.method == 'Clipboard.setData') {
+              copied.add((call.arguments as Map)['text'] as String);
+            }
+            return null;
+          });
+    });
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    // `isTouchPlatform` means a phone or tablet OS, which Fuchsia is not.
+    final touch = TargetPlatformVariant({
+      TargetPlatform.android,
+      TargetPlatform.iOS,
+    });
+
+    Widget field(
+      List<String> recipients,
+      ValueChanged<List<String>> onChanged,
+    ) => _wrapDraggable(recipients: recipients, onChanged: onChanged);
+
+    /// The soft keyboard's Backspace: the IME deletes the character before
+    /// the caret and reports the new value. No key event is sent.
+    Future<void> softBackspace(WidgetTester tester) async {
+      final controller = tester
+          .widget<TextField>(find.byType(TextField))
+          .controller!;
+      final value = controller.value;
+      final at = value.selection.baseOffset;
+      if (at <= 0) return;
+      tester.testTextInput.updateEditingValue(
+        TextEditingValue(
+          text: value.text.replaceRange(at - 1, at, ''),
+          selection: TextSelection.collapsed(offset: at - 1),
+        ),
+      );
+      await tester.pump();
+    }
+
+    testWidgets('tapping a chip then Backspace removes it', (tester) async {
+      var recipients = ['alice@example.com', 'bob@example.com'];
+      await tester.pumpWidget(
+        StatefulBuilder(
+          builder: (_, setState) =>
+              field(recipients, (r) => setState(() => recipients = r)),
+        ),
+      );
+
+      await tester.tap(find.text('alice@example.com'));
+      await tester.pump();
+      await softBackspace(tester);
+
+      expect(recipients, ['bob@example.com']);
+    }, variant: touch);
+
+    testWidgets('Backspace in an empty input selects the last chip, and a '
+        'second Backspace removes it', (tester) async {
+      var recipients = ['alice@example.com', 'bob@example.com'];
+      await tester.pumpWidget(
+        StatefulBuilder(
+          builder: (_, setState) =>
+              field(recipients, (r) => setState(() => recipients = r)),
+        ),
+      );
+
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      await softBackspace(tester);
+      expect(recipients, [
+        'alice@example.com',
+        'bob@example.com',
+      ], reason: 'the first Backspace only selects');
+
+      await softBackspace(tester);
+      expect(recipients, ['alice@example.com']);
+    }, variant: touch);
+
+    testWidgets('Backspace through typed text does not touch the chips', (
+      tester,
+    ) async {
+      var recipients = ['alice@example.com'];
+      await tester.pumpWidget(
+        StatefulBuilder(
+          builder: (_, setState) =>
+              field(recipients, (r) => setState(() => recipients = r)),
+        ),
+      );
+
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      final controller = tester
+          .widget<TextField>(find.byType(TextField))
+          .controller!;
+      tester.testTextInput.updateEditingValue(
+        TextEditingValue(
+          text: '${controller.text}b',
+          selection: TextSelection.collapsed(
+            offset: controller.text.length + 1,
+          ),
+        ),
+      );
+      await tester.pump();
+      await softBackspace(tester);
+
+      expect(recipients, ['alice@example.com']);
+    }, variant: touch);
+
+    testWidgets('a typed address is committed without the placeholder', (
+      tester,
+    ) async {
+      var recipients = ['alice@example.com'];
+      final key = GlobalKey<RecipientInputFieldState>();
+      await tester.pumpWidget(
+        StatefulBuilder(
+          builder: (_, setState) => MaterialApp(
+            home: Scaffold(
+              body: RecipientInputField(
+                key: key,
+                label: 'To',
+                recipients: recipients,
+                onChanged: (r) => setState(() => recipients = r),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      final controller = tester
+          .widget<TextField>(find.byType(TextField))
+          .controller!;
+      tester.testTextInput.updateEditingValue(
+        TextEditingValue(
+          text: '${controller.text}bob@example.com',
+          selection: TextSelection.collapsed(
+            offset: controller.text.length + 15,
+          ),
+        ),
+      );
+      await tester.pump();
+      key.currentState!.flush();
+      await tester.pump();
+
+      expect(recipients, ['alice@example.com', 'bob@example.com']);
+    }, variant: touch);
+
+    testWidgets('removing the last chip brings the hint back', (tester) async {
+      var recipients = ['alice@example.com'];
+      await tester.pumpWidget(
+        StatefulBuilder(
+          builder: (_, setState) => MaterialApp(
+            home: Scaffold(
+              body: RecipientInputField(
+                label: 'To',
+                hintText: 'recipient@example.com',
+                recipients: recipients,
+                onChanged: (r) => setState(() => recipients = r),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('alice@example.com'));
+      await tester.pump();
+      await softBackspace(tester);
+      await tester.pump();
+
+      expect(recipients, isEmpty);
+      expect(find.text('recipient@example.com'), findsOneWidget);
+    }, variant: touch);
+
+    testWidgets('long-pressing a chip copies its bare address', (tester) async {
+      var recipients = ['Alice Smith <alice@example.com>'];
+      await tester.pumpWidget(
+        StatefulBuilder(
+          builder: (_, setState) =>
+              field(recipients, (r) => setState(() => recipients = r)),
+        ),
+      );
+
+      await tester.longPress(find.text('Alice Smith'));
+      await tester.pump();
+
+      expect(copied, ['alice@example.com']);
+      expect(find.text('Copied to clipboard'), findsOneWidget);
+      expect(recipients, ['Alice Smith <alice@example.com>']);
+    }, variant: touch);
+
+    testWidgets('long-press copies on a read-only field too', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: RecipientInputField(
+              label: 'Guests',
+              recipients: const ['bob@example.com'],
+              onChanged: (_) {},
+              readOnly: true,
+            ),
+          ),
+        ),
+      );
+
+      await tester.longPress(find.text('bob@example.com'));
+      await tester.pump();
+
+      expect(copied, ['bob@example.com']);
+    }, variant: touch);
+
+    testWidgets('chips are not draggable', (tester) async {
+      await tester.pumpWidget(field(const ['alice@example.com'], (_) {}));
+
+      expect(find.byType(Draggable<Object>), findsNothing);
+      expect(find.text('alice@example.com'), findsOneWidget);
+    }, variant: touch);
+
+    testWidgets('the input is wide enough to long-press for Paste', (
+      tester,
+    ) async {
+      await tester.pumpWidget(field(const ['alice@example.com'], (_) {}));
+
+      expect(
+        tester.getSize(find.byType(TextField)).width,
+        greaterThanOrEqualTo(96),
+      );
+    }, variant: touch);
   });
 }

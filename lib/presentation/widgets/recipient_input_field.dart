@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:html_view/html_view.dart';
 
+import '../../core/platform/touch_metrics.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/contact_suggestion.dart';
 import '../../domain/repositories/system_contacts_repository.dart';
@@ -16,6 +17,21 @@ typedef RecipientDropAccepted =
     void Function(String address, String fromFieldId);
 
 typedef _RecipientDrag = ({String address, String sourceFieldId});
+
+/// Kept in the input on a touch screen so Backspace has something to delete.
+///
+/// A soft keyboard sends no key event for Backspace — iOS never does, and most
+/// Android keyboards don't either — and on an empty field it changes no text,
+/// so the field never hears about it. Without this, a tapped chip highlighted
+/// and then nothing on the keyboard could remove it. Deleting this invisible
+/// character is how the field learns Backspace was pressed on an input that
+/// looks empty.
+const _kBackspaceSentinel = '\u200B';
+
+/// The narrowest the input is drawn on a touch screen, so there is somewhere
+/// to long-press for Paste once chips fill the line. Sized to its text, it is
+/// a caret's width wide.
+const double _kTouchInputMinWidth = 96;
 
 /// Chip-based multi-recipient input with contact typeahead.
 ///
@@ -125,10 +141,16 @@ class RecipientInputFieldState extends State<RecipientInputField> {
   /// always paints over Flutter, swallowing the list.
   bool _guardAcquired = false;
 
+  /// What the input held after the last user edit, without the sentinel —
+  /// tells Backspace on an empty input apart from a select-all-and-delete.
+  String _lastTyped = '';
+
   @override
   void initState() {
     super.initState();
     _inputFocus.addListener(_onInputFocusChanged);
+    _inputController.addListener(_keepCaretAfterSentinel);
+    if (_usesSentinel) _resetInput();
     if (widget._showsInput && widget.accountId != null) {
       sl<SystemContactsRepository>().warmUp().catchError(
         (e) => debugPrint('[NightMail] contacts warmUp: $e'),
@@ -142,12 +164,21 @@ class RecipientInputFieldState extends State<RecipientInputField> {
     if (_selectedIndex != null && _selectedIndex! >= widget.recipients.length) {
       _selectedIndex = null;
     }
+    // The sentinel only goes in once there is a chip to act on: while it is
+    // there the hint, which only shows on an empty field, cannot. Deferred,
+    // since changing the controller rebuilds the TextField mid-build.
+    if (oldWidget.recipients.isEmpty != widget.recipients.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _syncSentinel();
+      });
+    }
   }
 
   @override
   void dispose() {
     _searchDebounce?.cancel();
     _releaseGuard();
+    _inputController.removeListener(_keepCaretAfterSentinel);
     _inputController.dispose();
     _inputFocus.removeListener(_onInputFocusChanged);
     _inputFocus.dispose();
@@ -174,14 +205,49 @@ class RecipientInputFieldState extends State<RecipientInputField> {
 
   void requestFocus() => _inputFocus.requestFocus();
 
+  bool get _usesSentinel =>
+      isTouchPlatform && widget._showsInput && widget.recipients.isNotEmpty;
+
+  /// The input's text as the user sees it. `trim()` does not strip the
+  /// sentinel — U+200B is not whitespace — so every read goes through here.
+  String get _typedText =>
+      _inputController.text.replaceAll(_kBackspaceSentinel, '');
+
+  /// Empties the input — down to the sentinel, where it is in use.
+  void _resetInput() {
+    _lastTyped = '';
+    _inputController.value = _usesSentinel
+        ? const TextEditingValue(
+            text: _kBackspaceSentinel,
+            selection: TextSelection.collapsed(offset: 1),
+          )
+        : TextEditingValue.empty;
+  }
+
+  void _syncSentinel() {
+    final typed = _typedText;
+    final wanted = _usesSentinel ? '$_kBackspaceSentinel$typed' : typed;
+    if (_inputController.text == wanted) return;
+    _inputController.value = TextEditingValue(
+      text: wanted,
+      selection: TextSelection.collapsed(offset: wanted.length),
+    );
+  }
+
+  /// A tap on an input that looks empty can land the caret either side of a
+  /// zero-width character, and Backspace from in front of it deletes nothing.
+  void _keepCaretAfterSentinel() {
+    final value = _inputController.value;
+    if (value.text != _kBackspaceSentinel) return;
+    if (value.selection == const TextSelection.collapsed(offset: 1)) return;
+    _inputController.selection = const TextSelection.collapsed(offset: 1);
+  }
+
   void _flushInput() {
-    final text = _inputController.text
-        .trim()
-        .replaceAll(',', '')
-        .replaceAll(';', '');
+    final text = _typedText.trim().replaceAll(',', '').replaceAll(';', '');
     if (text.isEmpty) return;
     widget.onChanged(List.from(widget.recipients)..add(text));
-    _inputController.clear();
+    _resetInput();
   }
 
   void _selectChip(int index) {
@@ -200,6 +266,12 @@ class RecipientInputFieldState extends State<RecipientInputField> {
     _clearSuggestions();
     setState(() => _selectedIndex = index);
     if (widget._showsInput) {
+      // Android's Back hides the keyboard but leaves the input focused, and
+      // focusing a focused node does nothing — so ask for the keyboard, or a
+      // highlighted chip would have no Backspace to delete it with.
+      if (isTouchPlatform && _inputFocus.hasFocus) {
+        unawaited(SystemChannels.textInput.invokeMethod('TextInput.show'));
+      }
       _inputFocus.requestFocus();
     } else {
       _chipKeyFocus.requestFocus();
@@ -214,7 +286,30 @@ class RecipientInputFieldState extends State<RecipientInputField> {
     if (widget._showsInput) _inputFocus.requestFocus();
   }
 
-  void _onTextChanged(String val) {
+  /// Backspace with nothing typed: deletes the highlighted chip, or
+  /// highlights the last one so a second Backspace deletes it.
+  void _backspaceOnEmptyInput() {
+    if (_selectedIndex != null) {
+      _deleteSelected();
+    } else if (widget.recipients.isNotEmpty) {
+      _selectChip(widget.recipients.length - 1);
+    }
+  }
+
+  void _onTextChanged(String rawVal) {
+    // Ahead of everything else, and of clearing the selection in particular:
+    // this is the soft keyboard's Backspace, and it is acting on a chip.
+    if (_usesSentinel && !rawVal.startsWith(_kBackspaceSentinel)) {
+      final wasEmpty = _lastTyped.isEmpty;
+      _syncSentinel();
+      _lastTyped = _typedText;
+      if (wasEmpty && _lastTyped.isEmpty) {
+        _backspaceOnEmptyInput();
+        return;
+      }
+    }
+    final val = _typedText;
+    _lastTyped = val;
     // Typing is not acting on a chip.
     if (_selectedIndex != null) setState(() => _selectedIndex = null);
     if (val.endsWith(',') || val.endsWith(';')) {
@@ -229,7 +324,7 @@ class RecipientInputFieldState extends State<RecipientInputField> {
     }
     _searchDebounce = Timer(const Duration(milliseconds: 200), () async {
       if (!mounted) return;
-      final query = _inputController.text.trim();
+      final query = _typedText.trim();
       if (query.isEmpty) return;
       // Cancelling the debounce timer does not cancel a search already
       // awaiting, so tag each one: without this a slow lookup (the live
@@ -290,11 +385,8 @@ class RecipientInputFieldState extends State<RecipientInputField> {
     // Whatever was half-typed before the paste is committed ahead of the
     // pasted lines, in one onChanged with them: the parent only applies a new
     // list on its next build, so two calls in a row would lose the first.
-    final typed = _inputController.text
-        .trim()
-        .replaceAll(',', '')
-        .replaceAll(';', '');
-    _inputController.clear();
+    final typed = _typedText.trim().replaceAll(',', '').replaceAll(';', '');
+    _resetInput();
     _clearSuggestions();
 
     List<RecipientResolution> resolved;
@@ -381,7 +473,7 @@ class RecipientInputFieldState extends State<RecipientInputField> {
 
   void _addSuggestion(ContactSuggestion s) {
     widget.onChanged(List.from(widget.recipients)..add(s.displayText));
-    _inputController.clear();
+    _resetInput();
     _clearSuggestions();
     _inputFocus.requestFocus();
   }
@@ -439,7 +531,12 @@ class RecipientInputFieldState extends State<RecipientInputField> {
       width: widget.labelWidth,
       child: leading == null
           ? text
-          : Row(children: [leading, Expanded(child: text)]),
+          : Row(
+              children: [
+                leading,
+                Expanded(child: text),
+              ],
+            ),
     );
     final onLabelTap = widget.onLabelTap;
     if (onLabelTap != null) {
@@ -569,7 +666,7 @@ class RecipientInputFieldState extends State<RecipientInputField> {
                   }
                 }
                 if (event.logicalKey == LogicalKeyboardKey.backspace &&
-                    _inputController.text.isEmpty &&
+                    _typedText.isEmpty &&
                     widget.recipients.isNotEmpty) {
                   _selectChip(widget.recipients.length - 1);
                   return KeyEventResult.handled;
@@ -617,23 +714,29 @@ class RecipientInputFieldState extends State<RecipientInputField> {
                       actions: {
                         PasteTextIntent: _RecipientListPasteAction(this),
                       },
-                      child: TextField(
-                        controller: _inputController,
-                        focusNode: _inputFocus,
-                        style: TextStyle(color: c.textPrimary, fontSize: 13),
-                        onSubmitted: (_) => _flushInput(),
-                        onChanged: _onTextChanged,
-                        decoration: InputDecoration(
-                          hintText: widget.recipients.isEmpty
-                              ? widget.hintText
-                              : null,
-                          hintStyle: TextStyle(
-                            color: c.textMuted,
-                            fontSize: 13,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          minWidth: isTouchPlatform ? _kTouchInputMinWidth : 0,
+                        ),
+                        child: TextField(
+                          controller: _inputController,
+                          focusNode: _inputFocus,
+                          contextMenuBuilder: _buildContextMenu,
+                          style: TextStyle(color: c.textPrimary, fontSize: 13),
+                          onSubmitted: (_) => _flushInput(),
+                          onChanged: _onTextChanged,
+                          decoration: InputDecoration(
+                            hintText: widget.recipients.isEmpty
+                                ? widget.hintText
+                                : null,
+                            hintStyle: TextStyle(
+                              color: c.textMuted,
+                              fontSize: 13,
+                            ),
+                            border: InputBorder.none,
+                            contentPadding: EdgeInsets.zero,
+                            isDense: true,
                           ),
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.zero,
-                          isDense: true,
                         ),
                       ),
                     ),
@@ -644,6 +747,44 @@ class RecipientInputFieldState extends State<RecipientInputField> {
           ),
       ],
     );
+  }
+
+  /// The text field's own menu, with Paste routed through [handlePastedText]
+  /// so a pasted list becomes a chip per line here too. The Flutter-drawn
+  /// toolbar (Android) calls `pasteText` directly, never reaching the
+  /// [PasteTextIntent] override that does this for the keyboard shortcut.
+  ///
+  /// iOS keeps its native menu, which pastes through the text input plugin
+  /// and so cannot be intercepted: a single address pastes as usual, but a
+  /// pasted list arrives with its lines already joined.
+  Widget _buildContextMenu(
+    BuildContext context,
+    EditableTextState editableTextState,
+  ) {
+    if (SystemContextMenu.isSupportedByField(editableTextState)) {
+      return SystemContextMenu.editableText(
+        editableTextState: editableTextState,
+      );
+    }
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      anchors: editableTextState.contextMenuAnchors,
+      buttonItems: [
+        for (final item in editableTextState.contextMenuButtonItems)
+          item.type == ContextMenuButtonType.paste
+              ? item.copyWith(
+                  onPressed: () => _pasteFromToolbar(editableTextState),
+                )
+              : item,
+      ],
+    );
+  }
+
+  Future<void> _pasteFromToolbar(EditableTextState editableTextState) async {
+    editableTextState.hideToolbar();
+    final text = (await Clipboard.getData(Clipboard.kTextPlain))?.text;
+    if (!mounted) return;
+    if (text != null && handlePastedText(text)) return;
+    await editableTextState.pasteText(SelectionChangedCause.toolbar);
   }
 
   Widget _buildChip(int index, AppColors c, {required bool draggable}) {
@@ -669,11 +810,20 @@ class RecipientInputFieldState extends State<RecipientInputField> {
     // was quietly doing before.
     //
     // The secondary tap opens the chip's context menu, read-only or not.
+    //
+    // None of that is for a fingertip. On a touch screen a chip is not
+    // draggable, so nothing contests its tap, and selecting on press would
+    // highlight a chip — and raise the keyboard — under every scroll that
+    // happened to start on one, and under a long press as well. There the tap
+    // selects and a long press copies, which is what stands in for the
+    // right-click menu, and also works read-only.
     final readOnly = widget.readOnly;
+    final touch = isTouchPlatform;
     final Widget chip = Listener(
-      onPointerDown: readOnly ? null : (_) => _selectChip(index),
+      onPointerDown: readOnly || touch ? null : (_) => _selectChip(index),
       child: GestureDetector(
         onTap: readOnly ? null : () => _selectChip(index),
+        onLongPress: touch ? () => _copyFromLongPress(address) : null,
         onSecondaryTapUp: (details) =>
             _showChipMenu(address, details.globalPosition),
         child: _RecipientChip(
@@ -684,7 +834,9 @@ class RecipientInputFieldState extends State<RecipientInputField> {
       ),
     );
 
-    if (!draggable || readOnly) return chip;
+    // Dragging between fields stays a pointer feature: on touch it would take
+    // the long press, and a scroll that started on a chip.
+    if (!draggable || readOnly || touch) return chip;
 
     return Draggable<_RecipientDrag>(
       data: (address: address, sourceFieldId: widget.fieldId!),
@@ -753,6 +905,17 @@ class RecipientInputFieldState extends State<RecipientInputField> {
       ],
     );
     if (copy != true) return;
+    await _copyAddress(address);
+  }
+
+  Future<void> _copyFromLongPress(String recipient) async {
+    final address = _bareAddress(recipient);
+    if (!address.contains('@')) return;
+    unawaited(Feedback.forLongPress(context));
+    await _copyAddress(address);
+  }
+
+  Future<void> _copyAddress(String address) async {
     await Clipboard.setData(ClipboardData(text: address));
     if (!mounted) return;
     // A meeting window is its own engine; don't assume it has a messenger.

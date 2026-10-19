@@ -1,34 +1,51 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.40.9",
+  "version": "1.40.10",
   "sections": [
-    {
-      "type": "features",
-      "title": "New features",
-      "items": [
-        {
-          "body": "join Teams meetings in the app instead of via the browser",
-          "title": "calendar"
-        }
-      ]
-    },
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "stop messages migrated into Office 365 landing as drafts",
-          "title": "migration"
-        },
-        {
-          "body": "fold the header and keep the caret in sight on a phone",
+          "body": "delete, copy and paste recipient pills on a phone",
           "title": "compose"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.40.9",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "join Teams meetings in the app instead of via the browser",
+              "title": "calendar"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "stop messages migrated into Office 365 landing as drafts",
+              "title": "migration"
+            },
+            {
+              "body": "fold the header and keep the caret in sight on a phone",
+              "title": "compose"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -403,23 +420,6 @@
             {
               "body": "drop finished meetings from Today",
               "title": "commitments"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.38.5",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "double-click fronts the open view window and never toggles the pane",
-              "title": "windows"
             }
           ]
         }

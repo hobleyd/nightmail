@@ -1,20 +1,51 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.40.8",
+  "version": "1.40.9",
   "sections": [
+    {
+      "type": "features",
+      "title": "New features",
+      "items": [
+        {
+          "body": "join Teams meetings in the app instead of via the browser",
+          "title": "calendar"
+        }
+      ]
+    },
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "stop the endless 401 retry, flag rejected tokens, free the sign-in port",
-          "title": "auth"
+          "body": "stop messages migrated into Office 365 landing as drafts",
+          "title": "migration"
+        },
+        {
+          "body": "fold the header and keep the caret in sight on a phone",
+          "title": "compose"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.40.8",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "stop the endless 401 retry, flag rejected tokens, free the sign-in port",
+              "title": "auth"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -389,23 +420,6 @@
             {
               "body": "double-click fronts the open view window and never toggles the pane",
               "title": "windows"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.38.4",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "point the launcher icon at the PNG, not the executable",
-              "title": "snap"
             }
           ]
         }

@@ -65,6 +65,7 @@ The app provides a desktop based three-pane layout (folders, message list, readi
 - Recurring event support, with per-occurrence or whole-series edit and cancel
 - Editing a meeting you organize notifies attendees of the change
 - Inline **Join** button on a meeting tile from 3 minutes before it starts until it ends, for meetings with a video-call link
+- Teams meeting links open straight in the Teams app rather than via a browser tab, falling back to the web link when Teams isn't installed
 - Guest RSVP status (accepted / declined / tentative) shown on each guest chip
 - Right-click a guest chip to copy their email address, including on meetings you didn't organise
 - **Email Attendees** from a meeting's right-click menu opens a new email to the organiser and every guest, titled after the meeting

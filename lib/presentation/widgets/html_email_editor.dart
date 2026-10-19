@@ -18,6 +18,8 @@ class HtmlEmailEditor extends StatefulWidget {
     this.onImagePasted,
     this.onClickFocus,
     this.onOverscroll,
+    this.onEditorFocus,
+    this.onCaretMoved,
     this.enableScrollHandoff = false,
     this.autofocus = false,
   });
@@ -46,6 +48,17 @@ class HtmlEmailEditor extends StatefulWidget {
   /// scroll view hosts this editor instead. Mobile-only; the desktop backend
   /// never raises it. Only fires when [enableScrollHandoff] is true.
   final ValueChanged<double>? onOverscroll;
+  /// Raised when the editable area takes focus in the page. A phone's webview
+  /// has no native focus signal of its own the way [onClickFocus] does on the
+  /// desktop. Mobile-only; only fires when [enableScrollHandoff] is true.
+  final VoidCallback? onEditorFocus;
+  /// Raised after typing, with the caret's top and bottom in the webview's own
+  /// logical pixels (the page is laid out at `device-width`, so a CSS pixel is
+  /// a Flutter one). The page has already scrolled its own content to keep
+  /// the caret inside it. The caller scrolls whatever hosts this editor so
+  /// that line is not left under the keyboard. Mobile-only; only fires when
+  /// [enableScrollHandoff] is true.
+  final void Function(double top, double bottom)? onCaretMoved;
   /// Lets the page's own touchmove handler take over a drag once it reaches
   /// either end of the editor's content, rather than letting the drag simply
   /// stop there. Only the caller that embeds this editor inside another
@@ -121,6 +134,16 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> with WidgetsBindingObs
         widget.onImagePasted?.call(value);
       case 'onOverscroll':
         widget.onOverscroll?.call(double.tryParse(value) ?? 0);
+      case 'onEditorFocus':
+        widget.onEditorFocus?.call();
+      case 'onCaretMoved':
+        final parts = value.split(',');
+        if (parts.length != 2) return;
+        final top = double.tryParse(parts[0]);
+        final bottom = double.tryParse(parts[1]);
+        if (top != null && bottom != null) {
+          widget.onCaretMoved?.call(top, bottom);
+        }
       case 'onClickFocus':
         // Unfocus the Flutter side first — calling focus() (native
         // makeFirstResponder) before this can otherwise be undone when
@@ -338,6 +361,8 @@ class _PlatformViewHost implements _EditorHost {
       'onAttachRequest',
       'onImagePasted',
       'onOverscroll',
+      'onEditorFocus',
+      'onCaretMoved',
     ]) {
       _controller.addJavaScriptChannel(
         name,

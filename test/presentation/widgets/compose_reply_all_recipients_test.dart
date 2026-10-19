@@ -163,9 +163,12 @@ void main() {
     await tester.pump();
   }
 
+  // A reply opens with the phone layout's header folded, so the fields are
+  // mounted but offstage.
   List<String> recipients(WidgetTester tester, String label) => tester
       .widget<RecipientInputField>(find.byWidgetPredicate(
-          (w) => w is RecipientInputField && w.label == label))
+          (w) => w is RecipientInputField && w.label == label,
+          skipOffstage: false))
       .recipients;
 
   testWidgets('strips the primary and every alias the account answers for',

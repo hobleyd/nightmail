@@ -1126,6 +1126,90 @@ function _startFling(scrollVelocity) {
   _flingRaf = requestAnimationFrame(step);
 }
 
+// --- Keeping the caret in sight on a phone -----------------------------------
+// Pressing Enter on the last visible line left the new line under the
+// keyboard. There are two viewports between the caret and the screen, and
+// neither one followed it. The first is `#editor-scroll`: the engine's own
+// caret reveal can't be trusted, because WKWebView's scrolling is inert while
+// the keyboard is up (see the touchmove handler above). Setting `scrollTop`
+// from script does work, so this sets it. The second is the Flutter scroll
+// view the whole webview sits in. Its editor box is floored against the
+// keyboard-less screen height, so the bottom of the page can be clipped behind
+// the keyboard even while the caret is inside `#editor-scroll`. Only the host
+// can scroll that one, so the caret's position in the page is posted
+// (`onCaretMoved`) and the host brings that line into its own viewport.
+//
+// Driven by `input` rather than `selectionchange`. Moving the caret by tapping
+// already puts it somewhere visible, and `input` is the event typing raises.
+// Gated on the same opt-in as the scroll handoff: only a host that has an
+// outer scroll view has anything to do with the position.
+let _caretRevealScheduled = false;
+
+// The caret's rect in viewport coordinates, or null when there is no caret in
+// the editor. A collapsed range on an empty line — the `<div><br></div>`
+// Enter has just made — usually measures as all zeros, so that falls back to
+// the element at the caret.
+function _caretRect() {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return null;
+  const range = sel.getRangeAt(0).cloneRange();
+  if (!editor.contains(range.endContainer)) return null;
+  range.collapse(false);
+  const rect = range.getClientRects()[0] || range.getBoundingClientRect();
+  if (rect && (rect.top !== 0 || rect.bottom !== 0)) return rect;
+  let node = range.endContainer;
+  if (node.nodeType === Node.ELEMENT_NODE && node.childNodes[range.endOffset]) {
+    node = node.childNodes[range.endOffset];
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) node = node.parentNode;
+  // The editor's own rect is the whole message, which says nothing about
+  // where the caret is.
+  if (!node || node === editor || !editor.contains(node)) return null;
+  return node.getBoundingClientRect();
+}
+
+function _revealCaret() {
+  const rect = _caretRect();
+  if (!rect) return;
+  const box = editorScroll.getBoundingClientRect();
+  const margin = 8;
+  let shift = 0;
+  if (rect.bottom > box.bottom - margin) {
+    shift = rect.bottom - (box.bottom - margin);
+  } else if (rect.top < box.top + margin) {
+    shift = rect.top - (box.top + margin);
+  }
+  if (shift !== 0) {
+    _cancelFling();
+    const before = editorScroll.scrollTop;
+    editorScroll.scrollTop += shift;
+    // What actually moved, which is less than asked for at either end.
+    shift = editorScroll.scrollTop - before;
+  }
+  // Viewport coordinates, which are the webview's own once any visual-viewport
+  // offset (iOS can pan the page when the keyboard opens) is taken off.
+  const offset = window.visualViewport ? window.visualViewport.offsetTop : 0;
+  _flutterNotify('onCaretMoved',
+      (rect.top - shift - offset) + ',' + (rect.bottom - shift - offset));
+}
+
+function _scheduleCaretReveal() {
+  if (!_scrollHandoffEnabled || _caretRevealScheduled) return;
+  _caretRevealScheduled = true;
+  requestAnimationFrame(function() {
+    _caretRevealScheduled = false;
+    _revealCaret();
+  });
+}
+editor.addEventListener('input', _scheduleCaretReveal);
+
+// A phone's webview gives the host no focus signal of its own (the desktop
+// overlay's `onClickFocus` is raised natively). The host collapses the
+// header fields and scrolls the editor into view on this.
+editor.addEventListener('focus', function() {
+  if (_scrollHandoffEnabled) _flutterNotify('onEditorFocus', '');
+});
+
 // --- Caret-tracked insertion (used for streaming AI drafts) ----------------
 var savedRange = null;
 

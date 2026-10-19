@@ -233,14 +233,98 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
   // view with no Flutter focus node of its own though, so — unlike the
   // recipient/subject fields and the plain-text `TextField`, which Flutter
   // already scrolls into view on focus — nothing brings it above the keyboard
-  // on its own. `_scrollEditorIntoView` does that by hand, on the one signal
-  // the webview does give us (`onClickFocus`) and, for a reply, on the
-  // keyboard actually opening — the HTML editor autofocuses itself once its
-  // content finishes loading, with no Flutter-side focus event to hook.
+  // on its own. `_scrollEditorIntoView` does that by hand, on the signal the
+  // page posts when the editor takes focus (`onEditorFocus`; the desktop's
+  // `onClickFocus` is raised natively and never reaches a phone) and, for a
+  // reply, on the keyboard actually opening — the HTML editor autofocuses
+  // itself once its content finishes loading, with no Flutter-side focus
+  // event to hook.
   final _editorAreaKey = GlobalKey();
   final _mobileBodyScrollController = ScrollController();
   double _lastBottomInset = 0;
   bool _awaitingAutoFocusScroll = false;
+
+  // ── Touch-platform header ────────────────────────────────────────────────
+  //
+  // From, To, Cc, Subject and the attachment chips take most of a phone's
+  // height once the keyboard is up, which left the body editor a sliver. On a
+  // phone they fold into one summary (`_CollapsedFieldsSummary`) that expands
+  // on a tap. A message that already has recipients (a reply) starts folded.
+  // A new message starts open, because the first thing to do is address it.
+  // The fields fold as soon as the body takes focus.
+  //
+  // Folded fields stay mounted (`Visibility(maintainState: true)`). The
+  // recipient fields are reached through GlobalKeys for Tab order and
+  // `flush()`, and an address typed but not yet a chip lives in their state.
+  late bool _headerExpanded;
+
+  void _setHeaderExpanded(bool expanded) {
+    if (expanded == _headerExpanded) return;
+    if (!expanded) {
+      // The summary is drawn from the recipient lists, so text still in an
+      // input has to become a chip first to be shown there.
+      for (final field in [_toFieldKey, _ccFieldKey, _bccFieldKey]) {
+        field.currentState
+          ?..flush()
+          ..dismissSuggestions();
+      }
+    }
+    setState(() => _headerExpanded = expanded);
+  }
+
+  void _onEditorFocus() {
+    _setHeaderExpanded(false);
+    // A tap with the keyboard down raises it after this. Scroll again once it
+    // is up, against the viewport that is left.
+    if (View.of(context).viewInsets.bottom == 0) {
+      _awaitingAutoFocusScroll = true;
+    }
+    _scrollEditorIntoView();
+  }
+
+  // The caret's top and bottom in the editor webview's own coordinates, from
+  // `editor.html`'s `onCaretMoved`. The page keeps the caret inside its own
+  // scroller, but with the header open the webview is taller than what is
+  // left above the keyboard (its height is floored against the keyboard-less
+  // screen, see `_buildContent`), so the line just typed can be inside the
+  // page and still clipped by this scroll view. This scrolls the line back
+  // into sight.
+  void _revealEditorCaret(double top, double bottom) {
+    if (!_mobileBodyScrollController.hasClients) return;
+    final editorContext = _editorAreaKey.currentContext;
+    final editorBox = editorContext?.findRenderObject() as RenderBox?;
+    final viewportBox = editorContext == null
+        ? null
+        : Scrollable.maybeOf(editorContext)?.context.findRenderObject()
+            as RenderBox?;
+    if (editorBox == null ||
+        viewportBox == null ||
+        !editorBox.attached ||
+        !viewportBox.attached) {
+      return;
+    }
+    const margin = 12.0;
+    final editorTop =
+        editorBox.localToGlobal(Offset.zero, ancestor: viewportBox).dy;
+    final position = _mobileBodyScrollController.position;
+    final caretTop = editorTop + top - margin;
+    final caretBottom = editorTop + bottom + margin;
+    double delta = 0;
+    if (caretBottom > position.viewportDimension) {
+      delta = caretBottom - position.viewportDimension;
+    } else if (caretTop < 0) {
+      delta = caretTop;
+    }
+    if (delta == 0) return;
+    final target = (position.pixels + delta)
+        .clamp(position.minScrollExtent, position.maxScrollExtent);
+    if (target == position.pixels) return;
+    unawaited(_mobileBodyScrollController.animateTo(
+      target,
+      duration: const Duration(milliseconds: 120),
+      curve: Curves.easeOut,
+    ));
+  }
 
   void _scrollEditorIntoView() {
     if (!isTouchPlatform) return;
@@ -366,6 +450,9 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     _ccRecipients = _parseAddresses(_initialCc());
     _bccRecipients = _parseAddresses(_initialBcc());
     _subjectController = TextEditingController(text: _initialSubject());
+    _headerExpanded = _toRecipients.isEmpty &&
+        _ccRecipients.isEmpty &&
+        _bccRecipients.isEmpty;
 
     _bodyType = _determineInitialBodyType();
     _awaitingAutoFocusScroll = isTouchPlatform &&
@@ -1373,7 +1460,10 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
         to.isEmpty &&
         cc.isEmpty &&
         bcc.isEmpty) {
-      setState(() => _sent = false);
+      setState(() {
+        _sent = false;
+        _headerExpanded = true;
+      });
       showNotice('Please enter at least one recipient');
       return;
     }
@@ -1558,12 +1648,13 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     }
   }
 
-  List<Widget> _buildFields(AppColors c) => [
+  List<Widget> _buildFields(AppColors c, {Widget? fromTrailing}) => [
         _FromFieldRow(
           accounts: widget.accounts,
           selectedAccountId: _selectedAccountId,
           fallbackText: widget.fromAddress,
           onChanged: (id) => setState(() => _selectedAccountId = id),
+          trailing: fromTrailing,
         ),
         const SizedBox(height: 8),
         RecipientInputField(
@@ -1660,6 +1751,8 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
           _scrollEditorIntoView();
         },
         onOverscroll: isTouchPlatform ? _applyEditorOverscroll : null,
+        onEditorFocus: isTouchPlatform ? _onEditorFocus : null,
+        onCaretMoved: isTouchPlatform ? _revealEditorCaret : null,
         enableScrollHandoff: isTouchPlatform,
       );
     }
@@ -1756,61 +1849,113 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
         // whatever was left after the fields, which on a phone was often
         // nothing.
         //
-        // The editor's height is floored against the *keyboard-less* screen
-        // height (`MediaQuery.sizeOf`, not `viewInsets`), so it does not
-        // itself shrink when the keyboard opens — the scroll viewport does,
-        // and the content becomes taller than it, which is what makes this
-        // scrollable in the first place. `_scrollEditorIntoView` then brings
-        // the editor back above the keyboard rather than leaving the user to
-        // find it by hand.
-        final editorHeight =
-            math.max(260.0, MediaQuery.sizeOf(context).height * 0.42);
+        // With the header open, the editor's height is floored against the
+        // *keyboard-less* screen height (`MediaQuery.sizeOf`, not
+        // `viewInsets`), so it does not itself shrink when the keyboard
+        // opens — the scroll viewport does, and the content becomes taller
+        // than it, which is what lets the fields scroll away. With the header
+        // folded there are no tall fields to scroll away: the summary sits
+        // outside the scroll view and the editor fills exactly what is left
+        // above the keyboard, toolbar included, so the page's own caret
+        // reveal (`onCaretMoved`) has the whole of its scroller in sight.
+        // `_scrollEditorIntoView` brings the editor back above the keyboard
+        // in either case rather than leaving the user to find it by hand.
+        //
+        // Folding only adds or removes siblings *before* the `Expanded`, the
+        // same as `_notice` after it, so the editor below is never reparented.
+        const scrollPadding = EdgeInsets.fromLTRB(16, 16, 16, 8);
+        const editorGap = 8.0;
+        final foldedPadding = scrollPadding.copyWith(top: 0);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _TitleBar(title: _title, onClose: () => _requestClose(context)),
             Divider(height: 1, color: c.border),
-            Expanded(
-              child: Stack(
-                children: [
-                  SingleChildScrollView(
-                    controller: _mobileBodyScrollController,
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        ..._buildFields(c),
-                        if (forwardEmail != null &&
-                            forwardEmail.attachments.isNotEmpty)
-                          _ForwardAttachmentChips(
-                            attachments: forwardEmail.attachments,
-                            excludedIds: _excludedAttachmentIds,
-                            onRemove: (id) => setState(
-                                () => _excludedAttachmentIds = [
-                                      ..._excludedAttachmentIds,
-                                      id
-                                    ]),
-                          ),
-                        if (visibleAttachments.isNotEmpty)
-                          _LocalAttachmentChips(
-                            attachments: visibleAttachments,
-                            onRemove: (att) => setState(() =>
-                                _localAttachments = _localAttachments
-                                    .where((a) => a != att)
-                                    .toList()),
-                          ),
-                        const SizedBox(height: 8),
-                        SizedBox(
-                          key: _editorAreaKey,
-                          height: editorHeight,
-                          child: _buildBodyEditor(c),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (_isDragOver) const Positioned.fill(child: _DropOverlay()),
-                ],
+            if (!_headerExpanded) ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 12, 4),
+                child: _CollapsedFieldsSummary(
+                  to: _toRecipients,
+                  cc: _ccRecipients,
+                  bcc: _bccRecipients,
+                  subject: _subjectController.text,
+                  attachmentCount: visibleAttachments.length +
+                      (forwardEmail?.attachments
+                              .where((a) =>
+                                  !_excludedAttachmentIds.contains(a.id))
+                              .length ??
+                          0),
+                  onExpand: () => _setHeaderExpanded(true),
+                ),
               ),
+              Divider(height: 1, color: c.border),
+            ],
+            Expanded(
+              child: LayoutBuilder(builder: (context, constraints) {
+                final editorHeight = _headerExpanded
+                    ? math.max(260.0, MediaQuery.sizeOf(context).height * 0.42)
+                    : math.max(
+                        200.0,
+                        constraints.maxHeight -
+                            foldedPadding.vertical -
+                            editorGap);
+                return Stack(
+                  children: [
+                    SingleChildScrollView(
+                      controller: _mobileBodyScrollController,
+                      padding: _headerExpanded ? scrollPadding : foldedPadding,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Visibility(
+                            visible: _headerExpanded,
+                            maintainState: true,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                ..._buildFields(
+                                  c,
+                                  fromTrailing: _HeaderCollapseButton(
+                                    onPressed: () =>
+                                        _setHeaderExpanded(false),
+                                  ),
+                                ),
+                                if (forwardEmail != null &&
+                                    forwardEmail.attachments.isNotEmpty)
+                                  _ForwardAttachmentChips(
+                                    attachments: forwardEmail.attachments,
+                                    excludedIds: _excludedAttachmentIds,
+                                    onRemove: (id) => setState(
+                                        () => _excludedAttachmentIds = [
+                                              ..._excludedAttachmentIds,
+                                              id
+                                            ]),
+                                  ),
+                                if (visibleAttachments.isNotEmpty)
+                                  _LocalAttachmentChips(
+                                    attachments: visibleAttachments,
+                                    onRemove: (att) => setState(() =>
+                                        _localAttachments = _localAttachments
+                                            .where((a) => a != att)
+                                            .toList()),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: editorGap),
+                          SizedBox(
+                            key: _editorAreaKey,
+                            height: editorHeight,
+                            child: _buildBodyEditor(c),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_isDragOver)
+                      const Positioned.fill(child: _DropOverlay()),
+                  ],
+                );
+              }),
             ),
             if (_notice != null)
               _ComposeNotice(
@@ -2062,12 +2207,16 @@ class _FromFieldRow extends StatelessWidget {
     required this.selectedAccountId,
     required this.fallbackText,
     required this.onChanged,
+    this.trailing,
   });
 
   final List<Account> accounts;
   final String? selectedAccountId;
   final String fallbackText;
   final ValueChanged<String?> onChanged;
+
+  /// Drawn at the end of the row; the phone layout's fold-up chevron.
+  final Widget? trailing;
 
   static String _labelFor(Account a) => a.senderName.isNotEmpty
       ? '${a.senderName} <${a.emailAddress}>'
@@ -2103,6 +2252,7 @@ class _FromFieldRow extends StatelessWidget {
               style: TextStyle(color: c.textTertiary, fontSize: 13),
             ),
           ),
+          ?trailing,
         ],
       );
     }
@@ -2136,7 +2286,130 @@ class _FromFieldRow extends StatelessWidget {
             ),
           ),
         ),
+        ?trailing,
       ],
+    );
+  }
+}
+
+/// The phone layout's header, folded: who the message is to and what it is
+/// about, on two lines, with a tap anywhere opening the full fields.
+///
+/// Cc and Bcc are counted at the end of the first line rather than listed
+/// after the To names, where a long To list would ellipsize them away — a
+/// recipient this message will go to is never out of sight (see `_showBcc`).
+class _CollapsedFieldsSummary extends StatelessWidget {
+  const _CollapsedFieldsSummary({
+    required this.to,
+    required this.cc,
+    required this.bcc,
+    required this.subject,
+    required this.attachmentCount,
+    required this.onExpand,
+  });
+
+  final List<String> to;
+  final List<String> cc;
+  final List<String> bcc;
+  final String subject;
+  final int attachmentCount;
+  final VoidCallback onExpand;
+
+  /// `Jane Doe <jane@example.com>` → `Jane Doe`; a bare address as it is.
+  static String _shortName(String recipient) {
+    final match = RegExp(r'^\s*"?([^"<]+?)"?\s*<').firstMatch(recipient);
+    return match?.group(1)?.trim() ?? recipient.trim();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final labelStyle = composeLabelStyle.copyWith(color: c.textDimmed);
+    final valueStyle = TextStyle(color: c.textPrimary, fontSize: 13);
+    final mutedStyle = TextStyle(color: c.textMuted, fontSize: 13);
+    final extras = [
+      if (cc.isNotEmpty) 'Cc ${cc.length}',
+      if (bcc.isNotEmpty) 'Bcc ${bcc.length}',
+    ].join(' · ');
+
+    return Semantics(
+      button: true,
+      label: 'Show all fields',
+      child: InkWell(
+        onTap: onExpand,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.baseline,
+                      textBaseline: TextBaseline.alphabetic,
+                      children: [
+                        Text('To  ', style: labelStyle),
+                        Expanded(
+                          child: Text(
+                            to.isEmpty
+                                ? 'No recipients'
+                                : to.map(_shortName).join(', '),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: to.isEmpty ? mutedStyle : valueStyle,
+                          ),
+                        ),
+                        if (extras.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 8),
+                            child: Text(extras, style: labelStyle),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subject.trim().isEmpty ? 'No subject' : subject,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: subject.trim().isEmpty
+                          ? mutedStyle
+                          : valueStyle.copyWith(fontWeight: FontWeight.w500),
+                    ),
+                  ],
+                ),
+              ),
+              if (attachmentCount > 0) ...[
+                const SizedBox(width: 8),
+                Icon(Icons.attach_file, size: 16, color: c.textMuted),
+                Text('$attachmentCount', style: labelStyle),
+              ],
+              const SizedBox(width: 4),
+              Icon(Icons.expand_more, size: 24, color: c.textMuted),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Folds the phone layout's header back into [_CollapsedFieldsSummary].
+class _HeaderCollapseButton extends StatelessWidget {
+  const _HeaderCollapseButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: 'Hide fields',
+      icon: Icon(Icons.expand_less, size: 24, color: context.colors.textMuted),
+      padding: EdgeInsets.zero,
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints(minWidth: 36, minHeight: 32),
+      onPressed: onPressed,
     );
   }
 }

@@ -161,6 +161,36 @@ wide and shrinks it, toolbar included, to a third of its size) and a
 `android/` halves of `packages/html_view` are now unused by the app; nothing
 in `lib/` reaches `HtmlViewWidget` on a phone.
 
+**On a phone the header folds, and the caret is followed by hand.** With the
+keyboard up, From/To/Cc/Subject left the editor a sliver. So on a touch
+platform they fold into a two-line summary (`_CollapsedFieldsSummary`: To
+names, Cc/Bcc *counts* so a long To list can't ellipsize a Bcc out of sight,
+then the subject), opened by a tap and closed by the chevron on the From row.
+A message with recipients starts folded, a new one starts open, and it folds
+when the body takes focus. The page posts `onEditorFocus` for that, because
+the phone backend has no native `onClickFocus`. A send refused for want of a
+recipient opens it again. Folded fields stay mounted
+(`Visibility(maintainState)`): the recipient fields are driven through
+GlobalKeys, and text typed but not yet a chip is `flush()`ed before folding
+so the summary shows it. Folded, the summary sits *outside* the scroll view
+and the editor fills exactly what is left above the keyboard, rather than
+keeping the keyboard-less floor described below: with no tall fields to
+scroll away, that floor only pushed the bottom of the webview under the
+keyboard, where no in-page scroll can reach. Folding adds or removes siblings
+before the `Expanded` only, so the editor is resized, never reparented.
+
+Pressing Enter on the last visible line used to leave the caret under the
+keyboard, because two viewports have to follow it and neither did.
+`#editor-scroll` can't rely on the engine's caret reveal, since WKWebView's
+scrolling is inert while the keyboard is up, so the page sets `scrollTop` on
+`input` itself. With the header open, the webview box is floored against
+the keyboard-less height and can be clipped by the Flutter scroll view, so the
+page then posts `onCaretMoved` (top,bottom in page px = logical px) and
+`_revealEditorCaret` scrolls that line into the outer viewport. A caret on
+the empty line Enter just made measures as a zero rect, so `_caretRect` falls
+back to the element at the caret. Both events only fire behind
+`setScrollHandoffEnabled(true)`, so the signature editors are untouched.
+
 **A snack bar in the compose form is under the editor on the desktop.** The
 overlay covers the bottom of the window, which is exactly where a `SnackBar`
 lands, so a failed send used to show a red bar with the message body painted

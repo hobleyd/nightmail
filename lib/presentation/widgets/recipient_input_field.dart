@@ -167,6 +167,11 @@ class RecipientInputFieldState extends State<RecipientInputField> {
 
   void flush() => _flushInput();
 
+  /// Closes the suggestion list. It is an [OverlayPortal], so it would stay
+  /// on screen when the field is hidden without losing focus (the compose
+  /// header folding on a phone).
+  void dismissSuggestions() => _clearSuggestions();
+
   void requestFocus() => _inputFocus.requestFocus();
 
   void _flushInput() {

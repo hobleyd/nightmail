@@ -195,10 +195,39 @@ void main() {
       expect(body['singleValueExtendedProperties'], [
         {'id': 'SystemTime 0x0E06', 'value': '2026-03-04T05:06:07.000Z'},
         {'id': 'SystemTime 0x0039', 'value': '2026-03-04T05:06:07.000Z'},
+        {'id': 'Integer 0x0E07', 'value': '0'},
       ]);
       expect(body.containsKey('receivedDateTime'), isFalse);
       expect(body.containsKey('sentDateTime'), isFalse);
       expect(body['isRead'], isFalse);
     });
+  });
+
+  group('GraphApiDatasourceImpl.insertRawMessage — not a draft', () {
+    // Graph creates every message with MSGFLAG_UNSENT unless PR_MESSAGE_FLAGS
+    // is supplied on the create — writable then and never again.
+    for (final isRead in [true, false]) {
+      test('sets PR_MESSAGE_FLAGS without MSGFLAG_UNSENT (isRead: $isRead)',
+          () async {
+        when(mockDio.post<Map<String, dynamic>>(any, data: anyNamed('data')))
+            .thenAnswer((_) async => _createdResp());
+
+        await datasource.insertRawMessage(
+          folderId: 'inbox',
+          rawBytes: _rawBytes,
+          receivedAt: DateTime.utc(2026, 3, 4),
+          isRead: isRead,
+        );
+
+        final body = verify(mockDio.post<Map<String, dynamic>>(any,
+                data: captureAnyNamed('data')))
+            .captured
+            .single as Map<String, dynamic>;
+        expect(
+            body['singleValueExtendedProperties'],
+            contains(equals(
+                {'id': 'Integer 0x0E07', 'value': isRead ? '1' : '0'})));
+      });
+    }
   });
 }

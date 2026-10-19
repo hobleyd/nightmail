@@ -3517,9 +3517,16 @@ class GraphApiDatasourceImpl
             // message had arrived today. The MAPI properties behind them
             // (PR_MESSAGE_DELIVERY_TIME, PR_CLIENT_SUBMIT_TIME) are writable
             // at creation, and are what those two fields then read back.
+            //
+            // PR_MESSAGE_FLAGS (0x0E07): without it Graph creates the message
+            // with MSGFLAG_UNSENT set — every migrated message lands as a
+            // draft, its original sender shown as the draft's From. The
+            // property is writable only at creation, so this is the one
+            // chance to clear it; bit 0x1 is MSGFLAG_READ.
             'singleValueExtendedProperties': [
               {'id': 'SystemTime 0x0E06', 'value': iso},
               {'id': 'SystemTime 0x0039', 'value': iso},
+              {'id': 'Integer 0x0E07', 'value': isRead ? '1' : '0'},
             ],
             'isRead': isRead,
           };

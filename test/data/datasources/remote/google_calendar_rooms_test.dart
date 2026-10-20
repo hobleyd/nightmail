@@ -251,6 +251,77 @@ void main() {
 
       expect(attendees.single.isResource, isTrue);
     });
+
+    // Saves used to write the room's opaque address into the location when the
+    // room directory had not been read in that window — so meetings on the
+    // server still read "htw.com.au_3336…@resource.calendar.google.com, …".
+    Future<String?> locationOf(
+      String location,
+      List<Map<String, dynamic>> rawAttendees,
+    ) async {
+      when(mockDio.get<Map<String, dynamic>>(
+        any,
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((inv) async {
+        final path = inv.positionalArguments.first as String;
+        if (path.contains('calendarList')) {
+          return ok({'defaultReminders': <dynamic>[]}, path);
+        }
+        return ok({
+          'items': [
+            {
+              'id': 'event-1',
+              'summary': 'Daily Stand-Up',
+              'start': {'dateTime': '2026-08-10T09:00:00Z'},
+              'end': {'dateTime': '2026-08-10T10:00:00Z'},
+              'location': location,
+              'attendees': rawAttendees,
+            },
+          ],
+        }, path);
+      });
+
+      final events = await datasource.getCalendarEvents(
+        startDateTime: DateTime.utc(2026, 8, 10),
+        endDateTime: DateTime.utc(2026, 8, 11),
+      );
+      return events.single.location;
+    }
+
+    test('a room address in the location is shown as the room\'s name',
+        () async {
+      final location = await locationOf('$_roomCalendarId, Google Meet', [
+        {
+          'email': _roomCalendarId,
+          'displayName': 'BNE-3-Boardroom (10)',
+          'resource': true,
+        },
+      ]);
+
+      expect(location, 'BNE-3-Boardroom (10), Google Meet');
+    });
+
+    test('a room address nobody can name is dropped, not shown', () async {
+      final location = await locationOf('$_roomCalendarId, Level 3', [
+        {'email': _roomCalendarId, 'resource': true},
+      ]);
+
+      expect(location, 'Level 3');
+    });
+
+    test('a location naming only an unknown room becomes no location',
+        () async {
+      final location = await locationOf(_roomCalendarId, const []);
+
+      expect(location, isNull);
+    });
+
+    test('an ordinary location is left exactly as written', () async {
+      final location = await locationOf('Level 3; kitchen', const []);
+
+      expect(location, 'Level 3; kitchen');
+    });
   });
 
   group('a Meet link is parsed apart from the location', () {
@@ -411,6 +482,50 @@ void main() {
       expect(body['location'], 'Boardroom');
     });
 
+    // The room picker used to be the only thing that read the directory, and
+    // only in the window running it — dragging a meeting in the main window
+    // wrote the room's opaque address into the location instead.
+    test('reads the room directory itself when the picker never did', () async {
+      stubDirectory({
+        'items': [
+          {'resourceName': 'Boardroom', 'resourceEmail': _roomCalendarId},
+        ],
+      });
+
+      await create(roomEmails: [_roomCalendarId], location: 'Google Meet');
+
+      expect(body['location'], 'Boardroom, Google Meet');
+    });
+
+    test('reads the directory once, not on every save', () async {
+      stubDirectory({
+        'items': [
+          {'resourceName': 'Boardroom', 'resourceEmail': _roomCalendarId},
+        ],
+      });
+
+      await create(roomEmails: [_roomCalendarId]);
+      await create(roomEmails: [_roomCalendarId]);
+
+      verify(mockDio.get<Map<String, dynamic>>(
+        _directoryUrl,
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).called(1);
+    });
+
+    test('never writes a room\'s opaque address into the location', () async {
+      stubDirectoryDenied(403);
+      stubCalendarList(const []);
+
+      await create(roomEmails: [_roomCalendarId], location: 'Level 3');
+
+      expect(body['location'], 'Level 3');
+      final attendees =
+          (body['attendees'] as List).cast<Map<String, dynamic>>();
+      expect(attendees.any((a) => a['email'] == _roomCalendarId), isTrue);
+    });
+
     test('sends an empty location and attendee list when there are none, so a '
         'PATCH can release the last room', () async {
       await create();
@@ -547,6 +662,55 @@ void main() {
 
       expect(body['location'], 'Boardroom, Google Meet');
     });
+  });
+
+  // Dragging a meeting hands its own location back to the save, and that
+  // location already names the room — Google's name for it, which need not be
+  // the directory's. Every drag used to prepend another copy.
+  test('a reschedule round trip names the room once, however often it runs',
+      () async {
+    stubDirectory({
+      'items': [
+        {'resourceName': 'Boardroom', 'resourceEmail': _roomCalendarId},
+      ],
+    });
+    when(mockDio.patch<Map<String, dynamic>>(
+      any,
+      data: anyNamed('data'),
+      queryParameters: anyNamed('queryParameters'),
+      options: anyNamed('options'),
+    )).thenAnswer((_) async => ok({
+          'id': 'e1',
+          'summary': 'Daily Stand-Up',
+          'start': {'dateTime': '2026-08-10T09:00:00Z'},
+          'end': {'dateTime': '2026-08-10T10:00:00Z'},
+        }, '/calendars/primary/events/e1'));
+
+    Future<String> save(String? location) async {
+      await datasource.updateCalendarEvent(
+        params: UpdateCalendarEventParams(
+          id: 'e1',
+          subject: 'Daily Stand-Up',
+          start: DateTime.utc(2026, 8, 10, 9),
+          end: DateTime.utc(2026, 8, 10, 10),
+          isAllDay: false,
+          timezone: 'Australia/Brisbane',
+          location: location,
+          roomEmails: [_roomCalendarId],
+        ),
+      );
+      return (verify(mockDio.patch<Map<String, dynamic>>(
+        any,
+        data: captureAnyNamed('data'),
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).captured.single as Map<String, dynamic>)['location'] as String;
+    }
+
+    // A location saved before the fix, then the one that save produced.
+    expect(
+        await save('$_roomCalendarId, Google Meet'), 'Boardroom, Google Meet');
+    expect(await save('Boardroom, Google Meet'), 'Boardroom, Google Meet');
   });
 
   test('createCalendarEvent always asks for conference data in the response',

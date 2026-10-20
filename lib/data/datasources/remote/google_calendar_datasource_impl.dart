@@ -7,6 +7,7 @@ import '../../../core/utils/ics_parser.dart';
 import '../../../core/utils/ics_writer.dart';
 import '../../../core/utils/meeting_conflicts.dart';
 import '../../../core/utils/online_meeting_url.dart';
+import '../../../core/utils/room_location.dart';
 import '../../../core/utils/rrule.dart';
 import '../../../core/utils/timezone_utils.dart';
 import '../../../domain/entities/attendee_availability.dart';
@@ -159,6 +160,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
   Future<CalendarEventModel> createCalendarEvent({
     required CreateCalendarEventParams params,
   }) async {
+    await _ensureRoomNames(params.roomEmails, params.location);
     try {
       final body = _buildEventBody(
         subject: params.subject,
@@ -209,6 +211,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
   }) async {
     // Recurrence may have changed; drop the cache so the next load refetches.
     _invalidateRecurrenceCache();
+    await _ensureRoomNames(params.roomEmails, params.location);
     try {
       final body = _buildEventBody(
         subject: params.subject,
@@ -1359,19 +1362,94 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     );
   }
 
-  /// The directory name for a booked room, falling back to the address' local
-  /// part when the room directory was never read. A Google resource address'
-  /// local part is an opaque id, so the bare address is the better fallback.
-  String _roomDisplayName(String email) =>
-      _roomsByEmail[email.toLowerCase()]?.displayName ?? email;
+  /// The directory name for a booked room, or null when the directory does not
+  /// know it. A Google resource address is an opaque id
+  /// (`htw.com.au_3336…@resource.calendar.google.com`), so an unnamed room is
+  /// left out of the location rather than written into it — it is still booked
+  /// as a resource attendee, which is where both Google's UI and ours list it.
+  String? _roomDisplayName(String email) =>
+      _roomsByEmail[email.toLowerCase()]?.displayName;
 
-  /// Whether the free-text location is just a room's name repeated, which is
-  /// what happens when the form shows the room in the field and also books it.
-  bool _locationNamesARoom(String location, List<String> roomEmails) {
-    final needle = location.trim().toLowerCase();
-    return roomEmails.any((e) =>
-        _roomDisplayName(e).trim().toLowerCase() == needle ||
-        e.trim().toLowerCase() == needle);
+  /// The in-flight or finished directory read behind [_ensureRoomNames].
+  Future<void>? _roomNamesLoad;
+
+  /// Reads the room directory before a save names its rooms in `location`.
+  ///
+  /// [_roomsByEmail] used to be filled only by the event form's room picker,
+  /// and only in the window — and on the datasource instance — that ran it. A
+  /// save from anywhere else (dragging a meeting in the main window, or the
+  /// first save after a launch) found it empty and wrote the raw resource
+  /// address into the meeting's location, on the server, for every guest to
+  /// see. Read once per instance; a failure is not kept, so the next save
+  /// tries again, and never stops the save itself.
+  Future<void> _ensureRoomNames(List<String> roomEmails, String? location) async {
+    if (isOnlineMeetingUrl(location)) return;
+    if (roomEmails.every((e) => _roomsByEmail.containsKey(e.toLowerCase()))) {
+      return;
+    }
+    final load = _roomNamesLoad ??= getMeetingRooms().then((_) {});
+    try {
+      await load;
+    } catch (e) {
+      _roomNamesLoad = null;
+      debugPrint('[GoogleCalendar] room names unavailable: $e');
+    }
+  }
+
+  /// [location] with every resource-calendar address in it replaced by that
+  /// room's name — from the event's own attendee entry, else the directory —
+  /// or dropped when neither knows it.
+  ///
+  /// Repairs meetings saved before [_ensureRoomNames], whose location on the
+  /// server still reads `htw.com.au_3336…@resource.calendar.google.com, …`.
+  /// The event form strips room names back out by name *or* address
+  /// (`_stripRoomNames`), so whichever ends up here is not shown twice.
+  String? _nameRoomAddresses(
+    String? location,
+    List<Map<String, dynamic>> rawAttendees,
+  ) {
+    if (location == null ||
+        !location.toLowerCase().contains(_resourceCalendarSuffix)) {
+      return location;
+    }
+    final attendeeNames = <String, String>{
+      for (final a in rawAttendees)
+        if (a['email'] is String &&
+            (a['displayName'] as String?)?.trim().isNotEmpty == true)
+          (a['email'] as String).toLowerCase(): (a['displayName'] as String).trim(),
+    };
+    final segments = <String>[];
+    for (final segment in location.split(RegExp(r'\s*[;,]\s*'))) {
+      final trimmed = segment.trim();
+      if (trimmed.isEmpty) continue;
+      final key = trimmed.toLowerCase();
+      if (!key.endsWith(_resourceCalendarSuffix)) {
+        segments.add(trimmed);
+        continue;
+      }
+      final name = attendeeNames[key] ?? _roomDisplayName(key);
+      if (name != null && !segments.contains(name)) segments.add(name);
+    }
+    return segments.join(', ');
+  }
+
+  /// The typed-in part of [location]: without the booked rooms' names, which
+  /// the body names again in front of it, and without any resource address,
+  /// which is an opaque id and never a place. A caller that forgot to strip the
+  /// rooms out would otherwise prepend another copy on every save.
+  String _withoutRooms(String location, List<String> roomEmails) {
+    final stripped = stripRoomNames(location, [
+      for (final e in roomEmails) ...[_roomDisplayName(e), e],
+    ]);
+    if (!stripped.toLowerCase().contains(_resourceCalendarSuffix)) {
+      return stripped.trim();
+    }
+    return stripped
+        .split(RegExp(r'\s*[;,]\s*'))
+        .where((s) =>
+            s.trim().isNotEmpty &&
+            !s.trim().toLowerCase().endsWith(_resourceCalendarSuffix))
+        .join(', ');
   }
 
   Map<String, dynamic> _buildEventBody({
@@ -1402,14 +1480,12 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     // the join button away. The room is booked as a resource attendee either
     // way, and both Google's UI and ours show it from there.
     final keepJoinUrl = isOnlineMeetingUrl(location);
+    final typed = _withoutRooms(location ?? '', roomEmails);
     final locationText = keepJoinUrl
         ? location!.trim()
         : [
-            ...roomEmails.map(_roomDisplayName),
-            if (location != null &&
-                location.isNotEmpty &&
-                !_locationNamesARoom(location, roomEmails))
-              location,
+            ...roomEmails.map(_roomDisplayName).whereType<String>(),
+            if (typed.isNotEmpty) typed,
           ].join(', ');
 
     final body = <String, dynamic>{
@@ -1776,7 +1852,8 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
 
     final description = json['description'] as String?;
     final split = splitMeetingLocation(
-      rawLocation: json['location'] as String?,
+      rawLocation:
+          _nameRoomAddresses(json['location'] as String?, rawAttendees),
       onlineMeetingUrl: _conferenceJoinUrl(json),
       description: description,
     );

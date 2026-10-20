@@ -335,6 +335,24 @@ Three things here are load-bearing:
 included. An omitted field on a PATCH means "leave unchanged", so releasing the
 last room or clearing a location would otherwise silently not take effect.
 
+**A Google room's address never goes into `location`.** Google's location is
+one free-text string, so `_buildEventBody` names booked rooms in it — but a
+resource address is an opaque id (`htw.com.au_3336…@resource.calendar.google.com`).
+The datasource's name map was filled only by the room picker, in the window
+and datasource instance that ran it, so a drag-to-reschedule in the main window
+wrote the raw address to the server for every guest. Saves now read the
+directory themselves (`_ensureRoomNames`, once per instance), a room still
+unnamed is left out of the location (it is booked as a resource attendee
+regardless), and `_parseEvent` swaps any address already saved on the server for
+the attendee's `displayName`, or drops it (`_nameRoomAddresses`).
+
+Anything that hands a meeting's own location back to a save must strip the
+rooms out first (`core/utils/room_location.dart` — the form and the
+drag-to-reschedule both do), because the save names them again in front of it.
+Google's attendee `displayName` ("BNE-3-Boardroom (10)") is not the directory's
+`resourceName` ("Boardroom"), so the datasource cannot catch that on its own;
+`_withoutRooms` only drops directory names and raw addresses.
+
 Reopening a meeting splits its roster back apart and strips the room names out of
 the provider's `location` string (`_stripRoomNames`), or the room would be shown
 — and saved — twice, once as a chip and once as typed-in text.

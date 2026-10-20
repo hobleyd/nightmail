@@ -8,6 +8,7 @@ import '../../../domain/usecases/cancel_calendar_event.dart'
         CancelCalendarEventParams,
         CancelCalendarEventSeries,
         CancelCalendarEventSeriesParams;
+import '../../../core/utils/room_location.dart';
 import '../../../domain/entities/calendar_event.dart' as domain;
 import '../../../domain/usecases/decline_calendar_event.dart';
 import '../../../domain/usecases/get_cached_calendar_events.dart';
@@ -163,7 +164,15 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
       end: blocEvent.newEnd,
       isAllDay: e.isAllDay,
       timezone: e.timezone ?? 'UTC',
-      location: e.location,
+      // The location already names the booked rooms, and the save names them
+      // again — so strip them here, as the event form does, or every drag
+      // prepends another copy of the room.
+      location: e.location == null
+          ? null
+          : stripRoomNames(e.location!, [
+              for (final a in e.attendees)
+                if (a.isResource) ...[a.displayName, a.email],
+            ]),
       description: e.bodyPreview,
       // Split the roster back apart: a booked room resent as a person attendee
       // loses its resource type, which is what makes the provider run the room's

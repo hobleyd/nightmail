@@ -16,6 +16,7 @@ import 'package:intl/intl.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/online_meeting_url.dart';
+import '../../core/utils/room_location.dart';
 import '../../core/utils/timezone_utils.dart';
 import '../../domain/entities/attendee_availability.dart';
 import '../../domain/entities/calendar_event.dart';
@@ -645,21 +646,10 @@ class _EventEditFormState extends State<EventEditForm> {
   /// single string, "; " for a hand-typed list) and drops any segment that is a
   /// room's name or address. A segment that merely *contains* a room name is
   /// kept: "Meet outside Room 3" is free text, not a duplicated chip.
-  static String _stripRoomNames(String location, List<MeetingRoom> rooms) {
-    if (location.isEmpty || rooms.isEmpty) return location;
-    final roomLabels = {
-      for (final r in rooms) ...[
-        r.displayName.trim().toLowerCase(),
-        r.email.trim().toLowerCase(),
-      ],
-    };
-    return location
-        .split(RegExp(r'\s*[;,]\s*'))
-        .where((segment) =>
-            segment.trim().isNotEmpty &&
-            !roomLabels.contains(segment.trim().toLowerCase()))
-        .join(', ');
-  }
+  static String _stripRoomNames(String location, List<MeetingRoom> rooms) =>
+      stripRoomNames(location, [
+        for (final r in rooms) ...[r.displayName, r.email],
+      ]);
 
   /// Fetches the account's room directory once, on open.
   ///

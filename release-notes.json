@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.40.10",
+  "version": "1.40.11",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "delete, copy and paste recipient pills on a phone",
-          "title": "compose"
+          "body": "show meeting rooms by name, not their Google resource address",
+          "title": "calendar"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.40.10",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "delete, copy and paste recipient pills on a phone",
+              "title": "compose"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -403,23 +420,6 @@
             {
               "body": "run snap install on a pseudo-terminal so the password prompt appears",
               "title": "snap"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.38.6",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "drop finished meetings from Today",
-              "title": "commitments"
             }
           ]
         }

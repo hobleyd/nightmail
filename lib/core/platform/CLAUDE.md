@@ -134,6 +134,70 @@ that normally does this can never arrive from a dead isolate).
 
 `test/core/platform/secondary_window_teardown_test.dart` pins the shape.
 
+### Linux sub-windows: one EGLDisplay, many engines
+
+On Linux every sub-window is a second `FlEngine` in the same process, and the
+GTK embedder was not written for that. Before the fixes below, opening any
+sub-window (compose, email view, event edit, …) gave a blank window, and
+closing it killed the whole app (2026-10-26, NVIDIA 580 on Ubuntu 26.04). On X11 that was a GLX `BadAccess` (request 149, minor 26),
+which GDK treats as fatal. On Wayland it was a segfault in
+`gdk_window_end_draw_frame`. `diagnostics.log` shows nothing, because the
+process dies before the log is flushed; the evidence is in
+`journalctl --user`. Three engine behaviours were involved, still present on
+Flutter `master` as of 3.47.8:
+
+- **Every engine gets the same `EGLDisplay`.** `FlOpenGLManager` asks EGL for
+  the display of the one GDK connection; EGL returns one handle per native
+  display, which on Wayland is also GDK's own. The manager's dispose calls
+  `eglTerminate` on it, so closing a sub-window terminated the display under
+  the main window (`EGL_NOT_INITIALIZED` on its next frame).
+- **On X11, libglvnd won't mix GLX and EGL on one thread.** GDK paints through
+  GLX and leaves its paint context current on the main thread (the reading
+  pane's WebKitWebView does this). A new engine's first `eglMakeCurrent` (its
+  compositor shader setup) then fails with `EGL_BAD_ACCESS`, and the window
+  never draws.
+- **The opposite case.** A closing engine's compositor makes its EGL context
+  current on the main thread to delete its shaders and never releases it. GDK's
+  next `glXMakeContextCurrent` is then refused on the client side, which is the
+  fatal `BadAccess`.
+
+`linux/runner/egl_shim.cc` handles all three without touching the engine. The
+engine, GTK and WebKitGTK all call EGL and GLX through libepoxy's exported
+dispatch pointers, so `main()` replaces those pointers **before GTK starts**:
+
+- `eglInitialize`/`eglTerminate` are reference-counted per display;
+- `eglMakeCurrent` retries once after `gdk_gl_context_clear_current()`;
+- `glXMake(Context)Current` releases any current EGL context first.
+
+Each case is safe because both sides make their own context current again
+before they use it. All three reproduce outside Flutter in a few dozen lines
+of C against GTK and epoxy (two `FlOpenGLManager`-shaped context sets, or one
+plus a realized `GdkGLContext`). Build one before you change the shim.
+
+The sub-window's `FlView` also has to sit in a `GtkOverlay`, as the main
+window's does (`my_application.cc`), or `html_view` refuses `createView` with
+`no_overlay` and the compose editor never appears. `desktop_multi_window` adds
+the view straight into the window, so it is vendored in
+`packages/desktop_multi_window` with the overlay added in `CreateWindow`.
+The overlay goes in *before* the view is added, and the view is then realized
+explicitly. Without that, nothing realizes it in a hidden window, its engine
+never starts, and the window never appears. Moving an already-realized
+`FlView` instead would tear its GL state down. Three more things came out of
+the same close path:
+
+- `html_view`'s `WebkitView` holds weak pointers to its overlay and webview:
+  GTK destroys both with the window before the engine that owns the view is
+  torn down.
+- `window_manager` is vendored in `packages/window_manager`. Every engine adds
+  a process-wide `button-press-event` emission hook with its plugin as the
+  data, and upstream never removes it, so the next click anywhere after a
+  sub-window closed ran against the freed plugin
+  (`invalid unclassed pointer in cast to 'WindowManagerPlugin'`). The patch
+  removes it in dispose.
+- `FlutterEngineRemoveView … implicit view cannot be removed` and `Attempted
+  to set message handler on an FlBinaryMessenger without an engine` are
+  printed on every close and are harmless.
+
 ### One Calendar, Tasks or Commitments window at a time
 
 A double-click on one of the view buttons (`view_shortcut_buttons.dart`)

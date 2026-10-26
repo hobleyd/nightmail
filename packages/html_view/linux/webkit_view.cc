@@ -235,6 +235,14 @@ WebkitView::WebkitView(gint64 id_, GtkOverlay* overlay_,
   g_signal_connect(overlay, "get-child-position",
                    G_CALLBACK(on_get_child_position), this);
   gtk_overlay_add_overlay(overlay, GTK_WIDGET(web_view));
+  // In a sub-window GTK destroys the window - the overlay and this web_view
+  // with it - before the engine that owns this object is torn down. These
+  // clear the pointers when that happens, so the destructor does not reach
+  // into freed widgets.
+  g_object_add_weak_pointer(G_OBJECT(overlay),
+                            reinterpret_cast<gpointer*>(&overlay));
+  g_object_add_weak_pointer(G_OBJECT(web_view),
+                            reinterpret_cast<gpointer*>(&web_view));
   // Don't show yet — wait until we have valid dimensions from setSize.
 
   // Method channel: html_view/<id>
@@ -277,13 +285,22 @@ WebkitView::~WebkitView() {
     event_channel = nullptr;
   }
 
-  if (overlay && web_view) {
-    g_signal_handlers_disconnect_by_data(G_OBJECT(overlay), this);
-    gtk_container_remove(GTK_CONTAINER(overlay), GTK_WIDGET(web_view));
-    // gtk_container_remove drops the overlay's ref; web_view is destroyed.
-    web_view = nullptr;
-    overlay = nullptr;
+  // Either may already be gone with its window; see the constructor.
+  if (web_view) {
+    g_object_remove_weak_pointer(G_OBJECT(web_view),
+                                 reinterpret_cast<gpointer*>(&web_view));
   }
+  if (overlay) {
+    g_object_remove_weak_pointer(G_OBJECT(overlay),
+                                 reinterpret_cast<gpointer*>(&overlay));
+    g_signal_handlers_disconnect_by_data(G_OBJECT(overlay), this);
+    if (web_view) {
+      // gtk_container_remove drops the overlay's ref; web_view is destroyed.
+      gtk_container_remove(GTK_CONTAINER(overlay), GTK_WIDGET(web_view));
+    }
+  }
+  web_view = nullptr;
+  overlay = nullptr;
 }
 
 // ---------------------------------------------------------------------------

@@ -332,10 +332,9 @@ packages:
   desktop_multi_window:
     dependency: "direct main"
     description:
-      name: desktop_multi_window
-      sha256: "6a82209dfd29279258515157e5c08612542ebf7bfb3b55fb1dfcd32c076eea4d"
-      url: "https://pub.dev"
-    source: hosted
+      path: "packages/desktop_multi_window"
+      relative: true
+    source: path
     version: "0.3.1"
   desktop_updater:
     dependency: "direct main"
@@ -1686,10 +1685,9 @@ packages:
   window_manager:
     dependency: "direct main"
     description:
-      name: window_manager
-      sha256: "05c231fd7b23d2380f14c5cc10b7b93d60d4fa4a2fb4e0f032de27e44b5560e9"
-      url: "https://pub.dev"
-    source: hosted
+      path: "packages/window_manager"
+      relative: true
+    source: path
     version: "0.5.2"
   window_to_front:
     dependency: transitive

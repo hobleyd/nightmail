@@ -16,6 +16,9 @@ analyzer:
     - windows/**
     - macos/**
     - linux/**
+    # Vendored upstream plugins, patched only on the native side.
+    - packages/desktop_multi_window/**
+    - packages/window_manager/**
 include: package:flutter_lints/flutter.yaml
 
 linter:

@@ -192,6 +192,17 @@ dependency_overrides:
   #   #294 SMTP DATA kept the folded continuation lines of a long Bcc header
   enough_mail:
     path: packages/enough_mail
+  # Locally patched copies, Linux only (the other platforms are untouched;
+  # see lib/core/platform/CLAUDE.md, "Linux sub-windows"). Both are the
+  # latest release; drop each once upstream ships the fix:
+  #   desktop_multi_window 0.3.1 — a sub-window's FlView is wrapped in a
+  #     GtkOverlay before it is added, so html_view can embed in it
+  #   window_manager 0.5.2 — the button-press emission hook is removed when
+  #     the plugin is disposed (use-after-free after a sub-window closes)
+  desktop_multi_window:
+    path: packages/desktop_multi_window
+  window_manager:
+    path: packages/window_manager
   # printing >=5.15 (Swift Package Manager support) needs pdf >=3.13, which
   # needs xml 7. caldav 1.5.0 still declares `xml: ^6.6.1` although it only
   # uses the high-level DOM API that xml 7 kept unchanged. Drop this override

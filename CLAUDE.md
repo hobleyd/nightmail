@@ -50,7 +50,8 @@ would re-break.
   CI-manual signing split, iPad as the desktop layout
 - [`lib/core/platform/CLAUDE.md`](lib/core/platform/CLAUDE.md) —
   `desktop_multi_window` sub-windows, the FFI-plugin isolate hazard, window
-  bounds persistence
+  bounds persistence, the Linux runner's EGL shim and vendored sub-window
+  plugins
 
 ### Auth
 

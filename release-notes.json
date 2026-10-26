@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.40.11",
+  "version": "1.40.12",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "show meeting rooms by name, not their Google resource address",
-          "title": "calendar"
+          "body": "a forward no longer sends attachments the user removed",
+          "title": "compose"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.40.11",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "show meeting rooms by name, not their Google resource address",
+              "title": "calendar"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -403,23 +420,6 @@
             {
               "body": "answer a forwarded invitation instead of \"Could not find this meeting\"",
               "title": "calendar"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.38.7",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "run snap install on a pseudo-terminal so the password prompt appears",
-              "title": "snap"
             }
           ]
         }

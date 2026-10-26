@@ -9,6 +9,7 @@ import '../../../core/error/exceptions.dart';
 import '../../../core/utils/special_folder_kind.dart';
 import '../../../core/utils/subject_prefixes.dart';
 import '../../../domain/entities/email.dart';
+import '../../../domain/entities/email_attachment.dart';
 import '../../../domain/entities/local_attachment.dart';
 import '../../../domain/entities/inline_attachment.dart';
 import '../../../domain/entities/meeting_invite.dart';
@@ -942,7 +943,7 @@ class GmailDatasourceImpl
     List<String> bccAddresses = const [],
     required String comment,
     String? subject,
-    List<String> excludedAttachmentIds = const [],
+    List<EmailAttachment> excludedAttachments = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
@@ -986,8 +987,19 @@ class GmailDatasourceImpl
         builder.addTextPlain(comment);
       }
 
+      // Gmail mints a fresh attachmentId on every messages.get, so the ids the
+      // compose window was shown rarely match this fetch: fall back to name +
+      // size, and drop one part per removed chip so an identical copy the
+      // user kept still goes.
+      final excluded = [...excludedAttachments];
       for (final att in source.attachments) {
-        if (excludedAttachmentIds.contains(att.attachmentId)) continue;
+        final i = excluded.indexWhere((e) =>
+            e.id == att.attachmentId ||
+            (e.name == att.name && e.size == att.size));
+        if (i >= 0) {
+          excluded.removeAt(i);
+          continue;
+        }
         try {
           final bytes = await downloadAttachment(messageId, att.attachmentId);
           builder.addBinary(

@@ -6,6 +6,7 @@ import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/error/exceptions.dart';
 import 'package:nightmail/data/datasources/remote/gmail_datasource_impl.dart';
+import 'package:nightmail/domain/entities/email_attachment.dart';
 import 'package:nightmail/domain/entities/meeting_invite.dart';
 
 import 'gmail_datasource_impl_test.mocks.dart';
@@ -920,6 +921,75 @@ void main() {
       final rawMime =
           utf8.decode(base64Url.decode(_padBase64(data['raw'] as String)));
       expect(rawMime.toLowerCase(), isNot(contains('\r\ncc:')));
+    });
+  });
+
+  group('GmailDatasourceImpl.forwardEmail — removed attachments', () {
+    Map<String, dynamic> part(String id, String name, int size) => {
+          'mimeType': 'application/pdf',
+          'filename': name,
+          'headers': [
+            {'name': 'Content-Disposition', 'value': 'attachment; filename="$name"'},
+          ],
+          'body': {'attachmentId': id, 'size': size},
+        };
+
+    Future<String> forward(List<EmailAttachment> excluded) async {
+      // Gmail re-mints attachmentIds per fetch: the source fetch names the
+      // parts fresh-keep / fresh-drop / fresh-copy, never the ids the compose
+      // window was shown.
+      stubGetByUrl((url) {
+        if (url.contains('profile')) return {'emailAddress': 'me@example.com'};
+        if (url.contains('/attachments/')) return {'data': _b64('bytes')};
+        return {
+          'threadId': 'thread1',
+          'payload': {
+            'mimeType': 'multipart/mixed',
+            'headers': [
+              {'name': 'Subject', 'value': 'Docs'},
+            ],
+            'parts': [
+              part('fresh-keep', 'keep.pdf', 100),
+              part('fresh-drop', 'drop.pdf', 200),
+              part('fresh-copy', 'drop.pdf', 200),
+            ],
+          },
+        };
+      });
+      when(mockDio.post<void>(any, data: anyNamed('data')))
+          .thenAnswer((_) async => _sendResp());
+
+      await datasource.forwardEmail(
+        messageId: 'msg1',
+        toAddresses: ['to@example.com'],
+        comment: 'FYI',
+        excludedAttachments: excluded,
+      );
+
+      final data = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
+          .captured.single as Map<String, dynamic>;
+      return utf8.decode(base64Url.decode(_padBase64(data['raw'] as String)));
+    }
+
+    test('drops a removed attachment whose id went stale', () async {
+      final rawMime = await forward(const [
+        EmailAttachment(
+            id: 'stale-drop', name: 'drop.pdf', contentType: 'application/pdf', size: 200),
+      ]);
+
+      expect('filename="drop.pdf"'.allMatches(rawMime), hasLength(1),
+          reason: 'one removed chip drops one of the two identical copies');
+      expect(rawMime, contains('filename="keep.pdf"'));
+      verifyNever(mockDio.get<String>('/users/me/messages/msg1/attachments/fresh-drop',
+          queryParameters: anyNamed('queryParameters'),
+          options: anyNamed('options')));
+    });
+
+    test('keeps everything when nothing was removed', () async {
+      final rawMime = await forward(const []);
+
+      expect('filename="drop.pdf"'.allMatches(rawMime), hasLength(2));
+      expect(rawMime, contains('filename="keep.pdf"'));
     });
   });
 

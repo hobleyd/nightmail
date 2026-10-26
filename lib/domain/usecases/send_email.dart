@@ -3,6 +3,7 @@ import 'package:fpdart/fpdart.dart';
 
 import '../../core/error/failures.dart';
 import '../entities/email.dart';
+import '../entities/email_attachment.dart';
 import '../entities/local_attachment.dart';
 import '../repositories/email_repository.dart';
 
@@ -56,7 +57,7 @@ class SendEmail {
           bccAddresses: params.bccAddresses,
           comment: params.body,
           subject: params.subject,
-          excludedAttachmentIds: params.excludedAttachmentIds,
+          excludedAttachments: params.excludedAttachments,
           bodyType: params.bodyType,
           newAttachments: params.newAttachments,
           accountId: params.fromAccountId,
@@ -74,7 +75,7 @@ class SendEmailParams extends Equatable {
     this.bccAddresses = const [],
     this.subject = '',
     required this.body,
-    this.excludedAttachmentIds = const [],
+    this.excludedAttachments = const [],
     this.bodyType = EmailBodyType.text,
     this.newAttachments = const [],
     this.fromAccountId,
@@ -87,7 +88,7 @@ class SendEmailParams extends Equatable {
   final List<String> bccAddresses;
   final String subject;
   final String body;
-  final List<String> excludedAttachmentIds;
+  final List<EmailAttachment> excludedAttachments;
   final EmailBodyType bodyType;
   final List<LocalAttachment> newAttachments;
   final String? fromAccountId;
@@ -101,7 +102,7 @@ class SendEmailParams extends Equatable {
         bccAddresses,
         subject,
         body,
-        excludedAttachmentIds,
+        excludedAttachments,
         bodyType,
         newAttachments,
         fromAccountId,

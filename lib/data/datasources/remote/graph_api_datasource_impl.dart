@@ -8,6 +8,7 @@ import '../../../core/utils/ics_parser.dart';
 import '../../../core/utils/online_meeting_url.dart';
 import '../../../core/utils/special_folder_kind.dart';
 import '../../../domain/entities/contact_details.dart';
+import '../../../domain/entities/email_attachment.dart';
 import '../../../domain/entities/local_attachment.dart';
 import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/email.dart';
@@ -2432,7 +2433,7 @@ class GraphApiDatasourceImpl
     List<String> bccAddresses = const [],
     required String comment,
     String? subject,
-    List<String> excludedAttachmentIds = const [],
+    List<EmailAttachment> excludedAttachments = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
@@ -2459,7 +2460,7 @@ class GraphApiDatasourceImpl
           .map((a) => {'emailAddress': {'address': _bareEmail(a)}})
           .toList();
 
-      if (newAttachments.isEmpty) {
+      if (newAttachments.isEmpty && excludedAttachments.isEmpty) {
         await _dio.post<void>(
           '$_base/messages/$messageId/forward',
           data: {
@@ -2468,7 +2469,8 @@ class GraphApiDatasourceImpl
           },
         );
       } else {
-        // Create a forward draft, attach files, then send.
+        // Create a forward draft, drop the attachments the user removed and
+        // add theirs, then send — /forward copies every original attachment.
         final draftResp = await _dio.post<Map<String, dynamic>>(
           '$_base/messages/$messageId/createForward',
           data: {
@@ -2480,6 +2482,7 @@ class GraphApiDatasourceImpl
         if (draftId == null) {
           throw const ServerException(message: 'No draft ID in forward response');
         }
+        await _removeExcludedFromForwardDraft(draftId, excludedAttachments);
         await _addAttachmentsToDraft(draftId, newAttachments);
         await _dio.post<void>('$_base/messages/$draftId/send');
       }
@@ -2501,6 +2504,33 @@ class GraphApiDatasourceImpl
           if (att.isInline && att.contentId != null) 'contentId': att.contentId,
         }
     ];
+  }
+
+  /// Deletes from a createForward draft the copies of [excluded]. The copies
+  /// get fresh ids, so they are matched by name + size (name alone as a
+  /// fallback), one copy per excluded attachment.
+  Future<void> _removeExcludedFromForwardDraft(
+      String draftId, List<EmailAttachment> excluded) async {
+    if (excluded.isEmpty) return;
+    final resp = await _dio.get<Map<String, dynamic>>(
+      '$_base/messages/$draftId/attachments',
+      queryParameters: {'\$select': 'id,name,size'},
+    );
+    final copies = [
+      ...(resp.data?['value'] as List<dynamic>?)
+              ?.cast<Map<String, dynamic>>() ??
+          const <Map<String, dynamic>>[]
+    ];
+    for (final att in excluded) {
+      var i = copies.indexWhere(
+          (c) => c['name'] == att.name && c['size'] == att.size);
+      if (i < 0) i = copies.indexWhere((c) => c['name'] == att.name);
+      if (i < 0) continue;
+      final id = copies.removeAt(i)['id'] as String?;
+      if (id != null) {
+        await _dio.delete<void>('$_base/messages/$draftId/attachments/$id');
+      }
+    }
   }
 
   Future<void> _addAttachmentsToDraft(

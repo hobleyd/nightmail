@@ -4,12 +4,16 @@ import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/domain/entities/email.dart';
+import 'package:nightmail/domain/entities/email_attachment.dart';
 import 'package:nightmail/domain/usecases/send_email.dart';
 import 'package:nightmail/presentation/blocs/compose/compose_bloc.dart';
 import 'package:nightmail/presentation/blocs/compose/compose_event.dart';
 import 'package:nightmail/presentation/blocs/compose/compose_state.dart';
 
 import 'compose_bloc_test.mocks.dart';
+
+const _att1 = EmailAttachment(
+    id: 'att-1', name: 'a.pdf', contentType: 'application/pdf', size: 10);
 
 const _submitted = ComposeSubmitted(
   mode: ComposeMode.newEmail,
@@ -65,14 +69,14 @@ void main() {
   test('forwards every field of the event into SendEmailParams', () async {
     when(mockSendEmail(any)).thenAnswer((_) async => const Right(unit));
 
-    bloc.add(const ComposeSubmitted(
+    bloc.add(ComposeSubmitted(
       mode: ComposeMode.reply,
       originalMessageId: 'msg-1',
       toAddresses: ['a@example.com'],
       ccAddresses: ['b@example.com'],
       subject: 'Re: Hi',
       body: 'Reply body',
-      excludedAttachmentIds: ['att-1'],
+      excludedAttachments: [_att1],
       bodyType: EmailBodyType.html,
       fromAccountId: 'acct-1',
     ));
@@ -86,7 +90,7 @@ void main() {
     expect(params.ccAddresses, ['b@example.com']);
     expect(params.subject, 'Re: Hi');
     expect(params.body, 'Reply body');
-    expect(params.excludedAttachmentIds, ['att-1']);
+    expect(params.excludedAttachments, [_att1]);
     expect(params.bodyType, EmailBodyType.html);
     expect(params.fromAccountId, 'acct-1');
   });

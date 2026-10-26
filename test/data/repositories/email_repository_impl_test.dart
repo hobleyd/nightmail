@@ -1929,7 +1929,7 @@ void main() {
         toAddresses: anyNamed('toAddresses'),
         ccAddresses: anyNamed('ccAddresses'),
         comment: anyNamed('comment'),
-        excludedAttachmentIds: anyNamed('excludedAttachmentIds'),
+        excludedAttachments: anyNamed('excludedAttachments'),
         bodyType: anyNamed('bodyType'),
         newAttachments: anyNamed('newAttachments'),
       )).thenAnswer((_) async {});
@@ -1946,7 +1946,7 @@ void main() {
         toAddresses: ['to@example.com'],
         ccAddresses: ['cc@example.com'],
         comment: 'FYI',
-        excludedAttachmentIds: anyNamed('excludedAttachmentIds'),
+        excludedAttachments: anyNamed('excludedAttachments'),
         bodyType: anyNamed('bodyType'),
         newAttachments: anyNamed('newAttachments'),
       )).called(1);
@@ -1958,7 +1958,7 @@ void main() {
         toAddresses: anyNamed('toAddresses'),
         ccAddresses: anyNamed('ccAddresses'),
         comment: anyNamed('comment'),
-        excludedAttachmentIds: anyNamed('excludedAttachmentIds'),
+        excludedAttachments: anyNamed('excludedAttachments'),
         bodyType: anyNamed('bodyType'),
         newAttachments: anyNamed('newAttachments'),
       )).thenAnswer((_) async {});
@@ -1974,7 +1974,7 @@ void main() {
         toAddresses: ['to@example.com'],
         ccAddresses: [],
         comment: 'FYI',
-        excludedAttachmentIds: anyNamed('excludedAttachmentIds'),
+        excludedAttachments: anyNamed('excludedAttachments'),
         bodyType: anyNamed('bodyType'),
         newAttachments: anyNamed('newAttachments'),
       )).called(1);
@@ -1986,7 +1986,7 @@ void main() {
         toAddresses: anyNamed('toAddresses'),
         ccAddresses: anyNamed('ccAddresses'),
         comment: anyNamed('comment'),
-        excludedAttachmentIds: anyNamed('excludedAttachmentIds'),
+        excludedAttachments: anyNamed('excludedAttachments'),
         bodyType: anyNamed('bodyType'),
         newAttachments: anyNamed('newAttachments'),
       )).thenAnswer((_) async {});

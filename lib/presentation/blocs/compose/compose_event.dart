@@ -1,6 +1,7 @@
 import 'package:equatable/equatable.dart';
 
 import '../../../domain/entities/email.dart';
+import '../../../domain/entities/email_attachment.dart';
 import '../../../domain/entities/local_attachment.dart';
 import '../../../domain/usecases/send_email.dart';
 
@@ -20,7 +21,7 @@ final class ComposeSubmitted extends ComposeEvent {
     this.bccAddresses = const [],
     required this.subject,
     required this.body,
-    this.excludedAttachmentIds = const [],
+    this.excludedAttachments = const [],
     this.bodyType = EmailBodyType.text,
     this.newAttachments = const [],
     this.fromAccountId,
@@ -33,7 +34,7 @@ final class ComposeSubmitted extends ComposeEvent {
   final List<String> bccAddresses;
   final String subject;
   final String body;
-  final List<String> excludedAttachmentIds;
+  final List<EmailAttachment> excludedAttachments;
   final EmailBodyType bodyType;
   final List<LocalAttachment> newAttachments;
   final String? fromAccountId;
@@ -47,7 +48,7 @@ final class ComposeSubmitted extends ComposeEvent {
         bccAddresses,
         subject,
         body,
-        excludedAttachmentIds,
+        excludedAttachments,
         bodyType,
         newAttachments,
         fromAccountId,

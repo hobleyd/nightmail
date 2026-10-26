@@ -4,6 +4,7 @@ import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nightmail/data/datasources/remote/graph_api_datasource_impl.dart';
 import 'package:nightmail/domain/entities/email.dart';
+import 'package:nightmail/domain/entities/email_attachment.dart';
 
 import 'graph_api_send_email_test.mocks.dart';
 
@@ -14,6 +15,8 @@ Response<void> _voidResp() => Response<void>(
 
 @GenerateMocks([Dio])
 void main() {
+  _forwardExclusionTests();
+
   late MockDio mockDio;
   late GraphApiDatasourceImpl datasource;
 
@@ -645,6 +648,62 @@ void main() {
       final body = verify(mockDio.post<void>(any, data: captureAnyNamed('data')))
           .captured.single as Map<String, dynamic>;
       expect((body['message'] as Map)['subject'], 'Fwd: Budget');
+    });
+  });
+}
+
+void _forwardExclusionTests() {
+  late MockDio mockDio;
+  late GraphApiDatasourceImpl datasource;
+
+  setUp(() {
+    mockDio = MockDio();
+    datasource = GraphApiDatasourceImpl.withDio(mockDio);
+  });
+
+  Response<T> resp<T>(T data, String path) =>
+      Response<T>(data: data, statusCode: 200, requestOptions: RequestOptions(path: path));
+
+  group('GraphApiDatasourceImpl.forwardEmail — removed attachments', () {
+    test('deletes the removed copy from the forward draft before sending',
+        () async {
+      when(mockDio.post<Map<String, dynamic>>(argThat(endsWith('/createForward')),
+              data: anyNamed('data')))
+          .thenAnswer((inv) async => resp<Map<String, dynamic>>(
+              {'id': 'draft1'}, inv.positionalArguments[0] as String));
+      // createForward copies the attachments under new ids.
+      when(mockDio.get<Map<String, dynamic>>(any,
+              queryParameters: anyNamed('queryParameters')))
+          .thenAnswer((inv) async => resp<Map<String, dynamic>>({
+                'value': [
+                  {'id': 'copy-keep', 'name': 'keep.pdf', 'size': 100},
+                  {'id': 'copy-drop', 'name': 'drop.pdf', 'size': 200},
+                ],
+              }, inv.positionalArguments[0] as String));
+      when(mockDio.delete<void>(any)).thenAnswer(
+          (inv) async => resp<void>(null, inv.positionalArguments[0] as String));
+      when(mockDio.post<void>(argThat(endsWith('/send')), data: anyNamed('data')))
+          .thenAnswer((inv) async => resp<void>(null, inv.positionalArguments[0] as String));
+
+      await datasource.forwardEmail(
+        messageId: 'msg1',
+        toAddresses: ['alice@example.com'],
+        comment: 'FYI',
+        excludedAttachments: const [
+          EmailAttachment(
+              id: 'orig-drop', name: 'drop.pdf', contentType: 'application/pdf', size: 200),
+        ],
+      );
+
+      verifyNever(mockDio.post<void>(argThat(endsWith('/msg1/forward')),
+          data: anyNamed('data')));
+      verifyInOrder([
+        mockDio.post<Map<String, dynamic>>(argThat(endsWith('/msg1/createForward')),
+            data: anyNamed('data')),
+        mockDio.delete<void>(argThat(endsWith('/draft1/attachments/copy-drop'))),
+        mockDio.post<void>(argThat(endsWith('/draft1/send')), data: anyNamed('data')),
+      ]);
+      verifyNever(mockDio.delete<void>(argThat(endsWith('/copy-keep'))));
     });
   });
 }

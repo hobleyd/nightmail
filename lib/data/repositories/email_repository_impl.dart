@@ -9,6 +9,7 @@ import '../../core/error/failures.dart';
 import '../../core/utils/orphaned_thread_rows.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_folder.dart';
+import '../../domain/entities/email_attachment.dart';
 import '../../domain/entities/local_attachment.dart';
 import '../../domain/repositories/email_repository.dart';
 import '../../infrastructure/accounts/account.dart';
@@ -548,7 +549,7 @@ class EmailRepositoryImpl implements EmailRepository {
     List<String> bccAddresses = const [],
     required String comment,
     String? subject,
-    List<String> excludedAttachmentIds = const [],
+    List<EmailAttachment> excludedAttachments = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
     String? accountId,
@@ -561,7 +562,7 @@ class EmailRepositoryImpl implements EmailRepository {
         bccAddresses: bccAddresses,
         comment: comment,
         subject: subject,
-        excludedAttachmentIds: excludedAttachmentIds,
+        excludedAttachments: excludedAttachments,
         bodyType: bodyType,
         newAttachments: newAttachments,
       );

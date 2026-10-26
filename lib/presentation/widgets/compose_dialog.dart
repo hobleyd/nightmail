@@ -1521,7 +1521,13 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
           bccAddresses: bcc,
           subject: subject,
           body: effectiveBody,
-          excludedAttachmentIds: _excludedAttachmentIds,
+          // The attachments themselves, not just their ids: Gmail mints a new
+          // attachmentId on every fetch, so the forward matches on name + size.
+          excludedAttachments: widget.mode == ComposeMode.forward
+              ? (widget.originalEmail?.attachments ?? const <EmailAttachment>[])
+                  .where((a) => _excludedAttachmentIds.contains(a.id))
+                  .toList()
+              : const [],
           bodyType: effectiveBodyType,
           newAttachments: _attachmentsForBody(effectiveBody),
           fromAccountId: _selectedAccountId,

@@ -25,7 +25,7 @@ class ComposeBloc extends Bloc<ComposeEvent, ComposeState> {
       bccAddresses: event.bccAddresses,
       subject: event.subject,
       body: event.body,
-      excludedAttachmentIds: event.excludedAttachmentIds,
+      excludedAttachments: event.excludedAttachments,
       bodyType: event.bodyType,
       newAttachments: event.newAttachments,
       fromAccountId: event.fromAccountId,

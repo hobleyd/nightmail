@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import '../../../core/utils/special_folder_kind.dart';
 import '../../../domain/entities/email.dart';
+import '../../../domain/entities/email_attachment.dart';
 import '../../../domain/entities/local_attachment.dart';
 import '../../models/email_folder_model.dart';
 import '../../models/email_model.dart';
@@ -59,7 +60,7 @@ abstract interface class EmailRemoteDatasource {
     List<String> bccAddresses = const [],
     required String comment,
     String? subject,
-    List<String> excludedAttachmentIds = const [],
+    List<EmailAttachment> excludedAttachments = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   });

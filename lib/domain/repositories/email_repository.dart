@@ -5,6 +5,7 @@ import 'package:fpdart/fpdart.dart';
 import '../../core/error/failures.dart';
 import '../entities/email.dart';
 import '../entities/email_folder.dart';
+import '../entities/email_attachment.dart';
 import '../entities/local_attachment.dart';
 
 abstract interface class EmailRepository {
@@ -79,7 +80,7 @@ abstract interface class EmailRepository {
     List<String> bccAddresses = const [],
     required String comment,
     String? subject,
-    List<String> excludedAttachmentIds = const [],
+    List<EmailAttachment> excludedAttachments = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
     String? accountId,

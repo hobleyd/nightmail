@@ -1768,7 +1768,7 @@ class ImapDatasourceImpl
     List<String> bccAddresses = const [],
     required String comment,
     String? subject,
-    List<String> excludedAttachmentIds = const [],
+    List<EmailAttachment> excludedAttachments = const [],
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
@@ -1800,7 +1800,7 @@ class ImapDatasourceImpl
 
     for (final info
         in original.findContentInfo(disposition: ContentDisposition.attachment)) {
-      if (excludedAttachmentIds.contains(info.fetchId)) continue;
+      if (excludedAttachments.any((a) => a.id == info.fetchId)) continue;
       final bytes = original.getPart(info.fetchId)?.decodeContentBinary();
       if (bytes == null || bytes.isEmpty) continue;
       builder.addBinary(

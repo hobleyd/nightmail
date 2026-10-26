@@ -444,11 +444,13 @@ class GmailForwardAttachment {
     required this.attachmentId,
     required this.name,
     required this.contentType,
+    required this.size,
   });
 
   final String attachmentId;
   final String name;
   final String contentType;
+  final int size;
 }
 
 /// Parses the source message of a forward. `compute()` entry point.
@@ -470,6 +472,7 @@ GmailForwardSource parseGmailForwardSource(String rawJson) {
       attachmentId: a.attachmentId,
       name: a.name,
       contentType: a.contentType,
+      size: a.size,
     ));
   }
 

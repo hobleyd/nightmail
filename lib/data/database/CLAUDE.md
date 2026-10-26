@@ -81,3 +81,16 @@ still healthy. The gap left is the `.timeout(3 s)` in `_prepareForShutdown`,
 where the close does not finish. A SIGSEGV in `sqlite3_finalize` at quit is that
 gap, not a new bug.
 
+
+## An Upgrade Step Must Be Safe to Run Twice
+
+drift runs `onUpgrade` outside a transaction and writes the new `user_version`
+only after it returns. If the app dies in between, the file is left half
+upgraded, and the next open runs every step from the old version again. A plain
+`ALTER TABLE ... ADD COLUMN` then fails on the duplicate column, and since the
+open fails, every query fails with it. That happened with the v21
+`migration_jobs.scope` column: the Inbox spun forever on Linux. Add columns
+through `_addColumnIfMissing`, and write any other step so that repeating it is
+harmless (`IF NOT EXISTS`, or delete-and-rederive).
+`test/data/database/interrupted_upgrade_test.dart` rewinds a current file's
+version and reopens it.

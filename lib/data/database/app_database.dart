@@ -576,22 +576,48 @@ class AppDatabase extends _$AppDatabase
             // Only for a database that already has the v18 table — an older
             // one just created it above with the current columns, and adding
             // them again would fail on the duplicate column.
-            await m.addColumn(commitments, commitments.scheduledEventId);
-            await m.addColumn(commitments, commitments.scheduledStartMs);
-            await m.addColumn(commitments, commitments.scheduledEndMs);
+            await _addColumnIfMissing(
+                m, commitments, commitments.scheduledEventId);
+            await _addColumnIfMissing(
+                m, commitments, commitments.scheduledStartMs);
+            await _addColumnIfMissing(
+                m, commitments, commitments.scheduledEndMs);
           }
           if (from == 18 || from == 19) {
             // Additive: the model's effort estimate. Same guard as above —
             // a pre-v18 database created the table with this column already.
-            await m.addColumn(commitments, commitments.estimatedMinutes);
+            await _addColumnIfMissing(
+                m, commitments, commitments.estimatedMinutes);
           }
           if (from >= 17 && from < 21) {
             // Additive: Inbox-only migration jobs. Same guard again — a
             // pre-v17 database created the table with this column already.
-            await m.addColumn(migrationJobs, migrationJobs.scope);
+            await _addColumnIfMissing(m, migrationJobs, migrationJobs.scope);
           }
         },
       );
+
+  /// [Migrator.addColumn], skipped when the column is already there. drift
+  /// runs `onUpgrade` outside a transaction and records the new
+  /// `user_version` only after it returns, so an app that dies in between
+  /// leaves the column added but the version old - and every later open
+  /// re-ran the ALTER TABLE, failed on the duplicate column, and failed every
+  /// query with it (the v21 `scope` column did exactly that: an Inbox that
+  /// spun forever). Checking first makes the step safe to repeat.
+  Future<void> _addColumnIfMissing(
+    Migrator m,
+    TableInfo table,
+    GeneratedColumn column,
+  ) async {
+    final existing = await customSelect(
+      'SELECT name FROM pragma_table_info(?)',
+      variables: [Variable<String>(table.actualTableName)],
+    ).get();
+    if (existing.any((row) => row.read<String>('name') == column.name)) {
+      return;
+    }
+    await m.addColumn(table, column);
+  }
 
   Future<void> _createCommitmentIndexes() async {
     // The pane asks "what is open for this account", and the scan asks for

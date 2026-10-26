@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.40.12",
+  "version": "1.40.13",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "a forward no longer sends attachments the user removed",
-          "title": "compose"
+          "body": "sub-windows draw, and closing one no longer kills the app",
+          "title": "linux"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.40.12",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "a forward no longer sends attachments the user removed",
+              "title": "compose"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -403,23 +420,6 @@
             {
               "body": "stay under the 6,000-unit/minute per-user quota",
               "title": "gmail"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.38.8",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "answer a forwarded invitation instead of \"Could not find this meeting\"",
-              "title": "calendar"
             }
           ]
         }

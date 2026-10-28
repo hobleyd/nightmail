@@ -1,20 +1,41 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.40.14",
+  "version": "1.40.15",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "a half-finished upgrade no longer breaks every query",
-          "title": "database"
+          "body": "the Drafts list refreshes after a compose window deletes a draft",
+          "title": "linux"
+        },
+        {
+          "body": "closing a compose window no longer crashes the app",
+          "title": "linux"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.40.14",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "a half-finished upgrade no longer breaks every query",
+              "title": "database"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -381,23 +402,6 @@
             {
               "body": "name a running app whose bundle was replaced underneath it",
               "title": "update"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.39.2",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "a double-click on Reply opens one window, not two",
-              "title": "windows"
             }
           ]
         }

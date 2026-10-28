@@ -76,6 +76,40 @@ static void html_view_plugin_init(HtmlViewPlugin* self) {
 }
 
 // ---------------------------------------------------------------------------
+// Focus hand-back
+// ---------------------------------------------------------------------------
+
+// FlView is focusable but never grabs focus on a click, so once a click in a
+// WebKitWebView has taken GTK keyboard focus, clicking a Flutter text field
+// moves Flutter's focus but not GTK's: keystrokes keep going to the webview
+// and the field never sees them. Taken back here on any press over the
+// FlView, and only when it isn't already held, so a click inside Flutter
+// doesn't churn focus-in.
+//
+// On the FlView's event box, through the generic "event" signal: that runs
+// before "button-press-event", whose FlView handler reports the press handled
+// and would stop a later handler from running.
+static gboolean on_flutter_event(GtkWidget*, GdkEvent* event,
+                                 gpointer user_data) {
+  if (gdk_event_get_event_type(event) == GDK_BUTTON_PRESS) {
+    GtkWidget* fl_view = GTK_WIDGET(user_data);
+    if (!gtk_widget_has_focus(fl_view)) gtk_widget_grab_focus(fl_view);
+  }
+  return FALSE;
+}
+
+static void reclaim_focus_on_click(FlView* fl_view) {
+  GList* children = gtk_container_get_children(GTK_CONTAINER(fl_view));
+  for (GList* l = children; l != nullptr; l = l->next) {
+    if (GTK_IS_EVENT_BOX(l->data)) {
+      g_signal_connect(l->data, "event", G_CALLBACK(on_flutter_event),
+                       fl_view);
+    }
+  }
+  g_list_free(children);
+}
+
+// ---------------------------------------------------------------------------
 // Public registration entry point
 // ---------------------------------------------------------------------------
 
@@ -94,6 +128,7 @@ void html_view_plugin_register_with_registrar(FlPluginRegistrar* registrar) {
     if (GTK_IS_OVERLAY(parent)) {
       plugin->overlay = GTK_OVERLAY(parent);
     }
+    reclaim_focus_on_click(fl_view);
   }
 
   g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();

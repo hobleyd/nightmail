@@ -244,6 +244,19 @@ input plugin claim it — a button, a chip — clicking the editor no longer run
 webview, so it is cosmetic; it is named here because it is the one case where
 the guard suppresses work that used to happen.
 
+### Linux: GTK focus has to be taken back by hand
+
+The opposite direction is the problem on Linux. A click in a `WebKitWebView`
+takes GTK keyboard focus, and Flutter's `FlView` is focusable but never grabs
+focus on a click (`fl_view.cc`, still true on 3.47.8). So after a click in the
+compose body, clicking Subject or To moved Flutter's focus there but every
+keystroke still went to the webview; the fields were dead until the window was
+reopened (2026-10-28). `html_view_plugin.cc`'s `reclaim_focus_on_click` grabs
+focus for the `FlView` on any press over it that it doesn't already hold. It
+hooks the event box's generic `event` signal, because the `FlView`'s
+`button-press-event` handler reports the press handled and stops any handler
+connected after it.
+
 ## Formatting From the Keyboard
 
 The compose editor binds the Gmail/Docs/Outlook-web set, because that is the

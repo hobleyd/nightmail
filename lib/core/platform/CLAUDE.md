@@ -165,12 +165,50 @@ Flutter `master` as of 3.47.8:
 engine, GTK and WebKitGTK all call EGL and GLX through libepoxy's exported
 dispatch pointers, so `main()` replaces those pointers **before GTK starts**:
 
-- `eglInitialize`/`eglTerminate` are reference-counted per display;
+- `eglTerminate` never reaches the driver;
 - `eglMakeCurrent` retries once after `gdk_gl_context_clear_current()`;
-- `glXMake(Context)Current` releases any current EGL context first.
+- `glXMake(Context)Current` releases any current EGL context first;
+- `eglDestroyContext` never reaches the driver either (it releases the context
+  if it is current on this thread);
+- a thread that made an EGL context current releases it as it exits.
 
-Each case is safe because both sides make their own context current again
-before they use it. All three reproduce outside Flutter in a few dozen lines
+**A closed sub-window's EGL contexts are never freed.** Deleting them
+segfaulted NVIDIA 580 in `libnvidia-eglcore` at offset `0xa5f05f`, a read
+near address `0x1230`, and took the app down on closing a compose window
+(2026-10-28; the kernel log line names the library, and `diagnostics.log` shows
+nothing). The route into the deletion varied. It was either the deferred delete
+of the context the compositor left current, run from
+`shim_glx_make_context_current` at the main window's next paint, or
+`FlOpenGLManager`'s own `eglDestroyContext` under `g_object_unref`. The
+deletion itself faults. Ruled out under gdb, each still crashing:
+
+- releasing the context on the main thread before destroying it;
+- releasing the contexts the raster and IO threads still held (they did) as
+  those threads exit.
+
+So the shim stops both calls short, the way the sqlite handle is leaked
+(`lib/data/database/CLAUDE.md`). A real `eglTerminate`, even the last one,
+would free every leaked context at once and move the crash to quit. NVIDIA's
+EGL does that anyway from its own exit handler: quitting crashed under
+`__run_exit_handlers` → `libEGL_nvidia`. So once a context has been left alive,
+the shim registers an `on_exit` handler that flushes stdio and `_exit`s. Exit
+handlers run newest first, and the driver's was registered when it loaded, so
+ours runs first. That covers Dart's `exit(0)` in the updater too. Anything
+that needs an exit handler to run on Linux must register after that point, or
+it won't.
+
+Leaked outright, each closed sub-window held ~35 MiB of GPU memory and as much
+RAM until quit. So a closed engine's three contexts are pooled and handed to
+the next engine that starts. Each pooled set is scrubbed first, meaning every GL object
+name in it is deleted: the engine frees its window-sized framebuffer with no
+context current, so without the scrub GPU memory still grew ~30 MiB a window.
+With it, five compose windows in a row reused one set and GPU memory stayed at
+200–235 MiB (2026-10-28). The scrub costs ~45 ms when a window opens. Measure
+`nvidia-smi` across ten opens before you change any of this, and get a gdb
+trace of a close first.
+
+Each of the first three cases is safe because both sides make their own
+context current again before they use it. All three reproduce outside Flutter in a few dozen lines
 of C against GTK and epoxy (two `FlOpenGLManager`-shaped context sets, or one
 plus a realized `GdkGLContext`). Build one before you change the shim.
 

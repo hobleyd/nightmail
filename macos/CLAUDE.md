@@ -55,9 +55,9 @@ done this). The extra refetch is wasted work, not a loop — `eventSaved` trigge
 excluding the origin would be a third behaviour to keep in step with the other
 platforms.
 
-The Dart callers are best-effort regardless: only macOS and Windows implement
-these relays at all, so Linux, Android and iOS raise `MissingPluginException`
-every time as a matter of course.
+The Dart callers are best-effort regardless: only macOS, Windows and Linux
+(`linux/runner/window_relay.cc`) implement these relays, so Android and iOS
+raise `MissingPluginException` every time as a matter of course.
 
 ## The Notification Delegate Is Stolen by Every Sub-Window
 

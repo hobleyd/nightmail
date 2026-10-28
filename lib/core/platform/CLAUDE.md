@@ -212,6 +212,13 @@ context current again before they use it. All three reproduce outside Flutter in
 of C against GTK and epoxy (two `FlOpenGLManager`-shaped context sets, or one
 plus a realized `GdkGLContext`). Build one before you change the shim.
 
+The `calendar_refresh`/`drafts_refresh` relays (`macos/CLAUDE.md`) live in
+`linux/runner/window_relay.cc`. They are registered from `my_application.cc` on
+the main view and in `desktop_multi_window`'s window-created callback, so every
+sub-window gets them. A closed window's channels are dropped when its `FlView`
+is finalized. Until then, a broadcast to one is a silent no-op, because its
+messenger has lost its engine.
+
 The sub-window's `FlView` also has to sit in a `GtkOverlay`, as the main
 window's does (`my_application.cc`), or `html_view` refuses `createView` with
 `no_overlay` and the compose editor never appears. `desktop_multi_window` adds

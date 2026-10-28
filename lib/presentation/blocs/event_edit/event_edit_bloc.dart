@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../domain/usecases/create_calendar_event.dart';
 import '../../../domain/usecases/propose_new_time.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
 import '../../../infrastructure/notifications/notification_service.dart';
+import '../../../infrastructure/notifications/reminder_reconcile_channel.dart';
 import 'event_edit_event.dart';
 import 'event_edit_state.dart';
 
@@ -14,7 +17,10 @@ class EventEditBloc extends Bloc<EventEditBlocEvent, EventEditState> {
     required this._proposeNewTime,
     required this._notificationService,
     this.accountId,
-  })  : super(const EventEditInitial()) {
+    Future<void> Function()? requestReminderReconcile,
+  })  : _requestReminderReconcile =
+            requestReminderReconcile ?? ReminderReconcileChannel.reconcileNow,
+        super(const EventEditInitial()) {
     on<EventEditSubmitted>(_onSubmitted);
     on<EventEditProposeSubmitted>(_onProposeSubmitted);
   }
@@ -27,6 +33,17 @@ class EventEditBloc extends Bloc<EventEditBlocEvent, EventEditState> {
   /// The account this event belongs to. Needed to namespace scheduled
   /// reminder notification ids; reminder scheduling is skipped if null.
   final String? accountId;
+
+  /// Re-derives every reminder from the server now (see
+  /// [ReminderReconcileChannel.reconcileNow]).
+  ///
+  /// The cancel/schedule below is keyed by the id that was edited, and a
+  /// reminder is filed under each *occurrence's* id. Saving a series edits the
+  /// master, and moving it re-keys every occurrence (Google names an instance
+  /// `<master>_<start>`), so no id this bloc holds reaches the old countdown:
+  /// a 1:1 moved 30 minutes later still announced itself at the old time until
+  /// the 15-minute cycle came round. Only a fetch sees the new ids.
+  final Future<void> Function() _requestReminderReconcile;
 
   Future<void> _onSubmitted(
     EventEditSubmitted event,
@@ -87,6 +104,9 @@ class EventEditBloc extends Bloc<EventEditBlocEvent, EventEditState> {
           notifyScope: event.notifyScope,
         ),
       );
+      // Sent before Saved, which closes the edit window and its engine with
+      // it, but not awaited: the reply waits on a fetch of every account.
+      if (result.isRight()) unawaited(_requestReminderReconcile());
       result.fold(
         (f) => emit(EventEditError(message: f.message)),
         (e) {

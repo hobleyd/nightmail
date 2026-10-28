@@ -231,3 +231,27 @@ scheduled. Four things here are deliberate:
 To see what is queued and by whom, decode `record.data` (a binary plist holding
 the request identifier and `srce`) for the rows whose `app_id` maps to
 `au.com.sharpblue.nightmail`; undelivered ones have `delivered_date IS NULL`.
+
+## A Series Change Is Reconciled, Not Patched by Id
+
+Observed on a real machine: a recurring 1:1 moved 30 minutes later with
+**Edit Series** kept its old 08:45–09:00 countdown. Every alert is filed under
+one *occurrence's* id, and Google names an occurrence `<master>_<start>`, so
+moving the master re-keys every occurrence. The edit window's
+cancel/reschedule held only the master's id, so nothing it cancelled was
+queued, and the old alerts lived until the 15-minute cycle, by which time they
+had fired. **Cancel Series** has the same blind spot for every occurrence but
+the one clicked.
+
+So the edit window's save, Cancel Series and drag-to-reschedule each call
+`ReminderReconcileChannel.reconcileNow()` on success: the main window runs its
+reconcile in-process, and any other window sends it the cross-window request.
+The fetch is what sees the new ids. The reconciler then drops each old-id
+row as "not wanted" and cancels its alerts. Two details matter:
+
+- **Not awaited.** The reply waits on a fetch of every account. In the edit
+  window it is fired *before* `EventEditSaved`, because Saved closes the
+  window and its engine with it.
+- **`requestReconcile` alone is not enough.** It returns early in the main
+  window, and `CalendarBloc` runs there too (the home page's calendar), which
+  is why `listen` keeps the handler for `reconcileNow` to call.

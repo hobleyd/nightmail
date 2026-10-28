@@ -57,6 +57,7 @@ void main() {
   late MockUpdateCalendarEvent mockUpdate;
   late MockProposeNewTime mockPropose;
   late MockNotificationService mockNotifications;
+  late int reconcileRequests;
 
   setUp(() {
     provideDummy<Either<Failure, CalendarEvent>>(Right(_savedEvent('x')));
@@ -65,6 +66,7 @@ void main() {
     mockUpdate = MockUpdateCalendarEvent();
     mockPropose = MockProposeNewTime();
     mockNotifications = MockNotificationService();
+    reconcileRequests = 0;
     // Fire-and-forget calls from _onSubmitted — stub unconditionally so an
     // unstubbed call doesn't throw MissingStubError; tests verify() the ones
     // they care about.
@@ -88,6 +90,7 @@ void main() {
         proposeNewTime: mockPropose,
         notificationService: mockNotifications,
         accountId: accountId,
+        requestReminderReconcile: () async => reconcileRequests++,
       );
 
   test('starts in EventEditInitial', () {
@@ -234,6 +237,23 @@ void main() {
       ]);
     });
 
+    test('asks the main window to reconcile reminders before reporting Saved',
+        () async {
+      // Saving a series edits its master, and moving it re-keys every
+      // occurrence; only a fetch sees the new ids, so the old countdown would
+      // otherwise fire until the 15-minute cycle.
+      final bloc = makeBloc();
+      addTearDown(bloc.close);
+      when(mockUpdate(any))
+          .thenAnswer((_) async => Right(_savedEvent('event-1')));
+
+      bloc.add(_updateSubmitted(reminderMinutes: 10));
+      await bloc.stream.firstWhere((s) {
+        if (s is EventEditSaved) expect(reconcileRequests, 1);
+        return s is EventEditSaved;
+      });
+    });
+
     test('cancels the existing reminder and schedules nothing when none is '
         'requested any more', () async {
       final bloc = makeBloc();
@@ -273,6 +293,8 @@ void main() {
           const EventEditError(message: 'nope'),
         ]),
       );
+      // Nothing changed server-side, so there is nothing to re-derive.
+      expect(reconcileRequests, 0);
     });
   });
 

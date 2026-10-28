@@ -26,11 +26,15 @@ abstract final class ReminderReconcileChannel {
 
   static const _reconcileMethod = 'reconcile';
 
+  /// The main window's handler, kept so [reconcileNow] can run it in-process.
+  static Future<void> Function()? _onReconcile;
+
   /// Main window only: runs [onReconcile] whenever a sub-window asks.
   ///
   /// Safe to call more than once — re-registering only swaps the handler.
   static Future<void> listen(Future<void> Function() onReconcile) async {
     if (!AppWindow.isMain) return;
+    _onReconcile = onReconcile;
     try {
       await _channel.setMethodCallHandler((MethodCall call) async {
         if (call.method == _reconcileMethod) await onReconcile();
@@ -40,6 +44,23 @@ abstract final class ReminderReconcileChannel {
       // Losing the channel costs immediacy, not correctness: the periodic
       // reconcile still catches everything on its next cycle.
       debugPrint('ReminderReconcileChannel.listen failed: $e');
+    }
+  }
+
+  /// Reconciles now from whichever window the caller is in: the main window
+  /// runs its own handler, any other window asks it to via [requestReconcile].
+  ///
+  /// For a change whose stale alerts no id the caller holds can reach — a
+  /// series cancelled or moved re-keys or removes every occurrence, and each
+  /// occurrence's alerts are filed under its own id. Only the reconciler's
+  /// fetch sees what the server now holds. Best-effort, like
+  /// [requestReconcile]: the periodic cycle remains the safety net.
+  static Future<void> reconcileNow() async {
+    if (!AppWindow.isMain) return requestReconcile();
+    try {
+      await _onReconcile?.call();
+    } catch (e) {
+      debugPrint('ReminderReconcileChannel.reconcileNow failed: $e');
     }
   }
 

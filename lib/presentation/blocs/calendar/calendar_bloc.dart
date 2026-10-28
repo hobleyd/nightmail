@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -16,6 +18,7 @@ import '../../../domain/usecases/get_calendar_events.dart';
 import '../../../domain/usecases/update_calendar_event.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
 import '../../../infrastructure/notifications/notification_service.dart';
+import '../../../infrastructure/notifications/reminder_reconcile_channel.dart';
 import 'calendar_event.dart';
 import 'calendar_state.dart';
 
@@ -29,7 +32,10 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
     required this._updateCalendarEvent,
     required this._notificationService,
     required this._accountManager,
-  })  : super(CalendarInitial(weekStart: _mondayOfWeek(DateTime.now()))) {
+    Future<void> Function()? requestReminderReconcile,
+  })  : _requestReminderReconcile =
+            requestReminderReconcile ?? ReminderReconcileChannel.reconcileNow,
+        super(CalendarInitial(weekStart: _mondayOfWeek(DateTime.now()))) {
     on<CalendarWeekLoadRequested>(_onLoadRequested);
     on<CalendarWeekNavigated>(_onWeekNavigated);
     on<CalendarEventCancelRequested>(_onCancelRequested);
@@ -50,6 +56,14 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
   final UpdateCalendarEvent _updateCalendarEvent;
   final NotificationService _notificationService;
   final AccountManager _accountManager;
+
+  /// Re-derives every reminder from the server now (see
+  /// [ReminderReconcileChannel.reconcileNow]). Cancelling a series removes
+  /// occurrences other than the one clicked, whose alerts [_cancelReminder]
+  /// cannot reach by id; a drag re-arms from the dragged copy rather than
+  /// from what the server saved. Without it both waited on the 15-minute
+  /// cycle. Not awaited — it fetches every account.
+  final Future<void> Function() _requestReminderReconcile;
 
   static const _calendarRefreshChannel =
       MethodChannel('au.com.sharpblue.nightmail/calendar_refresh');
@@ -124,6 +138,7 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
     );
     if (result.isRight()) {
       await _cancelReminder(event.eventId);
+      unawaited(_requestReminderReconcile());
       await _notifyOtherWindows();
       await _fetchWeek(weekStart, emit);
     }
@@ -197,6 +212,7 @@ class CalendarBloc extends Bloc<CalendarBlocEvent, CalendarState> {
         reminderMinutes: e.reminderMinutes!,
       );
     }
+    if (result.isRight()) unawaited(_requestReminderReconcile());
     result.fold(
       (failure) => emit(CalendarError(
           weekStart: weekStart,

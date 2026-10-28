@@ -56,6 +56,7 @@ void main() {
   late MockUpdateCalendarEvent mockUpdateCalendarEvent;
   late MockNotificationService mockNotificationService;
   late MockAccountManager mockAccountManager;
+  late int reconcileRequests;
 
   CalendarBloc makeBloc() => CalendarBloc(
         getCalendarEvents: mockGetCalendarEvents,
@@ -66,6 +67,7 @@ void main() {
         updateCalendarEvent: mockUpdateCalendarEvent,
         notificationService: mockNotificationService,
         accountManager: mockAccountManager,
+        requestReminderReconcile: () async => reconcileRequests++,
       );
 
   setUp(() {
@@ -77,6 +79,7 @@ void main() {
     mockUpdateCalendarEvent = MockUpdateCalendarEvent();
     mockNotificationService = MockNotificationService();
     mockAccountManager = MockAccountManager();
+    reconcileRequests = 0;
     when(mockAccountManager.activeAccount).thenReturn(const GmailAccount(
       id: 'acct1',
       displayName: 'Test',
@@ -285,6 +288,93 @@ void main() {
       verify(mockGetCalendarEvents(any)).called(1);
     });
 
+  });
+
+  // Cancelling a series removes occurrences other than the one clicked, and a
+  // drag re-arms from the dragged copy — neither can be fully put right by id,
+  // so both ask for a reconcile against the server rather than leave the old
+  // alerts to the 15-minute cycle.
+  group('CalendarBloc reminder reconcile', () {
+    final occurrence = CalendarEvent(
+      id: 'series_20260610T090000Z',
+      subject: '1:1',
+      start: DateTime.utc(2026, 6, 10, 9),
+      end: DateTime.utc(2026, 6, 10, 9, 30),
+      isAllDay: false,
+      reminderMinutes: 10,
+    );
+
+    setUp(() {
+      provideDummy<Either<Failure, CalendarEvent>>(Right(occurrence));
+      when(mockGetCalendarEvents(any))
+          .thenAnswer((_) async => Right(_tEvents));
+    });
+
+    Future<void> settle(CalendarBloc bloc) async {
+      await bloc.stream
+          .firstWhere((s) => s is CalendarLoaded || s is CalendarError);
+      await bloc.close();
+    }
+
+    test('cancelling a series asks for one', () async {
+      when(mockCancelCalendarEventSeries(any))
+          .thenAnswer((_) async => Right(null));
+
+      final bloc = makeBloc();
+      bloc.add(CalendarEventCancelSeriesRequested(
+        eventId: occurrence.id,
+        seriesMasterId: 'series',
+        occurrenceStart: occurrence.start,
+      ));
+      await settle(bloc);
+
+      expect(reconcileRequests, 1);
+    });
+
+    test('a series cancel that fails asks for none', () async {
+      when(mockCancelCalendarEventSeries(any)).thenAnswer(
+          (_) async => const Left(ServerFailure(message: 'nope')));
+
+      final bloc = makeBloc();
+      bloc.add(CalendarEventCancelSeriesRequested(
+        eventId: occurrence.id,
+        seriesMasterId: 'series',
+        occurrenceStart: occurrence.start,
+      ));
+      await settle(bloc);
+
+      expect(reconcileRequests, 0);
+    });
+
+    test('dragging a meeting asks for one', () async {
+      when(mockUpdateCalendarEvent(any))
+          .thenAnswer((_) async => Right(occurrence));
+
+      final bloc = makeBloc();
+      bloc.add(CalendarEventRescheduleRequested(
+        event: occurrence,
+        newStart: occurrence.start.add(const Duration(minutes: 30)),
+        newEnd: occurrence.end.add(const Duration(minutes: 30)),
+      ));
+      await settle(bloc);
+
+      expect(reconcileRequests, 1);
+    });
+
+    test('a drag that fails to save asks for none', () async {
+      when(mockUpdateCalendarEvent(any)).thenAnswer(
+          (_) async => const Left(ServerFailure(message: 'nope')));
+
+      final bloc = makeBloc();
+      bloc.add(CalendarEventRescheduleRequested(
+        event: occurrence,
+        newStart: occurrence.start.add(const Duration(minutes: 30)),
+        newEnd: occurrence.end.add(const Duration(minutes: 30)),
+      ));
+      await settle(bloc);
+
+      expect(reconcileRequests, 0);
+    });
   });
 
   group('CalendarBloc cache-first loading', () {

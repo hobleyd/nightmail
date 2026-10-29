@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.40.16",
+  "version": "1.41.0",
   "sections": [
     {
-      "type": "fixes",
-      "title": "Fixes",
+      "type": "features",
+      "title": "New features",
       "items": [
         {
-          "body": "a moved or cancelled series no longer fires its old reminders",
-          "title": "calendar"
+          "body": "one meeting-reminders dialog on every platform",
+          "title": "reminders"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.40.16",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "a moved or cancelled series no longer fires its old reminders",
+              "title": "calendar"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -375,23 +392,6 @@
             {
               "body": "clear the marker a completed install leaves behind, which refused every later install",
               "title": "update"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.39.4",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "text typed after *bold* is plain again",
-              "title": "compose"
             }
           ]
         }

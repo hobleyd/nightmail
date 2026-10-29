@@ -1,24 +1,41 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.40.15",
+  "version": "1.40.16",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "the Drafts list refreshes after a compose window deletes a draft",
-          "title": "linux"
-        },
-        {
-          "body": "closing a compose window no longer crashes the app",
-          "title": "linux"
+          "body": "a moved or cancelled series no longer fires its old reminders",
+          "title": "calendar"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.40.15",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "the Drafts list refreshes after a compose window deletes a draft",
+              "title": "linux"
+            },
+            {
+              "body": "closing a compose window no longer crashes the app",
+              "title": "linux"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -375,33 +392,6 @@
             {
               "body": "text typed after *bold* is plain again",
               "title": "compose"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.39.3",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "numbered lists from \"1. \" and *bold*, _italic_, ~struck~ as you type",
-              "title": "compose"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "name a running app whose bundle was replaced underneath it",
-              "title": "update"
             }
           ]
         }

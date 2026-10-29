@@ -62,6 +62,7 @@ The app provides a desktop based three-pane layout (folders, message list, readi
   free slot (see below)
 - Propose new meeting times from the full event form, with the guests' availability shown while you pick the slot; accept a proposed time as the organizer (moves the meeting and re-invites attendees)
 - New meetings default to a 15-minute reminder
+- One meeting-reminders dialog lists every upcoming meeting and counts each down (15, 10, 5 minutes, starting now), with per-meeting dismiss; toggle under Settings > Appearance > Show Meeting Reminders
 - Recurring event support, with per-occurrence or whole-series edit and cancel
 - Editing a meeting you organize notifies attendees of the change
 - Inline **Join** button on a meeting tile from 3 minutes before it starts until it ends, for meetings with a video-call link

@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -339,14 +338,6 @@ class NotificationService {
   // macOS only: called from Swift via the native channel.
   Future<dynamic> _handleNativeCall(MethodCall call) async {
     switch (call.method) {
-      case 'showReminderPopup':
-        final args = Map<String, dynamic>.from(call.arguments as Map);
-        await _openReminderPopup(
-          eventId: args['eventId'] as String? ?? '',
-          eventTitle: args['eventTitle'] as String? ?? '',
-          startIso: args['startIso'] as String?,
-          minutesUntilStart: args['minutesUntilStart'] as int?,
-        );
       case 'openEmail':
         final args = Map<String, dynamic>.from(call.arguments as Map);
         final emailId = args['emailId'] as String?;
@@ -403,25 +394,6 @@ class NotificationService {
           _setAction(OpenTasksAction(accountId: accountId));
         }
     }
-  }
-
-  Future<void> _openReminderPopup({
-    required String eventId,
-    required String eventTitle,
-    String? startIso,
-    int? minutesUntilStart,
-  }) async {
-    await WindowController.create(
-      WindowConfiguration(
-        arguments: jsonEncode({
-          'type': 'eventReminder',
-          'eventId': eventId,
-          'eventTitle': eventTitle,
-          'startIso': ?startIso,
-          'minutesUntilStart': ?minutesUntilStart,
-        }),
-      ),
-    );
   }
 
   /// Shows a per-email notification. On macOS goes via the native channel;
@@ -598,13 +570,10 @@ class NotificationService {
       // rescheduling supersedes (rather than doubles up on) a reminder left
       // pending by a build that only ever scheduled one alert per event.
       final key = i == 0 ? base : _followUpKey(base, offset);
-      final body = _countdownLabel(offset);
-      // The macOS reminder popup is NightMail's own window, not an OS banner,
-      // so only the two alerts worth interrupting for get one: the first (the
-      // lead-time warning the user asked for) and the last (the meeting is
-      // starting). The countdown in between arrives as a banner, which is what
-      // every other platform shows throughout.
-      final popup = i == 0 || offset == 0;
+      final body = countdownLabel(offset);
+      // The meeting-reminders dialog is not driven from here: it is the main
+      // window's own, ticking off wall-clock time (`MeetingReminderBoard`),
+      // because only macOS has a delivery hook to drive it from.
 
       if (Platform.isMacOS) {
         try {
@@ -616,7 +585,6 @@ class NotificationService {
             'startIso': iso,
             'eventId': eventId,
             'minutesUntilStart': offset,
-            'popup': popup,
           });
         } catch (_) {}
         continue;
@@ -1098,7 +1066,6 @@ class NotificationService {
   /// The offsets, in minutes before the start, at which the reminder series for
   /// a meeting with a [reminderMinutes] lead time fires: the lead-time alert
   /// first, then the countdown, always ending at 0 — the final "Starting now".
-  @visibleForTesting
   static List<int> reminderOffsets(int reminderMinutes) => [
         if (reminderMinutes > 0) reminderMinutes,
         for (final offset in _followUpOffsets)
@@ -1121,7 +1088,10 @@ class NotificationService {
   static int _taskNotifId(String accountId, String taskId) =>
       _idFor(_taskKey(accountId, taskId));
 
-  static String _countdownLabel(int minutesUntilStart) => minutesUntilStart <= 0
+  /// What one alert of a series says: "Starting in 10 minutes", or "Starting
+  /// now" at the start. Shared with the meeting-reminders dialog so a row and
+  /// the banner it accompanies read the same.
+  static String countdownLabel(int minutesUntilStart) => minutesUntilStart <= 0
       ? 'Starting now'
       : 'Starting in ${_minutesLabel(minutesUntilStart)}';
 

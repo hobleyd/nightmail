@@ -11,6 +11,9 @@ class AppSettings {
   static const bool defaultConfirmDeleteEmail = true;
   static const String _confirmDeleteEmailFile = 'confirm_delete_email';
 
+  static const bool defaultShowMeetingReminders = true;
+  static const String _showMeetingRemindersFile = 'show_meeting_reminders';
+
   static const String _externalImageDomainsFile = 'external_image_domains';
 
   static const EmailBodyType defaultComposeFormat = EmailBodyType.html;
@@ -52,6 +55,23 @@ class AppSettings {
   Future<void> saveConfirmDeleteEmail(bool value) async {
     try {
       final file = await _file(_confirmDeleteEmailFile);
+      await file.writeAsString('$value');
+    } catch (_) {}
+  }
+
+  Future<bool> loadShowMeetingReminders() async {
+    try {
+      final file = await _file(_showMeetingRemindersFile);
+      if (await file.exists()) {
+        return (await file.readAsString()).trim() == 'true';
+      }
+    } catch (_) {}
+    return defaultShowMeetingReminders;
+  }
+
+  Future<void> saveShowMeetingReminders(bool value) async {
+    try {
+      final file = await _file(_showMeetingRemindersFile);
       await file.writeAsString('$value');
     } catch (_) {}
   }

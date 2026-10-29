@@ -14,6 +14,7 @@ import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import '../../injection_container.dart';
+import '../../infrastructure/notifications/meeting_reminder_board.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import 'settings/ai_settings_page.dart';
@@ -324,6 +325,8 @@ class _AppearanceSection extends StatelessWidget {
         _FontSizeSetting(),
         const SizedBox(height: 12),
         const _ComposeFormatSetting(),
+        const SizedBox(height: 12),
+        const _MeetingRemindersSetting(),
       ],
     );
   }
@@ -617,6 +620,56 @@ class _DeleteConfirmSettingState extends State<_DeleteConfirmSetting> {
                 if (val == null) return;
                 setState(() => _value = val);
                 sl<AppSettings>().saveConfirmDeleteEmail(val);
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MeetingRemindersSetting extends StatefulWidget {
+  const _MeetingRemindersSetting();
+
+  @override
+  State<_MeetingRemindersSetting> createState() =>
+      _MeetingRemindersSettingState();
+}
+
+class _MeetingRemindersSettingState extends State<_MeetingRemindersSetting> {
+  bool _value = AppSettings.defaultShowMeetingReminders;
+
+  @override
+  void initState() {
+    super.initState();
+    sl<AppSettings>().loadShowMeetingReminders().then((v) {
+      if (mounted) setState(() => _value = v);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Row(
+      children: [
+        Text(
+          'Show Meeting Reminders',
+          style: TextStyle(color: c.textSecondary, fontSize: 13),
+        ),
+        const Spacer(),
+        SizedBox(
+          width: 180,
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: Checkbox(
+              value: _value,
+              onChanged: (val) {
+                if (val == null) return;
+                setState(() => _value = val);
+                sl<AppSettings>().saveShowMeetingReminders(val);
+                // Settings runs in the main window, beside the board.
+                sl<MeetingReminderBoard>().setEnabled(val);
               },
             ),
           ),

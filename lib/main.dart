@@ -35,7 +35,7 @@ import 'presentation/pages/compose_window.dart';
 import 'presentation/pages/email_view_window.dart';
 import 'presentation/pages/event_edit_window.dart';
 import 'presentation/pages/image_view_window.dart';
-import 'presentation/pages/reminder_popup_window.dart';
+import 'presentation/pages/meeting_reminders_window.dart';
 import 'presentation/pages/tasks_window.dart';
 import 'presentation/pages/home_page.dart';
 
@@ -265,12 +265,16 @@ void main(List<String> args) async {
       return;
     }
 
-    if (arguments['type'] == 'eventReminder') {
-      final title = arguments['eventTitle'] as String? ?? 'Reminder';
+    if (arguments['type'] == meetingRemindersWindowType) {
+      final rows = arguments['rows'] as List<dynamic>? ?? const [];
       await showSubWindow(
-        WindowOptions(size: const Size(300, 160), center: true, title: title),
+        WindowOptions(
+          size: MeetingRemindersWindowApp.initialSizeFor(rows.length),
+          center: true,
+          title: 'Meeting Reminders',
+        ),
       );
-      runApp(ReminderPopupWindowApp(arguments: arguments));
+      runApp(MeetingRemindersWindowApp(arguments: arguments));
       return;
     }
 

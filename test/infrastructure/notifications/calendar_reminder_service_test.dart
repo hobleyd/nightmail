@@ -13,12 +13,14 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
+import 'package:nightmail/core/settings/app_settings.dart';
 import 'package:nightmail/data/database/app_database.dart';
 import 'package:nightmail/data/datasources/remote/calendar_remote_datasource.dart';
 import 'package:nightmail/data/models/calendar_event_model.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 import 'package:nightmail/infrastructure/notifications/calendar_reminder_service.dart';
+import 'package:nightmail/infrastructure/notifications/meeting_reminder_board.dart';
 import 'package:nightmail/infrastructure/notifications/notification_service.dart';
 
 import 'calendar_reminder_service_test.mocks.dart';
@@ -520,6 +522,28 @@ void main() {
         startDateTime: anyNamed('startDateTime'),
         endDateTime: anyNamed('endDateTime'),
       ));
+      expect(await db.getScheduledReminders(account.id), isEmpty);
+    });
+
+    test('still fetches for the meeting-reminders dialog when it has one',
+        () async {
+      // The dialog is in-process and dies with it, so it carries none of the
+      // cross-build hazard the drain exists for; a developer run shows it.
+      final start = DateTime.now().toUtc().add(const Duration(minutes: 5));
+      stubEvents([event('e1', start: start)]);
+      final board = MeetingReminderBoard(settings: AppSettings());
+      service = CalendarReminderService(
+        accountManager: accountManager,
+        notificationService: notifications,
+        database: db,
+        schedulesReminders: false,
+        board: board,
+      );
+
+      await service.reconcileAll();
+
+      verify(notifications.drainReminders()).called(1);
+      expect([for (final r in board.rows) r.eventId], ['e1']);
       expect(await db.getScheduledReminders(account.id), isEmpty);
     });
 

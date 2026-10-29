@@ -47,6 +47,7 @@ import '../blocs/mail_poller/mail_poller_state.dart';
 import '../blocs/commitments/commitments_cubit.dart';
 import '../blocs/ai/ai_folder_cubit.dart';
 import '../blocs/email_list/email_list_state.dart';
+import '../widgets/meeting_reminder_host.dart';
 import '../widgets/ai_day_panel.dart';
 import '../widgets/email_list_panel.dart';
 import '../widgets/email_selection.dart';
@@ -116,7 +117,7 @@ class HomePage extends StatelessWidget {
         // icon has to be able to appear before the user goes looking.
         BlocProvider.value(value: sl<UpdateCubit>()..start()),
       ],
-      child: const _HomeView(),
+      child: const MeetingReminderHost(child: _HomeView()),
     );
   }
 }

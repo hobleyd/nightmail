@@ -1,6 +1,6 @@
 # Notifications & Reminders
 
-The overdue-tasks badge and the OS notification-budget rules behind `CalendarReminderService`/`TaskReminderService`. See [../../../CLAUDE.md](../../../CLAUDE.md) for architecture-wide rules and [../calendar/CLAUDE.md](../calendar/CLAUDE.md) for where the underlying events come from.
+The overdue-tasks badge, the OS notification-budget rules behind `CalendarReminderService`/`TaskReminderService`, and the meeting-reminders dialog. See [../../../CLAUDE.md](../../../CLAUDE.md) for architecture-wide rules and [../calendar/CLAUDE.md](../calendar/CLAUDE.md) for where the underlying events come from.
 
 ## The Overdue-Tasks Badge
 
@@ -202,8 +202,10 @@ So the fix is at the source. `AppConfig.schedulesOsReminders` is true only in a
 release build (or with `--dart-define=NIGHTMAIL_DEBUG_REMINDERS=true`); in any
 other build a reconcile pass is a **drain** — `NotificationService.drainReminders`
 cancels every event and task request this build's identity holds, and the
-service deletes the rows *its own* accounts wrote — and nothing is fetched or
-scheduled. Four things here are deliberate:
+service deletes the rows *its own* accounts wrote — and nothing is
+scheduled. The calendar service still fetches, but only to feed the
+meeting-reminders dialog (below), which lives and dies with the process and so
+carries none of this hazard. Four things here are deliberate:
 
 - **The drain is not keyed by account.** The accounts a developer run held
   last week may since have been re-added under fresh ids; the OS is asked what
@@ -231,6 +233,59 @@ scheduled. Four things here are deliberate:
 To see what is queued and by whom, decode `record.data` (a binary plist holding
 the request identifier and `srce`) for the rows whose `app_id` maps to
 `au.com.sharpblue.nightmail`; undelivered ones have `delivered_date IS NULL`.
+
+## The Meeting-Reminders Dialog Is Driven by the Clock, Not by Delivery
+
+One dialog lists every meeting due a reminder (Settings > Appearance > **Show
+Meeting Reminders**, on by default). It is its own sub-window on macOS, Windows
+and Linux (`meeting_reminders_window.dart`, type `meetingReminders`) and a
+modal `Dialog` on iOS and Android, which have no sub-windows
+(`MeetingReminderHost`, mounted in `HomePage`). Both render
+`MeetingReminderList`.
+
+It used to be a popup per alert, opened from macOS's `willPresent` — the only
+platform with a delivery hook. No other platform tells the app a scheduled
+notification fired, so the dialog is now driven from Dart:
+`MeetingReminderBoard` in the main window is handed every account's fetched
+events on each `CalendarReminderService` pass (all of them, not the
+budget-trimmed set — it holds no OS resource), and ticks every 15 s on wall
+clock. `willPresent` no longer opens anything; the OS banners are unchanged and
+the setting does not affect them.
+
+- **Rows are computed, not scheduled.** Each tick works out each meeting's
+  *latest* due offset from `reminderOffsets` (`rowsAt`, pure and tested). A
+  `Timer` per alert runs on monotonic time and fires long after the meeting on
+  a Mac that slept through it; the computation also makes 10 replace 15, and a
+  wake shows only the newest step rather than replaying the countdown.
+- **A row lasts from the first alert until 10 minutes after the start**
+  (`startedGrace`), or the end if sooner. The end alone held a "Starting now"
+  row all day for a long event, and announced it afresh on every launch.
+  **All-day events are left out**: an 18-hour lead counts down to midnight.
+  A started meeting a later fetch no longer lists (a fetch starts at "now")
+  keeps its row; one not yet started that disappears was cancelled and goes.
+  A failed fetch keeps the account's previous events, as the rows do.
+- **Dismissals are in memory only**, so a restart mid-countdown shows the
+  current step again. The window is always-on-top: it usually opens while
+  another app is in front.
+- **Only a new step opens or fronts the dialog** (`MeetingReminderUpdate.alert`).
+  Rows leaving, dismissals and the setting just update what is showing, so
+  closing the window is not undone until some meeting's next alert.
+- **Dismissal is per alert**, keyed `account::event::startMs::offset`: the
+  meeting returns at its next step, and a moved meeting returns at once.
+- **The main window owns all state.** It pushes rows with
+  `WindowController.invokeMethod('setRows')` (or `close` when empty); the
+  window registers that handler *before* pulling a snapshot over
+  `MeetingReminderChannel`, so a push racing its start cannot be lost.
+  Dismissals go back over the same channel. Window work is serialised in the
+  host so two updates cannot each create a window.
+- **The window measures itself.** `MeetingReminderList` has no fixed heights;
+  the window lays it out unbounded in a scroll view, and after every build
+  sets its frame to the content's height plus whatever the frame adds (frame
+  height less view height — the title bar is never guessed), keeping its top
+  edge, capped at `maxContentHeight`. Fixed per-row and title-bar constants
+  clipped the content on a real Mac.
+- **The board's tick only starts in the main window** (`start()` from the
+  host). The background isolate's reconcile feeds a board nobody shows.
 
 ## A Series Change Is Reconciled, Not Patched by Id
 

@@ -6,6 +6,7 @@ import '../../data/datasources/local/reminder_schedule_local_datasource.dart';
 import '../../domain/entities/calendar_event.dart';
 import '../accounts/account.dart';
 import '../accounts/account_manager.dart';
+import 'meeting_reminder_board.dart';
 import 'notification_service.dart';
 
 /// Reconciles every configured account's upcoming calendar events against
@@ -23,6 +24,7 @@ class CalendarReminderService {
     required this._notificationService,
     required this._database,
     required this._schedulesReminders,
+    this._board,
   });
 
   static const _lookahead = Duration(days: 14);
@@ -63,6 +65,10 @@ class CalendarReminderService {
   /// (`AppConfig.schedulesOsReminders`). When it does not, a pass is a drain:
   /// see [_drain].
   final bool _schedulesReminders;
+
+  /// The meeting-reminders dialog's source, handed every account's events on
+  /// each pass. Not limited by the OS budget below: it holds no OS resource.
+  final MeetingReminderBoard? _board;
 
   Timer? _timer;
   Timer? _startupTimer;
@@ -127,30 +133,23 @@ class CalendarReminderService {
   }
 
   Future<void> _reconcileEveryAccount() async {
+    final now = DateTime.now().toUtc();
     if (!_schedulesReminders) {
       await _drain();
+      // The dialog lives and dies with this process, so it has none of the
+      // cross-build hazard the drain exists for, and a developer run should
+      // show it.
+      if (_board != null) _feedBoard(await _fetchEveryAccount(now));
       return;
     }
-    final now = DateTime.now().toUtc();
 
     // Fetch every account first, then decide what to queue across all of them
     // at once. The budget below is per *app*, not per account, so it cannot be
     // spent one mailbox at a time — doing that would hand the first account
     // everything and leave the second with nothing however close its meetings
     // were.
-    final fetched = <String, List<CalendarEvent>>{};
-    for (final account in _accountManager.accounts) {
-      try {
-        fetched[account.id] = await _fetchEvents(account, now);
-      } catch (e) {
-        // Skip accounts that fail (auth error, network blip, calendar not
-        // supported for this account type) — the next cycle retries. Their
-        // persisted rows are deliberately left alone: a fetch that did not
-        // happen is not evidence that a meeting was cancelled.
-        debugPrint(
-            'CalendarReminderService: fetch failed for account ${account.id}: $e');
-      }
-    }
+    final fetched = await _fetchEveryAccount(now);
+    _feedBoard(fetched);
     if (fetched.isEmpty) return;
 
     final wanted = _chooseWhatToSchedule(fetched, now);
@@ -175,6 +174,32 @@ class CalendarReminderService {
       pending: pending,
     );
   }
+
+  /// Every account's upcoming events, by account id. An account whose fetch
+  /// failed is absent rather than empty.
+  Future<Map<String, List<CalendarEvent>>> _fetchEveryAccount(
+    DateTime now,
+  ) async {
+    final fetched = <String, List<CalendarEvent>>{};
+    for (final account in _accountManager.accounts) {
+      try {
+        fetched[account.id] = await _fetchEvents(account, now);
+      } catch (e) {
+        // Skip accounts that fail (auth error, network blip, calendar not
+        // supported for this account type) — the next cycle retries. Their
+        // persisted rows are deliberately left alone: a fetch that did not
+        // happen is not evidence that a meeting was cancelled.
+        debugPrint(
+            'CalendarReminderService: fetch failed for account ${account.id}: $e');
+      }
+    }
+    return fetched;
+  }
+
+  void _feedBoard(Map<String, List<CalendarEvent>> fetched) => _board?.update(
+        fetched,
+        known: {for (final a in _accountManager.accounts) a.id},
+      );
 
   /// The pass a build that must not hold reminders makes instead of
   /// reconciling: cancel everything this build has queued with the OS, and
@@ -420,5 +445,6 @@ class CalendarReminderService {
           accountId: accountId, eventId: r.eventId);
     }
     await _database.clearScheduledRemindersForAccount(accountId);
+    _board?.removeAccount(accountId);
   }
 }

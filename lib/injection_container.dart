@@ -155,6 +155,7 @@ import 'infrastructure/calendar/calendar_cache_sync_service.dart';
 import 'infrastructure/contacts/contact_cache_sync_service.dart';
 import 'infrastructure/network/connectivity_service.dart';
 import 'infrastructure/notifications/calendar_reminder_service.dart';
+import 'infrastructure/notifications/meeting_reminder_board.dart';
 import 'infrastructure/notifications/task_reminder_service.dart';
 import 'infrastructure/notifications/notification_service.dart';
 import 'infrastructure/sync/body_prefetch_service.dart';
@@ -479,11 +480,15 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => BadgeService());
   sl.registerLazySingleton(() => NotificationService());
   sl.registerLazySingleton(
+    () => MeetingReminderBoard(settings: sl<AppSettings>()),
+  );
+  sl.registerLazySingleton(
     () => CalendarReminderService(
       accountManager: sl<AccountManager>(),
       notificationService: sl<NotificationService>(),
       database: sl<ReminderScheduleLocalDatasource>(),
       schedulesReminders: AppConfig.schedulesOsReminders,
+      board: sl<MeetingReminderBoard>(),
     ),
   );
   sl.registerLazySingleton(

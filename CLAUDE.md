@@ -96,7 +96,8 @@ would re-break.
   — meeting-invite banners, forwarding, Gmail RSVPs, the offline calendar
   cache, room booking, Google's organizer/guest-notification quirks
 - [`lib/infrastructure/notifications/CLAUDE.md`](lib/infrastructure/notifications/CLAUDE.md)
-  — the overdue-tasks badge, the OS notification-scheduling budget
+  — the overdue-tasks badge, the OS notification-scheduling budget, the
+  meeting-reminders dialog
 
 ### Features
 

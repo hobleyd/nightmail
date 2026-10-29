@@ -60,7 +60,6 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     registerEventKitChannel(messenger: flutterViewController.engine.binaryMessenger)
 
     // Register the notification channel on the main window only.
-    // Reminder popups are always created from the main Flutter engine.
     mainNotificationChannel = FlutterMethodChannel(
       name: "au.com.sharpblue.nightmail/notifications",
       binaryMessenger: flutterViewController.engine.binaryMessenger
@@ -323,14 +322,11 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
       ]
       if let iso = args["startIso"] as? String { userInfo["startIso"] = iso }
       // A reminder is one alert in a series counting down to the start. The
-      // countdown travels with the request so the in-app popup can show it,
-      // and `popup` marks the alerts that warrant opening that popup at all
-      // (the first and the last) rather than only a banner. Defaults to true
-      // for a request scheduled before those keys existed.
+      // countdown travels with the request so `reconcileSeries` can tell a
+      // replayed, older alert from the newest one.
       if let mins = args["minutesUntilStart"] as? NSNumber {
         userInfo["minutesUntilStart"] = mins.intValue
       }
-      userInfo["popup"] = (args["popup"] as? Bool) ?? true
       // One thread per meeting. A reminder is a countdown of several alerts;
       // threading them makes Notification Center stack them as one group,
       // which is the only tidying that also happens when the app is not
@@ -473,27 +469,14 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
 
     guard type == "reminder" else { present(); return }
 
-    reconcileSeries(presenting: notification.request) { [weak self] show in
+    // The meeting-reminders dialog is not opened from here: the main
+    // window's Dart side drives it off wall-clock time on every platform
+    // (`MeetingReminderBoard`), since this is the only platform with a
+    // delivery hook to drive it from.
+    reconcileSeries(presenting: notification.request) { show in
       // A later alert of this countdown is already on screen: this one is
-      // stale, so neither a banner nor the popup.
+      // stale, so no banner.
       guard show else { completionHandler([]); return }
-
-      if (userInfo["popup"] as? Bool) ?? true {
-        // For calendar reminders fired in-app, show the existing popup so the
-        // user can dismiss it without leaving what they're doing. Only the
-        // first and last alert of a series carry `popup` — the countdown
-        // between them stays a banner, so a meeting cannot pile up a stack of
-        // these windows.
-        let eventId    = userInfo["eventId"]    as? String ?? ""
-        let eventTitle = userInfo["eventTitle"] as? String ?? ""
-        let startIso   = userInfo["startIso"]   as? String
-        var args: [String: Any] = ["eventId": eventId, "eventTitle": eventTitle]
-        if let iso = startIso { args["startIso"] = iso }
-        if let mins = userInfo["minutesUntilStart"] as? Int {
-          args["minutesUntilStart"] = mins
-        }
-        self?.mainNotificationChannel?.invokeMethod("showReminderPopup", arguments: args)
-      }
       present()
     }
   }
@@ -615,8 +598,7 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
 
   /// Registers a notifications channel on a secondary window's messenger so that
   /// scheduleReminder / cancelReminder calls from those windows reach the same Swift
-  /// handlers.  showReminderPopup is always *invoked* from mainNotificationChannel,
-  /// never handled here.
+  /// handlers.
   private func registerNotificationRelay(messenger: FlutterBinaryMessenger) {
     let channel = FlutterMethodChannel(
       name: "au.com.sharpblue.nightmail/notifications",

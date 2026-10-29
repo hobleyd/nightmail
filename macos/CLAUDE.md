@@ -62,7 +62,9 @@ raise `MissingPluginException` every time as a matter of course.
 ## The Notification Delegate Is Stolen by Every Sub-Window
 
 `MainFlutterWindow` is the `UNUserNotificationCenterDelegate`: `willPresent`
-folds a meeting's countdown and opens the reminder popup, `didReceive`
+folds a meeting's countdown (it opened the reminder popup too, until the
+meeting-reminders dialog moved to Dart — see
+[`lib/infrastructure/notifications/CLAUDE.md`](../lib/infrastructure/notifications/CLAUDE.md)), `didReceive`
 handles taps and the Mark Read / Delete actions. It is set once in
 `awakeFromNib`, after `RegisterGeneratedPlugins`, and that order is the only
 reason it holds at all.

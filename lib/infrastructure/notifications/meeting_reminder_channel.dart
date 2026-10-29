@@ -28,6 +28,7 @@ abstract final class MeetingReminderChannel {
 
   static const _snapshotMethod = 'snapshot';
   static const _dismissMethod = 'dismiss';
+  static const _silenceMethod = 'silence';
 
   /// Main window only.
   static Future<void> listen(MeetingReminderBoard board) async {
@@ -40,6 +41,9 @@ abstract final class MeetingReminderChannel {
           case _dismissMethod:
             final id = call.arguments as String?;
             if (id != null) board.dismiss(id);
+          case _silenceMethod:
+            final key = call.arguments as String?;
+            if (key != null) board.silence(key);
         }
         return null;
       });
@@ -65,6 +69,14 @@ abstract final class MeetingReminderChannel {
       await _channel.invokeMethod<void>(_dismissMethod, rowId);
     } catch (e) {
       debugPrint('MeetingReminderChannel.dismiss failed: $e');
+    }
+  }
+
+  static Future<void> silence(String meetingKey) async {
+    try {
+      await _channel.invokeMethod<void>(_silenceMethod, meetingKey);
+    } catch (e) {
+      debugPrint('MeetingReminderChannel.silence failed: $e');
     }
   }
 }

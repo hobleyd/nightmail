@@ -164,7 +164,7 @@ class _MeetingRemindersPageState extends State<_MeetingRemindersPage> {
   }
 
   void _dismiss(MeetingReminderRow row) {
-    unawaited(MeetingReminderChannel.dismiss(row.id));
+    unawaited(MeetingReminderChannel.silence(row.meetingKey));
     _setRows([for (final r in _rows) if (r.id != row.id) r]);
   }
 

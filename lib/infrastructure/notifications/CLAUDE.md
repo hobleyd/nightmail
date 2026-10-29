@@ -270,8 +270,12 @@ the setting does not affect them.
 - **Only a new step opens or fronts the dialog** (`MeetingReminderUpdate.alert`).
   Rows leaving, dismissals and the setting just update what is showing, so
   closing the window is not undone until some meeting's next alert.
-- **Dismissal is per alert**, keyed `account::event::startMs::offset`: the
-  meeting returns at its next step, and a moved meeting returns at once.
+- **A row's close button silences the meeting** for the rest of its
+  countdown (`silence`, keyed `account::event::startMs`): its later steps
+  neither show nor front the dialog. **Dismiss All is per alert**
+  (`dismiss`, keyed `…::offset`): it just closes the dialog, and each meeting
+  returns at its next step. Both keys carry the start, so a moved meeting
+  returns at once.
 - **The main window owns all state.** It pushes rows with
   `WindowController.invokeMethod('setRows')` (or `close` when empty); the
   window registers that handler *before* pulling a snapshot over

@@ -34,8 +34,12 @@ class MeetingReminderRow {
   /// Identifies this *alert*, not the meeting: dismissing it hides the row
   /// until the next alert of the countdown, which is a different id. The start
   /// is part of it so a meeting moved after a dismissal announces itself again.
-  String get id =>
-      '$accountId::$eventId::${start.millisecondsSinceEpoch}::$minutesUntilStart';
+  String get id => '$meetingKey::$minutesUntilStart';
+
+  /// Identifies the meeting at this start, whichever alert it is at — what a
+  /// row's close button silences for the rest of the countdown.
+  String get meetingKey =>
+      '$accountId::$eventId::${start.millisecondsSinceEpoch}';
 
   String get label => NotificationService.countdownLabel(minutesUntilStart);
 
@@ -120,6 +124,7 @@ class MeetingReminderBoard {
 
   final _events = <String, List<CalendarEvent>>{};
   final _dismissed = <String>{};
+  final _silenced = <String>{};
   final _updates = StreamController<MeetingReminderUpdate>.broadcast();
 
   /// The alert each live meeting is at, by `account::event::start`, whether or
@@ -189,11 +194,20 @@ class MeetingReminderBoard {
     recompute();
   }
 
+  /// Hides a meeting for the rest of its countdown: none of its later alerts
+  /// show or front the dialog. Keyed by [MeetingReminderRow.meetingKey], so a
+  /// meeting moved afterwards announces itself again.
+  void silence(String meetingKey) {
+    if (!_silenced.add(meetingKey)) return;
+    recompute();
+  }
+
   void recompute() {
     final now = _clock().toUtc();
     final stages = stagesAt(_events, now);
     var alert = false;
     for (final entry in stages.entries) {
+      if (_silenced.contains(entry.key)) continue;
       final previous = _stages[entry.key];
       if (previous == null || entry.value < previous) {
         alert = true;
@@ -206,8 +220,14 @@ class MeetingReminderBoard {
     // An id that is no longer current never will be again — a countdown only
     // moves forward — so the set does not grow for the life of the process.
     _dismissed.retainAll({for (final r in all) r.id});
+    _silenced.retainAll(stages.keys);
     final rows = _enabled
-        ? [for (final r in all) if (!_dismissed.contains(r.id)) r]
+        ? [
+            for (final r in all)
+              if (!_dismissed.contains(r.id) &&
+                  !_silenced.contains(r.meetingKey))
+                r,
+          ]
         : const <MeetingReminderRow>[];
 
     // A new alert whose row is dismissed or hidden is not worth fronting for.
@@ -231,8 +251,7 @@ class MeetingReminderBoard {
   ) =>
       {
         for (final r in rowsAt(events, now))
-          '${r.accountId}::${r.eventId}::${r.start.millisecondsSinceEpoch}':
-              r.minutesUntilStart,
+          r.meetingKey: r.minutesUntilStart,
       };
 
   /// Every meeting due a row at [now], soonest first, before dismissals.

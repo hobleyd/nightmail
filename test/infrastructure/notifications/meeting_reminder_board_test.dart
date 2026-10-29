@@ -154,6 +154,38 @@ void main() {
       expect(updates.last.rows.single.minutesUntilStart, 10);
     });
 
+    test('silencing a meeting hides its later alerts too', () async {
+      board.update({'a': [event('1'), event('2')]}, known: {'a'});
+      board.silence(board.rows.first.meetingKey);
+      await settle();
+      expect([for (final r in updates.last.rows) r.eventId], ['2']);
+
+      now = start.subtract(const Duration(minutes: 10));
+      board.recompute();
+      await settle();
+      expect([for (final r in updates.last.rows) r.eventId], ['2'],
+          reason: 'the silenced meeting stays out at its next alert');
+      expect(updates.last.alert, isTrue, reason: 'the other one moved on');
+
+      board.silence(board.rows.single.meetingKey);
+      now = start.subtract(const Duration(minutes: 5));
+      board.recompute();
+      await settle();
+      expect(updates.last.rows, isEmpty);
+      expect(updates.last.alert, isFalse,
+          reason: 'a silenced meeting\'s next alert does not front the dialog');
+    });
+
+    test('a moved meeting comes back after being silenced', () {
+      board.update({'a': [event('1')]}, known: {'a'});
+      board.silence(board.rows.single.meetingKey);
+      expect(board.rows, isEmpty);
+      board.update(
+          {'a': [event('1', at: start.subtract(const Duration(minutes: 3)))]},
+          known: {'a'});
+      expect(board.rows.single.minutesUntilStart, 15);
+    });
+
     test('the row leaves after the meeting starts, without an alert',
         () async {
       board.update({'a': [event('1')]}, known: {'a'});

@@ -157,7 +157,7 @@ class _MeetingReminderDialogState extends State<_MeetingReminderDialog> {
         child: SingleChildScrollView(
           child: MeetingReminderList(
             rows: _rows,
-            onDismiss: (row) => widget.board.dismiss(row.id),
+            onDismiss: (row) => widget.board.silence(row.meetingKey),
             onDismissAll: () {
               for (final r in _rows) {
                 widget.board.dismiss(r.id);

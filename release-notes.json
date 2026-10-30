@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.41.0",
+  "version": "1.41.1",
   "sections": [
     {
-      "type": "features",
-      "title": "New features",
+      "type": "fixes",
+      "title": "Fixes",
       "items": [
         {
-          "body": "one meeting-reminders dialog on every platform",
+          "body": "a meeting closed with its X stays out of the dialog",
           "title": "reminders"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.41.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "one meeting-reminders dialog on every platform",
+              "title": "reminders"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -375,23 +392,6 @@
             {
               "body": "unread mail no longer downloads on click after a wake from sleep",
               "title": "mail"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.39.5",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "clear the marker a completed install leaves behind, which refused every later install",
-              "title": "update"
             }
           ]
         }

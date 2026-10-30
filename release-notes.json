@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.41.1",
+  "version": "1.41.2",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "a meeting closed with its X stays out of the dialog",
-          "title": "reminders"
+          "body": "offer \"Clear pending install…\" when a stale marker blocks installs",
+          "title": "update"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.41.1",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "a meeting closed with its X stays out of the dialog",
+              "title": "reminders"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -375,23 +392,6 @@
             {
               "body": "relaunch after an in-app update on macOS",
               "title": "update"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.39.6",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "unread mail no longer downloads on click after a wake from sleep",
-              "title": "mail"
             }
           ]
         }

@@ -72,6 +72,10 @@ class UpdateCubit extends Cubit<AppUpdateStatus> {
   Future<void> openHelperApprovalSettings() =>
       _service.openHelperApprovalSettings();
 
+  /// Desktop only: throws away the pending install that is refusing every
+  /// later one, then checks again.
+  Future<void> clearPendingInstall() => _service.clearPendingInstall();
+
   @override
   Future<void> close() {
     _sub?.cancel();

@@ -71,3 +71,54 @@ Future<bool> clearCompletedInstallMarker({
       '${stageRoot.path} and the pending-install marker');
   return true;
 }
+
+/// The user-pressed version of [clearCompletedInstallMarker]: throws the
+/// pending install away whatever state it is in, for Settings → About's
+/// "Clear pending install…" button.
+///
+/// [clearCompletedInstallMarker] only covers an install that *succeeded*. An
+/// attempt that failed part-way leaves the same marker for a version that was
+/// never installed — 2026-10-30, 1.41.1 over 1.41.0: the handoff came back
+/// "Administrator approval is required", and every press of Restart and
+/// install after that was refused with "A pending install must be recovered
+/// before another install". The package re-reads the marker before each
+/// install, so removing it is what unblocks the next one; nothing in it is
+/// data, and the stage is a downloaded copy the app fetches again.
+///
+/// Deletes the marker's stage directory only when it carries the package's
+/// own `desktop_updater_stage_…` name, then the marker itself — including one
+/// that will not parse, since a torn marker blocks installs just the same.
+///
+/// Returns true when a marker was removed.
+Future<bool> clearPendingInstallMarker({
+  required File marker,
+  void Function(String)? log,
+}) async {
+  if (!await marker.exists()) return false;
+
+  String? stagingPath;
+  try {
+    final decoded = jsonDecode(await marker.readAsString());
+    if (decoded is Map<String, dynamic> && decoded['stagingPath'] is String) {
+      stagingPath = decoded['stagingPath'] as String;
+    }
+  } on FormatException {
+    // Removed below all the same.
+  }
+
+  String? removedStage;
+  if (stagingPath != null && stagingPath.isNotEmpty) {
+    final stageRoot = Directory(stagingPath).parent;
+    final stageName = stageRoot.path
+        .substring(stageRoot.path.lastIndexOf(Platform.pathSeparator) + 1);
+    if (stageName.startsWith(kDesktopUpdaterStagePrefix) &&
+        await stageRoot.exists()) {
+      await stageRoot.delete(recursive: true);
+      removedStage = stageRoot.path;
+    }
+  }
+  await marker.delete();
+  (log ?? debugPrint)('[Update] cleared the pending install at the user\'s '
+      'request — removed ${removedStage ?? 'no stage'} and the marker');
+  return true;
+}

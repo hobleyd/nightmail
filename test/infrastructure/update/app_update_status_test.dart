@@ -162,4 +162,25 @@ void main() {
       isNot(const AppUpdateStatus(phase: AppUpdatePhase.upToDate)),
     );
   });
+
+  group('isBlockedByPendingInstall', () {
+    test('recognises desktop_updater\'s refusal', () {
+      const status = AppUpdateStatus(
+        phase: AppUpdatePhase.failed,
+        error: 'A pending install must be recovered before another install.',
+      );
+      expect(status.isBlockedByPendingInstall, isTrue);
+    });
+
+    test('any other error, or none, is not it', () {
+      expect(const AppUpdateStatus().isBlockedByPendingInstall, isFalse);
+      expect(
+        const AppUpdateStatus(
+          phase: AppUpdatePhase.failed,
+          error: 'Unable to prepare update installation',
+        ).isBlockedByPendingInstall,
+        isFalse,
+      );
+    });
+  });
 }

@@ -146,4 +146,47 @@ void main() {
     expect(await run(), isFalse);
     expect(logged, isEmpty);
   });
+
+  group('clearing it on request', () {
+    Future<bool> clear() =>
+        clearPendingInstallMarker(marker: marker, log: logged.add);
+
+    test('a failed attempt\'s marker and stage are both removed', () async {
+      // 2026-10-30: the handoff for 1.41.1 failed, so the bundle is still in
+      // the stage and the marker names a version that never installed —
+      // exactly what clearCompletedInstallMarker leaves alone.
+      await writeConsumedStage();
+      await Directory('${stageRoot.path}/NightMail.app').create();
+      await writeMarker(version: '1.41.1', build: 245);
+
+      expect(await clear(), isTrue);
+      expect(await marker.exists(), isFalse);
+      expect(await stageRoot.exists(), isFalse);
+      expect(logged.single, contains(stageRoot.path));
+    });
+
+    test('a directory the package did not name is never deleted', () async {
+      final other = Directory('${root.path}/Documents');
+      await other.create();
+      await File('${other.path}/keep.txt').writeAsString('precious');
+      await writeMarker(stagingPath: '${other.path}/NightMail.app');
+
+      expect(await clear(), isTrue);
+      expect(await File('${other.path}/keep.txt').exists(), isTrue);
+      expect(await marker.exists(), isFalse);
+    });
+
+    test('a torn marker is removed too, since it blocks installs the same',
+        () async {
+      await marker.writeAsString('{"createdAt": "2026-10-12T05:09');
+
+      expect(await clear(), isTrue);
+      expect(await marker.exists(), isFalse);
+    });
+
+    test('no marker: nothing happens', () async {
+      expect(await clear(), isFalse);
+      expect(logged, isEmpty);
+    });
+  });
 }

@@ -587,6 +587,37 @@ class AppUpdateService {
     }
   }
 
+  /// Throws away a pending install that is refusing every later one — the
+  /// action behind About's "Clear pending install…", offered only while
+  /// [AppUpdateStatus.isBlockedByPendingInstall].
+  ///
+  /// Removes the marker and its stage ([clearPendingInstallMarker]), then
+  /// drops the controller: it still holds the stage it built in memory, which
+  /// may be the one just deleted. The next use builds a fresh one, and the
+  /// check that follows leaves the user at "Download update".
+  Future<void> clearPendingInstall() async {
+    if (!_isSupported ||
+        _mechanism != UpdateMechanism.desktop ||
+        _status.isBusy) {
+      return;
+    }
+    try {
+      await clearPendingInstallMarker(marker: await _recoveryFile());
+    } catch (error) {
+      debugPrint('[Update] could not clear the pending install: $error');
+      _emit(_status.copyWith(
+        phase: AppUpdatePhase.failed,
+        error: 'Could not clear the pending install: $error',
+      ));
+      return;
+    }
+    final controller = _desktop;
+    _desktop = null;
+    controller?.removeListener(_onDesktopControllerChanged);
+    controller?.dispose();
+    await checkForUpdate();
+  }
+
   /// Re-read on **every** check, not once per process.
   ///
   /// The document describes whatever release is newest at the moment it is
@@ -618,11 +649,7 @@ class AppUpdateService {
     final existing = _desktop;
     if (existing != null) return existing;
 
-    final supportDir = await appDataDirectory();
-    final recoveryFile = File(
-      '${supportDir.path}${Platform.pathSeparator}'
-      'desktop_updater_pending_install.json',
-    );
+    final recoveryFile = await _recoveryFile();
     await _clearCompletedInstallMarker(recoveryFile);
 
     final controller = DesktopUpdaterController(
@@ -636,6 +663,14 @@ class AppUpdateService {
     _desktop = controller;
     await controller.recoverPendingInstall();
     return controller;
+  }
+
+  static Future<File> _recoveryFile() async {
+    final supportDir = await appDataDirectory();
+    return File(
+      '${supportDir.path}${Platform.pathSeparator}'
+      'desktop_updater_pending_install.json',
+    );
   }
 
   void _onDesktopControllerChanged() {

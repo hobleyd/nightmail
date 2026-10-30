@@ -351,6 +351,19 @@ Two things now stand between this and a user:
 The upstream fix is the same idea in `recoverPendingInstall`: a confirmed
 install clears its marker whether or not the stage could be deleted.
 
+**A failed install leaves the same marker, and the self-heal rightly ignores
+it.** 2026-10-30, 1.41.1 over 1.41.0: the handoff came back
+`PrivilegedHelperApprovalRequired` on an admin account, the marker named a
+version that never installed, and every later Restart and install was
+refused. So About shows **"Clear pending install…"** under that error
+(`AppUpdateStatus.isBlockedByPendingInstall`, which matches the package's
+`StateError` wording — it is all there is to recognise it by). It confirms,
+then `clearPendingInstallMarker` removes the marker and its
+`desktop_updater_stage_*` directory, the service drops its controller (whose
+in-memory stage may be the one just deleted) and checks again, leaving the
+user at Download update. The package re-reads the marker before every
+install, so deleting the file is the whole unblock.
+
 ### The service starts at launch, not when Settings opens
 
 `../inkworm` — which this is modelled on — builds its `DesktopUpdaterController`

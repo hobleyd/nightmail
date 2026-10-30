@@ -5,6 +5,7 @@ import 'package:version/version.dart';
 import '../../core/theme/app_colors.dart';
 import '../../infrastructure/update/app_update_status.dart';
 import '../blocs/update/update_cubit.dart';
+import 'adaptive_alert_dialog.dart';
 
 /// The update block in Settings → About: what state the updater is in, the one
 /// button that moves it on, and the newest release's notes.
@@ -83,6 +84,10 @@ class AppUpdateSection extends StatelessWidget {
             if (status.error != null) ...[
               const SizedBox(height: 12),
               _ErrorLine(message: status.error!),
+            ],
+            if (status.isBlockedByPendingInstall && !status.isBusy) ...[
+              const SizedBox(height: 12),
+              const _ClearPendingInstallButton(),
             ],
             for (final release
                 in releaseNotesToShow(status.notes, status.installedVersion))
@@ -262,6 +267,63 @@ class _ErrorLine extends StatelessWidget {
       message,
       textAlign: TextAlign.center,
       style: const TextStyle(color: AppColors.notification, fontSize: 12),
+    );
+  }
+}
+
+/// Shown under "A pending install must be recovered before another install":
+/// an earlier attempt left its marker behind and `desktop_updater` refuses
+/// every install until it is gone. Confirms first, since the downloaded update
+/// goes with it and has to be fetched again.
+class _ClearPendingInstallButton extends StatelessWidget {
+  const _ClearPendingInstallButton();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return TextButton.icon(
+      onPressed: () => _confirm(context),
+      icon: const Icon(Icons.delete_sweep_rounded, size: 16),
+      label: const Text(
+        'Clear pending install…',
+        style: TextStyle(fontSize: 13),
+      ),
+      style: TextButton.styleFrom(
+        foregroundColor: c.textSecondary,
+        backgroundColor: c.surfaceBase,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(6),
+        ),
+      ),
+    );
+  }
+
+  void _confirm(BuildContext context) {
+    final cubit = context.read<UpdateCubit>();
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AdaptiveAlertDialog(
+        title: const Text('Clear Pending Install'),
+        content: const Text(
+          'An earlier update attempt did not finish and is blocking this one. '
+          'Clearing it removes the downloaded update; NightMail will check '
+          'again and you can download it afresh.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              cubit.clearPendingInstall();
+            },
+            child: const Text('Clear'),
+          ),
+        ],
+      ),
     );
   }
 }

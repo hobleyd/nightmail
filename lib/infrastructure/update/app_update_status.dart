@@ -100,6 +100,11 @@ class UpdateReleaseNotes extends Equatable {
   List<Object?> get props => [version, summary, sections];
 }
 
+/// `desktop_updater` 3.2.1's refusal when a pending-install marker exists
+/// (`updater_controller.dart`, `_restartApp` and `_writePendingRecoveryMarker`).
+const String kPendingInstallBlockedMessage =
+    'A pending install must be recovered before another install';
+
 /// What the About panel draws and what the Settings icon's dot is keyed off.
 class AppUpdateStatus extends Equatable {
   const AppUpdateStatus({
@@ -157,6 +162,13 @@ class AppUpdateStatus extends Equatable {
       phase == AppUpdatePhase.freshInstallRequired ||
       phase == AppUpdatePhase.readyToInstall ||
       phase == AppUpdatePhase.helperApprovalRequired;
+
+  /// Whether the last install was refused because an earlier attempt left its
+  /// pending-install marker behind — the case About offers "Clear pending
+  /// install…" for. `desktop_updater` raises it as a bare [StateError], so its
+  /// wording is the only thing to recognise it by.
+  bool get isBlockedByPendingInstall =>
+      error?.contains(kPendingInstallBlockedMessage) ?? false;
 
   bool get isBusy =>
       phase == AppUpdatePhase.checking ||

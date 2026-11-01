@@ -17,6 +17,7 @@ class EmailListItem extends StatefulWidget {
     required this.onTap,
     required this.onDelete,
     required this.onFlag,
+    this.isCursor,
     this.indent = 0.0,
     this.isMultiSelected = false,
     this.showCheckbox = false,
@@ -34,6 +35,11 @@ class EmailListItem extends StatefulWidget {
 
   final Email email;
   final bool isSelected;
+
+  /// Whether the keyboard cursor is on this row during a multi-selection,
+  /// which moves the selection border here from the open message's row. Null
+  /// when there is no such cursor, leaving the border to [isSelected].
+  final bool? isCursor;
   final bool isMultiSelected;
   final bool showCheckbox;
   final bool isSpam;
@@ -107,7 +113,9 @@ class _EmailListItemState extends State<EmailListItem> {
                         ? Colors.pink.shade100.withAlpha(60)
                         : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
-            border: widget.isSelected ? Border.all(color: c.selectionBorder) : null,
+            border: widget.isCursor ?? widget.isSelected
+                ? Border.all(color: c.selectionBorder)
+                : null,
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,

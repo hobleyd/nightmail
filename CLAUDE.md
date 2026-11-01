@@ -83,7 +83,7 @@ would re-break.
 
 - [`lib/presentation/blocs/email_list/CLAUDE.md`](lib/presentation/blocs/email_list/CLAUDE.md)
   — thread grouping across folders, which message heads a thread, folder
-  labels on list rows, the account-switch race
+  labels on list rows, the account-switch race, keyboard/Shift/Cmd selection
 - [`lib/presentation/blocs/folder_list/CLAUDE.md`](lib/presentation/blocs/folder_list/CLAUDE.md)
   — optimistic unread counts, cache-freeze recovery, folder
   create/move/delete/empty

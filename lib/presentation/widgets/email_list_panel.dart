@@ -41,6 +41,7 @@ import 'view_shortcut_buttons.dart';
 import 'email_list_conversations.dart';
 import 'email_list_correspondent.dart';
 import 'email_list_item.dart';
+import 'email_list_selection.dart';
 import 'flag_icon_button.dart';
 import 'report_junk_button.dart';
 import 'report_phishing_consent.dart';
@@ -99,8 +100,24 @@ class _EmailListPanelState extends State<EmailListPanel> {
   /// on every cycle, so watching the bloc would rebuild every row in the list
   /// each time a count moved.
   Map<String, String> _folderNames = const {};
-  int? _lastSelectedIndex;
   bool _isMultiSelectMode = false;
+
+  /// Where a Shift-click or Shift-arrow range is measured from, and what was
+  /// already picked when it was set — see [rangeSelection]. Only consulted
+  /// while [_selectedEmailIds] is non-empty; otherwise the open message is the
+  /// anchor, which keeps a reading-pane swipe or notification tap from leaving
+  /// a stale one behind.
+  String? _anchorId;
+  Set<String> _rangeBase = const {};
+
+  /// The row the arrow keys move from while a multi-selection is up. It is not
+  /// the open message: extending a selection never opens what it passes over
+  /// (opening marks a message read). See [_cursorIn].
+  String? _cursorId;
+
+  /// Rows that are built, by email id, so a keyboard move can scroll the row it
+  /// landed on into view — see [_revealRow].
+  final _rowContexts = <String, BuildContext>{};
 
   /// Android or iOS. Long-press multi-select and the checkboxes that go with
   /// it are for touch, where there is no Shift or Cmd to range-select with.
@@ -129,10 +146,22 @@ class _EmailListPanelState extends State<EmailListPanel> {
       if (event is KeyUpEvent) return KeyEventResult.ignored;
       switch (event.logicalKey) {
         case LogicalKeyboardKey.arrowDown:
-          _selectNextEmail();
+          _onArrow(1);
           return KeyEventResult.handled;
         case LogicalKeyboardKey.arrowUp:
-          _selectPrevEmail();
+          _onArrow(-1);
+          return KeyEventResult.handled;
+        // Both only while the list itself has focus: a row's flag and delete
+        // buttons sit inside this node, and Space is what activates them.
+        case LogicalKeyboardKey.space when node.hasPrimaryFocus:
+          // Plain Space as well as Cmd/Ctrl-Space: Ctrl-Space is the input
+          // source switch on a Mac and Cmd-Space is Spotlight, so neither
+          // reaches the app there.
+          if (event is KeyDownEvent) _toggleCursorRow();
+          return KeyEventResult.handled;
+        case LogicalKeyboardKey.escape
+            when node.hasPrimaryFocus && _selectedEmailIds.isNotEmpty:
+          _clearSelection();
           return KeyEventResult.handled;
         case LogicalKeyboardKey.arrowRight:
           if (widget.selectedEmailId != null) _flagFocusNode.requestFocus();
@@ -154,7 +183,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
       if (event is KeyUpEvent) return KeyEventResult.ignored;
       switch (event.logicalKey) {
         case LogicalKeyboardKey.arrowUp:
-          _selectPrevEmail();
+          _openAdjacentRow(-1);
           _listFocusNode.requestFocus();
           return KeyEventResult.handled;
         case LogicalKeyboardKey.arrowDown:
@@ -175,7 +204,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
           _flagFocusNode.requestFocus();
           return KeyEventResult.handled;
         case LogicalKeyboardKey.arrowDown:
-          _selectNextEmail();
+          _openAdjacentRow(1);
           _listFocusNode.requestFocus();
           return KeyEventResult.handled;
         case LogicalKeyboardKey.arrowLeft:
@@ -194,51 +223,178 @@ class _EmailListPanelState extends State<EmailListPanel> {
         widget.selectedEmailId == null &&
         _selectedEmailIds.isEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        final items = _currentFlatItems();
-        if (items.isNotEmpty) {
-          _selectEmailAtIndex(items, 0);
+        // Asked again: a click on a row also takes focus, and the row it
+        // opened has landed by now — opening the first row over it would
+        // throw the click away.
+        if (!mounted ||
+            widget.selectedEmailId != null ||
+            _selectedEmailIds.isNotEmpty) {
+          return;
         }
+        final rows = _currentRows();
+        if (rows.isNotEmpty) _openRow(rows.first);
       });
     }
   }
 
-  void _selectNextEmail() {
-    final items = _currentFlatItems();
-    if (items.isEmpty) return;
-    final currentId = widget.selectedEmailId;
-    if (currentId == null) {
-      _selectEmailAtIndex(items, 0);
-      return;
+  /// Up/Down opens the next row; with Shift it extends the selection instead,
+  /// and with Cmd (Ctrl elsewhere) it moves the cursor without changing the
+  /// selection, for Space to pick from — the Explorer/Outlook convention.
+  void _onArrow(int step) {
+    if (_shiftPressed) {
+      _extendSelection(step);
+    } else if (_modifierPressed) {
+      _moveCursor(step);
+    } else {
+      _openAdjacentRow(step);
     }
-    final idx = _rowIndexOfEmail(items, currentId);
-    if (idx == -1) return;
-    final next = _stepIndex(items, idx, 1);
-    if (next == -1) return;
-    _selectEmailAtIndex(items, next);
   }
 
-  void _selectPrevEmail() {
-    final items = _currentFlatItems();
-    if (items.isEmpty) return;
-    final currentId = widget.selectedEmailId;
-    if (currentId == null) return;
-    final idx = _rowIndexOfEmail(items, currentId);
-    if (idx <= 0) return;
-    final prev = _stepIndex(items, idx, -1);
-    if (prev == -1) return;
-    _selectEmailAtIndex(items, prev);
+  /// The row the arrow keys move from: the cursor while a multi-selection is
+  /// up, the open message otherwise.
+  /// A cursor whose row has gone (deleted, or dropped by a refresh) falls back
+  /// to the open message.
+  String? _cursorIn(List<String> rowIds) {
+    final cursor = _cursorId;
+    if (_selectedEmailIds.isNotEmpty &&
+        cursor != null &&
+        rowIds.contains(cursor)) {
+      return cursor;
+    }
+    return widget.selectedEmailId;
   }
 
-  void _selectEmailAtIndex(List<_ListItem> items, int index) {
+  void _openAdjacentRow(int step) {
+    final rows = _currentRows();
+    final rowIds = _idsOf(rows);
+    final next = stepRow(rowIds, _cursorIn(rowIds), step);
+    if (next == null) return;
+    _openRow(rows.firstWhere((e) => e.id == next));
+    _revealRow(next);
+  }
+
+  /// Opens [email] in the reading pane as the whole selection: any
+  /// multi-selection is dropped and the range anchor moves to it.
+  void _openRow(Email email) {
     if (_selectedEmailIds.isNotEmpty || _isMultiSelectMode) {
       setState(() {
         _selectedEmailIds = {};
         _isMultiSelectMode = false;
       });
     }
-    _lastSelectedIndex = index;
-    widget.onEmailSelected(_emailOfItem(items[index]));
+    _anchorId = email.id;
+    _cursorId = email.id;
+    _rangeBase = const {};
+    widget.onEmailSelected(email);
+  }
+
+  /// Shift-arrow: moves the cursor and selects from the anchor to it. Nothing
+  /// is opened on the way — see [_cursorId].
+  void _extendSelection(int step) {
+    final rowIds = _idsOf(_currentRows());
+    final multi = _selectedEmailIds.isNotEmpty;
+    final anchor = (multi ? _anchorId : null) ?? widget.selectedEmailId;
+    if (anchor == null) {
+      _openAdjacentRow(step);
+      return;
+    }
+    final next = stepRow(rowIds, _cursorIn(rowIds), step);
+    if (next == null) return;
+    final base = multi ? _rangeBase : const <String>{};
+    setState(() {
+      _anchorId = anchor;
+      _rangeBase = base;
+      _cursorId = next;
+      _selectedEmailIds = rangeSelection(rowIds,
+          anchorId: anchor, cursorId: next, base: base);
+      _isMultiSelectMode = true;
+    });
+    _revealRow(next);
+  }
+
+  /// Cmd/Ctrl-arrow: moves the cursor and leaves the selection as it is. The
+  /// open message becomes the selection first, so there is something for the
+  /// cursor to be away from.
+  void _moveCursor(int step) {
+    final rowIds = _idsOf(_currentRows());
+    final picked = _selectionOrOpen(rowIds);
+    if (picked.isEmpty) {
+      _openAdjacentRow(step);
+      return;
+    }
+    final next = stepRow(rowIds, _cursorIn(rowIds), step);
+    if (next == null) return;
+    setState(() {
+      if (_selectedEmailIds.isEmpty) {
+        _anchorId = widget.selectedEmailId;
+        _rangeBase = const {};
+      }
+      _selectedEmailIds = picked;
+      _cursorId = next;
+      _isMultiSelectMode = true;
+    });
+    _revealRow(next);
+  }
+
+  /// Space: adds the cursor row to the selection or takes it out — the
+  /// keyboard's Cmd-click.
+  void _toggleCursorRow() {
+    final rowIds = _idsOf(_currentRows());
+    final cursor = _cursorIn(rowIds);
+    if (cursor == null || !rowIds.contains(cursor)) return;
+    _toggleRow(cursor, rowIds);
+  }
+
+  /// Cmd-click and Space. The toggled row becomes the anchor, and everything
+  /// picked so far becomes the base a following Shift range is added to.
+  void _toggleRow(String id, List<String> rowIds) {
+    final ids = _selectionOrOpen(rowIds);
+    if (!ids.remove(id)) ids.add(id);
+    setState(() {
+      _selectedEmailIds = ids;
+      _anchorId = id;
+      _cursorId = id;
+      _rangeBase = Set.of(ids);
+      _isMultiSelectMode = _isMultiSelectMode && ids.isNotEmpty;
+    });
+  }
+
+  /// The multi-selection, or — when there is none yet — the open message, so a
+  /// Cmd-click or Cmd-arrow adds to what the user is looking at rather than
+  /// starting from nothing and quietly leaving it out of a delete.
+  Set<String> _selectionOrOpen(List<String> rowIds) {
+    if (_selectedEmailIds.isNotEmpty) return Set.of(_selectedEmailIds);
+    final open = widget.selectedEmailId;
+    return {if (open != null && rowIds.contains(open)) open};
+  }
+
+  /// Scrolls the list just far enough to show [id]'s row, after the frame that
+  /// draws the move. A row that is not built — the user scrolled far away
+  /// with the wheel, then pressed an arrow — is first brought near by an
+  /// estimate from its position in the list, since rows vary in height.
+  void _revealRow(String id) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final built = _rowContexts[id];
+      if (built != null && built.mounted) {
+        built.findRenderObject()?.showOnScreen();
+        return;
+      }
+      if (!_scrollController.hasClients) return;
+      final items = _currentFlatItems();
+      final index = _rowIndexOfEmail(items, id);
+      if (index == -1) return;
+      final position = _scrollController.position;
+      final total = position.maxScrollExtent + position.viewportDimension;
+      position.jumpTo((index / items.length * total -
+              position.viewportDimension / 2)
+          .clamp(position.minScrollExtent, position.maxScrollExtent));
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final row = _rowContexts[id];
+        if (row != null && row.mounted) row.findRenderObject()?.showOnScreen();
+      });
+    });
   }
 
   @override
@@ -353,6 +509,16 @@ class _EmailListPanelState extends State<EmailListPanel> {
     return [];
   }
 
+  /// The messages of the rows a selection can land on, in list order — see
+  /// [_isNavigable].
+  List<Email> _currentRows() => [
+        for (final item in _currentFlatItems())
+          if (_isNavigable(item)) _emailOfItem(item),
+      ];
+
+  static List<String> _idsOf(List<Email> rows) =>
+      [for (final e in rows) e.id];
+
   void _handleEmailTap(Email email, int index) {
     // A row is a GestureDetector, so a click leaves keyboard focus wherever
     // it was; take it for the list so the arrow keys and Cmd-A that follow a
@@ -372,53 +538,44 @@ class _EmailListPanelState extends State<EmailListPanel> {
           ids.add(email.id);
         }
         _selectedEmailIds = ids;
-        _lastSelectedIndex = index;
+        _anchorId = email.id;
+        _cursorId = email.id;
       });
       return;
     }
 
-    // Desktop Shift+Click: extend selection to a range
-    if (_isDesktop && _shiftPressed && _lastSelectedIndex != null) {
-      final items = _currentFlatItems();
-      final lo = math.min(_lastSelectedIndex!, index);
-      final hi = math.min(math.max(_lastSelectedIndex!, index), items.length - 1);
-      final ids = Set.of(_selectedEmailIds);
-      for (var i = lo; i <= hi; i++) {
-        final item = items[i];
-        if (item is _SingleEmailItem) ids.add(item.email.id);
-        if (item is _ConversationHeaderItem) ids.add(item.anchorEmail.id);
+    // Desktop Shift+Click: select from the anchor to here, replacing the last
+    // range rather than adding to it, so the anchor stays put across several
+    // Shift-clicks. Cmd+Shift+Click adds the range to what is selected.
+    if (_isDesktop && _shiftPressed) {
+      final multi = _selectedEmailIds.isNotEmpty;
+      final anchor = (multi ? _anchorId : null) ?? widget.selectedEmailId;
+      if (anchor != null) {
+        final rowIds = _idsOf(_currentRows());
+        final base = _modifierPressed
+            ? _selectionOrOpen(rowIds)
+            : multi
+                ? _rangeBase
+                : const <String>{};
+        setState(() {
+          _anchorId = anchor;
+          _rangeBase = base;
+          _cursorId = email.id;
+          _selectedEmailIds = rangeSelection(rowIds,
+              anchorId: anchor, cursorId: email.id, base: base);
+        });
+        return;
       }
-      setState(() {
-        _selectedEmailIds = ids;
-        _lastSelectedIndex = index;
-      });
-      return;
     }
 
     // Desktop Ctrl/Cmd+Click: toggle individual selection
     if (_isDesktop && _modifierPressed) {
-      setState(() {
-        final ids = Set.of(_selectedEmailIds);
-        if (ids.contains(email.id)) {
-          ids.remove(email.id);
-        } else {
-          ids.add(email.id);
-        }
-        _selectedEmailIds = ids;
-        _lastSelectedIndex = index;
-      });
+      _toggleRow(email.id, _idsOf(_currentRows()));
       return;
     }
 
     // Normal tap: clear multi-selection and open email in reading pane
-    if (_selectedEmailIds.isNotEmpty || _isMultiSelectMode) {
-      setState(() {
-        _selectedEmailIds = {};
-        _isMultiSelectMode = false;
-      });
-    }
-    _lastSelectedIndex = index;
-    widget.onEmailSelected(email);
+    _openRow(email);
   }
 
   void _handleEmailLongPress(Email email, int index) {
@@ -427,7 +584,8 @@ class _EmailListPanelState extends State<EmailListPanel> {
     setState(() {
       _isMultiSelectMode = true;
       _selectedEmailIds = {email.id};
-      _lastSelectedIndex = index;
+      _anchorId = email.id;
+      _cursorId = email.id;
     });
   }
 
@@ -453,7 +611,9 @@ class _EmailListPanelState extends State<EmailListPanel> {
     setState(() {
       _selectedEmailIds = {};
       _isMultiSelectMode = false;
-      _lastSelectedIndex = null;
+      _anchorId = null;
+      _cursorId = null;
+      _rangeBase = const {};
     });
   }
 
@@ -746,6 +906,10 @@ class _EmailListPanelState extends State<EmailListPanel> {
                                 onRefresh: _isTouch ? _refreshAndSettle : null,
                                 selectedEmailId: widget.selectedEmailId,
                                 selectedEmailIds: _selectedEmailIds,
+                                cursorEmailId: _selectedEmailIds.isNotEmpty
+                                    ? _cursorId
+                                    : null,
+                                rowContexts: _rowContexts,
                                 showCheckboxes: _showCheckboxes,
                                 scrollController: _scrollController,
                                 onEmailTapped: _handleEmailTap,
@@ -974,6 +1138,56 @@ Email? _findNextEmail(List<_ListItem> items, String emailId) {
 // ---------------------------------------------------------------------------
 // Widgets
 // ---------------------------------------------------------------------------
+
+/// Records a built row's context under its email id in [registry] for as long
+/// as the row is built — the list builds rows lazily, so this is the only way
+/// to find one to scroll to.
+class _RowContext extends StatefulWidget {
+  const _RowContext({
+    required this.id,
+    required this.registry,
+    required this.child,
+  });
+
+  final String id;
+  final Map<String, BuildContext> registry;
+  final Widget child;
+
+  @override
+  State<_RowContext> createState() => _RowContextState();
+}
+
+class _RowContextState extends State<_RowContext> {
+  @override
+  void initState() {
+    super.initState();
+    widget.registry[widget.id] = context;
+  }
+
+  @override
+  void didUpdateWidget(_RowContext oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.id != widget.id) {
+      _unregister(oldWidget.id);
+      widget.registry[widget.id] = context;
+    }
+  }
+
+  @override
+  void dispose() {
+    _unregister(widget.id);
+    super.dispose();
+  }
+
+  // Only if it is still ours: a row rebuilt under a new key registers before
+  // the old one is disposed.
+  void _unregister(String id) {
+    if (widget.registry[id] == context) widget.registry.remove(id);
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
 
 class _ListHeader extends StatelessWidget {
   const _ListHeader({
@@ -1244,6 +1458,7 @@ class _EmailListView extends StatelessWidget {
     required this.selectedEmailIds,
     required this.showCheckboxes,
     required this.scrollController,
+    required this.rowContexts,
     required this.onEmailTapped,
     required this.expandedConversationIds,
     required this.onToggleConversation,
@@ -1257,6 +1472,7 @@ class _EmailListView extends StatelessWidget {
     this.flagFocusNode,
     this.deleteFocusNode,
     this.onRefresh,
+    this.cursorEmailId,
   });
 
   final List<Email> emails;
@@ -1280,6 +1496,14 @@ class _EmailListView extends StatelessWidget {
   final bool isLoadingMore;
   final String? selectedEmailId;
   final Set<String> selectedEmailIds;
+
+  /// The keyboard cursor's row while a multi-selection is up; it takes the
+  /// selection border from the open message's row. See
+  /// [_EmailListPanelState._cursorId].
+  final String? cursorEmailId;
+
+  /// Filled with every built row, for [_EmailListPanelState._revealRow].
+  final Map<String, BuildContext> rowContexts;
   final bool showCheckboxes;
   final bool isDesktop;
   final ScrollController scrollController;
@@ -1345,7 +1569,7 @@ class _EmailListView extends StatelessWidget {
           void onFlag(DateTime? date) => _createTaskFromEmail(context, email, dueDate: date);
           final isSelected = email.id == selectedEmailId;
           final isDuplicate = item.isDuplicate;
-          final child = EmailListItem(
+          final row = EmailListItem(
             // The echo of the header's own message shares that message's id, so
             // it needs a key of its own or the two rows collide.
             key: ValueKey(isDuplicate ? 'echo_${email.id}' : 'item_${email.id}'),
@@ -1358,6 +1582,7 @@ class _EmailListView extends StatelessWidget {
               selfAddress: selfAddress,
             ),
             isSelected: isSelected,
+            isCursor: cursorEmailId == null ? null : email.id == cursorEmailId,
             isMultiSelected: selectedEmailIds.contains(email.id),
             showCheckbox: showCheckboxes,
             indent: isChild ? 20.0 : 0.0,
@@ -1379,6 +1604,10 @@ class _EmailListView extends StatelessWidget {
             flagFocusNode: isSelected && !isDuplicate ? flagFocusNode : null,
             deleteFocusNode: isSelected && !isDuplicate ? deleteFocusNode : null,
           );
+          // The echo stays out of the registry: it carries the header's id.
+          final child = isDuplicate
+              ? row
+              : _RowContext(id: email.id, registry: rowContexts, child: row);
           // The echo is a marker of where the header's message sits in the
           // order, not a second copy to act on — dragging or swiping it would
           // be acting on the row above.
@@ -1437,7 +1666,7 @@ class _EmailListView extends StatelessWidget {
         void onConvFlag(DateTime? date) =>
             _createTaskFromEmail(context, conv.anchorEmail, dueDate: date);
         final isConvSelected = conv.anchorEmail.id == selectedEmailId;
-        final convChild = _ConversationHeader(
+        final convRow = _ConversationHeader(
           key: ValueKey('conv_${conv.conversationId}'),
           anchorEmail: conv.anchorEmail,
           totalCount: conv.totalCount,
@@ -1450,6 +1679,9 @@ class _EmailListView extends StatelessWidget {
           ),
           isDesktop: isDesktop,
           isSelected: isConvSelected,
+          isCursor: cursorEmailId == null
+              ? null
+              : conv.anchorEmail.id == cursorEmailId,
           isMultiSelected: selectedEmailIds.contains(conv.anchorEmail.id),
           showCheckbox: showCheckboxes,
           folderLabel: emailFolderLabel(
@@ -1465,6 +1697,11 @@ class _EmailListView extends StatelessWidget {
           taskFlag: EmailTaskFlag.ofAll(conv.allEmailIds, taskFlags),
           flagFocusNode: isConvSelected ? flagFocusNode : null,
           deleteFocusNode: isConvSelected ? deleteFocusNode : null,
+        );
+        final convChild = _RowContext(
+          id: conv.anchorEmail.id,
+          registry: rowContexts,
+          child: convRow,
         );
         if (isDesktop) {
           return _DraggableEmailItem(
@@ -1516,6 +1753,7 @@ class _ConversationHeader extends StatefulWidget {
     required this.isSelected,
     required this.onTap,
     required this.onToggleExpand,
+    this.isCursor,
     required this.onDelete,
     required this.onFlag,
     this.isDesktop = true,
@@ -1536,6 +1774,9 @@ class _ConversationHeader extends StatefulWidget {
   final bool isExpanded;
   final bool hasUnread;
   final bool isSelected;
+
+  /// See [EmailListItem.isCursor].
+  final bool? isCursor;
   final bool isMultiSelected;
   final bool showCheckbox;
   final bool isDesktop;
@@ -1601,7 +1842,9 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
                         ? c.hoverEmailBg
                         : Colors.transparent,
                 borderRadius: BorderRadius.circular(8),
-                border: widget.isSelected ? Border.all(color: c.selectionBorder) : null,
+                border: widget.isCursor ?? widget.isSelected
+                    ? Border.all(color: c.selectionBorder)
+                    : null,
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,

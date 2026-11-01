@@ -578,3 +578,34 @@ while another list was selected, or with the Tasks pane switched to another
 list, leaves the flag plain. The reminder rows `OverdueTasksCubit` reads cover
 every list but carry no email id, so they cannot answer this; the list watches
 that cubit only so the day boundary repaints a flag red.
+
+## Keyboard and Range Selection Never Open What They Pass Over
+
+The list's selection lives in `EmailListPanel`, not the bloc. On the desktop:
+Up/Down opens the neighbouring row; **Shift** with an arrow or a click selects
+from an anchor to that row; **Cmd** (Ctrl off the Mac) with an arrow moves a
+cursor without changing the selection; **Space** — or Cmd-click — adds or
+removes the cursor's row; **Escape** drops the multi-selection. The arithmetic
+is in `email_list_selection.dart`.
+
+- **Extending never calls `onEmailSelected`.** Opening a message marks it read,
+  so a Shift-arrow through twenty rows would mark twenty read. The cursor is
+  therefore separate from the open message (`_cursorId`) and takes the
+  selection border from it while a multi-selection is up.
+- **The anchor stays put; the range is recomputed, not added to.** Every Shift
+  move selects `base ∪ anchor..cursor`, so stepping back shrinks the range and
+  a second Shift-click replaces the first one's. `base` is what a Cmd-click or
+  Space had picked when it set the anchor, so a range never eats earlier picks.
+  The old Shift-click added to the set and moved its anchor on every click.
+- **Anchor and cursor are ids, never indexes.** The poller inserts rows at the
+  top and expanding a thread inserts them in the middle; an index then names a
+  different message. Outside a multi-selection both fall back to
+  `selectedEmailId`, so a reading-pane swipe or a notification tap can't leave
+  a stale anchor behind.
+- **A Cmd-click or Cmd-arrow starts from the open message**, not from nothing:
+  the old Cmd-click selected only the clicked row, and a delete then quietly
+  left out the message the user was looking at.
+- **Rows scroll into view with `showOnScreen`** through `_rowContexts`, a
+  registry of built rows. A row that was never built (the user scrolled far
+  away with the wheel and then pressed an arrow) is brought near first by an
+  estimate from its position in the list, because rows vary in height.

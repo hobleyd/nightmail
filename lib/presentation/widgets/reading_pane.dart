@@ -1319,22 +1319,126 @@ class _ReadingPaneToolbar extends StatelessWidget {
         ));
   }
 
+  /// The phone's row: Back, the three compose actions and Delete stay as
+  /// icons, and everything else folds into a waffle menu at the right edge —
+  /// nine touch-sized targets do not fit a phone's width. Only the phone's
+  /// stacked layout passes [onBack], so its presence is what picks this row;
+  /// an iPad keeps the desktop one.
+  Widget _buildPhoneRow(BuildContext context) {
+    final c = context.colors;
+    final isJunkFolder = _isShowingJunkFolder(context);
+    return Row(
+      children: [
+        _ToolbarButton(
+          icon: Icons.arrow_back_ios_new_rounded,
+          tooltip: 'Back',
+          color: c.textMuted,
+          onPressed: onBack!,
+        ),
+        const SizedBox(width: 4),
+        _ToolbarButton(
+          icon: Icons.reply_rounded,
+          tooltip: 'Reply',
+          color: c.textMuted,
+          onPressed: () => _openComposeWindow(context, ComposeMode.reply),
+        ),
+        _ToolbarButton(
+          icon: Icons.reply_all_rounded,
+          tooltip: 'Reply All',
+          color: c.textMuted,
+          onPressed: () => _openComposeWindow(context, ComposeMode.replyAll),
+        ),
+        _ToolbarButton(
+          icon: Icons.forward_to_inbox_rounded,
+          tooltip: 'Forward',
+          color: c.textMuted,
+          onPressed: () => _openComposeWindow(context, ComposeMode.forward),
+        ),
+        const Spacer(),
+        _ToolbarButton(
+          icon: Icons.delete_outline_rounded,
+          tooltip: 'Delete',
+          color: c.textMuted,
+          iconSize: 20,
+          onPressed: () => _confirmAndDelete(context),
+        ),
+        PopupMenuButton<_MoreAction>(
+          tooltip: 'More',
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 200),
+          icon: Icon(Icons.apps_rounded, size: touchIcon(20), color: c.textMuted),
+          onSelected: (action) => switch (action) {
+            _MoreAction.meeting => _openMeetingRequest(context),
+            _MoreAction.commitment => _trackCommitment(context),
+            _MoreAction.reportJunk => _report(context, phishing: false),
+            _MoreAction.reportPhishing => _report(context, phishing: true),
+            _MoreAction.notJunk => _notJunk(context),
+            _MoreAction.print => onPrint?.call(),
+            _MoreAction.copyBody => _copyToClipboard(context),
+          },
+          itemBuilder: (_) => [
+            const PopupMenuItem(
+              value: _MoreAction.meeting,
+              child: _MoreMenuRow(
+                  icon: Icons.event_outlined, label: 'New meeting'),
+            ),
+            const PopupMenuItem(
+              value: _MoreAction.commitment,
+              child: _MoreMenuRow(
+                  icon: Icons.handshake_outlined, label: 'Track as commitment'),
+            ),
+            const PopupMenuDivider(),
+            // Inside Junk the only report is the reverse — see
+            // [ReportJunkButton] for why phishing is not offered there.
+            if (isJunkFolder)
+              const PopupMenuItem(
+                value: _MoreAction.notJunk,
+                child: _MoreMenuRow(
+                    icon: Icons.report_off_outlined, label: 'Not junk'),
+              )
+            else ...const [
+              PopupMenuItem(
+                value: _MoreAction.reportJunk,
+                child: _MoreMenuRow(
+                    icon: Icons.report_outlined, label: 'Report junk'),
+              ),
+              PopupMenuItem(
+                value: _MoreAction.reportPhishing,
+                child: _MoreMenuRow(
+                    icon: Icons.phishing, label: 'Report phishing'),
+              ),
+            ],
+            const PopupMenuDivider(),
+            if (onPrint != null)
+              const PopupMenuItem(
+                value: _MoreAction.print,
+                child: _MoreMenuRow(icon: Icons.print_outlined, label: 'Print'),
+              ),
+            const PopupMenuItem(
+              value: _MoreAction.copyBody,
+              child: _MoreMenuRow(
+                  icon: Icons.content_copy_outlined,
+                  label: 'Copy body (debug)'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    if (onBack != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: _buildPhoneRow(context),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       child: Row(
         children: [
-          if (onBack != null) ...[
-            _ToolbarButton(
-              icon: Icons.arrow_back_ios_new_rounded,
-              tooltip: 'Back',
-              color: context.colors.textMuted,
-              onPressed: onBack!,
-            ),
-            const SizedBox(width: 4),
-          ],
           _ToolbarButton(
             icon: Icons.reply_rounded,
             tooltip: 'Reply',
@@ -2620,6 +2724,36 @@ class _ToolbarButton extends StatelessWidget {
         minHeight: touchTarget(32),
       ),
       onPressed: onPressed,
+    );
+  }
+}
+
+/// What the phone toolbar's waffle menu offers.
+enum _MoreAction {
+  meeting,
+  commitment,
+  reportJunk,
+  reportPhishing,
+  notJunk,
+  print,
+  copyBody,
+}
+
+class _MoreMenuRow extends StatelessWidget {
+  const _MoreMenuRow({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: c.textMuted),
+        const SizedBox(width: 12),
+        Text(label, style: TextStyle(fontSize: 14, color: c.textPrimary)),
+      ],
     );
   }
 }

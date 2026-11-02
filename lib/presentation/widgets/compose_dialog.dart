@@ -167,6 +167,8 @@ class ComposeForm extends StatefulWidget {
     this.onTitleChanged,
     required this.defaultComposeFormat,
     this.signatureHtml = '',
+    this.initialSubject,
+    this.initialAttachments = const [],
   });
 
   final ComposeMode mode;
@@ -182,6 +184,14 @@ class ComposeForm extends StatefulWidget {
   final ValueChanged<String>? onTitleChanged;
   final EmailBodyType defaultComposeFormat;
   final String signatureHtml;
+
+  /// Seeds a new message's subject when there is no draft or original to take
+  /// one from — a forward of list rows as `.eml` attachments.
+  final String? initialSubject;
+
+  /// Files the message starts out with, already read into memory, such as the
+  /// `.eml` of each message forwarded from a list selection.
+  final List<LocalAttachment> initialAttachments;
 
   @override
   State<ComposeForm> createState() => ComposeFormState();
@@ -467,6 +477,9 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     } else {
       _bodyController = TextEditingController(text: _buildInitialPlainBody());
     }
+    // After the HTML branch, which replaces the list with the source's inline
+    // images.
+    _localAttachments = [..._localAttachments, ...widget.initialAttachments];
 
     _subjectFocus.onKeyEvent = (_, event) {
       if (event is KeyDownEvent &&
@@ -717,7 +730,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
   String _initialSubject() {
     if (widget.draftEmail != null) return widget.draftEmail!.subject;
     final email = widget.originalEmail;
-    if (email == null) return '';
+    if (email == null) return widget.initialSubject ?? '';
     final subject = email.subject;
     return switch (widget.mode) {
       ComposeMode.reply || ComposeMode.replyAll => replySubjectFor(subject),

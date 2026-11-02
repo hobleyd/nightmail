@@ -85,6 +85,7 @@ import 'domain/repositories/spam_filter_repository.dart';
 import 'domain/repositories/system_contacts_repository.dart';
 import 'domain/repositories/tasks_repository.dart';
 import 'domain/usecases/attach_email_to_task.dart';
+import 'domain/usecases/get_raw_email_bytes.dart';
 import 'domain/usecases/check_sender_anomaly.dart';
 import 'domain/usecases/merge_sender_addresses.dart';
 import 'domain/usecases/cancel_calendar_event.dart';
@@ -424,6 +425,7 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => MoveFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => DeleteFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => DownloadAttachment(sl<EmailRepository>()));
+  sl.registerLazySingleton(() => GetRawEmailBytes(sl<EmailRepository>()));
   sl.registerLazySingleton(() => GetCachedEmails(sl<EmailRepository>()));
   sl.registerLazySingleton(() => CacheEmails(sl<EmailRepository>()));
   sl.registerLazySingleton(() => ClearEmailCacheForFolder(sl<EmailRepository>()));

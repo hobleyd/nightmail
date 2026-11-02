@@ -201,15 +201,17 @@ Four things are load-bearing:
   put them back on the `UnsupportedFailure` every non-Gmail account returns would
   flicker the list on the common case.
 
-**A drag has to be thread-scoped for any of this to be reached.** The only
-thing that raises `EmailListEmailsMoved` is the folder panel's drop target, and
-it passes the `conversationId` the dragged row carried. A conversation header
-always has one. A *top-level* single row is a one-message thread and now carries
-one too — but a **child** row inside an expanded thread deliberately does not:
-it is an individual message, and dragging the thread's copy in Sent out of the
-Inbox has to stay the no-op it is rather than filing the whole thread away. A
-multi-select drag drops the `conversationId` for the same reason — the user
-named specific messages.
+**A drag has to be thread-scoped for any of this to be reached.** The folder
+panel's drop target passes the `conversationId` the dragged row carried. A
+conversation header always has one. A *top-level* single row is a one-message
+thread and now carries one too — but a **child** row inside an expanded thread
+deliberately does not: it is an individual message, and dragging the thread's
+copy in Sent out of the Inbox has to stay the no-op it is rather than filing the
+whole thread away. A multi-select drag drops the `conversationId` for the same
+reason — the user named specific messages — and so does the other thing that
+raises `EmailListEmailsMoved`, a touch selection's Move button (`_moveSelected`,
+picking from `showMoveToFolderSheet`). Both paths apply the same panel and badge
+deltas through `applyEmailMoveCounts`.
 
 `EmailListActionFailure` carries a `sequence` because of `props`: without it the
 same failure twice in a row compares equal, the second emit is dropped, and a
@@ -609,3 +611,27 @@ is in `email_list_selection.dart`.
   registry of built rows. A row that was never built (the user scrolled far
   away with the wheel and then pressed an arrow) is brought near first by an
   estimate from its position in the list, because rows vary in height.
+
+## A Touch Selection Forwards and Moves, It Does Not Compose
+
+Long-pressing a row on a phone puts the list into selection mode, and the
+header then trades its Compose button for **Forward** and **Move**. Compose has
+nothing to do with the rows picked, and these two are what a selection is for.
+Desktop selection (Shift/Cmd-click) keeps Compose: it already has the drag onto
+the folder panel, and the reading pane's own forward.
+
+- **Forward attaches each message's raw source as `<subject>.eml`**
+  (`GetRawEmailBytes` → `EmailRepository.getRawEmailBytes`, which all three
+  providers implement) in a new message, `ComposeMode.newEmail`, not
+  `forward`: that mode is the provider's forward-one-message endpoint and
+  needs an `originalEmail`. The parts go out as `message/rfc822`, named
+  explicitly because `LocalAttachment.mimeTypeFromName` has no `.eml` entry
+  and an octet-stream part is offered as a download rather than opened as a
+  message. Fetches run four at a time, and **compose opens only if every one
+  arrived**: a forward quietly missing a message the user picked is worse than
+  one that says it could not be made.
+- **The attachments reach the mobile compose route only**
+  (`ComposeWindowApp.open`'s `initialAttachments`). The desktop sub-window is
+  built from JSON arguments; nothing on the desktop passes them.
+- **A thread row's selection is its anchor**, for both, as it is for Delete.
+

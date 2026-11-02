@@ -18,6 +18,7 @@ import '../../domain/entities/email.dart';
 import '../../domain/entities/email_address.dart';
 import '../../domain/entities/email_attachment.dart';
 import '../../domain/entities/inline_attachment.dart';
+import '../../domain/entities/local_attachment.dart';
 import '../../domain/usecases/send_email.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../../injection_container.dart';
@@ -73,6 +74,10 @@ class ComposeWindowApp extends StatelessWidget {
   }
 
   /// Opens a compose screen: a new push route on mobile, a sub-window on desktop.
+  ///
+  /// [initialSubject] and [initialAttachments] reach the mobile route only:
+  /// the desktop sub-window is built from JSON arguments, and the bytes have no
+  /// business crossing that channel. Nothing on the desktop passes them.
   static Future<void> open(
     BuildContext context, {
     required ComposeMode mode,
@@ -80,6 +85,8 @@ class ComposeWindowApp extends StatelessWidget {
     Email? draftEmail,
     String? existingDraftId,
     VoidCallback? onSent,
+    String? initialSubject,
+    List<LocalAttachment> initialAttachments = const [],
   }) async {
     final isMobile = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
     if (isMobile) {
@@ -91,6 +98,8 @@ class ComposeWindowApp extends StatelessWidget {
             draftEmail: draftEmail,
             existingDraftId: existingDraftId,
             onSent: onSent,
+            initialSubject: initialSubject,
+            initialAttachments: initialAttachments,
           ),
           fullscreenDialog: true,
         ),
@@ -619,6 +628,8 @@ class _MobileComposePage extends StatefulWidget {
     this.draftEmail,
     this.existingDraftId,
     this.onSent,
+    this.initialSubject,
+    this.initialAttachments = const [],
   });
 
   final ComposeMode mode;
@@ -626,6 +637,8 @@ class _MobileComposePage extends StatefulWidget {
   final Email? draftEmail;
   final String? existingDraftId;
   final VoidCallback? onSent;
+  final String? initialSubject;
+  final List<LocalAttachment> initialAttachments;
 
   @override
   State<_MobileComposePage> createState() => _MobileComposePageState();
@@ -692,6 +705,8 @@ class _MobileComposePageState extends State<_MobileComposePage> {
               existingDraftId: widget.existingDraftId,
               defaultComposeFormat: _defaultComposeFormat,
               signatureHtml: _signatureHtml,
+              initialSubject: widget.initialSubject,
+              initialAttachments: widget.initialAttachments,
             ),
           ),
         ),

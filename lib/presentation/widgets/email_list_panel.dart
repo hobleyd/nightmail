@@ -10,16 +10,21 @@ import '../../core/theme/app_colors.dart';
 import '../../core/utils/business_days.dart';
 import '../../core/utils/junk_folder.dart';
 import '../../core/utils/outgoing_folder.dart';
+import '../../core/utils/subject_prefixes.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_address.dart';
+import '../../domain/entities/local_attachment.dart';
 import '../../domain/entities/task_email_link.dart';
 import 'email_drag_data.dart';
 import 'email_task_flag.dart';
 import 'email_folder_label.dart';
+import 'email_move_counts.dart';
+import 'move_to_folder_sheet.dart';
 import '../../domain/entities/email_folder.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../../injection_container.dart';
 import '../pages/compose_window.dart';
+import '../../domain/usecases/get_raw_email_bytes.dart';
 import '../../domain/usecases/send_email.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
 import '../blocs/email_detail/email_detail_event.dart';
@@ -118,6 +123,9 @@ class _EmailListPanelState extends State<EmailListPanel> {
   /// Rows that are built, by email id, so a keyboard move can scroll the row it
   /// landed on into view — see [_revealRow].
   final _rowContexts = <String, BuildContext>{};
+
+  /// While the selection's `.eml` files are being fetched for a forward.
+  bool _isForwarding = false;
 
   /// Android or iOS. Long-press multi-select and the checkboxes that go with
   /// it are for touch, where there is no Shift or Cmd to range-select with.
@@ -765,6 +773,118 @@ class _EmailListPanelState extends State<EmailListPanel> {
     _clearSelection();
   }
 
+  /// The touch selection's Forward: fetches each selected message's raw
+  /// source and opens a new message with them attached as `.eml` files.
+  ///
+  /// A thread row's selection is its anchor message, as for Move and Delete,
+  /// so a thread forwards as that one message. Nothing opens unless every
+  /// message arrived — a forward quietly missing one of the messages the user
+  /// picked is worse than a forward that says it could not be made.
+  Future<void> _forwardSelectedAsAttachments() async {
+    if (_isForwarding) return;
+    final emails = _emailsById(_selectedEmailIds);
+    if (emails.isEmpty) return;
+    setState(() => _isForwarding = true);
+
+    // A few at a time: Select All on a phone can pick a whole page, and each
+    // fetch is a full message download.
+    final getRawEmail = sl<GetRawEmailBytes>();
+    final attachments = <LocalAttachment>[];
+    final usedNames = <String>{};
+    String? failure;
+    for (var i = 0; i < emails.length && failure == null; i += 4) {
+      final batch = emails.skip(i).take(4).toList();
+      final results = await Future.wait(batch.map((e) => getRawEmail(e.id)));
+      for (var j = 0; j < batch.length; j++) {
+        results[j].fold(
+          (f) => failure ??= f.message,
+          (bytes) => attachments.add(LocalAttachment(
+            name: _emlFileName(batch[j].subject, usedNames),
+            // Named explicitly: [LocalAttachment.mimeTypeFromName] has no
+            // entry for .eml and would send it as application/octet-stream,
+            // which a recipient's client offers as a download rather than
+            // opening as a message.
+            mimeType: 'message/rfc822',
+            bytes: bytes,
+          )),
+        );
+      }
+    }
+    if (!mounted) return;
+    setState(() => _isForwarding = false);
+    if (failure != null) {
+      showErrorSnackBar(
+        context,
+        emails.length == 1
+            ? "Couldn't attach the message: $failure"
+            : "Couldn't attach the messages: $failure",
+      );
+      return;
+    }
+
+    _clearSelection();
+    await ComposeWindowApp.open(
+      context,
+      mode: ComposeMode.newEmail,
+      initialSubject: emails.length == 1
+          ? forwardSubjectFor(emails.first.subject)
+          : null,
+      initialAttachments: attachments,
+    );
+  }
+
+  /// `<subject>.eml`, made safe for a file name and distinct from every name
+  /// already in [used] — two replies in one thread share a subject.
+  static String _emlFileName(String subject, Set<String> used) {
+    var base = subject
+        .replaceAll(RegExp(r'[\\/:*?"<>|\r\n]'), '_')
+        .trim();
+    if (base.length > 80) base = base.substring(0, 80).trim();
+    if (base.isEmpty) base = 'message';
+    var name = '$base.eml';
+    for (var n = 2; !used.add(name); n++) {
+      name = '$base ($n).eml';
+    }
+    return name;
+  }
+
+  /// The touch selection's Move: asks for a destination and files the
+  /// selection there, the same move a multi-select drag onto the folder panel
+  /// makes — specific messages, so no conversation id.
+  Future<void> _moveSelected() async {
+    final ids = List.of(_selectedEmailIds);
+    if (ids.isEmpty) return;
+    final folderState = context.read<FolderListBloc>().state;
+    if (folderState is! FolderListLoaded) return;
+    final listState = context.read<EmailListBloc>().state;
+    final sourceFolderId =
+        listState is EmailListLoaded ? listState.currentFolderId : null;
+
+    final destination = await showMoveToFolderSheet(
+      context,
+      folders: folderState.folders,
+      currentFolderId: sourceFolderId,
+    );
+    if (destination == null || !mounted) return;
+
+    final moved = _emailsById(ids);
+    if (ids.contains(widget.selectedEmailId)) {
+      context.read<EmailDetailBloc>().add(const EmailDetailCleared());
+      context.read<HomeCubit>().clearEmail();
+    }
+    context.read<EmailListBloc>().add(EmailListEmailsMoved(
+          emailIds: ids,
+          destinationFolderId: destination.id,
+        ));
+    applyEmailMoveCounts(
+      context,
+      moved: moved,
+      sourceFolderId: sourceFolderId,
+      destination: destination,
+    );
+    _clearSelection();
+  }
+
   static Map<String, String> _folderNamesOf(FolderListState state) => {
         if (state is FolderListLoaded)
           for (final f in state.folders) f.id: f.displayName,
@@ -831,6 +951,11 @@ class _EmailListPanelState extends State<EmailListPanel> {
                 final hasSelection = !isSearchMode &&
                     (_selectedEmailIds.isNotEmpty ||
                         widget.selectedEmailId != null);
+                // Only touch's long-press selection trades Compose for these:
+                // [hasSelection] is also true with a message merely open.
+                final isTouchSelecting = _isTouch &&
+                    _isMultiSelectMode &&
+                    _selectedEmailIds.isNotEmpty;
                 return _ListHeader(
                   folderName: widget.folderName,
                   isLoadingFresh: isLoadingFresh,
@@ -839,6 +964,11 @@ class _EmailListPanelState extends State<EmailListPanel> {
                   onSearchSubmit: _submitSearch,
                   onSearchClear: _clearSearch,
                   onCompose: _openComposeWindow,
+                  onForward: isTouchSelecting
+                      ? _forwardSelectedAsAttachments
+                      : null,
+                  isForwarding: _isForwarding,
+                  onMove: isTouchSelecting ? _moveSelected : null,
                   onBack: widget.onBack,
                   onRefresh: () {
                     context
@@ -1199,6 +1329,9 @@ class _ListHeader extends StatelessWidget {
     required this.onSearchSubmit,
     required this.onSearchClear,
     required this.onCompose,
+    this.onForward,
+    this.isForwarding = false,
+    this.onMove,
     this.onBack,
     this.onDelete,
     this.onReportJunk,
@@ -1215,6 +1348,12 @@ class _ListHeader extends StatelessWidget {
   final ValueChanged<String> onSearchSubmit;
   final VoidCallback onSearchClear;
   final VoidCallback onCompose;
+
+  /// Forwards the touch selection as `.eml` attachments. Set only while
+  /// selecting on touch, where it and [onMove] take Compose's place.
+  final VoidCallback? onForward;
+  final bool isForwarding;
+  final VoidCallback? onMove;
   final VoidCallback? onBack;
   final VoidCallback? onDelete;
   /// Reports the selection as junk — or, in the Junk folder, as not junk.
@@ -1356,17 +1495,51 @@ class _ListHeader extends StatelessWidget {
               ],
             ),
           ),
-          IconButton(
-            icon: Icon(Icons.edit_square,
-                size: touchIcon(20), color: c.textMuted),
-            tooltip: 'Compose',
-            padding: EdgeInsets.zero,
-            constraints: BoxConstraints(
-              minWidth: touchTarget(32),
-              minHeight: touchTarget(32),
+          if (onForward != null) ...[
+            IconButton(
+              icon: isForwarding
+                  ? SizedBox(
+                      width: touchIcon(16),
+                      height: touchIcon(16),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.5,
+                        color: c.textMuted,
+                      ),
+                    )
+                  : Icon(Icons.forward_rounded,
+                      size: touchIcon(20), color: c.textMuted),
+              tooltip: 'Forward as attachment',
+              padding: EdgeInsets.zero,
+              constraints: BoxConstraints(
+                minWidth: touchTarget(32),
+                minHeight: touchTarget(32),
+              ),
+              onPressed: isForwarding ? null : onForward,
             ),
-            onPressed: onCompose,
-          ),
+            if (onMove != null)
+              IconButton(
+                icon: Icon(Icons.drive_file_move_outlined,
+                    size: touchIcon(20), color: c.textMuted),
+                tooltip: 'Move to folder',
+                padding: EdgeInsets.zero,
+                constraints: BoxConstraints(
+                  minWidth: touchTarget(32),
+                  minHeight: touchTarget(32),
+                ),
+                onPressed: onMove,
+              ),
+          ] else
+            IconButton(
+              icon: Icon(Icons.edit_square,
+                  size: touchIcon(20), color: c.textMuted),
+              tooltip: 'Compose',
+              padding: EdgeInsets.zero,
+              constraints: BoxConstraints(
+                minWidth: touchTarget(32),
+                minHeight: touchTarget(32),
+              ),
+              onPressed: onCompose,
+            ),
           if (onMarkUnread != null)
             IconButton(
               icon: Icon(Icons.mark_email_unread_outlined,

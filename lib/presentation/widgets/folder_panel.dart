@@ -24,7 +24,9 @@ import '../blocs/email_detail/email_detail_event.dart';
 import '../blocs/email_list/email_list_bloc.dart';
 import '../blocs/email_list/email_list_event.dart';
 import 'email_drag_data.dart';
+import 'email_move_counts.dart';
 import 'folder_drag_data.dart';
+import 'folder_display.dart';
 import '../blocs/email_list/email_list_state.dart';
 import '../blocs/folder_list/folder_list_bloc.dart';
 import '../blocs/folder_list/folder_list_event.dart';
@@ -696,7 +698,7 @@ class _FolderPanelState extends State<FolderPanel> {
       }
     }
 
-    roots.sort(_compareSystemOrder);
+    roots.sort(compareFolderSystemOrder);
     for (final list in childrenOf.values) {
       list.sort((a, b) => a.displayName.compareTo(b.displayName));
     }
@@ -752,27 +754,8 @@ class _FolderPanelState extends State<FolderPanel> {
     return result;
   }
 
-  static int _compareSystemOrder(EmailFolder a, EmailFolder b) {
-    final aIdx = _systemOrder(a.displayName);
-    final bIdx = _systemOrder(b.displayName);
-    if (aIdx != bIdx) return aIdx.compareTo(bIdx);
-    return a.displayName.compareTo(b.displayName);
-  }
-
-  static int _systemOrder(String name) {
-    return switch (name.toLowerCase()) {
-      'inbox' => 0,
-      'drafts' => 1,
-      'sent items' => 2,
-      'deleted items' => 3,
-      'junk email' => 4,
-      'archive' => 5,
-      _ => 99,
-    };
-  }
-
   // System folders (Inbox, Sent, etc.) can be dropped onto but not dragged.
-  static bool _isSystemFolder(EmailFolder f) => _systemOrder(f.displayName) != 99;
+  static bool _isSystemFolder(EmailFolder f) => folderSystemOrder(f.displayName) != 99;
 }
 
 class _DisplayItem {
@@ -1554,44 +1537,12 @@ class _FolderItemState extends State<_FolderItem>
               conversationId: details.data.conversationId,
             ));
 
-        if (moved.isNotEmpty &&
-            sourceFolderId != null &&
-            sourceFolderId != widget.folder.id) {
-          final unreadMoved = moved.where((e) => !e.isRead).length;
-          final folderListBloc = context.read<FolderListBloc>();
-          folderListBloc.add(FolderListUnreadCountChanged(
-            folderId: sourceFolderId,
-            unreadCountDelta: -unreadMoved,
-            totalCountDelta: -moved.length,
-          ));
-          folderListBloc.add(FolderListUnreadCountChanged(
-            folderId: widget.folder.id,
-            unreadCountDelta: unreadMoved,
-            totalCountDelta: moved.length,
-          ));
-          if (unreadMoved > 0) {
-            final folderListState = folderListBloc.state;
-            final sourceFolder = folderListState is FolderListLoaded
-                ? folderListState.folders
-                    .where((f) => f.id == sourceFolderId)
-                    .firstOrNull
-                : null;
-            final sourceIsInbox =
-                sourceFolder?.displayName.toLowerCase() == 'inbox';
-            final destIsInbox =
-                widget.folder.displayName.toLowerCase() == 'inbox';
-            final mailPoller = context.read<MailPollerCubit>();
-            if (sourceIsInbox && !destIsInbox) {
-              for (var i = 0; i < unreadMoved; i++) {
-                mailPoller.decrementUnreadCount();
-              }
-            } else if (destIsInbox && !sourceIsInbox) {
-              for (var i = 0; i < unreadMoved; i++) {
-                mailPoller.incrementUnreadCount();
-              }
-            }
-          }
-        }
+        applyEmailMoveCounts(
+          context,
+          moved: moved,
+          sourceFolderId: sourceFolderId,
+          destination: widget.folder,
+        );
       },
       builder: (context, candidateData, _) => _buildContent(
         context,
@@ -1622,7 +1573,7 @@ class _FolderItemState extends State<_FolderItem>
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(_iconFor(widget.folder.displayName),
+            Icon(folderIconFor(widget.folder.displayName),
                 size: touchIcon(14), color: AppColors.accent),
             const SizedBox(width: 6),
             Text(
@@ -1669,7 +1620,7 @@ class _FolderItemState extends State<_FolderItem>
         else
           SizedBox(width: touchIcon(20)),
         Icon(
-          _iconFor(widget.folder.displayName),
+          folderIconFor(widget.folder.displayName),
           size: touchIcon(16),
           color: (widget.isSelected || isDragHovering)
               ? AppColors.accent
@@ -2072,19 +2023,6 @@ class _FolderItemState extends State<_FolderItem>
         widget.folder.unreadItemCount > 0) {
       context.read<MailPollerCubit>().updateBadgeFromFolders(0);
     }
-  }
-
-  IconData _iconFor(String name) {
-    return switch (name.toLowerCase()) {
-      'inbox' => Icons.inbox_rounded,
-      'sent items' => Icons.send_rounded,
-      'drafts' => Icons.drafts_rounded,
-      'deleted items' => Icons.delete_outline_rounded,
-      'junk email' => Icons.report_gmailerrorred_rounded,
-      'archive' => Icons.archive_outlined,
-      'outbox' => Icons.outbox_rounded,
-      _ => Icons.folder_outlined,
-    };
   }
 }
 

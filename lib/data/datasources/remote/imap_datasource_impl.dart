@@ -21,6 +21,7 @@ import '../../models/email_address_model.dart';
 import '../../models/email_folder_model.dart';
 import '../../models/email_model.dart';
 import 'email_remote_datasource.dart';
+import 'mime_attachment_builder.dart';
 import 'spam_db_sync_datasource.dart';
 
 const _spamDbFolderName = 'SPAMDB';
@@ -1818,21 +1819,7 @@ class ImapDatasourceImpl
   Future<void> _addAttachmentsToBuilder(
       MessageBuilder builder, List<LocalAttachment> attachments) async {
     for (final att in attachments) {
-      if (att.isInline && att.contentId != null) {
-        final part = builder.addBinary(
-          att.bytes,
-          MediaType.fromText(att.mimeType),
-          filename: att.name,
-          disposition: ContentDispositionHeader.from(ContentDisposition.inline),
-        );
-        part.setHeader('Content-Id', '<${att.contentId}>');
-      } else {
-        builder.addBinary(
-          att.bytes,
-          MediaType.fromText(att.mimeType),
-          filename: att.name,
-        );
-      }
+      addLocalAttachment(builder, att);
     }
   }
 
@@ -2796,21 +2783,7 @@ String _buildDraftMimeText(_DraftMimeParams p) {
     builder.addTextPlain(p.body);
   }
   for (final att in p.attachments) {
-    if (att.isInline && att.contentId != null) {
-      final part = builder.addBinary(
-        att.bytes,
-        MediaType.fromText(att.mimeType),
-        filename: att.name,
-        disposition: ContentDispositionHeader.from(ContentDisposition.inline),
-      );
-      part.setHeader('Content-Id', '<${att.contentId}>');
-    } else {
-      builder.addBinary(
-        att.bytes,
-        MediaType.fromText(att.mimeType),
-        filename: att.name,
-      );
-    }
+    addLocalAttachment(builder, att);
   }
   return builder.buildMimeMessage().renderMessage();
 }

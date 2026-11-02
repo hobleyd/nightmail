@@ -208,10 +208,18 @@ thread and now carries one too — but a **child** row inside an expanded thread
 deliberately does not: it is an individual message, and dragging the thread's
 copy in Sent out of the Inbox has to stay the no-op it is rather than filing the
 whole thread away. A multi-select drag drops the `conversationId` for the same
-reason — the user named specific messages — and so does the other thing that
-raises `EmailListEmailsMoved`, a touch selection's Move button (`_moveSelected`,
-picking from `showMoveToFolderSheet`). Both paths apply the same panel and badge
-deltas through `applyEmailMoveCounts`.
+reason — the user named specific messages.
+
+The other thing that raises `EmailListEmailsMoved` is a touch selection's Move
+button (`_moveSelected`, picking from `showMoveToFolderSheet`), and it does
+**not** follow the multi-select drag. A selected thread row holds only its
+anchor's id, so moving just that id left the row on screen headed by the next
+message — Move apparently doing nothing. It resolves the selection with
+`resolveDeleteTargets`, as Delete does, and sends each thread the way a single
+header-row drag does (every message of it plus its `conversationId`, narrowed
+by the bloc to what this folder holds), with any loose messages in one event of
+their own. Both paths apply the same panel and badge deltas through
+`applyEmailMoveCounts`.
 
 `EmailListActionFailure` carries a `sequence` because of `props`: without it the
 same failure twice in a row compares equal, the second emit is dropped, and a
@@ -627,11 +635,17 @@ the folder panel, and the reading pane's own forward.
   needs an `originalEmail`. The parts go out as `message/rfc822`, named
   explicitly because `LocalAttachment.mimeTypeFromName` has no `.eml` entry
   and an octet-stream part is offered as a download rather than opened as a
-  message. Fetches run four at a time, and **compose opens only if every one
+  message. On Gmail and IMAP that type also routes the part through
+  `addLocalAttachment` (`mime_attachment_builder.dart`) as its own source
+  text: enough_mail's `addBinary` base64-encodes it but writes no
+  Content-Transfer-Encoding on a `message/*` part, which arrived as an
+  attachment no client could open. Graph takes it as a `fileAttachment`. Fetches run four at a time, and **compose opens only if every one
   arrived**: a forward quietly missing a message the user picked is worse than
   one that says it could not be made.
 - **The attachments reach the mobile compose route only**
   (`ComposeWindowApp.open`'s `initialAttachments`). The desktop sub-window is
   built from JSON arguments; nothing on the desktop passes them.
-- **A thread row's selection is its anchor**, for both, as it is for Delete.
+- **Forward takes a thread row as its anchor message alone**; Move takes the
+  whole thread, as Delete does (see above). Forwarding every message of a long
+  thread is rarely what was meant, and its replies quote one another anyway.
 

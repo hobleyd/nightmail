@@ -849,8 +849,14 @@ class _EmailListPanelState extends State<EmailListPanel> {
   }
 
   /// The touch selection's Move: asks for a destination and files the
-  /// selection there, the same move a multi-select drag onto the folder panel
-  /// makes — specific messages, so no conversation id.
+  /// selection there.
+  ///
+  /// The selection is resolved the way Delete resolves it, not the way a
+  /// multi-select drag does: a selected thread row holds only its anchor's id,
+  /// and moving that one message left the row on screen headed by the next,
+  /// as though Move had done nothing. Each thread goes as a single header-row
+  /// drag would send it — every message of it plus its conversation id, which
+  /// the bloc narrows to what this folder holds — and the rest as messages.
   Future<void> _moveSelected() async {
     final ids = List.of(_selectedEmailIds);
     if (ids.isEmpty) return;
@@ -867,18 +873,32 @@ class _EmailListPanelState extends State<EmailListPanel> {
     );
     if (destination == null || !mounted) return;
 
-    final moved = _emailsById(ids);
+    final targets = _resolveDeleteTargets(ids);
     if (ids.contains(widget.selectedEmailId)) {
       context.read<EmailDetailBloc>().add(const EmailDetailCleared());
       context.read<HomeCubit>().clearEmail();
     }
-    context.read<EmailListBloc>().add(EmailListEmailsMoved(
-          emailIds: ids,
-          destinationFolderId: destination.id,
-        ));
+    final bloc = context.read<EmailListBloc>();
+    final emails = listState is EmailListLoaded ? listState.emails : const <Email>[];
+    for (final conversationId in targets.conversationIds) {
+      bloc.add(EmailListEmailsMoved(
+        emailIds: [
+          for (final e in emails)
+            if ((e.conversationId ?? e.id) == conversationId) e.id,
+        ],
+        destinationFolderId: destination.id,
+        conversationId: conversationId,
+      ));
+    }
+    if (targets.emailIds.isNotEmpty) {
+      bloc.add(EmailListEmailsMoved(
+        emailIds: targets.emailIds,
+        destinationFolderId: destination.id,
+      ));
+    }
     applyEmailMoveCounts(
       context,
-      moved: moved,
+      moved: targets.removed,
       sourceFolderId: sourceFolderId,
       destination: destination,
     );

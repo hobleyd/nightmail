@@ -24,6 +24,7 @@ import 'conversation_folder_datasource.dart';
 import 'email_remote_datasource.dart';
 import 'gmail_message_parser.dart';
 import 'mail_delta_datasource.dart';
+import 'mime_attachment_builder.dart';
 import 'out_of_office_datasource.dart';
 import 'thread_index_datasource.dart';
 
@@ -1038,21 +1039,7 @@ class GmailDatasourceImpl
   Future<void> _addAttachmentsToBuilder(
       MessageBuilder builder, List<LocalAttachment> attachments) async {
     for (final att in attachments) {
-      if (att.isInline && att.contentId != null) {
-        final part = builder.addBinary(
-          att.bytes,
-          MediaType.fromText(att.mimeType),
-          filename: att.name,
-          disposition: ContentDispositionHeader.from(ContentDisposition.inline),
-        );
-        part.setHeader('Content-Id', '<${att.contentId}>');
-      } else {
-        builder.addBinary(
-          att.bytes,
-          MediaType.fromText(att.mimeType),
-          filename: att.name,
-        );
-      }
+      addLocalAttachment(builder, att);
     }
   }
 

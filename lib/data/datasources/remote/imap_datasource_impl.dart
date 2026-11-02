@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io' show SocketException, TlsException;
 import 'dart:typed_data';
 
@@ -799,9 +800,7 @@ class ImapDatasourceImpl
           throw ServerException(message: 'Message not found: $id');
         }
 
-        final buffer = StringBuffer();
-        fetchResult.messages.first.render(buffer);
-        return Uint8List.fromList(buffer.toString().codeUnits);
+        return rawBytesOfFetchedMessage(fetchResult.messages.first);
       } on ImapException catch (e) {
         throw ServerException(message: e.message ?? 'IMAP error');
       } on AuthException {
@@ -2769,6 +2768,25 @@ class _DraftMimeParams {
 /// UI every time the draft autosave timer fired. [compute] moves it to a
 /// worker isolate so only the cheap network I/O (APPEND) touches the
 /// account's connection back on the caller's isolate.
+/// The bytes of a message fetched with `BODY[]`, as the server holds them —
+/// the `.eml` a forward-as-attachment or an attach-to-task sends on.
+///
+/// A literal answer (every real server's) is kept by the fetch parser as the
+/// server's own bytes, so those are returned untouched. Rendering it and taking
+/// the string's code units happened to give the same bytes back, but only
+/// because each byte is rendered as one char code; that held by coincidence.
+/// A non-literal answer is text the reader has already UTF-8-decoded, and its
+/// code units are no bytes at all — every character above U+00FF was cut to
+/// its low byte — so it is UTF-8-encoded back, the inverse of that decode.
+@visibleForTesting
+Uint8List rawBytesOfFetchedMessage(MimeMessage message) {
+  final data = message.mimeData;
+  if (data is BinaryMimeData) return data.data;
+  final buffer = StringBuffer();
+  message.render(buffer);
+  return Uint8List.fromList(utf8.encode(buffer.toString()));
+}
+
 String _buildDraftMimeText(_DraftMimeParams p) {
   final builder = MessageBuilder()
     ..from = [MailAddress(p.fromName, p.fromAddress)]

@@ -145,6 +145,16 @@ class FakeImapServer {
     mailboxes.putIfAbsent(mailbox, () => {})[uid] = raw;
   }
 
+  /// The exact bytes FETCH serves for a message, where [seed]'s text would
+  /// otherwise go out UTF-8 encoded — for a body in a legacy charset.
+  final Map<String, Map<int, List<int>>> rawBytes = {};
+
+  /// [seed], for a message given as the bytes the server holds.
+  void seedBytes(String mailbox, {required int uid, required List<int> raw}) {
+    seed(mailbox, uid: uid, raw: latin1.decode(raw));
+    rawBytes.putIfAbsent(mailbox, () => {})[uid] = raw;
+  }
+
   Future<void> close() async {
     for (final s in _sessions) {
       await s.close();
@@ -339,7 +349,7 @@ class _ImapSession {
       if (raw == null) continue;
       final seq = sorted.indexOf(uid) + 1;
       if (wantsBody) {
-        final bytes = utf8.encode(raw);
+        final bytes = _server.rawBytes[_selected]?[uid] ?? utf8.encode(raw);
         _socket.write(
           '* $seq FETCH (UID $uid FLAGS () BODY[] {${bytes.length}}\r\n',
         );

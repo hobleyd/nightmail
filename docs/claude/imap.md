@@ -16,6 +16,20 @@ The reading is persisted, because a rebuild while the app was closed is the case
 an in-memory comparison cannot see.
 
 
+## A Message's Raw Bytes Are the Literal's, Not a Rendering
+
+`getRawEmailBytes` is the `.eml` a forward-as-attachment or an attach-to-task
+sends on, so it must be the message byte for byte. `rawBytesOfFetchedMessage`
+returns the `BODY[]` literal's own bytes, which the fetch parser keeps as
+`BinaryMimeData` (it no longer UTF-8-decodes them — see `fetch_parser.dart`).
+It used to render the message and take the string's `codeUnits`. That was
+byte-exact for a literal only because `BinaryMimeData.render` writes one char
+code per byte, and wrong for a non-literal answer: that text has been
+UTF-8-decoded by the response reader, so every character above U+00FF was cut
+to its low byte. The text fallback is now UTF-8-encoded back.
+`imap_raw_email_bytes_test.dart` pins both, including a windows-1252 body that
+any decode-and-re-encode would mangle.
+
 ## Testing Against a Real Dialogue
 
 `test/data/datasources/imap_test_harness.dart` runs a scripted IMAP server and

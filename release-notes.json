@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.41.2",
+  "version": "1.41.3",
   "sections": [
     {
-      "type": "fixes",
-      "title": "Fixes",
+      "type": "features",
+      "title": "New features",
       "items": [
         {
-          "body": "offer \"Clear pending install…\" when a stale marker blocks installs",
-          "title": "update"
+          "body": "keyboard multi-select — Shift/Cmd/Ctrl with the arrows, Space, Escape",
+          "title": "list"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.41.2",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "offer \"Clear pending install…\" when a stale marker blocks installs",
+              "title": "update"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -375,23 +392,6 @@
             {
               "body": "expand the Today tasks row to list the tasks",
               "title": "commitments"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.39.7",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "relaunch after an in-app update on macOS",
-              "title": "update"
             }
           ]
         }

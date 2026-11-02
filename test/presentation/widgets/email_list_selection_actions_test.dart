@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:meta/meta.dart';
 import 'package:flutter/material.dart';
@@ -12,7 +13,9 @@ import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/domain/entities/email.dart';
 import 'package:nightmail/domain/entities/email_address.dart';
 import 'package:nightmail/domain/entities/email_folder.dart';
+import 'package:nightmail/domain/entities/local_attachment.dart';
 import 'package:nightmail/domain/usecases/get_raw_email_bytes.dart';
+import 'package:nightmail/domain/usecases/send_email.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 import 'package:nightmail/injection_container.dart';
@@ -95,6 +98,13 @@ class _FakeAccountManager extends Fake implements AccountManager {
   Account? get activeAccount => _account;
 }
 
+/// What the panel asked a compose screen to open with.
+typedef _OpenedCompose = ({
+  ComposeMode mode,
+  String? subject,
+  List<LocalAttachment> attachments,
+});
+
 /// Answers each fetch from [answer], recording the ids asked for.
 class _FakeGetRawEmailBytes extends Fake implements GetRawEmailBytes {
   _FakeGetRawEmailBytes(this.answer);
@@ -139,6 +149,7 @@ void main() {
   late MockEmailDetailBloc emailDetail;
   late MockHomeCubit home;
   late _FakeGetRawEmailBytes getRaw;
+  late List<_OpenedCompose> opened;
 
   final single = _email('m1', 'Quarterly numbers', isRead: false);
   // A thread of two Inbox messages: its row is headed by t2, the newest.
@@ -187,6 +198,7 @@ void main() {
       (_) async => throw StateError('a test must set the fetch answer'),
     );
     sl.registerSingleton<GetRawEmailBytes>(getRaw);
+    opened = [];
   });
 
   tearDown(() async => sl.reset());
@@ -217,6 +229,20 @@ void main() {
             folder: _inbox,
             selectedEmailId: selectedEmailId,
             onEmailSelected: (_) {},
+            // Stands in for ComposeWindowApp.open, whose phone route cannot be
+            // reached from the test host.
+            composeOpener: (
+              context, {
+              required mode,
+              initialSubject,
+              initialAttachments = const [],
+            }) async {
+              opened.add((
+                mode: mode,
+                subject: initialSubject,
+                attachments: initialAttachments,
+              ));
+            },
           ),
         ),
       ),
@@ -313,9 +339,7 @@ void main() {
       expect(button.onPressed, isNull,
           reason: 'a second tap must not start a second forward');
 
-      // Finish on a failure: success would open compose, which on the test
-      // host is the desktop sub-window.
-      gate.complete(const Left(NetworkFailure(message: 'No connection')));
+      gate.complete(Right(Uint8List.fromList([1])));
       await tester.pumpAndSettle();
       expect(find.byType(CircularProgressIndicator), findsNothing);
     });
@@ -352,6 +376,73 @@ void main() {
           findsOneWidget);
       expect(forward, findsOneWidget,
           reason: 'the user can retry without picking the rows again');
+      expect(opened, isEmpty);
+    });
+
+    _onPhone('one message opens a new email with it attached as its .eml',
+        (tester) async {
+      getRaw.answer = (id) async => Right(Uint8List.fromList(utf8.encode(id)));
+      await pumpPanel(tester);
+      await longPress(tester, 'Quarterly numbers');
+
+      await tester.tap(forward);
+      await tester.pumpAndSettle();
+
+      final compose = opened.single;
+      expect(compose.mode, ComposeMode.newEmail,
+          reason: 'forward mode is the provider forward of one original');
+      expect(compose.subject, 'Fwd: Quarterly numbers');
+      expect(
+        compose.attachments
+            .map((a) => (a.name, a.mimeType, utf8.decode(a.bytes))),
+        [('Quarterly numbers.eml', 'message/rfc822', 'm1')],
+      );
+    });
+
+    _onPhone('several messages open one email with every .eml, in list order',
+        (tester) async {
+      getRaw.answer = (id) async => Right(Uint8List.fromList(utf8.encode(id)));
+      await pumpPanel(tester);
+      // Picked bottom-up; the attachments still follow the list.
+      await longPress(tester, 'Re: Offsite plans');
+      await tester.tap(find.text('Quarterly numbers'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(forward);
+      await tester.pumpAndSettle();
+
+      final compose = opened.single;
+      expect(compose.subject, isNull);
+      expect(
+        compose.attachments.map((a) => (a.name, utf8.decode(a.bytes))),
+        [('Quarterly numbers.eml', 'm1'), ('Re_ Offsite plans.eml', 't2')],
+      );
+    });
+
+    _onPhone('the selection is cleared once compose is opened',
+        (tester) async {
+      getRaw.answer = (id) async => Right(Uint8List.fromList([1]));
+      await pumpPanel(tester);
+      await longPress(tester, 'Quarterly numbers');
+
+      await tester.tap(forward);
+      await tester.pumpAndSettle();
+
+      expect(opened, hasLength(1));
+      expect(find.byTooltip('Compose'), findsOneWidget);
+      expect(forward, findsNothing);
+    });
+
+    _onPhone('Compose still opens a blank new email', (tester) async {
+      await pumpPanel(tester);
+
+      await tester.tap(find.byTooltip('Compose'));
+      await tester.pumpAndSettle();
+
+      final compose = opened.single;
+      expect(compose.mode, ComposeMode.newEmail);
+      expect(compose.subject, isNull);
+      expect(compose.attachments, isEmpty);
     });
   });
 

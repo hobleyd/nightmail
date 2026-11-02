@@ -13,6 +13,7 @@ import '../../core/utils/junk_folder.dart';
 import '../../core/utils/outgoing_folder.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_address.dart';
+import '../../domain/entities/local_attachment.dart';
 import '../../domain/entities/task_email_link.dart';
 import 'email_drag_data.dart';
 import 'email_task_flag.dart';
@@ -51,6 +52,15 @@ import 'flag_icon_button.dart';
 import 'report_junk_button.dart';
 import 'report_phishing_consent.dart';
 
+/// Opens a compose screen — [ComposeWindowApp.open], narrowed to what the
+/// list asks of it.
+typedef ComposeOpener = Future<void> Function(
+  BuildContext context, {
+  required ComposeMode mode,
+  String? initialSubject,
+  List<LocalAttachment> initialAttachments,
+});
+
 class EmailListPanel extends StatefulWidget {
   const EmailListPanel({
     super.key,
@@ -64,6 +74,7 @@ class EmailListPanel extends StatefulWidget {
     this.onTasksTapped,
     this.onAiTapped,
     this.onCommitmentsTapped,
+    @visibleForTesting this.composeOpener = ComposeWindowApp.open,
   });
 
   final String folderName;
@@ -81,6 +92,12 @@ class EmailListPanel extends StatefulWidget {
   final VoidCallback? onTasksTapped;
   final VoidCallback? onAiTapped;
   final VoidCallback? onCommitmentsTapped;
+
+  /// How Compose and a selection's Forward open their screen. Only a test
+  /// passes one: the real [ComposeWindowApp.open] decides phone or desktop
+  /// from `dart:io`, which is always the host under test, and its phone route
+  /// opens on the HTML editor's webview.
+  final ComposeOpener composeOpener;
 
   bool get _hasViewShortcuts =>
       onCalendarTapped != null &&
@@ -417,7 +434,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
   }
 
   Future<void> _openComposeWindow() async {
-    await ComposeWindowApp.open(context, mode: ComposeMode.newEmail);
+    await widget.composeOpener(context, mode: ComposeMode.newEmail);
   }
 
   void _submitSearch(String query) {
@@ -798,7 +815,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
         );
       case Right(value: final draft):
         _clearSelection();
-        await ComposeWindowApp.open(
+        await widget.composeOpener(
           context,
           mode: ComposeMode.newEmail,
           initialSubject: draft.subject,

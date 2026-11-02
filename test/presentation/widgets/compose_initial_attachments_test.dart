@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -16,6 +17,7 @@ import 'package:nightmail/domain/repositories/sender_repository.dart';
 import 'package:nightmail/domain/repositories/system_contacts_repository.dart';
 import 'package:nightmail/domain/usecases/ai/compose_reply.dart';
 import 'package:nightmail/domain/usecases/delete_server_draft.dart';
+import 'package:nightmail/domain/usecases/get_raw_email_bytes.dart';
 import 'package:nightmail/domain/usecases/save_server_draft.dart';
 import 'package:nightmail/domain/usecases/search_contacts.dart';
 import 'package:nightmail/domain/usecases/send_email.dart';
@@ -23,6 +25,7 @@ import 'package:nightmail/injection_container.dart';
 import 'package:nightmail/presentation/blocs/ai/ai_compose_cubit.dart';
 import 'package:nightmail/presentation/blocs/compose/compose_bloc.dart';
 import 'package:nightmail/presentation/widgets/compose_dialog.dart';
+import 'package:nightmail/presentation/widgets/forward_as_attachment.dart';
 
 // ---------------------------------------------------------------------------
 // ComposeForm seeded by a list selection's Forward: the subject it is handed
@@ -98,6 +101,19 @@ class _FakeDirectoryContacts extends Fake
 
 class _FakeComposeReply extends Fake implements ComposeReply {}
 
+/// Answers every fetch from [answer] — by default with the id as the source.
+class _FakeGetRawEmailBytes extends Fake implements GetRawEmailBytes {
+  Future<Either<Failure, Uint8List>> Function(String id) answer =
+      (id) async => Right(Uint8List.fromList(utf8.encode('source of $id')));
+  final asked = <String>[];
+
+  @override
+  Future<Either<Failure, Uint8List>> call(String emailId) {
+    asked.add(emailId);
+    return answer(emailId);
+  }
+}
+
 LocalAttachment _eml(String name, String source) => LocalAttachment(
       name: name,
       mimeType: 'message/rfc822',
@@ -106,6 +122,7 @@ LocalAttachment _eml(String name, String source) => LocalAttachment(
 
 void main() {
   late _RecordingEmailRepository repository;
+  late _FakeGetRawEmailBytes getRaw;
 
   setUp(() {
     repository = _RecordingEmailRepository();
@@ -120,6 +137,8 @@ void main() {
     sl.registerSingleton<DeleteServerDraft>(DeleteServerDraft(repository));
     sl.registerFactory<AiComposeCubit>(
         () => AiComposeCubit(composeReply: _FakeComposeReply()));
+    getRaw = _FakeGetRawEmailBytes();
+    sl.registerSingleton<GetRawEmailBytes>(getRaw);
   });
 
   tearDown(() async => sl.reset());
@@ -129,6 +148,7 @@ void main() {
     WidgetTester tester, {
     String? initialSubject,
     List<LocalAttachment> initialAttachments = const [],
+    List<ForwardedMessage> forwardAsAttachments = const [],
   }) async {
     await tester.binding.setSurfaceSize(const Size(900, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -145,6 +165,7 @@ void main() {
             defaultComposeFormat: EmailBodyType.text,
             initialSubject: initialSubject,
             initialAttachments: initialAttachments,
+            forwardAsAttachments: forwardAsAttachments,
           ),
         ),
       ),
@@ -215,5 +236,99 @@ void main() {
         ('Re_ Meeting.eml', 'message/rfc822', 'two'),
       ],
     );
+  });
+
+  // The desktop compose window is handed ids, not bytes, and fetches the
+  // .eml files itself once it is open.
+  group('forwarded messages fetched by the form', () {
+    const two = [
+      (id: 'm1', subject: 'Quarterly numbers'),
+      (id: 't2', subject: 'Re: Offsite plans'),
+    ];
+
+    testWidgets('are fetched and attached, in order, once the form opens',
+        (tester) async {
+      await pumpForm(tester, forwardAsAttachments: two);
+      await tester.pump();
+
+      expect(getRaw.asked, ['m1', 't2']);
+      expect(find.text('Quarterly numbers.eml'), findsOneWidget);
+      expect(find.text('Re_ Offsite plans.eml'), findsOneWidget);
+    });
+
+    testWidgets('show one pending chip until they arrive', (tester) async {
+      final gate = Completer<Either<Failure, Uint8List>>();
+      getRaw.answer = (_) => gate.future;
+      await pumpForm(tester, forwardAsAttachments: two);
+
+      expect(find.text('Attaching 2 messages…'), findsOneWidget);
+
+      gate.complete(Right(Uint8List.fromList([1])));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Attaching 2 messages…'), findsNothing);
+      expect(find.text('Quarterly numbers.eml'), findsOneWidget);
+    });
+
+    testWidgets('a failure attaches none and says why', (tester) async {
+      getRaw.answer = (id) async => id == 't2'
+          ? const Left(NetworkFailure(message: 'No connection'))
+          : Right(Uint8List.fromList([1]));
+      await pumpForm(tester, forwardAsAttachments: two);
+      await tester.pump();
+
+      expect(
+          find.text("Couldn't attach the forwarded messages: No connection"),
+          findsOneWidget);
+      expect(find.text('Quarterly numbers.eml'), findsNothing);
+      expect(find.textContaining('Attaching'), findsNothing);
+    });
+
+    testWidgets('Send pressed mid-fetch waits, then sends them',
+        (tester) async {
+      final gate = Completer<Either<Failure, Uint8List>>();
+      getRaw.answer = (id) => gate.future;
+      await pumpForm(tester,
+          initialSubject: 'Fwd: Quarterly numbers',
+          forwardAsAttachments: [two.first]);
+
+      await send(tester);
+      expect(repository.sends, isEmpty,
+          reason: 'it must not go before its attachments');
+
+      gate.complete(Right(Uint8List.fromList(utf8.encode('one'))));
+      for (var i = 0; i < 4; i++) {
+        await tester.pump();
+      }
+
+      final sent = repository.sends.single;
+      expect(sent.attachments.map((a) => (a.name, a.mimeType)),
+          [('Quarterly numbers.eml', 'message/rfc822')]);
+    });
+
+    testWidgets(
+        'a fetch that fails while Send waits holds the send, '
+        'and a second Send goes without', (tester) async {
+      final gate = Completer<Either<Failure, Uint8List>>();
+      getRaw.answer = (id) => gate.future;
+      await pumpForm(tester, forwardAsAttachments: [two.first]);
+
+      await send(tester);
+      gate.complete(const Left(NetworkFailure(message: 'No connection')));
+      for (var i = 0; i < 4; i++) {
+        await tester.pump();
+      }
+
+      expect(repository.sends, isEmpty,
+          reason: 'the user has not yet seen why the attachment is missing');
+      expect(find.text("Couldn't attach the forwarded message: No connection"),
+          findsOneWidget);
+
+      await tester.tap(find.text('Send'));
+      for (var i = 0; i < 4; i++) {
+        await tester.pump();
+      }
+      expect(repository.sends.single.attachments, isEmpty);
+    });
   });
 }

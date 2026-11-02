@@ -620,13 +620,15 @@ is in `email_list_selection.dart`.
   away with the wheel and then pressed an arrow) is brought near first by an
   estimate from its position in the list, because rows vary in height.
 
-## A Touch Selection Forwards and Moves, It Does Not Compose
+## A Selection Forwards as Attachments; on a Phone It Also Moves
 
 Long-pressing a row on a phone puts the list into selection mode, and the
 header then trades its Compose button for **Forward** and **Move**. Compose has
 nothing to do with the rows picked, and these two are what a selection is for.
-Desktop selection (Shift/Cmd-click) keeps Compose: it already has the drag onto
-the folder panel, and the reading pane's own forward.
+A desktop selection (Shift/Cmd-click) adds **Forward** *beside* Compose and no
+Move — the desktop moves by dragging onto the folder panel. A message that is
+merely open gets neither, on either platform: the header's own `hasSelection`
+covers it for Delete and Junk, and is deliberately not the trigger here.
 
 - **Forward attaches each message's raw source as `<subject>.eml`**
   (`GetRawEmailBytes` → `EmailRepository.getRawEmailBytes`, which all three
@@ -639,13 +641,23 @@ the folder panel, and the reading pane's own forward.
   `addLocalAttachment` (`mime_attachment_builder.dart`) as its own source
   text: enough_mail's `addBinary` base64-encodes it but writes no
   Content-Transfer-Encoding on a `message/*` part, which arrived as an
-  attachment no client could open. Graph takes it as a `fileAttachment`. Fetches run four at a time (`gatherForwardAttachments`,
-  `forward_as_attachment.dart`), and **compose opens only if every one
-  arrived**: a forward quietly missing a message the user picked is worse than
-  one that says it could not be made.
-- **The attachments reach the mobile compose route only**
-  (`ComposeWindowApp.open`'s `initialAttachments`). The desktop sub-window is
-  built from JSON arguments; nothing on the desktop passes them.
+  attachment no client could open. Graph takes it as a `fileAttachment`.
+  Fetches run four at a time (`gatherForwardAttachments`,
+  `forward_as_attachment.dart`) and are **all or nothing**: a forward quietly
+  missing a message the user picked is worse than one that says it could not
+  be made.
+- **Where the fetch runs differs by platform.** On a phone the list fetches
+  first, with a spinner on the button, and compose opens only once everything
+  arrived (`initialAttachments`). The desktop compose window is a separate
+  engine built from JSON arguments (see
+  [`lib/core/platform/CLAUDE.md`](../../../core/platform/CLAUDE.md)), so the
+  bytes cannot ride along: the list opens it at once with only ids and subjects
+  (`forwardAsAttachments`, `ComposeWindowApp.forwardedMessagesToJson`), and
+  `ComposeForm` fetches them itself through its own engine's `GetRawEmailBytes`,
+  showing an "Attaching…" chip meanwhile and a failure in its notice strip.
+  **Send waits for that fetch**, and if it fails *while* Send is waiting the
+  send is held so the user sees why first; a failure already shown is theirs to
+  send past. The desktop keeps the selection afterwards, the phone clears it.
 - **Forward takes a thread row as its anchor message alone**; Move takes the
   whole thread, as Delete does (see above). Forwarding every message of a long
   thread is rarely what was meant, and its replies quote one another anyway.

@@ -27,6 +27,7 @@ import '../blocs/compose/compose_state.dart';
 import '../blocs/theme/theme_cubit.dart';
 import '../blocs/theme/theme_state.dart';
 import '../widgets/compose_dialog.dart';
+import '../widgets/forward_as_attachment.dart';
 import '../widgets/error_snack_bar.dart';
 import 'mail_sent_channel.dart';
 
@@ -75,9 +76,11 @@ class ComposeWindowApp extends StatelessWidget {
 
   /// Opens a compose screen: a new push route on mobile, a sub-window on desktop.
   ///
-  /// [initialSubject] and [initialAttachments] reach the mobile route only:
-  /// the desktop sub-window is built from JSON arguments, and the bytes have no
-  /// business crossing that channel. Nothing on the desktop passes them.
+  /// [initialAttachments] reach the mobile route only: the desktop sub-window
+  /// is built from JSON arguments, and the bytes have no business crossing
+  /// that channel. [forwardAsAttachments] is how the desktop attaches
+  /// messages instead — just their ids and subjects, which the compose form
+  /// fetches as `.eml` files once it opens.
   static Future<void> open(
     BuildContext context, {
     required ComposeMode mode,
@@ -87,6 +90,7 @@ class ComposeWindowApp extends StatelessWidget {
     VoidCallback? onSent,
     String? initialSubject,
     List<LocalAttachment> initialAttachments = const [],
+    List<ForwardedMessage> forwardAsAttachments = const [],
   }) async {
     final isMobile = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
     if (isMobile) {
@@ -100,6 +104,7 @@ class ComposeWindowApp extends StatelessWidget {
             onSent: onSent,
             initialSubject: initialSubject,
             initialAttachments: initialAttachments,
+            forwardAsAttachments: forwardAsAttachments,
           ),
           fullscreenDialog: true,
         ),
@@ -109,6 +114,11 @@ class ComposeWindowApp extends StatelessWidget {
 
     Map<String, dynamic> args = {'mode': mode.name};
     if (existingDraftId != null) args['existingDraftId'] = existingDraftId;
+    if (initialSubject != null) args['initialSubject'] = initialSubject;
+    if (forwardAsAttachments.isNotEmpty) {
+      args['forwardAsAttachments'] =
+          forwardedMessagesToJson(forwardAsAttachments);
+    }
     if (originalEmail != null) {
       args['originalEmail'] = {
         'id': originalEmail.id,
@@ -162,6 +172,27 @@ class ComposeWindowApp extends StatelessWidget {
     await createSubWindow(
       WindowConfiguration(arguments: jsonEncode(args)),
     );
+  }
+
+  /// [ForwardedMessage]s as they cross into the compose window's arguments.
+  @visibleForTesting
+  static List<Map<String, String>> forwardedMessagesToJson(
+          List<ForwardedMessage> messages) =>
+      [for (final m in messages) {'id': m.id, 'subject': m.subject}];
+
+  /// [forwardedMessagesToJson] read back in the compose window. An entry with
+  /// no id is skipped rather than failing the window.
+  @visibleForTesting
+  static List<ForwardedMessage> forwardedMessagesFromJson(dynamic raw) {
+    if (raw is! List) return const [];
+    return [
+      for (final entry in raw)
+        if (entry is Map && entry['id'] is String)
+          (
+            id: entry['id'] as String,
+            subject: entry['subject'] as String? ?? '',
+          ),
+    ];
   }
 
   /// Inline images have to cross the window boundary as bytes: the sub-window
@@ -603,6 +634,9 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage>
             onTitleChanged: (title) => windowManager.setTitle(title),
             defaultComposeFormat: _defaultComposeFormat,
             signatureHtml: _signatureHtml,
+            initialSubject: widget.arguments['initialSubject'] as String?,
+            forwardAsAttachments: ComposeWindowApp.forwardedMessagesFromJson(
+                widget.arguments['forwardAsAttachments']),
           ),
         ),
       ),
@@ -630,6 +664,7 @@ class _MobileComposePage extends StatefulWidget {
     this.onSent,
     this.initialSubject,
     this.initialAttachments = const [],
+    this.forwardAsAttachments = const [],
   });
 
   final ComposeMode mode;
@@ -639,6 +674,7 @@ class _MobileComposePage extends StatefulWidget {
   final VoidCallback? onSent;
   final String? initialSubject;
   final List<LocalAttachment> initialAttachments;
+  final List<ForwardedMessage> forwardAsAttachments;
 
   @override
   State<_MobileComposePage> createState() => _MobileComposePageState();
@@ -707,6 +743,7 @@ class _MobileComposePageState extends State<_MobileComposePage> {
               signatureHtml: _signatureHtml,
               initialSubject: widget.initialSubject,
               initialAttachments: widget.initialAttachments,
+              forwardAsAttachments: widget.forwardAsAttachments,
             ),
           ),
         ),

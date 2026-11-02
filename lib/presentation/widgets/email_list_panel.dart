@@ -59,6 +59,7 @@ typedef ComposeOpener = Future<void> Function(
   required ComposeMode mode,
   String? initialSubject,
   List<LocalAttachment> initialAttachments,
+  List<ForwardedMessage> forwardAsAttachments,
 });
 
 class EmailListPanel extends StatefulWidget {
@@ -800,8 +801,8 @@ class _EmailListPanelState extends State<EmailListPanel> {
     final emails = _emailsById(_selectedEmailIds);
     if (emails.isEmpty) return;
     setState(() => _isForwarding = true);
-    final result =
-        await gatherForwardAttachments(emails, sl<GetRawEmailBytes>().call);
+    final result = await gatherForwardAttachments(
+        _forwardedMessages(emails), sl<GetRawEmailBytes>().call);
     if (!mounted) return;
     setState(() => _isForwarding = false);
 
@@ -823,6 +824,25 @@ class _EmailListPanelState extends State<EmailListPanel> {
         );
     }
   }
+
+  /// The desktop selection's Forward: opens a compose window with the
+  /// selection to attach as `.eml` files, which the window fetches itself —
+  /// the bytes cannot ride along in its JSON arguments, and nothing has to be
+  /// downloaded before the window can appear. The selection is kept: the
+  /// list stays as the user left it beside the new window.
+  Future<void> _forwardSelectionInComposeWindow() async {
+    final messages = _forwardedMessages(_emailsById(_selectedEmailIds));
+    if (messages.isEmpty) return;
+    await widget.composeOpener(
+      context,
+      mode: ComposeMode.newEmail,
+      initialSubject: forwardSelectionSubject(messages),
+      forwardAsAttachments: messages,
+    );
+  }
+
+  static List<ForwardedMessage> _forwardedMessages(List<Email> emails) =>
+      [for (final e in emails) (id: e.id, subject: e.subject)];
 
   /// The touch selection's Move: asks for a destination and files the
   /// selection there.
@@ -952,6 +972,10 @@ class _EmailListPanelState extends State<EmailListPanel> {
                 final isTouchSelecting = _isTouch &&
                     _isMultiSelectMode &&
                     _selectedEmailIds.isNotEmpty;
+                // A desktop Cmd/Shift-click selection adds Forward beside
+                // Compose; Move is the drag onto the folder panel.
+                final isDesktopSelecting =
+                    _isDesktop && _selectedEmailIds.isNotEmpty;
                 return _ListHeader(
                   folderName: widget.folderName,
                   isLoadingFresh: isLoadingFresh,
@@ -960,9 +984,12 @@ class _EmailListPanelState extends State<EmailListPanel> {
                   onSearchSubmit: _submitSearch,
                   onSearchClear: _clearSearch,
                   onCompose: _openComposeWindow,
+                  showCompose: !isTouchSelecting,
                   onForward: isTouchSelecting
                       ? _forwardSelectedAsAttachments
-                      : null,
+                      : isDesktopSelecting
+                          ? _forwardSelectionInComposeWindow
+                          : null,
                   isForwarding: _isForwarding,
                   onMove: isTouchSelecting ? _moveSelected : null,
                   onBack: widget.onBack,
@@ -1325,6 +1352,7 @@ class _ListHeader extends StatelessWidget {
     required this.onSearchSubmit,
     required this.onSearchClear,
     required this.onCompose,
+    this.showCompose = true,
     this.onForward,
     this.isForwarding = false,
     this.onMove,
@@ -1345,8 +1373,12 @@ class _ListHeader extends StatelessWidget {
   final VoidCallback onSearchClear;
   final VoidCallback onCompose;
 
-  /// Forwards the touch selection as `.eml` attachments. Set only while
-  /// selecting on touch, where it and [onMove] take Compose's place.
+  /// False while selecting on touch, where [onForward] and [onMove] take
+  /// Compose's place.
+  final bool showCompose;
+
+  /// Forwards the selection as `.eml` attachments — on touch or the desktop,
+  /// whenever rows are selected.
   final VoidCallback? onForward;
   final bool isForwarding;
   final VoidCallback? onMove;
@@ -1491,7 +1523,19 @@ class _ListHeader extends StatelessWidget {
               ],
             ),
           ),
-          if (onForward != null) ...[
+          if (showCompose)
+            IconButton(
+              icon: Icon(Icons.edit_square,
+                  size: touchIcon(20), color: c.textMuted),
+              tooltip: 'Compose',
+              padding: EdgeInsets.zero,
+              constraints: BoxConstraints(
+                minWidth: touchTarget(32),
+                minHeight: touchTarget(32),
+              ),
+              onPressed: onCompose,
+            ),
+          if (onForward != null)
             IconButton(
               icon: isForwarding
                   ? SizedBox(
@@ -1512,29 +1556,17 @@ class _ListHeader extends StatelessWidget {
               ),
               onPressed: isForwarding ? null : onForward,
             ),
-            if (onMove != null)
-              IconButton(
-                icon: Icon(Icons.drive_file_move_outlined,
-                    size: touchIcon(20), color: c.textMuted),
-                tooltip: 'Move to folder',
-                padding: EdgeInsets.zero,
-                constraints: BoxConstraints(
-                  minWidth: touchTarget(32),
-                  minHeight: touchTarget(32),
-                ),
-                onPressed: onMove,
-              ),
-          ] else
+          if (onMove != null)
             IconButton(
-              icon: Icon(Icons.edit_square,
+              icon: Icon(Icons.drive_file_move_outlined,
                   size: touchIcon(20), color: c.textMuted),
-              tooltip: 'Compose',
+              tooltip: 'Move to folder',
               padding: EdgeInsets.zero,
               constraints: BoxConstraints(
                 minWidth: touchTarget(32),
                 minHeight: touchTarget(32),
               ),
-              onPressed: onCompose,
+              onPressed: onMove,
             ),
           if (onMarkUnread != null)
             IconButton(

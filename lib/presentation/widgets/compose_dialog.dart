@@ -23,6 +23,7 @@ import '../../domain/entities/inline_attachment.dart';
 import '../../domain/entities/local_attachment.dart';
 import '../../domain/usecases/delete_server_draft.dart';
 import '../../domain/usecases/download_attachment.dart';
+import '../../domain/usecases/get_raw_email_bytes.dart';
 import '../../domain/usecases/save_server_draft.dart';
 import '../../domain/usecases/send_email.dart';
 import '../blocs/account/account_cubit.dart';
@@ -32,6 +33,7 @@ import '../blocs/compose/compose_bloc.dart';
 import '../blocs/compose/compose_event.dart';
 import '../blocs/compose/compose_state.dart';
 import 'compose_body_builder.dart';
+import 'forward_as_attachment.dart';
 import 'html_email_editor.dart';
 import 'insert_link_dialog.dart';
 import 'recipient_input_field.dart';
@@ -169,6 +171,7 @@ class ComposeForm extends StatefulWidget {
     this.signatureHtml = '',
     this.initialSubject,
     this.initialAttachments = const [],
+    this.forwardAsAttachments = const [],
   });
 
   final ComposeMode mode;
@@ -192,6 +195,12 @@ class ComposeForm extends StatefulWidget {
   /// Files the message starts out with, already read into memory, such as the
   /// `.eml` of each message forwarded from a list selection.
   final List<LocalAttachment> initialAttachments;
+
+  /// Messages to attach as `.eml` files, fetched by the form itself once it
+  /// opens. The desktop list's Forward hands over only these ids: the compose
+  /// window is a separate engine built from JSON arguments, which is no way to
+  /// carry whole messages. See [gatherForwardAttachments].
+  final List<ForwardedMessage> forwardAsAttachments;
 
   @override
   State<ComposeForm> createState() => ComposeFormState();
@@ -425,6 +434,10 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
   // strip is part of the form's own layout, so it shrinks the editor rather
   // than being hidden by it, and stays until dismissed or the next Send.
   String? _notice;
+  // The fetch of [ComposeForm.forwardAsAttachments], resolving to its failure
+  // message or null. Send waits on it — see [_awaitForwardedAttachments].
+  Future<String?>? _forwardFetch;
+  bool _forwardFetchDone = true;
   // The message is gone: the send came back [ComposeSent]. Unlike [_sent] —
   // which only means Send was pressed — there is nothing left worth keeping, so
   // closing must not offer to save what has already been sent as a draft.
@@ -480,6 +493,10 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     // After the HTML branch, which replaces the list with the source's inline
     // images.
     _localAttachments = [..._localAttachments, ...widget.initialAttachments];
+    if (widget.forwardAsAttachments.isNotEmpty) {
+      _forwardFetchDone = false;
+      _forwardFetch = _attachForwardedMessages();
+    }
 
     _subjectFocus.onKeyEvent = (_, event) {
       if (event is KeyDownEvent &&
@@ -1440,6 +1457,43 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     });
   }
 
+  /// Fetches [ComposeForm.forwardAsAttachments] and adds them as attachments,
+  /// or says in the notice strip why none could be. All or nothing, as on the
+  /// phone. Resolves to the failure message, or null once they are attached.
+  Future<String?> _attachForwardedMessages() async {
+    final messages = widget.forwardAsAttachments;
+    final result = await gatherForwardAttachments(
+        messages, sl<GetRawEmailBytes>().call);
+    if (!mounted) return null;
+    final failure = result.fold<String?>(
+      (message) => messages.length == 1
+          ? "Couldn't attach the forwarded message: $message"
+          : "Couldn't attach the forwarded messages: $message",
+      (draft) {
+        _localAttachments = [..._localAttachments, ...draft.attachments];
+        return null;
+      },
+    );
+    setState(() => _forwardFetchDone = true);
+    if (failure != null) showNotice(failure);
+    return failure;
+  }
+
+  /// Holds a send until the forwarded messages have been fetched, so it can
+  /// never go without them. Answers false when the send must stop: the fetch
+  /// failed *while Send was waiting*, so the user has not yet seen why the
+  /// attachments are missing. A failure they were already shown is theirs to
+  /// send past.
+  Future<bool> _awaitForwardedAttachments() async {
+    final pending = _forwardFetch;
+    if (pending == null || _forwardFetchDone) return true;
+    final failure = await pending;
+    if (failure == null || !mounted) return mounted;
+    setState(() => _sent = false);
+    showNotice(failure);
+    return false;
+  }
+
   /// Shows [message] in the notice strip above the footer, replacing whatever
   /// it held. See [_notice] for why this is not a snack bar.
   void showNotice(String message) {
@@ -1480,6 +1534,8 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
       showNotice('Please enter at least one recipient');
       return;
     }
+
+    if (!await _awaitForwardedAttachments()) return;
 
     final String effectiveBody;
     final EmailBodyType effectiveBodyType;
@@ -1950,9 +2006,12 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
                                               id
                                             ]),
                                   ),
-                                if (visibleAttachments.isNotEmpty)
+                                if (visibleAttachments.isNotEmpty || !_forwardFetchDone)
                                   _LocalAttachmentChips(
                                     attachments: visibleAttachments,
+                                    pendingCount: _forwardFetchDone
+                                        ? 0
+                                        : widget.forwardAsAttachments.length,
                                     onRemove: (att) => setState(() =>
                                         _localAttachments = _localAttachments
                                             .where((a) => a != att)
@@ -2018,9 +2077,12 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
                                     id
                                   ]),
                         ),
-                      if (visibleAttachments.isNotEmpty)
+                      if (visibleAttachments.isNotEmpty || !_forwardFetchDone)
                         _LocalAttachmentChips(
                           attachments: visibleAttachments,
+                          pendingCount: _forwardFetchDone
+                              ? 0
+                              : widget.forwardAsAttachments.length,
                           onRemove: (att) => setState(() => _localAttachments =
                               _localAttachments.where((a) => a != att).toList()),
                         ),
@@ -2068,9 +2130,12 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
                     onRemove: (id) => setState(
                         () => _excludedAttachmentIds = [..._excludedAttachmentIds, id]),
                   ),
-                if (visibleAttachments.isNotEmpty)
+                if (visibleAttachments.isNotEmpty || !_forwardFetchDone)
                   _LocalAttachmentChips(
                     attachments: visibleAttachments,
+                    pendingCount: _forwardFetchDone
+                        ? 0
+                        : widget.forwardAsAttachments.length,
                     onRemove: (att) => setState(() => _localAttachments =
                         _localAttachments.where((a) => a != att).toList()),
                   ),
@@ -2651,10 +2716,15 @@ class _LocalAttachmentChips extends StatelessWidget {
   const _LocalAttachmentChips({
     required this.attachments,
     required this.onRemove,
+    this.pendingCount = 0,
   });
 
   final List<LocalAttachment> attachments;
   final ValueChanged<LocalAttachment> onRemove;
+
+  /// Forwarded messages still being fetched, drawn as one chip with a spinner
+  /// until they arrive as attachments of their own.
+  final int pendingCount;
 
   @override
   Widget build(BuildContext context) {
@@ -2664,8 +2734,35 @@ class _LocalAttachmentChips extends StatelessWidget {
       child: Wrap(
         spacing: 6,
         runSpacing: 6,
-        children: attachments
-            .map((att) => Container(
+        children: [
+          if (pendingCount > 0)
+            Container(
+              decoration: BoxDecoration(
+                color: c.surfaceBase,
+                border: Border.all(color: c.border),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              padding: const EdgeInsets.fromLTRB(8, 5, 10, 5),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 10,
+                    height: 10,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 1.5, color: c.textMuted),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    pendingCount == 1
+                        ? 'Attaching message…'
+                        : 'Attaching $pendingCount messages…',
+                    style: TextStyle(fontSize: 12, color: c.textMuted),
+                  ),
+                ],
+              ),
+            ),
+          ...attachments.map((att) => Container(
                   decoration: BoxDecoration(
                     color: c.surfaceBase,
                     border: Border.all(color: c.border),
@@ -2697,8 +2794,8 @@ class _LocalAttachmentChips extends StatelessWidget {
                       ),
                     ],
                   ),
-                ))
-            .toList(),
+                )),
+        ],
       ),
     );
   }

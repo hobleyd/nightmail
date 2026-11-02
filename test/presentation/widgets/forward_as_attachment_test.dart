@@ -4,23 +4,10 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fpdart/fpdart.dart';
 import 'package:nightmail/core/error/failures.dart';
-import 'package:nightmail/domain/entities/email.dart';
-import 'package:nightmail/domain/entities/email_address.dart';
 import 'package:nightmail/presentation/widgets/forward_as_attachment.dart';
 
-Email _email(String id, String subject) => Email(
-      id: id,
-      subject: subject,
-      from: const EmailAddress(address: 'ada@example.com', name: 'Ada'),
-      toRecipients: const [],
-      ccRecipients: const [],
-      bodyPreview: '',
-      body: '',
-      bodyType: EmailBodyType.text,
-      isRead: true,
-      receivedDateTime: DateTime(2026, 11, 3, 9),
-      importance: EmailImportance.normal,
-    );
+ForwardedMessage _email(String id, String subject) =>
+    (id: id, subject: subject);
 
 Uint8List _raw(String id) => Uint8List.fromList(utf8.encode('source of $id'));
 

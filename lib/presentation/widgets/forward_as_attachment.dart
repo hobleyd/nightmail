@@ -4,31 +4,38 @@ import 'package:fpdart/fpdart.dart';
 
 import '../../core/error/failures.dart';
 import '../../core/utils/subject_prefixes.dart';
-import '../../domain/entities/email.dart';
 import '../../domain/entities/local_attachment.dart';
+
+/// A message to forward as an attachment: just what fetching and naming its
+/// `.eml` needs, so it can cross into the desktop compose window as JSON.
+typedef ForwardedMessage = ({String id, String subject});
 
 /// What a forward of list rows opens compose with: the subject to seed, if
 /// any, and each message's `.eml`.
 typedef ForwardDraft = ({String? subject, List<LocalAttachment> attachments});
 
-/// Fetches the raw source of each of [emails] through [fetchRaw] and turns it
-/// into a [ForwardDraft], or answers the first failure's message.
+/// The subject a forward of [messages] starts with: `Fwd: …` for a single
+/// message, none for several, since there is no one subject for them.
+String? forwardSelectionSubject(List<ForwardedMessage> messages) =>
+    messages.length == 1 ? forwardSubjectFor(messages.single.subject) : null;
+
+/// Fetches the raw source of each of [messages] through [fetchRaw] and turns
+/// it into a [ForwardDraft], or answers the first failure's message.
 ///
 /// Nothing is returned unless every message arrived — a forward quietly
 /// missing one the user picked is worse than one that says it could not be
-/// made. Fetches run [batchSize] at a time: Select All on a phone can pick a
+/// made. Fetches run [batchSize] at a time: Select All can pick a
 /// whole page, and each one is a full message download. Attachments keep the
-/// order of [emails]. Only a single message seeds a subject (`Fwd: …`); there
-/// is no one subject for several.
+/// order of [messages]; the subject is [forwardSelectionSubject].
 Future<Either<String, ForwardDraft>> gatherForwardAttachments(
-  List<Email> emails,
+  List<ForwardedMessage> messages,
   Future<Either<Failure, Uint8List>> Function(String emailId) fetchRaw, {
   int batchSize = 4,
 }) async {
   final attachments = <LocalAttachment>[];
   final usedNames = <String>{};
-  for (var i = 0; i < emails.length; i += batchSize) {
-    final batch = emails.skip(i).take(batchSize).toList();
+  for (var i = 0; i < messages.length; i += batchSize) {
+    final batch = messages.skip(i).take(batchSize).toList();
     final results = await Future.wait(batch.map((e) => fetchRaw(e.id)));
     for (var j = 0; j < batch.length; j++) {
       final failure = results[j].getLeft().toNullable();
@@ -45,7 +52,7 @@ Future<Either<String, ForwardDraft>> gatherForwardAttachments(
     }
   }
   return Right((
-    subject: emails.length == 1 ? forwardSubjectFor(emails.first.subject) : null,
+    subject: forwardSelectionSubject(messages),
     attachments: attachments,
   ));
 }

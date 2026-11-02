@@ -33,6 +33,7 @@ import 'package:nightmail/presentation/blocs/tasks/overdue_tasks_cubit.dart';
 import 'package:nightmail/presentation/blocs/tasks/tasks_bloc.dart';
 import 'package:nightmail/presentation/blocs/tasks/tasks_state.dart';
 import 'package:nightmail/presentation/widgets/email_list_panel.dart';
+import 'package:nightmail/presentation/widgets/forward_as_attachment.dart';
 
 import 'email_list_selection_actions_test.mocks.dart';
 
@@ -103,6 +104,7 @@ typedef _OpenedCompose = ({
   ComposeMode mode,
   String? subject,
   List<LocalAttachment> attachments,
+  List<ForwardedMessage> forwarded,
 });
 
 /// Answers each fetch from [answer], recording the ids asked for.
@@ -236,11 +238,13 @@ void main() {
               required mode,
               initialSubject,
               initialAttachments = const [],
+              forwardAsAttachments = const [],
             }) async {
               opened.add((
                 mode: mode,
                 subject: initialSubject,
                 attachments: initialAttachments,
+                forwarded: forwardAsAttachments,
               ));
             },
           ),
@@ -253,6 +257,16 @@ void main() {
   final compose = find.byTooltip('Compose');
   final forward = find.byTooltip('Forward as attachment');
   final move = find.byTooltip('Move to folder');
+
+  /// Cmd-clicks each row, as a desktop multi-selection is made.
+  Future<void> cmdClick(WidgetTester tester, List<String> subjects) async {
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    for (final subject in subjects) {
+      await tester.tap(find.text(subject));
+    }
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pumpAndSettle();
+  }
 
   Future<void> longPress(WidgetTester tester, String subject) async {
     await tester.longPress(find.text(subject));
@@ -305,20 +319,69 @@ void main() {
       expect(find.byTooltip('Delete selected'), findsOneWidget);
     });
 
-    _onMac('keeps Compose for a desktop selection', (tester) async {
+    _onMac('adds Forward beside Compose for a desktop selection',
+        (tester) async {
       await pumpPanel(tester);
 
-      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
-      await tester.tap(find.text('Quarterly numbers'));
-      await tester.tap(find.text('Re: Offsite plans'));
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
-      await tester.pumpAndSettle();
+      await cmdClick(tester, ['Quarterly numbers', 'Re: Offsite plans']);
 
       expect(find.byTooltip('Delete selected'), findsOneWidget,
           reason: 'the selection took');
       expect(compose, findsOneWidget);
+      expect(forward, findsOneWidget);
+      expect(move, findsNothing, reason: 'the desktop moves by drag');
+    });
+
+    _onMac('offers no Forward on the desktop with a message merely open',
+        (tester) async {
+      await pumpPanel(tester, selectedEmailId: 'm1');
+
+      expect(compose, findsOneWidget);
       expect(forward, findsNothing);
-      expect(move, findsNothing);
+    });
+  });
+
+  group('Forward on the desktop', () {
+    _onMac('opens compose at once with the ids, fetching nothing itself',
+        (tester) async {
+      await pumpPanel(tester);
+      await cmdClick(tester, ['Quarterly numbers']);
+
+      await tester.tap(forward);
+      await tester.pumpAndSettle();
+
+      final compose = opened.single;
+      expect(compose.mode, ComposeMode.newEmail);
+      expect(compose.subject, 'Fwd: Quarterly numbers');
+      expect(compose.forwarded, [(id: 'm1', subject: 'Quarterly numbers')]);
+      expect(compose.attachments, isEmpty,
+          reason: 'no bytes can cross into the compose window');
+      expect(getRaw.asked, isEmpty,
+          reason: 'the compose window does the fetching');
+    });
+
+    _onMac('several rows go in list order, with no subject', (tester) async {
+      await pumpPanel(tester);
+      // Picked bottom-up; the order handed over still follows the list.
+      await cmdClick(tester, ['Re: Offsite plans', 'Quarterly numbers']);
+
+      await tester.tap(forward);
+      await tester.pumpAndSettle();
+
+      final compose = opened.single;
+      expect(compose.subject, isNull);
+      expect(compose.forwarded.map((m) => m.id), ['m1', 't2']);
+    });
+
+    _onMac('keeps the selection once the window is opened', (tester) async {
+      await pumpPanel(tester);
+      await cmdClick(tester, ['Quarterly numbers']);
+
+      await tester.tap(forward);
+      await tester.pumpAndSettle();
+
+      expect(opened, hasLength(1));
+      expect(forward, findsOneWidget);
     });
   });
 

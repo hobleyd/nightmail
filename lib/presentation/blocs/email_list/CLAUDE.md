@@ -639,7 +639,8 @@ the folder panel, and the reading pane's own forward.
   `addLocalAttachment` (`mime_attachment_builder.dart`) as its own source
   text: enough_mail's `addBinary` base64-encodes it but writes no
   Content-Transfer-Encoding on a `message/*` part, which arrived as an
-  attachment no client could open. Graph takes it as a `fileAttachment`. Fetches run four at a time, and **compose opens only if every one
+  attachment no client could open. Graph takes it as a `fileAttachment`. Fetches run four at a time (`gatherForwardAttachments`,
+  `forward_as_attachment.dart`), and **compose opens only if every one
   arrived**: a forward quietly missing a message the user picked is worse than
   one that says it could not be made.
 - **The attachments reach the mobile compose route only**

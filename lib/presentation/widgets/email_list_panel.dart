@@ -4,21 +4,21 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:fpdart/fpdart.dart' show Left, Right;
 
 import '../../core/platform/touch_metrics.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/business_days.dart';
 import '../../core/utils/junk_folder.dart';
 import '../../core/utils/outgoing_folder.dart';
-import '../../core/utils/subject_prefixes.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_address.dart';
-import '../../domain/entities/local_attachment.dart';
 import '../../domain/entities/task_email_link.dart';
 import 'email_drag_data.dart';
 import 'email_task_flag.dart';
 import 'email_folder_label.dart';
 import 'email_move_counts.dart';
+import 'forward_as_attachment.dart';
 import 'move_to_folder_sheet.dart';
 import '../../domain/entities/email_folder.dart';
 import '../../infrastructure/accounts/account_manager.dart';
@@ -773,79 +773,38 @@ class _EmailListPanelState extends State<EmailListPanel> {
     _clearSelection();
   }
 
-  /// The touch selection's Forward: fetches each selected message's raw
-  /// source and opens a new message with them attached as `.eml` files.
+  /// The touch selection's Forward: opens a new message with each selected
+  /// message attached as an `.eml` — see [gatherForwardAttachments].
   ///
-  /// A thread row's selection is its anchor message, as for Move and Delete,
-  /// so a thread forwards as that one message. Nothing opens unless every
-  /// message arrived — a forward quietly missing one of the messages the user
-  /// picked is worse than a forward that says it could not be made.
+  /// A thread row's selection is its anchor message, so a thread forwards as
+  /// that one message.
   Future<void> _forwardSelectedAsAttachments() async {
     if (_isForwarding) return;
     final emails = _emailsById(_selectedEmailIds);
     if (emails.isEmpty) return;
     setState(() => _isForwarding = true);
-
-    // A few at a time: Select All on a phone can pick a whole page, and each
-    // fetch is a full message download.
-    final getRawEmail = sl<GetRawEmailBytes>();
-    final attachments = <LocalAttachment>[];
-    final usedNames = <String>{};
-    String? failure;
-    for (var i = 0; i < emails.length && failure == null; i += 4) {
-      final batch = emails.skip(i).take(4).toList();
-      final results = await Future.wait(batch.map((e) => getRawEmail(e.id)));
-      for (var j = 0; j < batch.length; j++) {
-        results[j].fold(
-          (f) => failure ??= f.message,
-          (bytes) => attachments.add(LocalAttachment(
-            name: _emlFileName(batch[j].subject, usedNames),
-            // Named explicitly: [LocalAttachment.mimeTypeFromName] has no
-            // entry for .eml and would send it as application/octet-stream,
-            // which a recipient's client offers as a download rather than
-            // opening as a message.
-            mimeType: 'message/rfc822',
-            bytes: bytes,
-          )),
-        );
-      }
-    }
+    final result =
+        await gatherForwardAttachments(emails, sl<GetRawEmailBytes>().call);
     if (!mounted) return;
     setState(() => _isForwarding = false);
-    if (failure != null) {
-      showErrorSnackBar(
-        context,
-        emails.length == 1
-            ? "Couldn't attach the message: $failure"
-            : "Couldn't attach the messages: $failure",
-      );
-      return;
-    }
 
-    _clearSelection();
-    await ComposeWindowApp.open(
-      context,
-      mode: ComposeMode.newEmail,
-      initialSubject: emails.length == 1
-          ? forwardSubjectFor(emails.first.subject)
-          : null,
-      initialAttachments: attachments,
-    );
-  }
-
-  /// `<subject>.eml`, made safe for a file name and distinct from every name
-  /// already in [used] — two replies in one thread share a subject.
-  static String _emlFileName(String subject, Set<String> used) {
-    var base = subject
-        .replaceAll(RegExp(r'[\\/:*?"<>|\r\n]'), '_')
-        .trim();
-    if (base.length > 80) base = base.substring(0, 80).trim();
-    if (base.isEmpty) base = 'message';
-    var name = '$base.eml';
-    for (var n = 2; !used.add(name); n++) {
-      name = '$base ($n).eml';
+    switch (result) {
+      case Left(value: final failure):
+        showErrorSnackBar(
+          context,
+          emails.length == 1
+              ? "Couldn't attach the message: $failure"
+              : "Couldn't attach the messages: $failure",
+        );
+      case Right(value: final draft):
+        _clearSelection();
+        await ComposeWindowApp.open(
+          context,
+          mode: ComposeMode.newEmail,
+          initialSubject: draft.subject,
+          initialAttachments: draft.attachments,
+        );
     }
-    return name;
   }
 
   /// The touch selection's Move: asks for a destination and files the

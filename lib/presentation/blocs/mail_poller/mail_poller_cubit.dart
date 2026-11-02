@@ -630,21 +630,33 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                 } else {
                   if (_newMailAccounts.remove(account.id)) changed = true;
                 }
-              } else if (!_latestPolledUnread.containsKey(account.id)) {
-                // No changes and no cached count yet (first poll after startup).
-                // Fetch folders once to prime the badge count.
-                final folders = await ds.getMailFolders();
-                final inboxes = folders
-                    .where((f) => f.displayName.toLowerCase() == 'inbox');
-                if (inboxes.isEmpty) continue;
-                inboxIdByAccount[account.id] = inboxes.first.id;
-                await _persistFolderCounts(account.id, folders);
-                final serverUnread = inboxes.first.unreadItemCount;
-                _latestPolledUnread[account.id] =
-                    _withRecentUnreadChanges(account.id, serverUnread);
-                _baselineUnread[account.id] = serverUnread;
+              } else {
+                if (!_latestPolledUnread.containsKey(account.id)) {
+                  // No changes and no cached count yet (first poll after
+                  // startup). Fetch folders once to prime the badge count.
+                  final folders = await ds.getMailFolders();
+                  final inboxes = folders
+                      .where((f) => f.displayName.toLowerCase() == 'inbox');
+                  if (inboxes.isEmpty) continue;
+                  inboxIdByAccount[account.id] = inboxes.first.id;
+                  await _persistFolderCounts(account.id, folders);
+                  final serverUnread = inboxes.first.unreadItemCount;
+                  _latestPolledUnread[account.id] =
+                      _withRecentUnreadChanges(account.id, serverUnread);
+                  _baselineUnread[account.id] = serverUnread;
+                }
+                // No changes and count already known → badge count is
+                // unchanged. The envelope flag still follows it: a quiet delta
+                // is the usual first cycle after launch, and without this an
+                // account whose unread mail predates the cursor (primed from
+                // cache by _primeBadgeFromCache) was never flagged until
+                // something new reached its Inbox.
+                if ((_latestPolledUnread[account.id] ?? 0) > 0) {
+                  if (_newMailAccounts.add(account.id)) changed = true;
+                } else {
+                  if (_newMailAccounts.remove(account.id)) changed = true;
+                }
               }
-              // No changes and count already known → badge count is unchanged.
 
               // Persisted only now that every change the page carried has been
               // applied. A delta link is a one-shot receipt: advancing it first

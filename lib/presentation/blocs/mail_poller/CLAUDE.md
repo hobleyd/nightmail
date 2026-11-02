@@ -115,6 +115,13 @@ listing for 30 s. The IMAP row therefore keeps the source's `mailbox:uid`
 until the destination is next listed, which replaces it; opening the folder
 does that within seconds.
 
+**A quiet delta still sets the envelope flag** (`accountsWithNewMail`, the
+account switcher's dot) from the count the cubit holds. It used to be set only
+by a delta that carried changes, so an account whose unread mail predated its
+cursor — the count primed from cache at launch, nothing new since — showed no
+dot until something reached its Inbox. Whether it happened depended on whether
+mail had arrived since the last run, which is why it looked unreproducible.
+
 Failures are reported on `lastPollAt`/`lastPollErrors`, including the
 offline skip. A silent `catch (_)` here is how a deterministic failure came to
 look like a quiet mailbox for the life of an install.

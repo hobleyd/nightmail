@@ -455,6 +455,51 @@ void main() {
 
       verify(mockDatabase.saveDeltaToken(_msId, 'inbox', _newToken)).called(1);
     });
+
+    // The account switcher's dot: unread mail that predates the cursor is
+    // still unread, so a quiet first cycle must flag it — for a background
+    // account nothing else would until new mail reached its Inbox.
+    test('flags a background account whose cached Inbox has unread mail',
+        () async {
+      when(mockAccountManager.activeAccount).thenReturn(null);
+      final cubit = makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      expect(cubit.state.accountsWithNewMail, contains(_msId));
+    });
+
+    test('flags it when the count had to be fetched, not primed', () async {
+      when(mockAccountManager.activeAccount).thenReturn(null);
+      when(mockGetCachedFolders(any)).thenAnswer((_) async => const Right([]));
+      when(mockGraphDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: 4)]);
+      final cubit = makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      expect(cubit.state.accountsWithNewMail, contains(_msId));
+    });
+
+    test('does not flag an account whose Inbox has no unread mail', () async {
+      when(mockAccountManager.activeAccount).thenReturn(null);
+      when(mockGetCachedFolders(any)).thenAnswer((_) async => Right([
+            const EmailFolder(
+                id: 'inbox', displayName: 'Inbox',
+                totalItemCount: 10, unreadItemCount: 0),
+          ]));
+      final cubit = makeCubit();
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      expect(cubit.state.accountsWithNewMail, isNot(contains(_msId)));
+    });
   });
 
   // ---------------------------------------------------------------------------

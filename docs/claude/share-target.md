@@ -45,9 +45,15 @@ only when Dart takes the share.
 - Copies go to `cacheDir/shared/<time>/<index>/<display name>` — the index
   directory because two shared files can carry the same name. The whole
   `shared` directory is cleared at the start of each read.
-- `launchMode` is `singleTop` with `taskAffinity=""`, as for `mailto:`. A share
-  can therefore start a second activity in the sharing app's task rather than
-  raising the running one. That is unchanged from how `mailto:` already behaves.
+- `launchMode` is `singleTask`, so a share (or a `mailto:` link) into a
+  running NightMail goes to the existing activity through `onNewIntent` rather
+  than starting a second activity — and a second Flutter engine — in the sharing
+  app's task. It was `singleTop` until sharing made that the common path.
+  `taskAffinity=""` stays: it keeps other apps from planting activities in
+  NightMail's task. The cost of `singleTask` is that tapping the launcher icon
+  clears anything above the activity in its task, so a sign-in Custom Tab the
+  user left (to fetch a 2FA code, say) is closed if they come back through the
+  icon rather than Recents.
 
 ## iOS
 

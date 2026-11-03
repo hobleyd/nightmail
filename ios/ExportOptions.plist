@@ -14,6 +14,8 @@
 	<dict>
 		<key>au.com.sharpblue.nightmail</key>
 		<string>NightMail App Store</string>
+		<key>au.com.sharpblue.nightmail.ShareExtension</key>
+		<string>NightMail Share Extension App Store</string>
 	</dict>
 	<key>uploadBitcode</key>
 	<false/>

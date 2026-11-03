@@ -85,6 +85,25 @@ anchors, so a project-file change that moves them fails the job loudly rather
 than producing a badly signed archive. Dry-run it locally by extracting the
 Python from the workflow and pointing it at a copy of the project file.
 
+## Share Extension
+
+`ShareExtension/` is a second target embedded in the app (an "Embed Foundation
+Extensions" phase placed before Flutter's "Thin Binary"); what it does is in
+[../docs/claude/share-target.md](../docs/claude/share-target.md). For signing it
+means:
+
+- Runner and the extension both carry the App Groups entitlement
+  (`group.au.com.sharpblue.nightmail`), so the `au.com.sharpblue.nightmail` App
+  ID needs the App Groups capability with that group, and the "NightMail App
+  Store" profile has to be **regenerated** after it is added.
+- The extension has its own App ID (`au.com.sharpblue.nightmail.ShareExtension`,
+  App Groups on) and its own App Store profile, "NightMail Share Extension App
+  Store", in the `IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_B64` secret.
+  `ExportOptions.plist` maps the bundle id to it.
+- The `build-ios` patch flips the extension's Release configuration to manual
+  signing as it does Runner's, anchored on the extension's object ids
+  (`7B5E0A1C2F3D4E5F6000000C` target, `…13` Release configuration).
+
 ## iPad
 
 `TARGETED_DEVICE_FAMILY = "1,2"`: the app is universal and multitasking is

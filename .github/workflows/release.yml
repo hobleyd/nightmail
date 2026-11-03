@@ -631,6 +631,7 @@ jobs:
           IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
           PROVISIONING_PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_B64 }}
+          SHARE_EXTENSION_PROFILE_B64: ${{ secrets.IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_B64 }}
         run: |
           KEYCHAIN_PATH="$RUNNER_TEMP/ios-signing.keychain-db"
           echo "$IOS_DIST_CERT_P12_B64" | base64 --decode > "$RUNNER_TEMP/ios_cert.p12"
@@ -647,6 +648,12 @@ jobs:
           echo "$PROVISIONING_PROFILE_B64" | base64 --decode > "$RUNNER_TEMP/NightMail_App_Store.mobileprovision"
           PROFILE_UUID=$(security cms -D -i "$RUNNER_TEMP/NightMail_App_Store.mobileprovision" | plutil -extract UUID xml1 -o - - | sed -n 's/.*<string>\(.*\)<\/string>.*/\1/p')
           cp "$RUNNER_TEMP/NightMail_App_Store.mobileprovision" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+
+          # The Share Extension (ios/ShareExtension) is signed separately with
+          # its own App Store profile, "NightMail Share Extension App Store".
+          echo "$SHARE_EXTENSION_PROFILE_B64" | base64 --decode > "$RUNNER_TEMP/NightMail_Share_Extension.mobileprovision"
+          EXT_PROFILE_UUID=$(security cms -D -i "$RUNNER_TEMP/NightMail_Share_Extension.mobileprovision" | plutil -extract UUID xml1 -o - - | sed -n 's/.*<string>\(.*\)<\/string>.*/\1/p')
+          cp "$RUNNER_TEMP/NightMail_Share_Extension.mobileprovision" "$HOME/Library/MobileDevice/Provisioning Profiles/$EXT_PROFILE_UUID.mobileprovision"
 
       # ExportOptions.plist only governs the *export* step (.xcarchive -> .ipa).
       # The *archive* step (xcodebuild archive, which is what flutter build ipa
@@ -700,6 +707,27 @@ jobs:
               "\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = \"NightMail App Store\";\n"
           )
           block = block.replace(old_tail, new_tail)
+          text = text[:start] + block + text[end:]
+
+          # The Share Extension target, the same way: its TargetAttributes and
+          # its Release configuration, by object id.
+          old_ext_attrs = "\t\t\t\t\t7B5E0A1C2F3D4E5F6000000C = {\n\t\t\t\t\t\tCreatedOnToolsVersion = 26.0;\n\t\t\t\t\t};\n"
+          assert text.count(old_ext_attrs) == 1, "ShareExtension TargetAttributes anchor not found or not unique -- pbxproj layout changed, update this patch"
+          new_ext_attrs = "\t\t\t\t\t7B5E0A1C2F3D4E5F6000000C = {\n\t\t\t\t\t\tCreatedOnToolsVersion = 26.0;\n\t\t\t\t\t\tDevelopmentTeam = 69XRMYD9XG;\n\t\t\t\t\t\tProvisioningStyle = Manual;\n\t\t\t\t\t};\n"
+          text = text.replace(old_ext_attrs, new_ext_attrs)
+
+          start = text.index("7B5E0A1C2F3D4E5F60000013 /* Release */ = {")
+          end = text.index("name = Release;", start)
+          block = text[start:end]
+          assert block.count("CODE_SIGN_STYLE = Automatic;") == 1, "ShareExtension Release CODE_SIGN_STYLE anchor not found or not unique -- pbxproj layout changed, update this patch"
+          old_ext_id = "\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = au.com.sharpblue.nightmail.ShareExtension;\n"
+          assert block.count(old_ext_id) == 1, "ShareExtension Release PRODUCT_BUNDLE_IDENTIFIER anchor not found or not unique -- pbxproj layout changed, update this patch"
+          block = block.replace("CODE_SIGN_STYLE = Automatic;", "CODE_SIGN_STYLE = Manual;")
+          block = block.replace(old_ext_id, (
+              "\t\t\t\tCODE_SIGN_IDENTITY = \"Apple Distribution\";\n"
+              + old_ext_id
+              + "\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = \"NightMail Share Extension App Store\";\n"
+          ))
           text = text[:start] + block + text[end:]
 
           path.write_text(text)

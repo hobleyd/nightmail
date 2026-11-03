@@ -8,6 +8,8 @@ class SceneDelegate: FlutterSceneDelegate {
   // alive as an instance property or calls silently become MissingPluginException.
   private var badgeChannel: FlutterMethodChannel?
   private var eventKitChannel: FlutterMethodChannel?
+  private var shareChannel: FlutterMethodChannel?
+  private var didActivateObserver: NSObjectProtocol?
   private let eventStore = EKEventStore()
 
   override func scene(
@@ -38,6 +40,8 @@ class SceneDelegate: FlutterSceneDelegate {
       }
       result(nil)
     }
+
+    registerShareChannel(controller: controller)
 
     eventKitChannel = FlutterMethodChannel(
       name: "au.com.sharpblue.nightmail/eventkit",
@@ -239,5 +243,60 @@ class SceneDelegate: FlutterSceneDelegate {
       return Int((-offset / 60.0).rounded())
     }
     return minutesValues.max()
+  }
+
+  // MARK: - Share channel
+  //
+  // ShareExtension/ShareViewController.swift leaves what was shared in the App
+  // Group container as share/pending.json and opens nightmail-share://. Dart
+  // pulls it with takePendingShare; this side only pings shareReceived when one
+  // may be waiting — on that URL, and whenever the app comes to the foreground,
+  // which catches a share whose open-the-app step did not happen. See
+  // docs/claude/share-target.md.
+
+  private static let appGroupId = "group.au.com.sharpblue.nightmail"
+  private static let shareScheme = "nightmail-share"
+
+  private func registerShareChannel(controller: FlutterViewController) {
+    shareChannel = FlutterMethodChannel(
+      name: "au.com.sharpblue.nightmail/share_intent",
+      binaryMessenger: controller.engine.binaryMessenger
+    )
+    shareChannel?.setMethodCallHandler { call, result in
+      guard call.method == "takePendingShare" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      result(Self.takePendingShare())
+    }
+    didActivateObserver = NotificationCenter.default.addObserver(
+      forName: UIScene.didActivateNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      if Self.pendingShareURL.map({ FileManager.default.fileExists(atPath: $0.path) }) == true {
+        self?.shareChannel?.invokeMethod("shareReceived", arguments: nil)
+      }
+    }
+  }
+
+  override func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+    if URLContexts.contains(where: { $0.url.scheme == Self.shareScheme }) {
+      shareChannel?.invokeMethod("shareReceived", arguments: nil)
+      return
+    }
+    super.scene(scene, openURLContexts: URLContexts)
+  }
+
+  private static var pendingShareURL: URL? {
+    FileManager.default
+      .containerURL(forSecurityApplicationGroupIdentifier: appGroupId)?
+      .appendingPathComponent("share/pending.json")
+  }
+
+  /// The waiting share as the map Dart's SharedContent.fromMap reads, removed
+  /// as it is taken. The files it names stay for Dart to read and delete.
+  private static func takePendingShare() -> Any? {
+    guard let url = pendingShareURL, let data = try? Data(contentsOf: url) else { return nil }
+    try? FileManager.default.removeItem(at: url)
+    return try? JSONSerialization.jsonObject(with: data)
   }
 }

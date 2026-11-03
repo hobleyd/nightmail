@@ -48,3 +48,29 @@ only when Dart takes the share.
 - `launchMode` is `singleTop` with `taskAffinity=""`, as for `mailto:`. A share
   can therefore start a second activity in the sharing app's task rather than
   raising the running one. That is unchanged from how `mailto:` already behaves.
+
+## iOS
+
+`ios/ShareExtension` is an app extension embedded in `Runner.app/PlugIns`
+(bundle id `au.com.sharpblue.nightmail.ShareExtension`). It has **no Flutter
+dependency** and shows no UI:
+
+1. Copies each shared file into the App Group container
+   (`group.au.com.sharpblue.nightmail`) under `share/<uuid>/<index>/<name>`;
+   links and text are collected as text, `attributedTitle` as the subject.
+2. Writes `share/pending.json` (the channel map) and opens `nightmail-share://`,
+   a scheme registered in `Runner/Info.plist`, by walking the responder chain
+   to the `UIApplication` — an extension has no `UIApplication.shared`.
+3. `SceneDelegate` answers `takePendingShare` by reading and deleting
+   `pending.json`, and pings `shareReceived` on that URL **and** on every
+   `UIScene.didActivateNotification` while the file exists. The second ping is
+   the fallback if iOS ever stops the extension opening its app: the share is
+   still waiting, and opens when the user next switches to NightMail.
+
+The App Group id is a literal in `ShareViewController.swift`,
+`SceneDelegate.swift` and both `.entitlements` files — change all four together.
+
+The extension's `CFBundleVersion`/`CFBundleShortVersionString` come from the
+same `FLUTTER_BUILD_*` variables as the app (its configurations are based on
+the Flutter xcconfigs). App Store upload rejects an extension whose version
+differs from its parent's.

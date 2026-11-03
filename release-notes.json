@@ -1,20 +1,75 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.41.3",
+  "version": "1.42.0",
   "sections": [
     {
       "type": "features",
       "title": "New features",
       "items": [
         {
-          "body": "keyboard multi-select — Shift/Cmd/Ctrl with the arrows, Space, Escape",
-          "title": "list"
+          "body": "add an iOS Share Extension",
+          "title": "share"
+        },
+        {
+          "body": "receive shares from other apps on Android",
+          "title": "share"
+        },
+        {
+          "body": "forward a desktop selection as .eml attachments",
+          "title": "email-list"
+        },
+        {
+          "body": "forward and move a phone selection instead of composing",
+          "title": "email-list"
+        }
+      ]
+    },
+    {
+      "type": "fixes",
+      "title": "Fixes",
+      "items": [
+        {
+          "body": "run MainActivity as singleTask",
+          "title": "android"
+        },
+        {
+          "body": "return a fetched message's own bytes as its .eml",
+          "title": "imap"
+        },
+        {
+          "body": "move whole threads from a phone selection; send .eml parts unencoded",
+          "title": "email-list"
+        },
+        {
+          "body": "fold the phone toolbar's extra actions into a waffle menu",
+          "title": "reading-pane"
+        },
+        {
+          "body": "show the unread dot for an account with no new mail since launch",
+          "title": "poller"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.41.3",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "keyboard multi-select — Shift/Cmd/Ctrl with the arrows, Space, Escape",
+              "title": "list"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -375,23 +430,6 @@
             {
               "body": "migrate just the Inbox from the folder's right-click menu",
               "title": "migration"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.39.8",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "expand the Today tasks row to list the tasks",
-              "title": "commitments"
             }
           ]
         }

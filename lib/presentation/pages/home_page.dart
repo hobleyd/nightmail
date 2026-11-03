@@ -23,6 +23,7 @@ import '../../infrastructure/notifications/notification_action.dart';
 import '../../infrastructure/notifications/notification_service.dart';
 import '../../infrastructure/notifications/reminder_reconcile_channel.dart';
 import '../../infrastructure/notifications/task_reminder_service.dart';
+import '../../infrastructure/share/share_intent_service.dart';
 import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/calendar/calendar_bloc.dart';
@@ -133,6 +134,7 @@ class _HomeViewState extends State<_HomeView> {
   final _appLinks = AppLinks();
   StreamSubscription<Uri>? _mailtoSub;
   StreamSubscription<NotificationAction>? _notifSub;
+  StreamSubscription<void>? _shareSub;
 
   // The macOS app menu's "About NightMail" item is wired natively to invoke
   // this instead of the default orderFrontStandardAboutPanel: box — see
@@ -171,6 +173,15 @@ class _HomeViewState extends State<_HomeView> {
       if (mounted) _handleMailto(uri);
     });
 
+    // Content shared from another app. The native side holds it until it is
+    // taken, so one that launched the app is still waiting here — and the home
+    // page only mounts once accounts have loaded, so compose has a sender.
+    if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+      _shareSub =
+          sl<ShareIntentService>().arrivals.listen((_) => _openPendingShare());
+      _openPendingShare();
+    }
+
     // Subscribe to notification taps (real-time) and drain any cold-start action.
     final notifService = sl<NotificationService>();
     _notifSub = notifService.actions.listen((action) {
@@ -198,6 +209,7 @@ class _HomeViewState extends State<_HomeView> {
   void dispose() {
     _mailtoSub?.cancel();
     _notifSub?.cancel();
+    _shareSub?.cancel();
     super.dispose();
   }
 
@@ -328,6 +340,15 @@ class _HomeViewState extends State<_HomeView> {
   }
 
   void _handleMailto(Uri uri) => ComposeWindowApp.openMailto(context, uri);
+
+  Future<void> _openPendingShare() async {
+    final shares = sl<ShareIntentService>();
+    final content = await shares.takePendingShare();
+    if (content == null || !mounted) return;
+    final attachments = await shares.readAttachments(content);
+    if (!mounted) return;
+    await ComposeWindowApp.openShared(context, content, attachments);
+  }
 
   @override
   Widget build(BuildContext context) {

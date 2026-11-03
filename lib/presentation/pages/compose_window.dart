@@ -21,6 +21,7 @@ import '../../domain/entities/inline_attachment.dart';
 import '../../domain/entities/local_attachment.dart';
 import '../../domain/usecases/send_email.dart';
 import '../../infrastructure/accounts/account_manager.dart';
+import '../../infrastructure/share/share_intent_service.dart';
 import '../../injection_container.dart';
 import '../blocs/compose/compose_bloc.dart';
 import '../blocs/compose/compose_state.dart';
@@ -73,6 +74,40 @@ class ComposeWindowApp extends StatelessWidget {
       ),
     );
   }
+
+  /// Opens a compose screen holding what another app shared to NightMail
+  /// through the OS share sheet. Mobile only — no desktop platform offers
+  /// NightMail as a share target, and the sub-window never sees
+  /// [attachments] (see [open]).
+  static Future<void> openShared(
+    BuildContext context,
+    SharedContent content,
+    List<LocalAttachment> attachments,
+  ) {
+    return open(
+      context,
+      mode: ComposeMode.newEmail,
+      draftEmail: sharedDraft(content),
+      initialAttachments: attachments,
+    );
+  }
+
+  /// The draft a share prefills: its subject (Android's `EXTRA_SUBJECT`, e.g.
+  /// a page title alongside a shared link) and its text as a plain body.
+  @visibleForTesting
+  static Email sharedDraft(SharedContent content) => Email(
+        id: '',
+        subject: content.subject,
+        from: const EmailAddress(address: ''),
+        toRecipients: const [],
+        ccRecipients: const [],
+        bodyPreview: '',
+        body: content.text,
+        bodyType: EmailBodyType.text,
+        isRead: false,
+        receivedDateTime: DateTime.now(),
+        importance: EmailImportance.normal,
+      );
 
   /// Opens a compose screen: a new push route on mobile, a sub-window on desktop.
   ///

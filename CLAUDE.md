@@ -109,6 +109,9 @@ would re-break.
 - [`docs/claude/commitments.md`](docs/claude/commitments.md) — the
   Commitments pane: how a System One model lifts "I owe / they owe me /
   needs action" out of cached mail, the scan budget, auto-resolution rules
+- [`docs/claude/share-target.md`](docs/claude/share-target.md) — NightMail
+  in the phone's share sheet: the pulled share channel, Android's intent
+  handling, the iOS Share Extension and its App Group
 - [`lib/infrastructure/update/CLAUDE.md`](lib/infrastructure/update/CLAUDE.md)
   — in-app update mechanism (macOS/Windows/Android)
 - [`lib/infrastructure/contacts/CLAUDE.md`](lib/infrastructure/contacts/CLAUDE.md)

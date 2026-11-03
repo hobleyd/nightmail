@@ -12,6 +12,7 @@ The app provides a desktop based three-pane layout (folders, message list, readi
 
 ### Email
 - Read, compose, reply, reply-all, and forward messages
+- Forward a multi-selection on the desktop as `.eml` attachments in one new message
 - Bcc recipients, behind an expander on the Cc row; a message can go to Cc or Bcc recipients alone, with no To
 - HTML and plain text rendering
 - Attachment download and upload
@@ -167,6 +168,8 @@ Settings → Accounts.
 - Opens on the Inbox of the last active account, with Calendar, Tasks and AI one tap away at the foot of the list
 - Message list and message are real screens: edge-swipe back on iOS, predictive back on Android
 - Pull to refresh, long-press to multi-select, swipe right to mark unread, swipe left for actions, long-press for context menus
+- A multi-selection can be forwarded as `.eml` attachments in one new message, or moved to a folder picked from the full folder tree
+- Appears in the Android and iOS share sheet: text, links, photos and files shared from another app open a new message with them filled in
 - Swipe left or right while reading a message to open the next or previous thread in the folder, with a matching slide transition
 - Calendar cycles Day → Week → Full Week → Month, with the same month view as the desktop
 - Swipe left or right on the calendar to step forward or back by a day, week or month

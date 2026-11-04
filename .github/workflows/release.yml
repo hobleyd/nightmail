@@ -106,10 +106,11 @@ jobs:
         env:
           MACOS_CERT_P12_B64: ${{ secrets.MACOS_CERT_P12 }}
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
           PROVISIONING_PROFILE_B64: ${{ secrets.PROVISIONING_PROFILE_B64 }}
         run: |
           KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          # The keychain only lives for this job, so any random password will do.
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 24)
           echo "$MACOS_CERT_P12_B64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
@@ -629,11 +630,12 @@ jobs:
         env:
           IOS_DIST_CERT_P12_B64: ${{ secrets.IOS_DIST_CERT_P12 }}
           IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
           PROVISIONING_PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_B64 }}
           SHARE_EXTENSION_PROFILE_B64: ${{ secrets.IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_B64 }}
         run: |
           KEYCHAIN_PATH="$RUNNER_TEMP/ios-signing.keychain-db"
+          # The keychain only lives for this job, so any random password will do.
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 24)
           echo "$IOS_DIST_CERT_P12_B64" | base64 --decode > "$RUNNER_TEMP/ios_cert.p12"
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"

@@ -1,20 +1,26 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.42.2",
-  "sections": [
+  "version": "1.42.3",
+  "sections": [],
+  "previous": [
     {
-      "type": "fixes",
-      "title": "Fixes",
-      "items": [
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.42.2",
+      "sections": [
         {
-          "body": "declare the host Info.plist as an input of the helper phase",
-          "title": "macos"
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "declare the host Info.plist as an input of the helper phase",
+              "title": "macos"
+            }
+          ]
         }
       ]
-    }
-  ],
-  "previous": [
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -413,23 +419,6 @@
             {
               "body": "step days by calendar date, not 24 hours",
               "title": "commitments"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.40.1",
-      "sections": [
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "mail copied into Microsoft 365 keeps its original time",
-              "title": "migration"
             }
           ]
         }

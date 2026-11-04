@@ -100,6 +100,11 @@ means:
   App Groups on) and its own App Store profile, "NightMail Share Extension App
   Store", in the `IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_B64` secret.
   `ExportOptions.plist` maps the bundle id to it.
+- Both App Store profiles (and every other app's) are kept vaulted in the
+  `../ansible` repo; `scripts/add_provisioning_profile.sh` there replaces a
+  renewed one and pushes it to its secret, and entropy/ishtar runs re-push
+  only a changed, newer one (`<SECRET>_SHA256` repo variables). Renew there, not
+  with a hand-run `gh secret set`, or the vault falls behind the secret.
 - The `build-ios` patch flips the extension's Release configuration to manual
   signing as it does Runner's, anchored on the extension's object ids
   (`7B5E0A1C2F3D4E5F6000000C` target, `…13` Release configuration).

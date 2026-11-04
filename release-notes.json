@@ -1,8 +1,19 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.42.1",
-  "sections": [],
+  "version": "1.42.2",
+  "sections": [
+    {
+      "type": "fixes",
+      "title": "Fixes",
+      "items": [
+        {
+          "body": "declare the host Info.plist as an input of the helper phase",
+          "title": "macos"
+        }
+      ]
+    }
+  ],
   "previous": [
     {
       "schemaVersion": 1,

@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.42.4",
+  "version": "1.42.5",
   "sections": [
     {
       "type": "fixes",
       "title": "Fixes",
       "items": [
         {
-          "body": "open new /meet/ Teams links in the app, not the browser",
-          "title": "calendar"
+          "body": "return to the email list after reporting junk from a message",
+          "title": "mobile"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.42.4",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "open new /meet/ Teams links in the app, not the browser",
+              "title": "calendar"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -403,33 +420,6 @@
             {
               "body": "copy a guest's email address from its right-click menu",
               "title": "meetings"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.40.2",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "colour the flag on rows with an open task",
-              "title": "email-list"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "step days by calendar date, not 24 hours",
-              "title": "commitments"
             }
           ]
         }

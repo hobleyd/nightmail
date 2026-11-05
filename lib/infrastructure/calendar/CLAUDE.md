@@ -387,8 +387,10 @@ Everything that decides joinability now reads `CalendarEvent.hasOnlineMeeting`.
 - `onlineMeetingPlatformName` — "Microsoft Teams" / "Google Meet" / "Zoom", shown
   wherever the URL itself would be meaningless noise (the hover card's own row,
   the event form's join line).
-- `teamsAppJoinUrl` — rewrites a `teams.microsoft.com/l/...` join link to the
-  `msteams:/l/...` deep link the Teams app registers.
+- `teamsAppJoinUrl` — rewrites a `teams.microsoft.com/l/...` or `/meet/...`
+  join link to the `msteams:` deep link the Teams app registers. The short
+  `/meet/<id>?p=<passcode>` form is what new meetings carry; matching only
+  `/l/` sent all of them back through the browser tab this exists to avoid.
 
 **Every Join affordance goes through `launchMeetingJoinUrl`**
 (`presentation/widgets/body_link_opener.dart`), never a bare `launchUrl`.

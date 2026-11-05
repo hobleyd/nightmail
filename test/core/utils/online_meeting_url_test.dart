@@ -18,6 +18,15 @@ void main() {
       test(url, () => expect(isOnlineMeetingUrl(url), isTrue));
     }
 
+    test('rewrites the short /meet/ link new meetings carry', () {
+      expect(
+        teamsAppJoinUrl(
+          'https://teams.microsoft.com/meet/2581234567890?p=AbCdEf123',
+        ),
+        'msteams:/meet/2581234567890?p=AbCdEf123',
+      );
+    });
+
     test('tolerates surrounding whitespace', () {
       expect(isOnlineMeetingUrl('  https://meet.google.com/abc  '), isTrue);
     });
@@ -186,6 +195,15 @@ void main() {
       expect(uri.hasAuthority, isFalse);
     });
 
+    test('rewrites the short /meet/ link new meetings carry', () {
+      expect(
+        teamsAppJoinUrl(
+          'https://teams.microsoft.com/meet/2581234567890?p=AbCdEf123',
+        ),
+        'msteams:/meet/2581234567890?p=AbCdEf123',
+      );
+    });
+
     test('tolerates surrounding whitespace', () {
       expect(teamsAppJoinUrl('  $join  '), isNotNull);
     });
@@ -195,6 +213,7 @@ void main() {
       expect(teamsAppJoinUrl('https://meet.google.com/abc-defg-hij'), isNull);
       expect(teamsAppJoinUrl('https://acme.zoom.us/j/1234567890'), isNull);
       expect(teamsAppJoinUrl('https://teams.microsoft.com/'), isNull);
+      expect(teamsAppJoinUrl('https://teams.microsoft.com/meeting/x'), isNull);
       expect(
         teamsAppJoinUrl('https://evil.example/teams.microsoft.com/l/x'),
         isNull,

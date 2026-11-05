@@ -634,9 +634,15 @@ class _MobileLayoutState extends State<_MobileLayout> {
   }
 
   /// Observer callback. Fires from inside the navigator's own push/pop, which
-  /// may be mid-build, so the state change is deferred a frame.
+  /// may be mid-build, so the rebuild is deferred a frame — but [_routeNames]
+  /// itself is updated now. A popup menu's `onSelected` runs straight after
+  /// its route pops, before that frame: Report junk from the reading pane's
+  /// waffle menu clears the selection there, and a stale stack would still
+  /// show the menu on top, so the selection-cleared listener would not pop
+  /// the message and leave the phone on an empty reading pane.
   void _onRoutesChanged(List<Route<dynamic>> stack, Route<dynamic>? popped) {
     final names = [for (final r in stack) r.settings.name];
+    _routeNames = names;
     // Backing out of a message — by button, edge swipe or system back — is
     // what unselects it. A pop caused by the selection clearing (a delete
     // from the reading pane) re-clears an already clear state, which emits
@@ -648,7 +654,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
     final leftThread = popped?.settings.name == _MobileRoute.thread;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      setState(() => _routeNames = names);
+      setState(() {});
       _syncForegroundTimer();
       if (leftMessage) context.read<HomeCubit>().clearEmail();
       if (leftThread) {

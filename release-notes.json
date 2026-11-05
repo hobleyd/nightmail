@@ -1,8 +1,19 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.42.3",
-  "sections": [],
+  "version": "1.42.4",
+  "sections": [
+    {
+      "type": "fixes",
+      "title": "Fixes",
+      "items": [
+        {
+          "body": "open new /meet/ Teams links in the app, not the browser",
+          "title": "calendar"
+        }
+      ]
+    }
+  ],
   "previous": [
     {
       "schemaVersion": 1,

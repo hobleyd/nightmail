@@ -19,7 +19,7 @@ The app provides a desktop based three-pane layout (folders, message list, readi
 - Move messages between folders
 - Mark as read/unread
 - Report junk/spam
-- Report phishing, from the junk dropdown or the reading pane: Microsoft 365 submits it to the tenant's threat submissions (admin consent asked once); Gmail and IMAP file it as junk
+- Report phishing, from the junk dropdown or the reading pane: Microsoft 365 submits it to the tenant's threat submissions (admin consent asked once); Gmail and IMAP file it as junk; with a Phishing Inbox set, every provider mails the report there instead
 - Full-text search within folders
 - Sender anomaly and spam detection
 - Spam filter synced across IMAP clients via a dedicated server-side folder
@@ -186,6 +186,9 @@ Settings → Accounts.
   tenant without a later **Sign In Again**
 - Secure token storage (system Keychain / encrypted preferences)
 - Clear an account's local cache without removing the account
+- **Phishing Inbox** (Settings → Accounts) sends Report phishing to an address
+  you choose, such as your security team, with the original attached as an
+  `.eml`; left empty, the provider's default is used
 - **Sign In Again** (Settings → Accounts) re-runs the OAuth consent flow for a
   Microsoft 365 or Gmail account without deleting it or its cache. Needed when a
   new provider scope is added — providers won't grant one on a token refresh, so

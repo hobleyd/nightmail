@@ -976,6 +976,7 @@ class _AccountsSectionState extends State<_AccountsSection> {
   late TextEditingController _phoneController;
   late TextEditingController _mobileController;
   late TextEditingController _addressController;
+  late TextEditingController _phishingInboxController;
 
   EmailBodyType _composeFormat = AppSettings.defaultComposeFormat;
 
@@ -997,6 +998,7 @@ class _AccountsSectionState extends State<_AccountsSection> {
     _phoneController = TextEditingController();
     _mobileController = TextEditingController();
     _addressController = TextEditingController();
+    _phishingInboxController = TextEditingController();
     sl<AppSettings>().loadDefaultComposeFormat().then((format) {
       if (mounted) setState(() => _composeFormat = format);
     });
@@ -1019,6 +1021,7 @@ class _AccountsSectionState extends State<_AccountsSection> {
     _phoneController.dispose();
     _mobileController.dispose();
     _addressController.dispose();
+    _phishingInboxController.dispose();
     super.dispose();
   }
 
@@ -1031,6 +1034,7 @@ class _AccountsSectionState extends State<_AccountsSection> {
     _phoneController.text = account.phone;
     _mobileController.text = account.mobile;
     _addressController.text = account.address;
+    _phishingInboxController.text = account.phishingInbox;
     if (account is ImapAccount) {
       _hostController.text = account.host;
       _portController.text = account.port.toString();
@@ -1200,6 +1204,14 @@ class _AccountsSectionState extends State<_AccountsSection> {
   void _saveChanges() {
     if (_selectedAccount == null) return;
 
+    final phishingInbox = _phishingInboxController.text.trim();
+    if (phishingInbox.isNotEmpty && !phishingInbox.contains('@')) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Phishing Inbox must be an email address, or empty'),
+      ));
+      return;
+    }
+
     NextcloudCalendarConfig? caldavConfig;
     if (_selectedAccount is ImapAccount && _nextcloudEnabled) {
       final url = _caldavUrlController.text.trim();
@@ -1222,6 +1234,7 @@ class _AccountsSectionState extends State<_AccountsSection> {
           phone: _phoneController.text,
           mobile: _mobileController.text,
           address: _addressController.text,
+          phishingInbox: phishingInbox,
         ),
       GmailAccount a => a.copyWith(
           displayName: _nameController.text,
@@ -1232,6 +1245,7 @@ class _AccountsSectionState extends State<_AccountsSection> {
           phone: _phoneController.text,
           mobile: _mobileController.text,
           address: _addressController.text,
+          phishingInbox: phishingInbox,
         ),
       ImapAccount a => a.copyWith(
           displayName: _nameController.text,
@@ -1242,6 +1256,7 @@ class _AccountsSectionState extends State<_AccountsSection> {
           phone: _phoneController.text,
           mobile: _mobileController.text,
           address: _addressController.text,
+          phishingInbox: phishingInbox,
           host: _hostController.text,
           port: int.tryParse(_portController.text) ?? a.port,
           useSsl: _useSsl,
@@ -1493,6 +1508,17 @@ class _AccountsSectionState extends State<_AccountsSection> {
                               (_selectedAccount as GmailAccount).clientId ??
                                   '(default)',
                         ),
+                      // Empty is the platform default — see
+                      // EmailRepositoryImpl.reportPhishing.
+                      _AccountDetailRow(
+                        label: 'Phishing Inbox',
+                        value: _selectedAccount!.phishingInbox.isEmpty
+                            ? '(platform default)'
+                            : _selectedAccount!.phishingInbox,
+                        isEditing: _isEditing,
+                        controller: _phishingInboxController,
+                        keyboardType: TextInputType.emailAddress,
+                      ),
                       if (_selectedAccount is ImapAccount) ...[
                         _SectionSubheader(label: 'Incoming (IMAP)'),
                         _AccountDetailRow(

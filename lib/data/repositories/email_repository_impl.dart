@@ -659,6 +659,35 @@ class EmailRepositoryImpl implements EmailRepository {
   @override
   Future<Either<Failure, Unit>> reportPhishing(String id) async {
     final datasource = _accountManager.emailDatasource;
+    final phishingInbox =
+        _accountManager.activeAccount?.phishingInbox.trim() ?? '';
+    if (phishingInbox.isNotEmpty) {
+      // A configured inbox replaces the provider's channel outright: no
+      // threat submission, so no ThreatSubmission scope to check. The
+      // original goes as an .eml attachment, headers intact, which is what a
+      // security team needs to trace it. Sent before the move for the same
+      // reason the submission is (the move mints a new id on Graph), and
+      // synchronously for the same reason too — never queued.
+      final reported = await _execute(() async {
+        final raw = await datasource.getRawEmailBytes(id);
+        await datasource.sendEmail(
+          toAddresses: [phishingInbox],
+          subject: 'Phishing report',
+          body: 'The attached message was reported as phishing from '
+              '${_accountManager.activeAccount?.emailAddress ?? 'NightMail'}.',
+          newAttachments: [
+            LocalAttachment(
+              name: 'reported-message.eml',
+              mimeType: 'message/rfc822',
+              bytes: raw,
+            ),
+          ],
+        );
+        return unit;
+      });
+      if (reported.isLeft()) return reported;
+      return reportJunk(id);
+    }
     if (datasource is PhishingReportDatasource) {
       final account = _accountManager.activeAccount;
       if (account != null &&

@@ -208,4 +208,45 @@ void main() {
       }
     });
   });
+
+  group('Account.phishingInbox', () {
+    const accounts = <Account>[
+      GmailAccount(id: 'g', displayName: 'Home', emailAddress: 'me@gmail.com'),
+      ImapAccount(
+        id: 'i',
+        displayName: 'Mail',
+        emailAddress: 'me@example.com',
+        host: 'imap.example.com',
+        port: 993,
+        useSsl: true,
+        smtpHost: 'smtp.example.com',
+        smtpPort: 587,
+        smtpUseSsl: false,
+      ),
+      MicrosoftAccount(
+        id: 'm',
+        displayName: 'Work',
+        emailAddress: 'me@contoso.com',
+        tenantId: 'tid',
+      ),
+    ];
+
+    test('round-trips JSON for every account type and counts in equality', () {
+      for (final account in accounts) {
+        final set = account.copyWith(phishingInbox: 'security@example.com');
+        final restored = Account.fromJson(set.toJson());
+        expect(restored.phishingInbox, 'security@example.com');
+        expect(restored, set);
+        expect(restored, isNot(account));
+      }
+    });
+
+    test('an account saved before the setting existed is the platform default',
+        () {
+      for (final account in accounts) {
+        final json = account.toJson()..remove('phishingInbox');
+        expect(Account.fromJson(json).phishingInbox, isEmpty);
+      }
+    });
+  });
 }

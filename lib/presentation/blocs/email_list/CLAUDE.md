@@ -377,7 +377,19 @@ makes. Both end with the message in Junk; phishing differs in what happens
   is the `SPAM` label — and IMAP has nothing, so for both `reportPhishing` is
   `reportJunk` under its honest name. Say so if asked; do not invent a channel
   (forwarding to a third-party address sends the user's mail somewhere they
-  did not choose).
+  did not choose) — the one forward that exists is the address the user typed
+  in themselves, below.
+- **A Phishing Inbox replaces the provider's channel.** Settings > Accounts >
+  *Phishing Inbox* (`Account.phishingInbox`, per account, empty = platform
+  default) is typically an organisation's security mailbox. When it is set,
+  `reportPhishing` fetches the original's raw bytes and mails them there as a
+  `message/rfc822` `.eml` attachment (headers intact, which is what a security
+  team traces), for every provider — Gmail and IMAP gain a real report this
+  way. Microsoft's threat submission is then skipped entirely, so
+  `ensurePhishingReportAccess` returns early and no `ThreatSubmission` grant is
+  checked or asked for. Everything else below still holds: sent synchronously
+  through `_execute` before the junk move, never queued, and a failed send
+  leaves the message where it was.
 - **The API is `/beta`, and its scope needs admin consent.** v1.0's
   `$metadata` carries no `threatSubmission` at all (only the older,
   admin-oriented `threatAssessmentRequests`), and `ThreatSubmission.ReadWrite`

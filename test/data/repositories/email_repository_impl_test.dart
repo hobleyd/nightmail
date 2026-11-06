@@ -19,6 +19,7 @@ import 'package:nightmail/domain/entities/email.dart';
 import 'package:nightmail/domain/entities/email_attachment.dart';
 import 'package:nightmail/domain/entities/email_folder.dart';
 import 'package:nightmail/domain/entities/inline_attachment.dart';
+import 'package:nightmail/domain/entities/local_attachment.dart';
 import 'package:nightmail/domain/entities/meeting_invite.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
@@ -35,12 +36,32 @@ class _FakePhishingCapableDatasource extends Fake
     implements EmailRemoteDatasource, PhishingReportDatasource {
   final submitted = <String>[];
   final junked = <String>[];
+  final sent = <({List<String> to, List<LocalAttachment> attachments})>[];
   Object? submitError;
+  Object? sendError;
 
   @override
   Future<void> submitPhishingReport(String id) async {
     if (submitError != null) throw submitError!;
     submitted.add(id);
+  }
+
+  @override
+  Future<Uint8List> getRawEmailBytes(String id) async =>
+      Uint8List.fromList('Subject: raw $id\r\n\r\nbody'.codeUnits);
+
+  @override
+  Future<void> sendEmail({
+    required List<String> toAddresses,
+    List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
+    required String subject,
+    required String body,
+    EmailBodyType bodyType = EmailBodyType.text,
+    List<LocalAttachment> newAttachments = const [],
+  }) async {
+    if (sendError != null) throw sendError!;
+    sent.add((to: toAddresses, attachments: newAttachments));
   }
 
   @override
@@ -2173,6 +2194,78 @@ void main() {
         result.getLeft().toNullable(),
         isA<ServerFailure>().having((f) => f.statusCode, 'statusCode', 403),
       );
+      verifyNever(mockPendingOperations.enqueue(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+        folderId: anyNamed('folderId'),
+        opType: anyNamed('opType'),
+        payload: anyNamed('payload'),
+      ));
+    });
+
+    test('with a Phishing Inbox set, mails the original there as an .eml and '
+        'files it as junk — Microsoft is never asked or told', () async {
+      final ds = _FakePhishingCapableDatasource();
+      when(mockAccountManager.emailDatasource).thenReturn(ds);
+      when(mockAccountManager.activeAccount).thenReturn(
+          tMicrosoft.copyWith(phishingInbox: ' security@contoso.com '));
+      when(mockLocalDatasource.deleteEmailFromCache(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async {});
+
+      final result = await repository.reportPhishing('email-1');
+
+      expect(result.isRight(), isTrue);
+      expect(ds.submitted, isEmpty);
+      verifyNever(mockAccountManager.hasThreatSubmissionAccess(any));
+      expect(ds.sent, hasLength(1));
+      expect(ds.sent.single.to, ['security@contoso.com']);
+      final attachment = ds.sent.single.attachments.single;
+      expect(attachment.mimeType, 'message/rfc822');
+      expect(attachment.name, endsWith('.eml'));
+      expect(String.fromCharCodes(attachment.bytes), contains('raw email-1'));
+      verify(mockPendingOperations.enqueue(
+        accountId: 'ms-1',
+        emailId: 'email-1',
+        folderId: anyNamed('folderId'),
+        opType: PendingOperationType.junk,
+        payload: anyNamed('payload'),
+      )).called(1);
+    });
+
+    test('with a Phishing Inbox set on a Gmail/IMAP account, the report is '
+        'mailed too, not just filed', () async {
+      final ds = _FakePhishingCapableDatasource();
+      when(mockAccountManager.emailDatasource).thenReturn(ds);
+      when(mockAccountManager.activeAccount).thenReturn(const GmailAccount(
+        id: 'gmail-1',
+        displayName: 'Personal',
+        emailAddress: 'me@gmail.com',
+        phishingInbox: 'abuse@example.com',
+      ));
+      when(mockLocalDatasource.deleteEmailFromCache(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async {});
+
+      final result = await repository.reportPhishing('email-1');
+
+      expect(result.isRight(), isTrue);
+      expect(ds.sent.single.to, ['abuse@example.com']);
+    });
+
+    test('a report mail that fails to send leaves the message where it is',
+        () async {
+      final ds = _FakePhishingCapableDatasource()
+        ..sendError = const ServerException(message: 'Rejected', statusCode: 550);
+      when(mockAccountManager.emailDatasource).thenReturn(ds);
+      when(mockAccountManager.activeAccount).thenReturn(
+          tMicrosoft.copyWith(phishingInbox: 'security@contoso.com'));
+
+      final result = await repository.reportPhishing('email-1');
+
+      expect(result.getLeft().toNullable(), isA<ServerFailure>());
       verifyNever(mockPendingOperations.enqueue(
         accountId: anyNamed('accountId'),
         emailId: anyNamed('emailId'),

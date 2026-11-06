@@ -45,6 +45,7 @@ sealed class Account extends Equatable {
     this.mobile = '',
     this.address = '',
     this.signatureHtml = '',
+    this.phishingInbox = '',
   });
 
   final String id;
@@ -68,6 +69,13 @@ sealed class Account extends Equatable {
   final String mobile;
   final String address;
   final String signatureHtml;
+
+  /// Where *Report phishing* sends the message for this account, as an `.eml`
+  /// attachment, in place of the provider's own channel. Empty means the
+  /// platform default (Microsoft's threat submission API; for Gmail and IMAP a
+  /// plain move to Junk). Typed into Settings > Accounts, typically an
+  /// organisation's security team mailbox.
+  final String phishingInbox;
 
   /// The name to show as the sender when sending mail (the `From:` header
   /// display name). [displayName] is just this account's label in the
@@ -123,6 +131,7 @@ sealed class Account extends Equatable {
     String? mobile,
     String? address,
     String? signatureHtml,
+    String? phishingInbox,
   });
 
   Map<String, dynamic> toJson();
@@ -153,6 +162,7 @@ final class MicrosoftAccount extends Account {
     super.mobile,
     super.address,
     super.signatureHtml,
+    super.phishingInbox,
   });
 
   final String tenantId;
@@ -190,6 +200,7 @@ final class MicrosoftAccount extends Account {
     String? mobile,
     String? address,
     String? signatureHtml,
+    String? phishingInbox,
     String? tenantId,
     Object? clientId = _sentinel,
   }) {
@@ -205,6 +216,7 @@ final class MicrosoftAccount extends Account {
       mobile: mobile ?? this.mobile,
       address: address ?? this.address,
       signatureHtml: signatureHtml ?? this.signatureHtml,
+      phishingInbox: phishingInbox ?? this.phishingInbox,
       tenantId: tenantId ?? this.tenantId,
       clientId: clientId == _sentinel ? this.clientId : clientId as String?,
       parentAccountId: parentAccountId,
@@ -227,6 +239,7 @@ final class MicrosoftAccount extends Account {
       mobile: json['mobile'] as String? ?? '',
       address: json['address'] as String? ?? '',
       signatureHtml: json['signatureHtml'] as String? ?? '',
+      phishingInbox: json['phishingInbox'] as String? ?? '',
     );
   }
 
@@ -247,6 +260,7 @@ final class MicrosoftAccount extends Account {
         'mobile': mobile,
         'address': address,
         'signatureHtml': signatureHtml,
+        'phishingInbox': phishingInbox,
       };
 
   @override
@@ -265,6 +279,7 @@ final class MicrosoftAccount extends Account {
         mobile,
         address,
         signatureHtml,
+        phishingInbox,
       ];
 }
 
@@ -283,6 +298,7 @@ final class MicrosoftAccount extends Account {
     super.mobile,
     super.address,
     super.signatureHtml,
+    super.phishingInbox,
   });
 
   /// This account's own Google Cloud OAuth Client ID/Secret (BYOA), or null
@@ -306,6 +322,7 @@ final class MicrosoftAccount extends Account {
     String? mobile,
     String? address,
     String? signatureHtml,
+    String? phishingInbox,
     Object? clientId = _sentinel,
     Object? clientSecret = _sentinel,
   }) {
@@ -321,6 +338,7 @@ final class MicrosoftAccount extends Account {
       mobile: mobile ?? this.mobile,
       address: address ?? this.address,
       signatureHtml: signatureHtml ?? this.signatureHtml,
+      phishingInbox: phishingInbox ?? this.phishingInbox,
       clientId: clientId == _sentinel ? this.clientId : clientId as String?,
       clientSecret: clientSecret == _sentinel
           ? this.clientSecret
@@ -343,6 +361,7 @@ final class MicrosoftAccount extends Account {
       mobile: json['mobile'] as String? ?? '',
       address: json['address'] as String? ?? '',
       signatureHtml: json['signatureHtml'] as String? ?? '',
+      phishingInbox: json['phishingInbox'] as String? ?? '',
     );
   }
 
@@ -362,6 +381,7 @@ final class MicrosoftAccount extends Account {
         'mobile': mobile,
         'address': address,
         'signatureHtml': signatureHtml,
+        'phishingInbox': phishingInbox,
       };
 
   @override
@@ -379,6 +399,7 @@ final class MicrosoftAccount extends Account {
         mobile,
         address,
         signatureHtml,
+        phishingInbox,
       ];
 }
 
@@ -402,6 +423,7 @@ final class ImapAccount extends Account {
     super.mobile,
     super.address,
     super.signatureHtml,
+    super.phishingInbox,
   });
 
   final String host;
@@ -424,6 +446,7 @@ final class ImapAccount extends Account {
     String? mobile,
     String? address,
     String? signatureHtml,
+    String? phishingInbox,
     String? host,
     int? port,
     bool? useSsl,
@@ -444,6 +467,7 @@ final class ImapAccount extends Account {
       mobile: mobile ?? this.mobile,
       address: address ?? this.address,
       signatureHtml: signatureHtml ?? this.signatureHtml,
+      phishingInbox: phishingInbox ?? this.phishingInbox,
       host: host ?? this.host,
       port: port ?? this.port,
       useSsl: useSsl ?? this.useSsl,
@@ -481,6 +505,7 @@ final class ImapAccount extends Account {
       mobile: json['mobile'] as String? ?? '',
       address: json['address'] as String? ?? '',
       signatureHtml: json['signatureHtml'] as String? ?? '',
+      phishingInbox: json['phishingInbox'] as String? ?? '',
     );
   }
 
@@ -506,6 +531,7 @@ final class ImapAccount extends Account {
         'mobile': mobile,
         'address': address,
         'signatureHtml': signatureHtml,
+        'phishingInbox': phishingInbox,
       };
 
   @override
@@ -528,6 +554,7 @@ final class ImapAccount extends Account {
         mobile,
         address,
         signatureHtml,
+        phishingInbox,
       ];
 }
 

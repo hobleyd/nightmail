@@ -5,12 +5,14 @@ import 'package:flutter/material.dart';
 import '../widgets/adaptive_switch.dart';
 import '../widgets/adaptive_alert_dialog.dart';
 import 'package:flutter/services.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../core/error/exceptions.dart';
 import '../../core/platform/touch_metrics.dart';
 import '../../core/settings/app_settings.dart';
+import '../../core/signature/signature_import.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import '../../injection_container.dart';
@@ -802,17 +804,98 @@ class _SignatureEditorState extends State<_SignatureEditor> {
     }
   }
 
+  static const _htmlTypes = XTypeGroup(
+    label: 'HTML',
+    extensions: ['html', 'htm'],
+    mimeTypes: ['text/html'],
+    uniformTypeIdentifiers: ['public.html'],
+  );
+
+  /// Replaces the signature with an HTML file's `<body>`. Merge tags in the
+  /// file are kept unresolved, exactly as if typed into the editor.
+  Future<void> _importHtml(BuildContext context) async {
+    final file = await openFile(acceptedTypeGroups: const [_htmlTypes]);
+    if (file == null || !mounted) return;
+    final html = SignatureImport.fromBytes(await file.readAsBytes());
+    if (!mounted) return;
+
+    final editorState = _htmlEditorKey.currentState;
+    final current = editorState != null
+        ? await editorState.getContent()
+        : _plainController.text;
+    if (!context.mounted) return;
+    if (ComposeBodyBuilder.stripHtml(current).trim().isNotEmpty) {
+      // The HTML editor is a native view drawn above Flutter on the desktop,
+      // so it has to be hidden for the dialog to be visible.
+      await editorState?.hide();
+      if (!context.mounted) return;
+      final replace = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AdaptiveAlertDialog(
+          title: const Text('Replace Signature'),
+          content: Text('Replace the current signature with "${file.name}"?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Replace'),
+            ),
+          ],
+        ),
+      );
+      if (mounted) await editorState?.show();
+      if (replace != true || !mounted) return;
+    }
+
+    // The file is stored as it is, not as the editor re-serialises it: the
+    // HTML parser foster-parents text out of a <table>, so the editor's copy
+    // of a template that wraps rows in IFEXISTS(..., <tr>…</tr>, ) would come
+    // back with the call split from its row. Nothing is lost by skipping the
+    // editor's sanitiser here — the merged signature still goes through it in
+    // the compose editor's setContent. Loading content doesn't raise
+    // onContentChanged, so the editor only replaces this once it's edited.
+    widget.onChanged(html);
+    if (editorState != null) {
+      await editorState.setContent(html);
+    } else {
+      _plainController.text = ComposeBodyBuilder.stripHtml(html
+              .replaceAll(
+                  RegExp(r'<(style|script)\b[^>]*>.*?</\1\s*>',
+                      caseSensitive: false, dotAll: true),
+                  '')
+              .replaceAll(RegExp(r'<!--.*?-->', dotAll: true), ''))
+          .trim();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Signature',
-          style: TextStyle(color: c.textSecondary, fontSize: 13),
+        Row(
+          children: [
+            Text(
+              'Signature',
+              style: TextStyle(color: c.textSecondary, fontSize: 13),
+            ),
+            const Spacer(),
+            TextButton.icon(
+              onPressed: () => _importHtml(context),
+              icon: const Icon(Icons.file_open_outlined, size: 16),
+              label: const Text('Import HTML…'),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                textStyle: const TextStyle(fontSize: 12),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         Container(
           height: 160,
           clipBehavior: Clip.antiAlias,

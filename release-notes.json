@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.42.5",
+  "version": "1.43.0",
   "sections": [
     {
-      "type": "fixes",
-      "title": "Fixes",
+      "type": "features",
+      "title": "New features",
       "items": [
         {
-          "body": "return to the email list after reporting junk from a message",
-          "title": "mobile"
+          "body": "import an HTML signature from a file",
+          "title": "settings"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.42.5",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "return to the email list after reporting junk from a message",
+              "title": "mobile"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -399,27 +416,6 @@
             {
               "body": "keep a moved O365 message from reappearing in the folder it left",
               "title": "mail"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.40.3",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "email a meeting's attendees from its context menu",
-              "title": "calendar"
-            },
-            {
-              "body": "copy a guest's email address from its right-click menu",
-              "title": "meetings"
             }
           ]
         }

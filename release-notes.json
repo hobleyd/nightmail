@@ -1,20 +1,37 @@
 {
   "schemaVersion": 1,
   "format": "desktop_updater.release_notes.v1",
-  "version": "1.43.0",
+  "version": "1.44.0",
   "sections": [
     {
       "type": "features",
       "title": "New features",
       "items": [
         {
-          "body": "import an HTML signature from a file",
-          "title": "settings"
+          "body": "send phishing reports to a per-account Phishing Inbox",
+          "title": "accounts"
         }
       ]
     }
   ],
   "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.43.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "import an HTML signature from a file",
+              "title": "settings"
+            }
+          ]
+        }
+      ]
+    },
     {
       "schemaVersion": 1,
       "format": "desktop_updater.release_notes.v1",
@@ -389,33 +406,6 @@
             {
               "body": "open a task's linked email as a thread over Tasks on a phone",
               "title": "tasks"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "schemaVersion": 1,
-      "format": "desktop_updater.release_notes.v1",
-      "version": "1.40.5",
-      "sections": [
-        {
-          "type": "features",
-          "title": "New features",
-          "items": [
-            {
-              "body": "add a Google Workspace sign-in that requests the room scope up front",
-              "title": "accounts"
-            }
-          ]
-        },
-        {
-          "type": "fixes",
-          "title": "Fixes",
-          "items": [
-            {
-              "body": "keep a moved O365 message from reappearing in the folder it left",
-              "title": "mail"
             }
           ]
         }

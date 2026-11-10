@@ -1,4 +1,5 @@
 import '../../../core/utils/ics_parser.dart';
+import '../../../core/utils/rrule.dart';
 import '../../../domain/entities/meeting_invite.dart';
 
 /// Turns a `text/calendar` part into a [MeetingInvite].
@@ -44,6 +45,8 @@ MeetingInvite buildMeetingInviteFromIcs(
       proposedStart:
           type == MeetingEmailType.proposedNewTime ? event.start : null,
       proposedEnd: type == MeetingEmailType.proposedNewTime ? event.end : null,
+      recurrence: event.rrule == null ? null : parseRRule(event.rrule!),
+      isRecurring: event.rrule != null,
     );
   } catch (_) {
     // Method-only: the classification is what decides which banner appears, and

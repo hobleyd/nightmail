@@ -58,7 +58,7 @@ class CalendarEventModel extends CalendarEvent {
       organizerName: _organizerField(json, 'name'),
       timezone: (json['start'] as Map<String, dynamic>?)?['timeZone'] as String?,
       attendees: _parseAttendees(json['attendees'] as List<dynamic>?),
-      recurrence: _parseRecurrence(json['recurrence'] as Map<String, dynamic>?),
+      recurrence: parseGraphRecurrence(json['recurrence'] as Map<String, dynamic>?),
       reminderMinutes: (json['isReminderOn'] as bool? ?? false)
           ? json['reminderMinutesBeforeStart'] as int?
           : null,
@@ -140,7 +140,9 @@ class CalendarEventModel extends CalendarEvent {
     };
   }
 
-  static CalendarRecurrence? _parseRecurrence(Map<String, dynamic>? map) {
+  /// A Graph `patternedRecurrence`. Shared with `EmailModel`, whose
+  /// eventMessage carries the same shape for a series invitation.
+  static CalendarRecurrence? parseGraphRecurrence(Map<String, dynamic>? map) {
     if (map == null) return null;
     final pattern = map['pattern'] as Map<String, dynamic>?;
     final range = map['range'] as Map<String, dynamic>?;

@@ -1,3 +1,5 @@
+import 'calendar_recurrence.dart';
+
 enum MeetingInviteResponseType { accept, tentative, decline }
 
 enum MeetingEmailType {
@@ -50,6 +52,8 @@ class MeetingInvite {
     this.type = MeetingEmailType.invitation,
     this.proposedStart,
     this.proposedEnd,
+    this.recurrence,
+    this.isRecurring = false,
   });
 
   /// Raw iCalendar text from a text/calendar MIME part. Populated for Gmail;
@@ -94,4 +98,16 @@ class MeetingInvite {
   /// original is not recoverable from it.
   final DateTime? proposedStart;
   final DateTime? proposedEnd;
+
+  /// How the series repeats, when this is an invitation to one. From the
+  /// `VEVENT`'s `RRULE` for an ICS invite, and from `eventMessage.recurrence`
+  /// for Graph. [meetingStart] is then the series' first occurrence, so without
+  /// this the banner presents a weekly meeting as a single date.
+  final CalendarRecurrence? recurrence;
+
+  /// The invitation is to a series even though [recurrence] could not be read
+  /// — Graph reports `type: seriesMaster` on an eventMessage whose `recurrence`
+  /// it left out, and an `RRULE` may use a `FREQ` this app does not model.
+  /// Knowing a meeting repeats is worth more than the exact rule.
+  final bool isRecurring;
 }

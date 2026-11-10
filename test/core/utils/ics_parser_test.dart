@@ -163,6 +163,44 @@ END:VCALENDAR''');
     });
   });
 
+  group('IcsParser.parse RRULE', () {
+    test("is the VEVENT's rule, not the VTIMEZONE's daylight-saving rules", () {
+      // Outlook's VTIMEZONE comes first and carries yearly RRULEs of its own;
+      // reading one of those would call every Outlook invitation yearly.
+      final event = IcsParser.parse('''
+BEGIN:VCALENDAR
+METHOD:REQUEST
+BEGIN:VTIMEZONE
+TZID:AUS Eastern Standard Time
+BEGIN:STANDARD
+DTSTART:16010101T030000
+TZOFFSETFROM:+1100
+TZOFFSETTO:+1000
+RRULE:FREQ=YEARLY;INTERVAL=1;BYDAY=1SU;BYMONTH=4
+END:STANDARD
+BEGIN:DAYLIGHT
+DTSTART:16010101T020000
+TZOFFSETFROM:+1000
+TZOFFSETTO:+1100
+RRULE:FREQ=YEARLY;INTERVAL=1;BYDAY=1SU;BYMONTH=10
+END:DAYLIGHT
+END:VTIMEZONE
+BEGIN:VEVENT
+RRULE:FREQ=WEEKLY;UNTIL=20270210T230000Z;INTERVAL=1;BYDAY=TU;WKST=SU
+UID:evt-1
+DTSTART;TZID=AUS Eastern Standard Time:20261117T100000
+DTEND;TZID=AUS Eastern Standard Time:20261117T103000
+END:VEVENT
+END:VCALENDAR''');
+      expect(event.rrule,
+          'RRULE:FREQ=WEEKLY;UNTIL=20270210T230000Z;INTERVAL=1;BYDAY=TU;WKST=SU');
+    });
+
+    test('is null for a one-off meeting', () {
+      expect(IcsParser.parse(_ics('DTSTART:20260615T100000Z')).rrule, isNull);
+    });
+  });
+
   group('IcsParser.parse TEXT values', () {
     IcsEvent parseWith(List<String> lines) => IcsParser.parse('''
 BEGIN:VCALENDAR

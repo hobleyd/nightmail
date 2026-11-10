@@ -10,6 +10,7 @@ import 'package:nightmail/data/datasources/local/email_local_datasource_impl.dar
 import 'package:nightmail/data/services/inline_attachment_cache.dart';
 import 'package:nightmail/data/models/email_address_model.dart';
 import 'package:nightmail/data/models/email_model.dart';
+import 'package:nightmail/domain/entities/calendar_recurrence.dart';
 import 'package:nightmail/domain/entities/email.dart';
 import 'package:nightmail/domain/entities/email_attachment.dart';
 import 'package:nightmail/domain/entities/inline_attachment.dart';
@@ -1143,7 +1144,8 @@ void main() {
   });
 
   group('meeting invite', () {
-    EmailModel emailWithInvite(String id) => EmailModel(
+    EmailModel emailWithInvite(String id, {MeetingInvite? invite}) =>
+        EmailModel(
           id: id,
           subject: 'Subject $id',
           from: const EmailAddressModel(address: 'a@b.com'),
@@ -1156,7 +1158,7 @@ void main() {
           receivedDateTime: DateTime(2026, 6, 1),
           importance: EmailImportance.normal,
           parentFolderId: 'folder-1',
-          meetingInvite: MeetingInvite(
+          meetingInvite: invite ?? MeetingInvite(
             icsData: 'BEGIN:VCALENDAR...',
             meetingStart: DateTime.utc(2026, 6, 15, 14, 0),
             meetingEnd: DateTime.utc(2026, 6, 15, 15, 0),
@@ -1190,6 +1192,44 @@ void main() {
       expect(invite.meetingEnd, DateTime.utc(2026, 6, 15, 15, 0));
       expect(invite.location, 'Room 1');
       expect(invite.isAllDay, isFalse);
+    });
+
+    test("round-trips a series invitation's recurrence", () async {
+      await datasource.cacheEmails(
+        accountId: 'acct-1',
+        folderId: 'folder-1',
+        emails: [
+          emailWithInvite(
+            'email-1',
+            invite: MeetingInvite(
+              meetingStart: DateTime.utc(2026, 6, 15, 14, 0),
+              recurrence: CalendarRecurrence(
+                frequency: RecurrenceFrequency.weekly,
+                interval: 2,
+                daysOfWeek: const [2, 4],
+                endDate: DateTime(2027, 2, 10),
+              ),
+              isRecurring: true,
+            ),
+          ),
+        ],
+      );
+
+      final invite = (await datasource.getCachedEmailById(
+        accountId: 'acct-1',
+        emailId: 'email-1',
+      ))!
+          .meetingInvite!;
+      expect(invite.isRecurring, isTrue);
+      expect(
+        invite.recurrence,
+        CalendarRecurrence(
+          frequency: RecurrenceFrequency.weekly,
+          interval: 2,
+          daysOfWeek: const [2, 4],
+          endDate: DateTime(2027, 2, 10),
+        ),
+      );
     });
 
     // Regression: a poll/list fetch re-touches the row with a thin, ICS-less

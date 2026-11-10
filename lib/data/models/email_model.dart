@@ -6,6 +6,7 @@ import '../../domain/entities/email.dart';
 import '../../domain/entities/email_attachment.dart';
 import '../../domain/entities/inline_attachment.dart';
 import '../../domain/entities/meeting_invite.dart';
+import 'calendar_event_model.dart';
 import 'email_address_model.dart';
 
 class EmailModel extends Email {
@@ -215,6 +216,14 @@ class EmailModel extends Email {
 
     final isAllDay = json['isAllDay'] as bool? ?? false;
 
+    // An eventMessage for a series carries the series' pattern, and its
+    // start/end are the first occurrence's. `type` says it is a series even
+    // where `recurrence` is missing.
+    final recurrence = CalendarEventModel.parseGraphRecurrence(
+        json['recurrence'] as Map<String, dynamic>?);
+    final isRecurring = recurrence != null ||
+        (json['type'] as String?)?.toLowerCase() == 'seriesmaster';
+
     return MeetingInvite(
       meetingStart: meetingStart,
       meetingEnd: meetingEnd,
@@ -223,6 +232,8 @@ class EmailModel extends Email {
       type: type,
       proposedStart: proposedStart,
       proposedEnd: proposedEnd,
+      recurrence: recurrence,
+      isRecurring: isRecurring,
     );
   }
 

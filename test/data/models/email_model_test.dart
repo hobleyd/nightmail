@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/data/models/email_model.dart';
+import 'package:nightmail/domain/entities/calendar_recurrence.dart';
 import 'package:nightmail/domain/entities/meeting_invite.dart';
 
 void main() {
@@ -110,6 +111,49 @@ void main() {
         });
 
         expect(email.meetingInvite!.type, MeetingEmailType.invitation);
+      });
+
+      Map<String, dynamic> requestJson(Map<String, dynamic> extra) => {
+            ...declineJson(),
+            '@odata.type': '#microsoft.graph.eventMessageRequest',
+            'meetingMessageType': 'meetingRequest',
+            ...extra,
+          };
+
+      test("reads a series invitation's recurrence", () {
+        final email = EmailModel.fromJson(requestJson({
+          'type': 'seriesMaster',
+          'recurrence': {
+            'pattern': {
+              'type': 'weekly',
+              'interval': 1,
+              'daysOfWeek': ['tuesday'],
+            },
+            'range': {'type': 'endDate', 'endDate': '2027-02-10'},
+          },
+        }));
+
+        final invite = email.meetingInvite!;
+        expect(invite.isRecurring, isTrue);
+        expect(invite.recurrence!.frequency, RecurrenceFrequency.weekly);
+        expect(invite.recurrence!.daysOfWeek, [2]);
+        expect(invite.recurrence!.endDate, DateTime(2027, 2, 10));
+      });
+
+      test('knows a seriesMaster repeats even with no recurrence to read', () {
+        final email =
+            EmailModel.fromJson(requestJson({'type': 'seriesMaster'}));
+
+        expect(email.meetingInvite!.isRecurring, isTrue);
+        expect(email.meetingInvite!.recurrence, isNull);
+      });
+
+      test('leaves a single meeting non-recurring', () {
+        final email =
+            EmailModel.fromJson(requestJson({'type': 'singleInstance'}));
+
+        expect(email.meetingInvite!.isRecurring, isFalse);
+        expect(email.meetingInvite!.recurrence, isNull);
       });
     });
 

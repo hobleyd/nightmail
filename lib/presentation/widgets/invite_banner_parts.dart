@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/meeting_invite.dart';
+import 'event_hover_card.dart';
 
 /// The pieces every meeting banner in the reading pane is built from.
 ///
@@ -24,6 +25,17 @@ String formatMeetingTime(MeetingInvite invite) {
     return '$datePart  $startTime – $endTime';
   }
   return '$datePart  $startTime';
+}
+
+/// `Weekly on Tue` for an invitation to a series, or null for a one-off.
+///
+/// [formatMeetingTime] names only the first occurrence, so this line is what
+/// tells a series from a single meeting before it is answered — and an answer
+/// to a series answers every occurrence.
+String? describeInviteRecurrence(MeetingInvite invite) {
+  final r = invite.recurrence;
+  if (r != null) return describeRecurrence(r);
+  return invite.isRecurring ? 'Repeating' : null;
 }
 
 /// The small tinted action button a banner offers — Accept, Decline, Add to

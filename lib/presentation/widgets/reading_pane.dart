@@ -1845,7 +1845,9 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
     final invite = widget.email.meetingInvite;
     final timeStr = invite != null ? formatMeetingTime(invite) : '';
     final location = invite?.location;
-    final hasDetails = timeStr.isNotEmpty || location != null;
+    final repeats = invite == null ? null : describeInviteRecurrence(invite);
+    final hasDetails =
+        timeStr.isNotEmpty || location != null || repeats != null;
 
     // A Wrap rather than a Row: the buttons keep their intrinsic width, so in a
     // narrow reading pane a Row would starve the details column instead of
@@ -1903,6 +1905,23 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
                           color: c.textPrimary,
                           fontSize: 12,
                           fontWeight: FontWeight.w500)),
+                if (repeats != null) ...[
+                  const SizedBox(height: 2),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.repeat_rounded,
+                          size: 12, color: c.textDimmed),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(repeats,
+                            style:
+                                TextStyle(color: c.textTertiary, fontSize: 11),
+                            overflow: TextOverflow.ellipsis),
+                      ),
+                    ],
+                  ),
+                ],
                 if (location != null) ...[
                   const SizedBox(height: 2),
                   Row(

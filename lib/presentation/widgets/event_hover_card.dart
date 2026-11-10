@@ -604,7 +604,12 @@ String formatEventDuration(Duration duration) {
 String? describeEventRecurrence(CalendarEvent event) {
   final r = event.recurrence;
   if (r == null) return event.isRecurringOccurrence ? 'Repeating' : null;
+  return describeRecurrence(r);
+}
 
+/// `Every 2 weeks on Mon, Wed until 30 Sep 2026` — the rule alone, shared by
+/// [describeEventRecurrence] and the meeting-invite banner.
+String describeRecurrence(CalendarRecurrence r) {
   final buffer = StringBuffer(r.interval <= 1
       ? switch (r.frequency) {
           RecurrenceFrequency.daily => 'Daily',

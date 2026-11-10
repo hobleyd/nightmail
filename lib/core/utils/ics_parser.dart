@@ -17,6 +17,7 @@ class IcsEvent {
     this.organizerName,
     this.sequence,
     this.recurrenceId,
+    this.rrule,
   });
 
   /// The `SUMMARY` property, or null when the part declares none — the same
@@ -61,6 +62,15 @@ class IcsEvent {
   /// the series master never reaches it.
   final DateTime? recurrenceId;
 
+  /// The `RRULE` content line of the series this invitation is to, verbatim
+  /// (`RRULE:FREQ=WEEKLY;BYDAY=TU`), or null for a one-off — and for a
+  /// single-occurrence invitation, which carries a [recurrenceId] instead.
+  ///
+  /// Read from the `VEVENT` alone: the `VTIMEZONE` ahead of it carries its own
+  /// `RRULE`s (`FREQ=YEARLY;BYMONTH=10;BYDAY=1SU`, the daylight-saving switch),
+  /// and taking one of those would call every Outlook invitation yearly.
+  final String? rrule;
+
   /// The `SEQUENCE` revision number, or null when the property is absent
   /// (which per RFC 5545 means 0). A reply must echo the sequence it is
   /// replying to so the organizer can discard replies to stale revisions.
@@ -85,6 +95,7 @@ class IcsParser {
     String? organizerName;
     int? sequence;
     DateTime? recurrenceId;
+    String? rrule;
     final attendees = <String>[];
 
     bool inVEvent = false;
@@ -155,6 +166,8 @@ class IcsParser {
       } else if (namePart.startsWith('RECURRENCE-ID')) {
         final (dt, _) = parseDateTime(rawName, value);
         if (dt != null) recurrenceId = dt;
+      } else if (namePart == 'RRULE') {
+        rrule = 'RRULE:$value';
       } else if (namePart == 'SEQUENCE') {
         sequence = int.tryParse(value.trim());
       }
@@ -177,6 +190,7 @@ class IcsParser {
       organizerName: organizerName,
       sequence: sequence,
       recurrenceId: recurrenceId,
+      rrule: rrule,
     );
   }
 

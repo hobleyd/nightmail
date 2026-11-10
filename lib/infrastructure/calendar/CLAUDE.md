@@ -84,7 +84,9 @@ Four things now hold this together:
   `_parseStatus` draws as **tentative**. That is an accept that visibly does not
   take. A series invitation is the other way round and goes to the master
   (`recurringEventId`), or every occurrence but one is left unanswered.
-  `IcsParser` parses `RECURRENCE-ID` for this and nothing else.
+  `IcsParser` parses `RECURRENCE-ID` for this and nothing else. (It reads the
+  `VEVENT`'s `RRULE` too, but only so the invite banner can say the meeting
+  repeats — `MeetingInvite.recurrence` — never to address an answer.)
 - **…and the lookup has to find *that* occurrence.** `events.list?iCalUID=`
   without `singleEvents` returns the series master *and* every occurrence
   modified or cancelled on it, all under the one UID, in no useful order. It

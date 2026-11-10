@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:drift/drift.dart';
 
+import '../../../domain/entities/calendar_recurrence.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/email_address.dart';
 import '../../../domain/entities/email_attachment.dart';
@@ -80,7 +81,12 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
   ///   non-empty body short-circuits the network for good. The same fragment
   ///   carried none of the body's `cid:` references, so the message's inline
   ///   images were filed as ordinary attachments too.
-  static const attachmentParseVersion = 7;
+  /// * 7 — the invite carried no recurrence: neither the ICS `RRULE` nor
+  ///   Graph's `eventMessage.recurrence` was read, so a recurring invitation's
+  ///   banner showed its first date as if it were the only one. The invite is
+  ///   cached in the detail row, so one read before the fix would keep saying
+  ///   so.
+  static const attachmentParseVersion = 8;
 
   /// JSON key for [attachmentParseVersion]. Absent on pre-versioning rows,
   /// which read back as version 1.
@@ -874,7 +880,36 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
       'type': invite.type.name,
       'proposedStart': invite.proposedStart?.toIso8601String(),
       'proposedEnd': invite.proposedEnd?.toIso8601String(),
+      'recurrence': _recurrenceToJson(invite.recurrence),
+      'isRecurring': invite.isRecurring,
     };
+  }
+
+  static Map<String, dynamic>? _recurrenceToJson(CalendarRecurrence? r) {
+    if (r == null) return null;
+    return {
+      'frequency': r.frequency.name,
+      'interval': r.interval,
+      'daysOfWeek': r.daysOfWeek,
+      'endDate': r.endDate?.toIso8601String(),
+      'count': r.count,
+    };
+  }
+
+  static CalendarRecurrence? _recurrenceFromJson(Map<String, dynamic>? j) {
+    if (j == null) return null;
+    final frequency = RecurrenceFrequency.values
+        .where((f) => f.name == j['frequency'])
+        .firstOrNull;
+    if (frequency == null) return null;
+    final endDate = j['endDate'] as String?;
+    return CalendarRecurrence(
+      frequency: frequency,
+      interval: j['interval'] as int? ?? 1,
+      daysOfWeek: (j['daysOfWeek'] as List<dynamic>?)?.cast<int>(),
+      endDate: endDate == null ? null : DateTime.tryParse(endDate),
+      count: j['count'] as int?,
+    );
   }
 
   static MeetingInvite? _meetingInviteFromJson(Map<String, dynamic>? j) {
@@ -898,6 +933,9 @@ class EmailLocalDatasourceImpl implements EmailLocalDatasource {
       proposedStart:
           proposedStart != null ? DateTime.tryParse(proposedStart) : null,
       proposedEnd: proposedEnd != null ? DateTime.tryParse(proposedEnd) : null,
+      recurrence:
+          _recurrenceFromJson(j['recurrence'] as Map<String, dynamic>?),
+      isRecurring: j['isRecurring'] as bool? ?? false,
     );
   }
 

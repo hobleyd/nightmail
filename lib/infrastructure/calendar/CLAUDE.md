@@ -85,6 +85,17 @@ Four things now hold this together:
   take. A series invitation is the other way round and goes to the master
   (`recurringEventId`), or every occurrence but one is left unanswered.
   `IcsParser` parses `RECURRENCE-ID` for this and nothing else.
+- **…and the lookup has to find *that* occurrence.** `events.list?iCalUID=`
+  without `singleEvents` returns the series master *and* every occurrence
+  modified or cancelled on it, all under the one UID, in no useful order. It
+  used to ask for `maxResults: 1` and answer whatever came back: declining
+  "Invitation: … @ Tue 17 Nov" PATCHed and DELETEd the already-cancelled 3 Nov
+  occurrence (the DELETE 410'd), the organizer heard nothing, and 17 Nov stayed
+  on the calendar. For an occurrence invitation a UID hit now counts only if its
+  `originalStartTime` equals the `RECURRENCE-ID` (`_isOccurrence`; a master has
+  none), else the start-time window decides, and a same-series instance there
+  at the wrong occurrence is neither matched nor allowed into the "single
+  invited event" fallback.
 - **The roster PATCHed is the server's, with only this account's entry
   changed.** Building it from the ICS — which is what both the accept and the
   decline path did — hands Google a guest list that may differ from the one on

@@ -314,6 +314,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
           uid: event.uid,
           start: meetingStart ?? event.start,
           userEmail: userEmail,
+          recurrenceId: event.recurrenceId,
           allowStartTimeMatch: event.recurrenceId != null,
         );
         if (target == null) {
@@ -365,6 +366,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
         uid: event.uid,
         start: meetingStart ?? event.start,
         userEmail: userEmail,
+        recurrenceId: event.recurrenceId,
       );
     } on DioException catch (e) {
       throw _mapException(e);
@@ -421,19 +423,33 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
   /// unambiguous event this account was invited to. Two candidates returns
   /// null — answering the wrong meeting is worse than answering none, and the
   /// caller reports rather than guessing.
+  ///
+  /// An invitation naming a [recurrenceId] is about one occurrence, and a UID
+  /// hit is only that occurrence if its `originalStartTime` says so. Without
+  /// `singleEvents` the UID lookup lists the series master *and* every
+  /// occurrence modified or cancelled on it, all sharing the UID, in no
+  /// particular order, and answering whichever came first answers — and, for
+  /// a decline, deletes — some other occurrence. A miss there falls through to
+  /// the start-time window, which lists expanded instances.
   Future<Map<String, dynamic>?> _findInviteEvent({
     required String? uid,
     required DateTime? start,
     required String? userEmail,
+    DateTime? recurrenceId,
     bool allowStartTimeMatch = true,
   }) async {
     if (uid != null) {
       final byUid = await _listPrimaryEvents({
         'iCalUID': uid,
-        'maxResults': 1,
         'showHiddenInvitations': true,
       });
-      if (byUid.isNotEmpty) return byUid.first;
+      if (recurrenceId == null) {
+        if (byUid.isNotEmpty) return byUid.first;
+      } else {
+        for (final e in byUid) {
+          if (_isOccurrence(e, recurrenceId)) return e;
+        }
+      }
     }
     if (start == null || !allowStartTimeMatch) return null;
 
@@ -449,9 +465,18 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     // at the invitation's own time is a candidate.
     final atStart = window.where((e) => _startsAt(e, start)).toList();
     for (final e in atStart) {
-      if (isSameMeetingUid(e['iCalUID'] as String?, uid)) return e;
+      if (!isSameMeetingUid(e['iCalUID'] as String?, uid)) continue;
+      if (recurrenceId != null &&
+          e['originalStartTime'] != null &&
+          !_isOccurrence(e, recurrenceId)) {
+        continue;
+      }
+      return e;
     }
+    // An event of this meeting's own series has already been judged above, and
+    // one that reached here is a different occurrence of it.
     final invited = atStart
+        .where((e) => !isSameMeetingUid(e['iCalUID'] as String?, uid))
         .where((e) => (e['organizer'] as Map<String, dynamic>?)?['self'] != true)
         .where((e) => _selfAttendee(e, userEmail) != null)
         .toList();
@@ -485,6 +510,15 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
     final parsed = DateTime.tryParse(dateTime);
     if (parsed == null) return false;
     return parsed.toUtc().difference(start.toUtc()).abs() <= _inviteStartSlack;
+  }
+
+  /// Whether [e] is the occurrence an invitation's `RECURRENCE-ID` names: its
+  /// `originalStartTime`, which stays put when the occurrence is moved. A
+  /// series master has none and is never an occurrence.
+  bool _isOccurrence(Map<String, dynamic> e, DateTime recurrenceId) {
+    final original = e['originalStartTime'] as Map<String, dynamic>?;
+    if (original == null) return false;
+    return _startsAt({'start': original}, recurrenceId);
   }
 
   static String _dateKey(DateTime dt) => '${dt.year.toString().padLeft(4, '0')}'

@@ -414,6 +414,105 @@ void main() {
         deleted.single, '/calendars/primary/events/master-1_20260910T010000Z');
   });
 
+  group('the UID lookup lists the whole series', () {
+    // Without `singleEvents`, `iCalUID=` returns the master and every occurrence
+    // modified or cancelled on it. Declining "Updated invitation: … @ Tue 17
+    // Nov" answered and deleted whichever came back first — the 3 Nov
+    // occurrence — and the organizer never heard about 17 Nov.
+    Map<String, dynamic> master() => {
+          'id': 'master-1',
+          'iCalUID': 'series-uid-1',
+          'recurrence': ['RRULE:FREQ=WEEKLY'],
+          'start': {'dateTime': '2026-08-27T01:15:00Z'},
+          'organizer': {'email': 'boss@example.com'},
+          'attendees': [
+            {'email': 'me@example.com', 'self': true, 'responseStatus': 'needsAction'},
+          ],
+        };
+
+    Map<String, dynamic> otherOccurrence() => {
+          'id': 'master-1_20260903T011500Z',
+          'recurringEventId': 'master-1',
+          'iCalUID': 'series-uid-1',
+          'originalStartTime': {'dateTime': '2026-09-03T01:15:00Z'},
+          'start': {'dateTime': '2026-09-03T01:15:00Z'},
+          'organizer': {'email': 'boss@example.com'},
+          'attendees': [
+            {'email': 'me@example.com', 'self': true, 'responseStatus': 'needsAction'},
+          ],
+        };
+
+    /// The occurrence `occurrenceIcs` names: originally 01:15, moved to 01:00.
+    Map<String, dynamic> invitedOccurrence() => {
+          ...recurringInstance(),
+          'originalStartTime': {'dateTime': '2026-09-10T01:15:00Z'},
+        };
+
+    Future<void> declineOccurrence() => datasource.respondToMeetingInvite(
+          emailId: 'msg-1',
+          response: MeetingInviteResponseType.decline,
+          icsData: occurrenceIcs,
+          meetingStart: meetingStart,
+          userEmail: 'me@example.com',
+        );
+
+    test('declining one occurrence never answers or removes another', () async {
+      stubUidLookup([otherOccurrence(), master()]);
+      stubWindowLookup([invitedOccurrence()]);
+
+      await declineOccurrence();
+
+      final patched = verify(mockDio.patch<void>(
+        captureAny,
+        data: anyNamed('data'),
+        queryParameters: anyNamed('queryParameters'),
+      )).captured;
+      expect(patched.single,
+          '/calendars/primary/events/master-1_20260910T010000Z');
+      final deleted = verify(mockDio.delete<void>(
+        captureAny,
+        queryParameters: anyNamed('queryParameters'),
+      )).captured;
+      expect(deleted.single,
+          '/calendars/primary/events/master-1_20260910T010000Z');
+    });
+
+    test('a UID hit that is the invited occurrence is answered directly',
+        () async {
+      stubUidLookup([master(), invitedOccurrence()]);
+
+      await declineOccurrence();
+
+      verifyNever(mockDio.get<Map<String, dynamic>>(
+        '/calendars/primary/events',
+        queryParameters: argThat(
+          containsPair('singleEvents', true),
+          named: 'queryParameters',
+        ),
+      ));
+      final deleted = verify(mockDio.delete<void>(
+        captureAny,
+        queryParameters: anyNamed('queryParameters'),
+      )).captured;
+      expect(deleted.single,
+          '/calendars/primary/events/master-1_20260910T010000Z');
+    });
+
+    test('the window skips an instance of the series at the wrong occurrence',
+        () async {
+      stubUidLookup([master()]);
+      stubWindowLookup([
+        {
+          ...otherOccurrence(),
+          'start': {'dateTime': '2026-09-10T01:00:00Z'},
+        },
+      ]);
+
+      expect(declineOccurrence(),
+          throwsA(isA<MeetingNotOnCalendarException>()));
+    });
+  });
+
   group('importMeetingInvite', () {
     /// An invitation somebody forwarded on: the roster is the organizer's,
     /// and this account is not on it.

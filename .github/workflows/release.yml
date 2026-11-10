@@ -809,7 +809,9 @@ jobs:
           BUILD_NUMBER="${{ needs.prepare.outputs.build_number }}"
           APP_NAME="nightmail"
 
-          git fetch origin gh-pages 2>/dev/null || true
+          # Only the tip: the previous archive and the releases carried
+          # forward below are all read from it, never from its history.
+          git fetch --depth=1 origin gh-pages 2>/dev/null || true
           if git show origin/gh-pages:app-archive.json > deploy/app-archive.json 2>/dev/null \
               && jq -e '.schemaVersion == 3' deploy/app-archive.json > /dev/null 2>&1; then
             echo "Using existing schema v3 app-archive.json from gh-pages"
@@ -834,6 +836,39 @@ jobs:
               --release-url "https://hobleyd.github.io/nightmail/releases/${VERSION}+${BUILD_NUMBER}-${PLATFORM}/release.json"
           done
 
+      # The site used to keep every release ever published (keep_files), and at
+      # 7 GB the Pages deploy began timing out while syncing files — GitHub
+      # caps a published site at 1 GB. A client only ever downloads the newest
+      # item for its platform and channel (`selectRelease` in desktop_updater's
+      # update_client.dart) and every install is a whole-bundle replace, so the
+      # older releases served nobody. A few are kept so a client that fetched
+      # the archive just before this deploy can still fetch the descriptor it
+      # picked. The archive is pruned to match — it is re-signed below — so it
+      # never names a descriptor that is gone.
+      - name: Prune old releases
+        run: |
+          KEEP=5
+          jq --argjson keep "$KEEP" '
+            ([.items | group_by(.platform + "/" + .channel)[]
+              | sort_by(.buildNumber) | .[-$keep:][] | .release]) as $kept
+            | .items |= map(select(.release as $r | $kept | index($r)))
+          ' deploy/app-archive.json > deploy/app-archive.json.tmp
+          mv deploy/app-archive.json.tmp deploy/app-archive.json
+
+          # This run's releases are already in deploy/; the rest of the kept
+          # ones come off the live branch, along with its hand-written index.
+          PREFIX="https://hobleyd.github.io/nightmail/"
+          for URL in $(jq -r '.items[].release' deploy/app-archive.json); do
+            DIR="${URL#"$PREFIX"}"
+            DIR="${DIR%/release.json}"
+            if [ ! -d "deploy/$DIR" ]; then
+              git archive origin/gh-pages "$DIR" | tar -x -C deploy
+            fi
+          done
+          git show origin/gh-pages:index.html > deploy/index.html
+          ls deploy/releases
+          du -sh deploy
+
       - name: Import release signing key
         env:
           DESKTOP_UPDATER_KEY_PASSPHRASE: ${{ secrets.DESKTOP_UPDATER_KEY_PASSPHRASE }}
@@ -854,6 +889,9 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./deploy
-          # Past releases must survive: an app still on an old version fetches
-          # its descriptor from the URL the archive recorded at the time.
-          keep_files: true
+          # deploy/ is the whole site — "Prune old releases" carried forward
+          # everything worth keeping — and the branch is rebuilt as a single
+          # commit, so the zips of every past release stop accumulating in its
+          # history too.
+          keep_files: false
+          force_orphan: true

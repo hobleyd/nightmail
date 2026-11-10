@@ -530,6 +530,31 @@ platform/channel/version/build slot and gh-pages overwrites that release's zip
 and descriptor together, leaving clients on that build correctly seeing nothing.
 Same as inkworm; not a bug.
 
+### gh-pages Holds the Newest Five Releases, Not All of Them
+
+The deploy used to publish with `keep_files: true`, so every zip ever released
+stayed on the site and in the branch history. At 1.44.1 that was 7.3 GB, and
+GitHub's `pages build and deployment` began failing with "Timeout reached,
+aborting!" while syncing files. GitHub caps a published site at 1 GB, so
+retrying only buys one more run.
+
+The deploy job's "Prune old releases" step now keeps the newest 5 archive items
+per platform/channel. It copies those release folders and `index.html` off the
+live branch into `deploy/`, and publishes with `keep_files: false` and
+`force_orphan: true`. That is about 350 MB, as a single commit. Nothing needs
+the older releases:
+
+- `desktop_updater` downloads only the newest eligible item's descriptor
+  (`selectRelease`, `update_client.dart`).
+- Every install is a `wholeBundleReplace` of one zip, never a delta against the
+  installed version.
+
+The archive is pruned *with* the folders, before it is re-signed, so it never
+names a descriptor that is gone. The four older releases kept alongside the
+newest cover a client that fetched the archive just before a deploy. If the
+updater ever gains delta updates or a staged rollout (`_isRolloutEligible` can
+pass over the newest item), revisit `KEEP`.
+
 ### What the About Panel Reports
 
 **The controller has no "up to date" state.** A check that finds nothing newer

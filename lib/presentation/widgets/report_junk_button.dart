@@ -21,7 +21,8 @@ enum ReportJunkAction { junk, phishing }
 /// not be.
 ///
 /// On a **touch screen** it is a plain *Report junk* tap. The menu is a
-/// desktop affordance; the list's swipe actions are the touch one.
+/// desktop affordance; the list's swipe actions, which carry a phishing cell
+/// beside the junk one, are the touch one.
 class ReportJunkButton extends StatelessWidget {
   const ReportJunkButton({
     super.key,

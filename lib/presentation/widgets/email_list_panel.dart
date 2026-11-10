@@ -1844,6 +1844,9 @@ class _EmailListView extends StatelessWidget {
                       ? EmailListNotJunkReported(emailIds: [email.id])
                       : EmailListJunkReported(emailIds: [email.id]),
                 ),
+            onReportPhishing: isJunkMailFolder(currentFolder)
+                ? null
+                : () => _reportPhishingFromSwipe(context, [email.id]),
             child: child,
           );
         }
@@ -1928,6 +1931,9 @@ class _EmailListView extends StatelessWidget {
                     ? EmailListNotJunkReported(emailIds: conv.allEmailIds)
                     : EmailListJunkReported(emailIds: conv.allEmailIds),
               ),
+          onReportPhishing: isJunkMailFolder(currentFolder)
+              ? null
+              : () => _reportPhishingFromSwipe(context, conv.allEmailIds),
           child: convChild,
         );
       },
@@ -2396,6 +2402,16 @@ class _DragFeedback extends StatelessWidget {
   }
 }
 
+/// The swipe's *Report phishing*: the consent [ensurePhishingReportAccess]
+/// asks for first, then the same list event the toolbar's menu sends.
+Future<void> _reportPhishingFromSwipe(
+    BuildContext context, List<String> emailIds) async {
+  if (!await ensurePhishingReportAccess(context) || !context.mounted) return;
+  context
+      .read<EmailListBloc>()
+      .add(EmailListPhishingReported(emailIds: emailIds));
+}
+
 class _SwipeableEmailItem extends StatefulWidget {
   const _SwipeableEmailItem({
     super.key,
@@ -2404,6 +2420,7 @@ class _SwipeableEmailItem extends StatefulWidget {
     required this.onFlag,
     required this.onMarkUnread,
     required this.onMarkJunk,
+    this.onReportPhishing,
     this.isJunkFolder = false,
   });
 
@@ -2412,6 +2429,10 @@ class _SwipeableEmailItem extends StatefulWidget {
   final void Function(DateTime?) onFlag;
   final VoidCallback onMarkUnread;
   final VoidCallback onMarkJunk;
+
+  /// Null in the Junk folder, where the tray offers *Not junk* and no
+  /// phishing cell — for the reason [ReportJunkButton] gives.
+  final VoidCallback? onReportPhishing;
   final bool isJunkFolder;
 
   @override
@@ -2420,9 +2441,12 @@ class _SwipeableEmailItem extends StatefulWidget {
 
 class _SwipeableEmailItemState extends State<_SwipeableEmailItem>
     with SingleTickerProviderStateMixin {
-  /// Four equal action cells. Wide enough on a touch screen to seat a doubled
-  /// glyph in each without cramping it.
-  double get _actionWidth => isTouchPlatform ? 4 * kTouchTargetSize : 160.0;
+  /// Four or five equal action cells (five when *Report phishing* is
+  /// offered). Wide enough on a touch screen to seat a doubled glyph in each
+  /// without cramping it.
+  double get _actionWidth =>
+      (widget.onReportPhishing == null ? 4 : 5) *
+      (isTouchPlatform ? kTouchTargetSize : 40.0);
 
   /// The leading tray holds one cell.
   double get _leadingWidth => isTouchPlatform ? 2 * kTouchTargetSize : 80.0;
@@ -2594,6 +2618,21 @@ class _SwipeableEmailItemState extends State<_SwipeableEmailItem>
             ),
           ),
         ),
+        if (widget.onReportPhishing case final onReportPhishing?)
+          Expanded(
+            child: GestureDetector(
+              onTap: () {
+                onReportPhishing();
+                _snapTo(0);
+              },
+              child: Container(
+                color: Colors.purple.shade600,
+                alignment: Alignment.center,
+                child: Icon(Icons.phishing,
+                    color: Colors.white, size: touchIcon(22)),
+              ),
+            ),
+          ),
         Expanded(
           child: GestureDetector(
             onTap: () {

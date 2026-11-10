@@ -340,7 +340,9 @@ jobs:
 
       # In-app updates: the .app is zipped and described by a release.json that
       # the app verifies against the pinned public key before installing.
-      # --artifact-url must be where the deploy job below actually publishes it.
+      # --artifact-url must be where "Upload update zip to GitHub Release"
+      # below puts it: the release, not GitHub Pages. Pages serves only the
+      # small signed JSON — see "Prune old releases" in the deploy job.
       #
       # --app-name must be the .app bundle's real on-disk name, because
       # desktop_updater's client stages the extracted zip at
@@ -373,7 +375,7 @@ jobs:
             --build-number "$BUILD_NUMBER" \
             --platform macos \
             --channel stable \
-            --artifact-url "https://hobleyd.github.io/nightmail/releases/${VERSION}+${BUILD_NUMBER}-macos/${ARTIFACT_STEM}-${VERSION}-macos.zip" \
+            --artifact-url "https://github.com/hobleyd/nightmail/releases/download/${VERSION}/${ARTIFACT_STEM}-${VERSION}-macos.zip" \
             --install-strategy wholeBundleReplace
 
       - name: Import release signing key
@@ -392,6 +394,13 @@ jobs:
           dart run desktop_updater:release sign \
             --release "dist/${VERSION}+${BUILD_NUMBER}-macos/release.json" \
             --key-profile desktop_updater.keys.json
+
+      - name: Upload update zip to GitHub Release
+        uses: softprops/action-gh-release@v0.1.15
+        with:
+          name: 'nightmail-${{ needs.prepare.outputs.version }}'
+          tag_name: ${{ needs.prepare.outputs.version }}
+          files: 'dist/${{ needs.prepare.outputs.version }}+${{ needs.prepare.outputs.build_number }}-macos/*.zip'
 
       - name: Upload distribution artifact
         uses: actions/upload-artifact@v4
@@ -443,6 +452,8 @@ jobs:
 
       # The in-app updater replaces the unpacked runner directory, not the Inno
       # installer above — the .exe stays the download for a fresh install.
+      # Its zip is a release asset too; --artifact-url must match the upload
+      # below.
       - name: Package release for desktop_updater
         shell: bash
         run: |
@@ -458,7 +469,7 @@ jobs:
             --build-number "$BUILD_NUMBER" \
             --platform windows \
             --channel stable \
-            --artifact-url "https://hobleyd.github.io/nightmail/releases/${VERSION}+${BUILD_NUMBER}-windows/${APP_NAME}-${VERSION}-windows.zip" \
+            --artifact-url "https://github.com/hobleyd/nightmail/releases/download/${VERSION}/${APP_NAME}-${VERSION}-windows.zip" \
             --install-strategy wholeDirectoryReplace
 
       - name: Import release signing key
@@ -479,6 +490,13 @@ jobs:
           dart run desktop_updater:release sign \
             --release "dist/${VERSION}+${BUILD_NUMBER}-windows/release.json" \
             --key-profile desktop_updater.keys.json
+
+      - name: Upload update zip to GitHub Release
+        uses: softprops/action-gh-release@v0.1.15
+        with:
+          name: 'nightmail-${{ needs.prepare.outputs.version }}'
+          tag_name: ${{ needs.prepare.outputs.version }}
+          files: 'dist/${{ needs.prepare.outputs.version }}+${{ needs.prepare.outputs.build_number }}-windows/*.zip'
 
       - name: Upload distribution artifact
         uses: actions/upload-artifact@v4
@@ -836,15 +854,19 @@ jobs:
               --release-url "https://hobleyd.github.io/nightmail/releases/${VERSION}+${BUILD_NUMBER}-${PLATFORM}/release.json"
           done
 
-      # The site used to keep every release ever published (keep_files), and at
-      # 7 GB the Pages deploy began timing out while syncing files — GitHub
-      # caps a published site at 1 GB. A client only ever downloads the newest
-      # item for its platform and channel (`selectRelease` in desktop_updater's
-      # update_client.dart) and every install is a whole-bundle replace, so the
-      # older releases served nobody. A few are kept so a client that fetched
-      # the archive just before this deploy can still fetch the descriptor it
-      # picked. The archive is pruned to match — it is re-signed below — so it
-      # never names a descriptor that is gone.
+      # Pages serves only small signed JSON: the archive, each release's
+      # descriptor and the release notes. The zips are GitHub release assets
+      # (uploaded by the build jobs, named in each descriptor's artifact.url).
+      # Publishing them through Pages grew the site to 7.3 GB and then left
+      # every deploy stalled until it timed out, even once it was cut to 350 MB.
+      #
+      # A client only ever downloads the newest item for its platform and
+      # channel (`selectRelease` in desktop_updater's update_client.dart), and
+      # every install is a whole-bundle replace, so older releases serve nobody.
+      # A few descriptors are kept for a client that fetched the archive just
+      # before this deploy. The archive is pruned to match — it is re-signed
+      # below — so it never names a descriptor that is gone, nor one whose zip
+      # was on Pages (every release before the move).
       - name: Prune old releases
         run: |
           KEEP=5
@@ -855,18 +877,28 @@ jobs:
           ' deploy/app-archive.json > deploy/app-archive.json.tmp
           mv deploy/app-archive.json.tmp deploy/app-archive.json
 
-          # This run's releases are already in deploy/; the rest of the kept
+          # This run's descriptors are already in deploy/; the rest of the kept
           # ones come off the live branch, along with its hand-written index.
           PREFIX="https://hobleyd.github.io/nightmail/"
+          ASSETS="https://github.com/hobleyd/nightmail/releases/download/"
           for URL in $(jq -r '.items[].release' deploy/app-archive.json); do
-            DIR="${URL#"$PREFIX"}"
-            DIR="${DIR%/release.json}"
-            if [ ! -d "deploy/$DIR" ]; then
-              git archive origin/gh-pages "$DIR" | tar -x -C deploy
+            FILE="${URL#"$PREFIX"}"
+            if [ ! -f "deploy/$FILE" ]; then
+              mkdir -p "deploy/$(dirname "$FILE")"
+              git show "origin/gh-pages:$FILE" > "deploy/$FILE" 2>/dev/null || rm -f "deploy/$FILE"
+            fi
+            if [ ! -f "deploy/$FILE" ] \
+                || ! jq -e --arg a "$ASSETS" '.artifact.url | startswith($a)' "deploy/$FILE" > /dev/null; then
+              echo "Dropping $URL: no descriptor, or its zip is not a release asset"
+              rm -rf "deploy/$(dirname "$FILE")"
+              jq --arg r "$URL" '.items |= map(select(.release != $r))' \
+                deploy/app-archive.json > deploy/app-archive.json.tmp
+              mv deploy/app-archive.json.tmp deploy/app-archive.json
             fi
           done
+          find deploy -name '*.zip' -delete
           git show origin/gh-pages:index.html > deploy/index.html
-          ls deploy/releases
+          find deploy -type f | sort
           du -sh deploy
 
       - name: Import release signing key
@@ -891,7 +923,6 @@ jobs:
           publish_dir: ./deploy
           # deploy/ is the whole site — "Prune old releases" carried forward
           # everything worth keeping — and the branch is rebuilt as a single
-          # commit, so the zips of every past release stop accumulating in its
-          # history too.
+          # commit, so nothing accumulates in its history.
           keep_files: false
           force_orphan: true

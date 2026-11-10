@@ -530,30 +530,44 @@ platform/channel/version/build slot and gh-pages overwrites that release's zip
 and descriptor together, leaving clients on that build correctly seeing nothing.
 Same as inkworm; not a bug.
 
-### gh-pages Holds the Newest Five Releases, Not All of Them
+### Update Zips Are Release Assets; Pages Serves Only Signed JSON
 
-The deploy used to publish with `keep_files: true`, so every zip ever released
-stayed on the site and in the branch history. At 1.44.1 that was 7.3 GB, and
-GitHub's `pages build and deployment` began failing with "Timeout reached,
-aborting!" while syncing files. GitHub caps a published site at 1 GB, so
-retrying only buys one more run.
+Each signed descriptor's `artifact.url` points at a GitHub release asset:
+`https://github.com/hobleyd/nightmail/releases/download/<version>/<zip>`. The
+macOS and Windows build jobs upload that zip with `softprops/action-gh-release`,
+next to the `.dmg`/`.exe`. gh-pages holds only `app-archive.json`, the
+`release.json` descriptors, `release-notes.json` and `index.html`, about 16 KB.
 
-The deploy job's "Prune old releases" step now keeps the newest 5 archive items
-per platform/channel. It copies those release folders and `index.html` off the
-live branch into `deploy/`, and publishes with `keep_files: false` and
-`force_orphan: true`. That is about 350 MB, as a single commit. Nothing needs
-the older releases:
+The zips used to be published through Pages with `keep_files: true`. By 1.44.1
+that was 7.3 GB, and `pages build and deployment` failed with "Timeout reached,
+aborting!" while syncing files. Cutting the site to the newest five releases
+(about 350 MB) did not help: the next two deploys stalled the same way, with
+GitHub reporting no status at all. Pages is not a place for large binaries.
 
-- `desktop_updater` downloads only the newest eligible item's descriptor
-  (`selectRelease`, `update_client.dart`).
-- Every install is a `wholeBundleReplace` of one zip, never a delta against the
-  installed version.
+What keeps this working:
 
-The archive is pruned *with* the folders, before it is re-signed, so it never
-names a descriptor that is gone. The four older releases kept alongside the
-newest cover a client that fetched the archive just before a deploy. If the
-updater ever gains delta updates or a staged rollout (`_isRolloutEligible` can
-pass over the newest item), revisit `KEEP`.
+- **The client follows the redirect.** A release download URL answers with a
+  302 to GitHub's storage CDN, and `HttpUpdateTransport` follows it, because
+  `http.AbortableRequest` follows redirects by default. This was checked by
+  downloading `nightmail-1.44.1.exe` through `downloadBounded`: the bytes and
+  SHA-256 matched GitHub's asset digest. The descriptor's SHA-256 is still what
+  the install trusts, so the host does not need to be trusted.
+- **The deploy job's "Prune old releases" step keeps the newest five archive
+  items per platform/channel.** It copies their descriptors off the live branch
+  and drops any item whose descriptor is missing or whose zip is not a release
+  asset (every release before this change). It strips zips from `deploy/` and
+  publishes with `keep_files: false` and `force_orphan: true`. Nothing older is
+  needed: `desktop_updater` downloads only the newest eligible item
+  (`selectRelease`, `update_client.dart`), and installs are whole-bundle
+  replaces, never deltas. The kept items cover a client that fetched the archive
+  just before a deploy. If the updater ever gains delta updates or a staged
+  rollout (`_isRolloutEligible` can pass over the newest item), revisit `KEEP`.
+- **A same-version re-push briefly mismatches.** The tag, and so the asset URL,
+  is the semver alone. Re-pushing at an unchanged pubspec version overwrites the
+  zip during the build jobs, and Pages still serves the old descriptor, with the
+  old SHA-256, until the deploy job finishes. A client that starts an install
+  in that window gets a SHA mismatch and retries on its next check. Bump the
+  version to publish.
 
 ### What the About Panel Reports
 

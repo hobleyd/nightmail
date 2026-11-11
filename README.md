@@ -181,6 +181,7 @@ Settings → Accounts.
 - Per-account folder, calendar, and task views
 - Profile fields (name, title, phone) are filled from the Microsoft or Google directory when an account is added, so signature merge tags start out populated
 - Import an HTML signature from a file (Settings → Accounts) — signature-generator exports and Outlook `.htm` signatures keep their merge tags and `IFEXISTS(...)` calls
+- Replies and reply-alls that include anyone on your own domain open without the signature (Settings → Hide signature on internal replies, on by default); personal Gmail and Outlook.com/Hotmail domains never count as internal
 - Separate **Gmail** and **Google Workspace** sign-ins — Workspace asks for the
   room-directory scope on the first sign-in, so room booking lists the whole
   tenant without a later **Sign In Again**

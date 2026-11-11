@@ -744,6 +744,61 @@ function setContent(html) {
   }
 }
 
+// A signature held back from an internal reply, put back where the body
+// would have carried it: above the separator that heads the quoted message,
+// with a blank line either side, or at the end if the user deleted the quote.
+//
+// It goes in through `insertHTML` rather than as adopted nodes so that it is
+// one undo step, which means a string re-parse — the paste path's terms, so
+// `_sanitizeHtmlFragment` (see "A Quoted Reply Is Somebody Else's Markup" in
+// docs/claude/webviews.md). The insertion point is a caret *between* two
+// top-level blocks, which both engines take as a new block rather than merging
+// into the line above. The caret goes back where the user left it.
+function insertSignature(html) {
+  const separator = Array.from(editor.children).find(function(el) {
+    return /^-+ (Original Message|Forwarded message) -+$/
+        .test(el.textContent.trim());
+  }) || null;
+  const before = separator ? separator.previousSibling : editor.lastChild;
+  const markup =
+      (before && !_isBlankBlock(before) ? '<div><br></div>' : '') +
+      _sanitizeHtmlFragment(html) +
+      (separator ? '<div><br></div>' : '');
+
+  const sel = window.getSelection();
+  const userRange = sel.rangeCount > 0 && _rangeInEditor(sel.getRangeAt(0))
+      ? sel.getRangeAt(0).cloneRange()
+      : null;
+  const at = document.createRange();
+  if (separator) {
+    at.setStartBefore(separator);
+  } else {
+    at.selectNodeContents(editor);
+  }
+  at.collapse(!!separator);
+  editor.focus();
+  sel.removeAllRanges();
+  sel.addRange(at);
+  document.execCommand('insertHTML', false, markup);
+  if (userRange) {
+    sel.removeAllRanges();
+    sel.addRange(userRange);
+  }
+  scheduleChange();
+}
+
+function _blankBlock() {
+  const div = document.createElement('div');
+  div.appendChild(document.createElement('br'));
+  return div;
+}
+
+function _isBlankBlock(node) {
+  return node.nodeType === Node.ELEMENT_NODE &&
+      node.textContent.trim() === '' &&
+      !node.querySelector('img');
+}
+
 function getContent() {
   return _cleanHtml();
 }

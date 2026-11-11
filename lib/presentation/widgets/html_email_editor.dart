@@ -224,6 +224,12 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> with WidgetsBindingObs
     await _host.run('insertLink(${jsonEncode(url)})');
   }
 
+  /// Puts [html] back above the quoted message — see `insertSignature` in
+  /// `assets/editor/editor.html`.
+  Future<void> insertSignature(String html) async {
+    await _host.run('insertSignature(${jsonEncode(html)})');
+  }
+
   Future<void> saveSelection() async {
     await _host.run('saveSelection()');
   }

@@ -28,6 +28,15 @@ void main() {
   }
 
   group('inbound HTML reaches the editor sanitised', () {
+    test('insertSignature takes the paste path\'s sanitiser', () {
+      // insertHTML (for the undo step) is a re-parse, so it needs the
+      // fragment sanitiser that drops svg/math/noscript outright.
+      final body = functionBody('insertSignature');
+      expect(body, contains("execCommand('insertHTML', false, markup)"));
+      expect(body, contains('_sanitizeHtmlFragment(html)'));
+      expect(body, isNot(contains('innerHTML')));
+    });
+
     test('setContent parses inert and adopts nodes', () {
       final body = functionBody('setContent');
       expect(body, contains('_parseSanitizedBody('),

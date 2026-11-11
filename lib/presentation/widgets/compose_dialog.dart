@@ -197,7 +197,9 @@ class ComposeForm extends StatefulWidget {
   final String signatureHtml;
 
   /// Leave [signatureHtml] out of a reply or reply-all with anyone on the
-  /// account's own domain among its recipients — see [ComposeFormState._signatureHtml].
+  /// account's own domain among its recipients — see
+  /// [ComposeFormState._initialSignatureHtml]. The footer then offers to put
+  /// it back.
   final bool hideSignatureForInternalReplies;
 
   /// Seeds a new message's subject when there is no draft or original to take
@@ -446,6 +448,13 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
   // strip is part of the form's own layout, so it shrinks the editor rather
   // than being hidden by it, and stays until dismissed or the next Send.
   String? _notice;
+  // The signature was left out of the initial body (an internal reply), so
+  // the footer offers to insert it. Cleared once it has been.
+  bool _signatureHeldBack = false;
+  // The plain-text body as built, which is all quote when the signature was
+  // held back: where [_insertSignature] puts it, for as long as the user
+  // leaves the quote alone.
+  String _plainQuoteTail = '';
   // The fetch of [ComposeForm.forwardAsAttachments], resolving to its failure
   // message or null. Send waits on it — see [_awaitForwardedAttachments].
   Future<String?>? _forwardFetch;
@@ -490,6 +499,11 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
         _bccRecipients.isEmpty;
 
     _bodyType = _determineInitialBodyType();
+    // A draft's body comes back as it was saved, signature or not, so only a
+    // freshly built one can have had it held back.
+    _signatureHeldBack = widget.draftEmail == null &&
+        widget.signatureHtml.isNotEmpty &&
+        _initialSignatureHtml().isEmpty;
     _awaitingAutoFocusScroll = isTouchPlatform &&
         _bodyType == EmailBodyType.html &&
         (widget.mode == ComposeMode.reply ||
@@ -501,6 +515,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
       _bodyController = TextEditingController();
     } else {
       _bodyController = TextEditingController(text: _buildInitialPlainBody());
+      if (_signatureHeldBack) _plainQuoteTail = _bodyController.text;
     }
     // After the HTML branch, which replaces the list with the source's inline
     // images.
@@ -586,22 +601,23 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
         originalEmail: widget.originalEmail,
         draftEmail: widget.draftEmail,
         mode: widget.mode,
-        signature: ComposeBodyBuilder.stripHtml(_signatureHtml),
+        signature: ComposeBodyBuilder.stripHtml(_initialSignatureHtml()),
       );
 
   String _buildInitialHtmlBody() => ComposeBodyBuilder.buildInitialHtmlBody(
         originalEmail: widget.originalEmail,
         draftEmail: widget.draftEmail,
         mode: widget.mode,
-        signature: _signatureHtml,
+        signature: _initialSignatureHtml(),
       );
 
   /// The signature the initial body carries. A reply or reply-all with anyone
   /// on the account's own domain in To or Cc goes without it when
   /// [ComposeForm.hideSignatureForInternalReplies] is set, outside recipients
   /// alongside notwithstanding. Read once, from the recipients [initState]
-  /// has just seeded — changing them later doesn't put it back.
-  String get _signatureHtml {
+  /// has just seeded — changing them later doesn't put it back; the footer's
+  /// Signature button does ([_insertSignature]).
+  String _initialSignatureHtml() {
     final isReply = widget.mode == ComposeMode.reply ||
         widget.mode == ComposeMode.replyAll;
     if (!widget.hideSignatureForInternalReplies || !isReply) {
@@ -613,6 +629,29 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     return recipients.any((r) => isInternalAddress(r, accountAddress))
         ? ''
         : widget.signatureHtml;
+  }
+
+  /// Puts back the signature [_initialSignatureHtml] held back, where the
+  /// body would have carried it: above the quoted message, or at the end if
+  /// the quote has gone.
+  void _insertSignature() {
+    if (_bodyType == EmailBodyType.html) {
+      _htmlEditorKey.currentState?.insertSignature(widget.signatureHtml);
+    } else {
+      final text = _bodyController.text;
+      final quote =
+          _plainQuoteTail.isEmpty ? -1 : text.lastIndexOf(_plainQuoteTail);
+      final at = quote < 0 ? text.length : quote;
+      final selection = _bodyController.selection;
+      _bodyController.value = TextEditingValue(
+        text: text.replaceRange(at, at,
+            '\n\n${ComposeBodyBuilder.stripHtml(widget.signatureHtml)}'),
+        selection: selection.isValid && selection.end <= at
+            ? selection
+            : const TextSelection.collapsed(offset: 0),
+      );
+    }
+    setState(() => _signatureHeldBack = false);
   }
 
   /// Whether [address] is on the same domain as [accountAddress]. A personal
@@ -1955,6 +1994,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
           }
         },
         onAiCompose: _aiGenerating ? null : () => _onAiCompose(context),
+        onInsertSignature: _signatureHeldBack ? _insertSignature : null,
       );
 
       if (isTouchPlatform) {
@@ -2220,6 +2260,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
             },
             onAiCompose:
                 _aiGenerating ? null : () => _onAiCompose(context),
+            onInsertSignature: _signatureHeldBack ? _insertSignature : null,
           ),
         ],
       ),
@@ -2890,6 +2931,7 @@ class _Footer extends StatefulWidget {
     required this.bodyType,
     required this.onBodyTypeChanged,
     this.onAiCompose,
+    this.onInsertSignature,
   });
   final VoidCallback onSend;
   final VoidCallback onClose;
@@ -2903,6 +2945,9 @@ class _Footer extends StatefulWidget {
   final ValueChanged<EmailBodyType> onBodyTypeChanged;
   // Opens the AI draft prompt. Null while a generation is already in flight.
   final VoidCallback? onAiCompose;
+  // Puts back a signature an internal reply opened without. Null — and no
+  // button — when there is none held back.
+  final VoidCallback? onInsertSignature;
 
   @override
   State<_Footer> createState() => _FooterState();
@@ -3017,6 +3062,26 @@ class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
           ],
         ];
         final actions = <Widget>[
+          if (widget.onInsertSignature != null) ...[
+            Tooltip(
+              message: 'Insert signature',
+              child: TextButton.icon(
+                onPressed: isLocked ? null : widget.onInsertSignature,
+                icon: const Icon(Icons.draw_outlined, size: 16),
+                label: const Text('Signature', style: TextStyle(fontSize: 13)),
+                style: TextButton.styleFrom(
+                  foregroundColor: c.textSecondary,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  minimumSize: Size(0, touchTarget(0)),
+                  tapTargetSize: isTouchPlatform
+                      ? MaterialTapTargetSize.padded
+                      : MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
           TextButton.icon(
             onPressed: isLocked ? null : widget.onAiCompose,
             icon: const Icon(Icons.auto_awesome_rounded, size: 16),

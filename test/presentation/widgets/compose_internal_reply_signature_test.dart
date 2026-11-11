@@ -21,6 +21,7 @@ import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/injection_container.dart';
 import 'package:nightmail/presentation/blocs/ai/ai_compose_cubit.dart';
 import 'package:nightmail/presentation/blocs/compose/compose_bloc.dart';
+import 'package:nightmail/presentation/widgets/compose_body_builder.dart';
 import 'package:nightmail/presentation/widgets/compose_dialog.dart';
 
 // ---------------------------------------------------------------------------
@@ -209,6 +210,48 @@ void main() {
   testWidgets('a new message keeps it', (tester) async {
     await pump(tester, mode: ComposeMode.newEmail);
     expect(signatureText(), findsOneWidget);
+  });
+
+  Finder signatureButton() => find.widgetWithText(TextButton, 'Signature');
+
+  String body(WidgetTester tester) =>
+      tester.widget<TextField>(find.byType(TextField).last).controller!.text;
+
+  testWidgets('a held-back signature can be put back above the quote',
+      (tester) async {
+    await pump(tester, mode: ComposeMode.reply, originalEmail: original());
+    // The body as typing at the top of the reply leaves it.
+    final quote = ComposeBodyBuilder.buildInitialPlainBody(
+        originalEmail: original(), draftEmail: null, mode: ComposeMode.reply);
+    tester.widget<TextField>(find.byType(TextField).last).controller!.text =
+        'Sounds good$quote';
+    await tester.pump();
+
+    await tester.tap(signatureButton());
+    await tester.pump();
+
+    expect(body(tester), 'Sounds good\n\nSIGNATURE-MARK$quote');
+    expect(signatureButton(), findsNothing);
+  });
+
+  testWidgets('with the quote deleted, it goes at the end', (tester) async {
+    await pump(tester, mode: ComposeMode.reply, originalEmail: original());
+    tester.widget<TextField>(find.byType(TextField).last).controller!.text =
+        'Just this';
+    await tester.pump();
+
+    await tester.tap(signatureButton());
+    await tester.pump();
+
+    expect(body(tester), 'Just this\n\nSIGNATURE-MARK');
+  });
+
+  testWidgets('no Signature button when nothing was held back',
+      (tester) async {
+    await pump(tester,
+        mode: ComposeMode.reply,
+        originalEmail: original(from: 'client@example.com'));
+    expect(signatureButton(), findsNothing);
   });
 
   test('nobody on a personal Google or Microsoft domain is internal', () {

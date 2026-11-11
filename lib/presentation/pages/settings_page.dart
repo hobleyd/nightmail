@@ -328,6 +328,8 @@ class _AppearanceSection extends StatelessWidget {
         const SizedBox(height: 12),
         const _ComposeFormatSetting(),
         const SizedBox(height: 12),
+        const _InternalReplySignatureSetting(),
+        const SizedBox(height: 12),
         const _MeetingRemindersSetting(),
       ],
     );
@@ -672,6 +674,55 @@ class _MeetingRemindersSettingState extends State<_MeetingRemindersSetting> {
                 sl<AppSettings>().saveShowMeetingReminders(val);
                 // Settings runs in the main window, beside the board.
                 sl<MeetingReminderBoard>().setEnabled(val);
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _InternalReplySignatureSetting extends StatefulWidget {
+  const _InternalReplySignatureSetting();
+
+  @override
+  State<_InternalReplySignatureSetting> createState() =>
+      _InternalReplySignatureSettingState();
+}
+
+class _InternalReplySignatureSettingState
+    extends State<_InternalReplySignatureSetting> {
+  bool _value = AppSettings.defaultHideSignatureForInternalReplies;
+
+  @override
+  void initState() {
+    super.initState();
+    sl<AppSettings>().loadHideSignatureForInternalReplies().then((v) {
+      if (mounted) setState(() => _value = v);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Row(
+      children: [
+        Text(
+          'Hide signature on internal replies',
+          style: TextStyle(color: c.textSecondary, fontSize: 13),
+        ),
+        const Spacer(),
+        SizedBox(
+          width: 180,
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: Checkbox(
+              value: _value,
+              onChanged: (val) {
+                if (val == null) return;
+                setState(() => _value = val);
+                sl<AppSettings>().saveHideSignatureForInternalReplies(val);
               },
             ),
           ),

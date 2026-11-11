@@ -37,10 +37,16 @@ class ComposeWindowApp extends StatelessWidget {
     super.key,
     required this.windowId,
     required this.arguments,
+    this.hideSignatureForInternalReplies =
+        AppSettings.defaultHideSignatureForInternalReplies,
   });
 
   final String windowId;
   final Map<String, dynamic> arguments;
+
+  /// Read by `main()` before the window's first frame: the form builds its
+  /// body once, as it opens, so the answer has to be in hand by then.
+  final bool hideSignatureForInternalReplies;
 
   /// Opens a compose screen prefilled from a `mailto:` URI (RFC 6068).
   ///
@@ -315,6 +321,7 @@ class ComposeWindowApp extends StatelessWidget {
                 arguments['mode'] as String? ?? 'newEmail',
               ),
               arguments: arguments,
+              hideSignatureForInternalReplies: hideSignatureForInternalReplies,
             ),
           );
         },
@@ -328,11 +335,13 @@ class _ComposeWindowPage extends StatefulWidget {
     required this.windowId,
     required this.mode,
     required this.arguments,
+    required this.hideSignatureForInternalReplies,
   });
 
   final String windowId;
   final ComposeMode mode;
   final Map<String, dynamic> arguments;
+  final bool hideSignatureForInternalReplies;
 
   @override
   State<_ComposeWindowPage> createState() => _ComposeWindowPageState();
@@ -669,6 +678,8 @@ class _ComposeWindowPageState extends State<_ComposeWindowPage>
             onTitleChanged: (title) => windowManager.setTitle(title),
             defaultComposeFormat: _defaultComposeFormat,
             signatureHtml: _signatureHtml,
+            hideSignatureForInternalReplies:
+                widget.hideSignatureForInternalReplies,
             initialSubject: widget.arguments['initialSubject'] as String?,
             forwardAsAttachments: ComposeWindowApp.forwardedMessagesFromJson(
                 widget.arguments['forwardAsAttachments']),
@@ -718,12 +729,18 @@ class _MobileComposePage extends StatefulWidget {
 class _MobileComposePageState extends State<_MobileComposePage> {
   EmailBodyType _defaultComposeFormat = AppSettings.defaultComposeFormat;
   String _signatureHtml = '';
+  // Null until read. The form builds its body once, as it mounts, so it
+  // waits for this rather than opening with the signature and keeping it.
+  bool? _hideSignatureForInternalReplies;
 
   @override
   void initState() {
     super.initState();
     sl<AppSettings>().loadDefaultComposeFormat().then((format) {
       if (mounted) setState(() => _defaultComposeFormat = format);
+    });
+    sl<AppSettings>().loadHideSignatureForInternalReplies().then((hide) {
+      if (mounted) setState(() => _hideSignatureForInternalReplies = hide);
     });
     final signatureAccount = sl<AccountManager>().activeAccount;
     if (signatureAccount != null) {
@@ -763,23 +780,27 @@ class _MobileComposePageState extends State<_MobileComposePage> {
                 widget.onSent?.call();
               }
             },
-            child: ComposeForm(
-              mode: widget.mode,
-              originalEmail: widget.originalEmail,
-              draftEmail: widget.draftEmail,
-              onClose: () => Navigator.of(context).pop(),
-              fromAddress: fromAddress,
-              accountId: account?.id,
-              accountDomain: _domainOf(account?.emailAddress),
-              accounts: sl<AccountManager>().accounts,
-              scrollable: true,
-              existingDraftId: widget.existingDraftId,
-              defaultComposeFormat: _defaultComposeFormat,
-              signatureHtml: _signatureHtml,
-              initialSubject: widget.initialSubject,
-              initialAttachments: widget.initialAttachments,
-              forwardAsAttachments: widget.forwardAsAttachments,
-            ),
+            child: _hideSignatureForInternalReplies == null
+                ? const SizedBox.shrink()
+                : ComposeForm(
+                  mode: widget.mode,
+                  originalEmail: widget.originalEmail,
+                  draftEmail: widget.draftEmail,
+                  onClose: () => Navigator.of(context).pop(),
+                  fromAddress: fromAddress,
+                  accountId: account?.id,
+                  accountDomain: _domainOf(account?.emailAddress),
+                  accounts: sl<AccountManager>().accounts,
+                  scrollable: true,
+                  existingDraftId: widget.existingDraftId,
+                  defaultComposeFormat: _defaultComposeFormat,
+                  signatureHtml: _signatureHtml,
+                  hideSignatureForInternalReplies:
+                      _hideSignatureForInternalReplies!,
+                  initialSubject: widget.initialSubject,
+                  initialAttachments: widget.initialAttachments,
+                  forwardAsAttachments: widget.forwardAsAttachments,
+                ),
           ),
         ),
       ),

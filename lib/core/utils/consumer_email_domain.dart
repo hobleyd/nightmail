@@ -23,3 +23,57 @@ bool isConsumerGoogleAddress(String? emailAddress) {
 }
 
 const _consumerDomains = {'gmail.com', 'googlemail.com'};
+
+/// Whether [emailAddress] is on a personal mail domain — Google's or
+/// Microsoft's — where sharing a domain says nothing about sharing an
+/// organisation. Unlike [isConsumerGoogleAddress], anything unrecognised (or
+/// unparseable) is *not* consumer.
+bool isConsumerEmailAddress(String? emailAddress) {
+  final email = emailAddress?.trim().toLowerCase();
+  if (email == null || !email.contains('@')) return false;
+  final domain = email.split('@').last;
+  return _consumerDomains.contains(domain) ||
+      _microsoftConsumerDomains.contains(domain);
+}
+
+/// Microsoft account (personal Outlook) domains, including the regional
+/// variants still issued or carried over from Hotmail/Live.
+const _microsoftConsumerDomains = {
+  'outlook.com',
+  'hotmail.com',
+  'live.com',
+  'msn.com',
+  'passport.com',
+  'outlook.com.au',
+  'hotmail.com.au',
+  'live.com.au',
+  'outlook.co.uk',
+  'hotmail.co.uk',
+  'live.co.uk',
+  'outlook.co.nz',
+  'live.co.nz',
+  'hotmail.co.nz',
+  'outlook.ca',
+  'hotmail.ca',
+  'live.ca',
+  'outlook.de',
+  'hotmail.de',
+  'live.de',
+  'outlook.fr',
+  'hotmail.fr',
+  'live.fr',
+  'outlook.it',
+  'hotmail.it',
+  'live.it',
+  'outlook.es',
+  'hotmail.es',
+  'outlook.jp',
+  'hotmail.co.jp',
+  'live.jp',
+  'outlook.in',
+  'live.in',
+  'outlook.ie',
+  'live.ie',
+  'outlook.sg',
+  'live.com.sg',
+};

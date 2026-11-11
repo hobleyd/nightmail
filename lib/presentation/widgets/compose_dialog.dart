@@ -15,6 +15,7 @@ import '../../core/platform/touch_metrics.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/signature/signature_merge_engine.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/consumer_email_domain.dart';
 import '../../core/utils/subject_prefixes.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../../domain/entities/email.dart';
@@ -50,6 +51,7 @@ class ComposeDialog extends StatelessWidget {
     this.accounts = const [],
     required this.defaultComposeFormat,
     this.signatureHtml = '',
+    this.hideSignatureForInternalReplies = false,
   });
 
   final ComposeMode mode;
@@ -61,6 +63,7 @@ class ComposeDialog extends StatelessWidget {
   final List<Account> accounts;
   final EmailBodyType defaultComposeFormat;
   final String signatureHtml;
+  final bool hideSignatureForInternalReplies;
 
   static Future<void> show(
     BuildContext context, {
@@ -85,6 +88,8 @@ class ComposeDialog extends StatelessWidget {
     final accounts =
         accountState is AccountsLoaded ? accountState.accounts : const <Account>[];
     final defaultFormat = await sl<AppSettings>().loadDefaultComposeFormat();
+    final hideSignatureForInternalReplies =
+        await sl<AppSettings>().loadHideSignatureForInternalReplies();
     final signatureHtml = accountState is AccountsLoaded
         ? SignatureMergeEngine.merge(
             accountState.activeAccount.signatureHtml, accountState.activeAccount)
@@ -105,6 +110,7 @@ class ComposeDialog extends StatelessWidget {
           accounts: accounts,
           defaultComposeFormat: defaultFormat,
           signatureHtml: signatureHtml,
+          hideSignatureForInternalReplies: hideSignatureForInternalReplies,
         ),
       ),
     );
@@ -141,6 +147,7 @@ class ComposeDialog extends StatelessWidget {
           accounts: accounts,
           defaultComposeFormat: defaultComposeFormat,
           signatureHtml: signatureHtml,
+          hideSignatureForInternalReplies: hideSignatureForInternalReplies,
         ),
       ),
     );
@@ -169,6 +176,7 @@ class ComposeForm extends StatefulWidget {
     this.onTitleChanged,
     required this.defaultComposeFormat,
     this.signatureHtml = '',
+    this.hideSignatureForInternalReplies = false,
     this.initialSubject,
     this.initialAttachments = const [],
     this.forwardAsAttachments = const [],
@@ -187,6 +195,10 @@ class ComposeForm extends StatefulWidget {
   final ValueChanged<String>? onTitleChanged;
   final EmailBodyType defaultComposeFormat;
   final String signatureHtml;
+
+  /// Leave [signatureHtml] out of a reply or reply-all with anyone on the
+  /// account's own domain among its recipients — see [ComposeFormState._signatureHtml].
+  final bool hideSignatureForInternalReplies;
 
   /// Seeds a new message's subject when there is no draft or original to take
   /// one from — a forward of list rows as `.eml` attachments.
@@ -574,15 +586,51 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
         originalEmail: widget.originalEmail,
         draftEmail: widget.draftEmail,
         mode: widget.mode,
-        signature: ComposeBodyBuilder.stripHtml(widget.signatureHtml),
+        signature: ComposeBodyBuilder.stripHtml(_signatureHtml),
       );
 
   String _buildInitialHtmlBody() => ComposeBodyBuilder.buildInitialHtmlBody(
         originalEmail: widget.originalEmail,
         draftEmail: widget.draftEmail,
         mode: widget.mode,
-        signature: widget.signatureHtml,
+        signature: _signatureHtml,
       );
+
+  /// The signature the initial body carries. A reply or reply-all with anyone
+  /// on the account's own domain in To or Cc goes without it when
+  /// [ComposeForm.hideSignatureForInternalReplies] is set, outside recipients
+  /// alongside notwithstanding. Read once, from the recipients [initState]
+  /// has just seeded — changing them later doesn't put it back.
+  String get _signatureHtml {
+    final isReply = widget.mode == ComposeMode.reply ||
+        widget.mode == ComposeMode.replyAll;
+    if (!widget.hideSignatureForInternalReplies || !isReply) {
+      return widget.signatureHtml;
+    }
+    final accountAddress =
+        _selectedAccount?.emailAddress ?? widget.fromAddress;
+    final recipients = [..._toRecipients, ..._ccRecipients];
+    return recipients.any((r) => isInternalAddress(r, accountAddress))
+        ? ''
+        : widget.signatureHtml;
+  }
+
+  /// Whether [address] is on the same domain as [accountAddress]. A personal
+  /// Google or Microsoft domain has no organisation behind it, so nobody on
+  /// `@gmail.com` or `@outlook.com` is internal to anyone else there.
+  @visibleForTesting
+  static bool isInternalAddress(String address, String accountAddress) {
+    final account = _domainOfAddress(accountAddress);
+    if (account == null || isConsumerEmailAddress(accountAddress)) return false;
+    return _domainOfAddress(address) == account;
+  }
+
+  static String? _domainOfAddress(String address) {
+    final bare = RegExp(r'<([^>]+)>').firstMatch(address)?.group(1) ?? address;
+    final at = bare.lastIndexOf('@');
+    if (at < 0 || at == bare.trim().length - 1) return null;
+    return bare.substring(at + 1).trim().toLowerCase();
+  }
 
   /// The inline images carried by whichever message supplied the initial body
   /// — the same precedence [ComposeBodyBuilder.buildInitialHtmlBody] uses.

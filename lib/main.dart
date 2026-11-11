@@ -14,6 +14,7 @@ import 'core/diagnostics/diagnostic_log.dart';
 import 'core/platform/macos_app_data_migration.dart';
 import 'core/platform/window_utils.dart';
 import 'core/platform/windows_app_data_migration.dart';
+import 'core/settings/app_settings.dart';
 import 'core/settings/window_bounds_service.dart';
 import 'core/utils/subject_prefixes.dart';
 import 'data/database/app_database.dart';
@@ -326,7 +327,14 @@ void main(List<String> args) async {
       restore: await composeWindowBounds.loadValidatedBounds(),
     );
 
-    runApp(ComposeWindowApp(windowId: windowId, arguments: arguments));
+    final hideSignatureForInternalReplies =
+        await sl<AppSettings>().loadHideSignatureForInternalReplies();
+
+    runApp(ComposeWindowApp(
+      windowId: windowId,
+      arguments: arguments,
+      hideSignatureForInternalReplies: hideSignatureForInternalReplies,
+    ));
     return;
   }
 

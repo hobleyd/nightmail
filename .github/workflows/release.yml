@@ -547,7 +547,15 @@ jobs:
         run: convert assets/logo.png -resize 512x512 build/linux/x64/release/bundle/nightmail.png
 
       - name: Install Snapcraft
-        run: sudo snap install snapcraft --classic
+        # The Snap Store refuses connections now and then (build 258 failed
+        # here on "connection refused"); retry rather than fail the release.
+        run: |
+          for attempt in 1 2 3 4 5; do
+            sudo snap install snapcraft --classic && exit 0
+            echo "snap install failed (attempt $attempt), retrying in 30s"
+            sleep 30
+          done
+          exit 1
 
       - name: Build Snap package
         run: |

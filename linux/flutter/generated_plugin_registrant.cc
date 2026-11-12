@@ -13,12 +13,12 @@
 #include <file_selector_linux/file_selector_plugin.h>
 #include <flutter_secure_storage_linux/flutter_secure_storage_linux_plugin.h>
 #include <gtk/gtk_plugin.h>
-#include <html_view/html_view_plugin.h>
 #include <open_file_linux/open_file_linux_plugin.h>
 #include <printing/printing_plugin.h>
 #include <screen_retriever_linux/screen_retriever_linux_plugin.h>
 #include <url_launcher_linux/url_launcher_plugin.h>
 #include <window_manager/window_manager_plugin.h>
+#include <html_view/html_view_plugin.h>
 #include <window_to_front/window_to_front_plugin.h>
 
 void fl_register_plugins(FlPluginRegistry* registry) {
@@ -43,9 +43,6 @@ void fl_register_plugins(FlPluginRegistry* registry) {
   g_autoptr(FlPluginRegistrar) gtk_registrar =
       fl_plugin_registry_get_registrar_for_plugin(registry, "GtkPlugin");
   gtk_plugin_register_with_registrar(gtk_registrar);
-  g_autoptr(FlPluginRegistrar) html_view_registrar =
-      fl_plugin_registry_get_registrar_for_plugin(registry, "HtmlViewPlugin");
-  html_view_plugin_register_with_registrar(html_view_registrar);
   g_autoptr(FlPluginRegistrar) open_file_linux_registrar =
       fl_plugin_registry_get_registrar_for_plugin(registry, "OpenFileLinuxPlugin");
   open_file_linux_plugin_register_with_registrar(open_file_linux_registrar);
@@ -61,6 +58,9 @@ void fl_register_plugins(FlPluginRegistry* registry) {
   g_autoptr(FlPluginRegistrar) window_manager_registrar =
       fl_plugin_registry_get_registrar_for_plugin(registry, "WindowManagerPlugin");
   window_manager_plugin_register_with_registrar(window_manager_registrar);
+  g_autoptr(FlPluginRegistrar) html_view_registrar =
+      fl_plugin_registry_get_registrar_for_plugin(registry, "HtmlViewPlugin");
+  html_view_plugin_register_with_registrar(html_view_registrar);
   g_autoptr(FlPluginRegistrar) window_to_front_registrar =
       fl_plugin_registry_get_registrar_for_plugin(registry, "WindowToFrontPlugin");
   window_to_front_plugin_register_with_registrar(window_to_front_registrar);

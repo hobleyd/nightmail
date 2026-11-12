@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 3,
+  "appName": "nightmail",
+  "items": [
+    {
+      "version": "1.44.1",
+      "buildNumber": 256,
+      "platform": "macos",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "https://hobleyd.github.io/nightmail/releases/1.44.1+256-macos/release.json"
+    },
+    {
+      "version": "1.44.2",
+      "buildNumber": 257,
+      "platform": "macos",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "https://hobleyd.github.io/nightmail/releases/1.44.2+257-macos/release.json"
+    },
+    {
+      "version": "1.45.0",
+      "buildNumber": 258,
+      "platform": "macos",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "https://hobleyd.github.io/nightmail/releases/1.45.0+258-macos/release.json"
+    },
+    {
+      "version": "1.45.1",
+      "buildNumber": 259,
+      "platform": "macos",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "https://hobleyd.github.io/nightmail/releases/1.45.1+259-macos/release.json"
+    },
+    {
+      "version": "1.44.1",
+      "buildNumber": 256,
+      "platform": "windows",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "https://hobleyd.github.io/nightmail/releases/1.44.1+256-windows/release.json"
+    },
+    {
+      "version": "1.44.2",
+      "buildNumber": 257,
+      "platform": "windows",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "https://hobleyd.github.io/nightmail/releases/1.44.2+257-windows/release.json"
+    },
+    {
+      "version": "1.45.0",
+      "buildNumber": 258,
+      "platform": "windows",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "https://hobleyd.github.io/nightmail/releases/1.45.0+258-windows/release.json"
+    },
+    {
+      "version": "1.45.1",
+      "buildNumber": 259,
+      "platform": "windows",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "https://hobleyd.github.io/nightmail/releases/1.45.1+259-windows/release.json"
+    }
+  ],
+  "signature": {
+    "algorithm": "ed25519",
+    "publicKeyId": "release-b53948b0e36b895fa047a8f4",
+    "value": "d88Tz5weNOqjuAP4ttqDm7lQGLTm309ZQs1InJepiWE5Hn+6ovqxK+yfAjLp2fXXnGCaCQMBR+JpHTBYTkvRDw=="
+  }
+}

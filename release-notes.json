@@ -1,0 +1,405 @@
+{
+  "schemaVersion": 1,
+  "format": "desktop_updater.release_notes.v1",
+  "version": "1.45.1",
+  "sections": [
+    {
+      "type": "features",
+      "title": "New features",
+      "items": [
+        {
+          "body": "Signature button puts back a held-back signature",
+          "title": "compose"
+        }
+      ]
+    }
+  ],
+  "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.45.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "hide the signature on replies to internal recipients",
+              "title": "compose"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.44.2",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "offer Report phishing in the touch swipe tray",
+              "title": "email-list"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.44.1",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "show that a meeting invitation repeats",
+              "title": "calendar"
+            },
+            {
+              "body": "answer the occurrence a Gmail invitation names, not the first in its series",
+              "title": "calendar"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.44.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "send phishing reports to a per-account Phishing Inbox",
+              "title": "accounts"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.43.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "import an HTML signature from a file",
+              "title": "settings"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.42.5",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "return to the email list after reporting junk from a message",
+              "title": "mobile"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.42.4",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "open new /meet/ Teams links in the app, not the browser",
+              "title": "calendar"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.42.2",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "declare the host Info.plist as an input of the helper phase",
+              "title": "macos"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.42.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "add an iOS Share Extension",
+              "title": "share"
+            },
+            {
+              "body": "receive shares from other apps on Android",
+              "title": "share"
+            },
+            {
+              "body": "forward a desktop selection as .eml attachments",
+              "title": "email-list"
+            },
+            {
+              "body": "forward and move a phone selection instead of composing",
+              "title": "email-list"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "run MainActivity as singleTask",
+              "title": "android"
+            },
+            {
+              "body": "return a fetched message's own bytes as its .eml",
+              "title": "imap"
+            },
+            {
+              "body": "move whole threads from a phone selection; send .eml parts unencoded",
+              "title": "email-list"
+            },
+            {
+              "body": "fold the phone toolbar's extra actions into a waffle menu",
+              "title": "reading-pane"
+            },
+            {
+              "body": "show the unread dot for an account with no new mail since launch",
+              "title": "poller"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.41.3",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "keyboard multi-select — Shift/Cmd/Ctrl with the arrows, Space, Escape",
+              "title": "list"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.41.2",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "offer \"Clear pending install…\" when a stale marker blocks installs",
+              "title": "update"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.41.1",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "a meeting closed with its X stays out of the dialog",
+              "title": "reminders"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.41.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "one meeting-reminders dialog on every platform",
+              "title": "reminders"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.40.16",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "a moved or cancelled series no longer fires its old reminders",
+              "title": "calendar"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.40.15",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "the Drafts list refreshes after a compose window deletes a draft",
+              "title": "linux"
+            },
+            {
+              "body": "closing a compose window no longer crashes the app",
+              "title": "linux"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.40.14",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "a half-finished upgrade no longer breaks every query",
+              "title": "database"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.40.13",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "sub-windows draw, and closing one no longer kills the app",
+              "title": "linux"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.40.12",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "a forward no longer sends attachments the user removed",
+              "title": "compose"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.40.11",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "show meeting rooms by name, not their Google resource address",
+              "title": "calendar"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.40.10",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "delete, copy and paste recipient pills on a phone",
+              "title": "compose"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

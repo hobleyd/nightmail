@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/core/config/oauth_client_id_storage.dart';
 import 'package:nightmail/data/datasources/remote/gmail_datasource_impl.dart';
 import 'package:nightmail/data/datasources/remote/graph_api_datasource_impl.dart';
+import 'package:nightmail/domain/entities/cloud_document.dart';
+import 'package:nightmail/domain/entities/graph_endpoints.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 import 'package:nightmail/infrastructure/accounts/account_storage.dart';
@@ -900,6 +902,127 @@ void main() {
       final account = manager.accountById('m')!;
       expect(account.emailAddress, 'typed@sharpblue.com.au');
       expect(account.aliases, ['me@sharpblue.com.au', 'alias@sharpblue.com.au']);
+    });
+  });
+
+  /// A NightMail Server account goes through every Graph pipeline the
+  /// manager builds, pointed at its server — and is kept out of the features
+  /// only Microsoft has, rather than prompted for Graph consent the server
+  /// would refuse.
+  group('NightMail Server accounts', () {
+    const server = GraphEndpoints(
+      graphBaseUrl: 'https://mail.example.com/graph/v1.0',
+      graphBetaBaseUrl: 'https://mail.example.com/graph/beta',
+      authorizationEndpoint: 'https://mail.example.com/oauth2/authorize',
+      tokenEndpoint: 'https://mail.example.com/oauth2/token',
+      clientId: 'nightmail',
+      scopes: ['openid', 'email', 'profile', 'offline_access'],
+      serverUrl: 'https://mail.example.com',
+    );
+    const nw = MicrosoftAccount(
+      id: 'nw',
+      displayName: 'Server',
+      emailAddress: 'me@example.com',
+      tenantId: MicrosoftAccount.nightmailServerTenantId,
+      clientId: 'nightmail',
+      server: server,
+    );
+    const ms = MicrosoftAccount(
+      id: 'ms',
+      displayName: 'Microsoft',
+      emailAddress: 'me@contoso.com',
+      tenantId: 'tid',
+    );
+
+    String tokenJson(String scope) => jsonEncode({
+          'access_token': 'a',
+          'expires_at':
+              DateTime.now().add(const Duration(hours: 1)).toIso8601String(),
+          'refresh_token': 'r',
+          'token_type': 'Bearer',
+          'scope': scope,
+        });
+
+    setUp(() async {
+      when(mockAccountStorage.loadAccounts()).thenAnswer((_) async => [nw, ms]);
+      when(mockAccountStorage.loadActiveIndex()).thenAnswer((_) async => 0);
+      when(mockAccountStorage.saveAccounts(any)).thenAnswer((_) async {});
+      when(mockAccountStorage.saveActiveIndex(any)).thenAnswer((_) async {});
+      when(mockSecureStorage.read(key: anyNamed('key')))
+          .thenAnswer((_) async => tokenJson('openid email profile'));
+      await accountManager.initialize();
+    });
+
+    test('its datasources talk to the server; Microsoft\'s are unchanged', () {
+      final serverDs = accountManager.buildEmailDatasourceForAccount(nw)
+          as GraphApiDatasourceImpl;
+      expect(serverDs.graphRoots,
+          (v1: server.graphBaseUrl, beta: server.graphBetaBaseUrl));
+      for (final ds in [
+        accountManager.buildCalendarDatasourceForAccount(nw),
+        accountManager.buildTasksDatasourceForAccount(nw),
+        accountManager.directoryDatasourceForAccount('nw'),
+      ]) {
+        expect((ds as GraphApiDatasourceImpl).graphRoots.v1,
+            server.graphBaseUrl);
+      }
+      final msDs = accountManager.buildEmailDatasourceForAccount(ms)
+          as GraphApiDatasourceImpl;
+      expect(msDs.graphRoots, (
+        v1: 'https://graph.microsoft.com/v1.0',
+        beta: 'https://graph.microsoft.com/beta',
+      ));
+    });
+
+    test('a shared mailbox on it inherits the server', () async {
+      final shared = await accountManager.addSharedMailbox(
+        parentAccountId: 'nw',
+        email: 'team@example.com',
+        displayName: 'Team',
+      ) as MicrosoftAccount;
+      expect(shared.server, server);
+      final ds = accountManager.buildEmailDatasourceForAccount(shared)
+          as GraphApiDatasourceImpl;
+      expect(ds.graphRoots.v1, server.graphBaseUrl);
+      expect(ds.mailboxBase, '/users/team@example.com');
+    });
+
+    test('a shared mailbox follows its parent even without its own copy', () {
+      const shared = MicrosoftAccount(
+        id: 'sh',
+        displayName: 'Team',
+        emailAddress: 'team@example.com',
+        tenantId: MicrosoftAccount.nightmailServerTenantId,
+        parentAccountId: 'nw',
+      );
+      final ds = accountManager.buildEmailDatasourceForAccount(shared)
+          as GraphApiDatasourceImpl;
+      expect(ds.graphRoots.v1, server.graphBaseUrl);
+    });
+
+    test('is never offered SharePoint/OneDrive previews', () async {
+      expect(
+        accountManager
+            .cloudDriveCandidates(CloudDriveProvider.microsoft)
+            .map((a) => a.id),
+        ['ms'],
+      );
+      expect(accountManager.cloudDriveDatasourceForAccount('nw'), isNull);
+      expect(await accountManager.hasCloudDriveAccess('nw'), isFalse);
+      expect(await accountManager.requestCloudDriveAccess('nw'), isFalse);
+    });
+
+    test('has no Microsoft threat submission to ask consent for', () async {
+      expect(await accountManager.hasThreatSubmissionAccess('nw'), isFalse);
+      expect(
+          await accountManager.requestThreatSubmissionAccess('nw'), isFalse);
+    });
+
+    test('needs no incremental consent to save an out-of-office', () async {
+      expect(await accountManager.hasOutOfOfficeWriteAccess('nw'), isTrue);
+      expect(await accountManager.requestOutOfOfficeWriteAccess('nw'), isTrue);
+      // The Microsoft account still reads its grant off the token.
+      expect(await accountManager.hasOutOfOfficeWriteAccess('ms'), isFalse);
     });
   });
 }

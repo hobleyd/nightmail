@@ -1,5 +1,8 @@
 import 'package:equatable/equatable.dart';
 
+import '../../data/models/graph_endpoints_model.dart';
+import '../../domain/entities/graph_endpoints.dart';
+
 class NextcloudCalendarConfig extends Equatable {
   const NextcloudCalendarConfig({
     required this.serverUrl,
@@ -155,6 +158,7 @@ final class MicrosoftAccount extends Account {
     required this.tenantId,
     this.clientId,
     this.parentAccountId,
+    this.server,
     super.firstName,
     super.lastName,
     super.jobTitle,
@@ -188,6 +192,27 @@ final class MicrosoftAccount extends Account {
 
   bool get isSharedMailbox => parentAccountId != null;
 
+  /// Non-null when this account lives on a NightMail Server rather than
+  /// Microsoft 365: the endpoints and scopes that server published at
+  /// discovery. Null — every account added before NightMail Servers existed —
+  /// is Microsoft, derived from [tenantId] by [endpoints] and never stored,
+  /// so those accounts load and save byte-for-byte as before.
+  ///
+  /// [tenantId] is a placeholder ([nightmailServerTenantId]) on such an
+  /// account, and [clientId] is the one the server issued. A shared mailbox
+  /// carries its parent's copy (see `AccountManager.addSharedMailbox`).
+  final GraphEndpoints? server;
+
+  /// Stored as [tenantId] on a NightMail Server account, which has no tenant.
+  static const nightmailServerTenantId = 'nightmail-server';
+
+  bool get isNightmailServer => server != null;
+
+  /// Where this account's Graph calls and sign-in go: [server], or
+  /// Microsoft's for [tenantId].
+  GraphEndpoints get endpoints =>
+      server ?? GraphEndpoints.microsoft(tenantId: tenantId);
+
   @override
   MicrosoftAccount copyWith({
     String? displayName,
@@ -220,6 +245,9 @@ final class MicrosoftAccount extends Account {
       tenantId: tenantId ?? this.tenantId,
       clientId: clientId == _sentinel ? this.clientId : clientId as String?,
       parentAccountId: parentAccountId,
+      // Not settable: an account cannot move between Microsoft and a server
+      // without a fresh sign-in, so the only copy that matters is kept.
+      server: server,
     );
   }
 
@@ -232,6 +260,10 @@ final class MicrosoftAccount extends Account {
       tenantId: json['tenantId'] as String? ?? 'common',
       clientId: json['clientId'] as String?,
       parentAccountId: json['parentAccountId'] as String?,
+      server: json['nightmailServer'] is Map<String, dynamic>
+          ? GraphEndpointsModel.fromStorageJson(
+              json['nightmailServer'] as Map<String, dynamic>)
+          : null,
       firstName: json['firstName'] as String? ?? '',
       lastName: json['lastName'] as String? ?? '',
       jobTitle: json['jobTitle'] as String? ?? '',
@@ -253,6 +285,8 @@ final class MicrosoftAccount extends Account {
         'tenantId': tenantId,
         if (clientId != null) 'clientId': clientId,
         if (parentAccountId != null) 'parentAccountId': parentAccountId,
+        if (server != null)
+          'nightmailServer': GraphEndpointsModel.toStorageJson(server!),
         'firstName': firstName,
         'lastName': lastName,
         'jobTitle': jobTitle,
@@ -272,6 +306,7 @@ final class MicrosoftAccount extends Account {
         tenantId,
         clientId,
         parentAccountId,
+        server,
         firstName,
         lastName,
         jobTitle,

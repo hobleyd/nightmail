@@ -22,6 +22,7 @@ import '../../infrastructure/http/graph_http_client.dart';
 import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
 import '../widgets/client_id_dialog.dart';
+import '../widgets/nightmail_server_sign_in.dart';
 
 /// Pushed from inside [HomePage] when the user wants to add another account.
 class AddAccountPage extends StatefulWidget {
@@ -97,6 +98,35 @@ class _AddAccountPageState extends State<AddAccountPage> {
         clientId: clientId,
       ).withMailboxAddresses(addresses);
 
+      if (mounted) {
+        await accountCubit.addAccount(account);
+        nav.pop();
+      }
+    } on AuthException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  /// A Graph account on a NightMail Server rather than Microsoft 365 — see
+  /// [signInToNightmailServer].
+  Future<void> _signInNightmailServer() async {
+    final accountCubit = context.read<AccountCubit>();
+    final nav = Navigator.of(context);
+
+    final serverUrl = await showNightmailServerDialog(context);
+    if (serverUrl == null || !mounted) return;
+
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final account = await signInToNightmailServer(serverUrl);
       if (mounted) {
         await accountCubit.addAccount(account);
         nav.pop();
@@ -259,6 +289,12 @@ class _AddAccountPageState extends State<AddAccountPage> {
                       label: 'Google Workspace',
                       color: const Color(0xFF1A73E8),
                       onTap: () => _signInGmail(workspace: true),
+                    ),
+                    const SizedBox(height: 12),
+                    _ProviderButton(
+                      label: 'NightMail Server',
+                      color: const Color(0xFF111827),
+                      onTap: _signInNightmailServer,
                     ),
                     const SizedBox(height: 12),
                     _ProviderButton(

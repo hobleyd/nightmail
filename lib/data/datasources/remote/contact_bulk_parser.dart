@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../../../domain/entities/cached_contact.dart';
+import '../../../domain/entities/graph_endpoints.dart';
 
 /// Isolate-side parsing for the daily address-book refresh.
 ///
@@ -263,28 +264,51 @@ String? googleNextPageToken(String body) =>
 /// Checked against [isGraphUrl] before being returned, for the same reason
 /// `graphDeltaLink` is: this URL is then requested with the account's access
 /// token attached, so its host is verified rather than assumed.
-String? graphNextLink(String body) {
+/// [trustedBaseUrl] is the account's Graph root — see [isGraphUrl].
+String? graphNextLink(String body, {String? trustedBaseUrl}) {
   // Written as two adjacent literals so the sequence is not itself read as a
   // Dart escape.
   const ampersandEscape = '\\' 'u0026';
   final raw = _graphNextLinkPattern.firstMatch(body)?.group(1);
   if (raw == null) return null;
   final url = raw.replaceAll(r'\/', '/').replaceAll(ampersandEscape, '&');
-  return isGraphUrl(url) ? url : null;
+  return isGraphUrl(url, trustedBaseUrl: trustedBaseUrl) ? url : null;
 }
 
-/// Whether [url] is an absolute `https` URL on Microsoft Graph's own host.
+/// Whether [url] is an absolute `https` URL on Microsoft Graph's own host —
+/// or, for an account on a NightMail Server, on that server's origin.
 ///
 /// Every continuation link this app follows is an absolute URL taken out of a
 /// response and requested with the account's access token attached, so the host
 /// is checked rather than assumed. A link that fails this is treated as no link
 /// at all, which ends the paging loop instead of issuing an authenticated
 /// request somewhere unintended.
-bool isGraphUrl(String url) {
+///
+/// [trustedBaseUrl] is the Graph root the account's client sends to
+/// (`GraphEndpoints.graphBaseUrl`). Null, empty or Microsoft's own keeps the
+/// Microsoft rule above. Anything else is a NightMail Server, whose links
+/// point back at itself: those must match its scheme, host and port exactly,
+/// never merely "some https host" — the guard is the point.
+bool isGraphUrl(String url, {String? trustedBaseUrl}) {
   final uri = Uri.tryParse(url);
-  if (uri == null || !uri.isAbsolute || uri.scheme != 'https') return false;
-  final host = uri.host.toLowerCase();
-  return host == 'graph.microsoft.com' || host.endsWith('.graph.microsoft.com');
+  if (uri == null || !uri.isAbsolute) return false;
+  final trusted = trustedBaseUrl == null || trustedBaseUrl.isEmpty
+      ? null
+      : Uri.tryParse(trustedBaseUrl);
+  if (trusted != null &&
+      trusted.isAbsolute &&
+      !_isMicrosoftGraphHost(trusted.host)) {
+    return uri.scheme == trusted.scheme &&
+        uri.host.toLowerCase() == trusted.host.toLowerCase() &&
+        uri.port == trusted.port;
+  }
+  return uri.scheme == 'https' && _isMicrosoftGraphHost(uri.host);
+}
+
+bool _isMicrosoftGraphHost(String host) {
+  final h = host.toLowerCase();
+  const graph = GraphEndpoints.microsoftGraphHost;
+  return h == graph || h.endsWith('.$graph');
 }
 
 // --- shared -----------------------------------------------------------------

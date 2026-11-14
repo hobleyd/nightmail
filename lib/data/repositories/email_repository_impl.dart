@@ -688,7 +688,14 @@ class EmailRepositoryImpl implements EmailRepository {
       if (reported.isLeft()) return reported;
       return reportJunk(id);
     }
-    if (datasource is PhishingReportDatasource) {
+    // A NightMail Server account is read through the Graph datasource too,
+    // but has no threat submission behind it: like Gmail and IMAP, its
+    // report is the junk move alone.
+    final onNightmailServer = switch (_accountManager.activeAccount) {
+      MicrosoftAccount(isNightmailServer: true) => true,
+      _ => false,
+    };
+    if (datasource is PhishingReportDatasource && !onNightmailServer) {
       final account = _accountManager.activeAccount;
       if (account != null &&
           !await _accountManager.hasThreatSubmissionAccess(account.id)) {

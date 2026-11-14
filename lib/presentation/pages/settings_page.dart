@@ -1535,6 +1535,8 @@ class _AccountsSectionState extends State<_AccountsSection> {
                       _AccountDetailRow(
                         label: 'Type',
                         value: switch (_selectedAccount!) {
+                          MicrosoftAccount(isNightmailServer: true) =>
+                            'NightMail Server',
                           MicrosoftAccount() => 'Microsoft',
                           GmailAccount() => 'Gmail',
                           ImapAccount() => 'IMAP',
@@ -1545,6 +1547,15 @@ class _AccountsSectionState extends State<_AccountsSection> {
                       // and MicrosoftAccount.clientId) — changing it here
                       // without a fresh sign-in would break this account's
                       // own token refresh.
+                      // Not editable either: the endpoints are what the
+                      // server published when the account was added.
+                      if (_selectedAccount case MicrosoftAccount(
+                        :final server?,
+                      ))
+                        _AccountDetailRow(
+                          label: 'Server',
+                          value: server.serverUrl ?? server.graphBaseUrl,
+                        ),
                       if (_selectedAccount is MicrosoftAccount)
                         _AccountDetailRow(
                           label: 'Client ID',

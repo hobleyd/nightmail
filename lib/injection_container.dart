@@ -27,6 +27,8 @@ import 'data/datasources/local/sender_local_datasource.dart';
 import 'data/datasources/local/sender_local_datasource_impl.dart';
 import 'data/repositories/calendar_repository_impl.dart';
 import 'data/repositories/cloud_drive_repository_impl.dart';
+import 'data/repositories/server_discovery_repository_impl.dart';
+import 'data/datasources/remote/nightware_discovery_datasource.dart';
 import 'data/repositories/contact_cache_repository_impl.dart';
 import 'data/repositories/contact_details_repository_impl.dart';
 import 'data/repositories/directory_contacts_repository_impl.dart';
@@ -76,6 +78,7 @@ import 'presentation/blocs/out_of_office/meeting_sweep_cubit.dart';
 import 'presentation/blocs/out_of_office/out_of_office_cubit.dart';
 import 'domain/repositories/calendar_repository.dart';
 import 'domain/repositories/cloud_drive_repository.dart';
+import 'domain/repositories/server_discovery_repository.dart';
 import 'domain/repositories/contact_details_repository.dart';
 import 'domain/repositories/contact_cache_repository.dart';
 import 'domain/repositories/directory_contacts_repository.dart';
@@ -90,6 +93,7 @@ import 'domain/usecases/check_sender_anomaly.dart';
 import 'domain/usecases/merge_sender_addresses.dart';
 import 'domain/usecases/cancel_calendar_event.dart';
 import 'domain/usecases/fetch_cloud_document.dart';
+import 'domain/usecases/discover_nightware_server.dart';
 import 'domain/usecases/check_attendees_availability.dart';
 import 'domain/usecases/get_meeting_rooms.dart';
 import 'domain/usecases/create_calendar_event.dart';
@@ -358,6 +362,17 @@ Future<void> configureDependencies() async {
       systemContacts: sl<SystemContactsRepository>(),
     ),
   );
+  // NightMail Server discovery (`/.well-known/nightware`), for the add-account
+  // screen's "NightMail Server" option. Its own Dio: see the AI note below on
+  // why there is no shared one.
+  sl.registerLazySingleton<NightwareDiscoveryDatasource>(
+    () => NightwareDiscoveryDatasourceImpl(),
+  );
+  sl.registerLazySingleton<ServerDiscoveryRepository>(
+    () => ServerDiscoveryRepositoryImpl(
+      datasource: sl<NightwareDiscoveryDatasource>(),
+    ),
+  );
   sl.registerLazySingleton<CloudDriveRepository>(
     () => CloudDriveRepositoryImpl(accountManager: sl<AccountManager>()),
   );
@@ -467,6 +482,8 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => OfficePreviewService());
   sl.registerLazySingleton(() => MarkdownPreviewService());
   sl.registerLazySingleton(() => FetchCloudDocument(sl<CloudDriveRepository>()));
+  sl.registerLazySingleton(
+      () => DiscoverNightwareServer(sl<ServerDiscoveryRepository>()));
   sl.registerLazySingleton(() => GetTaskLists(sl<TasksRepository>()));
   sl.registerLazySingleton(() => GetTasks(sl<TasksRepository>()));
   sl.registerLazySingleton(() => CreateTask(sl<TasksRepository>()));

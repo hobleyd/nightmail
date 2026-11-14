@@ -38,6 +38,7 @@ import '../http/google_people_http_client.dart';
 import '../http/google_tasks_http_client.dart';
 import '../http/graph_http_client.dart';
 import '../../domain/entities/cloud_document.dart';
+import '../../domain/entities/graph_endpoints.dart';
 import 'account.dart';
 import 'account_storage.dart';
 
@@ -196,18 +197,15 @@ class AccountManager {
     );
     if (account is! MicrosoftAccount) return null;
     final cfg = _microsoftAuthConfig(account);
-    final authSvc = MicrosoftAuthService(
-      clientId: cfg.clientId ?? AppConfig.microsoftClientId,
-      tenantId: cfg.tenantId,
-      redirectUri: AppConfig.microsoftRedirectUri,
-      tokenStorage: cfg.tokenStorage,
-    );
+    final authSvc = _microsoftAuthServiceFor(cfg);
     final ds = GraphApiDatasourceImpl(
+      betaBaseUrl: cfg.endpoints.graphBetaBaseUrl,
       mailboxAddress: cfg.mailboxAddress,
       client: GraphHttpClient(
         authService: authSvc,
         onAuthFailure: () => _authFailureController.add(cfg.credentialOwnerId),
         onAuthSuccess: () => _authSuccessController.add(cfg.credentialOwnerId),
+        baseUrl: cfg.endpoints.graphBaseUrl,
       ),
     );
     _directoryDatasourceCache[accountId] = ds;
@@ -224,19 +222,25 @@ class AccountManager {
   /// `/me/...`. [credentialOwnerId] is who a 401 should actually flag for
   /// re-auth — always the parent for a shared mailbox, which owns no
   /// credentials of its own to invalidate.
+  ///
+  /// [endpoints] are the credential owner's too: a shared mailbox is reached
+  /// through the same server its parent signed in to, whatever copy it holds.
   ({
     TokenStorage tokenStorage,
     String tenantId,
     String? clientId,
+    GraphEndpoints endpoints,
     String credentialOwnerId,
     String? mailboxAddress,
   })
   _microsoftAuthConfig(MicrosoftAccount account) {
     final ownerId = account.parentAccountId ?? account.id;
+    final owner = _credentialOwnerFor(account);
     return (
       tokenStorage: TokenStorage(_secureStorage, storageKey: 'token_$ownerId'),
       tenantId: account.tenantId,
       clientId: account.clientId,
+      endpoints: (owner is MicrosoftAccount ? owner : account).endpoints,
       credentialOwnerId: ownerId,
       mailboxAddress: account.parentAccountId != null
           ? account.emailAddress
@@ -341,8 +345,11 @@ class AccountManager {
   /// own, and the parent account is already in the list.
   List<Account> cloudDriveCandidates(CloudDriveProvider provider) {
     bool matches(Account a) => switch (provider) {
-      CloudDriveProvider.microsoft =>
-        a is MicrosoftAccount && a.parentAccountId == null,
+      // A NightMail Server has no SharePoint/OneDrive behind it, and would
+      // refuse Files.Read.All as a scope it never published.
+      CloudDriveProvider.microsoft => a is MicrosoftAccount &&
+          a.parentAccountId == null &&
+          !a.isNightmailServer,
       CloudDriveProvider.google => a is GmailAccount,
     };
     final active = activeAccount;
@@ -367,6 +374,7 @@ class AccountManager {
     final token = await authService.getStoredToken();
     if (token == null) return false;
     return switch (account) {
+      MicrosoftAccount(isNightmailServer: true) => false,
       MicrosoftAccount() => MicrosoftAuthService.grantsFileAccess(token.scope),
       GmailAccount() => GmailAuthService.grantsFileAccess(token.scope),
       _ => false,
@@ -386,6 +394,7 @@ class AccountManager {
     if (account == null) throw StateError('Unknown account: $accountId');
 
     final extraScopes = switch (account) {
+      MicrosoftAccount(isNightmailServer: true) => null,
       MicrosoftAccount() => const [MicrosoftAuthService.filesReadScope],
       GmailAccount() => const [GmailAuthService.driveReadonlyScope],
       ImapAccount() => null,
@@ -468,6 +477,11 @@ class AccountManager {
     final token = await authService.getStoredToken();
     if (token == null) return false;
     return switch (account) {
+      // No incremental consent on a NightMail Server: a token carries every
+      // scope the server published, and the Graph `MailboxSettings.ReadWrite`
+      // URI is not one it knows. Whether the write works is the server's
+      // answer to the save itself.
+      MicrosoftAccount(isNightmailServer: true) => true,
       MicrosoftAccount() => MicrosoftAuthService.grantsMailboxSettingsWrite(
         token.scope,
       ),
@@ -503,6 +517,8 @@ class AccountManager {
     // shared mailbox would land a second token under a key nothing reads.
     final account = _credentialOwnerFor(accountById(accountId));
     if (account == null) throw StateError('Unknown account: $accountId');
+    // Nothing to ask a NightMail Server for — see hasOutOfOfficeWriteAccess.
+    if (account is MicrosoftAccount && account.isNightmailServer) return true;
 
     final extraScopes = switch (account) {
       MicrosoftAccount() => const [
@@ -546,6 +562,9 @@ class AccountManager {
     // reads no token at all.
     final account = _credentialOwnerFor(accountById(accountId));
     if (account is! MicrosoftAccount) return false;
+    // Microsoft's channel only; a NightMail Server's report is a junk move,
+    // see EmailRepositoryImpl.reportPhishing.
+    if (account.isNightmailServer) return false;
     final authService = _buildOAuthServiceForAccount(account);
     if (authService == null) return false;
     final token = await authService.getStoredToken();
@@ -568,7 +587,7 @@ class AccountManager {
   Future<bool> requestThreatSubmissionAccess(String accountId) async {
     final account = _credentialOwnerFor(accountById(accountId));
     if (account == null) throw StateError('Unknown account: $accountId');
-    if (account is! MicrosoftAccount) return false;
+    if (account is! MicrosoftAccount || account.isNightmailServer) return false;
 
     final token = await _signInExistingAccount(
       account,
@@ -595,20 +614,18 @@ class AccountManager {
 
     final CloudDriveDatasource datasource;
     switch (account) {
+      case MicrosoftAccount(isNightmailServer: true):
+        return null;
       case MicrosoftAccount():
         final cfg = _microsoftAuthConfig(account);
         datasource = GraphDriveDatasourceImpl(
           client: GraphHttpClient(
-            authService: MicrosoftAuthService(
-              clientId: cfg.clientId ?? AppConfig.microsoftClientId,
-              tenantId: cfg.tenantId,
-              redirectUri: AppConfig.microsoftRedirectUri,
-              tokenStorage: cfg.tokenStorage,
-            ),
+            authService: _microsoftAuthServiceFor(cfg),
             onAuthFailure: () =>
                 _authFailureController.add(cfg.credentialOwnerId),
             onAuthSuccess: () =>
                 _authSuccessController.add(cfg.credentialOwnerId),
+            baseUrl: cfg.endpoints.graphBaseUrl,
           ),
         );
       case GmailAccount():
@@ -811,6 +828,7 @@ class AccountManager {
       tenantId: parent.tenantId,
       clientId: parent.clientId,
       parentAccountId: parentAccountId,
+      server: parent.server,
     );
     await addAccount(account);
     return account;
@@ -994,6 +1012,7 @@ class AccountManager {
         tokenStorage: tokenStorage,
         extraScopes: extraScopes,
         verifySignIn: verifySignIn,
+        endpoints: account.endpoints,
       ),
       // The email is what lets a Workspace account pick up the room-directory
       // scope on re-auth; see GmailAuthService._requestedScopes.
@@ -1037,7 +1056,8 @@ class AccountManager {
     List<String> extraScopes = const [],
   }) async {
     final SignedInMailboxLookup? lookup = switch (account) {
-      MicrosoftAccount() => GraphMailboxLookup(),
+      MicrosoftAccount() =>
+        GraphMailboxLookup(graphBaseUrl: account.endpoints.graphBaseUrl),
       GmailAccount() => GmailMailboxLookup(),
       ImapAccount() => null,
     };
@@ -1089,8 +1109,10 @@ class AccountManager {
   EmailRemoteDatasource buildEmailDatasourceForAccount(Account account) {
     switch (account) {
       case MicrosoftAccount():
+        final cfg = _microsoftAuthConfig(account);
         return GraphApiDatasourceImpl(
-          mailboxAddress: _microsoftAuthConfig(account).mailboxAddress,
+          mailboxAddress: cfg.mailboxAddress,
+          betaBaseUrl: cfg.endpoints.graphBetaBaseUrl,
           client: _graphClientFor(account),
         );
 
@@ -1121,18 +1143,35 @@ class AccountManager {
   /// one each call: it is stateless, unlike the IMAP datasource.
   GraphHttpClient _graphClientFor(MicrosoftAccount account) {
     final cfg = _microsoftAuthConfig(account);
-    final authSvc = MicrosoftAuthService(
-      clientId: cfg.clientId ?? AppConfig.microsoftClientId,
-      tenantId: cfg.tenantId,
-      redirectUri: AppConfig.microsoftRedirectUri,
-      tokenStorage: cfg.tokenStorage,
-    );
+    final authSvc = _microsoftAuthServiceFor(cfg);
     return GraphHttpClient(
       authService: authSvc,
       onAuthFailure: () => _authFailureController.add(cfg.credentialOwnerId),
       onAuthSuccess: () => _authSuccessController.add(cfg.credentialOwnerId),
+      baseUrl: cfg.endpoints.graphBaseUrl,
     );
   }
+
+  /// The auth service behind every Graph client for a resolved
+  /// [_microsoftAuthConfig]: the account's client id, tenant and endpoints —
+  /// Microsoft's, or its NightMail Server's.
+  MicrosoftAuthService _microsoftAuthServiceFor(
+    ({
+      TokenStorage tokenStorage,
+      String tenantId,
+      String? clientId,
+      GraphEndpoints endpoints,
+      String credentialOwnerId,
+      String? mailboxAddress,
+    }) cfg,
+  ) =>
+      MicrosoftAuthService(
+        clientId: cfg.clientId ?? AppConfig.microsoftClientId,
+        tenantId: cfg.tenantId,
+        redirectUri: AppConfig.microsoftRedirectUri,
+        tokenStorage: cfg.tokenStorage,
+        endpoints: cfg.endpoints,
+      );
 
   /// A Gmail client authenticating as [account]; likewise stateless.
   GmailHttpClient _gmailClientFor(GmailAccount account) {
@@ -1197,8 +1236,9 @@ class AccountManager {
     final override = _mailboxAddressesOverride;
     if (override != null) return override(account);
     return switch (account) {
-      MicrosoftAccount() =>
-        GraphMailboxLookup().addressesWith(_graphClientFor(account).dio),
+      MicrosoftAccount() => GraphMailboxLookup(
+          graphBaseUrl: _microsoftAuthConfig(account).endpoints.graphBaseUrl,
+        ).addressesWith(_graphClientFor(account).dio),
       GmailAccount() =>
         GmailMailboxLookup().addressesWith(_gmailClientFor(account).dio),
       ImapAccount() => Future.value(const []),
@@ -1233,20 +1273,17 @@ class AccountManager {
     switch (account) {
       case MicrosoftAccount():
         final cfg = _microsoftAuthConfig(account);
-        final authSvc = MicrosoftAuthService(
-          clientId: cfg.clientId ?? AppConfig.microsoftClientId,
-          tenantId: cfg.tenantId,
-          redirectUri: AppConfig.microsoftRedirectUri,
-          tokenStorage: cfg.tokenStorage,
-        );
+        final authSvc = _microsoftAuthServiceFor(cfg);
         final httpClient = GraphHttpClient(
           authService: authSvc,
           onAuthFailure: () =>
               _authFailureController.add(cfg.credentialOwnerId),
           onAuthSuccess: () =>
               _authSuccessController.add(cfg.credentialOwnerId),
+          baseUrl: cfg.endpoints.graphBaseUrl,
         );
         final ds = GraphApiDatasourceImpl(
+          betaBaseUrl: cfg.endpoints.graphBetaBaseUrl,
           client: httpClient,
           mailboxAddress: cfg.mailboxAddress,
         );
@@ -1325,13 +1362,9 @@ class AccountManager {
     switch (account) {
       case MicrosoftAccount():
         final cfg = _microsoftAuthConfig(account);
-        final authSvc = MicrosoftAuthService(
-          clientId: cfg.clientId ?? AppConfig.microsoftClientId,
-          tenantId: cfg.tenantId,
-          redirectUri: AppConfig.microsoftRedirectUri,
-          tokenStorage: cfg.tokenStorage,
-        );
+        final authSvc = _microsoftAuthServiceFor(cfg);
         return GraphApiDatasourceImpl(
+          betaBaseUrl: cfg.endpoints.graphBetaBaseUrl,
           mailboxAddress: cfg.mailboxAddress,
           client: GraphHttpClient(
             authService: authSvc,
@@ -1339,6 +1372,7 @@ class AccountManager {
                 _authFailureController.add(cfg.credentialOwnerId),
             onAuthSuccess: () =>
                 _authSuccessController.add(cfg.credentialOwnerId),
+            baseUrl: cfg.endpoints.graphBaseUrl,
           ),
         );
       case GmailAccount():
@@ -1377,13 +1411,9 @@ class AccountManager {
     switch (account) {
       case MicrosoftAccount():
         final cfg = _microsoftAuthConfig(account);
-        final authSvc = MicrosoftAuthService(
-          clientId: cfg.clientId ?? AppConfig.microsoftClientId,
-          tenantId: cfg.tenantId,
-          redirectUri: AppConfig.microsoftRedirectUri,
-          tokenStorage: cfg.tokenStorage,
-        );
+        final authSvc = _microsoftAuthServiceFor(cfg);
         return GraphApiDatasourceImpl(
+          betaBaseUrl: cfg.endpoints.graphBetaBaseUrl,
           mailboxAddress: cfg.mailboxAddress,
           client: GraphHttpClient(
             authService: authSvc,
@@ -1391,6 +1421,7 @@ class AccountManager {
                 _authFailureController.add(cfg.credentialOwnerId),
             onAuthSuccess: () =>
                 _authSuccessController.add(cfg.credentialOwnerId),
+            baseUrl: cfg.endpoints.graphBaseUrl,
           ),
         );
       case GmailAccount():

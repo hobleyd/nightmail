@@ -17,7 +17,7 @@ import 'adaptive_alert_dialog.dart';
 /// cloud-document and out-of-office consents, and a decline is an answer: the
 /// message is left where it is and nothing is reported.
 ///
-/// Gmail and IMAP have no report channel — reporting phishing there files the
+/// Gmail, IMAP and NightMail Server accounts have no report channel — reporting phishing there files the
 /// message as junk, which needs nothing extra — so they always go ahead. So
 /// does an account with a Phishing Inbox set: the report is mailed there
 /// instead, and Microsoft's channel is never used.
@@ -25,6 +25,9 @@ Future<bool> ensurePhishingReportAccess(BuildContext context) async {
   final accountManager = sl<AccountManager>();
   final account = accountManager.activeAccount;
   if (account is! MicrosoftAccount) return true;
+  // A NightMail Server has no report channel either — see
+  // EmailRepositoryImpl.reportPhishing.
+  if (account.isNightmailServer) return true;
   if (account.phishingInbox.trim().isNotEmpty) return true;
   if (await accountManager.hasThreatSubmissionAccess(account.id)) return true;
   if (!context.mounted) return false;

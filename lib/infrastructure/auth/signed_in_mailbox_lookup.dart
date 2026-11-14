@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show debugPrint;
 
+import '../../domain/entities/graph_endpoints.dart';
 import 'auth_token.dart';
 
 /// Asks the provider which mailbox a token answers for.
@@ -79,12 +80,21 @@ class GmailMailboxLookup implements SignedInMailboxLookup {
 /// `userPrincipalName` is what the user signs in with — the two differ in
 /// many tenants, and either may be what an account was recorded under —
 /// while `proxyAddresses` carries the aliases as `smtp:` entries.
+///
+/// [graphBaseUrl] is the account's Graph root (`GraphEndpoints.graphBaseUrl`).
+/// It matters more than it looks: [addressesFor] carries a token under test,
+/// and a NightMail Server's token sent to Microsoft's `/me` would both leak
+/// it and come back 401 — "could not tell" — quietly disabling the check.
 class GraphMailboxLookup implements SignedInMailboxLookup {
-  GraphMailboxLookup({Dio? http}) : _http = http ?? Dio();
+  GraphMailboxLookup({
+    Dio? http,
+    String graphBaseUrl = GraphEndpoints.microsoftGraphBaseUrl,
+  })  : _http = http ?? Dio(),
+        _url = '$graphBaseUrl/me';
 
   final Dio _http;
 
-  static const _url = 'https://graph.microsoft.com/v1.0/me';
+  final String _url;
 
   @override
   Future<List<String>> addressesFor(AuthToken token) =>

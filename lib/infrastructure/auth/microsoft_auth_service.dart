@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 
 import '../../core/error/exceptions.dart';
+import '../../domain/entities/graph_endpoints.dart';
 import 'auth_service.dart';
 import 'auth_token.dart';
 import 'oauth_state.dart';
@@ -24,6 +25,10 @@ import 'web_auth_stub.dart' if (dart.library.html) 'web_auth_web.dart';
 ///     application (for web)
 ///   - Redirect URI matching [redirectUri]
 ///   - API permissions: Mail.Read, Mail.ReadWrite, Mail.Send, Calendars.ReadWrite, Tasks.ReadWrite, offline_access
+///
+/// The same flow signs in to a NightMail Server: [endpoints] then names the
+/// server's authorization and token endpoints and the scopes it publishes, in
+/// place of Microsoft's authority for [tenantId] and the Graph scope list.
 class MicrosoftAuthService implements AuthService {
   MicrosoftAuthService({
     required this.clientId,
@@ -33,11 +38,20 @@ class MicrosoftAuthService implements AuthService {
     this.clientSecret,
     this.extraScopes = const [],
     this.verifySignIn,
+    GraphEndpoints? endpoints,
     Dio? httpClient,
-  })  : _http = httpClient ?? Dio();
+  })  : endpoints = endpoints ?? GraphEndpoints.microsoft(tenantId: tenantId),
+        _http = httpClient ?? Dio();
 
   final String clientId;
+
+  /// Microsoft's tenant, which picks the authority when [endpoints] is the
+  /// Microsoft default. Meaningless — and unused — for a NightMail Server.
   final String tenantId;
+
+  /// Where this account signs in, and what it asks for. Microsoft's endpoints
+  /// for [tenantId] unless given; see [GraphEndpoints].
+  final GraphEndpoints endpoints;
   final String redirectUri;
   final String? clientSecret;
   final TokenStorage _tokenStorage;
@@ -46,6 +60,9 @@ class MicrosoftAuthService implements AuthService {
   /// Scopes to request on top of [_scopes], for a flow that exists *only* to
   /// ask for them — today, file read access for the cloud-document preview
   /// ([filesReadScope]).
+  ///
+  /// Microsoft only: a NightMail Server is asked for exactly the scopes it
+  /// published, so these are dropped there — see [_signInScopes].
   ///
   /// Deliberately not part of [_scopes]. `Files.Read.All` is a scope a tenant
   /// may require an administrator to consent to, and an unconsented scope in
@@ -219,12 +236,25 @@ class MicrosoftAuthService implements AuthService {
   /// like it had lapsed. Asking for an incremental scope that was never
   /// consented to fails the refresh, so it is added only when the token proves
   /// it was.
-  List<String> _refreshScopes(AuthToken token) => [
-        ..._scopes,
-        if (grantsFileAccess(token.scope)) filesReadScope,
-        if (grantsMailboxSettingsWrite(token.scope)) mailboxSettingsWriteScope,
-        if (grantsThreatSubmission(token.scope)) threatSubmissionScope,
-      ];
+  ///
+  /// A NightMail Server is asked for exactly what it published, every time:
+  /// the incremental scopes are Graph permission URIs only Microsoft knows.
+  List<String> _refreshScopes(AuthToken token) => endpoints.isMicrosoft
+      ? [
+          ..._scopes,
+          if (grantsFileAccess(token.scope)) filesReadScope,
+          if (grantsMailboxSettingsWrite(token.scope))
+            mailboxSettingsWriteScope,
+          if (grantsThreatSubmission(token.scope)) threatSubmissionScope,
+        ]
+      : _serverScopes;
+
+  /// What an interactive sign-in asks for: the base set plus [extraScopes]
+  /// for Microsoft, the published set alone for a NightMail Server.
+  List<String> get _signInScopes =>
+      endpoints.isMicrosoft ? [..._scopes, ...extraScopes] : _serverScopes;
+
+  List<String> get _serverScopes => endpoints.scopes ?? const [];
 
   /// [_refreshScopes], for tests. A refresh that drops an incremental scope
   /// hands back a token without it an hour after the user granted it, and the
@@ -238,8 +268,25 @@ class MicrosoftAuthService implements AuthService {
   @visibleForTesting
   static List<String> get baseScopes => List.unmodifiable(_scopes);
 
-  String get _baseUrl =>
-      'https://login.microsoftonline.com/$tenantId/oauth2/v2.0';
+  /// The authorization request [signIn] opens, visible so the endpoint and
+  /// the scopes it carries can be pinned without driving a browser.
+  @visibleForTesting
+  Uri buildAuthorizationUri({
+    required String codeChallenge,
+    required String state,
+  }) =>
+      Uri.parse(endpoints.authorizationEndpoint).replace(
+        queryParameters: {
+          'client_id': clientId,
+          'response_type': 'code',
+          'redirect_uri': _effectiveRedirectUri,
+          'scope': _signInScopes.join(' '),
+          'code_challenge': codeChallenge,
+          'code_challenge_method': 'S256',
+          'state': state,
+          'response_mode': 'query',
+        },
+      );
 
   @override
   Future<AuthToken> signIn() async {
@@ -249,18 +296,8 @@ class MicrosoftAuthService implements AuthService {
     // only ever be checked against the state the flow it belongs to sent.
     final state = generateOAuthState();
 
-    final authUri = Uri.parse('$_baseUrl/authorize').replace(
-      queryParameters: {
-        'client_id': clientId,
-        'response_type': 'code',
-        'redirect_uri': _effectiveRedirectUri,
-        'scope': [..._scopes, ...extraScopes].join(' '),
-        'code_challenge': codeChallenge,
-        'code_challenge_method': 'S256',
-        'state': state,
-        'response_mode': 'query',
-      },
-    );
+    final authUri =
+        buildAuthorizationUri(codeChallenge: codeChallenge, state: state);
 
     // On web, flutter_web_auth_2 is bypassed because Microsoft's COOP headers
     // sever window.opener in the popup, breaking its postMessage approach.
@@ -363,7 +400,7 @@ class MicrosoftAuthService implements AuthService {
 
     try {
       final response = await _http.post(
-        '$_baseUrl/token',
+        endpoints.tokenEndpoint,
         data: {
           'client_id': clientId,
           'grant_type': 'refresh_token',
@@ -418,7 +455,7 @@ class MicrosoftAuthService implements AuthService {
     final AuthToken token;
     try {
       final response = await _http.post(
-        '$_baseUrl/token',
+        endpoints.tokenEndpoint,
         data: {
           'client_id': clientId,
           'grant_type': 'authorization_code',

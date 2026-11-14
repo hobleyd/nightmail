@@ -232,3 +232,40 @@ its own 401s, said to sign in again. The retry now carries a mark and is not
 refreshed again; a 401 on it, or a 401 with no refresh token to try, fires
 `onAuthFailure`, and `onAuthSuccess` waits for a retry that is not refused.
 Both outcomes are `debugPrint`ed as `[Auth] …` lines in `diagnostics.log`.
+
+## A Graph Account Can Live on a NightMail Server
+
+The add-account screens' *NightMail Server* button adds a `MicrosoftAccount`
+whose `server` holds a `GraphEndpoints` (`domain/entities/graph_endpoints.dart`)
+discovered from `<server>/.well-known/nightware`
+(`NightwareDiscoveryDatasource`, `GraphEndpointsModel.fromDiscoveryJson`).
+It signs in through `MicrosoftAuthService` — same PKCE, `state` and redirect
+URIs — against the server's authorization/token endpoints, and syncs through
+`GraphApiDatasourceImpl` against its Graph roots. Everything else about it is
+a Microsoft account.
+
+Load-bearing:
+
+- **A null `server` is Microsoft, derived from `tenantId`, and never stored.**
+  `GraphEndpoints.microsoft` is exactly the URLs that were hardcoded before,
+  and `toJson` omits the field, so every existing account loads and saves
+  byte-for-byte as it did. There is no migration because absence is the
+  default. `fromStorageJson` never throws — `AccountStorage.loadAccounts`
+  returns *no accounts* on any throw — and a damaged block still reads as a
+  server, never as Microsoft.
+- **No Microsoft URL outside `graph_endpoints.dart`.** Every Graph client,
+  datasource, `GraphMailboxLookup` and auth service the app builds takes the
+  account's endpoints (`AccountManager._microsoftAuthConfig` resolves them from
+  the credential owner, so a shared mailbox follows its parent). A stray
+  absolute `https://graph.microsoft.com/...` sends a server account's token to
+  Microsoft and fails as a quiet 401; `no_hardcoded_graph_urls_test.dart`
+  fails on one. `isGraphUrl` trusts a server account's next/delta links only
+  on its own scheme, host and port.
+- **The server is asked for exactly the scopes it published.** Microsoft's
+  incremental scopes (`Files.Read.All`, `MailboxSettings.ReadWrite`,
+  `ThreatSubmission.ReadWrite`) are Graph permission URIs it does not know, so
+  `MicrosoftAuthService` drops `extraScopes` and refreshes with the published
+  list, and `AccountManager` never asks: SharePoint/OneDrive previews skip
+  server accounts, out-of-office needs no consent, and *Report phishing* is a
+  junk move (or the Phishing Inbox) as on Gmail. `tenantId` is the placeholder
+  `MicrosoftAccount.nightmailServerTenantId`.

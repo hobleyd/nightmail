@@ -12,6 +12,7 @@ import '../../../domain/entities/email_attachment.dart';
 import '../../../domain/entities/local_attachment.dart';
 import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/email.dart';
+import '../../../domain/entities/graph_endpoints.dart';
 import '../../../domain/entities/inline_attachment.dart';
 import '../../../domain/entities/calendar_recurrence.dart';
 import '../../../domain/entities/meeting_invite.dart';
@@ -106,15 +107,38 @@ class GraphApiDatasourceImpl
         MailDeltaDatasource,
         OutOfOfficeDatasource,
         PhishingReportDatasource {
-  GraphApiDatasourceImpl({required GraphHttpClient client, String? mailboxAddress})
-      : _dio = client.dio,
+  GraphApiDatasourceImpl({
+    required GraphHttpClient client,
+    String? mailboxAddress,
+    String betaBaseUrl = GraphEndpoints.microsoftGraphBetaBaseUrl,
+  })  : _dio = client.dio,
+        _graphBase = client.dio.options.baseUrl,
+        _betaBase = betaBaseUrl,
         _base = mailboxAddress == null ? '/me' : '/users/$mailboxAddress';
 
   @visibleForTesting
-  GraphApiDatasourceImpl.withDio(this._dio, {String? mailboxAddress})
-      : _base = mailboxAddress == null ? '/me' : '/users/$mailboxAddress';
+  GraphApiDatasourceImpl.withDio(
+    this._dio, {
+    String? mailboxAddress,
+    String? graphBaseUrl,
+    String betaBaseUrl = GraphEndpoints.microsoftGraphBetaBaseUrl,
+  })  : _graphBase = graphBaseUrl,
+        _betaBase = betaBaseUrl,
+        _base = mailboxAddress == null ? '/me' : '/users/$mailboxAddress';
 
   final Dio _dio;
+
+  /// The account's Graph beta root ([GraphEndpoints.graphBetaBaseUrl]), for
+  /// the few calls Microsoft never promoted to v1.0. Absolute, because the
+  /// client's base URL is the v1.0 root.
+  final String _betaBase;
+
+  /// The v1.0 root the client sends to, which is also the only origin a
+  /// `@odata.nextLink`/`@odata.deltaLink` is followed to — see [isGraphUrl].
+  /// Captured at construction rather than read off [_dio] per call; null
+  /// (a test's bare Dio) keeps the Microsoft rule.
+  final String? _graphBase;
+  String? get _trustedBase => _graphBase;
 
   // '/me' for the signed-in account, or '/users/{sharedMailboxAddress}' when
   // this instance was built for a shared mailbox (see AccountManager's
@@ -124,6 +148,12 @@ class GraphApiDatasourceImpl
 
   @visibleForTesting
   String get mailboxBase => _base;
+
+  /// The Graph roots this instance talks to — the account's, see
+  /// `GraphEndpoints`.
+  @visibleForTesting
+  ({String v1, String beta}) get graphRoots =>
+      (v1: _graphBase ?? '', beta: _betaBase);
 
   // Recurrence JSON per series-master id. calendarView expands each series into
   // occurrences that don't carry the `recurrence` pattern — only the master
@@ -2288,7 +2318,7 @@ class GraphApiDatasourceImpl
       final body = resp.data;
       if (body == null || body.isEmpty) break;
       pages.add(body);
-      nextLink = graphNextLink(body);
+      nextLink = graphNextLink(body, trustedBaseUrl: _trustedBase);
       if (nextLink == null) return (pages: pages, truncated: false);
     }
     return (pages: pages, truncated: nextLink != null);
@@ -2645,9 +2675,17 @@ class GraphApiDatasourceImpl
   /// Report button does — the tenant's Submissions portal, "User reported".
   /// Needs `ThreatSubmission.ReadWrite`, asked for incrementally; see
   /// `MicrosoftAuthService.threatSubmissionScope`.
+  ///
+  /// This is Microsoft's; the instance posts to its own beta root
+  /// ([_threatSubmissionUrl]), though a NightMail Server account never gets
+  /// here — `EmailRepositoryImpl.reportPhishing` files it as junk instead.
   @visibleForTesting
   static const threatSubmissionEndpoint =
-      'https://graph.microsoft.com/beta/security/threatSubmission/emailThreats';
+      '${GraphEndpoints.microsoftGraphBetaBaseUrl}$_threatSubmissionPath';
+
+  static const _threatSubmissionPath = '/security/threatSubmission/emailThreats';
+
+  String get _threatSubmissionUrl => '$_betaBase$_threatSubmissionPath';
 
   /// Who this instance's mailbox is, for [submitPhishingReport]: the `users/…`
   /// path segment Graph resolves the message under, and the address the
@@ -2689,7 +2727,7 @@ class GraphApiDatasourceImpl
     try {
       final mailbox = await _resolveMailboxIdentity();
       await _dio.post<Map<String, dynamic>>(
-        threatSubmissionEndpoint,
+        _threatSubmissionUrl,
         data: {
           '@odata.type': '#microsoft.graph.security.emailUrlThreatSubmission',
           'category': 'phishing',
@@ -2697,7 +2735,7 @@ class GraphApiDatasourceImpl
           // `messageUrl`, not `messageUri`: the beta resource's property. The
           // v1.0 spelling belongs to threatAssessmentRequests, a different API.
           'messageUrl':
-              'https://graph.microsoft.com/beta/${mailbox.userPath}/messages/$id',
+              '$_betaBase/${mailbox.userPath}/messages/$id',
         },
       );
     } on DioException catch (e) {
@@ -3155,8 +3193,10 @@ class GraphApiDatasourceImpl
         // stands in as the token once the budget is spent — the replay branch
         // above follows a nextLink exactly as it follows a delta link, so the
         // next poll resumes where this one stopped rather than starting over.
-        final link = graphDeltaLink(raw) ??
-            (pagesFetched >= _deltaPageBudget ? graphNextLink(raw) : null);
+        final link = graphDeltaLink(raw, trustedBaseUrl: _trustedBase) ??
+            (pagesFetched >= _deltaPageBudget
+                ? graphNextLink(raw, trustedBaseUrl: _trustedBase)
+                : null);
         if (link != null) {
           final parsed = await compute(parseGraphDeltaPages, rawPages);
           return MailDeltaResult(
@@ -3168,7 +3208,7 @@ class GraphApiDatasourceImpl
           );
         }
 
-        nextUrl = graphNextLink(raw);
+        nextUrl = graphNextLink(raw, trustedBaseUrl: _trustedBase);
         if (nextUrl == null) break;
       }
     } on DioException catch (e) {
@@ -3342,7 +3382,7 @@ class GraphApiDatasourceImpl
   Future<List<MeetingRoom>> _fetchRoomsFromFindRooms() async {
     try {
       final response = await _dio.get<Map<String, dynamic>>(
-        'https://graph.microsoft.com/beta/me/findRooms',
+        '$_betaBase/me/findRooms',
       );
       final value = response.data?['value'] as List<dynamic>? ?? const [];
       return value

@@ -315,14 +315,15 @@ final _graphDeltaLinkPattern =
 /// inside a JSON string value is always `\"`. It is still passed through
 /// [isGraphUrl] before being returned, so a link this app would go on to GET
 /// with the account's bearer token attached has to be Graph's own host.
-String? graphDeltaLink(String body) {
+/// [trustedBaseUrl] is the account's Graph root, as for `graphNextLink`.
+String? graphDeltaLink(String body, {String? trustedBaseUrl}) {
   // Written as two adjacent literals so the sequence is not itself read as a
   // Dart escape.
   const ampersandEscape = '\\' 'u0026';
   final raw = _graphDeltaLinkPattern.firstMatch(body)?.group(1);
   if (raw == null) return null;
   final url = raw.replaceAll(r'\/', '/').replaceAll(ampersandEscape, '&');
-  return isGraphUrl(url) ? url : null;
+  return isGraphUrl(url, trustedBaseUrl: trustedBaseUrl) ? url : null;
 }
 
 /// Decodes a Graph attachment response's `contentBytes` to bytes. `compute()`

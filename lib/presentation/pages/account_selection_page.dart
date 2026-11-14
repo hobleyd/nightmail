@@ -22,6 +22,7 @@ import '../../infrastructure/http/graph_http_client.dart';
 import '../../injection_container.dart';
 import '../blocs/account/account_cubit.dart';
 import '../widgets/client_id_dialog.dart';
+import '../widgets/nightmail_server_sign_in.dart';
 
 /// Shown when no accounts are configured. Lets the user choose a provider.
 class AccountSelectionPage extends StatefulWidget {
@@ -104,6 +105,33 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
         clientId: clientId,
       ).withMailboxAddresses(addresses);
 
+      if (mounted) {
+        await accountCubit.addAccount(account);
+      }
+    } on AuthException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  /// A Graph account on a NightMail Server rather than Microsoft 365 — see
+  /// [signInToNightmailServer].
+  Future<void> _signInNightmailServer() async {
+    final accountCubit = context.read<AccountCubit>();
+
+    final serverUrl = await showNightmailServerDialog(context);
+    if (serverUrl == null || !mounted) return;
+
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final account = await signInToNightmailServer(serverUrl);
       if (mounted) {
         await accountCubit.addAccount(account);
       }
@@ -271,6 +299,17 @@ class _AccountSelectionPageState extends State<AccountSelectionPage> {
                       icon: _GmailIcon(),
                       color: const Color(0xFF1A73E8),
                       onTap: () => _signInGmail(workspace: true),
+                    ),
+                    const SizedBox(height: 12),
+                    _ProviderButton(
+                      label: 'NightMail Server',
+                      icon: const Icon(
+                        Icons.dns_outlined,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                      color: const Color(0xFF111827),
+                      onTap: _signInNightmailServer,
                     ),
                     const SizedBox(height: 12),
                     _ProviderButton(

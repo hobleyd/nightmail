@@ -1,19 +1,24 @@
 import 'package:dio/dio.dart';
 
+import '../../domain/entities/graph_endpoints.dart';
 import '../auth/auth_service.dart';
 import 'auth_interceptor.dart';
 import 'retry_interceptor.dart';
 
 /// Dio instance pre-configured for Microsoft Graph API calls.
 /// Automatically injects the Bearer token and refreshes it on 401.
+///
+/// [baseUrl] is the account's Graph v1.0 root ([GraphEndpoints.graphBaseUrl]):
+/// Microsoft's unless the account is on a NightMail Server.
 class GraphHttpClient {
   GraphHttpClient({
     required AuthService authService,
     void Function()? onAuthFailure,
     void Function()? onAuthSuccess,
+    String baseUrl = GraphEndpoints.microsoftGraphBaseUrl,
   }) {
     _dio = Dio(BaseOptions(
-      baseUrl: 'https://graph.microsoft.com/v1.0',
+      baseUrl: baseUrl,
       headers: {
         'Accept': 'application/json',
         'Content-Type': 'application/json',

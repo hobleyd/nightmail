@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nightmail/domain/entities/graph_endpoints.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 
 void main() {
@@ -247,6 +250,98 @@ void main() {
         final json = account.toJson()..remove('phishingInbox');
         expect(Account.fromJson(json).phishingInbox, isEmpty);
       }
+    });
+  });
+
+  /// A NightMail Server account is a MicrosoftAccount that carries the
+  /// server's endpoints. Every account stored before that existed has no such
+  /// field and must load as Microsoft — and save back byte-for-byte.
+  group('MicrosoftAccount.server', () {
+    const server = GraphEndpoints(
+      graphBaseUrl: 'https://mail.example.com/graph/v1.0',
+      graphBetaBaseUrl: 'https://mail.example.com/graph/beta',
+      authorizationEndpoint: 'https://mail.example.com/oauth2/authorize',
+      tokenEndpoint: 'https://mail.example.com/oauth2/token',
+      clientId: 'nightmail',
+      scopes: ['openid', 'email', 'profile', 'offline_access'],
+      serverUrl: 'https://mail.example.com',
+    );
+    const serverAccount = MicrosoftAccount(
+      id: 'nw-1',
+      displayName: 'Me',
+      emailAddress: 'me@example.com',
+      tenantId: MicrosoftAccount.nightmailServerTenantId,
+      clientId: 'nightmail',
+      server: server,
+    );
+
+    // As 1.44.0 wrote it.
+    const legacyJson = <String, dynamic>{
+      'type': 'microsoft',
+      'id': 'ms-1',
+      'displayName': 'Alice',
+      'emailAddress': 'alice@contoso.com',
+      'aliases': ['a@contoso.com'],
+      'tenantId': 'contoso-tenant',
+      'clientId': 'custom-client',
+      'firstName': 'Alice',
+      'lastName': 'Smith',
+      'jobTitle': '',
+      'phone': '',
+      'mobile': '',
+      'address': '',
+      'signatureHtml': '<p>sig</p>',
+      'phishingInbox': '',
+    };
+
+    test('an account stored before servers existed loads as Microsoft', () {
+      final account = Account.fromJson(legacyJson) as MicrosoftAccount;
+      expect(account.server, isNull);
+      expect(account.isNightmailServer, isFalse);
+      expect(account.endpoints,
+          GraphEndpoints.microsoft(tenantId: 'contoso-tenant'));
+    });
+
+    test('and saves back byte-for-byte', () {
+      final account = Account.fromJson(legacyJson);
+      expect(jsonEncode(account.toJson()), jsonEncode(legacyJson));
+      expect(account.toJson().containsKey('nightmailServer'), isFalse);
+    });
+
+    test('a legacy account with no tenant still defaults to common', () {
+      final json = Map<String, dynamic>.of(legacyJson)..remove('tenantId');
+      expect((Account.fromJson(json) as MicrosoftAccount).endpoints,
+          GraphEndpoints.microsoft(tenantId: 'common'));
+    });
+
+    test('a server account round-trips its configuration', () {
+      final restored = Account.fromJson(
+              jsonDecode(jsonEncode(serverAccount.toJson()))
+                  as Map<String, dynamic>)
+          as MicrosoftAccount;
+      expect(restored, serverAccount);
+      expect(restored.server, server);
+      expect(restored.isNightmailServer, isTrue);
+      expect(restored.endpoints, server);
+    });
+
+    test('copyWith and withMailboxAddresses keep the server', () {
+      // add-account calls withMailboxAddresses before saving: dropping the
+      // server there would save a brand-new server account as Microsoft.
+      expect(serverAccount.copyWith(displayName: 'X').server, server);
+      final learned = serverAccount
+          .withMailboxAddresses(['me@example.com', 'alias@example.com'])
+          as MicrosoftAccount;
+      expect(learned.server, server);
+      expect(learned.aliases, ['alias@example.com']);
+    });
+
+    test('a damaged stored block never throws or reads as Microsoft', () {
+      final json = Map<String, dynamic>.of(legacyJson)
+        ..['nightmailServer'] = <String, dynamic>{'graphBaseUrl': 7};
+      final account = Account.fromJson(json) as MicrosoftAccount;
+      expect(account.isNightmailServer, isTrue);
+      expect(account.endpoints.isMicrosoft, isFalse);
     });
   });
 }

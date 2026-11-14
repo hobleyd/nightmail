@@ -15,6 +15,7 @@ import 'package:nightmail/data/models/email_address_model.dart';
 import 'package:nightmail/data/models/email_folder_model.dart';
 import 'package:nightmail/data/models/email_model.dart';
 import 'package:nightmail/data/repositories/email_repository_impl.dart';
+import 'package:nightmail/domain/entities/graph_endpoints.dart';
 import 'package:nightmail/domain/entities/email.dart';
 import 'package:nightmail/domain/entities/email_attachment.dart';
 import 'package:nightmail/domain/entities/email_folder.dart';
@@ -2112,6 +2113,45 @@ void main() {
       verifyNever(mockAccountManager.hasThreatSubmissionAccess(any));
       verify(mockPendingOperations.enqueue(
         accountId: 'account-1',
+        emailId: 'email-1',
+        folderId: anyNamed('folderId'),
+        opType: PendingOperationType.junk,
+        payload: anyNamed('payload'),
+      )).called(1);
+    });
+
+    test('a NightMail Server account is read through Graph but has no '
+        'threat submission: the report is the junk move alone', () async {
+      const nw = MicrosoftAccount(
+        id: 'nw-1',
+        displayName: 'Server',
+        emailAddress: 'me@example.com',
+        tenantId: MicrosoftAccount.nightmailServerTenantId,
+        server: GraphEndpoints(
+          graphBaseUrl: 'https://mail.example.com/graph/v1.0',
+          graphBetaBaseUrl: 'https://mail.example.com/graph/beta',
+          authorizationEndpoint: 'https://mail.example.com/oauth2/authorize',
+          tokenEndpoint: 'https://mail.example.com/oauth2/token',
+          clientId: 'nightmail',
+          scopes: ['openid'],
+          serverUrl: 'https://mail.example.com',
+        ),
+      );
+      final ds = _FakePhishingCapableDatasource();
+      when(mockAccountManager.emailDatasource).thenReturn(ds);
+      when(mockAccountManager.activeAccount).thenReturn(nw);
+      when(mockLocalDatasource.deleteEmailFromCache(
+        accountId: anyNamed('accountId'),
+        emailId: anyNamed('emailId'),
+      )).thenAnswer((_) async {});
+
+      final result = await repository.reportPhishing('email-1');
+
+      expect(result.isRight(), isTrue);
+      expect(ds.submitted, isEmpty);
+      verifyNever(mockAccountManager.hasThreatSubmissionAccess(any));
+      verify(mockPendingOperations.enqueue(
+        accountId: 'nw-1',
         emailId: 'email-1',
         folderId: anyNamed('folderId'),
         opType: PendingOperationType.junk,

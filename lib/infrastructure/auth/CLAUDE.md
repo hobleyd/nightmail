@@ -272,4 +272,10 @@ Load-bearing:
 - **`filesBaseUrls` is the one optional discovery field**, and the one parsed
   leniently: a bad entry is dropped, never a reason the server cannot be
   added. It turns on Nextcloud link previews through the server's `/shares`
-  (see `docs/claude/body-links.md`).
+  (see `docs/claude/body-links.md`). It is also the one field re-read after
+  sign-in: `AccountCubit` asks each server again at startup
+  (`AccountManager.refreshServerFileSites`), so an account added before its
+  server published file sites gets them without being re-added. Only the file
+  sites are adopted, and only while the Graph roots, endpoints, client and
+  scopes are unchanged — a server that moved those needs a fresh sign-in, not
+  a silent rewrite of stored endpoints.

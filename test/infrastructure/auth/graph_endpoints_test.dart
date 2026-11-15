@@ -28,6 +28,64 @@ void main() {
     serverUrl: 'https://mail.example.com',
   );
 
+  group('withFileSitesFrom', () {
+    GraphEndpoints rediscovered({
+      String tokenEndpoint = 'https://mail.example.com/oauth2/token',
+      List<String>? scopes = const [
+        'openid',
+        'email',
+        'profile',
+        'offline_access',
+      ],
+      List<String> files = const ['https://cloud.example.com'],
+    }) =>
+        GraphEndpoints(
+          graphBaseUrl: server.graphBaseUrl,
+          graphBetaBaseUrl: server.graphBetaBaseUrl,
+          authorizationEndpoint: server.authorizationEndpoint,
+          tokenEndpoint: tokenEndpoint,
+          clientId: server.clientId,
+          scopes: scopes,
+          serverUrl: 'https://other-input.example.com',
+          filesBaseUrls: files,
+        );
+
+    test('adopts the file sites and keeps everything else as stored', () {
+      final updated = server.withFileSitesFrom(rediscovered());
+
+      expect(updated.filesBaseUrls, ['https://cloud.example.com']);
+      expect(updated.serverUrl, server.serverUrl);
+      expect(updated.tokenEndpoint, server.tokenEndpoint);
+    });
+
+    test('a server that stopped publishing file sites turns them off', () {
+      final withSites = server.withFileSitesFrom(rediscovered());
+
+      expect(
+          withSites
+              .withFileSitesFrom(rediscovered(files: const []))
+              .filesBaseUrls,
+          isEmpty);
+    });
+
+    test('returns itself when nothing changed or the server moved', () {
+      expect(
+          identical(
+              server.withFileSitesFrom(rediscovered(files: const [])), server),
+          isTrue);
+      expect(
+          identical(
+              server.withFileSitesFrom(
+                  rediscovered(tokenEndpoint: 'https://elsewhere/token')),
+              server),
+          isTrue);
+      expect(
+          identical(server.withFileSitesFrom(rediscovered(scopes: null)),
+              server),
+          isTrue);
+    });
+  });
+
   group('GraphEndpoints.microsoft', () {
     test('is the previously hardcoded Graph and authority URLs', () {
       final ms = GraphEndpoints.microsoft(tenantId: 'contoso-tenant');

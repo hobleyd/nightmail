@@ -1256,6 +1256,47 @@ class AccountManager {
     }
   }
 
+  /// Asks each NightMail Server the accounts live on for its discovery
+  /// document again ([discover] answers null when it cannot be had) and adopts
+  /// the file sites it now publishes. Discovery is otherwise only read when an
+  /// account is added, so without this a server that starts publishing
+  /// `filesBaseUrls` — or an account added before servers could — never turns
+  /// on Nextcloud link previews. Returns whether any account changed.
+  Future<bool> refreshServerFileSites(
+    Future<GraphEndpoints?> Function(String serverUrl) discover,
+  ) async {
+    final serverUrls = {
+      for (final account in _accounts)
+        if (account case MicrosoftAccount(:final server?)
+            when server.serverUrl != null)
+          server.serverUrl!,
+    };
+    var changed = false;
+    for (final serverUrl in serverUrls) {
+      final GraphEndpoints? rediscovered;
+      try {
+        rediscovered = await discover(serverUrl);
+      } catch (_) {
+        continue;
+      }
+      if (rediscovered == null) continue;
+      // Re-read after the round trip, as ensureEmailPopulated does: shared
+      // mailboxes carry their parent's copy and are refreshed with it.
+      for (final account in List<Account>.of(_accounts)) {
+        if (account is! MicrosoftAccount ||
+            account.server?.serverUrl != serverUrl) {
+          continue;
+        }
+        final updated = account.withRediscoveredServer(rediscovered);
+        if (identical(updated, account)) continue;
+        _driveDatasourceCache.remove(account.id);
+        await updateAccount(updated);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
   static bool _lacksMailboxAddresses(Account account) => switch (account) {
         ImapAccount() => false,
         MicrosoftAccount(isSharedMailbox: true) => false,

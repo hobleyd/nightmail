@@ -84,6 +84,42 @@ class GraphEndpoints extends Equatable {
   /// discovered before servers could (the feature is simply off there).
   final List<String> filesBaseUrls;
 
+  /// These endpoints with the file sites [rediscovered] now publishes, when
+  /// it is still the same sign-in and sync configuration; otherwise these,
+  /// unchanged. Only the file sites are adopted: a server that moved its Graph
+  /// root, token endpoint, client or scopes needs a fresh sign-in, which a
+  /// silent rewrite of stored endpoints would only turn into a confusing 401.
+  GraphEndpoints withFileSitesFrom(GraphEndpoints rediscovered) {
+    final sameServer = graphBaseUrl == rediscovered.graphBaseUrl &&
+        graphBetaBaseUrl == rediscovered.graphBetaBaseUrl &&
+        authorizationEndpoint == rediscovered.authorizationEndpoint &&
+        tokenEndpoint == rediscovered.tokenEndpoint &&
+        clientId == rediscovered.clientId &&
+        _sameList(scopes, rediscovered.scopes);
+    if (!sameServer || _sameList(filesBaseUrls, rediscovered.filesBaseUrls)) {
+      return this;
+    }
+    return GraphEndpoints(
+      graphBaseUrl: graphBaseUrl,
+      graphBetaBaseUrl: graphBetaBaseUrl,
+      authorizationEndpoint: authorizationEndpoint,
+      tokenEndpoint: tokenEndpoint,
+      clientId: clientId,
+      scopes: scopes,
+      serverUrl: serverUrl,
+      filesBaseUrls: List.unmodifiable(rediscovered.filesBaseUrls),
+    );
+  }
+
+  static bool _sameList(List<String>? a, List<String>? b) {
+    if (a == null || b == null) return a == b;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
   /// Whether these are Microsoft's endpoints. Features that only exist there —
   /// threat submission, SharePoint/OneDrive previews, incremental Graph
   /// consent — check this.

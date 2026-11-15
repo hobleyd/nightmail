@@ -251,6 +251,34 @@ final class MicrosoftAccount extends Account {
     );
   }
 
+  /// This account with the file sites its NightMail Server [rediscovered]
+  /// now publishes (see [GraphEndpoints.withFileSitesFrom]), or itself on a
+  /// Microsoft account or when nothing changed.
+  MicrosoftAccount withRediscoveredServer(GraphEndpoints rediscovered) {
+    final current = server;
+    if (current == null) return this;
+    final updated = current.withFileSitesFrom(rediscovered);
+    if (identical(updated, current)) return this;
+    return MicrosoftAccount(
+      id: id,
+      displayName: displayName,
+      emailAddress: emailAddress,
+      aliases: aliases,
+      tenantId: tenantId,
+      clientId: clientId,
+      parentAccountId: parentAccountId,
+      server: updated,
+      firstName: firstName,
+      lastName: lastName,
+      jobTitle: jobTitle,
+      phone: phone,
+      mobile: mobile,
+      address: address,
+      signatureHtml: signatureHtml,
+      phishingInbox: phishingInbox,
+    );
+  }
+
   factory MicrosoftAccount.fromJson(Map<String, dynamic> json) {
     return MicrosoftAccount(
       id: json['id'] as String,

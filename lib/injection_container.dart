@@ -531,6 +531,7 @@ Future<void> configureDependencies() async {
       calendarCacheSync: sl<CalendarCacheSyncService>(),
       contactCacheSync: sl<ContactCacheSyncService>(),
       taskReminderService: sl<TaskReminderService>(),
+      discoverServer: sl<DiscoverNightwareServer>(),
     ),
   );
   sl.registerLazySingleton(

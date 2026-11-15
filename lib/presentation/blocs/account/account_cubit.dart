@@ -8,6 +8,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../../domain/repositories/email_repository.dart';
+import '../../../domain/usecases/discover_nightware_server.dart';
 import '../../../infrastructure/accounts/account.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
 import '../../../infrastructure/calendar/calendar_cache_sync_service.dart';
@@ -80,6 +81,7 @@ class AccountCubit extends Cubit<AccountState> {
     required this._calendarCacheSync,
     required this._contactCacheSync,
     required this._taskReminderService,
+    required this._discoverServer,
   })  : super(const AccountLoading()) {
     _authFailureSub = _accountManager.authFailures.listen(_onAuthFailure);
     _authSuccessSub = _accountManager.authSuccesses.listen(_onAuthSuccess);
@@ -91,6 +93,7 @@ class AccountCubit extends Cubit<AccountState> {
   final CalendarCacheSyncService _calendarCacheSync;
   final ContactCacheSyncService _contactCacheSync;
   final TaskReminderService _taskReminderService;
+  final DiscoverNightwareServer _discoverServer;
   late final StreamSubscription<String> _authFailureSub;
   late final StreamSubscription<String> _authSuccessSub;
 
@@ -217,6 +220,19 @@ class AccountCubit extends Cubit<AccountState> {
         _accountManager.ensureEmailPopulated().then((_) async {
           try {
             if (!isClosed) await _emitLoaded();
+          } catch (_) {}
+        }).catchError((_) {}),
+      );
+      // Likewise best-effort: what each NightMail Server publishes now (its
+      // Nextcloud file sites), since discovery is otherwise read only when an
+      // account is added.
+      unawaited(
+        _accountManager
+            .refreshServerFileSites((serverUrl) async =>
+                (await _discoverServer(serverUrl)).toNullable())
+            .then((changed) async {
+          try {
+            if (changed && !isClosed) await _emitLoaded();
           } catch (_) {}
         }).catchError((_) {}),
       );

@@ -954,6 +954,95 @@ void main() {
       await accountManager.initialize();
     });
 
+    group('refreshServerFileSites', () {
+      final published = GraphEndpoints(
+        graphBaseUrl: server.graphBaseUrl,
+        graphBetaBaseUrl: server.graphBetaBaseUrl,
+        authorizationEndpoint: server.authorizationEndpoint,
+        tokenEndpoint: server.tokenEndpoint,
+        clientId: server.clientId,
+        scopes: server.scopes,
+        serverUrl: server.serverUrl,
+        filesBaseUrls: const ['https://cloud.example.com'],
+      );
+
+      test('an account discovered before file sites existed adopts them, '
+          'turning on Nextcloud previews, and is saved', () async {
+        expect(accountManager.cloudDriveDatasourceForAccount('nw'), isNull);
+        final microsoftBefore = accountManager.accountById('ms');
+        final asked = <String>[];
+
+        final changed =
+            await accountManager.refreshServerFileSites((url) async {
+          asked.add(url);
+          return published;
+        });
+
+        expect(changed, isTrue);
+        expect(asked, ['https://mail.example.com']);
+        final account = accountManager.accountById('nw') as MicrosoftAccount;
+        expect(account.endpoints.filesBaseUrls, ['https://cloud.example.com']);
+        expect(account.endpoints.tokenEndpoint, server.tokenEndpoint);
+        expect(accountManager.cloudDriveDatasourceForAccount('nw'), isNotNull);
+        final saved = verify(mockAccountStorage.saveAccounts(captureAny))
+            .captured
+            .last as List<Account>;
+        expect(
+            saved
+                .whereType<MicrosoftAccount>()
+                .firstWhere((a) => a.id == 'nw')
+                .endpoints
+                .filesBaseUrls,
+            ['https://cloud.example.com']);
+        // Microsoft is never asked and never changes.
+        expect(accountManager.accountById('ms'), same(microsoftBefore));
+      });
+
+      test('nothing is saved when the server publishes what is stored',
+          () async {
+        clearInteractions(mockAccountStorage);
+
+        final changed =
+            await accountManager.refreshServerFileSites((_) async => server);
+
+        expect(changed, isFalse);
+        verifyNever(mockAccountStorage.saveAccounts(any));
+      });
+
+      test('an unreachable or failing server leaves the account as it was',
+          () async {
+        clearInteractions(mockAccountStorage);
+
+        expect(await accountManager.refreshServerFileSites((_) async => null),
+            isFalse);
+        expect(
+            await accountManager
+                .refreshServerFileSites((_) async => throw Exception('down')),
+            isFalse);
+
+        expect(accountManager.accountById('nw'), nw);
+        verifyNever(mockAccountStorage.saveAccounts(any));
+      });
+
+      test('a server that moved its sign-in endpoints is not half-applied',
+          () async {
+        final moved = GraphEndpoints(
+          graphBaseUrl: server.graphBaseUrl,
+          graphBetaBaseUrl: server.graphBetaBaseUrl,
+          authorizationEndpoint: server.authorizationEndpoint,
+          tokenEndpoint: 'https://auth.example.com/token',
+          clientId: server.clientId,
+          scopes: server.scopes,
+          serverUrl: server.serverUrl,
+          filesBaseUrls: const ['https://cloud.example.com'],
+        );
+
+        expect(await accountManager.refreshServerFileSites((_) async => moved),
+            isFalse);
+        expect(accountManager.accountById('nw'), nw);
+      });
+    });
+
     test('its datasources talk to the server; Microsoft\'s are unchanged', () {
       final serverDs = accountManager.buildEmailDatasourceForAccount(nw)
           as GraphApiDatasourceImpl;

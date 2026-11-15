@@ -21,6 +21,8 @@ The app provides a desktop based three-pane layout (folders, message list, readi
 - Report junk/spam
 - Report phishing, from the junk dropdown or the reading pane: Microsoft 365 submits it to the tenant's threat submissions (admin consent asked once); Gmail and IMAP file it as junk; with a Phishing Inbox set, every provider mails the report there instead
 - Full-text search within folders
+- Search operators on every provider: free text matches message bodies as well as headers, plus `from:`, `to:`, `cc:`, `subject:`, `body:`, `has:attachment` and "quoted phrases"
+- An AI assistant's email search shows in the message list from its result card ("Show N emails in list"), under a banner that closes back to the folder
 - Sender anomaly and spam detection
 - Spam filter synced across IMAP clients via a dedicated server-side folder
 - Delete a conversation thread's in-folder messages from the reading pane

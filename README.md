@@ -38,6 +38,7 @@ The app provides a desktop based three-pane layout (folders, message list, readi
 - `mailto:` links open the compose window instead of the OS's default mail client
 - SharePoint, OneDrive and Google Drive document links open as a preview in the reading pane, like an attachment — from any mailbox, whichever account holds the file (file access is asked for once, the first time you open one)
 - A previewed SharePoint, OneDrive or Google Drive document keeps a link to the file itself — tap the preview bar's title or the open-in-new icon to open it in the browser
+- Nextcloud share links (`/s/…`, `/f/…`) on a NightMail Server's advertised file sites open as a preview in the reading pane, like a SharePoint link; a password-protected or unshared link opens in the browser instead
 - An email attached to another message opens as a preview in the reading pane, with its own attachments available to open or save
 - A markdown attachment or a `.md` document link renders as formatted text in the reading pane's preview, rather than showing its raw source
 - The compose window reopens at the size and position it was last closed at
@@ -197,6 +198,10 @@ Settings → Accounts.
   left in place until a new one is issued.
 - **Add Shared Mailbox** (Microsoft 365) adds a shared mailbox using the signed-in
   account's own permissions, with no separate sign-in
+- **NightMail Server** sign-in points a Microsoft Graph account at a self-hosted
+  NightMail Server instead of Microsoft — enter the server address and NightMail
+  reads its `/.well-known/nightware` discovery and signs in with the endpoints it
+  publishes
 - **Migrate Account** copies mail from one configured account into another,
   mapping special folders by kind rather than name; resumable, with a status
   dialog reporting live progress and any permanent per-message failures

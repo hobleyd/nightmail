@@ -1010,7 +1010,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
                 );
               },
             ),
-            const _ThreadFocusBanner(),
+            const _FocusBanner(),
             Divider(height: 1, color: c.separator),
             Expanded(
               child: Focus(
@@ -1034,10 +1034,12 @@ class _EmailListPanelState extends State<EmailListPanel> {
                         :final expandedConversationIds,
                         :final spamEmailIds,
                         :final activeSearchQuery,
+                        :final focusedResults,
                       ) =>
                         emails.isEmpty
                             ? _pullToRefresh(_EmptyStateView(
-                                message: activeSearchQuery != null
+                                message: activeSearchQuery != null ||
+                                        focusedResults != null
                                     ? 'No results found'
                                     : 'No emails here',
                               ))
@@ -1110,23 +1112,39 @@ class _EmailListPanelState extends State<EmailListPanel> {
 
 /// Shown in place of the folder listing when the list has been narrowed to a
 /// single conversation — e.g. after following a task's "View source email"
-/// link. Without it there is nothing to explain why the folder looks empty,
-/// and no way back.
-class _ThreadFocusBanner extends StatelessWidget {
-  const _ThreadFocusBanner();
+/// link — or to an AI assistant's result set. Without it there is nothing to
+/// explain why the folder looks different, and no way back.
+class _FocusBanner extends StatelessWidget {
+  const _FocusBanner();
+
+  /// (icon, title, the event that dismisses it), or null for a folder listing.
+  static (IconData, String, EmailListEvent)? _focusOf(EmailListState s) {
+    if (s is! EmailListLoaded) return null;
+    if (s.focusedThreadSubject case final subject?) {
+      return (
+        Icons.forum_outlined,
+        subject.isEmpty ? 'Conversation' : subject,
+        const EmailListThreadFocusCleared(),
+      );
+    }
+    if (s.focusedResults case final results?) {
+      return (
+        Icons.auto_awesome_outlined,
+        'AI: ${results.title}',
+        const EmailListResultsFocusCleared(),
+      );
+    }
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<EmailListBloc, EmailListState>(
-      buildWhen: (prev, curr) {
-        final p = prev is EmailListLoaded ? prev.focusedThreadSubject : null;
-        final c = curr is EmailListLoaded ? curr.focusedThreadSubject : null;
-        return p != c;
-      },
+      buildWhen: (prev, curr) => _focusOf(prev) != _focusOf(curr),
       builder: (context, state) {
-        final subject =
-            state is EmailListLoaded ? state.focusedThreadSubject : null;
-        if (subject == null) return const SizedBox.shrink();
+        final focus = _focusOf(state);
+        if (focus == null) return const SizedBox.shrink();
+        final (icon, title, clear) = focus;
 
         final c = context.colors;
         return Container(
@@ -1134,12 +1152,11 @@ class _ThreadFocusBanner extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
           child: Row(
             children: [
-              Icon(Icons.forum_outlined,
-                  size: touchIcon(14), color: AppColors.accent),
+              Icon(icon, size: touchIcon(14), color: AppColors.accent),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  subject.isEmpty ? 'Conversation' : subject,
+                  title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -1157,9 +1174,7 @@ class _ThreadFocusBanner extends StatelessWidget {
                   minWidth: touchTarget(24),
                   minHeight: touchTarget(24),
                 ),
-                onPressed: () => context
-                    .read<EmailListBloc>()
-                    .add(const EmailListThreadFocusCleared()),
+                onPressed: () => context.read<EmailListBloc>().add(clear),
               ),
             ],
           ),

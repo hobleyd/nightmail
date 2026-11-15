@@ -49,6 +49,10 @@ abstract class AgentChatCubit extends Cubit<AiFolderChatState> {
   final StringBuffer _turnText = StringBuffer();
 
   String? _streamingId;
+
+  /// The current turn's folder and account, stamped on its tool cards.
+  String? _turnFolderId;
+  String? _turnAccountId;
   int _seq = 0;
   int _turn = 0;
   int _currentTurn = 0;
@@ -66,11 +70,19 @@ abstract class AgentChatCubit extends Cubit<AiFolderChatState> {
   void onTurnEnded() {}
 
   /// Starts a turn for [userInstruction]; ignored while one is in flight or
-  /// when the instruction is blank.
+  /// when the instruction is blank. [folderId] and [accountId] are what the
+  /// turn's tools run against, recorded on each [AiToolItem].
   @protected
-  void startTurn(String userInstruction, AgentTurnRunner run) {
+  void startTurn(
+    String userInstruction,
+    AgentTurnRunner run, {
+    String? folderId,
+    String? accountId,
+  }) {
     final instruction = userInstruction.trim();
     if (instruction.isEmpty || _subscription != null) return;
+    _turnFolderId = folderId;
+    _turnAccountId = accountId;
 
     _buffer.clear();
     _turnText.clear();
@@ -148,6 +160,8 @@ abstract class AgentChatCubit extends Cubit<AiFolderChatState> {
             name: call.name,
             args: call.arguments,
             status: AiToolStatus.running,
+            turnFolderId: _turnFolderId,
+            turnAccountId: _turnAccountId,
           );
           _display.add(item);
           _turnOf[item.id] = _currentTurn;

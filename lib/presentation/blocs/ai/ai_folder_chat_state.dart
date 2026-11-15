@@ -60,6 +60,8 @@ final class AiToolItem extends AiChatItem {
     required this.args,
     this.output,
     required this.status,
+    this.turnFolderId,
+    this.turnAccountId,
   });
 
   @override
@@ -82,6 +84,12 @@ final class AiToolItem extends AiChatItem {
   /// The call's lifecycle state.
   final AiToolStatus status;
 
+  /// The folder the panel was showing when the turn ran — the tools' default
+  /// when the model names none — and the account it belonged to. What a
+  /// replay of the call ("Show in list") needs to ask the same question.
+  final String? turnFolderId;
+  final String? turnAccountId;
+
   AiToolItem copyWith({String? output, AiToolStatus? status}) => AiToolItem(
         id: id,
         callId: callId,
@@ -89,10 +97,13 @@ final class AiToolItem extends AiChatItem {
         args: args,
         output: output ?? this.output,
         status: status ?? this.status,
+        turnFolderId: turnFolderId,
+        turnAccountId: turnAccountId,
       );
 
   @override
-  List<Object?> get props => [id, callId, name, args, output, status];
+  List<Object?> get props =>
+      [id, callId, name, args, output, status, turnFolderId, turnAccountId];
 }
 
 /// Lifecycle of an [AiToolItem].

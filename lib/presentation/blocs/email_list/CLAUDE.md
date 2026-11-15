@@ -464,6 +464,40 @@ the tasks rather than the inbox. Three things keep it honest:
   `HomePage`'s blocs, where the link could only show a "main window" hint; it
   now asks the shell via `HomeCubit.requestMobileTasksNav`.
 
+## An AI Search Shows in the List as a Query, Not as Its Emails
+
+A finished `search_emails` / `list_emails` card in the AI assistant offers
+"Show N emails in list" (`agentEmailResults`, `tool_call_card.dart`). That
+dispatches `EmailListResultsFocusRequested` with an `EmailListResultSet` — the
+tool's *arguments*, not its emails — and the bloc re-runs the call. It is a
+third narrowed view beside search and a focused thread (`focusedResults`, so
+`isShowingFolder` is false), with the same banner and close as a thread:
+
+- **It is held as a query so it refreshes like a search.** The tool result is
+  JSON for the model; carrying `Email`s through the agent stream would couple
+  the AI domain to the list for a snapshot that goes stale on the next poll.
+  The cost is one more provider call on click, and the count on the button can
+  differ from what lands if mail arrived in between.
+- **The folder and account are the turn's, not the click's.** A tool defaults
+  to the folder on screen *when the turn ran*; `AgentChatCubit` stamps that and
+  the active account on each `AiToolItem` (`turnFolderId`/`turnAccountId`).
+  The AI chat survives an account switch, and a folder id is only meaningful
+  to the account it came from (below), so a set from another account is
+  refused with an `actionFailure` rather than run — and a refresh after a
+  switch stands down.
+- **The three narrowed views are exclusive.** Showing results clears search
+  and thread focus; a search or a thread focus clears the results. Closing
+  goes back to the folder (`_returnToFolder`, shared with the thread close),
+  and a close that beats the results cancels them by generation, as a thread
+  close does.
+- **On a phone the AI panel is a route over whatever was showing** — the
+  folder list, the inbox, or a task's `thread` route. Showing results pops it
+  and then `_showEmailList()`s, which from a thread route pops back past Tasks
+  to the inbox. The event goes a frame later: popping the thread route clears
+  its focus in a post-frame callback, and that clear cancels a result set
+  still in flight. The transcript lives on `AiFolderCubit` and is still there
+  when the panel is reopened.
+
 ## Which Folder an Account Switch Lands On
 
 `HomePage`'s `AccountCubit` listener owns the whole switch — it files the

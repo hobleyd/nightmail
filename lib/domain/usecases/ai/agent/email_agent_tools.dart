@@ -21,6 +21,11 @@ import 'agent_tool.dart';
 class ListEmailsTool implements AgentTool {
   const ListEmailsTool(this._getEmails);
 
+  /// Emails returned when the model names no `limit`, and the most it may ask
+  /// for. Shared with the card that replays the call in the email list.
+  static const defaultLimit = 25;
+  static const maxLimit = 100;
+
   final GetEmails _getEmails;
 
   @override
@@ -58,7 +63,8 @@ class ListEmailsTool implements AgentTool {
     String? currentFolderId,
   }) async {
     final folderId = _asString(args['folder_id']) ?? currentFolderId;
-    final limit = ((_asInt(args['limit']) ?? 25).clamp(1, 100)).toInt();
+    final limit =
+        ((_asInt(args['limit']) ?? defaultLimit).clamp(1, maxLimit)).toInt();
     final unreadOnly = _asBool(args['unread_only']) ?? false;
 
     final result = await _getEmails(
@@ -128,6 +134,10 @@ class GetEmailTool implements AgentTool {
 class SearchEmailsTool implements AgentTool {
   const SearchEmailsTool(this._searchEmails);
 
+  /// As [ListEmailsTool.defaultLimit] / [ListEmailsTool.maxLimit].
+  static const defaultLimit = 50;
+  static const maxLimit = 100;
+
   final SearchEmails _searchEmails;
 
   @override
@@ -170,7 +180,8 @@ class SearchEmailsTool implements AgentTool {
       return Right(jsonEncode({'error': "Missing required argument 'query'."}));
     }
     final folderId = _asString(args['folder_id']) ?? currentFolderId;
-    final limit = ((_asInt(args['limit']) ?? 50).clamp(1, 100)).toInt();
+    final limit =
+        ((_asInt(args['limit']) ?? defaultLimit).clamp(1, maxLimit)).toInt();
 
     final result = await _searchEmails(
       SearchEmailsParams(query: query, folderId: folderId, top: limit),

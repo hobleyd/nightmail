@@ -1892,6 +1892,177 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
+  // EmailListResultsFocusRequested — an AI assistant's result set in the list
+  // ---------------------------------------------------------------------------
+
+  group('EmailListResultsFocusRequested', () {
+    setUp(() => fakeAccountManager.account = _account);
+
+    const search = EmailListResultSet(
+      title: 'invoice',
+      accountId: 'account-1',
+      query: 'invoice',
+      folderId: 'folder-ai',
+      top: 30,
+    );
+
+    Future<EmailListLoaded> show(EmailListResultSet results) async {
+      bloc.add(EmailListResultsFocusRequested(results: results));
+      return await bloc.stream.firstWhere(
+        (s) => s is EmailListLoaded && s.focusedResults != null,
+      ) as EmailListLoaded;
+    }
+
+    test('re-runs the search and shows its hits in place of the folder',
+        () async {
+      await loadEmails([_email('id1')], folderId: 'folder-1');
+      when(mockSearchEmails(any))
+          .thenAnswer((_) async => Right([_email('hit1'), _email('hit2')]));
+
+      final state = await show(search);
+
+      expect(state.emails.map((e) => e.id), ['hit1', 'hit2']);
+      expect(state.focusedResults, search);
+      expect(state.isShowingFolder, isFalse);
+      expect(state.currentFolderId, 'folder-1',
+          reason: 'the folder behind the results is what closing returns to');
+      final params =
+          verify(mockSearchEmails(captureAny)).captured.single
+              as SearchEmailsParams;
+      expect(params, const SearchEmailsParams(
+          folderId: 'folder-ai', query: 'invoice', top: 30));
+    });
+
+    test('a listing re-runs as an unread-only folder fetch', () async {
+      await loadEmails([_email('id1')], folderId: 'folder-1');
+      when(mockGetEmails(any))
+          .thenAnswer((_) async => Right([_email('unread1')]));
+      clearInteractions(mockGetEmails);
+
+      final state = await show(const EmailListResultSet(
+        title: 'Unread emails',
+        accountId: 'account-1',
+        folderId: 'folder-1',
+        top: 25,
+        unreadOnly: true,
+      ));
+
+      expect(state.emails.map((e) => e.id), ['unread1']);
+      final params = verify(mockGetEmails(captureAny)).captured.single
+          as GetEmailsParams;
+      expect(params.filter, 'isRead eq false');
+      expect(params.top, 25);
+    });
+
+    // A folder id means nothing to another account — see the account-switch
+    // notes in lib/presentation/blocs/email_list/CLAUDE.md.
+    test('a set from another account is refused, not run', () async {
+      await loadEmails([_email('id1')], folderId: 'folder-1');
+
+      bloc.add(const EmailListResultsFocusRequested(
+        results: EmailListResultSet(
+          title: 'invoice',
+          accountId: 'account-2',
+          query: 'invoice',
+        ),
+      ));
+      final state = await bloc.stream.firstWhere(
+          (s) => s is EmailListLoaded && s.actionFailure != null)
+          as EmailListLoaded;
+
+      expect(state.focusedResults, isNull);
+      expect(state.emails.map((e) => e.id), ['id1']);
+      verifyNever(mockSearchEmails(any));
+    });
+
+    test('a refresh re-runs the set instead of loading the folder', () async {
+      await loadEmails([_email('id1')], folderId: 'folder-1');
+      when(mockSearchEmails(any))
+          .thenAnswer((_) async => Right([_email('hit1')]));
+      await show(search);
+
+      when(mockSearchEmails(any))
+          .thenAnswer((_) async => Right([_email('hit1'), _email('hit3')]));
+      clearInteractions(mockGetEmails);
+
+      bloc.add(const EmailListRefreshRequested());
+      await pumpEventQueue();
+
+      final state = bloc.state as EmailListLoaded;
+      expect(state.focusedResults, search);
+      expect(state.emails.map((e) => e.id), ['hit1', 'hit3']);
+      verifyNever(mockGetEmails(any));
+    });
+
+    test('a background cache repaint leaves the results alone', () async {
+      await loadEmails([_email('id1')], folderId: 'folder-1');
+      when(mockSearchEmails(any))
+          .thenAnswer((_) async => Right([_email('hit1')]));
+      await show(search);
+      clearInteractions(mockGetCachedEmails);
+
+      bloc.add(const EmailListCacheRefreshRequested());
+      await pumpEventQueue();
+
+      expect((bloc.state as EmailListLoaded).emails.map((e) => e.id),
+          ['hit1']);
+      verifyNever(mockGetCachedEmails(any));
+    });
+
+    test('clearing the set reloads the folder', () async {
+      await loadEmails([_email('id1')], folderId: 'folder-1');
+      when(mockSearchEmails(any))
+          .thenAnswer((_) async => Right([_email('hit1')]));
+      await show(search);
+
+      when(mockGetEmails(any))
+          .thenAnswer((_) async => Right([_email('id1'), _email('id9')]));
+      bloc.add(const EmailListResultsFocusCleared());
+      final state = await bloc.stream.firstWhere(
+        (s) => s is EmailListLoaded && s.emails.any((e) => e.id == 'id9'),
+      ) as EmailListLoaded;
+
+      expect(state.focusedResults, isNull);
+      expect(state.currentFolderId, 'folder-1');
+      expect(state.isShowingFolder, isTrue);
+    });
+
+    test('clearing before the results arrive cancels them', () async {
+      await loadEmails([_email('id1')], folderId: 'folder-1');
+      final searchCompleter = Completer<Either<Failure, List<Email>>>();
+      when(mockSearchEmails(any)).thenAnswer((_) => searchCompleter.future);
+
+      bloc.add(const EmailListResultsFocusRequested(results: search));
+      await pumpEventQueue();
+      bloc.add(const EmailListResultsFocusCleared());
+      await pumpEventQueue();
+      searchCompleter.complete(Right([_email('hit1')]));
+      await pumpEventQueue();
+
+      final state = bloc.state as EmailListLoaded;
+      expect(state.focusedResults, isNull);
+      expect(state.emails.map((e) => e.id), ['id1']);
+    });
+
+    test('focusing a thread replaces the results', () async {
+      await loadEmails([_email('id1', conversationId: 'conv-a')],
+          folderId: 'folder-1');
+      when(mockSearchEmails(any)).thenAnswer(
+          (_) async => Right([_email('id1', conversationId: 'conv-a')]));
+      await show(search);
+      when(mockGetConversationThread(any)).thenAnswer(
+          (_) async => Right([_email('id1', conversationId: 'conv-a')]));
+
+      bloc.add(const EmailListThreadFocusRequested(emailId: 'id1'));
+      final state = await bloc.stream.firstWhere(
+              (s) => s is EmailListLoaded && s.focusedThreadId != null)
+          as EmailListLoaded;
+
+      expect(state.focusedResults, isNull);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // EmailListCacheRefreshRequested — the poller's repaint must not be dropped
   // ---------------------------------------------------------------------------
 

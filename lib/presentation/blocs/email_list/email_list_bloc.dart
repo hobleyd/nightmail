@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:fpdart/fpdart.dart';
 
 import '../../../core/error/failures.dart';
 import '../../../core/utils/stale_data_retry.dart';
@@ -87,6 +88,8 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     on<EmailListSearchCleared>(_onSearchCleared);
     on<EmailListThreadFocusRequested>(_onThreadFocusRequested);
     on<EmailListThreadFocusCleared>(_onThreadFocusCleared);
+    on<EmailListResultsFocusRequested>(_onResultsFocusRequested);
+    on<EmailListResultsFocusCleared>(_onResultsFocusCleared);
   }
 
   final GetEmails _getEmails;
@@ -423,6 +426,11 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     // re-run the query instead of replacing it with the folder listing.
     if (prior != null && prior.activeSearchQuery != null) {
       await _refreshSearch(prior, emit);
+      return;
+    }
+    // Nor is an AI result set; it re-runs like a search.
+    if (prior != null && prior.focusedResults != null) {
+      await _refreshResults(prior, emit);
       return;
     }
 
@@ -1405,6 +1413,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
         hasMore: false,
         focusedThreadId: null,
         focusedThreadSubject: null,
+        focusedResults: null,
       )),
     );
   }
@@ -1422,6 +1431,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     emit(current.copyWith(
       isSearchMode: false,
       activeSearchQuery: null,
+      focusedResults: null,
       isLoadingFresh: true,
     ));
     await _applyPendingCacheRepaint(emit);
@@ -1497,6 +1507,7 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       // A thread replaces search results; don't leave a stale query behind.
       isSearchMode: false,
       activeSearchQuery: null,
+      focusedResults: null,
     ));
   }
 
@@ -1519,14 +1530,24 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     }
 
     final myGeneration = ++_activeRequestGeneration;
-    final folderId = current.currentFolderId;
-    final folderName = current.currentFolderName;
-
     emit(current.copyWith(
       focusedThreadId: null,
       focusedThreadSubject: null,
       isLoadingFresh: true,
     ));
+    await _returnToFolder(current, myGeneration, emit);
+  }
+
+  /// Reloads the folder [narrowed] was narrowed from, once a thread or result
+  /// set has been dismissed. The deferred repaint goes first so a fetch that
+  /// fails still leaves the folder on screen.
+  Future<void> _returnToFolder(
+    EmailListLoaded narrowed,
+    int myGeneration,
+    Emitter<EmailListState> emit,
+  ) async {
+    final folderId = narrowed.currentFolderId;
+    final folderName = narrowed.currentFolderName;
     await _applyPendingCacheRepaint(emit);
 
     _serverOffset = 0;
@@ -1548,11 +1569,132 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
           hasMore: emails.length >= _pageSize,
           currentFolderId: folderId,
           currentFolderName: folderName,
-          emptyingFolderIds: current.emptyingFolderIds,
+          emptyingFolderIds: narrowed.emptyingFolderIds,
         ));
         _recordSenders(emails, folderName);
       },
     );
+  }
+
+  Future<void> _onResultsFocusRequested(
+    EmailListResultsFocusRequested event,
+    Emitter<EmailListState> emit,
+  ) async {
+    final current = state;
+    if (current is! EmailListLoaded) return;
+    final results = event.results;
+    if (results.accountId != _accountManager.activeAccount?.id) {
+      emit(current.copyWith(
+        actionFailure: EmailListActionFailure(
+          message: 'Those results are from another account.',
+          sequence: ++_actionFailureSequence,
+        ),
+      ));
+      return;
+    }
+
+    // A view change like a thread focus: a folder fetch already in flight
+    // must not land on top of it, and a clear can beat it.
+    final myGeneration = ++_activeRequestGeneration;
+    _pendingFocusGeneration = myGeneration;
+    emit(current.copyWith(isLoadingFresh: true));
+
+    final result = await _fetchResults(results);
+    if (myGeneration != _activeRequestGeneration) return;
+    _pendingFocusGeneration = null;
+
+    final s = state;
+    if (s is! EmailListLoaded) return;
+    result.fold(
+      (failure) => emit(s.copyWith(
+        isLoadingFresh: false,
+        actionFailure: EmailListActionFailure(
+          message: "Couldn't show those results: ${failure.message}",
+          sequence: ++_actionFailureSequence,
+        ),
+      )),
+      (emails) => emit(s.copyWith(
+        emails: emails,
+        hasMore: false,
+        isLoadingMore: false,
+        isLoadingFresh: false,
+        focusedResults: results,
+        focusedThreadId: null,
+        focusedThreadSubject: null,
+        isSearchMode: false,
+        activeSearchQuery: null,
+      )),
+    );
+  }
+
+  Future<void> _onResultsFocusCleared(
+    EmailListResultsFocusCleared event,
+    Emitter<EmailListState> emit,
+  ) async {
+    final current = state;
+    if (current is! EmailListLoaded) return;
+    if (current.focusedResults == null) {
+      // Cleared before the results arrived: cancel them, as a thread clear
+      // does, or they land afterwards over the folder.
+      if (_pendingFocusGeneration == _activeRequestGeneration) {
+        _pendingFocusGeneration = null;
+        ++_activeRequestGeneration;
+        emit(current.copyWith(isLoadingFresh: false));
+      }
+      return;
+    }
+
+    final myGeneration = ++_activeRequestGeneration;
+    emit(current.copyWith(focusedResults: null, isLoadingFresh: true));
+    await _returnToFolder(current, myGeneration, emit);
+  }
+
+  /// Re-runs the result set on screen, leaving it up.
+  Future<void> _refreshResults(
+    EmailListLoaded current,
+    Emitter<EmailListState> emit,
+  ) async {
+    final results = current.focusedResults;
+    if (results == null) return;
+    if (results.accountId != _accountManager.activeAccount?.id) return;
+
+    final myGeneration = _activeRequestGeneration;
+    emit(current.copyWith(isLoadingFresh: true));
+
+    final result = await _fetchResults(results);
+    if (myGeneration != _activeRequestGeneration) return;
+
+    final s = state;
+    if (s is! EmailListLoaded || s.focusedResults != results) return;
+    result.fold(
+      (_) => emit(s.copyWith(isLoadingFresh: false)),
+      // As with a search, an empty result is a real answer.
+      (emails) => emit(s.copyWith(
+        emails: emails,
+        hasMore: false,
+        isLoadingFresh: false,
+      )),
+    );
+  }
+
+  /// The same call the AI tool made: a search, or a (possibly unread-only)
+  /// listing of one folder.
+  Future<Either<Failure, List<Email>>> _fetchResults(
+    EmailListResultSet results,
+  ) {
+    final query = results.query;
+    if (query != null) {
+      return _searchEmails(SearchEmailsParams(
+        folderId: results.folderId,
+        query: query,
+        top: results.top,
+      ));
+    }
+    return _getEmails(GetEmailsParams(
+      folderId: results.folderId,
+      top: results.top,
+      filter: results.unreadOnly ? 'isRead eq false' : null,
+    ));
   }
 
   /// Re-fetches the thread currently on screen, leaving focus mode intact.

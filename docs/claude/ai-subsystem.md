@@ -42,6 +42,11 @@ finish reasons the UI renders as tool cards live there, with
 the presentation side `AgentChatCubit` owns the transcript (text bubbles
 interleaved with tool cards, turn-tagged history trimming) and
 `AiFolderCubit` / `CommitmentsAgentCubit` only supply the turn.
+Each tool card is stamped with the folder and account its turn ran against
+(`AiToolItem.turnFolderId`/`turnAccountId`): a folder agent's email search can
+be re-run in the email list from its card, and that replay needs both — see
+"An AI Search Shows in the List" in
+[`lib/presentation/blocs/email_list/CLAUDE.md`](../../lib/presentation/blocs/email_list/CLAUDE.md).
 
 ### System One (typed decision) providers speak a non-chat wire
 

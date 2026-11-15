@@ -3,7 +3,70 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_colors.dart';
+import '../../../domain/usecases/ai/agent/email_agent_tools.dart';
 import '../../blocs/ai/ai_folder_chat_state.dart';
+import '../../blocs/email_list/email_list_event.dart' show EmailListResultSet;
+
+/// The emails a finished `search_emails` / `list_emails` call found, as a set
+/// the email list can re-run — or null for any other tool, a call still running
+/// or failed, or one that found nothing. Uses the tools' own limits, so the
+/// replay asks the same question.
+EmailListResultSet? agentEmailResults(AiToolItem item) {
+  if (item.status != AiToolStatus.complete) return null;
+  final found = _resultCount(item);
+  if (found == null || found == 0) return null;
+
+  final args = item.args;
+  final folderId = _argString(args['folder_id']) ?? item.turnFolderId;
+  switch (item.name) {
+    case 'search_emails':
+      final query = _argString(args['query']);
+      if (query == null) return null;
+      return EmailListResultSet(
+        title: query,
+        accountId: item.turnAccountId,
+        query: query,
+        folderId: folderId,
+        top: (_argInt(args['limit']) ?? SearchEmailsTool.defaultLimit)
+            .clamp(1, SearchEmailsTool.maxLimit),
+      );
+    case 'list_emails':
+      final unreadOnly = args['unread_only'] == true ||
+          '${args['unread_only']}'.toLowerCase() == 'true';
+      return EmailListResultSet(
+        title: unreadOnly ? 'Unread emails' : 'Latest emails',
+        accountId: item.turnAccountId,
+        folderId: folderId,
+        top: (_argInt(args['limit']) ?? ListEmailsTool.defaultLimit)
+            .clamp(1, ListEmailsTool.maxLimit),
+        unreadOnly: unreadOnly,
+      );
+  }
+  return null;
+}
+
+/// The `count` an email-list tool reported, or null when the output is not one.
+int? _resultCount(AiToolItem item) {
+  final out = item.output;
+  if (out == null) return null;
+  try {
+    final decoded = jsonDecode(out);
+    return decoded is Map<String, dynamic> && decoded['emails'] is List
+        ? (decoded['emails'] as List).length
+        : null;
+  } on FormatException {
+    return null;
+  }
+}
+
+String? _argString(Object? v) => v is String && v.isNotEmpty ? v : null;
+
+int? _argInt(Object? v) => switch (v) {
+      int() => v,
+      double() => v.toInt(),
+      String() => int.tryParse(v),
+      _ => null,
+    };
 
 /// An inline, collapsible card rendering a single agent tool call — the Vercel
 /// AI Elements `Tool` pattern adapted to Flutter.
@@ -12,10 +75,14 @@ import '../../blocs/ai/ai_folder_chat_state.dart';
 /// short argument preview, a status pill, and a chevron. Tapping expands to show
 /// pretty-printed JSON for the input arguments and the output (or error text).
 /// An [AiToolStatus.error] card is forced open and cannot be collapsed.
+///
+/// A finished email search or listing also offers to show what it found in the
+/// email list ([onShowInList]); a host without a list passes null.
 class ToolCallCard extends StatefulWidget {
-  const ToolCallCard({super.key, required this.item});
+  const ToolCallCard({super.key, required this.item, this.onShowInList});
 
   final AiToolItem item;
+  final ValueChanged<EmailListResultSet>? onShowInList;
 
   @override
   State<ToolCallCard> createState() => _ToolCallCardState();
@@ -151,6 +218,7 @@ class _ToolCallCardState extends State<ToolCallCard> {
           children: [
             _buildHeader(c),
             if (_isExpanded) _buildBody(c),
+            _buildShowInList(),
           ],
         ),
       ),
@@ -197,6 +265,28 @@ class _ToolCallCardState extends State<ToolCallCard> {
             const SizedBox(width: 4),
             Icon(chevron, size: 16, color: c.textMuted),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildShowInList() {
+    final onShow = widget.onShowInList;
+    final results = onShow == null ? null : agentEmailResults(widget.item);
+    if (results == null) return const SizedBox.shrink();
+    final n = _resultCount(widget.item)!;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(6, 0, 6, 4),
+      child: TextButton.icon(
+        onPressed: () => onShow!(results),
+        icon: const Icon(Icons.view_list_outlined, size: 15),
+        label: Text(
+          'Show $n ${n == 1 ? 'email' : 'emails'} in list',
+          style: const TextStyle(fontSize: 12),
+        ),
+        style: TextButton.styleFrom(
+          foregroundColor: AppColors.accent,
+          visualDensity: VisualDensity.compact,
         ),
       ),
     );

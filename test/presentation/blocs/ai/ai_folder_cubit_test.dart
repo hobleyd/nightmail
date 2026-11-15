@@ -555,5 +555,33 @@ void main() {
       expect(second.callId, 'c2');
       expect(second.status, AiToolStatus.running);
     });
+
+    // "Show in list" replays the call against the folder and account the turn
+    // ran in; without the stamp every replay is refused as another account's.
+    test('each tool card records the folder and account its turn ran in, '
+        'and finishing the call keeps them', () async {
+      cubit.send('Find the invoice',
+          currentFolderId: 'inbox', accountId: 'account-1');
+      await pumpEventQueue();
+
+      controllers[0].add(const Right(AiChunk(
+        delta: 'Searching…',
+        finishReason: RunFolderAgent.toolActivityFinishReason,
+        toolCalls: [
+          AiToolCall(id: 'c1', name: 'search_emails', arguments: {'q': 'a'}),
+        ],
+      )));
+      controllers[0].add(const Right(AiChunk(
+        delta: '',
+        finishReason: RunFolderAgent.toolResultFinishReason,
+        toolResult: AiToolResult(callId: 'c1', output: '{}', isError: false),
+      )));
+      await pumpEventQueue();
+
+      final card = cubit.state.messages[1] as AiToolItem;
+      expect(card.status, AiToolStatus.complete);
+      expect(card.turnFolderId, 'inbox');
+      expect(card.turnAccountId, 'account-1');
+    });
   });
 }

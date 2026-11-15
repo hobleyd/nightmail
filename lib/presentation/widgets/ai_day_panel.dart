@@ -6,6 +6,7 @@ import '../../core/platform/touch_metrics.dart';
 import '../../core/theme/app_colors.dart';
 import '../blocs/ai/ai_folder_chat_state.dart';
 import '../blocs/ai/ai_folder_cubit.dart';
+import '../blocs/email_list/email_list_event.dart' show EmailListResultSet;
 import 'ai/tool_call_card.dart';
 
 class AiDayPanel extends StatefulWidget {
@@ -13,7 +14,9 @@ class AiDayPanel extends StatefulWidget {
     super.key,
     required this.onClose,
     this.folderIdProvider,
+    this.accountIdProvider,
     this.contextProvider,
+    this.onShowInList,
     this.useBackNavigation = false,
   });
 
@@ -27,6 +30,12 @@ class AiDayPanel extends StatefulWidget {
   /// Called just before each turn to resolve the current folder's id, which the
   /// agent's tools default to. Returns null when no folder is selected.
   final String? Function()? folderIdProvider;
+
+  /// Called alongside [folderIdProvider]: the account that folder belongs to.
+  final String? Function()? accountIdProvider;
+
+  /// Shows a search card's results in the email list; null hides the action.
+  final ValueChanged<EmailListResultSet>? onShowInList;
 
   /// Called just before each turn to collect the fallback context string (a
   /// formatted excerpt of the current folder's emails). Used only when the
@@ -72,6 +81,7 @@ class _AiDayPanelState extends State<AiDayPanel> {
     context.read<AiFolderCubit>().send(
           instruction,
           currentFolderId: widget.folderIdProvider?.call(),
+          accountId: widget.accountIdProvider?.call(),
           fallbackEmailsContext: widget.contextProvider?.call(),
         );
   }
@@ -201,7 +211,10 @@ class _AiDayPanelState extends State<AiDayPanel> {
               createdAt: DateTime.now(),
               customProperties: {'id': item.id},
             ))
-        .copyWith(customBuilder: (context, _) => ToolCallCard(item: item));
+        .copyWith(
+          customBuilder: (context, _) =>
+              ToolCallCard(item: item, onShowInList: widget.onShowInList),
+        );
     _byId[item.id] = cm;
 
     if (prev == null) {

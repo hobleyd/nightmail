@@ -1,17 +1,43 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/presentation/blocs/ai/ai_folder_chat_state.dart';
+import 'package:nightmail/presentation/blocs/email_list/email_list_event.dart';
 import 'package:nightmail/presentation/widgets/ai/tool_call_card.dart';
 
-Widget _wrap(AiToolItem item) {
+Widget _wrap(
+  AiToolItem item, {
+  ValueChanged<EmailListResultSet>? onShowInList,
+}) {
   return MaterialApp(
     home: Scaffold(
       // Width-bounded so the collapsed one-liner can lay out its Flexible
       // preview without unbounded-width errors.
-      body: SizedBox(width: 360, child: ToolCallCard(item: item)),
+      body: SizedBox(
+        width: 360,
+        child: ToolCallCard(item: item, onShowInList: onShowInList),
+      ),
     ),
   );
 }
+
+const _twoHits = '{"count": 2, "emails": [{"id": "a"}, {"id": "b"}]}';
+
+AiToolItem _item(
+  String name,
+  Map<String, dynamic> args, {
+  String? output = _twoHits,
+  AiToolStatus status = AiToolStatus.complete,
+}) =>
+    AiToolItem(
+      id: 'item',
+      callId: 'call',
+      name: name,
+      args: args,
+      output: output,
+      status: status,
+      turnFolderId: 'inbox',
+      turnAccountId: 'account-1',
+    );
 
 void main() {
   group('ToolCallCard', () {
@@ -102,5 +128,71 @@ void main() {
         expect(tester.takeException(), isNull);
       },
     );
+  });
+
+  group('agentEmailResults', () {
+    test('a search replays its query in the turn\'s folder and account', () {
+      expect(
+        agentEmailResults(_item('search_emails', {'query': 'invoice'})),
+        const EmailListResultSet(
+          title: 'invoice',
+          accountId: 'account-1',
+          query: 'invoice',
+          folderId: 'inbox',
+          top: 50,
+        ),
+      );
+    });
+
+    test('a folder and limit the model named win over the defaults', () {
+      final r = agentEmailResults(_item(
+          'search_emails', {'query': 'x', 'folder_id': 'archive', 'limit': '7'}));
+      expect(r?.folderId, 'archive');
+      expect(r?.top, 7);
+    });
+
+    test('an unread listing is a listing, not a search', () {
+      final r = agentEmailResults(
+          _item('list_emails', {'unread_only': true, 'limit': 500}));
+      expect(r?.query, isNull);
+      expect(r?.unreadOnly, isTrue);
+      expect(r?.title, 'Unread emails');
+      expect(r?.top, 100, reason: 'clamped like the tool clamps it');
+    });
+
+    test('nothing to show for other tools, no hits, or a call not done', () {
+      expect(agentEmailResults(_item('get_email', {'id': 'a'})), isNull);
+      expect(
+          agentEmailResults(_item('search_emails', {'query': 'x'},
+              output: '{"count": 0, "emails": []}')),
+          isNull);
+      expect(
+          agentEmailResults(_item('search_emails', {'query': 'x'},
+              output: null, status: AiToolStatus.running)),
+          isNull);
+      expect(
+          agentEmailResults(_item('search_emails', {'query': 'x'},
+              status: AiToolStatus.error)),
+          isNull);
+    });
+  });
+
+  group('ToolCallCard show in list', () {
+    testWidgets('offers the hits and hands over the result set',
+        (tester) async {
+      EmailListResultSet? shown;
+      await tester.pumpWidget(_wrap(
+        _item('search_emails', {'query': 'invoice'}),
+        onShowInList: (r) => shown = r,
+      ));
+
+      await tester.tap(find.text('Show 2 emails in list'));
+      expect(shown?.query, 'invoice');
+    });
+
+    testWidgets('a host with no email list gets no action', (tester) async {
+      await tester.pumpWidget(_wrap(_item('search_emails', {'query': 'x'})));
+      expect(find.textContaining('in list'), findsNothing);
+    });
   });
 }

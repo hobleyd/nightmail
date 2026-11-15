@@ -235,3 +235,54 @@ final class EmailListThreadFocusRequested extends EmailListEvent {
 final class EmailListThreadFocusCleared extends EmailListEvent {
   const EmailListThreadFocusCleared();
 }
+
+/// A set of emails defined by a query rather than by a folder — what one of the
+/// AI assistant's `search_emails` / `list_emails` calls found. Held as the
+/// query, not the emails, so it is re-run the way a search is: on show, and on
+/// every refresh while it is up.
+final class EmailListResultSet extends Equatable {
+  const EmailListResultSet({
+    required this.title,
+    required this.accountId,
+    this.query,
+    this.folderId,
+    this.top = 50,
+    this.unreadOnly = false,
+  });
+
+  /// What the banner calls the set (the search query, or what was listed).
+  final String title;
+
+  /// The account the AI turn ran against. A folder id means nothing to any
+  /// other account, so the set is refused once the active account differs.
+  final String? accountId;
+
+  /// The search query; null for a plain listing of [folderId].
+  final String? query;
+
+  final String? folderId;
+  final int top;
+
+  /// For a listing only: just the unread mail.
+  final bool unreadOnly;
+
+  @override
+  List<Object?> get props =>
+      [title, accountId, query, folderId, top, unreadOnly];
+}
+
+/// Replaces the list with [results] under a banner, the way
+/// [EmailListThreadFocusRequested] does with a thread — used by the AI
+/// assistant's "Show in list" on a search card.
+final class EmailListResultsFocusRequested extends EmailListEvent {
+  const EmailListResultsFocusRequested({required this.results});
+  final EmailListResultSet results;
+
+  @override
+  List<Object?> get props => [results];
+}
+
+/// Leaves a result set and reloads the folder that was on screen.
+final class EmailListResultsFocusCleared extends EmailListEvent {
+  const EmailListResultsFocusCleared();
+}

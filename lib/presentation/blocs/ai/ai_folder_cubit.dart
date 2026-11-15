@@ -17,6 +17,7 @@ class AiFolderCubit extends AgentChatCubit {
   void send(
     String userInstruction, {
     String? currentFolderId,
+    String? accountId,
     String? fallbackEmailsContext,
   }) {
     startTurn(
@@ -27,6 +28,8 @@ class AiFolderCubit extends AgentChatCubit {
         currentFolderId: currentFolderId,
         fallbackEmailsContext: fallbackEmailsContext,
       ),
+      folderId: currentFolderId,
+      accountId: accountId,
     );
   }
 }

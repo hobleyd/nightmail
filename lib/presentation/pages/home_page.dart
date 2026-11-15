@@ -819,6 +819,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
   void _openAi() {
     final aiFolderCubit = context.read<AiFolderCubit>();
     final emailListBloc = context.read<EmailListBloc>();
+    final accountCubit = context.read<AccountCubit>();
     _nav?.push<void>(
       MaterialPageRoute(
         fullscreenDialog: true,
@@ -832,6 +833,20 @@ class _MobileLayoutState extends State<_MobileLayout> {
                 folderIdProvider: () {
                   final s = emailListBloc.state;
                   return s is EmailListLoaded ? s.currentFolderId : null;
+                },
+                accountIdProvider: () => _activeAccountId(accountCubit),
+                onShowInList: (results) {
+                  Navigator.of(ctx).pop();
+                  // The list is not necessarily under this route — the AI
+                  // also opens from the folder list and over a task's thread.
+                  _showEmailList();
+                  // A frame later: leaving a thread route clears its focus in
+                  // a post-frame callback (_onRoutesChanged), and that clear
+                  // would cancel results still on their way.
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    emailListBloc
+                        .add(EmailListResultsFocusRequested(results: results));
+                  });
                 },
                 contextProvider: () {
                   final s = emailListBloc.state;
@@ -1461,6 +1476,12 @@ class _ThreePanelLayoutState extends State<_ThreePanelLayout> {
                             ? listState.currentFolderId
                             : null;
                       },
+                      accountIdProvider: () =>
+                          _activeAccountId(context.read<AccountCubit>()),
+                      onShowInList: (results) => context
+                          .read<EmailListBloc>()
+                          .add(EmailListResultsFocusRequested(
+                              results: results)),
                       contextProvider: () {
                         final listState =
                             context.read<EmailListBloc>().state;
@@ -1699,6 +1720,12 @@ class _ResizeHandleState extends State<_ResizeHandle> {
       ),
     );
   }
+}
+
+/// The account an AI turn runs against, recorded on its tool cards.
+String? _activeAccountId(AccountCubit accounts) {
+  final s = accounts.state;
+  return s is AccountsLoaded ? s.activeAccount.id : null;
 }
 
 /// Formats up to 25 emails from the current folder into a compact text block

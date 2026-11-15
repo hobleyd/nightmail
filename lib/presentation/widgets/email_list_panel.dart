@@ -1410,7 +1410,7 @@ class _ListHeader extends StatelessWidget {
                 onSubmitted: onSearchSubmit,
                 style: TextStyle(fontSize: 14, color: c.textPrimary),
                 decoration: InputDecoration(
-                  hintText: 'from: to: subject: has:attachment',
+                  hintText: 'Search mail — from: to: subject: body: has:attachment',
                   hintStyle: TextStyle(fontSize: 13, color: c.textMuted),
                   border: InputBorder.none,
                   isDense: true,

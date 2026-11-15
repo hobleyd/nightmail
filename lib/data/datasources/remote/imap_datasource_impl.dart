@@ -22,6 +22,7 @@ import '../../models/email_address_model.dart';
 import '../../models/email_folder_model.dart';
 import '../../models/email_model.dart';
 import 'email_remote_datasource.dart';
+import 'mail_search_query.dart';
 import 'mime_attachment_builder.dart';
 import 'spam_db_sync_datasource.dart';
 
@@ -562,7 +563,7 @@ class ImapDatasourceImpl
       try {
         final client = await _getConnectedClient();
 
-        final criteria = _buildImapCriteria(query);
+        final criteria = imapSearchCriteria(query);
         final searchResult =
             await client.uidSearchMessages(searchCriteria: criteria);
         final allUids = searchResult.matchingSequence?.toList() ?? [];
@@ -643,34 +644,6 @@ class ImapDatasourceImpl
 
   /// Upper bound on messages fetched for a single thread.
   static const _threadFetchLimit = 200;
-
-  String _buildImapCriteria(String query) {
-    final criteria = <String>[];
-    var remaining = query.trim();
-
-    // Extract field:value tokens.
-    final tokenRe = RegExp(r'(\w+):(\S+)', caseSensitive: false);
-    for (final m in tokenRe.allMatches(query)) {
-      remaining = remaining.replaceFirst(m.group(0)!, '').trim();
-      final field = m.group(1)!.toLowerCase();
-      final value = m.group(2)!;
-      switch (field) {
-        case 'from':
-          criteria.add('FROM "$value"');
-        case 'to':
-          criteria.add('TO "$value"');
-        case 'subject':
-          criteria.add('SUBJECT "$value"');
-        // has:attachment not supported by basic IMAP SEARCH; skip silently.
-      }
-    }
-
-    if (remaining.isNotEmpty) {
-      criteria.add('TEXT "$remaining"');
-    }
-
-    return criteria.isEmpty ? 'ALL' : criteria.join(' ');
-  }
 
   @override
   Future<EmailModel> getEmail(String id) {

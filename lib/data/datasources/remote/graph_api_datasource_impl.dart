@@ -37,6 +37,7 @@ import 'phishing_report_datasource.dart';
 import 'graph_import_parser.dart';
 import 'mail_delta_datasource.dart';
 import 'graph_message_parser.dart';
+import 'mail_search_query.dart';
 import 'out_of_office_datasource.dart';
 import 'tasks_remote_datasource.dart';
 
@@ -488,12 +489,6 @@ class GraphApiDatasourceImpl
     required String query,
     int top = 50,
   }) async {
-    // Convert has:attachment to KQL; other tokens (from:, to:, subject:) pass through.
-    final kql = query.replaceAllMapped(
-      RegExp(r'\bhas:attachment\b', caseSensitive: false),
-      (_) => 'hasAttachments:true',
-    );
-
     try {
       // Always search globally across the whole mailbox. Per-folder $search on
       // /me/mailFolders/{id}/messages silently returns empty on many tenants,
@@ -505,7 +500,7 @@ class GraphApiDatasourceImpl
         queryParameters: {
           '\$top': top,
           '\$select': _emailListSelect,
-          '\$search': '"$kql"',
+          '\$search': graphSearchExpression(query),
         },
         options: Options(responseType: ResponseType.plain),
       );

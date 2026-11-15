@@ -164,8 +164,10 @@ abstract interface class EmailRemoteDatasource {
   });
 
   /// Searches [folderId] (and its immediate children where supported) for
-  /// emails matching [query].  Supports `from:`, `to:`, `subject:`, and
-  /// `has:attachment` notation.  Results are NOT cached.
+  /// emails matching [query]. Free text matches message bodies as well as
+  /// headers; `from:`, `to:`, `subject:`, `body:`, `has:attachment` and
+  /// quoted phrases are translated per provider (see `mail_search_query.dart`).
+  /// Results are NOT cached.
   Future<List<EmailModel>> searchEmails({
     String? folderId,
     required String query,

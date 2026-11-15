@@ -24,6 +24,7 @@ import 'conversation_folder_datasource.dart';
 import 'email_remote_datasource.dart';
 import 'gmail_message_parser.dart';
 import 'mail_delta_datasource.dart';
+import 'mail_search_query.dart';
 import 'mime_attachment_builder.dart';
 import 'out_of_office_datasource.dart';
 import 'thread_index_datasource.dart';
@@ -615,12 +616,11 @@ class GmailDatasourceImpl
     required String query,
     int top = 50,
   }) async {
-    // Gmail's q parameter natively supports from:, to:, subject:, has:attachment.
     try {
       // Plain, decoded here — an id list, same as the thread index in getEmails.
       final listResp = await _dio.get<String>(
         '/users/me/messages',
-        queryParameters: {'maxResults': top, 'q': query},
+        queryParameters: {'maxResults': top, 'q': gmailSearchQuery(query)},
         options: Options(responseType: ResponseType.plain),
       );
 

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nightmail/core/config/oauth_client_id_storage.dart';
 import 'package:nightmail/data/datasources/remote/gmail_datasource_impl.dart';
 import 'package:nightmail/data/datasources/remote/graph_api_datasource_impl.dart';
+import 'package:nightmail/data/datasources/remote/graph_drive_datasource_impl.dart';
 import 'package:nightmail/domain/entities/cloud_document.dart';
 import 'package:nightmail/domain/entities/graph_endpoints.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
@@ -1001,6 +1002,11 @@ void main() {
     });
 
     test('is never offered SharePoint/OneDrive previews', () async {
+      expect(accountManager.nextcloudFileBaseUrls, isEmpty);
+      expect(
+          accountManager.cloudDriveCandidates(CloudDriveProvider.nextcloud,
+              url: 'https://mail.example.com/s/AbCdEfGh'),
+          isEmpty);
       expect(
         accountManager
             .cloudDriveCandidates(CloudDriveProvider.microsoft)
@@ -1010,6 +1016,70 @@ void main() {
       expect(accountManager.cloudDriveDatasourceForAccount('nw'), isNull);
       expect(await accountManager.hasCloudDriveAccess('nw'), isFalse);
       expect(await accountManager.requestCloudDriveAccess('nw'), isFalse);
+    });
+
+    test('one that advertises file sites previews Nextcloud links on them',
+        () async {
+      const files = MicrosoftAccount(
+        id: 'nwf',
+        displayName: 'Server with files',
+        emailAddress: 'me@files.example.com',
+        tenantId: MicrosoftAccount.nightmailServerTenantId,
+        clientId: 'nightmail',
+        server: GraphEndpoints(
+          graphBaseUrl: 'https://graph.files.example.com/v1.0',
+          graphBetaBaseUrl: 'https://graph.files.example.com/beta',
+          authorizationEndpoint: 'https://auth.files.example.com/authorize',
+          tokenEndpoint: 'https://auth.files.example.com/token',
+          clientId: 'nightmail',
+          scopes: ['openid'],
+          serverUrl: 'https://files.example.com',
+          filesBaseUrls: ['https://cloud.files.example.com'],
+        ),
+      );
+      const shared = MicrosoftAccount(
+        id: 'nwf-shared',
+        displayName: 'Team',
+        emailAddress: 'team@files.example.com',
+        tenantId: MicrosoftAccount.nightmailServerTenantId,
+        parentAccountId: 'nwf',
+      );
+      when(mockAccountStorage.loadAccounts())
+          .thenAnswer((_) async => [nw, ms, files, shared]);
+      await accountManager.initialize();
+
+      expect(accountManager.nextcloudFileBaseUrls,
+          ['https://cloud.files.example.com']);
+      expect(
+        accountManager
+            .cloudDriveCandidates(CloudDriveProvider.nextcloud,
+                url: 'https://cloud.files.example.com/s/AbCdEfGh')
+            .map((a) => a.id),
+        ['nwf'],
+      );
+      // Not its host, not its link shape, or no link at all: nobody.
+      for (final url in [
+        'https://cloud.example.com/s/AbCdEfGh',
+        'https://cloud.files.example.com/apps/files/',
+        null,
+      ]) {
+        expect(
+            accountManager.cloudDriveCandidates(CloudDriveProvider.nextcloud,
+                url: url),
+            isEmpty,
+            reason: url);
+      }
+      expect(await accountManager.hasCloudDriveAccess('nwf'), isTrue);
+      final ds = accountManager.cloudDriveDatasourceForAccount('nwf');
+      expect(ds, isA<GraphDriveDatasourceImpl>());
+      // Still never a SharePoint/OneDrive candidate, nor asked for its scope.
+      expect(
+        accountManager
+            .cloudDriveCandidates(CloudDriveProvider.microsoft)
+            .map((a) => a.id),
+        ['ms'],
+      );
+      expect(await accountManager.requestCloudDriveAccess('nwf'), isFalse);
     });
 
     test('has no Microsoft threat submission to ask consent for', () async {

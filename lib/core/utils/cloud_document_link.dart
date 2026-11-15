@@ -1,9 +1,9 @@
 /// Telling a link to a cloud *document* apart from every other link in a body.
 ///
-/// A SharePoint/OneDrive or Google Drive link in a message points at a file the
-/// reader almost certainly wants to look at, not a web page they want to visit
-/// — so NightMail fetches it and previews it in the reading pane, the same way
-/// an attachment chip does. Everything else keeps going to the browser.
+/// A SharePoint/OneDrive, Google Drive or (on a NightMail Server) Nextcloud
+/// link in a message points at a file the reader almost certainly wants to
+/// look at, not a web page they want to visit — so NightMail fetches it and
+/// previews it in the reading pane, the same way an attachment chip does. Everything else keeps going to the browser.
 ///
 /// **This scanner is deliberately biased towards not matching.** A false
 /// positive is the expensive mistake: a SharePoint *site* link or a Drive
@@ -71,7 +71,13 @@ const _googleEditorKinds = <String>{
 /// browser.
 ///
 /// [url] is the raw href as it appeared in the message body.
-CloudDocumentLink? parseCloudDocumentLink(String url) {
+/// [nextcloudBaseUrls] are the file sites the signed-in NightMail Servers
+/// advertise (`GraphEndpoints.filesBaseUrls`); a Nextcloud link is claimed
+/// only below one of them, never on the strength of its shape alone.
+CloudDocumentLink? parseCloudDocumentLink(
+  String url, {
+  Iterable<String> nextcloudBaseUrls = const [],
+}) {
   final uri = Uri.tryParse(url.trim());
   if (uri == null) return null;
   if (!uri.hasScheme || !(uri.isScheme('http') || uri.isScheme('https'))) {
@@ -82,7 +88,51 @@ CloudDocumentLink? parseCloudDocumentLink(String url) {
 
   if (_isMicrosoftFileHost(host)) return _parseMicrosoft(uri);
   if (_googleFileHosts.contains(host)) return _parseGoogle(uri);
+  for (final base in nextcloudBaseUrls) {
+    final link = _parseNextcloud(uri, base);
+    if (link != null) return link;
+  }
   return null;
+}
+
+/// A Nextcloud document link: `{base}/s/{token}` (a public share) or
+/// `{base}/f/{fileId}` (Nextcloud's internal link), optionally with the
+/// `index.php/` Nextcloud emits without URL rewriting.
+///
+/// Everything else on that host stays the browser's: the Files app
+/// (`/apps/files/…`), a share's `/download` or sub-path, and any link with a
+/// query or fragment (a folder share opened at `?path=`, `?openfile=…`). A
+/// folder or password-protected share still matches here — its shape says
+/// nothing — and the server answers it as a folder or a refusal, which falls
+/// back to the browser quietly.
+final _nextcloudLinkPath = RegExp(
+    r'^(?:index\.php/)?(?:s/[A-Za-z0-9_+-]{1,128}|f/[0-9]{1,18})/?$');
+
+CloudDocumentLink? _parseNextcloud(Uri uri, String base) {
+  final site = Uri.tryParse(base);
+  if (site == null || site.host.isEmpty) return null;
+  if (uri.scheme.toLowerCase() != site.scheme.toLowerCase() ||
+      uri.host.toLowerCase() != site.host.toLowerCase() ||
+      uri.port != site.port) {
+    return null;
+  }
+  if (uri.hasQuery || uri.hasFragment) return null;
+
+  // On a path-segment boundary: a site at `/nextcloud` does not own
+  // `/nextcloudish/s/…`.
+  var prefix = site.path;
+  while (prefix.endsWith('/')) {
+    prefix = prefix.substring(0, prefix.length - 1);
+  }
+  prefix = '$prefix/';
+  if (!uri.path.startsWith(prefix)) return null;
+  if (!_nextcloudLinkPath.hasMatch(uri.path.substring(prefix.length))) {
+    return null;
+  }
+  return CloudDocumentLink(
+    provider: CloudDriveProvider.nextcloud,
+    url: uri.toString(),
+  );
 }
 
 /// SharePoint and OneDrive for Business.

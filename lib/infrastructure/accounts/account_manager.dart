@@ -37,6 +37,7 @@ import '../http/google_drive_http_client.dart';
 import '../http/google_people_http_client.dart';
 import '../http/google_tasks_http_client.dart';
 import '../http/graph_http_client.dart';
+import '../../core/utils/cloud_document_link.dart';
 import '../../domain/entities/cloud_document.dart';
 import '../../domain/entities/graph_endpoints.dart';
 import 'account.dart';
@@ -343,7 +344,12 @@ class AccountManager {
   ///
   /// Shared Microsoft mailboxes are skipped — they hold no credentials of their
   /// own, and the parent account is already in the list.
-  List<Account> cloudDriveCandidates(CloudDriveProvider provider) {
+  ///
+  /// A Nextcloud link ([url]) goes only to the NightMail Servers whose
+  /// advertised file sites it lies on: two servers' Nextclouds have nothing to
+  /// do with each other, and asking the wrong one is a guaranteed 404.
+  List<Account> cloudDriveCandidates(CloudDriveProvider provider,
+      {String? url}) {
     bool matches(Account a) => switch (provider) {
       // A NightMail Server has no SharePoint/OneDrive behind it, and would
       // refuse Files.Read.All as a scope it never published.
@@ -351,6 +357,14 @@ class AccountManager {
           a.parentAccountId == null &&
           !a.isNightmailServer,
       CloudDriveProvider.google => a is GmailAccount,
+      CloudDriveProvider.nextcloud => a is MicrosoftAccount &&
+          a.parentAccountId == null &&
+          a.isNightmailServer &&
+          url != null &&
+          parseCloudDocumentLink(url,
+                      nextcloudBaseUrls: a.endpoints.filesBaseUrls)
+                  ?.provider ==
+              CloudDriveProvider.nextcloud,
     };
     final active = activeAccount;
     return [
@@ -358,6 +372,16 @@ class AccountManager {
       ..._accounts.where((a) => matches(a) && a.id != active?.id),
     ];
   }
+
+  /// Every file site the signed-in NightMail Servers advertise — what the body
+  /// link scanner may claim as Nextcloud (`parseCloudDocumentLink`).
+  List<String> get nextcloudFileBaseUrls => [
+        for (final a in _accounts)
+          if (a is MicrosoftAccount &&
+              a.parentAccountId == null &&
+              a.isNightmailServer)
+            ...a.endpoints.filesBaseUrls,
+      ];
 
   /// Whether [accountId]'s stored token already carries the provider's
   /// file-read scope.
@@ -374,7 +398,10 @@ class AccountManager {
     final token = await authService.getStoredToken();
     if (token == null) return false;
     return switch (account) {
-      MicrosoftAccount(isNightmailServer: true) => false,
+      // No scope to ask for: the server's own token reads its file sites, if
+      // it publishes any.
+      MicrosoftAccount(isNightmailServer: true) =>
+        account.endpoints.filesBaseUrls.isNotEmpty,
       MicrosoftAccount() => MicrosoftAuthService.grantsFileAccess(token.scope),
       GmailAccount() => GmailAuthService.grantsFileAccess(token.scope),
       _ => false,
@@ -614,7 +641,10 @@ class AccountManager {
 
     final CloudDriveDatasource datasource;
     switch (account) {
-      case MicrosoftAccount(isNightmailServer: true):
+      // A NightMail Server serves its Nextcloud links through the same Graph
+      // `/shares` route; one that publishes no file sites has nothing to fetch.
+      case MicrosoftAccount(isNightmailServer: true)
+          when account.endpoints.filesBaseUrls.isEmpty:
         return null;
       case MicrosoftAccount():
         final cfg = _microsoftAuthConfig(account);

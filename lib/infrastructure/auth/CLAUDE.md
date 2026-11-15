@@ -269,3 +269,7 @@ Load-bearing:
   server accounts, out-of-office needs no consent, and *Report phishing* is a
   junk move (or the Phishing Inbox) as on Gmail. `tenantId` is the placeholder
   `MicrosoftAccount.nightmailServerTenantId`.
+- **`filesBaseUrls` is the one optional discovery field**, and the one parsed
+  leniently: a bad entry is dropped, never a reason the server cannot be
+  added. It turns on Nextcloud link previews through the server's `/shares`
+  (see `docs/claude/body-links.md`).

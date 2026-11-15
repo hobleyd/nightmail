@@ -22,7 +22,8 @@ class CloudDriveRepositoryImpl implements CloudDriveRepository {
   @override
   Future<Either<Failure, CloudDocument>> fetchDocument(
       CloudDocumentLink link) async {
-    final candidates = _accountManager.cloudDriveCandidates(link.provider);
+    final candidates =
+        _accountManager.cloudDriveCandidates(link.provider, url: link.url);
     if (candidates.isEmpty) {
       return Left(CloudDriveUnavailable(
           message: 'No ${_providerName(link.provider)} account is signed in'));
@@ -66,7 +67,13 @@ class CloudDriveRepositoryImpl implements CloudDriveRepository {
         if (e.statusCode != 403 && e.statusCode != 404) {
           return Left(ServerFailure(message: e.message, statusCode: e.statusCode));
         }
-        lastFailure = ServerFailure(message: e.message, statusCode: e.statusCode);
+        // On a Nextcloud the same two statuses are the share itself saying
+        // no — password-protected (403), gone or never shared with this
+        // reader (404) — which the browser handles better: it can ask for the
+        // password. That is a quiet fall-through, not an error on screen.
+        lastFailure = link.provider == CloudDriveProvider.nextcloud
+            ? CloudDriveUnavailable(message: e.message)
+            : ServerFailure(message: e.message, statusCode: e.statusCode);
       }
     }
 
@@ -93,5 +100,6 @@ class CloudDriveRepositoryImpl implements CloudDriveRepository {
   String _providerName(CloudDriveProvider provider) => switch (provider) {
         CloudDriveProvider.microsoft => 'Microsoft 365',
         CloudDriveProvider.google => 'Google',
+        CloudDriveProvider.nextcloud => 'NightMail Server',
       };
 }

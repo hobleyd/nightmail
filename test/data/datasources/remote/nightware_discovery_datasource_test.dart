@@ -199,6 +199,63 @@ void main() {
     });
   });
 
+  group('filesBaseUrls (optional)', () {
+    GraphEndpoints parse(Object? files) => GraphEndpointsModel.fromDiscoveryJson(
+          {...valid, 'filesBaseUrls': ?files},
+          serverUrl: 'https://mail.example.com',
+        );
+
+    test('absent means no file sites, and the document is still valid', () {
+      expect(parse(null).filesBaseUrls, isEmpty);
+    });
+
+    test('usable entries are kept, trailing slashes stripped, duplicates dropped',
+        () {
+      expect(
+        parse([
+          'https://cloud.example.com/',
+          'https://files.example.com/nextcloud',
+          'https://cloud.example.com',
+          'http://cloud.lan',
+        ]).filesBaseUrls,
+        [
+          'https://cloud.example.com',
+          'https://files.example.com/nextcloud',
+          'http://cloud.lan',
+        ],
+      );
+    });
+
+    test('a malformed list or entry is ignored rather than refusing the server',
+        () {
+      expect(parse('https://cloud.example.com').filesBaseUrls, isEmpty);
+      expect(
+        parse([
+          42,
+          '',
+          'cloud.example.com',
+          'ftp://cloud.example.com',
+          'https://cloud.example.com/?x=1',
+          'https://cloud.example.com/#f',
+          'https://user:pw@cloud.example.com',
+          'https://ok.example.com',
+        ]).filesBaseUrls,
+        ['https://ok.example.com'],
+      );
+    });
+
+    test('round-trips through the stored copy; none stores nothing', () {
+      final endpoints = parse(['https://cloud.example.com']);
+      final stored = GraphEndpointsModel.toStorageJson(endpoints);
+      expect(stored['filesBaseUrls'], ['https://cloud.example.com']);
+      expect(GraphEndpointsModel.fromStorageJson(stored), endpoints);
+      expect(
+          GraphEndpointsModel.toStorageJson(parse(null))
+              .containsKey('filesBaseUrls'),
+          isFalse);
+    });
+  });
+
   group('GraphEndpointsModel storage JSON', () {
     test('round-trips a discovered configuration', () {
       final endpoints = GraphEndpointsModel.fromDiscoveryJson(valid,

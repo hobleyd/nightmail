@@ -12,11 +12,11 @@ carries a BCC list.
 
 ## A Cloud Document Link Is Previewed, Not Followed
 
-A SharePoint/OneDrive or Google Drive link in a body is an attachment in all but
-name, so `openBodyLink` fetches it and draws it in the reading pane's preview
-surface — the same one the attachment chips use — instead of handing it to a
-browser that would ask the reader to sign in to a second thing to read their own
-mail. Everything else still goes to `launchUrl`.
+A SharePoint/OneDrive or Google Drive link — or, on a NightMail Server, a link
+to its Nextcloud — in a body is an attachment in all but name, so
+`openBodyLink` fetches it and draws it in the reading pane's preview surface —
+the same one the attachment chips use — instead of handing it to a browser
+that would ask the reader to sign in to a second thing to read their own mail. Everything else still goes to `launchUrl`.
 
 **Which mailbox the mail arrived in says nothing about who holds the file.** A
 OneDrive link turns up in Gmail and a Drive link in Exchange as a matter of
@@ -83,6 +83,41 @@ what tells the preview to treat a document titled `.docx` as the PDF it now is;
 `cloudDocumentFormatFor` (`core/utils/cloud_document_format.dart`) is the one
 rule both the datasources and the pane read, so a file is never downloaded and
 *then* found to be unpreviewable.
+
+## A NightMail Server's Nextcloud Links Take the SharePoint Route
+
+A NightMail Server (Nightware) fronts a Nextcloud, and a link to a document on
+it previews exactly as a SharePoint link does on Microsoft 365: through the
+server's Graph `/shares/{u!url}/driveItem` and `/content?format=pdf`, fetched
+by `GraphDriveDatasourceImpl` against that account's own Graph base. The server
+answers `/content` with a 302 to a short-lived self-authorising URL — the same
+pre-authenticated-download dance, so the interceptor-free Dio is load-bearing
+here too — and renders Office files to PDF with Collabora.
+
+- **Only advertised hosts are claimed.** The scanner has no idea which hosts
+  are Nextclouds, and `/s/{token}` is too generic a shape to claim on sight.
+  A server lists its file sites in discovery (`filesBaseUrls`, optional —
+  `GraphEndpointsModel` drops a malformed entry rather than refusing the
+  server), `AccountManager.nextcloudFileBaseUrls` collects them across signed-in
+  servers, and `parseCloudDocumentLink` takes them as `nextcloudBaseUrls`. Only
+  `{base}/s/{token}` and `{base}/f/{fileId}` (with or without `index.php/`)
+  match; the Files app, a share's `/download`, and anything with a query or
+  fragment stay with the browser.
+- **The account is the server that advertises the host**
+  (`cloudDriveCandidates(nextcloud, url:)`), never another server — two
+  servers' Nextclouds share nothing, so asking the wrong one is a certain 404.
+  There is no scope to grant: `hasCloudDriveAccess` is simply "does it publish
+  file sites".
+- **403/404 fall through quietly.** On a Nextcloud they are the share itself
+  saying no — password-protected, deleted, or an internal `/f/` link to a file
+  never shared with this reader — and the browser can do what NightMail cannot
+  (ask for the password, offer a login). So the repository reports them as
+  `CloudDriveUnavailable`, not `ServerFailure`; Microsoft's 403/404 handling is
+  unchanged. A folder share comes back as a `folder` and falls back the same way.
+- **An account added before servers published `filesBaseUrls` has the feature
+  off** until it is added again: the stored discovery copy is not refreshed.
+
+Microsoft and Google accounts are untouched by all of this.
 
 **The preview bar's title is the way back to the file.** Drawing the document
 here is *instead of* the browser tab the reader clicked, so the header

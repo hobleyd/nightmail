@@ -5,7 +5,11 @@ import 'package:equatable/equatable.dart';
 /// Which cloud service holds a document — read off the link, never off the
 /// mailbox the link arrived in. A OneDrive link in Gmail and a Drive link in
 /// Exchange are both ordinary.
-enum CloudDriveProvider { microsoft, google }
+///
+/// [nextcloud] is a NightMail Server's own file site: its links are fetched
+/// through that server's Graph `/shares`, exactly like a SharePoint link, and
+/// are recognised only on the hosts a signed-in server advertises.
+enum CloudDriveProvider { microsoft, google, nextcloud }
 
 /// A link in a message body that names a single cloud document.
 ///
@@ -20,12 +24,12 @@ class CloudDocumentLink extends Equatable {
 
   final CloudDriveProvider provider;
 
-  /// The link exactly as it appeared in the body. Microsoft needs this whole:
-  /// Graph resolves a sharing URL directly rather than an id.
+  /// The link exactly as it appeared in the body. Microsoft and Nextcloud need
+  /// this whole: Graph resolves a sharing URL directly rather than an id.
   final String url;
 
-  /// Google Drive's file id, picked out of the URL. Null for
-  /// [CloudDriveProvider.microsoft], which has no equivalent in the link.
+  /// Google Drive's file id, picked out of the URL. Null for the providers
+  /// resolved by sharing URL, which need no id of their own.
   final String? fileId;
 
   @override

@@ -50,7 +50,8 @@ void main() {
     // The reader is in their Exchange mailbox; the file is in Drive. The
     // candidate list is the Gmail accounts regardless of what is active.
     final datasource = MockCloudDriveDatasource();
-    when(accounts.cloudDriveCandidates(CloudDriveProvider.google))
+    when(accounts.cloudDriveCandidates(CloudDriveProvider.google,
+            url: anyNamed('url')))
         .thenReturn([gmail('ann')]);
     when(accounts.hasCloudDriveAccess('ann')).thenAnswer((_) async => true);
     when(accounts.cloudDriveDatasourceForAccount('ann')).thenReturn(datasource);
@@ -62,7 +63,8 @@ void main() {
   });
 
   test('no account of that provider is a settled "not here"', () async {
-    when(accounts.cloudDriveCandidates(CloudDriveProvider.google))
+    when(accounts.cloudDriveCandidates(CloudDriveProvider.google,
+            url: anyNamed('url')))
         .thenReturn([]);
 
     final result = await repository.fetchDocument(driveLink);
@@ -71,7 +73,8 @@ void main() {
   });
 
   test('an account that has never been asked for access is offered', () async {
-    when(accounts.cloudDriveCandidates(CloudDriveProvider.google))
+    when(accounts.cloudDriveCandidates(CloudDriveProvider.google,
+            url: anyNamed('url')))
         .thenReturn([gmail('ann')]);
     when(accounts.hasCloudDriveAccess('ann')).thenAnswer((_) async => false);
     when(accounts.accountById('ann')).thenReturn(gmail('ann'));
@@ -89,7 +92,8 @@ void main() {
       () async {
     final annDatasource = MockCloudDriveDatasource();
     final bobDatasource = MockCloudDriveDatasource();
-    when(accounts.cloudDriveCandidates(CloudDriveProvider.google))
+    when(accounts.cloudDriveCandidates(CloudDriveProvider.google,
+            url: anyNamed('url')))
         .thenReturn([gmail('ann'), gmail('bob')]);
     when(accounts.hasCloudDriveAccess(any)).thenAnswer((_) async => true);
     when(accounts.cloudDriveDatasourceForAccount('ann'))
@@ -110,7 +114,8 @@ void main() {
       () async {
     final annDatasource = MockCloudDriveDatasource();
     final bobDatasource = MockCloudDriveDatasource();
-    when(accounts.cloudDriveCandidates(CloudDriveProvider.google))
+    when(accounts.cloudDriveCandidates(CloudDriveProvider.google,
+            url: anyNamed('url')))
         .thenReturn([gmail('ann'), gmail('bob')]);
     when(accounts.hasCloudDriveAccess(any)).thenAnswer((_) async => true);
     when(accounts.cloudDriveDatasourceForAccount('ann'))
@@ -132,7 +137,8 @@ void main() {
       () async {
     final annDatasource = MockCloudDriveDatasource();
     final bobDatasource = MockCloudDriveDatasource();
-    when(accounts.cloudDriveCandidates(CloudDriveProvider.google))
+    when(accounts.cloudDriveCandidates(CloudDriveProvider.google,
+            url: anyNamed('url')))
         .thenReturn([gmail('ann'), gmail('bob')]);
     when(accounts.hasCloudDriveAccess(any)).thenAnswer((_) async => true);
     when(accounts.cloudDriveDatasourceForAccount('ann'))
@@ -151,7 +157,8 @@ void main() {
   test('a document nothing can draw is not retried elsewhere', () async {
     final annDatasource = MockCloudDriveDatasource();
     final bobDatasource = MockCloudDriveDatasource();
-    when(accounts.cloudDriveCandidates(CloudDriveProvider.google))
+    when(accounts.cloudDriveCandidates(CloudDriveProvider.google,
+            url: anyNamed('url')))
         .thenReturn([gmail('ann'), gmail('bob')]);
     when(accounts.hasCloudDriveAccess(any)).thenAnswer((_) async => true);
     when(accounts.cloudDriveDatasourceForAccount('ann'))
@@ -170,7 +177,8 @@ void main() {
   test('every granted account refused, but one unasked, offers the unasked one',
       () async {
     final annDatasource = MockCloudDriveDatasource();
-    when(accounts.cloudDriveCandidates(CloudDriveProvider.google))
+    when(accounts.cloudDriveCandidates(CloudDriveProvider.google,
+            url: anyNamed('url')))
         .thenReturn([gmail('ann'), gmail('bob')]);
     when(accounts.hasCloudDriveAccess('ann')).thenAnswer((_) async => true);
     when(accounts.hasCloudDriveAccess('bob')).thenAnswer((_) async => false);
@@ -185,5 +193,66 @@ void main() {
     final failure = result.getLeft().toNullable();
     expect(failure, isA<CloudDriveAccessNotGranted>());
     expect((failure as CloudDriveAccessNotGranted).accountId, 'bob');
+  });
+
+  group('Nextcloud links on a NightMail Server', () {
+    const nextcloudLink = CloudDocumentLink(
+      provider: CloudDriveProvider.nextcloud,
+      url: 'https://cloud.example.com/s/AbCdEfGh',
+    );
+    const server = MicrosoftAccount(
+      id: 'nw',
+      displayName: 'Server',
+      emailAddress: 'me@example.com',
+      tenantId: MicrosoftAccount.nightmailServerTenantId,
+    );
+
+    void given(Future<CloudDocument> Function() fetch) {
+      final datasource = MockCloudDriveDatasource();
+      when(accounts.cloudDriveCandidates(CloudDriveProvider.nextcloud,
+              url: nextcloudLink.url))
+          .thenReturn([server]);
+      when(accounts.hasCloudDriveAccess('nw')).thenAnswer((_) async => true);
+      when(accounts.cloudDriveDatasourceForAccount('nw')).thenReturn(datasource);
+      when(datasource.fetchDocument(nextcloudLink)).thenAnswer((_) => fetch());
+    }
+
+    test('is fetched by the server account that advertises the host', () async {
+      given(() async => document);
+
+      expect((await repository.fetchDocument(nextcloudLink)).toNullable(),
+          document);
+    });
+
+    for (final status in [403, 404]) {
+      test('a $status (password-protected, gone) falls through quietly',
+          () async {
+        given(() async =>
+            throw ServerException(message: 'refused', statusCode: status));
+
+        final failure =
+            (await repository.fetchDocument(nextcloudLink)).getLeft().toNullable();
+        expect(failure, isA<CloudDriveUnavailable>());
+      });
+    }
+
+    test('any other server error is still reported', () async {
+      given(() async =>
+          throw const ServerException(message: 'down', statusCode: 503));
+
+      expect((await repository.fetchDocument(nextcloudLink)).getLeft().toNullable(),
+          isA<ServerFailure>());
+    });
+
+    test('no advertising server is a settled "not here"', () async {
+      when(accounts.cloudDriveCandidates(CloudDriveProvider.nextcloud,
+              url: nextcloudLink.url))
+          .thenReturn([]);
+
+      final failure =
+          (await repository.fetchDocument(nextcloudLink)).getLeft().toNullable();
+      expect(failure, isA<CloudDriveUnavailable>());
+      expect(failure!.message, contains('NightMail Server'));
+    });
   });
 }

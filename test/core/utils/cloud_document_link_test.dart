@@ -189,4 +189,84 @@ void main() {
       }
     });
   });
+
+  group('Nextcloud on an advertised NightMail Server file site', () {
+    const sites = [
+      'https://cloud.example.com',
+      'https://files.example.com/nextcloud',
+    ];
+
+    CloudDocumentLink? parse(String url) =>
+        parseCloudDocumentLink(url, nextcloudBaseUrls: sites);
+
+    test('public shares and internal links are documents', () {
+      const documents = [
+        'https://cloud.example.com/s/jeKXiPKYQXyWQAT',
+        'https://cloud.example.com/s/jeKXiPKYQXyWQAT/',
+        'https://cloud.example.com/index.php/s/jeKXiPKYQXyWQAT',
+        'https://cloud.example.com/f/385',
+        'https://cloud.example.com/index.php/f/385',
+        'https://CLOUD.example.com/s/custom-token_1',
+        'https://files.example.com/nextcloud/s/AbCdEfGh',
+        'https://files.example.com/nextcloud/f/12',
+      ];
+      for (final url in documents) {
+        final link = parse(url);
+        expect(link?.provider, CloudDriveProvider.nextcloud, reason: url);
+        expect(link?.url, Uri.parse(url).toString(), reason: url);
+        expect(link?.fileId, isNull, reason: url);
+      }
+    });
+
+    test('anything else on the site stays with the browser', () {
+      const notDocuments = [
+        'https://cloud.example.com/',
+        'https://cloud.example.com/apps/files/',
+        'https://cloud.example.com/apps/files/files/385?dir=/',
+        'https://cloud.example.com/s/AbCdEfGh/download',
+        'https://cloud.example.com/s/AbCdEfGh/download/x.docx',
+        'https://cloud.example.com/s/AbCdEfGh?path=/Reports',
+        'https://cloud.example.com/f/385?openfile=true',
+        'https://cloud.example.com/s/AbCdEfGh#x',
+        'https://cloud.example.com/f/notanumber',
+        'https://cloud.example.com/remote.php/dav/files/alice/x.docx',
+        'https://files.example.com/s/AbCdEfGh',
+        'https://files.example.com/nextcloudish/s/AbCdEfGh',
+      ];
+      for (final url in notDocuments) {
+        expect(parse(url), isNull, reason: url);
+      }
+    });
+
+    test('the same shapes on a host nobody advertised are not claimed', () {
+      expect(parse('https://evil.example.com/s/AbCdEfGh'), isNull);
+      expect(parse('http://cloud.example.com/s/AbCdEfGh'), isNull);
+      expect(parse('https://cloud.example.com:8443/s/AbCdEfGh'), isNull);
+      expect(parse('https://cloud.example.com.evil.test/s/AbCdEfGh'), isNull);
+      expect(parseCloudDocumentLink('https://cloud.example.com/s/AbCdEfGh'),
+          isNull);
+    });
+
+    test('Microsoft and Google links are unaffected by file sites', () {
+      expect(
+        parse('https://drive.google.com/file/d/1AbCdEfGhIjKlMn/view')?.provider,
+        CloudDriveProvider.google,
+      );
+      expect(
+        parseCloudDocumentLink(
+          'https://contoso.sharepoint.com/:w:/g/personal/x/Eabcdefghij',
+          nextcloudBaseUrls: const ['https://contoso.sharepoint.com'],
+        )?.provider,
+        CloudDriveProvider.microsoft,
+      );
+    });
+
+    test('an unusable advertised site is skipped', () {
+      expect(
+        parseCloudDocumentLink('https://cloud.example.com/s/AbC',
+            nextcloudBaseUrls: const ['not a url', 'https://cloud.example.com']),
+        isNotNull,
+      );
+    });
+  });
 }

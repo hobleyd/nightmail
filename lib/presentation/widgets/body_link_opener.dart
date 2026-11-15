@@ -6,6 +6,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 import '../../core/utils/cloud_document_link.dart';
+import '../../infrastructure/accounts/account_manager.dart';
+import '../../injection_container.dart';
 import '../../core/utils/online_meeting_url.dart';
 import '../pages/compose_window.dart';
 import 'cloud_document_preview_host.dart';
@@ -21,8 +23,9 @@ import 'cloud_document_preview_host.dart';
 ///   OS, a round trip through a second process to arrive where the click
 ///   already was. On a machine where NightMail is not the default, it would
 ///   compose the reply in a program the reader did not choose.
-/// * A **SharePoint/OneDrive or Google Drive document** is fetched and shown in
-///   the reading pane, the same surface an attachment chip previews into — the
+/// * A **SharePoint/OneDrive, Google Drive or NightMail Server (Nextcloud)
+///   document** is fetched and shown in the reading pane, the same surface an
+///   attachment chip previews into — the
 ///   link is an attachment in all but name, and following it to a browser tab
 ///   asks the reader to sign in to a second thing to read their own mail. This
 ///   needs somewhere to draw the preview, so it only happens where a
@@ -39,7 +42,8 @@ Future<void> openBodyLink(BuildContext context, String url) async {
     return ComposeWindowApp.openMailto(context, uri);
   }
 
-  final document = parseCloudDocumentLink(url);
+  final document = parseCloudDocumentLink(url,
+      nextcloudBaseUrls: _nextcloudFileSites());
   if (document != null) {
     final host = CloudDocumentPreviewHost.maybeOf(context);
     if (host != null && await host(document)) return;
@@ -47,6 +51,13 @@ Future<void> openBodyLink(BuildContext context, String url) async {
 
   await launchWebUrl(uri);
 }
+
+/// The file sites signed-in NightMail Servers advertise. A sub-window engine
+/// that never registered the account manager has none — and no preview host
+/// either, so its links go to the browser regardless.
+Iterable<String> _nextcloudFileSites() => sl.isRegistered<AccountManager>()
+    ? sl<AccountManager>().nextcloudFileBaseUrls
+    : const [];
 
 /// Opens a web page the way the platform expects: in the in-app browser view
 /// on a phone or tablet (Safari View Controller on iOS, a Custom Tab on

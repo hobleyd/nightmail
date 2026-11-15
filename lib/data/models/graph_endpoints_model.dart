@@ -25,9 +25,16 @@ abstract final class GraphEndpointsModel {
   ///   "authorizationEndpoint": "https://mail.example.com/oauth2/authorize",
   ///   "tokenEndpoint": "https://mail.example.com/oauth2/token",
   ///   "clientId": "nightmail",
-  ///   "scopes": ["openid", "email", "profile", "offline_access"]
+  ///   "scopes": ["openid", "email", "profile", "offline_access"],
+  ///   "filesBaseUrls": ["https://cloud.example.com"]
   /// }
   /// ```
+  ///
+  /// `filesBaseUrls` is the one optional field (see
+  /// [GraphEndpoints.filesBaseUrls]), and it is read leniently: an entry that
+  /// is not an absolute http(s) URL is dropped rather than refusing the whole
+  /// document, because a server's file sites are a preview nicety and must
+  /// never be the reason an account cannot be added.
   ///
   /// URLs must be absolute `https` — or `http` to a loopback host, for a
   /// server on the same machine — because every one of them is handed the
@@ -80,7 +87,33 @@ abstract final class GraphEndpointsModel {
       clientId: clientId.trim(),
       scopes: List.unmodifiable(rawScopes.cast<String>().map((s) => s.trim())),
       serverUrl: serverUrl,
+      filesBaseUrls: _filesBaseUrls(json['filesBaseUrls']),
     );
+  }
+
+  /// The usable entries of an optional `filesBaseUrls` list: absolute http(s)
+  /// URLs with a host and no query or fragment, trailing slashes stripped.
+  /// No tokens are ever sent to them — they only decide which links in a body
+  /// are this server's — so plain `http` is as acceptable as the server says.
+  static List<String> _filesBaseUrls(Object? raw) {
+    if (raw is! List) return const [];
+    final out = <String>[];
+    for (final entry in raw) {
+      if (entry is! String) continue;
+      final trimmed = _stripTrailingSlash(entry.trim());
+      final uri = Uri.tryParse(trimmed);
+      if (uri == null ||
+          !uri.isAbsolute ||
+          uri.host.isEmpty ||
+          !(uri.isScheme('https') || uri.isScheme('http')) ||
+          uri.hasQuery ||
+          uri.hasFragment ||
+          uri.userInfo.isNotEmpty) {
+        continue;
+      }
+      if (!out.contains(trimmed)) out.add(trimmed);
+    }
+    return List.unmodifiable(out);
   }
 
   /// What a user typed as a server address, as the address discovery is
@@ -130,6 +163,8 @@ abstract final class GraphEndpointsModel {
         'tokenEndpoint': endpoints.tokenEndpoint,
         if (endpoints.clientId != null) 'clientId': endpoints.clientId,
         if (endpoints.scopes != null) 'scopes': endpoints.scopes,
+        if (endpoints.filesBaseUrls.isNotEmpty)
+          'filesBaseUrls': endpoints.filesBaseUrls,
       };
 
   /// Reads [toStorageJson]'s output back. Never throws — see the class doc.
@@ -144,6 +179,7 @@ abstract final class GraphEndpointsModel {
       tokenEndpoint: str('tokenEndpoint'),
       clientId: json['clientId'] is String ? json['clientId'] as String : null,
       scopes: scopes is List ? scopes.whereType<String>().toList() : null,
+      filesBaseUrls: _filesBaseUrls(json['filesBaseUrls']),
     );
   }
 }

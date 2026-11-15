@@ -20,6 +20,7 @@ class GraphEndpoints extends Equatable {
     this.clientId,
     this.scopes,
     this.serverUrl,
+    this.filesBaseUrls = const [],
   });
 
   /// Microsoft's own endpoints for [tenantId] — byte-for-byte what was
@@ -73,6 +74,16 @@ class GraphEndpoints extends Equatable {
   /// was normalised; null for Microsoft.
   final String? serverUrl;
 
+  /// Public base URLs of the NightMail Server's file sites (its Nextcloud,
+  /// e.g. `https://cloud.example.com`), no trailing slash. A
+  /// `{base}/s/{token}` or `{base}/f/{fileId}` link in a message body is
+  /// previewed through this server's `/shares` — the same route a
+  /// SharePoint link takes on Microsoft — but only on these hosts, so the
+  /// link scanner never claims a Nextcloud it was not told about. Empty for
+  /// Microsoft, for a server that does not publish any, and for an account
+  /// discovered before servers could (the feature is simply off there).
+  final List<String> filesBaseUrls;
+
   /// Whether these are Microsoft's endpoints. Features that only exist there —
   /// threat submission, SharePoint/OneDrive previews, incremental Graph
   /// consent — check this.
@@ -87,5 +98,6 @@ class GraphEndpoints extends Equatable {
         clientId,
         scopes,
         serverUrl,
+        filesBaseUrls,
       ];
 }

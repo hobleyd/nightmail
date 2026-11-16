@@ -23,6 +23,7 @@ The app provides a desktop based three-pane layout (folders, message list, readi
 - Full-text search within folders
 - Search operators on every provider: free text matches message bodies as well as headers, plus `from:`, `to:`, `cc:`, `subject:`, `body:`, `has:attachment` and "quoted phrases"
 - An AI assistant's email search shows in the message list from its result card ("Show N emails in list"), under a banner that closes back to the folder
+- When the AI assistant narrows a search down to the emails that answer the question, just those emails can be shown in the message list too
 - Sender anomaly and spam detection
 - Spam filter synced across IMAP clients via a dedicated server-side folder
 - Delete a conversation thread's in-folder messages from the reading pane

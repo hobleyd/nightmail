@@ -22,6 +22,7 @@ import 'package:nightmail/domain/usecases/get_email.dart';
 import 'package:nightmail/domain/usecases/get_emails.dart';
 import 'package:nightmail/domain/usecases/get_mail_folders.dart';
 import 'package:nightmail/domain/usecases/search_emails.dart';
+import 'package:nightmail/domain/usecases/ai/agent/email_agent_tools.dart';
 import 'package:nightmail/domain/usecases/ai/run_folder_agent.dart';
 
 import 'run_folder_agent_test.mocks.dart';
@@ -284,7 +285,13 @@ void main() {
       expect(
         requests[0].tools!.map((t) => t.name),
         containsAll(
-            <String>['list_emails', 'get_email', 'search_emails', 'list_folders']),
+            <String>[
+              'list_emails',
+              'get_email',
+              'search_emails',
+              'list_folders',
+              'show_emails',
+            ]),
       );
 
       // Round 2 carries the assistant tool-call turn + the tool-result turn,
@@ -700,6 +707,44 @@ void main() {
           .firstWhere((m) => m.role == AiRole.tool && m.name == 'get_email');
       final decoded = jsonDecode(toolMsg.content) as Map<String, dynamic>;
       expect(decoded['body'], 'ALLOWED-BODY');
+    });
+  });
+  group('ShowEmailsTool', () {
+    test('reads each id back and reports the ones that are not emails',
+        () async {
+      when(mockGetEmail(any)).thenAnswer((inv) async {
+        final id = (inv.positionalArguments.single as GetEmailParams).id;
+        return id == 'made-up'
+            ? const Left(ServerFailure(message: 'not found'))
+            : Right(email(id: id));
+      });
+
+      final out = (await ShowEmailsTool(mockGetEmail).invoke({
+        'ids': ['a', 'made-up', 'a', 'b'],
+      }))
+          .getOrElse((_) => '');
+      final decoded = jsonDecode(out) as Map<String, dynamic>;
+
+      expect((decoded['emails'] as List).map((e) => e['id']), ['a', 'b']);
+      expect(decoded['notFound'], ['made-up']);
+      verify(mockGetEmail(any)).called(3); // the repeated 'a' is read once
+    });
+
+    test('no ids, or none that are emails, is an error the model can see',
+        () async {
+      when(mockGetEmail(any))
+          .thenAnswer((_) async => const Left(ServerFailure(message: 'x')));
+      final tool = ShowEmailsTool(mockGetEmail);
+
+      for (final args in [
+        <String, dynamic>{},
+        {
+          'ids': ['nope']
+        },
+      ]) {
+        final out = (await tool.invoke(args)).getOrElse((_) => '');
+        expect(jsonDecode(out), contains('error'));
+      }
     });
   });
 }

@@ -1954,6 +1954,28 @@ void main() {
       expect(params.top, 25);
     });
 
+    test('a picked set reads each email back, newest first, skipping gone ones',
+        () async {
+      await loadEmails([_email('id1')], folderId: 'folder-1');
+      when(mockGetEmail(any)).thenAnswer((inv) async {
+        final id = (inv.positionalArguments.single as GetEmailParams).id;
+        return switch (id) {
+          'old' => Right(_email('old', receivedDateTime: DateTime(2026, 5, 2))),
+          'new' => Right(_email('new', receivedDateTime: DateTime(2026, 5, 9))),
+          _ => const Left(ServerFailure(message: 'gone')),
+        };
+      });
+
+      final state = await show(const EmailListResultSet(
+        title: 'MacBook purchase',
+        accountId: 'account-1',
+        ids: ['old', 'deleted', 'new'],
+      ));
+
+      expect(state.emails.map((e) => e.id), ['new', 'old']);
+      verifyNever(mockSearchEmails(any));
+    });
+
     // A folder id means nothing to another account — see the account-switch
     // notes in lib/presentation/blocs/email_list/CLAUDE.md.
     test('a set from another account is refused, not run', () async {

@@ -478,6 +478,15 @@ third narrowed view beside search and a focused thread (`focusedResults`, so
   the AI domain to the list for a snapshot that goes stale on the next poll.
   The cost is one more provider call on click, and the count on the button can
   differ from what lands if mail arrived in between.
+- **A narrowed-down answer needs `show_emails`.** Asked to *find* something,
+  the model searches broadly, reads a few hits with `get_email` and keeps,
+  say, 3 of 40. That pick existed only in its prose, so the only button was
+  the search's — all 40. The folder agent now has a `show_emails` tool it is
+  told to call with the ids it settled on; its card offers the same button
+  over an id set (`EmailListResultSet.ids`), which the list reads back with
+  `GetEmail` one by one, newest first, dropping any that have gone. The
+  card uses the ids the tool *read back*, not the ones the model sent, so a
+  made-up id never reaches the list.
 - **The folder and account are the turn's, not the click's.** A tool defaults
   to the folder on screen *when the turn ran*; `AgentChatCubit` stamps that and
   the active account on each `AiToolItem` (`turnFolderId`/`turnAccountId`).

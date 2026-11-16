@@ -24,7 +24,8 @@ import 'agent/email_agent_tools.dart';
 /// Replaces the single-shot [QueryEmailFolder] for tool-capable models: instead
 /// of pre-stuffing folder emails into the prompt, the model is given read-only
 /// tools ([ListEmailsTool], [GetEmailTool], [SearchEmailsTool],
-/// [ListFoldersTool]) to read/search mail on demand. Multi-turn threading is
+/// [ListFoldersTool], and [ShowEmailsTool] to name its pick) to read/search
+/// mail on demand. Multi-turn threading is
 /// the caller's responsibility — it passes the accumulated [history] each turn.
 ///
 /// Routing reuses [AiCapability.compose]. When the routed model does not
@@ -98,8 +99,11 @@ class RunFolderAgent {
       'information you need before answering — do not guess or fabricate. '
       'Prefer list_emails or search_emails to find relevant messages, then '
       'get_email to read details. The user is currently viewing a specific '
-      'folder; tools default to that folder when no folder is specified. Cite '
-      'specific senders, subjects, and dates. Be concise and specific.';
+      'folder; tools default to that folder when no folder is specified. When '
+      'the user asks you to find emails and you narrow what a search or '
+      'listing found down to the ones that match, finish by calling '
+      'show_emails with their ids so the user can open them in their list. '
+      'Cite specific senders, subjects, and dates. Be concise and specific.';
 
   /// Fallback system prompt (no tools) — mirrors [QueryEmailFolder].
   static const String _fallbackSystemPrompt =
@@ -198,6 +202,7 @@ class RunFolderAgent {
       GetEmailTool(getEmail, includeBodies: includeBodies),
       SearchEmailsTool(searchEmails),
       ListFoldersTool(getMailFolders),
+      ShowEmailsTool(getEmail),
     ];
     // The loop itself is shared with the commitments agent — see AgentLoop.
     yield* AgentLoop(inferenceRepository).run(
@@ -239,6 +244,8 @@ class RunFolderAgent {
         return 'Reading an email…';
       case 'list_folders':
         return 'Listing folders…';
+      case 'show_emails':
+        return 'Picking out the matching emails…';
       default:
         return 'Using ${call.name}…';
     }

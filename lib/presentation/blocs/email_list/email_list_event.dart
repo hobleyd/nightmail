@@ -237,14 +237,16 @@ final class EmailListThreadFocusCleared extends EmailListEvent {
 }
 
 /// A set of emails defined by a query rather than by a folder — what one of the
-/// AI assistant's `search_emails` / `list_emails` calls found. Held as the
-/// query, not the emails, so it is re-run the way a search is: on show, and on
-/// every refresh while it is up.
+/// AI assistant's `search_emails` / `list_emails` calls found, or the emails
+/// its `show_emails` picked out. Held as the query (or the ids), not the
+/// emails, so it is re-run the way a search is: on show, and on every refresh
+/// while it is up.
 final class EmailListResultSet extends Equatable {
   const EmailListResultSet({
     required this.title,
     required this.accountId,
     this.query,
+    this.ids,
     this.folderId,
     this.top = 50,
     this.unreadOnly = false,
@@ -260,6 +262,10 @@ final class EmailListResultSet extends Equatable {
   /// The search query; null for a plain listing of [folderId].
   final String? query;
 
+  /// The emails the assistant picked, read back one by one; when set, [query],
+  /// [folderId] and [top] play no part.
+  final List<String>? ids;
+
   final String? folderId;
   final int top;
 
@@ -268,7 +274,7 @@ final class EmailListResultSet extends Equatable {
 
   @override
   List<Object?> get props =>
-      [title, accountId, query, folderId, top, unreadOnly];
+      [title, accountId, query, ids, folderId, top, unreadOnly];
 }
 
 /// Replaces the list with [results] under a banner, the way

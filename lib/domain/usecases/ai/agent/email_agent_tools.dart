@@ -222,6 +222,85 @@ class ListFoldersTool implements AgentTool {
   }
 }
 
+/// `show_emails` — names the emails that answer the user's request, once the
+/// model has narrowed a search down by reading what it found.
+///
+/// A search card can only replay its query, so without this the model's pick
+/// lives in its prose and the list cannot show it. Each id is read back, so an
+/// id the model made up is dropped rather than shown; the output is the same
+/// shape as a listing, which is what the card's "Show in list" reads.
+class ShowEmailsTool implements AgentTool {
+  const ShowEmailsTool(this._getEmail);
+
+  /// The most ids one call may name; more are ignored.
+  static const maxIds = 25;
+
+  final GetEmail _getEmail;
+
+  @override
+  String get name => 'show_emails';
+
+  @override
+  String get description =>
+      'Pick out the emails that answer the user\'s request so they can open '
+      'them in their email list. Call this once, at the end, with the ids of '
+      'the matching emails whenever the user asked to find emails and you '
+      'narrowed a search or listing down — not for every email you looked at.';
+
+  @override
+  Map<String, dynamic> get parametersSchema => {
+        'type': 'object',
+        'properties': {
+          'ids': {
+            'type': 'array',
+            'items': {'type': 'string'},
+            'description': 'Ids of the matching emails, from list_emails, '
+                'search_emails or get_email (at most $maxIds).',
+          },
+          'title': {
+            'type': 'string',
+            'description': 'A few words naming what these emails are, e.g. '
+                '"MacBook purchase, May".',
+          },
+        },
+        'required': ['ids'],
+      };
+
+  @override
+  Future<Either<Failure, String>> invoke(
+    Map<String, dynamic> args, {
+    String? currentFolderId,
+  }) async {
+    final raw = args['ids'];
+    final ids = <String>{
+      if (raw is List)
+        for (final v in raw) ?_asString(v),
+    }.take(maxIds).toList();
+    if (ids.isEmpty) {
+      return Right(jsonEncode({'error': "Missing required argument 'ids'."}));
+    }
+
+    final results =
+        await Future.wait(ids.map((id) => _getEmail(GetEmailParams(id: id))));
+    final found = <Email>[];
+    final missing = <String>[];
+    for (var i = 0; i < ids.length; i++) {
+      results[i].fold((_) => missing.add(ids[i]), found.add);
+    }
+    if (found.isEmpty) {
+      return Right(jsonEncode({
+        'error': 'None of those ids is an email. Use ids exactly as '
+            'list_emails, search_emails or get_email returned them.',
+      }));
+    }
+    final listing = jsonDecode(_encodeEmailList(found)) as Map<String, dynamic>;
+    return Right(jsonEncode({
+      ...listing,
+      if (missing.isNotEmpty) 'notFound': missing,
+    }));
+  }
+}
+
 // --- Shared formatting helpers -------------------------------------------
 
 /// Encodes a list of emails as a compact indexed JSON string (metadata +

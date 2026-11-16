@@ -160,6 +160,30 @@ void main() {
       expect(r?.top, 100, reason: 'clamped like the tool clamps it');
     });
 
+    test('a pick shows the ids that were read back, under its title', () {
+      final r = agentEmailResults(_item(
+        'show_emails',
+        {'ids': ['a', 'b', 'made-up'], 'title': 'MacBook purchase'},
+        output: '{"count": 2, "emails": [{"id": "a"}, {"id": "b"}], '
+            '"notFound": ["made-up"]}',
+      ));
+      expect(
+        r,
+        const EmailListResultSet(
+          title: 'MacBook purchase',
+          accountId: 'account-1',
+          ids: ['a', 'b'],
+        ),
+      );
+    });
+
+    test('a pick where nothing was found offers nothing', () {
+      expect(
+          agentEmailResults(_item('show_emails', {'ids': ['x']},
+              output: '{"error": "None of those ids is an email."}')),
+          isNull);
+    });
+
     test('nothing to show for other tools, no hits, or a call not done', () {
       expect(agentEmailResults(_item('get_email', {'id': 'a'})), isNull);
       expect(

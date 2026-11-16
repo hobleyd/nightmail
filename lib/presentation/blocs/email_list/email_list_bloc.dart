@@ -1677,11 +1677,12 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
     );
   }
 
-  /// The same call the AI tool made: a search, or a (possibly unread-only)
-  /// listing of one folder.
+  /// The same call the AI tool made: a search, a (possibly unread-only)
+  /// listing of one folder, or the emails it picked out by id.
   Future<Either<Failure, List<Email>>> _fetchResults(
     EmailListResultSet results,
   ) {
+    if (results.ids case final ids?) return _fetchPicked(ids);
     final query = results.query;
     if (query != null) {
       return _searchEmails(SearchEmailsParams(
@@ -1695,6 +1696,22 @@ class EmailListBloc extends Bloc<EmailListEvent, EmailListState> {
       top: results.top,
       filter: results.unreadOnly ? 'isRead eq false' : null,
     ));
+  }
+
+  /// Reads each picked email, newest first like any listing. One that has
+  /// gone since (deleted, moved off a provider that keys by folder) is left
+  /// out; only when none can be read is it a failure.
+  Future<Either<Failure, List<Email>>> _fetchPicked(List<String> ids) async {
+    final results =
+        await Future.wait(ids.map((id) => _getEmail(GetEmailParams(id: id))));
+    final emails = <Email>[];
+    Failure? failure;
+    for (final r in results) {
+      r.fold((f) => failure ??= f, emails.add);
+    }
+    if (emails.isEmpty && failure != null) return Left(failure!);
+    emails.sort((a, b) => b.receivedDateTime.compareTo(a.receivedDateTime));
+    return Right(emails);
   }
 
   /// Re-fetches the thread currently on screen, leaving focus mode intact.

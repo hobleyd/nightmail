@@ -7,10 +7,10 @@ import '../../../domain/usecases/ai/agent/email_agent_tools.dart';
 import '../../blocs/ai/ai_folder_chat_state.dart';
 import '../../blocs/email_list/email_list_event.dart' show EmailListResultSet;
 
-/// The emails a finished `search_emails` / `list_emails` call found, as a set
-/// the email list can re-run — or null for any other tool, a call still running
-/// or failed, or one that found nothing. Uses the tools' own limits, so the
-/// replay asks the same question.
+/// The emails a finished `search_emails` / `list_emails` call found, or a
+/// `show_emails` call picked out, as a set the email list can re-run — or null
+/// for any other tool, a call still running or failed, or one that found
+/// nothing. Uses the tools' own limits, so the replay asks the same question.
 EmailListResultSet? agentEmailResults(AiToolItem item) {
   if (item.status != AiToolStatus.complete) return null;
   final found = _resultCount(item);
@@ -19,6 +19,16 @@ EmailListResultSet? agentEmailResults(AiToolItem item) {
   final args = item.args;
   final folderId = _argString(args['folder_id']) ?? item.turnFolderId;
   switch (item.name) {
+    case 'show_emails':
+      // The ids that were read back, not the ones asked for: one the model
+      // made up is in `notFound`, not `emails`.
+      final ids = _resultIds(item);
+      if (ids.isEmpty) return null;
+      return EmailListResultSet(
+        title: _argString(args['title']) ?? 'Picked emails',
+        accountId: item.turnAccountId,
+        ids: ids,
+      );
     case 'search_emails':
       final query = _argString(args['query']);
       if (query == null) return null;
@@ -56,6 +66,21 @@ int? _resultCount(AiToolItem item) {
         : null;
   } on FormatException {
     return null;
+  }
+}
+
+/// The ids in an email-list tool's output.
+List<String> _resultIds(AiToolItem item) {
+  try {
+    final decoded = jsonDecode(item.output ?? '');
+    final emails = decoded is Map<String, dynamic> ? decoded['emails'] : null;
+    return [
+      if (emails is List)
+        for (final e in emails)
+          if (e is Map && e['id'] is String) e['id'] as String,
+    ];
+  } on FormatException {
+    return const [];
   }
 }
 
@@ -116,6 +141,8 @@ class _ToolCallCardState extends State<ToolCallCard> {
         return running ? 'Reading…' : 'Read email';
       case 'list_folders':
         return running ? 'Listing…' : 'Listed folders';
+      case 'show_emails':
+        return running ? 'Picking out…' : 'Picked out emails';
       default:
         return widget.item.name;
     }
@@ -131,6 +158,8 @@ class _ToolCallCardState extends State<ToolCallCard> {
         return Icons.mail_outline;
       case 'list_folders':
         return Icons.folder_outlined;
+      case 'show_emails':
+        return Icons.checklist_rtl;
       default:
         return Icons.build_outlined;
     }
@@ -140,7 +169,7 @@ class _ToolCallCardState extends State<ToolCallCard> {
   /// subject) for the collapsed one-liner preview, or null when none.
   String? _argPreview() {
     final args = widget.item.args;
-    for (final key in const ['query', 'subject', 'id', 'folder_id']) {
+    for (final key in const ['query', 'title', 'subject', 'id', 'folder_id']) {
       final v = args[key];
       final s = v?.toString().trim();
       if (s != null && s.isNotEmpty) return s;

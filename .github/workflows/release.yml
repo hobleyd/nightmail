@@ -630,8 +630,15 @@ jobs:
   build-ios:
     needs: prepare
     if: github.event_name == 'push'
-    runs-on: macos-latest
+    # App Store Connect rejects uploads not built with the iOS 27 SDK from
+    # April 2027 (ITMS-90725). macos-latest (macos-26) tops out at Xcode 26.x,
+    # so this job runs on the separate xcode-27 image and pins the same Xcode
+    # local builds use rather than trusting the image default.
+    runs-on: xcode-27
     steps:
+      - name: Select Xcode 27.2
+        run: sudo xcode-select -s /Applications/Xcode_27.2.app && xcodebuild -version
+
       - uses: actions/checkout@v4
 
       - uses: subosito/flutter-action@v2

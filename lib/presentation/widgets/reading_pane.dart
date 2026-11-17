@@ -1650,13 +1650,20 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
             CalendarWeekLoadRequested(weekStart: calendarState.weekStart),
           );
 
-      // A forwarded invitation stays in the mailbox. It is somebody's message
-      // *about* the meeting — their note is the context — and no earlier
-      // invitation to the same meeting is superseded by answering it, because
-      // the organizer never sent one here. The banner stays too: it is the
-      // one place that says the organizer was emailed rather than told by the
-      // provider, which the user needs to know before expecting updates.
-      if (_responseMode == MeetingResponseMode.emailedOrganizer) return;
+      // A forwarded invitation that was accepted stays in the mailbox. It is
+      // somebody's message *about* the meeting — their note is the context —
+      // and no earlier invitation to the same meeting is superseded by
+      // answering it, because the organizer never sent one here. The banner
+      // stays too: it is the one place that says the organizer was emailed
+      // rather than told by the provider, which the user needs to know before
+      // expecting updates. A decline expects no updates and keeps nothing on
+      // the calendar, so it is deleted like any other declined invitation —
+      // keeping a declined Bcc'd mail-out in the Inbox read as the decline
+      // not having happened.
+      if (_responseMode == MeetingResponseMode.emailedOrganizer &&
+          response != MeetingInviteResponseType.decline) {
+        return;
+      }
 
       final email = widget.email;
       final emailListBloc = context.read<EmailListBloc>();
@@ -2166,14 +2173,10 @@ class _MeetingInviteBannerState extends State<_MeetingInviteBanner> {
                       Padding(
                         padding: const EdgeInsets.only(top: 2),
                         child: Text(
-                          _responded == MeetingInviteResponseType.decline
-                              ? 'This invitation was forwarded to you, so your '
-                                  'reply was emailed to the organiser.'
-                              : 'This invitation was forwarded to you, so a '
-                                  'copy was added to your calendar and your '
-                                  'reply emailed to the organiser. You will '
-                                  'only receive updates to the meeting once '
-                                  'they add you to it.',
+                          'You are not on this invitation\'s guest list, so '
+                          'a copy was added to your calendar and your reply '
+                          'emailed to the organiser. You will only receive '
+                          'updates to the meeting once they add you to it.',
                           style: TextStyle(color: c.textDimmed, fontSize: 11),
                         ),
                       ),

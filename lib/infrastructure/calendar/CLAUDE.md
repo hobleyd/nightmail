@@ -181,10 +181,16 @@ a `MeetingResponseMode` so the banner can say which happened:
   will ever reach them. The copy is written before the mail goes out, so a
   reply that fails still leaves the answered meeting on the calendar, and the
   failure says so.
-- **The banner keeps the message and says what happened.** Every other answer
-  deletes the invitation and tidies the ones it supersedes; a forwarded one is
-  somebody's message *about* the meeting, nothing supersedes it, and the
+- **An accepted one keeps the message and says what happened.** Every other
+  answer deletes the invitation and tidies the ones it supersedes; a forwarded
+  one is somebody's message *about* the meeting, nothing supersedes it, and the
   banner is the one place that can say "emailed, not on their guest list yet".
+  **A decline is deleted like any other**: it expects no updates and keeps
+  nothing on the calendar, and a declined invitation left in the Inbox reads
+  as a decline that did not happen. That was AltTab's Christmas drinks, an
+  Outlook mail-out with every guest Bcc'd — "forwarded" here means "not on the
+  roster", which a Bcc'd mail-out is too, so neither the banner nor the reply
+  says "forwarded".
 - **Declining a meeting the provider does not hold is still a quiet no-op** for
   a non-forwarded invitation — the datasource now throws the typed miss on the
   decline path too (a forwarded decline owes the organizer a reply), and the

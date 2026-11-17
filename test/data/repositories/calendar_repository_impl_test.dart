@@ -2632,6 +2632,8 @@ END:VCALENDAR''';
       expect(mail[#subject], 'Declined: Quarterly review');
       expect(mail[#body], contains('has declined'));
       expect(mail[#body], contains('Clashes'));
+      // Nothing to ask of an organizer whose meeting was declined.
+      expect(mail[#body], isNot(contains('guest list')));
       final reply = replyIcsOf(mail);
       expect(reply, contains('PARTSTAT=DECLINED'));
       expect(reply, contains('COMMENT:Clashes'));

@@ -958,11 +958,16 @@ class CalendarRepositoryImpl implements CalendarRepository {
         ..writeln()
         ..writeln(note);
     }
-    body
-      ..writeln()
-      ..writeln('This invitation was forwarded to them, so they are not on '
-          'the guest list. Add them to the meeting if they should receive '
-          'updates to it.');
+    // Not "forwarded": an Outlook mail-out Bcc's its guests, and they are no
+    // more on the roster than a colleague's forward is. Nothing to ask of the
+    // organizer after a decline.
+    if (response != MeetingInviteResponseType.decline) {
+      body
+        ..writeln()
+        ..writeln('They are not on the guest list for this invitation (it '
+            'was forwarded or Bcc\'d to them). Add them to the meeting if '
+            'they should receive updates to it.');
+    }
 
     final reply = buildReplyIcs(
       originalIcs: icsData,

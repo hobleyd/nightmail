@@ -431,12 +431,18 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
   /// particular order, and answering whichever came first answers — and, for
   /// a decline, deletes — some other occurrence. A miss there falls through to
   /// the start-time window, which lists expanded instances.
+  ///
+  /// [sameMeetingOnly] is for removing a cancelled meeting: only this UID is
+  /// ever returned (the window still finds an unmodified occurrence), and a
+  /// series cancellation takes the master or single event, never one of its
+  /// occurrences.
   Future<Map<String, dynamic>?> _findInviteEvent({
     required String? uid,
     required DateTime? start,
     required String? userEmail,
     DateTime? recurrenceId,
     bool allowStartTimeMatch = true,
+    bool sameMeetingOnly = false,
   }) async {
     if (uid != null) {
       final byUid = await _listPrimaryEvents({
@@ -444,6 +450,12 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
         'showHiddenInvitations': true,
       });
       if (recurrenceId == null) {
+        if (sameMeetingOnly) {
+          for (final e in byUid) {
+            if (e['originalStartTime'] == null) return e;
+          }
+          return null;
+        }
         if (byUid.isNotEmpty) return byUid.first;
       } else {
         for (final e in byUid) {
@@ -473,6 +485,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       }
       return e;
     }
+    if (sameMeetingOnly) return null;
     // An event of this meeting's own series has already been judged above, and
     // one that reached here is a different occurrence of it.
     final invited = atStart
@@ -769,16 +782,31 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       throw const ServerException(
           message: 'Cannot remove meeting: iCalendar UID missing');
     }
+    // This used to delete whatever `events.list?iCalUID=&maxResults=1` listed
+    // first — for a recurring meeting, the master or any modified or cancelled
+    // occurrence, in no useful order. Removing "Cancelled event: Weekly infosec
+    // alignment @ Wed 18 Nov" DELETEd the long-gone 11 Nov occurrence (410);
+    // had it listed the master, it would have taken the whole series. The
+    // lookup is now [_findInviteEvent]'s, held to this meeting's own UID: no
+    // start-time guess, because the slot a cancelled meeting leaves is exactly
+    // where its replacement goes.
     try {
-      final searchResp = await _dio.get<Map<String, dynamic>>(
-        '/calendars/primary/events',
-        queryParameters: {'iCalUID': event.uid, 'maxResults': 1},
+      final target = await _findInviteEvent(
+        uid: event.uid,
+        start: meetingStart ?? event.start,
+        userEmail: null,
+        recurrenceId: event.recurrenceId,
+        sameMeetingOnly: true,
       );
-      final items = (searchResp.data?['items'] as List<dynamic>? ?? [])
-          .cast<Map<String, dynamic>>();
-      if (items.isEmpty) return; // Not in calendar — nothing to remove.
-      final eventId = items.first['id'] as String;
-      await _dio.delete<void>('/calendars/primary/events/$eventId');
+      // Google takes a cancelled meeting off an attendee's calendar itself, so
+      // usually there is nothing left: either no copy, or one already marked
+      // cancelled.
+      if (target == null || target['status'] == 'cancelled') return;
+      final eventId = target['id'] as String;
+      await _dio.delete<void>(
+        '/calendars/primary/events/$eventId',
+        queryParameters: {'sendUpdates': 'none'},
+      );
     } on DioException catch (e) {
       throw _mapException(e);
     }

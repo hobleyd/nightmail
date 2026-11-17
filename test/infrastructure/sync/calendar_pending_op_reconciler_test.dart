@@ -234,6 +234,51 @@ void main() {
 
       expect(result.map((e) => e.id), ['e2']);
     });
+
+    // A cancelled meeting's replacement arrives in the same slot. Removing the
+    // cancelled one — already gone from the provider — must not take the
+    // replacement with it just because it is the only meeting at that time.
+    test('a remove-from-calendar whose UID is not in the snapshot removes '
+        'nothing, even with one meeting at its start', () {
+      final result = CalendarPendingOpReconciler.apply(
+        [event('replacement', start: at(10, 9), iCalUid: 'uid-new')],
+        [
+          op(PendingCalendarOperationType.removeMeetingFromCalendar, 'mail-1', {
+            'icsData': ics,
+            'meetingStart': at(10, 9).toIso8601String(),
+          }),
+        ],
+      );
+
+      expect(result.map((e) => e.id), ['replacement']);
+    });
+
+    test('an occurrence remove-from-calendar takes only that occurrence', () {
+      const occurrenceIcs = 'BEGIN:VCALENDAR\r\n'
+          'METHOD:CANCEL\r\n'
+          'BEGIN:VEVENT\r\n'
+          'UID:uid-1\r\n'
+          'RECURRENCE-ID:20260617T090000Z\r\n'
+          'DTSTART:20260617T090000Z\r\n'
+          'DTEND:20260617T100000Z\r\n'
+          'END:VEVENT\r\n'
+          'END:VCALENDAR';
+      final result = CalendarPendingOpReconciler.apply(
+        [
+          event('wk1', start: at(10, 9), iCalUid: 'uid-1'),
+          event('wk2', start: at(17, 9), iCalUid: 'uid-1'),
+          event('wk3', start: at(24, 9), iCalUid: 'uid-1'),
+        ],
+        [
+          op(PendingCalendarOperationType.removeMeetingFromCalendar, 'mail-1', {
+            'icsData': occurrenceIcs,
+            'meetingStart': at(17, 9).toIso8601String(),
+          }),
+        ],
+      );
+
+      expect(result.map((e) => e.id), ['wk1', 'wk3']);
+    });
   });
 
   group('multiple ops', () {

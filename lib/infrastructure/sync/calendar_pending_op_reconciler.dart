@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../../core/utils/calendar_event_patch.dart';
 import '../../core/utils/ics_parser.dart';
+import '../../core/utils/meeting_conflicts.dart';
 import '../../data/datasources/local/pending_calendar_operations_datasource.dart';
 import '../../domain/entities/calendar_event.dart';
 import '../../domain/entities/meeting_invite.dart';
@@ -125,27 +126,45 @@ class CalendarPendingOpReconciler {
   /// Locates the meeting an invitation-side op refers to, by the same two rules
   /// `CalendarRepositoryImpl._findCachedMeeting` uses — the ICS `UID` first,
   /// then an unambiguous start-time match for providers (Microsoft) whose
-  /// invitations carry no calendar part.
+  /// invitations carry no calendar part. A UID that matches nothing in the
+  /// snapshot matches nothing: the meeting at that time is some other one —
+  /// a cancelled meeting's replacement, typically — and a queued
+  /// remove-from-calendar would hide it.
   static CalendarEvent? _findMatch(
     List<CalendarEvent> events,
     Map<String, dynamic> payload,
   ) {
-    final ics = payload['icsData'] as String?;
-    final uid = ics == null ? null : _uidOf(ics);
-    if (uid != null && uid.isNotEmpty) {
-      for (final e in events) {
-        if (e.iCalUid == uid) return e;
-      }
-    }
-
+    final icsData = payload['icsData'] as String?;
+    final ics = icsData == null ? null : _parseIcs(icsData);
+    final uid = ics?.uid;
     final startRaw = payload['meetingStart'] as String?;
     final start = startRaw == null ? null : DateTime.tryParse(startRaw);
-    if (start == null) return null;
+
+    if (uid != null && uid.isNotEmpty) {
+      if (ics!.recurrenceId == null) {
+        for (final e in events) {
+          if (e.iCalUid == uid) return e;
+        }
+        return null;
+      }
+      // One occurrence: the series' other occurrences share the UID.
+      final matches = _atStart(events, start ?? ics.start)
+          .where((e) => isSameMeetingUid(e.iCalUid, uid))
+          .toList();
+      return matches.length == 1 ? matches.first : null;
+    }
+
+    final atStart = _atStart(events, start);
+    return atStart.length == 1 ? atStart.first : null;
+  }
+
+  static List<CalendarEvent> _atStart(
+      List<CalendarEvent> events, DateTime? start) {
+    if (start == null) return const [];
     final utc = start.toUtc();
-    final atStart = events
+    return events
         .where((e) => e.start.difference(utc).abs() <= _startSlack)
         .toList();
-    return atStart.length == 1 ? atStart.first : null;
   }
 
   static const _startSlack = Duration(minutes: 1);
@@ -159,9 +178,9 @@ class CalendarPendingOpReconciler {
     }
   }
 
-  static String? _uidOf(String icsData) {
+  static IcsEvent? _parseIcs(String icsData) {
     try {
-      return IcsParser.parse(icsData).uid;
+      return IcsParser.parse(icsData);
     } catch (_) {
       return null;
     }

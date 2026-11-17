@@ -15,6 +15,7 @@ import '../../core/utils/ics_parser.dart';
 import '../../core/utils/ics_reply_builder.dart';
 import '../../core/utils/ics_request_builder.dart';
 import '../../core/utils/ics_writer.dart';
+import '../../core/utils/meeting_conflicts.dart';
 import '../../core/utils/rrule.dart';
 import '../../domain/entities/attendee_availability.dart';
 import '../../domain/entities/calendar_event.dart';
@@ -615,36 +616,58 @@ class CalendarRepositoryImpl implements CalendarRepository {
   ///
   /// Null means "don't apply anything optimistically", which sends the caller
   /// down the network-first path rather than risking the wrong meeting.
+  ///
+  /// A UID that matches nothing is **not** followed by a start-time guess. The
+  /// meeting at that time is then some other meeting — typically the
+  /// replacement for a cancelled one, which arrives in the same slot. Removing
+  /// "Cancelled event: Weekly infosec alignment" took the "Infosec Strategy"
+  /// meeting that replaced it off the cached calendar exactly that way. An
+  /// invitation naming a `RECURRENCE-ID` matches only that occurrence, not the
+  /// series' earliest cached one.
   Future<CalendarEvent?> _findCachedMeeting({
     required String accountId,
     String? icsData,
     DateTime? meetingStart,
   }) async {
-    final uid = icsData == null ? null : _uidOf(icsData);
+    final ics = icsData == null ? null : _parseIcs(icsData);
+    final uid = ics?.uid;
     if (uid != null && uid.isNotEmpty) {
-      final byUid = await _localDatasource.getCachedEventByICalUid(
-        accountId: accountId,
-        iCalUid: uid,
-      );
-      if (byUid != null) return byUid;
+      final recurrenceId = ics!.recurrenceId;
+      if (recurrenceId == null) {
+        return _localDatasource.getCachedEventByICalUid(
+          accountId: accountId,
+          iCalUid: uid,
+        );
+      }
+      final occurrence = await _cachedAt(accountId, meetingStart ?? ics.start);
+      final matches =
+          occurrence.where((e) => isSameMeetingUid(e.iCalUid, uid)).toList();
+      return matches.length == 1 ? matches.first : null;
     }
 
     if (meetingStart == null) return null;
-    final start = meetingStart.toUtc();
-    final candidates = await _localDatasource.getCachedEvents(
-      accountId: accountId,
-      start: start.subtract(_startSlack),
-      end: start.add(_startSlack),
-    );
-    final atStart = candidates
-        .where((e) => e.start.difference(start).abs() <= _startSlack)
-        .toList();
+    final atStart = await _cachedAt(accountId, meetingStart);
     return atStart.length == 1 ? atStart.first : null;
   }
 
-  String? _uidOf(String icsData) {
+  /// Cached meetings starting at [start], within [_startSlack].
+  Future<List<CalendarEvent>> _cachedAt(
+      String accountId, DateTime? start) async {
+    if (start == null) return const [];
+    final utc = start.toUtc();
+    final candidates = await _localDatasource.getCachedEvents(
+      accountId: accountId,
+      start: utc.subtract(_startSlack),
+      end: utc.add(_startSlack),
+    );
+    return candidates
+        .where((e) => e.start.difference(utc).abs() <= _startSlack)
+        .toList();
+  }
+
+  IcsEvent? _parseIcs(String icsData) {
     try {
-      return IcsParser.parse(icsData).uid;
+      return IcsParser.parse(icsData);
     } catch (_) {
       return null;
     }

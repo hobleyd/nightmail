@@ -119,6 +119,30 @@ message or event id, and it has never had anything that could create.
 `test/data/datasources/remote/google_calendar_rsvp_test.dart` pins it — chiefly
 that an accept whose lookups come up empty issues **no** POST.
 
+## Removing a Cancelled Meeting Matches Its Own UID Only
+
+Incident, 17 Nov 2026: Jesse cancelled the 18 Nov occurrence of "Weekly infosec
+alignment" and sent "Infosec Strategy | Alignment & Next Steps" for the same
+slot. Accepting the new meeting and then "Remove from calendar" on the
+cancellation took the new meeting off NightMail's calendar until the next
+sync. Google's copy was untouched only by luck.
+
+- **Google** (`removeMeetingFromCalendar`) DELETEd the first hit of
+  `iCalUID=&maxResults=1`, the same unordered listing the RSVP path stopped
+  trusting. Here that was the already-cancelled 11 Nov occurrence (410). A
+  listed master would have taken the series. It now goes through
+  `_findInviteEvent(sameMeetingOnly: true)`: the `RECURRENCE-ID` occurrence (or,
+  for a series cancel, the master), the start-time window only for an
+  unmodified instance *of this UID*, never the "single invited event" guess.
+  An occurrence Google already marked `cancelled` is left alone.
+- **Locally** `_findCachedMeeting` and the reconciler's `_findMatch` fell back
+  to an unambiguous start-time match even when the ICS had a UID that matched
+  nothing. The cancelled meeting was already gone, so the one meeting at
+  that time was its replacement. That fallback is now only for an invitation
+  with no ICS (Graph). A `RECURRENCE-ID` matches that occurrence, not the
+  series' earliest cached row. The 25 Nov occurrence, which was still live on
+  Google, was missing from the cache afterwards, which is what that would do.
+
 ## A Forwarded Invitation Is Answered by Email
 
 "Fwd: <meeting>" from a colleague carries the organizer's `METHOD:REQUEST`

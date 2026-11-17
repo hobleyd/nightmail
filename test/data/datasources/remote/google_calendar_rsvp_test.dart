@@ -719,4 +719,141 @@ void main() {
       expect(bodies, isEmpty);
     });
   });
+
+  /// Removing a cancelled meeting used to DELETE whatever
+  /// `events.list?iCalUID=&maxResults=1` listed first. For a recurring meeting
+  /// that is the master or any modified/cancelled occurrence, in no order:
+  /// "Cancelled event: Weekly infosec alignment @ Wed 18 Nov" deleted the
+  /// already-cancelled 11 Nov occurrence, and a master listed first would have
+  /// taken the whole series.
+  group('removeMeetingFromCalendar', () {
+    const cancelOccurrenceIcs = 'BEGIN:VCALENDAR\r\n'
+        'METHOD:CANCEL\r\n'
+        'BEGIN:VEVENT\r\n'
+        'UID:series-uid-1\r\n'
+        'RECURRENCE-ID:20260917T010000Z\r\n'
+        'DTSTART:20260917T010000Z\r\n'
+        'DTEND:20260917T020000Z\r\n'
+        'STATUS:CANCELLED\r\n'
+        'END:VEVENT\r\n'
+        'END:VCALENDAR';
+    const cancelSeriesIcs = 'BEGIN:VCALENDAR\r\n'
+        'METHOD:CANCEL\r\n'
+        'BEGIN:VEVENT\r\n'
+        'UID:series-uid-1\r\n'
+        'DTSTART:20260910T010000Z\r\n'
+        'DTEND:20260910T020000Z\r\n'
+        'STATUS:CANCELLED\r\n'
+        'END:VEVENT\r\n'
+        'END:VCALENDAR';
+    final occurrenceStart = DateTime.utc(2026, 9, 17, 1);
+
+    final master = {
+      'id': 'master-1',
+      'iCalUID': 'series-uid-1',
+      'start': {'dateTime': '2026-09-10T01:00:00Z'},
+    };
+    Map<String, dynamic> exception(String day, {String? status}) => {
+          'id': 'master-1_202609${day}T010000Z',
+          'iCalUID': 'series-uid-1',
+          'recurringEventId': 'master-1',
+          if (status != null) 'status': status,
+          'originalStartTime': {'dateTime': '2026-09-${day}T01:00:00Z'},
+          'start': {'dateTime': '2026-09-${day}T01:00:00Z'},
+        };
+
+    Future<void> remove(String ics, {DateTime? start}) =>
+        datasource.removeMeetingFromCalendar(
+          emailId: 'msg-1',
+          icsData: ics,
+          meetingStart: start,
+        );
+
+    List<String> deleted() => verify(mockDio.delete<void>(
+          captureAny,
+          queryParameters: anyNamed('queryParameters'),
+        )).captured.cast<String>();
+
+    test('an occurrence cancel never deletes the master or another occurrence',
+        () async {
+      stubUidLookup([exception('10', status: 'cancelled'), master]);
+      stubWindowLookup([]);
+
+      await remove(cancelOccurrenceIcs, start: occurrenceStart);
+
+      verifyNever(mockDio.delete<void>(any,
+          queryParameters: anyNamed('queryParameters')));
+    });
+
+    test('an occurrence cancel deletes that occurrence', () async {
+      stubUidLookup([master, exception('10'), exception('17')]);
+
+      await remove(cancelOccurrenceIcs, start: occurrenceStart);
+
+      expect(deleted(), ['/calendars/primary/events/master-1_20260917T010000Z']);
+    });
+
+    test('an unmodified occurrence is found in the start-time window',
+        () async {
+      stubUidLookup([master]);
+      stubWindowLookup([
+        {
+          ...exception('17'),
+          'iCalUID': 'series-uid-1_20260917T010000Z@google.com',
+        },
+      ]);
+
+      await remove(cancelOccurrenceIcs, start: occurrenceStart);
+
+      expect(deleted(), ['/calendars/primary/events/master-1_20260917T010000Z']);
+    });
+
+    test('another meeting in the cancelled slot is left alone', () async {
+      stubUidLookup([master]);
+      stubWindowLookup([
+        {
+          'id': 'replacement-1',
+          'iCalUID': 'other-uid@google.com',
+          'start': {'dateTime': '2026-09-17T01:00:00Z'},
+          'organizer': {'email': 'boss@example.com'},
+          'attendees': [
+            {'email': 'me@example.com', 'self': true, 'responseStatus': 'accepted'},
+          ],
+        },
+      ]);
+
+      await remove(cancelOccurrenceIcs, start: occurrenceStart);
+
+      verifyNever(mockDio.delete<void>(any,
+          queryParameters: anyNamed('queryParameters')));
+    });
+
+    test('an occurrence Google already cancelled is not deleted again',
+        () async {
+      stubUidLookup([master, exception('17', status: 'cancelled')]);
+
+      await remove(cancelOccurrenceIcs, start: occurrenceStart);
+
+      verifyNever(mockDio.delete<void>(any,
+          queryParameters: anyNamed('queryParameters')));
+    });
+
+    test('a series cancel deletes the master, never an occurrence', () async {
+      stubUidLookup([exception('10'), master]);
+
+      await remove(cancelSeriesIcs, start: meetingStart);
+
+      expect(deleted(), ['/calendars/primary/events/master-1']);
+    });
+
+    test('a series cancel with only occurrences listed deletes nothing',
+        () async {
+      stubUidLookup([exception('10'), exception('17')]);
+
+      await remove(cancelSeriesIcs, start: meetingStart);
+
+      verifyNever(mockDio.delete<void>(any,
+          queryParameters: anyNamed('queryParameters')));
+    });
+  });
 }

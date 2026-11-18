@@ -690,4 +690,100 @@ void main() {
           {'dateTime': '2026-08-05T02:00:00.000', 'timeZone': 'UTC'});
     });
   });
+
+  group('GraphApiDatasourceImpl.removeMeetingFromCalendar', () {
+    final cancelledStart = DateTime.utc(2026, 11, 18, 4);
+
+    Map<String, dynamic> event(String id,
+            {required DateTime start,
+            bool isCancelled = false,
+            bool isOrganizer = false}) =>
+        {
+          'id': id,
+          'isOrganizer': isOrganizer,
+          'isCancelled': isCancelled,
+          'start': {
+            'dateTime': start.toIso8601String().replaceFirst('Z', ''),
+            'timeZone': 'UTC',
+          },
+        };
+
+    /// The message-to-event navigation 404s, so the calendar search runs.
+    void stubCalendarView(List<Map<String, dynamic>> events) {
+      when(mockDio.get<Map<String, dynamic>>(
+        any,
+        queryParameters: anyNamed('queryParameters'),
+        options: anyNamed('options'),
+      )).thenAnswer((inv) async {
+        final path = inv.positionalArguments[0] as String;
+        if (path != '/me/calendarView') {
+          throw DioException(
+            response: Response(
+                statusCode: 404, requestOptions: RequestOptions(path: path)),
+            requestOptions: RequestOptions(path: path),
+          );
+        }
+        return Response(
+            data: {'value': events},
+            statusCode: 200,
+            requestOptions: RequestOptions(path: path));
+      });
+      when(mockDio.delete<void>(any)).thenAnswer((inv) async => Response<void>(
+            statusCode: 204,
+            requestOptions:
+                RequestOptions(path: inv.positionalArguments[0] as String),
+          ));
+    }
+
+    Future<void> remove() => datasource.removeMeetingFromCalendar(
+        emailId: 'msg-cancel', meetingStart: cancelledStart);
+
+    test('removes the meeting Exchange marked cancelled at that start',
+        () async {
+      stubCalendarView([
+        event('replacement', start: cancelledStart),
+        event('cancelled', start: cancelledStart, isCancelled: true),
+      ]);
+
+      await remove();
+
+      verify(mockDio.delete<void>('/me/events/cancelled')).called(1);
+      verifyNever(mockDio.delete<void>('/me/events/replacement'));
+    });
+
+    test('never removes the meeting that replaced it in the same slot',
+        () async {
+      // Regression: the first non-organized event in the window was deleted,
+      // and the slot a cancelled meeting leaves is where its replacement goes.
+      stubCalendarView([event('replacement', start: cancelledStart)]);
+
+      await remove();
+
+      verifyNever(mockDio.delete<void>(any));
+    });
+
+    test('leaves a cancelled meeting at a different start alone', () async {
+      stubCalendarView([
+        event('other',
+            start: cancelledStart.add(const Duration(minutes: 30)),
+            isCancelled: true),
+      ]);
+
+      await remove();
+
+      verifyNever(mockDio.delete<void>(any));
+    });
+
+    test('removes nothing when two cancelled meetings share the start',
+        () async {
+      stubCalendarView([
+        event('a', start: cancelledStart, isCancelled: true),
+        event('b', start: cancelledStart, isCancelled: true),
+      ]);
+
+      await remove();
+
+      verifyNever(mockDio.delete<void>(any));
+    });
+  });
 }

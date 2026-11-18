@@ -143,6 +143,27 @@ sync. Google's copy was untouched only by luck.
   series' earliest cached row. The 25 Nov occurrence, which was still live on
   Google, was missing from the cache afterwards, which is what that would do.
 
+The same incident had already happened once. On 9 Nov, removing "Cancelled
+event: David | Jesse 1;1 @ Wed 11 Nov" took the whole weekly series off the
+attendee's calendar while it stayed on the organizer's, until the organizer
+re-invited them on 18 Nov. The other providers had the same two shapes:
+
+- **Graph**'s fallback, used when message-to-event navigation fails, deleted
+  the first non-organized event within 2½ hours of the start. It now deletes
+  only the single event Exchange itself marked `isCancelled` at exactly that
+  start. If there is none, or more than one, nothing is deleted.
+- **CalDAV** keeps a whole series in one resource, so deleting it for a
+  `RECURRENCE-ID` cancellation deleted the series. A one-occurrence
+  cancellation of a recurring resource is now left alone
+  (`removesOnlyCancelledMeeting`). Writing an EXDATE back would go through the
+  caldav package's field serializer, which drops ORGANIZER and ATTENDEE.
+- **EventKit** resolved the UID to the series master and removed it with
+  `.thisEvent`, which removes the series' *first* occurrence, not the cancelled
+  one. Dart now sends the `RECURRENCE-ID` as `occurrenceStartMs`, and the
+  native `deleteEventByUID` (macOS and iOS, kept in step) removes the
+  occurrence whose `occurrenceDate` matches it. Without one, the whole meeting
+  was cancelled, so a series is removed with `.futureEvents` from its master.
+
 ## A Forwarded Invitation Is Answered by Email
 
 "Fwd: <meeting>" from a colleague carries the organizer's `METHOD:REQUEST`

@@ -1211,7 +1211,13 @@ class GraphApiDatasourceImpl
       }
     }
 
-    // 2. Fallback: search the calendar by start time and delete the attendee event.
+    // 2. Fallback: the one meeting Exchange itself marked cancelled at this
+    // start. This used to delete the first meeting in a 2½-hour window that
+    // this account did not organize — and the slot a cancelled meeting leaves
+    // is exactly where its replacement goes, the Google incident of 17 Nov
+    // (lib/infrastructure/calendar/CLAUDE.md). Exchange keeps a cancelled
+    // meeting on an attendee's calendar with `isCancelled` until it is
+    // removed, which no replacement carries; anything else is left alone.
     if (meetingStart == null) {
       throw const ServerException(
           message: 'Could not locate the calendar event for this cancellation');
@@ -1225,17 +1231,21 @@ class GraphApiDatasourceImpl
         queryParameters: {
           'startDateTime': fmt(windowStart),
           'endDateTime': fmt(windowEnd),
-          '\$select': 'id,isOrganizer',
+          '\$select': 'id,isOrganizer,isCancelled,start',
           '\$top': 50,
         },
         options: Options(headers: {'Prefer': 'outlook.timezone="UTC"'}),
       );
       final events = (calResp.data?['value'] as List<dynamic>? ?? [])
           .cast<Map<String, dynamic>>();
-      final attendeeEvents =
-          events.where((e) => e['isOrganizer'] != true).toList();
-      if (attendeeEvents.isEmpty) return; // Not in calendar — nothing to remove.
-      final targetId = attendeeEvents.first['id'] as String;
+      final cancelled = events.where((e) {
+        if (e['isOrganizer'] == true || e['isCancelled'] != true) return false;
+        final start = _parseGraphDateTime(e['start']);
+        return start != null && start.isAtSameMomentAs(meetingStart.toUtc());
+      }).toList();
+      // None: Exchange already took it off. Two: no way to tell which.
+      if (cancelled.length != 1) return;
+      final targetId = cancelled.single['id'] as String;
       await _dio.delete<void>('$_base/events/$targetId');
     } on DioException catch (e) {
       throw _mapDioException(e);

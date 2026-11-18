@@ -662,8 +662,11 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
         let id = (call.arguments as? [String: Any])?["id"] as? String ?? ""
         self.handleDeleteEventSeries(id: id, result: result)
       case "deleteEventByUID":
-        let uid = (call.arguments as? [String: Any])?["uid"] as? String ?? ""
-        self.handleDeleteEventByUID(uid: uid, result: result)
+        let args = call.arguments as? [String: Any]
+        let uid = args?["uid"] as? String ?? ""
+        let occurrenceStartMs = (args?["occurrenceStartMs"] as? NSNumber)?.int64Value
+        self.handleDeleteEventByUID(
+          uid: uid, occurrenceStartMs: occurrenceStartMs, result: result)
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -804,19 +807,43 @@ class MainFlutterWindow: NSWindow, UNUserNotificationCenterDelegate {
     }
   }
 
-  private func handleDeleteEventByUID(uid: String, result: @escaping FlutterResult) {
+  /// Removes the meeting a cancellation names, and only that.
+  ///
+  /// `calendarItems(withExternalIdentifier:)` resolves a recurring meeting to
+  /// its master, and removing the master with `.thisEvent` removes the
+  /// series' *first* occurrence — whichever one was cancelled. With
+  /// [occurrenceStartMs] (the cancellation's RECURRENCE-ID) the occurrence is
+  /// found by its original date and removed alone; without it the whole
+  /// meeting was cancelled, so a series goes with `.futureEvents` from its
+  /// master. See lib/infrastructure/calendar/CLAUDE.md.
+  private func handleDeleteEventByUID(
+    uid: String, occurrenceStartMs: Int64?, result: @escaping FlutterResult
+  ) {
     let items = eventStore.calendarItems(withExternalIdentifier: uid)
-    var deleted = false
-    for item in items {
-      guard let event = item as? EKEvent else { continue }
-      do {
-        try eventStore.remove(event, span: .thisEvent)
-        deleted = true
-      } catch {}
+      .compactMap { $0 as? EKEvent }
+    if let ms = occurrenceStartMs {
+      let occurrence = Date(timeIntervalSince1970: Double(ms) / 1000)
+      let calendars = Array(Set(items.compactMap { $0.calendar }))
+      if !calendars.isEmpty {
+        let predicate = eventStore.predicateForEvents(
+          withStart: occurrence.addingTimeInterval(-86_400),
+          end: occurrence.addingTimeInterval(86_400),
+          calendars: calendars)
+        for event in eventStore.events(matching: predicate)
+        where event.calendarItemExternalIdentifier == uid
+          && abs((event.occurrenceDate ?? event.startDate)
+            .timeIntervalSince(occurrence)) < 1 {
+          try? eventStore.remove(event, span: .thisEvent)
+        }
+      }
+    } else {
+      for event in items {
+        // Detached occurrences go with their series; removing them again throws.
+        try? eventStore.remove(
+          event, span: event.hasRecurrenceRules ? .futureEvents : .thisEvent)
+      }
     }
-    if !deleted {
-      // Event not in local store — treat as already removed.
-    }
+    // Nothing matched — not in the local store, or already removed.
     result(nil)
   }
 

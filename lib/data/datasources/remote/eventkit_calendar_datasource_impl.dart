@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 
 import '../../../core/error/exceptions.dart';
+import '../../../core/utils/ics_parser.dart';
 import '../../../core/utils/online_meeting_url.dart';
 import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/meeting_invite.dart';
@@ -149,8 +150,16 @@ class EventKitCalendarDatasourceImpl implements CalendarRemoteDatasource {
     if (icsData == null) return;
     final uid = _parseUid(icsData);
     if (uid == null) return;
+    // A RECURRENCE-ID names the one occurrence cancelled; without it the
+    // whole meeting is. The native side used to remove whatever the UID
+    // resolved to — for a series, its first occurrence, whichever was meant.
+    final occurrence = IcsParser.parse(icsData).recurrenceId;
     try {
-      await _channel.invokeMethod<void>('deleteEventByUID', {'uid': uid});
+      await _channel.invokeMethod<void>('deleteEventByUID', {
+        'uid': uid,
+        if (occurrence != null)
+          'occurrenceStartMs': occurrence.millisecondsSinceEpoch,
+      });
     } on PlatformException {
       // Best-effort — event may not be in the local EventKit store.
     }

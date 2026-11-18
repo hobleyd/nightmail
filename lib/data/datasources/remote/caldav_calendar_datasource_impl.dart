@@ -1,7 +1,9 @@
 import 'package:caldav/caldav.dart' as caldav;
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:uuid/uuid.dart';
 
 import '../../../core/error/exceptions.dart';
+import '../../../core/utils/ics_parser.dart';
 import '../../../core/utils/online_meeting_url.dart';
 import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/calendar_recurrence.dart';
@@ -231,10 +233,14 @@ class CalDavCalendarDatasourceImpl implements CalendarRemoteDatasource {
     final icsEvent = _parseIcs(icsData);
     final uid = icsEvent.uid;
     if (uid == null) return;
+    final cancelsOccurrence = IcsParser.parse(icsData).recurrenceId != null;
 
     // Check the in-memory cache first (populated during the last calendar load).
     if (_eventCache.containsKey(uid)) {
-      await cancelCalendarEvent(eventId: uid);
+      if (removesOnlyCancelledMeeting(
+          _eventCache[uid]!, cancelsOccurrence: cancelsOccurrence)) {
+        await cancelCalendarEvent(eventId: uid);
+      }
       return;
     }
 
@@ -257,10 +263,35 @@ class CalDavCalendarDatasourceImpl implements CalendarRemoteDatasource {
       }
     } catch (_) {}
 
-    if (_eventCache.containsKey(uid)) {
+    if (_eventCache.containsKey(uid) &&
+        removesOnlyCancelledMeeting(
+            _eventCache[uid]!, cancelsOccurrence: cancelsOccurrence)) {
       await cancelCalendarEvent(eventId: uid);
     }
     // Event not found — it may have already been removed.
+  }
+
+  /// Whether deleting [event]'s resource removes no more than a cancellation
+  /// asked for.
+  ///
+  /// A CalDAV resource holds a whole recurring series — the master and every
+  /// overridden occurrence under one href — so DELETE on it takes all of them.
+  /// A cancellation of one occurrence (`RECURRENCE-ID`) used to do exactly
+  /// that: the Google incident of 17 Nov in lib/infrastructure/calendar/
+  /// CLAUDE.md, with no luck involved. Removing the one occurrence means
+  /// adding an EXDATE, and the caldav package can only write a resource back
+  /// from its own fields, dropping ORGANIZER and ATTENDEE. So the occurrence
+  /// is left for the server's own scheduling to cancel; a stale occurrence is
+  /// far cheaper than a lost series.
+  @visibleForTesting
+  static bool removesOnlyCancelledMeeting(
+    caldav.CalendarEvent event, {
+    required bool cancelsOccurrence,
+  }) {
+    if (!cancelsOccurrence) return true;
+    final recurs = (event.rrule?.isNotEmpty ?? false) ||
+        (event.recurrenceId?.isNotEmpty ?? false);
+    return !recurs;
   }
 
   @override

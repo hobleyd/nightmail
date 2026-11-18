@@ -82,6 +82,12 @@ class AppConfig {
           : _gmailClientIdAndroidDebug;
       if (id.isNotEmpty) return id;
     }
+    // Never the Desktop client on a phone: Google answers its custom-scheme
+    // redirect with `redirect_uri_mismatch`, after the user has already been
+    // sent to the browser. The placeholder makes the dialog ask instead.
+    if (!kIsWeb && (Platform.isIOS || Platform.isAndroid)) {
+      return 'YOUR_GOOGLE_CLIENT_ID';
+    }
     return _gmailClientIdDesktop;
   }
   static const _gmailRedirectUriOverride = String.fromEnvironment(

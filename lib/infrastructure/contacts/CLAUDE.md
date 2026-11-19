@@ -111,6 +111,25 @@ split is easy to undo by accident:
   cannot move into the isolate.
 - **Network** — plain async I/O on the calling isolate; it never blocks the UI.
 
+### Losing the macOS Contacts permission
+
+macOS can drop NightMail's Contacts grant when the app is updated. On
+2026-11-19 the launch before the 1.47.3 install answered `granted` and every
+launch after it answered `denied` — `requestAccess` refused with no dialog,
+which is what the native side reports as `denied` (a refusal recorded in System
+Settings is `permanentlyDenied`). Relaunching did not bring it back. Nothing
+looked broken: the typeahead simply stopped offering Contacts names.
+
+So the main window checks once it is up (`checkContactsAccess`,
+`presentation/widgets/contacts_access_notice.dart`):
+`SystemContactsRepository.permission()` is the memoised answer, and
+`AppSettings` keeps whether it was ever seen `granted`. Only a *loss* — granted
+before, refused now — shows a banner, with a link to the Contacts privacy pane
+and a "Don't remind me" that clears the flag; a reader who never granted access
+is never nagged (`contactsAccessAction` is the rule, unit-tested). If NightMail
+is not listed in that pane at all, `sudo tccutil reset Contacts
+au.com.sharpblue.nightmail` and a relaunch brings the dialog back.
+
 ### Other notes
 
 - `ContactSuggestion` (`{address, name, displayText}`) is the presentation

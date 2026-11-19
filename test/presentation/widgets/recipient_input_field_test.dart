@@ -77,6 +77,10 @@ class _FakeSystemContacts implements SystemContactsRepository {
   Future<bool> isAvailable() async => true;
 
   @override
+  Future<ContactsPermission> permission() async =>
+      ContactsPermission.granted;
+
+  @override
   Future<List<ContactSuggestion>> fetchAll() async => results;
 }
 

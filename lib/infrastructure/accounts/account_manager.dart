@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:fpdart/fpdart.dart' show Either;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:uuid/uuid.dart';
 
@@ -40,8 +41,10 @@ import '../http/graph_http_client.dart';
 import '../../core/utils/cloud_document_link.dart';
 import '../../domain/entities/cloud_document.dart';
 import '../../domain/entities/graph_endpoints.dart';
+import '../../core/error/failures.dart';
 import 'account.dart';
 import 'account_storage.dart';
+import 'file_sites_refresh.dart';
 
 class AccountManager {
   AccountManager({
@@ -1256,45 +1259,118 @@ class AccountManager {
     }
   }
 
-  /// Asks each NightMail Server the accounts live on for its discovery
-  /// document again ([discover] answers null when it cannot be had) and adopts
-  /// the file sites it now publishes. Discovery is otherwise only read when an
-  /// account is added, so without this a server that starts publishing
-  /// `filesBaseUrls` — or an account added before servers could — never turns
-  /// on Nextcloud link previews. Returns whether any account changed.
-  Future<bool> refreshServerFileSites(
-    Future<GraphEndpoints?> Function(String serverUrl) discover,
-  ) async {
+  /// Asks each NightMail Server the accounts live on — or just [serverUrl] —
+  /// for its discovery document again and adopts the file sites it now
+  /// publishes. Discovery is otherwise only read when an account is added, so
+  /// without this a server that starts publishing `filesBaseUrls` — or an
+  /// account added before servers could — never turns on Nextcloud link
+  /// previews.
+  ///
+  /// Returns one outcome per server, each logged: every way this can leave
+  /// previews off used to end in a bare `continue`, and on 2026-11-19 that
+  /// left a link previewing nothing with no record of which one it was.
+  Future<List<FileSitesRefresh>> refreshServerFileSites(
+    Future<Either<Failure, GraphEndpoints>> Function(String serverUrl)
+        discover, {
+    String? serverUrl,
+  }) async {
     final serverUrls = {
       for (final account in _accounts)
         if (account case MicrosoftAccount(:final server?)
-            when server.serverUrl != null)
+            when server.serverUrl != null &&
+                (serverUrl == null || server.serverUrl == serverUrl))
           server.serverUrl!,
     };
-    var changed = false;
-    for (final serverUrl in serverUrls) {
-      final GraphEndpoints? rediscovered;
-      try {
-        rediscovered = await discover(serverUrl);
-      } catch (_) {
+    final outcomes = <FileSitesRefresh>[];
+    for (final url in serverUrls) {
+      final outcome = await _refreshFileSites(url, discover);
+      debugPrint('[FileSites] $url: ${_describe(outcome)}'
+          '${outcome.previewsOff ? ' — document previews are off' : ''}');
+      outcomes.add(outcome);
+    }
+    return outcomes;
+  }
+
+  Future<FileSitesRefresh> _refreshFileSites(
+    String serverUrl,
+    Future<Either<Failure, GraphEndpoints>> Function(String serverUrl)
+        discover,
+  ) async {
+    final Either<Failure, GraphEndpoints> answer;
+    try {
+      answer = await discover(serverUrl);
+    } catch (e) {
+      return FileSitesUnreachable(serverUrl,
+          reason: '$e', previewsOff: _serverPreviewsOff(serverUrl));
+    }
+    final rediscovered = answer.toNullable();
+    if (rediscovered == null) {
+      return FileSitesUnreachable(serverUrl,
+          reason: answer.getLeft().toNullable()!.message,
+          previewsOff: _serverPreviewsOff(serverUrl));
+    }
+
+    // Re-read after the round trip, as ensureEmailPopulated does: shared
+    // mailboxes carry their parent's copy and are refreshed with it.
+    var updatedAny = false;
+    for (final account in List<Account>.of(_accounts)) {
+      if (account is! MicrosoftAccount ||
+          account.server?.serverUrl != serverUrl) {
         continue;
       }
-      if (rediscovered == null) continue;
-      // Re-read after the round trip, as ensureEmailPopulated does: shared
-      // mailboxes carry their parent's copy and are refreshed with it.
-      for (final account in List<Account>.of(_accounts)) {
-        if (account is! MicrosoftAccount ||
-            account.server?.serverUrl != serverUrl) {
-          continue;
-        }
-        final updated = account.withRediscoveredServer(rediscovered);
-        if (identical(updated, account)) continue;
-        _driveDatasourceCache.remove(account.id);
-        await updateAccount(updated);
-        changed = true;
+      final changed = account.server!.signInChangeFrom(rediscovered);
+      if (changed != null) {
+        return FileSitesRefused(serverUrl,
+            changed: changed, previewsOff: _serverPreviewsOff(serverUrl));
+      }
+      final updated = account.withRediscoveredServer(rediscovered);
+      if (identical(updated, account)) continue;
+      _driveDatasourceCache.remove(account.id);
+      await updateAccount(updated);
+      updatedAny = true;
+    }
+    final previewsOff = _serverPreviewsOff(serverUrl);
+    return updatedAny
+        ? FileSitesUpdated(serverUrl, previewsOff: previewsOff)
+        : FileSitesUnchanged(serverUrl, previewsOff: previewsOff);
+  }
+
+  bool _serverPreviewsOff(String serverUrl) => !_accounts.any((a) =>
+      a is MicrosoftAccount &&
+      a.server?.serverUrl == serverUrl &&
+      a.endpoints.filesBaseUrls.isNotEmpty);
+
+  static String _describe(FileSitesRefresh outcome) => switch (outcome) {
+        FileSitesUpdated() => 'adopted the file sites it publishes',
+        FileSitesUnchanged() => 'file sites unchanged',
+        FileSitesUnreachable(:final reason) => 'unreachable: $reason',
+        FileSitesRefused(:final changed) =>
+          'not adopted — its $changed changed, which needs the account re-added',
+      };
+
+  /// Whether a NightMail Server account lives at [host] while holding no file
+  /// sites — when a link there is most likely its Nextcloud, unrecognised
+  /// because the refresh that would have taught the scanner the host has not
+  /// succeeded. Returns that server's address, or null.
+  String? serverWithoutFileSitesAt(String host) {
+    for (final account in _accounts) {
+      if (account case MicrosoftAccount(:final server?)
+          when server.serverUrl != null &&
+              server.filesBaseUrls.isEmpty &&
+              _hostOf(server.serverUrl!) == host.toLowerCase()) {
+        return server.serverUrl;
       }
     }
-    return changed;
+    return null;
+  }
+
+  /// The host of a server address, which is stored as the reader typed it —
+  /// possibly without a scheme.
+  static String? _hostOf(String serverUrl) {
+    final withScheme =
+        serverUrl.contains('://') ? serverUrl : 'https://$serverUrl';
+    final host = Uri.tryParse(withScheme)?.host.toLowerCase();
+    return host == null || host.isEmpty ? null : host;
   }
 
   static bool _lacksMailboxAddresses(Account account) => switch (account) {

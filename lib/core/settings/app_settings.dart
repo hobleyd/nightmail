@@ -148,6 +148,27 @@ class AppSettings {
     } catch (_) {}
   }
 
+  /// Set once Contacts access has been seen granted, so losing it later can be
+  /// told apart from never having had it — see `ContactsAccessNotice`.
+  static const String _contactsAccessGrantedFile = 'contacts_access_granted';
+
+  Future<bool> loadContactsAccessGranted() async {
+    try {
+      final file = await _file(_contactsAccessGrantedFile);
+      if (await file.exists()) {
+        return (await file.readAsString()).trim() == 'true';
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  Future<void> saveContactsAccessGranted(bool value) async {
+    try {
+      final file = await _file(_contactsAccessGrantedFile);
+      await file.writeAsString('$value');
+    } catch (_) {}
+  }
+
   static const String _activeViewFile = 'active_view';
 
   Future<String> loadActiveView() async {

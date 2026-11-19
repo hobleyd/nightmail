@@ -48,6 +48,7 @@ import '../blocs/mail_poller/mail_poller_state.dart';
 import '../blocs/commitments/commitments_cubit.dart';
 import '../blocs/ai/ai_folder_cubit.dart';
 import '../blocs/email_list/email_list_state.dart';
+import '../widgets/contacts_access_notice.dart';
 import '../widgets/meeting_reminder_host.dart';
 import '../widgets/ai_day_panel.dart';
 import '../widgets/email_list_panel.dart';
@@ -194,6 +195,11 @@ class _HomeViewState extends State<_HomeView> {
         if (mounted) _handleNotificationAction(pending);
       });
     }
+
+    // After the first frame, so the banner has a Scaffold to sit in.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(checkContactsAccess(context));
+    });
 
     if (!kIsWeb && Platform.isMacOS) {
       _appMenuChannel.setMethodCallHandler((call) async {

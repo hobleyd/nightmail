@@ -5,6 +5,7 @@ import 'package:fpdart/fpdart.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/error/failures.dart';
+import 'package:nightmail/infrastructure/accounts/file_sites_refresh.dart';
 import 'package:nightmail/domain/entities/graph_endpoints.dart';
 import 'package:nightmail/domain/repositories/email_repository.dart';
 import 'package:nightmail/domain/repositories/server_discovery_repository.dart';
@@ -240,29 +241,38 @@ void main() {
 
     test('re-emits loaded when a server refresh changed an account',
         () async {
-      final refresh = Completer<bool>();
-      when(mockAccountManager.refreshServerFileSites(any))
+      final refresh = Completer<List<FileSitesRefresh>>();
+      when(mockAccountManager.refreshServerFileSites(any,
+              serverUrl: anyNamed('serverUrl')))
           .thenAnswer((_) => refresh.future);
 
       await cubit.initialize();
       await pumpEventQueue();
       clearInteractions(mockAccountManager);
 
-      refresh.complete(true);
+      refresh.complete(const [
+        FileSitesUpdated('https://mail.example.com', previewsOff: false),
+      ]);
       await pumpEventQueue();
 
       verify(mockAccountManager.getUnauthenticatedAccountIds()).called(1);
     });
 
     test('a server refresh that changed nothing does not re-emit', () async {
-      when(mockAccountManager.refreshServerFileSites(any))
-          .thenAnswer((_) async => false);
+      when(mockAccountManager.refreshServerFileSites(any,
+              serverUrl: anyNamed('serverUrl')))
+          .thenAnswer((_) async => const [
+                FileSitesUnreachable('https://mail.example.com',
+                    reason: 'offline', previewsOff: true),
+              ]);
 
       await cubit.initialize();
       await pumpEventQueue();
 
       // The first emit and the email backfill's re-emit; none for the refresh.
-      verify(mockAccountManager.refreshServerFileSites(any)).called(1);
+      verify(mockAccountManager.refreshServerFileSites(any,
+              serverUrl: anyNamed('serverUrl')))
+          .called(1);
       verify(mockAccountManager.getUnauthenticatedAccountIds()).called(2);
     });
 
@@ -277,25 +287,22 @@ void main() {
         taskReminderService: mockTaskReminderService,
         discoverServer: DiscoverNightwareServer(_NoServers(asked)),
       );
-      GraphEndpoints? answered = const GraphEndpoints(
-        graphBaseUrl: 'x',
-        graphBetaBaseUrl: 'x',
-        authorizationEndpoint: 'x',
-        tokenEndpoint: 'x',
-      );
-      when(mockAccountManager.refreshServerFileSites(any))
+      Either<Failure, GraphEndpoints>? answered;
+      when(mockAccountManager.refreshServerFileSites(any,
+              serverUrl: anyNamed('serverUrl')))
           .thenAnswer((invocation) async {
         final discover = invocation.positionalArguments.single
-            as Future<GraphEndpoints?> Function(String);
+            as Future<Either<Failure, GraphEndpoints>> Function(String);
         answered = await discover('https://mail.example.com');
-        return false;
+        return const [];
       });
 
       await cubit.initialize();
       await pumpEventQueue();
 
       expect(asked, ['https://mail.example.com']);
-      expect(answered, isNull, reason: 'a failed discovery reads as null');
+      expect(answered!.isLeft(), isTrue,
+          reason: 'a failed discovery keeps its reason');
       await cubit.close();
     });
 

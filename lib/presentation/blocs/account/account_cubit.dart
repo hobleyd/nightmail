@@ -11,6 +11,7 @@ import '../../../domain/repositories/email_repository.dart';
 import '../../../domain/usecases/discover_nightware_server.dart';
 import '../../../infrastructure/accounts/account.dart';
 import '../../../infrastructure/accounts/account_manager.dart';
+import '../../../infrastructure/accounts/file_sites_refresh.dart';
 import '../../../infrastructure/calendar/calendar_cache_sync_service.dart';
 import '../../../infrastructure/contacts/contact_cache_sync_service.dart';
 import '../../../infrastructure/notifications/calendar_reminder_service.dart';
@@ -226,19 +227,28 @@ class AccountCubit extends Cubit<AccountState> {
       // Likewise best-effort: what each NightMail Server publishes now (its
       // Nextcloud file sites), since discovery is otherwise read only when an
       // account is added.
-      unawaited(
-        _accountManager
-            .refreshServerFileSites((serverUrl) async =>
-                (await _discoverServer(serverUrl)).toNullable())
-            .then((changed) async {
-          try {
-            if (changed && !isClosed) await _emitLoaded();
-          } catch (_) {}
-        }).catchError((_) {}),
-      );
+      unawaited(refreshServerFileSites()
+          .catchError((_) => const <FileSitesRefresh>[]));
     } else {
       emit(const AccountNoAccounts());
     }
+  }
+
+  /// Asks each NightMail Server — or just [serverUrl] — for its file sites
+  /// again (see [AccountManager.refreshServerFileSites]), re-emitting when an
+  /// account changed. Run at startup, and again by the body-link opener when
+  /// a link lands on a server whose file sites were never learnt.
+  Future<List<FileSitesRefresh>> refreshServerFileSites(
+      {String? serverUrl}) async {
+    final outcomes = await _accountManager.refreshServerFileSites(
+        (url) => _discoverServer(url),
+        serverUrl: serverUrl);
+    if (outcomes.any((o) => o is FileSitesUpdated) && !isClosed) {
+      try {
+        await _emitLoaded();
+      } catch (_) {}
+    }
+    return outcomes;
   }
 
   Future<void> addAccount(Account account) async {

@@ -114,8 +114,21 @@ here too — and renders Office files to PDF with Collabora.
   (ask for the password, offer a login). So the repository reports them as
   `CloudDriveUnavailable`, not `ServerFailure`; Microsoft's 403/404 handling is
   unchanged. A folder share comes back as a `folder` and falls back the same way.
-- **An account added before servers published `filesBaseUrls` has the feature
-  off** until it is added again: the stored discovery copy is not refreshed.
+- **The file sites are re-learnt, and a failure to is never silent.**
+  `AccountCubit` asks each server again at startup
+  (`AccountManager.refreshServerFileSites`), so an account added before its
+  server published file sites gets them without being re-added. Each server's
+  outcome (`FileSitesRefresh`: updated, unchanged, unreachable, refused) is
+  logged as a `[FileSites]` line. Every one of them used to end in a bare
+  `continue`, and on 2026-11-19 a `/f/` link opened in the browser for a whole
+  session with nothing recorded to say why — it previewed after the next
+  restart. So a click on a link at the host of a server whose accounts hold
+  *no* file sites (`serverWithoutFileSitesAt`) asks that server again, once,
+  before giving up, and re-matches the link; if it still cannot, a snack bar
+  says whether the server was unreachable or *refused* — moved its sign-in
+  settings, which only re-adding the account fixes and which never clears on
+  its own. Every click also leaves `[CloudPreview]` lines saying where it
+  stopped.
 
 Microsoft and Google accounts are untouched by all of this.
 

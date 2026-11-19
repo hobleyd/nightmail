@@ -13,11 +13,11 @@ class SystemContactsRepositoryImpl implements SystemContactsRepository {
   /// Memoised permission request. The result is cached for the process
   /// lifetime because macOS only ever prompts once — a later change is made in
   /// System Settings, which restarts the app.
-  Future<bool>? _permissionFuture;
+  Future<ContactsPermission>? _permissionFuture;
 
-  Future<bool> _requestPermission() async {
+  Future<ContactsPermission> _requestPermission() async {
     // Channel is only implemented on macOS; skip silently on other platforms.
-    if (!Platform.isMacOS) return false;
+    if (!Platform.isMacOS) return ContactsPermission.unsupported;
     final status = await _channel.invokeMethod<String>('requestPermission');
     debugPrint('[NightMail] contacts permission: $status');
     if (status == 'permanentlyDenied') {
@@ -26,22 +26,25 @@ class SystemContactsRepositoryImpl implements SystemContactsRepository {
         'To enable: System Settings → Privacy & Security → Contacts → NightMail → Allow',
       );
     }
-    return status == 'granted';
+    return switch (status) {
+      'granted' => ContactsPermission.granted,
+      'permanentlyDenied' => ContactsPermission.permanentlyDenied,
+      _ => ContactsPermission.denied,
+    };
   }
 
-  Future<bool> _ensurePermission() =>
+  @override
+  Future<ContactsPermission> permission() =>
       _permissionFuture ??= _requestPermission();
 
   @override
   Future<void> warmUp() async {
-    await _ensurePermission();
+    await permission();
   }
 
   @override
-  Future<bool> isAvailable() async {
-    if (!Platform.isMacOS) return false;
-    return _ensurePermission();
-  }
+  Future<bool> isAvailable() async =>
+      await permission() == ContactsPermission.granted;
 
   @override
   Future<List<ContactSuggestion>> fetchAll() async {

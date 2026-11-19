@@ -2,6 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fpdart/fpdart.dart' show Left, Right;
+import 'package:nightmail/core/error/failures.dart';
+import 'package:nightmail/infrastructure/accounts/file_sites_refresh.dart';
 import 'package:nightmail/core/config/oauth_client_id_storage.dart';
 import 'package:nightmail/data/datasources/remote/gmail_datasource_impl.dart';
 import 'package:nightmail/data/datasources/remote/graph_api_datasource_impl.dart';
@@ -972,13 +975,14 @@ void main() {
         final microsoftBefore = accountManager.accountById('ms');
         final asked = <String>[];
 
-        final changed =
+        final outcomes =
             await accountManager.refreshServerFileSites((url) async {
           asked.add(url);
-          return published;
+          return Right(published);
         });
 
-        expect(changed, isTrue);
+        expect(outcomes.single, isA<FileSitesUpdated>());
+        expect(outcomes.single.previewsOff, isFalse);
         expect(asked, ['https://mail.example.com']);
         final account = accountManager.accountById('nw') as MicrosoftAccount;
         expect(account.endpoints.filesBaseUrls, ['https://cloud.example.com']);
@@ -1002,10 +1006,12 @@ void main() {
           () async {
         clearInteractions(mockAccountStorage);
 
-        final changed =
-            await accountManager.refreshServerFileSites((_) async => server);
+        final outcomes = await accountManager
+            .refreshServerFileSites((_) async => Right(server));
 
-        expect(changed, isFalse);
+        expect(outcomes.single, isA<FileSitesUnchanged>());
+        // The server publishes no file sites, so there is nothing to preview.
+        expect(outcomes.single.previewsOff, isTrue);
         verifyNever(mockAccountStorage.saveAccounts(any));
       });
 
@@ -1013,12 +1019,16 @@ void main() {
           () async {
         clearInteractions(mockAccountStorage);
 
-        expect(await accountManager.refreshServerFileSites((_) async => null),
-            isFalse);
+        final failed = await accountManager.refreshServerFileSites(
+            (_) async => const Left(NetworkFailure(message: 'offline')));
         expect(
-            await accountManager
-                .refreshServerFileSites((_) async => throw Exception('down')),
-            isFalse);
+            failed.single,
+            isA<FileSitesUnreachable>()
+                .having((o) => o.reason, 'reason', 'offline')
+                .having((o) => o.previewsOff, 'previewsOff', isTrue));
+        final threw = await accountManager
+            .refreshServerFileSites((_) async => throw Exception('down'));
+        expect(threw.single, isA<FileSitesUnreachable>());
 
         expect(accountManager.accountById('nw'), nw);
         verifyNever(mockAccountStorage.saveAccounts(any));
@@ -1037,9 +1047,52 @@ void main() {
           filesBaseUrls: const ['https://cloud.example.com'],
         );
 
-        expect(await accountManager.refreshServerFileSites((_) async => moved),
-            isFalse);
+        final outcomes =
+            await accountManager.refreshServerFileSites((_) async => Right(moved));
+        expect(
+            outcomes.single,
+            isA<FileSitesRefused>()
+                .having((o) => o.changed, 'changed', 'tokenEndpoint')
+                .having((o) => o.previewsOff, 'previewsOff', isTrue));
         expect(accountManager.accountById('nw'), nw);
+      });
+
+      test('serverUrl limits the refresh to that server', () async {
+        final asked = <String>[];
+        final outcomes = await accountManager.refreshServerFileSites(
+            (url) async {
+          asked.add(url);
+          return Right(published);
+        }, serverUrl: 'https://elsewhere.example.com');
+
+        expect(outcomes, isEmpty);
+        expect(asked, isEmpty);
+      });
+    });
+
+    group('serverWithoutFileSitesAt', () {
+      test('names a server at that host whose accounts hold no file sites',
+          () {
+        expect(accountManager.serverWithoutFileSitesAt('MAIL.example.com'),
+            'https://mail.example.com');
+        expect(accountManager.serverWithoutFileSitesAt('example.org'), isNull);
+      });
+
+      test('is null once the server has published its file sites', () async {
+        await accountManager.refreshServerFileSites(
+            (_) async => Right(server.withFileSitesFrom(GraphEndpoints(
+                  graphBaseUrl: server.graphBaseUrl,
+                  graphBetaBaseUrl: server.graphBetaBaseUrl,
+                  authorizationEndpoint: server.authorizationEndpoint,
+                  tokenEndpoint: server.tokenEndpoint,
+                  clientId: server.clientId,
+                  scopes: server.scopes,
+                  serverUrl: server.serverUrl,
+                  filesBaseUrls: const ['https://mail.example.com/cloud'],
+                ))));
+
+        expect(accountManager.serverWithoutFileSitesAt('mail.example.com'),
+            isNull);
       });
     });
 

@@ -278,4 +278,7 @@ Load-bearing:
   server published file sites gets them without being re-added. Only the file
   sites are adopted, and only while the Graph roots, endpoints, client and
   scopes are unchanged — a server that moved those needs a fresh sign-in, not
-  a silent rewrite of stored endpoints.
+  a silent rewrite of stored endpoints. That refusal is reported, not
+  swallowed (`FileSitesRefused`, naming the field via
+  `GraphEndpoints.signInChangeFrom`), as is an unreachable server; see
+  `docs/claude/body-links.md` for when the reader is told.

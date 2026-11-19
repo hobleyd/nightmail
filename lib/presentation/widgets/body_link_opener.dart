@@ -1,14 +1,16 @@
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 import '../../core/utils/cloud_document_link.dart';
 import '../../infrastructure/accounts/account_manager.dart';
+import '../../infrastructure/accounts/file_sites_refresh.dart';
 import '../../injection_container.dart';
 import '../../core/utils/online_meeting_url.dart';
+import '../blocs/account/account_cubit.dart';
 import '../pages/compose_window.dart';
 import 'cloud_document_preview_host.dart';
 
@@ -42,9 +44,16 @@ Future<void> openBodyLink(BuildContext context, String url) async {
     return ComposeWindowApp.openMailto(context, uri);
   }
 
-  final fileSites = _nextcloudFileSites();
-  final document =
-      parseCloudDocumentLink(url, nextcloudBaseUrls: fileSites);
+  var fileSites = _nextcloudFileSites();
+  var document = parseCloudDocumentLink(url, nextcloudBaseUrls: fileSites);
+  if (document == null && CloudDocumentPreviewHost.maybeOf(context) != null) {
+    final learnt = await _learnFileSites(context, uri);
+    if (learnt) {
+      fileSites = _nextcloudFileSites();
+      document = parseCloudDocumentLink(url, nextcloudBaseUrls: fileSites);
+    }
+  }
+  if (!context.mounted) return launchWebUrl(uri);
   if (document != null) {
     final host = CloudDocumentPreviewHost.maybeOf(context);
     if (host == null) {
@@ -63,6 +72,47 @@ Future<void> openBodyLink(BuildContext context, String url) async {
   }
 
   await launchWebUrl(uri);
+}
+
+/// A link to the host of a NightMail Server whose accounts hold no file sites
+/// is most likely its Nextcloud, unrecognised because the startup refresh that
+/// would have taught the scanner that host did not succeed. Asks the server
+/// again, once, now that it matters; returns whether that changed anything.
+///
+/// When it still cannot, says why — the browser is about to open the link
+/// either way, but "unreachable" and "needs the account re-added" are
+/// different problems, and the second one never clears up on its own.
+Future<bool> _learnFileSites(BuildContext context, Uri uri) async {
+  if (!sl.isRegistered<AccountManager>() || !sl.isRegistered<AccountCubit>()) {
+    return false;
+  }
+  if (!uri.isScheme('http') && !uri.isScheme('https')) return false;
+  final serverUrl = sl<AccountManager>().serverWithoutFileSitesAt(uri.host);
+  if (serverUrl == null) return false;
+
+  final List<FileSitesRefresh> outcomes;
+  try {
+    outcomes = await sl<AccountCubit>()
+        .refreshServerFileSites(serverUrl: serverUrl);
+  } catch (e) {
+    debugPrint('[CloudPreview] file-site refresh for $serverUrl threw: $e');
+    return false;
+  }
+  final message = switch (outcomes.firstOrNull) {
+    FileSitesUnreachable(:final reason) =>
+      'Could not reach NightMail Server to preview this document, so it is '
+          'opening in your browser. ($reason)',
+    FileSitesRefused() =>
+      "NightMail Server's sign-in settings have changed, so its documents "
+          'cannot be previewed until the account is removed and added again. '
+          'Opening this one in your browser.',
+    _ => null,
+  };
+  if (message != null && context.mounted) {
+    ScaffoldMessenger.maybeOf(context)
+        ?.showSnackBar(SnackBar(content: Text(message)));
+  }
+  return outcomes.any((o) => o is FileSitesUpdated);
 }
 
 /// The file sites signed-in NightMail Servers advertise. A sub-window engine

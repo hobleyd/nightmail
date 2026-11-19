@@ -90,13 +90,8 @@ class GraphEndpoints extends Equatable {
   /// root, token endpoint, client or scopes needs a fresh sign-in, which a
   /// silent rewrite of stored endpoints would only turn into a confusing 401.
   GraphEndpoints withFileSitesFrom(GraphEndpoints rediscovered) {
-    final sameServer = graphBaseUrl == rediscovered.graphBaseUrl &&
-        graphBetaBaseUrl == rediscovered.graphBetaBaseUrl &&
-        authorizationEndpoint == rediscovered.authorizationEndpoint &&
-        tokenEndpoint == rediscovered.tokenEndpoint &&
-        clientId == rediscovered.clientId &&
-        _sameList(scopes, rediscovered.scopes);
-    if (!sameServer || _sameList(filesBaseUrls, rediscovered.filesBaseUrls)) {
+    if (signInChangeFrom(rediscovered) != null ||
+        _sameList(filesBaseUrls, rediscovered.filesBaseUrls)) {
       return this;
     }
     return GraphEndpoints(
@@ -109,6 +104,23 @@ class GraphEndpoints extends Equatable {
       serverUrl: serverUrl,
       filesBaseUrls: List.unmodifiable(rediscovered.filesBaseUrls),
     );
+  }
+
+  /// The first sign-in or sync setting [rediscovered] no longer agrees with
+  /// these on, by its discovery field name, or null when it is the same
+  /// configuration. Non-null is why [withFileSitesFrom] adopts nothing.
+  String? signInChangeFrom(GraphEndpoints rediscovered) {
+    if (graphBaseUrl != rediscovered.graphBaseUrl) return 'graphBaseUrl';
+    if (graphBetaBaseUrl != rediscovered.graphBetaBaseUrl) {
+      return 'graphBetaBaseUrl';
+    }
+    if (authorizationEndpoint != rediscovered.authorizationEndpoint) {
+      return 'authorizationEndpoint';
+    }
+    if (tokenEndpoint != rediscovered.tokenEndpoint) return 'tokenEndpoint';
+    if (clientId != rediscovered.clientId) return 'clientId';
+    if (!_sameList(scopes, rediscovered.scopes)) return 'scopes';
+    return null;
   }
 
   static bool _sameList(List<String>? a, List<String>? b) {

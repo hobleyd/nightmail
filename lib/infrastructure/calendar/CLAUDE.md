@@ -59,12 +59,30 @@ Four things now hold this together:
   ever taken** (normalised through `isSameMeetingUid`, so the instance suffix
   and domain do not matter). It used to settle for "the single event there
   this account was invited to". Incident, 19 Nov 2026: an outside firm's 9am
-  invitation that Google had never filed was accepted from the phone, the
+  invitation that no listing returned was accepted from the phone, the
   guess found a colleague's 9am incident bridge, accepted *that*, and the
-  reading pane binned the invitation as answered. The real meeting never
-  reached the calendar and its organizer heard nothing. An invitation with
+  reading pane binned the invitation as answered. The real meeting stayed
+  hidden on `needsAction` and its organizer heard nothing. An invitation with
   nothing of its own in the window has, by construction, only somebody
   else's meeting there to guess.
+- **…and then by the id Google derived from the UID** (`_getImportedInvite`).
+  Google *does* file an outside sender's invitation on a calendar set to add
+  only known senders' invitations — "Meeting | Herron Todd White | Gilchrist
+  Connell" was created 11 seconds after it arrived — but hides it, and
+  neither `events.list?iCalUID=` nor the start-time window returns it,
+  `showHiddenInvitations=true` notwithstanding. It is reachable only by
+  `events.get` on `_` + lowercase unpadded base32hex of the UID
+  (`googleEventIdForUid`, checked against two Exchange invitations; an
+  occurrence is `<id>_<original start, UTC>`). A hit counts only if its
+  `iCalUID` matches and it is not `cancelled`, so this is an exact key, not a
+  guess, and the decline and remove paths use it too. Incident, 19 Nov 2026,
+  the same meeting moved to 26 Nov: both listings missed it again, the accept
+  took the unfiled path below (a copy imported, a `REPLY` emailed), and the
+  meeting stayed hidden on `needsAction` — on neither the calendar nor the
+  sync. Whether the import briefly set the answer on Google's own copy and
+  the organizer's resend 40 seconds later reset it is not established.
+  Every lookup now logs how it found the meeting, or that it did not
+  (`[GoogleCalendar] invite …`).
 - **Declining takes that fallback only for an occurrence**
   (`allowStartTimeMatch: event.recurrenceId != null`). A decline answers *and*
   deletes; what it can remove off a heuristic match is therefore held to one
@@ -189,11 +207,12 @@ a `MeetingResponseMode` so the banner can say which happened:
   the roster beforehand would be wrong: a guest invited through a group
   address is not on it either, but Google expands the group and files the
   meeting, so the lookup finds it and the question never arises.
-- **Being on the roster does not mean Google filed it.** A calendar set to add
-  invitations only from known senders does not file an outside sender's
-  invitation at all — not even as a hidden one `showHiddenInvitations` would
-  list; Gmail shows "This event isn't in your calendar yet" and an add button.
-  That invitation is answered the same way (copy kept, `METHOD:REPLY` mailed),
+- **Being on the roster does not mean Google lists it.** A calendar set to add
+  invitations only from known senders files an outside sender's invitation
+  hidden, where no listing returns it; Gmail shows "This event isn't in your
+  calendar yet" and an add button. The derived-id fetch above now finds that
+  case and answers it on Google's own copy. What still misses — nothing
+  under the derived id either — is answered the same way (copy kept, `METHOD:REPLY` mailed),
   returning `MeetingResponseMode.emailedUnfiled`: the body drops the "not on
   the guest list" paragraph, and the reading pane deletes it like any answered
   invitation, since updates will reach this account as usual. It used to be
@@ -305,7 +324,10 @@ one it opened on, or a dragged save would read as unchanged and notify nobody.
 The calendar is offline-first: it paints from `cached_calendar_events` and then
 repaints from the provider. `CalendarCacheSyncService` keeps **today through four
 weeks ahead** warm for every account and expires anything that finished more than
-a **fortnight** ago. It runs in the **main window only** (started from
+a **fortnight** ago. Google's listing asks for `showHiddenInvitations`, so an
+invitation Google hides until it is answered is shown (unanswered) rather
+than missing — though the Gilchrist meeting above was not returned even so;
+answering it is what un-hides it. It runs in the **main window only** (started from
 `HomePage.build`); the calendar sub-window reads the same SQLite file and writes
 back whichever week it fetches.
 

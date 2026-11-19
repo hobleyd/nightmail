@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/error/exceptions.dart';
+import 'package:nightmail/core/utils/meeting_conflicts.dart';
 import 'package:nightmail/data/datasources/remote/google_calendar_datasource_impl.dart';
 import 'package:nightmail/data/models/calendar_event_model.dart';
 import 'package:nightmail/domain/entities/meeting_invite.dart';
@@ -106,6 +107,14 @@ void main() {
     )).thenAnswer((_) async => listing(items));
   }
 
+  DioException notFound(String path) => DioException(
+        requestOptions: RequestOptions(path: path),
+        response: Response(
+          statusCode: 404,
+          requestOptions: RequestOptions(path: path),
+        ),
+      );
+
   setUp(() {
     mockDio = MockDio();
     final client = MockGoogleCalendarHttpClient();
@@ -115,6 +124,10 @@ void main() {
       accountEmail: 'me@example.com',
     );
 
+    // Nothing filed under the UID's derived id unless a test says so.
+    when(mockDio.get<Map<String, dynamic>>(
+      argThat(startsWith('/calendars/primary/events/_')),
+    )).thenThrow(notFound('/calendars/primary/events/_'));
     when(mockDio.patch<void>(
       any,
       data: anyNamed('data'),
@@ -229,6 +242,122 @@ void main() {
       data: anyNamed('data'),
       queryParameters: anyNamed('queryParameters'),
     ));
+  });
+
+  group('an invitation no listing returns', () {
+    // An outside sender's invitation, on a calendar set to add only known
+    // senders' invitations, is filed but hidden — and neither the UID listing
+    // nor the start-time window returns it, `showHiddenInvitations` or not.
+    // Accepting "Meeting | Herron Todd White | Gilchrist Connell" took the
+    // unfiled path because of it, and the meeting stayed on `needsAction`.
+    final derivedId = googleEventIdForUid('series-uid-1');
+
+    Map<String, dynamic> hidden({
+      String iCalUid = 'series-uid-1',
+      String status = 'confirmed',
+    }) =>
+        {
+          'id': derivedId,
+          'iCalUID': iCalUid,
+          'status': status,
+          'start': {'dateTime': '2026-09-10T01:00:00Z'},
+          'organizer': {'email': 'boss@example.com'},
+          'attendees': [
+            {'email': 'boss@example.com', 'responseStatus': 'accepted'},
+            {'email': 'me@example.com', 'self': true, 'responseStatus': 'needsAction'},
+          ],
+        };
+
+    void stubDerived(Map<String, dynamic> event, {String? id}) {
+      final path = '/calendars/primary/events/${id ?? derivedId}';
+      when(mockDio.get<Map<String, dynamic>>(path)).thenAnswer((_) async =>
+          Response(
+              data: event, statusCode: 200, requestOptions: RequestOptions(path: path)));
+    }
+
+    test('is fetched by its derived id and answered, never imported', () async {
+      stubUidLookup(const []);
+      stubWindowLookup(const []);
+      stubDerived(hidden());
+
+      await accept();
+
+      final patch = verify(mockDio.patch<void>(
+        captureAny,
+        data: captureAnyNamed('data'),
+        queryParameters: anyNamed('queryParameters'),
+      )).captured;
+      expect(patch[0], '/calendars/primary/events/$derivedId');
+      final attendees =
+          ((patch[1] as Map)['attendees'] as List).cast<Map<String, dynamic>>();
+      expect(
+        attendees.firstWhere((a) => a['email'] == 'me@example.com')['responseStatus'],
+        'accepted',
+      );
+      verifyNever(mockDio.post<Map<String, dynamic>>(
+        any,
+        data: anyNamed('data'),
+        queryParameters: anyNamed('queryParameters'),
+      ));
+    });
+
+    test('a derived-id hit under another UID is not this meeting', () async {
+      stubUidLookup(const []);
+      stubWindowLookup(const []);
+      stubDerived(hidden(iCalUid: 'someone-elses-uid'));
+
+      await expectLater(
+          accept(), throwsA(isA<MeetingNotOnCalendarException>()));
+      verifyNever(mockDio.patch<void>(
+        any,
+        data: anyNamed('data'),
+        queryParameters: anyNamed('queryParameters'),
+      ));
+    });
+
+    test('a cancelled event at the derived id is not answered', () async {
+      stubUidLookup(const []);
+      stubWindowLookup(const []);
+      stubDerived(hidden(status: 'cancelled'));
+
+      await expectLater(
+          accept(), throwsA(isA<MeetingNotOnCalendarException>()));
+    });
+
+    test('an occurrence is fetched as its instance', () async {
+      stubUidLookup(const []);
+      stubWindowLookup(const []);
+      final instanceId = '${derivedId}_20260910T011500Z';
+      stubDerived(
+        {...hidden(), 'id': instanceId, 'recurringEventId': derivedId},
+        id: instanceId,
+      );
+
+      await datasource.respondToMeetingInvite(
+        emailId: 'msg-1',
+        response: MeetingInviteResponseType.accept,
+        icsData: occurrenceIcs,
+        meetingStart: meetingStart,
+        userEmail: 'me@example.com',
+      );
+
+      final patched = verify(mockDio.patch<void>(
+        captureAny,
+        data: anyNamed('data'),
+        queryParameters: anyNamed('queryParameters'),
+      )).captured;
+      expect(patched.single, '/calendars/primary/events/$instanceId');
+    });
+
+    test('the id matches the one Google gave a real Exchange invitation', () {
+      expect(
+        googleEventIdForUid('040000008200E00074C5B7101A82E00800000000C0BAE2439576'
+            'DD0100000000000000001000000017BA1595B035B24C8BBCFBBDD57A082C'),
+        '_60q30c1g60o30e1i60o4ac1g60rj8gpl88rj2c1h84s34h9g60s30c1g60o30c1g8co44'
+        'ga568q36e9l6sr48h1g64o30c1g60o30c1g60o30c1g60o32c1g60o30c1g64rk4g9h6ks'
+        'jaghg6cqk4chk8cs44gi38p144h246krk2c1o691g',
+      );
+    });
   });
 
   test('the roster sent is the server\'s, not the invitation\'s', () async {

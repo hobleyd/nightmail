@@ -93,6 +93,11 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
           'singleEvents': true,
           'orderBy': 'startTime',
           'maxResults': 250,
+          // An invitation Google files but hides until it is answered (an
+          // outside sender, on a calendar set to add only known senders'
+          // invitations) is still this account's meeting; leaving it out
+          // made it vanish from the calendar while it sat on `needsAction`.
+          'showHiddenInvitations': true,
           // transparency/eventType/iCalUID feed conflict detection: the first
           // two decide whether an event really occupies its slot, the third
           // identifies the invite's own auto-added copy. A field mask omitting
@@ -454,18 +459,35 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       if (recurrenceId == null) {
         if (sameMeetingOnly) {
           for (final e in byUid) {
-            if (e['originalStartTime'] == null) return e;
+            if (e['originalStartTime'] == null) {
+              _logInviteLookup(uid, 'UID listing');
+              return e;
+            }
           }
-          return null;
+        } else if (byUid.isNotEmpty) {
+          _logInviteLookup(uid, 'UID listing');
+          return byUid.first;
         }
-        if (byUid.isNotEmpty) return byUid.first;
       } else {
         for (final e in byUid) {
-          if (_isOccurrence(e, recurrenceId)) return e;
+          if (_isOccurrence(e, recurrenceId)) {
+            _logInviteLookup(uid, 'UID listing');
+            return e;
+          }
         }
       }
+
+      final byId = await _getImportedInvite(uid, recurrenceId);
+      if (byId != null) return byId;
+      if (sameMeetingOnly && recurrenceId == null) {
+        _logInviteLookup(uid, null);
+        return null;
+      }
     }
-    if (start == null || !allowStartTimeMatch) return null;
+    if (start == null || !allowStartTimeMatch) {
+      if (uid != null) _logInviteLookup(uid, null);
+      return null;
+    }
 
     final window = await _listPrimaryEvents({
       'timeMin': start.subtract(_inviteStartSlack).toUtc().toIso8601String(),
@@ -485,9 +507,68 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
           !_isOccurrence(e, recurrenceId)) {
         continue;
       }
+      if (uid != null) _logInviteLookup(uid, 'start-time window');
       return e;
     }
+    if (uid != null) _logInviteLookup(uid, null);
     return null;
+  }
+
+  /// The meeting an invitation is for, fetched by the id Google gave it, or
+  /// null when there is none.
+  ///
+  /// An invitation from an outside sender, on a calendar set to add only known
+  /// senders' invitations, *is* filed — under an id that is `_` plus the
+  /// lowercase, unpadded base32hex of its `UID` — but neither listing above
+  /// returns it, `showHiddenInvitations` or not, until it is answered.
+  /// Incident, 19 Nov 2026: "Meeting | Herron Todd White | Gilchrist Connell"
+  /// (an Exchange UID) was filed 11 seconds after it arrived, both listings
+  /// missed it, and the accept took the unfiled path: a copy imported over
+  /// Google's own and a `REPLY` emailed, while the meeting stayed hidden on
+  /// `needsAction`. Fetched here, it is answered like any other.
+  ///
+  /// This is an exact key, not a guess: a hit counts only if its `iCalUID` is
+  /// the invitation's. An occurrence is the instance id
+  /// `<id>_<original start, UTC>`. A Google-made UID ends `@google.com` and its
+  /// event is listed by `iCalUID` already, so it costs no request here.
+  Future<Map<String, dynamic>?> _getImportedInvite(
+      String uid, DateTime? recurrenceId) async {
+    if (uid.toLowerCase().endsWith('@google.com')) return null;
+    var id = googleEventIdForUid(uid);
+    if (recurrenceId != null) id = '${id}_${_instanceSuffix(recurrenceId)}';
+    final Map<String, dynamic>? e;
+    try {
+      final resp =
+          await _dio.get<Map<String, dynamic>>('/calendars/primary/events/$id');
+      e = resp.data;
+    } on DioException catch (err) {
+      final status = err.response?.statusCode;
+      if (status != 404 && status != 410) rethrow;
+      return null;
+    }
+    if (e == null ||
+        e['status'] == 'cancelled' ||
+        !isSameMeetingUid(e['iCalUID'] as String?, uid)) {
+      return null;
+    }
+    _logInviteLookup(uid, 'its derived id');
+    return e;
+  }
+
+  static String _instanceSuffix(DateTime t) {
+    final u = t.toUtc();
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${u.year.toString().padLeft(4, '0')}${two(u.month)}${two(u.day)}'
+        'T${two(u.hour)}${two(u.minute)}${two(u.second)}Z';
+  }
+
+  /// One line per lookup in `diagnostics.log`. An RSVP that went down the
+  /// unfiled path used to leave no trace of why.
+  void _logInviteLookup(String uid, String? foundBy) {
+    final short = uid.length > 24 ? '…${uid.substring(uid.length - 24)}' : uid;
+    debugPrint(foundBy == null
+        ? '[GoogleCalendar] invite $short: not on the calendar'
+        : '[GoogleCalendar] invite $short: found by $foundBy');
   }
 
   Future<List<Map<String, dynamic>>> _listPrimaryEvents(

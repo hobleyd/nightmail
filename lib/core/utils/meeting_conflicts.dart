@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../../domain/entities/calendar_event.dart';
 
 /// Picks the calendar events that genuinely clash with an incoming meeting
@@ -71,4 +73,28 @@ String? _uidKey(String? uid) {
   final underscore = key.indexOf('_');
   if (underscore > 0) key = key.substring(0, underscore);
   return key.isEmpty ? null : key;
+}
+
+/// The event id Google gives a meeting it filed from somebody else's
+/// invitation: `_` and the lowercase, unpadded base32hex (RFC 4648 §7) of the
+/// `UID`'s bytes. Checked against two Exchange invitations on a real calendar.
+///
+/// It is what reaches an invitation that `events.list` will not return — see
+/// `GoogleCalendarDatasourceImpl._getImportedInvite`.
+String googleEventIdForUid(String uid) {
+  const alphabet = '0123456789abcdefghijklmnopqrstuv';
+  final out = StringBuffer('_');
+  var buffer = 0;
+  var bits = 0;
+  for (final byte in utf8.encode(uid)) {
+    buffer = (buffer << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      out.write(alphabet[(buffer >> bits) & 31]);
+    }
+    buffer &= (1 << bits) - 1;
+  }
+  if (bits > 0) out.write(alphabet[(buffer << (5 - bits)) & 31]);
+  return out.toString();
 }

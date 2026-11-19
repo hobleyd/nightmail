@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:fpdart/fpdart.dart';
 
 import '../../core/error/exceptions.dart';
@@ -25,6 +26,7 @@ class CloudDriveRepositoryImpl implements CloudDriveRepository {
     final candidates =
         _accountManager.cloudDriveCandidates(link.provider, url: link.url);
     if (candidates.isEmpty) {
+      debugPrint('[CloudPreview] no ${link.provider.name} account for the link');
       return Left(CloudDriveUnavailable(
           message: 'No ${_providerName(link.provider)} account is signed in'));
     }
@@ -42,11 +44,17 @@ class CloudDriveRepositoryImpl implements CloudDriveRepository {
       }
     }
 
+    debugPrint('[CloudPreview] ${link.provider.name} accounts: '
+        '${granted.length} with file access, ${notGranted.length} without');
+
     Failure? lastFailure;
     for (final accountId in granted) {
       final datasource =
           _accountManager.cloudDriveDatasourceForAccount(accountId);
-      if (datasource == null) continue;
+      if (datasource == null) {
+        debugPrint('[CloudPreview] $accountId: no drive datasource');
+        continue;
+      }
       try {
         return Right(await datasource.fetchDocument(link));
       } on NetworkException catch (e) {
@@ -58,8 +66,11 @@ class CloudDriveRepositoryImpl implements CloudDriveRepository {
         // A settled answer about the document itself, not about this account.
         return Left(CloudDriveUnavailable(message: e.message));
       } on AuthException catch (e) {
+        debugPrint('[CloudPreview] $accountId: auth: ${e.message}');
         lastFailure = AuthFailure(message: e.message);
       } on ServerException catch (e) {
+        debugPrint('[CloudPreview] $accountId: HTTP ${e.statusCode}: '
+            '${e.message}');
         // 403/404 means *this* account cannot see the file: someone else's
         // tenant, or a file shared with another address. Any other status is
         // the provider having a bad day and says nothing about the next

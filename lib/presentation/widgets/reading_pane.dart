@@ -682,6 +682,8 @@ class _EmailViewState extends State<_EmailView> {
       final document = result.toNullable();
       if (document == null) {
         final failure = result.getLeft().toNullable();
+        debugPrint('[CloudPreview] fetch failed: ${failure.runtimeType}: '
+            '${failure?.message}');
         // "Nothing here can open this" is not worth a message: the browser is
         // about to open it, which is what the reader asked for. A server or
         // network failure is, because the browser may not fare better.
@@ -720,6 +722,9 @@ class _EmailViewState extends State<_EmailView> {
         : cloudDocumentFormatFor(
             name: document.name, contentType: document.contentType);
     final icon = _AttachmentChipState._iconFor(document.contentType, fileName);
+    debugPrint('[CloudPreview] fetched "${document.name}" '
+        '(${document.contentType}, ${document.bytes.length} bytes) as '
+        '${format?.name ?? 'unpreviewable'}');
 
     switch (format) {
       case CloudDocumentFormat.pdf:
@@ -745,6 +750,9 @@ class _EmailViewState extends State<_EmailView> {
         // Only reached when the provider would not convert it — an uploaded
         // Office file in Drive, which Drive cannot render without write access.
         final path = await _officePreviewPath(file.path, document.name);
+        if (path == null) {
+          debugPrint('[CloudPreview] local Office conversion failed');
+        }
         if (path == null || !mounted) return false;
         _showPreview(_AttachmentPreviewKind.webFile, path, document.name,
             link.url, icon,

@@ -42,11 +42,24 @@ Future<void> openBodyLink(BuildContext context, String url) async {
     return ComposeWindowApp.openMailto(context, uri);
   }
 
-  final document = parseCloudDocumentLink(url,
-      nextcloudBaseUrls: _nextcloudFileSites());
+  final fileSites = _nextcloudFileSites();
+  final document =
+      parseCloudDocumentLink(url, nextcloudBaseUrls: fileSites);
   if (document != null) {
     final host = CloudDocumentPreviewHost.maybeOf(context);
-    if (host != null && await host(document)) return;
+    if (host == null) {
+      debugPrint('[CloudPreview] ${document.provider.name} link, but no '
+          'preview host here (standalone window?) — opening in the browser');
+    } else if (await host(document)) {
+      return;
+    } else {
+      debugPrint('[CloudPreview] ${document.provider.name} link declined '
+          '— opening in the browser');
+    }
+  } else if (uri.isScheme('http') || uri.isScheme('https')) {
+    // Host and path only: the query of an arbitrary link can carry a token.
+    debugPrint('[CloudPreview] not a cloud-document link: '
+        '${uri.host}${uri.path} (file sites known: ${fileSites.join(', ')})');
   }
 
   await launchWebUrl(uri);

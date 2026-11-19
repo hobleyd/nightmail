@@ -16,4 +16,12 @@ enum MeetingResponseMode {
   /// until the organizer acts on that reply, an update or cancellation of the
   /// meeting is not sent to them.
   emailedOrganizer,
+
+  /// This account *is* on the guest list, but the provider never filed the
+  /// meeting — Google, for an outside sender on a calendar that only adds
+  /// invitations from known senders. Answered the same way as a forwarded one
+  /// (a copy kept, a `METHOD:REPLY` emailed), which is what Gmail's own "add
+  /// to calendar" does; the organizer already has this account on the guest
+  /// list, so updates arrive as usual and there is nothing to warn about.
+  emailedUnfiled,
 }

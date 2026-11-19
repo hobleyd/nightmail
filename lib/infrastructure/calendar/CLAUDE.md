@@ -54,13 +54,17 @@ Four things now hold this together:
   a loud wrong answer for a quiet one. (A *forwarded* invitation is kept as a
   copy by a different method, `importMeetingInvite`, which the repository
   reaches only after that throw — see the next section.)
-- **A missed UID falls back to the meeting's start time**, `_findInviteEvent` —
-  the shape Graph uses as its last resort and `_findCachedMeeting` uses locally.
-  A UID match within the window wins (normalised through `isSameMeetingUid`, so
-  the instance suffix and domain do not matter); failing that, a *single*
-  unambiguous event this account was invited to and does not organize. Two
-  candidates finds nothing and the caller reports it — answering the wrong
-  meeting is worse than answering none.
+- **A missed UID falls back to the meeting's start time**, `_findInviteEvent`,
+  where the expanded instances are listed — but **only this meeting's UID is
+  ever taken** (normalised through `isSameMeetingUid`, so the instance suffix
+  and domain do not matter). It used to settle for "the single event there
+  this account was invited to". Incident, 19 Nov 2026: an outside firm's 9am
+  invitation that Google had never filed was accepted from the phone, the
+  guess found a colleague's 9am incident bridge, accepted *that*, and the
+  reading pane binned the invitation as answered. The real meeting never
+  reached the calendar and its organizer heard nothing. An invitation with
+  nothing of its own in the window has, by construction, only somebody
+  else's meeting there to guess.
 - **Declining takes that fallback only for an occurrence**
   (`allowStartTimeMatch: event.recurrenceId != null`). A decline answers *and*
   deletes; what it can remove off a heuristic match is therefore held to one
@@ -111,7 +115,9 @@ signal (`OutboxDrainService` treats 404/410 as "no retry can ever succeed").
 That is what this is: an RSVP only reaches the queue when
 `_findCachedMeeting` found a *cached* copy to answer optimistically, so the
 provider not holding one is settled rather than propagation lag. Left untyped it
-would be retried 25 times and then dropped just as quietly.
+would be retried 25 times and then dropped anyway. Either way a drop is logged
+(`[CalendarOutbox] … dropped`) — before that, a queued RSVP that never reached
+the organizer left no trace in `diagnostics.log`.
 
 Graph needs none of this: every one of its paths posts `accept`/`decline` to a
 message or event id, and it has never had anything that could create.
@@ -178,13 +184,20 @@ copy and telling the organizer.
 a `MeetingResponseMode` so the banner can say which happened:
 
 - **The decision is made after the provider's miss, not at classification.**
-  "Forwarded" means `MeetingNotOnCalendarException` *and* the ICS names an
-  organizer who is not this account *and* this account is not on the roster
-  (`_isForwardedInvitation`). Reclassifying on the roster alone would be
-  wrong: a guest invited through a group address is not on it either, but
-  Google expands the group and files the meeting, so the lookup finds it and
-  the question never arises. An invitation this account *is* on the roster of
-  that still cannot be found stays the 404 failure it was.
+  "Unfiled" means `MeetingNotOnCalendarException` *and* the ICS names an
+  organizer who is not this account (`_unfiledInvitation`). Reclassifying on
+  the roster beforehand would be wrong: a guest invited through a group
+  address is not on it either, but Google expands the group and files the
+  meeting, so the lookup finds it and the question never arises.
+- **Being on the roster does not mean Google filed it.** A calendar set to add
+  invitations only from known senders does not file an outside sender's
+  invitation at all — not even as a hidden one `showHiddenInvitations` would
+  list; Gmail shows "This event isn't in your calendar yet" and an add button.
+  That invitation is answered the same way (copy kept, `METHOD:REPLY` mailed),
+  returning `MeetingResponseMode.emailedUnfiled`: the body drops the "not on
+  the guest list" paragraph, and the reading pane deletes it like any answered
+  invitation, since updates will reach this account as usual. It used to be
+  reported as a 404, which is what made a start-time guess look necessary.
 - **The copy is an `events.import`, never an insert.** Import is the one call
   on which `organizer` is writable, so the copy names the real organizer and
   carries their `iCalUID` — a later update from them lands on it instead of
@@ -212,10 +225,9 @@ a `MeetingResponseMode` so the banner can say which happened:
   Outlook mail-out with every guest Bcc'd — "forwarded" here means "not on the
   roster", which a Bcc'd mail-out is too, so neither the banner nor the reply
   says "forwarded".
-- **Declining a meeting the provider does not hold is still a quiet no-op** for
-  a non-forwarded invitation — the datasource now throws the typed miss on the
-  decline path too (a forwarded decline owes the organizer a reply), and the
-  repository swallows it where there was nothing to answer either.
+- **Declining a meeting the provider does not hold is a quiet no-op only when
+  there is nobody to answer** (no organizer, or this account is it). Any
+  other unfiled invitation is owed the reply, forwarded or not.
 
 Graph never reaches any of this: a calendar part on a message Exchange did not
 process is reclassified as a published event and only ever *added*. CalDAV and

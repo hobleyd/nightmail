@@ -808,13 +808,14 @@ class CalendarRepositoryImpl implements CalendarRepository {
         );
         return const Right(MeetingResponseMode.viaProvider);
       } on MeetingNotOnCalendarException {
-        // The provider holds no copy. For an invitation this account is on
-        // the guest list of that is a failure to report; for one somebody
-        // *forwarded* it is the expected shape, and is answered below.
-        final forwarded = icsData != null &&
-            userEmail != null &&
-            _isForwardedInvitation(icsData, userEmail);
-        if (!forwarded) {
+        // The provider holds no copy. An invitation from somebody else that it
+        // never filed — forwarded, Bcc'd, or from an outside sender Google
+        // does not add — is answered below, by email. Anything else is a
+        // failure to report.
+        final unfiled = icsData == null || userEmail == null
+            ? null
+            : _unfiledInvitation(icsData, userEmail);
+        if (unfiled == null) {
           // Declining a meeting the provider does not hold has always been a
           // quiet no-op — there is nothing to remove.
           if (response == MeetingInviteResponseType.decline) {
@@ -822,16 +823,19 @@ class CalendarRepositoryImpl implements CalendarRepository {
           }
           rethrow;
         }
-        await _answerForwardedInvitation(
+        await _answerUnfiledInvitation(
           ds: ds,
           accountId: resolvedAccountId,
-          icsData: icsData,
+          icsData: icsData!,
           response: response,
-          userEmail: userEmail,
+          userEmail: userEmail!,
           displayName: account?.senderName,
           message: message,
+          onGuestList: unfiled.onGuestList,
         );
-        return const Right(MeetingResponseMode.emailedOrganizer);
+        return Right(unfiled.onGuestList
+            ? MeetingResponseMode.emailedUnfiled
+            : MeetingResponseMode.emailedOrganizer);
       }
     } on AuthException catch (e) {
       return Left(AuthFailure(message: e.message));
@@ -844,30 +848,35 @@ class CalendarRepositoryImpl implements CalendarRepository {
     }
   }
 
-  /// Whether an invitation reached this account by being passed on, rather
-  /// than from its organizer: there is an organizer to answer to, it is not
-  /// this account, and this account is not on the guest list.
+  /// An invitation the provider never filed that can be answered by email:
+  /// there is an organizer to answer to and it is not this account. Null when
+  /// there is not. [onGuestList] says whether this account is on its roster.
   ///
   /// Only consulted once the provider has said it holds no copy of the
-  /// meeting. A guest invited through a group address is not on the roster
-  /// either, but Google expands the group and files the meeting, so the lookup
-  /// finds it and this is never asked.
-  bool _isForwardedInvitation(String icsData, String userEmail) {
+  /// meeting. Off the guest list it was passed on — forwarded, or a Bcc'd
+  /// mail-out. On it, Google declined to file it: an outside sender, on a
+  /// calendar set to add invitations only from known senders, is not even
+  /// listed as a hidden invitation (Gmail offers "add to calendar" instead).
+  /// That used to be reported as a failure, which is what left the old
+  /// start-time guess answering some other meeting at the same hour.
+  ({bool onGuestList})? _unfiledInvitation(String icsData, String userEmail) {
     final IcsEvent event;
     try {
       event = IcsParser.parse(icsData);
     } catch (_) {
-      return false;
+      return null;
     }
     final self = userEmail.trim().toLowerCase();
     final organizer = event.organizer?.trim().toLowerCase();
     if (organizer == null || organizer.isEmpty || organizer == self) {
-      return false;
+      return null;
     }
-    return !event.attendees.any((a) => a.trim().toLowerCase() == self);
+    return (
+      onGuestList: event.attendees.any((a) => a.trim().toLowerCase() == self),
+    );
   }
 
-  /// Answers a forwarded invitation the way Outlook and Gmail do: a private
+  /// Answers an unfiled invitation the way Outlook and Gmail do: a private
   /// copy of the meeting is kept on this calendar with the answer on it, and
   /// the organizer is emailed a `METHOD:REPLY` from this account — the only
   /// route by which they can learn of it, since nothing the provider holds
@@ -876,7 +885,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
   /// A decline keeps nothing; there is nothing to keep. The copy is written
   /// before the mail goes out, so a reply that fails to send still leaves the
   /// answered meeting on the calendar, and the failure says so.
-  Future<void> _answerForwardedInvitation({
+  Future<void> _answerUnfiledInvitation({
     required CalendarRemoteDatasource ds,
     required String? accountId,
     required String icsData,
@@ -884,6 +893,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
     required String userEmail,
     required String? displayName,
     required String? message,
+    required bool onGuestList,
   }) async {
     final kept = response != MeetingInviteResponseType.decline;
     if (kept) {
@@ -909,16 +919,17 @@ class CalendarRepositoryImpl implements CalendarRepository {
       displayName: displayName,
       message: message,
       kept: kept,
+      onGuestList: onGuestList,
     );
   }
 
-  /// Emails the organizer this account's answer to a forwarded invitation.
+  /// Emails the organizer this account's answer to an unfiled invitation.
   ///
   /// The `METHOD:REPLY` part is what Exchange and Google process: the
   /// organizer's client shows "Accepted: …" against the right meeting and —
   /// in Outlook — offers to add the sender to the attendee list, which is the
   /// only way updates will ever reach them. The body says the same in plain
-  /// text, for a client that ignores the part, and says plainly that the
+  /// text, for a client that ignores the part, and says plainly when the
   /// sender is not on the guest list.
   Future<void> _emailInviteReply({
     required String icsData,
@@ -927,6 +938,7 @@ class CalendarRepositoryImpl implements CalendarRepository {
     required String? displayName,
     required String? message,
     required bool kept,
+    required bool onGuestList,
   }) async {
     final event = IcsParser.parse(icsData);
     final organizer = event.organizer;
@@ -960,8 +972,8 @@ class CalendarRepositoryImpl implements CalendarRepository {
     }
     // Not "forwarded": an Outlook mail-out Bcc's its guests, and they are no
     // more on the roster than a colleague's forward is. Nothing to ask of the
-    // organizer after a decline.
-    if (response != MeetingInviteResponseType.decline) {
+    // organizer after a decline, nor of one who already invited them.
+    if (response != MeetingInviteResponseType.decline && !onGuestList) {
       body
         ..writeln()
         ..writeln('They are not on the guest list for this invitation (it '

@@ -24,8 +24,9 @@ import 'google_calendar_rsvp_test.mocks.dart';
 /// Google never filed it — is kept through `importMeetingInvite` instead, and
 /// the second half of this file pins how that differs: an imported copy names
 /// the invitation's own organizer, carries its UID and recurrence, and is
-/// never an insert. The RSVP path itself still only reports the miss; the
-/// repository decides whether the miss is a forwarded invitation.
+/// never an insert. The RSVP path itself still only reports the miss — it
+/// never answers another meeting in the slot instead — and the repository
+/// decides whether the miss is an invitation Google never filed.
 @GenerateMocks([Dio, GoogleCalendarHttpClient])
 void main() {
   late MockDio mockDio;
@@ -194,6 +195,36 @@ void main() {
     expect(attendees.map((a) => a['email']), contains('someone.else@example.com'));
 
     verifyNever(mockDio.post<void>(
+      any,
+      data: anyNamed('data'),
+      queryParameters: anyNamed('queryParameters'),
+    ));
+  });
+
+  test('another meeting at the same time is never answered in its place',
+      () async {
+    // An outside sender's invitation Google never filed has nothing of its
+    // own in the window. The one invited meeting that is there belongs to
+    // somebody else: answering it accepted a colleague's incident bridge, and
+    // the invitation was binned as answered.
+    stubUidLookup(const []);
+    stubWindowLookup([
+      {
+        'id': 'bridge-1',
+        'iCalUID': 'bridge-uid@google.com',
+        'start': {'dateTime': '2026-09-10T01:00:00Z'},
+        'organizer': {'email': 'colleague@example.com'},
+        'attendees': [
+          {'email': 'colleague@example.com', 'responseStatus': 'accepted'},
+          {'email': 'me@example.com', 'self': true, 'responseStatus': 'needsAction'},
+        ],
+      }
+    ]);
+
+    await expectLater(
+        accept(), throwsA(isA<MeetingNotOnCalendarException>()));
+
+    verifyNever(mockDio.patch<void>(
       any,
       data: anyNamed('data'),
       queryParameters: anyNamed('queryParameters'),

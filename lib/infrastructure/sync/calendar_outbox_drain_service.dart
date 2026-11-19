@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show debugPrint;
+
 import '../../core/error/exceptions.dart';
 import '../../data/datasources/local/pending_calendar_operations_datasource.dart';
 import '../../data/datasources/remote/calendar_remote_datasource.dart';
@@ -105,6 +107,10 @@ class CalendarOutboxDrainService {
             (e.statusCode == 404 || e.statusCode == 410);
         final exhausted = op.retryCount + 1 >= _maxOpRetries;
         if (targetGone || exhausted) {
+          // Said out loud: a dropped RSVP is otherwise indistinguishable from
+          // one that reached the organizer.
+          debugPrint('[CalendarOutbox] $accountId: dropped ${op.opType.name} '
+              'for ${op.targetId} after ${op.retryCount + 1} attempt(s): $e');
           await _pendingOperations.removeCalendarOperation(op.id);
         } else {
           await _pendingOperations.recordCalendarOperationFailure(

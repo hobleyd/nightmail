@@ -2579,21 +2579,32 @@ END:VCALENDAR''';
       expect(reply, isNot(contains('mailto:ravi@example.com')));
     });
 
-    test('an invitation this account is on the roster of is reported, '
-        'not answered by email', () async {
-      // Being invited and not finding the meeting is a settled failure: the
-      // old create fallback is exactly what must not come back here, and
-      // emailing the organizer would duplicate what the provider sends.
+    test('an invitation this account is on the roster of that the provider '
+        'never filed is kept and answered by email', () async {
+      // Google does not file an outside sender's invitation on a calendar set
+      // to add invitations only from known senders — not even as a hidden
+      // one — so the provider has nothing to answer and sends nothing. This
+      // used to be reported, which is what left a start-time guess answering
+      // somebody else's meeting at the same hour.
       givenNotOnCalendar();
 
       final result = await respond(icsData: direct);
 
       expect(
-        result.getLeft().toNullable(),
-        isA<ServerFailure>().having((f) => f.statusCode, 'statusCode', 404),
-      );
-      verifyNothingKept();
-      verifyNoMail();
+          result.getRight().toNullable(), MeetingResponseMode.emailedUnfiled);
+      verify(mockDatasource.importMeetingInvite(
+        icsData: direct,
+        response: MeetingInviteResponseType.accept,
+        userEmail: 'sam@example.com',
+        message: null,
+      )).called(1);
+      final mail = capturedMail();
+      expect(mail[#toAddresses], ['dana@example.com']);
+      expect(mail[#subject], 'Accepted: Quarterly review');
+      // Dana invited sam@; there is no guest list to ask to be added to.
+      expect(mail[#body], isNot(contains('guest list')));
+      expect(replyIcsOf(mail),
+          contains('PARTSTAT=ACCEPTED;RSVP=FALSE:mailto:sam@example.com'));
     });
 
     test('a meeting this account organizes is never answered by email',
@@ -2649,12 +2660,35 @@ END:VCALENDAR''';
       expect(replyIcsOf(mail), contains('PARTSTAT=TENTATIVE'));
     });
 
-    test('declining a meeting the provider does not hold stays a quiet no-op',
-        () async {
+    test('declining an invitation the provider never filed emails the '
+        'organizer and keeps nothing', () async {
       givenNotOnCalendar();
 
       final result = await respond(
           icsData: direct, response: MeetingInviteResponseType.decline);
+
+      expect(
+          result.getRight().toNullable(), MeetingResponseMode.emailedUnfiled);
+      verifyNothingKept();
+      expect(replyIcsOf(capturedMail()), contains('PARTSTAT=DECLINED'));
+    });
+
+    test('declining a meeting with nobody to answer stays a quiet no-op',
+        () async {
+      const noOrganizer = '''
+BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:evt-8
+SUMMARY:Published
+ATTENDEE:mailto:sam@example.com
+DTSTART:20260803T230000Z
+DTEND:20260803T234500Z
+END:VEVENT
+END:VCALENDAR''';
+      givenNotOnCalendar();
+
+      final result = await respond(
+          icsData: noOrganizer, response: MeetingInviteResponseType.decline);
 
       expect(result.getRight().toNullable(), MeetingResponseMode.viaProvider);
       verifyNothingKept();

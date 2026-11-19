@@ -313,7 +313,6 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
         final target = await _findInviteEvent(
           uid: event.uid,
           start: meetingStart ?? event.start,
-          userEmail: userEmail,
           recurrenceId: event.recurrenceId,
           allowStartTimeMatch: event.recurrenceId != null,
         );
@@ -365,17 +364,17 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       target = await _findInviteEvent(
         uid: event.uid,
         start: meetingStart ?? event.start,
-        userEmail: userEmail,
         recurrenceId: event.recurrenceId,
       );
     } on DioException catch (e) {
       throw _mapException(e);
     }
     if (target == null) {
-      // Typed so the repository can tell a forwarded invitation — one this
-      // account is not on the guest list of, which Google therefore never
-      // filed — from any other failure, and answer it by keeping a private
-      // copy ([importMeetingInvite]) and emailing the organizer.
+      // Typed so the repository can tell an invitation Google never filed —
+      // forwarded, Bcc'd, or from an outside sender on a calendar that only
+      // adds invitations from known senders — from any other failure, and
+      // answer it by keeping a copy ([importMeetingInvite]) and emailing the
+      // organizer.
       //
       // It carries a 404, the calendar outbox's drop signal (`OutboxDrainService`
       // treats 404/410 as "no retry can ever succeed"), and that is what this
@@ -416,13 +415,18 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
   /// invitations only once they are answered does not list an unanswered one at
   /// all without it.
   ///
-  /// A miss therefore falls back to the meeting's *start time*, which is the
-  /// shape `GraphApiDatasourceImpl.respondToMeetingInvite` uses as its own last
-  /// resort and `CalendarRepositoryImpl._findCachedMeeting` uses locally: a UID
-  /// match among the events in that window wins, and failing that a single
-  /// unambiguous event this account was invited to. Two candidates returns
-  /// null — answering the wrong meeting is worse than answering none, and the
-  /// caller reports rather than guessing.
+  /// A miss therefore falls back to the meeting's *start time*, where the
+  /// expanded instances are listed and a normalised UID match finds them.
+  ///
+  /// Only *this meeting's* UID is ever returned. The window used to settle,
+  /// failing a UID match, for the single event there this account was invited
+  /// to — and an invitation Google never filed (an outside sender, on a
+  /// calendar that only adds invitations from known senders) has nothing of its
+  /// own in the window, so the guess was always somebody else's meeting.
+  /// Accepting an outside firm's 9am invitation on 19 Nov 2026 accepted a
+  /// colleague's 9am incident bridge instead, and binned the invitation as
+  /// answered. A miss is reported; the repository answers an unfiled
+  /// invitation itself.
   ///
   /// An invitation naming a [recurrenceId] is about one occurrence, and a UID
   /// hit is only that occurrence if its `originalStartTime` says so. Without
@@ -432,14 +436,12 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
   /// a decline, deletes — some other occurrence. A miss there falls through to
   /// the start-time window, which lists expanded instances.
   ///
-  /// [sameMeetingOnly] is for removing a cancelled meeting: only this UID is
-  /// ever returned (the window still finds an unmodified occurrence), and a
-  /// series cancellation takes the master or single event, never one of its
+  /// [sameMeetingOnly] is for removing a cancelled meeting: a series
+  /// cancellation takes the master or single event, never one of its
   /// occurrences.
   Future<Map<String, dynamic>?> _findInviteEvent({
     required String? uid,
     required DateTime? start,
-    required String? userEmail,
     DateTime? recurrenceId,
     bool allowStartTimeMatch = true,
     bool sameMeetingOnly = false,
@@ -485,15 +487,7 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       }
       return e;
     }
-    if (sameMeetingOnly) return null;
-    // An event of this meeting's own series has already been judged above, and
-    // one that reached here is a different occurrence of it.
-    final invited = atStart
-        .where((e) => !isSameMeetingUid(e['iCalUID'] as String?, uid))
-        .where((e) => (e['organizer'] as Map<String, dynamic>?)?['self'] != true)
-        .where((e) => _selfAttendee(e, userEmail) != null)
-        .toList();
-    return invited.length == 1 ? invited.first : null;
+    return null;
   }
 
   Future<List<Map<String, dynamic>>> _listPrimaryEvents(
@@ -537,21 +531,6 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
   static String _dateKey(DateTime dt) => '${dt.year.toString().padLeft(4, '0')}'
       '-${dt.month.toString().padLeft(2, '0')}'
       '-${dt.day.toString().padLeft(2, '0')}';
-
-  /// This account's own entry on an event's roster, matched on Google's `self`
-  /// flag first and the address second (a delegate or an alias is listed under
-  /// the address the organizer invited, which need not be [_accountEmail]).
-  Map<String, dynamic>? _selfAttendee(
-      Map<String, dynamic> e, String? userEmail) {
-    final attendees =
-        (e['attendees'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
-    final email = (userEmail ?? _accountEmail).toLowerCase();
-    for (final a in attendees) {
-      if (a['self'] == true) return a;
-      if ((a['email'] as String?)?.toLowerCase() == email) return a;
-    }
-    return null;
-  }
 
   /// Sends the RSVP and returns the id of the event it was applied to.
   ///
@@ -794,7 +773,6 @@ class GoogleCalendarDatasourceImpl implements CalendarRemoteDatasource {
       final target = await _findInviteEvent(
         uid: event.uid,
         start: meetingStart ?? event.start,
-        userEmail: null,
         recurrenceId: event.recurrenceId,
         sameMeetingOnly: true,
       );

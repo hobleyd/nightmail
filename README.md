@@ -45,6 +45,7 @@ The app provides a desktop based three-pane layout (folders, message list, readi
 - Nextcloud share links (`/s/…`, `/f/…`) on a NightMail Server's advertised file sites open as a preview in the reading pane, like a SharePoint link; a password-protected or unshared link opens in the browser instead
 - An email attached to another message opens as a preview in the reading pane, with its own attachments available to open or save
 - A markdown attachment or a `.md` document link renders as formatted text in the reading pane's preview, rather than showing its raw source
+- Word, Excel and PowerPoint attachments preview in the reading pane; with the ArtCraft `wordcraft-cli` / `deckcraft-cli` installed, Word and PowerPoint render as a full-fidelity PDF in a fraction of a second, falling back to LibreOffice and then a built-in viewer
 - The compose window reopens at the size and position it was last closed at
 - New-mail notifications on iOS/macOS carry Mark Read, Delete, and Dismiss actions that act without opening the app, and appear on a paired Apple Watch automatically
 - Cmd/Ctrl+A selects every message in the folder list, so delete, junk and drag act on the whole folder

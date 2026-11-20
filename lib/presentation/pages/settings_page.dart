@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -13,6 +14,7 @@ import '../../core/error/exceptions.dart';
 import '../../core/platform/touch_metrics.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/signature/signature_import.dart';
+import '../../core/signature/signature_merge_engine.dart';
 import '../../core/theme/app_colors.dart';
 import '../../domain/entities/email.dart';
 import '../../injection_container.dart';
@@ -809,17 +811,23 @@ class _ComposeFormatSettingState extends State<_ComposeFormatSetting> {
 /// every change via [onChanged]; this widget just renders whichever editor
 /// matches the app's Compose Format preference. Read-only, with no
 /// toolbar and Import HTML disabled, until the account's Edit button sets
-/// [editable].
+/// [editable] — and while read-only it shows the signature as it will be
+/// sent, merge tags resolved from [account]'s profile, not the template.
 class _SignatureEditor extends StatefulWidget {
   const _SignatureEditor({
     super.key,
     required this.initialHtml,
+    required this.account,
     required this.composeFormat,
     required this.editable,
     required this.onChanged,
   });
 
+  /// The template, with its merge tags unresolved.
   final String initialHtml;
+
+  /// Whose profile fills the merge tags in the read-only preview.
+  final Account account;
   final EmailBodyType composeFormat;
   final bool editable;
   final ValueChanged<String> onChanged;
@@ -836,7 +844,82 @@ class _SignatureEditorState extends State<_SignatureEditor> {
   void initState() {
     super.initState();
     _plainController =
-        TextEditingController(text: ComposeBodyBuilder.stripHtml(widget.initialHtml));
+        TextEditingController(text: ComposeBodyBuilder.stripHtml(_shownHtml));
+  }
+
+  /// What the editor shows: the template while editing, the merged
+  /// signature otherwise.
+  String get _shownHtml => widget.editable
+      ? widget.initialHtml
+      : SignatureMergeEngine.merge(widget.initialHtml, widget.account);
+
+  @override
+  void didUpdateWidget(_SignatureEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.editable != oldWidget.editable) {
+      unawaited(_swapShown(leavingEdit: oldWidget.editable));
+    } else if (!widget.editable &&
+        (widget.account != oldWidget.account ||
+            widget.initialHtml != oldWidget.initialHtml)) {
+      // Saved profile fields (or another window's signature edit) change
+      // what the preview resolves to.
+      unawaited(_showContent(_shownHtml));
+    }
+  }
+
+  /// What the editor serialised the template as on entering Edit — see
+  /// [_swapShown].
+  String? _editBaseline;
+
+  /// Swaps the template for the preview, or back.
+  ///
+  /// Leaving Edit, the editor's last keystrokes are collected first: it
+  /// debounces changes by 300 ms, and that pending change would otherwise
+  /// fire *after* the preview was loaded, read the merged text out of the
+  /// page and save it over the template — every merge tag gone.
+  /// [_onHtmlChanged] drops anything arriving while read-only for the same
+  /// reason. What is collected is saved only if it differs from how the
+  /// editor itself serialised the template on the way in, not from the
+  /// stored template: an imported file is kept byte for byte (see
+  /// [_importHtml]), and the editor's copy of it can differ with nothing
+  /// typed — Edit then Save would otherwise overwrite it with that copy.
+  Future<void> _swapShown({required bool leavingEdit}) async {
+    final editor = _htmlEditorKey.currentState;
+    if (editor == null) {
+      await _showContent(_shownHtml);
+      return;
+    }
+    if (!leavingEdit) {
+      await editor.setContent(widget.initialHtml);
+      final baseline = await editor.getContent();
+      if (mounted) _editBaseline = baseline;
+      return;
+    }
+    final html = await editor.getContent();
+    if (!mounted) return;
+    final changed = _editBaseline != null && html != _editBaseline;
+    _editBaseline = null;
+    if (changed) widget.onChanged(html);
+    // The preview has to be of what was just saved, not of an initialHtml
+    // the parent has not rebuilt with yet.
+    await _showContent(
+      SignatureMergeEngine.merge(
+        changed ? html : widget.initialHtml,
+        widget.account,
+      ),
+    );
+  }
+
+  Future<void> _showContent(String html) async {
+    if (widget.composeFormat == EmailBodyType.html) {
+      await _htmlEditorKey.currentState?.setContent(html);
+    } else {
+      _plainController.text = ComposeBodyBuilder.stripHtml(html);
+    }
+  }
+
+  void _onHtmlChanged(String html) {
+    if (widget.editable) widget.onChanged(html);
   }
 
   @override
@@ -966,9 +1049,9 @@ class _SignatureEditorState extends State<_SignatureEditor> {
           child: widget.composeFormat == EmailBodyType.html
               ? HtmlEmailEditor(
                   key: _htmlEditorKey,
-                  initialHtml: widget.initialHtml,
+                  initialHtml: _shownHtml,
                   readOnly: !widget.editable,
-                  onContentChanged: widget.onChanged,
+                  onContentChanged: _onHtmlChanged,
                   onLinkRequested: () => _onLinkRequested(context),
                   onAttachRequested: () {},
                 )
@@ -1384,6 +1467,7 @@ class _AccountsSectionState extends State<_AccountsSection> {
         final signature = _SignatureEditor(
           key: ValueKey(_selectedAccount!.id),
           initialHtml: _selectedAccount!.signatureHtml,
+          account: _selectedAccount!,
           composeFormat: _composeFormat,
           editable: _isEditing,
           onChanged: _onSignatureChanged,

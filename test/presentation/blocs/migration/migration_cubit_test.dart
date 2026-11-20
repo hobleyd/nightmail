@@ -38,6 +38,9 @@ void main() {
   setUp(() {
     mockService = MockAccountMigrationService();
     cubit = MigrationCubit(migrationService: mockService);
+    // Rules are not what these tests are about.
+    when(mockService.getRuleResult(any, any)).thenAnswer((_) async => null);
+    when(mockService.runsLocalRules(any)).thenReturn(false);
   });
 
   tearDown(() => cubit.close());

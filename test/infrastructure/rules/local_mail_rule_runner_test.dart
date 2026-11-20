@@ -489,4 +489,24 @@ void main() {
     expect(result.processed, 1);
     expect(result.changedInbox, isFalse);
   });
+
+  test('rules are paused while a migration fills the Inbox', () async {
+    // Copied mail arrives as new UIDs; the rules would act on mail the old
+    // server's rules already handled.
+    await withRules([
+      _rule('r', 1, const [MailRuleAction(MailRuleActionKind.delete)]),
+    ]);
+    await atProgress(10);
+    mailbox.inbox = [_msg(11)];
+    final paused = LocalMailRuleRunner(
+      store: store,
+      isMigrationTarget: (id) async => id == _account.id,
+    );
+
+    await paused.run(_account, mailbox);
+
+    expect(mailbox.calls, isEmpty);
+    // Forgotten, so the rules restart from "now", past every copied message.
+    expect(await store.loadProgress(_account.id), isNull);
+  });
 }

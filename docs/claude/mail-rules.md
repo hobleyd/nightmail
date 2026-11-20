@@ -180,6 +180,65 @@ The rules that keep it from doing damage:
   attachment-disposition parts only, so an HTML original's `cid:` images
   arrive broken — true of the app's own forward as well.
 
+## Migrating rules with the mail
+
+`AccountMigrationService` hands both job scopes (Inbox and whole account) to
+`MailRuleMigrator` once the mail is across — after, so the folders an account
+job has just created exist to file into. A rules failure never fails the job.
+
+- **Strict translation** (`MailRuleTranslator`). A rule is copied only if the
+  target can say exactly the same thing; a lost condition or exception makes
+  a rule act on more mail, a delete rule most dangerously. Skipped rules are
+  listed with the reason in the migration dialog. Loosenings, each bounded:
+  - `fromAddresses`/`sentToAddresses` stand in as sender/recipient
+    *contains* where the target lacks the exact test (Gmail) — Outlook's own
+    "from X" rule is `fromAddresses`, and most Outlook rules would otherwise
+    never reach Gmail.
+  - "Stop processing" into Gmail (no rule order) is dropped only when no
+    later rule deletes or forwards; otherwise the rule is skipped, since on
+    Gmail both would run.
+  - A move into Gmail's Trash/Archive becomes delete/archive; any other
+    system label is skipped (filters file into user labels only).
+- **Gmail's criteria are search syntax.** Leaving Gmail, only plain
+  `a OR b` lists translate (anything with brackets, quotes, operators or
+  `-` is skipped); entering Gmail, every value that is not a bare address
+  or domain is quoted, or `-draft` would mean "not draft". Gmail to Gmail
+  copies verbatim.
+- **Folders** map by special kind first, then by full path against a *live*
+  walk of the target (the cache misses folders the job just created, and
+  creating one twice fails); missing ones are created level by level, or as
+  one `A/B` label on Gmail, whose `__virtual__` parents cannot be created
+  under.
+- **Once per account pair.** The result is stored (`MailRuleStore`,
+  `mail_rule_migration_<source>__<target>.json`) and a finished copy is never
+  repeated — jobs re-run on every resume and rescan, and copying again would
+  resurrect a migrated rule the user has since deleted or changed. Only
+  `needsPermission` and `failed` retry. A rule identical to one on the target
+  (or Gmail's "Filter already exists") counts as already there. Per pair, not
+  per job, so an Inbox job and an account job do not copy twice.
+- **Permission.** A background job cannot open a sign-in window, so a server
+  target without the write scope records `needsPermission` and the dialog
+  offers "Sign in to allow it, then copy rules". Checked only when
+  `capabilities.runsOnServer` — the OAuth check answers false for IMAP.
+- **NightMail's own IMAP rules pause while their account is a migration
+  target** (`LocalMailRuleRunner`'s `isMigrationTarget`, any running or
+  paused job): migrated mail arrives as new Inbox UIDs and the rules would
+  act on mail the old server already handled. Progress is forgotten, so they
+  restart from "now" afterwards. Gmail's `insert` and Graph's MIME create do
+  not run server rules, so only IMAP needs this.
+- **The old account's copies are the user's call.** Once the copy is done
+  the status dialog asks whether to turn off the migrated rules on the old
+  account — while mail reaches both, both sets act on it — and the answer is
+  stored with the result (`SourceRulesDecision`), so it is asked once. Only
+  `migratedSourceRuleIds` (copied, or already there) are switched off; a
+  skipped rule has no copy and keeps working where it is. Each is a PATCH of
+  `isEnabled` alone, so a view-only rule loses nothing. A server account
+  without the write permission gets "Sign in and turn off" rather than a
+  sign-in sprung on a plain button; a rule that will not switch off leaves
+  the question open with the reason. Gmail filters cannot be switched off,
+  so for a Gmail source the dialog says to delete them in Settings → Rules
+  instead.
+
 ## Folder picker
 
 `getMailRuleFolders` reads the local folder cache (the whole tree, walked by

@@ -63,6 +63,8 @@ class MigrationCubit extends Cubit<MigrationState> {
             scope: scope);
     final progress =
         _migrationService.getProgress(sourceId, targetId, scope: scope);
+    final ruleResult =
+        await _migrationService.getRuleResult(sourceId, targetId);
     // A refresh that was already in flight when a different job started
     // being watched must not report the old job as the new one.
     if (isClosed ||
@@ -71,7 +73,59 @@ class MigrationCubit extends Cubit<MigrationState> {
         scope != _scope) {
       return;
     }
-    emit(MigrationState(job: job, failures: failures, progress: progress));
+    emit(MigrationState(
+      job: job,
+      failures: failures,
+      progress: progress,
+      ruleResult: ruleResult,
+      copyingRules: _copyingRules,
+      targetRunsLocalRules: _migrationService.runsLocalRules(targetId),
+    ));
+  }
+
+  bool _copyingRules = false;
+
+  /// Answers "switch the old account's rules off?" for the watched pair.
+  Future<void> decideSourceRules({
+    required bool turnOff,
+    bool requestPermission = false,
+  }) async {
+    final sourceId = _sourceAccountId;
+    final targetId = _targetAccountId;
+    if (sourceId == null || targetId == null || _copyingRules) return;
+    _copyingRules = true;
+    await _refresh();
+    try {
+      await _migrationService.decideSourceRules(
+        sourceId,
+        targetId,
+        turnOff: turnOff,
+        requestPermission: requestPermission,
+      );
+    } finally {
+      _copyingRules = false;
+      await _refresh();
+    }
+  }
+
+  /// Copies the watched pair's rules again — after a sign-in for the
+  /// permission when [requestPermission] — and refreshes.
+  Future<void> copyRules({bool requestPermission = false}) async {
+    final sourceId = _sourceAccountId;
+    final targetId = _targetAccountId;
+    if (sourceId == null || targetId == null || _copyingRules) return;
+    _copyingRules = true;
+    await _refresh();
+    try {
+      await _migrationService.copyRulesNow(
+        sourceId,
+        targetId,
+        requestPermission: requestPermission,
+      );
+    } finally {
+      _copyingRules = false;
+      await _refresh();
+    }
   }
 
   @override

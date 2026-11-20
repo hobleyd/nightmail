@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:equatable/equatable.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../../core/error/exceptions.dart';
 import '../../core/utils/special_folder_kind.dart';
@@ -12,6 +13,7 @@ import '../accounts/account.dart';
 import '../accounts/account_manager.dart';
 import '../network/connectivity_service.dart';
 import '../sync/imap_connection_gate.dart';
+import 'mail_rule_migrator.dart';
 
 /// Live, in-memory progress for a running job's current folder — what the
 /// status dialog's spinner shows while a job is actually running. Not
@@ -69,12 +71,17 @@ class AccountMigrationService {
     required this._localDatasource,
     required this._imapConnectionGate,
     required this._connectivityService,
+    this._ruleMigrator,
   });
 
   final AccountManager _accountManager;
   final MigrationLocalDatasource _localDatasource;
   final ImapConnectionGate _imapConnectionGate;
   final ConnectivityService _connectivityService;
+
+  /// Copies the source's mail rules once the mail is across. Optional only
+  /// so tests that are not about rules need not build one.
+  final MailRuleMigrator? _ruleMigrator;
 
   /// Total attempts (including ones recorded on a previous run) before a
   /// message is marked permanently failed — "retried, but if it fails again
@@ -306,6 +313,7 @@ class AccountMigrationService {
           destFolderId: destInboxId,
         );
         if (!finished) return; // offline mid-run; next call resumes
+        await _copyRules(source, target);
         await _localDatasource.setJobStatus(
             jobId: id, status: MigrationJobStatus.completed);
         return;
@@ -366,6 +374,7 @@ class AccountMigrationService {
         if (!shouldContinue) return; // offline mid-run; next call resumes
       }
 
+      await _copyRules(source, target);
       await _localDatasource.setJobStatus(
           jobId: id, status: MigrationJobStatus.completed);
     } on AuthException catch (e) {
@@ -388,6 +397,74 @@ class AccountMigrationService {
       );
     }
   }
+
+  /// Rules go across after the mail, so the folders an account migration has
+  /// just created are there for them to file into — and both scopes copy
+  /// them, since rules belong to the Inbox. Once per account pair (see
+  /// [MailRuleMigrator]); never the job's failure.
+  Future<void> _copyRules(Account source, Account target) async {
+    final migrator = _ruleMigrator;
+    if (migrator == null) return;
+    try {
+      await migrator.migrateOnce(source, target);
+    } catch (e) {
+      debugPrint('[Migration] copying rules failed: $e');
+    }
+  }
+
+  /// What copying this pair's rules last came to, for the status dialog.
+  Future<RuleMigrationResult?> getRuleResult(
+    String sourceAccountId,
+    String targetAccountId,
+  ) async =>
+      _ruleMigrator?.lastResult(sourceAccountId, targetAccountId);
+
+  /// The status dialog's retry. With [requestPermission] it first runs the
+  /// target's sign-in for the rules permission — which a background job
+  /// cannot — and stops if that is not granted. Returns the new result, or
+  /// null when nothing was attempted.
+  Future<RuleMigrationResult?> copyRulesNow(
+    String sourceAccountId,
+    String targetAccountId, {
+    bool requestPermission = false,
+  }) async {
+    final migrator = _ruleMigrator;
+    if (migrator == null) return null;
+    final source = _accountManager.accountById(sourceAccountId);
+    final target = _accountManager.accountById(targetAccountId);
+    if (source == null || target == null) return null;
+    if (requestPermission &&
+        !await _accountManager.requestOutOfOfficeWriteAccess(targetAccountId)) {
+      return null;
+    }
+    return migrator.migrateNow(source, target);
+  }
+
+  /// The status dialog's answer to "switch the old account's rules off?".
+  /// With [requestPermission] the old account's sign-in for the rules
+  /// permission runs first, and nothing changes if it is not granted.
+  Future<RuleMigrationResult?> decideSourceRules(
+    String sourceAccountId,
+    String targetAccountId, {
+    required bool turnOff,
+    bool requestPermission = false,
+  }) async {
+    final migrator = _ruleMigrator;
+    if (migrator == null) return null;
+    final source = _accountManager.accountById(sourceAccountId);
+    final target = _accountManager.accountById(targetAccountId);
+    if (source == null || target == null) return null;
+    if (requestPermission &&
+        !await _accountManager.requestOutOfOfficeWriteAccess(sourceAccountId)) {
+      return null;
+    }
+    return migrator.decideSourceRules(source, target, turnOff: turnOff);
+  }
+
+  /// Whether NightMail itself runs [accountId]'s rules (IMAP) — and so
+  /// pauses them while this migration fills its Inbox.
+  bool runsLocalRules(String accountId) =>
+      _accountManager.accountById(accountId) is ImapAccount;
 
   /// Runs [body] as the sole holder of [accountId]'s IMAP connection when
   /// [isImap] — a no-op wrapper otherwise, since Gmail/Graph build a fresh,

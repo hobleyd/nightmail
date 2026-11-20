@@ -49,9 +49,15 @@ class LocalRuleRunResult {
 ///   a message that is itself automatic (`Auto-Submitted`), while every
 ///   forward it sends is marked so.
 class LocalMailRuleRunner {
-  LocalMailRuleRunner({required this._store});
+  LocalMailRuleRunner({required this._store, this._isMigrationTarget});
 
   final MailRuleStore _store;
+
+  /// Whether a migration job is copying mail into the account. Those copies
+  /// arrive as new Inbox UIDs, and the rules — maybe the ones the migration
+  /// itself just copied over — would forward, file or delete mail the old
+  /// server's rules already handled.
+  final Future<bool> Function(String accountId)? _isMigrationTarget;
 
   /// Stored on a message once a device has offered it to the rules.
   static const claimKeyword = r'$NightMailRules';
@@ -75,7 +81,11 @@ class LocalMailRuleRunner {
             r.actions.isNotEmpty)
           r,
     ];
-    if (rules.isEmpty) {
+    if (rules.isEmpty ||
+        (await _isMigrationTarget?.call(account.id) ?? false)) {
+      // Also while a migration is filling the Inbox: forgetting progress
+      // means the rules restart from "now" once it is done, past every
+      // copied message.
       // Forgotten, so switching a rule on later starts from that moment
       // rather than working through everything that arrived meanwhile.
       await _store.clearProgress(account.id);

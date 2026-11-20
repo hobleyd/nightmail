@@ -86,6 +86,29 @@ class MailRuleStore {
     if (await file.exists()) await file.delete();
   }
 
+  static const _migrationPrefix = 'mail_rule_migration_';
+
+  /// What copying rules from one account to another last came to, keyed by
+  /// the account pair — `MailRuleMigrator`'s once-only marker and the
+  /// migration dialog's summary. Per pair, not per job: an Inbox job and a
+  /// whole-account job between the same two accounts must not copy twice.
+  Future<Map<String, dynamic>?> loadMigrationResult(
+    String sourceAccountId,
+    String targetAccountId,
+  ) async {
+    final json = await _read(_migrationName(sourceAccountId, targetAccountId));
+    return json is Map<String, dynamic> ? json : null;
+  }
+
+  Future<void> saveMigrationResult(
+    String sourceAccountId,
+    String targetAccountId,
+    Map<String, dynamic> result,
+  ) => _write(_migrationName(sourceAccountId, targetAccountId), result);
+
+  static String _migrationName(String source, String target) =>
+      '$_migrationPrefix${_safe(source)}__${_safe(target)}.json';
+
   /// A corrupt or unreadable file reads as absent. For progress that is the
   /// safe direction: the runner restarts from the Inbox's newest message and
   /// processes nothing old, rather than from 0.

@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../data/datasources/local/migration_local_datasource.dart';
 import '../../infrastructure/migration/account_migration_service.dart';
+import '../../infrastructure/migration/mail_rule_migrator.dart';
 import '../blocs/migration/migration_cubit.dart';
 import '../blocs/migration/migration_state.dart';
 
@@ -137,6 +138,12 @@ class MigrationStatusDialog extends StatelessWidget {
                         ),
                       ),
                     ],
+                    const SizedBox(height: 16),
+                    _RulesSection(
+                      state: state,
+                      sourceAccountLabel: sourceAccountLabel,
+                      targetAccountLabel: targetAccountLabel,
+                    ),
                   ],
                 );
               },
@@ -219,4 +226,187 @@ class _StatusIcon extends StatelessWidget {
         MigrationJobStatus.failed =>
           const Icon(Icons.error_outline, color: Colors.redAccent, size: 18),
       };
+}
+
+/// What became of the source's mail rules: copied once the mail is across,
+/// strictly — a rule the new server cannot say exactly is listed with why.
+class _RulesSection extends StatelessWidget {
+  const _RulesSection({
+    required this.state,
+    required this.sourceAccountLabel,
+    required this.targetAccountLabel,
+  });
+
+  final MigrationState state;
+  final String sourceAccountLabel;
+  final String targetAccountLabel;
+
+  static const _small = TextStyle(fontSize: 12);
+  static const _heading = TextStyle(fontWeight: FontWeight.w600, fontSize: 13);
+
+  @override
+  Widget build(BuildContext context) {
+    final result = state.ruleResult;
+    final running = state.job?.status == MigrationJobStatus.running;
+    final cubit = context.read<MigrationCubit>();
+    final children = <Widget>[];
+
+    if (running && state.targetRunsLocalRules) {
+      children.add(Text(
+        'Rules on $targetAccountLabel are paused until this migration '
+        'finishes, so they do not act on the copied mail.',
+        style: _small,
+      ));
+      children.add(const SizedBox(height: 6));
+    }
+
+    if (state.copyingRules) {
+      children.add(const Text('Copying rules…', style: _small));
+    } else if (result == null) {
+      children.add(const Text(
+        'Rules are copied once the mail is across.',
+        style: _small,
+      ));
+    } else {
+      switch (result.status) {
+        case RuleMigrationStatus.nothingToCopy:
+          children.add(const Text('No rules to copy.', style: _small));
+        case RuleMigrationStatus.needsPermission:
+          children.addAll([
+            Text(
+              'Rules not copied yet: $targetAccountLabel needs one extra '
+              'permission to change its rules.',
+              style: _small,
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: () => cubit.copyRules(requestPermission: true),
+                child: const Text('Sign in to allow it, then copy rules'),
+              ),
+            ),
+          ]);
+        case RuleMigrationStatus.failed:
+          children.addAll([
+            Text(
+              'Rules not copied: ${result.message ?? 'unknown error'}',
+              style: const TextStyle(fontSize: 12, color: Colors.redAccent),
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: cubit.copyRules,
+                child: const Text('Try again'),
+              ),
+            ),
+          ]);
+        case RuleMigrationStatus.done:
+          final parts = [
+            '${result.copied} copied',
+            if (result.alreadyThere > 0) '${result.alreadyThere} already there',
+            if (result.skipped.isNotEmpty)
+              '${result.skipped.length} not copied',
+          ];
+          children.add(Text('Rules: ${parts.join(', ')}.', style: _heading));
+          if (result.skipped.isNotEmpty) {
+            children.add(const SizedBox(height: 4));
+            children.add(ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 140),
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  for (final s in result.skipped)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Text('${s.name} — ${s.reason}', style: _small),
+                    ),
+                ],
+              ),
+            ));
+          }
+          children.addAll(_sourceRules(result, cubit));
+      }
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: children,
+    );
+  }
+
+  /// The question about the old account's copies of the migrated rules,
+  /// asked once and remembered: while mail still reaches both accounts,
+  /// both sets act on it.
+  List<Widget> _sourceRules(RuleMigrationResult result, MigrationCubit cubit) {
+    final count = result.migratedSourceRuleIds.length;
+    final rules = count == 1 ? 'rule' : 'rules';
+    switch (result.sourceRules) {
+      case SourceRulesDecision.turnedOff:
+        return [
+          const SizedBox(height: 6),
+          Text('The migrated $rules on $sourceAccountLabel are turned off.',
+              style: _small),
+        ];
+      case SourceRulesDecision.keptRunning:
+        return [
+          const SizedBox(height: 6),
+          Text(
+            'The migrated $rules on $sourceAccountLabel are still running — '
+            'turn them off in Settings → Rules when you are ready.',
+            style: _small,
+          ),
+        ];
+      case SourceRulesDecision.undecided:
+        if (count == 0) return const [];
+    }
+    if (!result.sourceCanDisable) {
+      return [
+        const SizedBox(height: 6),
+        Text(
+          '$sourceAccountLabel still has its copies of these filters, and '
+          'Gmail filters cannot be switched off. Delete them in Settings → '
+          'Rules once mail no longer arrives there.',
+          style: _small,
+        ),
+      ];
+    }
+    final needsSignIn =
+        result.sourceRulesMessage == MailRuleMigrator.needsPermissionMessage;
+    final failure = needsSignIn ? null : result.sourceRulesMessage;
+    return [
+      const SizedBox(height: 8),
+      Text(
+        'Turn off the $count migrated $rules on $sourceAccountLabel? While '
+        'mail still reaches both accounts, both sets of rules act on it — a '
+        'forward would go out twice.',
+        style: _small,
+      ),
+      if (needsSignIn)
+        Text(
+          '$sourceAccountLabel needs one extra permission to change its '
+          'rules; you will be asked to sign in.',
+          style: const TextStyle(fontSize: 11, color: Colors.grey),
+        ),
+      if (failure != null)
+        Text(failure,
+            style: const TextStyle(fontSize: 12, color: Colors.redAccent)),
+      Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          TextButton(
+            onPressed: () => cubit.decideSourceRules(turnOff: false),
+            child: const Text('Keep running'),
+          ),
+          TextButton(
+            onPressed: () => cubit.decideSourceRules(
+              turnOff: true,
+              requestPermission: needsSignIn,
+            ),
+            child: Text(needsSignIn ? 'Sign in and turn off' : 'Turn off'),
+          ),
+        ],
+      ),
+    ];
+  }
 }

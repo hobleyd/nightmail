@@ -36,6 +36,7 @@ import 'data/repositories/email_repository_impl.dart';
 import 'data/repositories/mail_rules_repository_impl.dart';
 import 'data/datasources/local/mail_rule_store.dart';
 import 'infrastructure/rules/local_mail_rule_runner.dart';
+import 'infrastructure/migration/mail_rule_migrator.dart';
 import 'data/repositories/out_of_office_repository_impl.dart';
 import 'data/repositories/sender_repository_impl.dart';
 import 'data/repositories/spam_filter_repository_impl.dart';
@@ -315,6 +316,12 @@ Future<void> configureDependencies() async {
       localDatasource: sl<MigrationLocalDatasource>(),
       imapConnectionGate: sl<ImapConnectionGate>(),
       connectivityService: sl<ConnectivityService>(),
+      ruleMigrator: MailRuleMigrator(
+        repository: sl<MailRulesRepository>(),
+        accountManager: sl<AccountManager>(),
+        store: sl<MailRuleStore>(),
+        imapConnectionGate: sl<ImapConnectionGate>(),
+      ),
     ),
   );
   sl.registerLazySingleton(
@@ -359,7 +366,12 @@ Future<void> configureDependencies() async {
   );
   sl.registerLazySingleton(() => MailRuleStore());
   sl.registerLazySingleton(
-    () => LocalMailRuleRunner(store: sl<MailRuleStore>()),
+    () => LocalMailRuleRunner(
+      store: sl<MailRuleStore>(),
+      isMigrationTarget: (accountId) async =>
+          (await sl<MigrationLocalDatasource>().getResumableJobs())
+              .any((job) => job.targetAccountId == accountId),
+    ),
   );
   sl.registerLazySingleton<MailRulesRepository>(
     () => MailRulesRepositoryImpl(

@@ -231,6 +231,19 @@ Settings → Accounts.
   emails attendees, so those are never pre-selected). Only offered for the
   account that's currently active elsewhere in the app
 
+### Rules
+- **Settings → Rules** creates, edits, reorders, switches off and deletes an
+  account's mail rules: conditions (sender, recipients, subject, body,
+  attachments, "sent to me"…), exceptions, and actions (move, copy, delete,
+  mark read, flag, forward, stop processing more rules)
+- Microsoft 365 rules and Gmail filters are the mailbox's own, so they run on
+  the server however you read your mail; a rule using settings NightMail
+  can't show opens view-only rather than being rewritten without them
+- IMAP accounts get rules too, run by NightMail on new Inbox mail while it is
+  open — never on mail already there, at most once per message, and never in
+  a way that could loop (no copies into the Inbox, no forwarding of automatic
+  mail)
+
 ### Updates
 - Checks for a new version at launch and every 6 hours, with a dot on the
   Settings icon when one is waiting; nothing downloads or installs until you

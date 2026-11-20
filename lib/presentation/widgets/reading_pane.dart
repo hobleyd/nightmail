@@ -764,9 +764,9 @@ class _EmailViewState extends State<_EmailView> {
   }
 
   /// The local Office preview for a file the provider declined to convert:
-  /// LibreOffice → PDF when it is installed, else the bundled JS viewer for the
-  /// three OOXML formats it can read. Null when neither applies, which sends
-  /// the link to the browser.
+  /// an ArtCraft CLI or LibreOffice → PDF when one is installed, else the
+  /// bundled JS viewer for the three OOXML formats it can read. Null when none
+  /// applies, which sends the link to the browser.
   Future<String?> _officePreviewPath(String docPath, String name) async {
     final svc = sl<OfficePreviewService>();
     final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
@@ -776,10 +776,9 @@ class _EmailViewState extends State<_EmailView> {
       'pptx' => OfficeFormat.pptx,
       _ => null,
     };
-    if (svc.libreOfficeAvailable) {
-      final pdf = await svc.convertToPdf(docPath);
-      if (pdf != null) return pdf;
-    }
+    final pdf = await svc.convertWithArtCraft(docPath) ??
+        await svc.convertToPdf(docPath);
+    if (pdf != null) return pdf;
     if (jsFormat == null) return null;
     return svc.buildJsViewer(docPath, jsFormat);
   }
@@ -3640,24 +3639,21 @@ class _AttachmentChipState extends State<_AttachmentChip> {
         );
       });
 
-  /// Office (docx/xlsx/pptx) preview. Word always uses the JS viewer; Excel and
-  /// PowerPoint use LibreOffice → PDF when available and fall back to the JS
-  /// viewer otherwise. The download spinner (`_isLoading`) stays up across the
-  /// whole download-and-render/convert wait.
+  /// Office (docx/xlsx/pptx) preview. Word and PowerPoint try their ArtCraft
+  /// CLI → PDF first. After that, Word goes straight to the JS viewer, while
+  /// Excel and PowerPoint use LibreOffice → PDF when available and fall back
+  /// to the JS viewer otherwise. The download spinner (`_isLoading`) stays up
+  /// across the whole download-and-render/convert wait.
   Future<void> _previewOffice(OfficeFormat fmt) => _withBytes((bytes) async {
         final docFile = await _scratchFile();
         await docFile.writeAsBytes(bytes);
 
         final svc = sl<OfficePreviewService>();
-        String previewPath;
-        if (fmt == OfficeFormat.docx) {
-          previewPath = await svc.buildJsViewer(docFile.path, fmt);
-        } else if (svc.libreOfficeAvailable) {
-          previewPath = await svc.convertToPdf(docFile.path) ??
-              await svc.buildJsViewer(docFile.path, fmt);
-        } else {
-          previewPath = await svc.buildJsViewer(docFile.path, fmt);
-        }
+        final previewPath = await svc.convertWithArtCraft(docFile.path) ??
+            (fmt == OfficeFormat.docx
+                ? null
+                : await svc.convertToPdf(docFile.path)) ??
+            await svc.buildJsViewer(docFile.path, fmt);
 
         if (!mounted) return;
         widget.onAttachmentPreview?.call(

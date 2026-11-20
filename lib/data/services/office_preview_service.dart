@@ -15,10 +15,13 @@ enum OfficeFormat { docx, xlsx, pptx }
 ///     vendored JS libraries) into a single temp directory and inlines the
 ///     document as base64. Loaded into the native webview via `loadUrl`
 ///     (NOT `loadHtml` — WebView2's `NavigateToString` caps at ~2 MB).
-///   * [convertToPdf] — shells out to a locally installed LibreOffice
-///     (`soffice --headless --convert-to pdf`) and returns the PDF path so the
-///     existing PDF preview widget can render it. Used for Excel/PowerPoint
-///     when LibreOffice is present (higher fidelity than the JS fallback).
+///   * [convertWithArtCraft] / [convertToPdf] — shell out to a locally
+///     installed converter and return the PDF path so the existing PDF preview
+///     widget can render it. The ArtCraft CLIs (`wordcraft-cli`,
+///     `deckcraft-cli`) are tried first: native Rust binaries that convert in
+///     ~0.1–0.2 s where LibreOffice spends ~1 s just starting up. LibreOffice
+///     (`soffice --headless --convert-to pdf`) covers everything else, Excel
+///     included — `gridcraft-cli` cannot write a PDF.
 class OfficePreviewService {
   OfficePreviewService();
 
@@ -33,8 +36,19 @@ class OfficePreviewService {
     'xlsx.full.min.js',
   ];
 
+  /// The ArtCraft CLI that can render each input extension to PDF. Only the
+  /// formats each CLI documents reading: DeckCraft opens `.pptx` alone.
+  static const Map<String, String> _artCraftClis = <String, String>{
+    'docx': 'wordcraft-cli',
+    'doc': 'wordcraft-cli',
+    'odt': 'wordcraft-cli',
+    'rtf': 'wordcraft-cli',
+    'pptx': 'deckcraft-cli',
+  };
+
   String? _sofficeCache;
   bool _sofficeLookedUp = false;
+  final Map<String, String?> _artCraftCache = <String, String?>{};
   bool _assetsExtracted = false;
 
   // ---------------------------------------------------------------------------
@@ -49,8 +63,6 @@ class OfficePreviewService {
     _sofficeCache = _locateSoffice();
     return _sofficeCache;
   }
-
-  bool get libreOfficeAvailable => findSoffice() != null;
 
   String? _locateSoffice() {
     final candidates = <String>[];
@@ -82,6 +94,72 @@ class OfficePreviewService {
       if (File(p).existsSync()) return p;
     }
     return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // ArtCraft CLI → PDF conversion
+  // ---------------------------------------------------------------------------
+
+  /// Absolute path to the ArtCraft CLI [name], or null if it is not installed.
+  /// The CLIs ship separately from the ArtCraft `.app` bundles (which hold only
+  /// the GUI), and their installer links them into `~/.local/bin` — not on the
+  /// PATH an app launched from the Dock inherits, hence the explicit look there.
+  /// Result is cached for the lifetime of the app.
+  String? _findArtCraftCli(String name) =>
+      _artCraftCache.putIfAbsent(name, () => _locateArtCraftCli(name));
+
+  String? _locateArtCraftCli(String name) {
+    final exe = Platform.isWindows ? '$name.exe' : name;
+    final sep = Platform.pathSeparator;
+    final home = Platform.environment[Platform.isWindows ? 'USERPROFILE' : 'HOME'];
+    final dirs = <String>[
+      if (home != null) ...['$home$sep.local${sep}bin', '$home$sep.cargo${sep}bin'],
+      if (Platform.isMacOS) ...['/opt/homebrew/bin', '/usr/local/bin'],
+      ...(Platform.environment['PATH'] ?? '')
+          .split(Platform.isWindows ? ';' : ':')
+          .where((d) => d.trim().isNotEmpty),
+    ];
+    for (final dir in dirs) {
+      final p = '$dir$sep$exe';
+      if (File(p).existsSync()) return p;
+    }
+    return null;
+  }
+
+  /// Converts [inputPath] to a PDF with the ArtCraft CLI for its extension and
+  /// returns the PDF path, or null when no CLI handles the format, it is not
+  /// installed, or the conversion fails (caller falls back to LibreOffice / the
+  /// JS viewer).
+  Future<String?> convertWithArtCraft(String inputPath) async {
+    final base = inputPath.split(RegExp(r'[\\/]')).last;
+    final dot = base.lastIndexOf('.');
+    final ext = dot < 0 ? '' : base.substring(dot + 1).toLowerCase();
+    final name = _artCraftClis[ext];
+    final cli = name == null ? null : _findArtCraftCli(name);
+    if (cli == null) return null;
+    try {
+      final tmp = await getTemporaryDirectory();
+      final sep = Platform.pathSeparator;
+      final outDir = Directory('${tmp.path}${sep}nightmail_artcraft_out');
+      if (!outDir.existsSync()) outDir.createSync(recursive: true);
+
+      // Unique name per call so the preview widget's ValueKey(path) changes
+      // and the webview reloads when switching between documents.
+      final stem = dot <= 0 ? base : base.substring(0, dot);
+      final pdf = File('${outDir.path}$sep${stem}_'
+          '${DateTime.now().microsecondsSinceEpoch}.pdf');
+
+      final result = await Process.run(cli, ['convert', inputPath, pdf.path])
+          .timeout(const Duration(seconds: 30));
+      if (pdf.existsSync() && pdf.lengthSync() > 0) return pdf.path;
+
+      debugPrint('$name convert failed (exit ${result.exitCode}): '
+          '${result.stderr}');
+      return null;
+    } catch (e) {
+      debugPrint('$name convert failed: $e');
+      return null;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -263,8 +341,8 @@ class OfficePreviewService {
 
   // Full client-side PowerPoint layout renderers (PPTXjs et al.) are heavy and
   // unreliable, so the JS fallback is a best-effort *text* view: unzip the pptx
-  // with JSZip and pull each slide's text runs. (LibreOffice → PDF is the
-  // primary, high-fidelity path when it's installed.)
+  // with JSZip and pull each slide's text runs. (DeckCraft or LibreOffice →
+  // PDF is the primary, high-fidelity path when one is installed.)
   static const String _pptxScript = r'''<script src="jszip.min.js"></script>
 <script>
   function esc(s){return s.replace(/[&<>]/g,function(c){

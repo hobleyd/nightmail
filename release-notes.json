@@ -1,0 +1,400 @@
+{
+  "schemaVersion": 1,
+  "format": "desktop_updater.release_notes.v1",
+  "version": "1.51.0",
+  "sections": [
+    {
+      "type": "features",
+      "title": "New features",
+      "items": [
+        {
+          "body": "copy mail rules to the new account, and ask about the old ones",
+          "title": "migration"
+        },
+        {
+          "body": "signature preview resolves merge tags until Edit is pressed",
+          "title": "settings"
+        }
+      ]
+    }
+  ],
+  "previous": [
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.50.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "Rules — server-side mail rules per account, and IMAP rules run in NightMail",
+              "title": "settings"
+            }
+          ]
+        },
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "signature is read-only until the account's Edit is pressed",
+              "title": "settings"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.49.1",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "AI drafts go straight into the message; line the pane up",
+              "title": "compose"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.49.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "render Word/PowerPoint previews with the ArtCraft CLIs",
+              "title": "attachments"
+            },
+            {
+              "body": "AI side pane that drafts, reviews and revises the message",
+              "title": "compose"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.47.7",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "answer a hidden Gmail invitation on Google's own copy",
+              "title": "calendar"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.47.6",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "tell the reader when Contacts access or a server's file sites are lost"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.47.5",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "never answer another meeting in an invitation's slot",
+              "title": "calendar"
+            },
+            {
+              "body": "never send the desktop Gmail client id from a phone",
+              "title": "auth"
+            },
+            {
+              "body": "remove only the cancelled meeting on Graph, CalDAV and EventKit",
+              "title": "calendar"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.47.3",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "delete a declined invitation the account is not a guest on",
+              "title": "calendar"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.47.2",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "remove only the cancelled meeting, never its replacement",
+              "title": "calendar"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.47.1",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "show the emails an AI search narrowed down to in the list",
+              "title": "ai"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.47.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "show an AI search's results in the email list",
+              "title": "ai"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.46.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "translate body:, cc: and quoted phrases for every provider",
+              "title": "search"
+            },
+            {
+              "body": "refresh a NightMail Server's file sites at startup",
+              "title": "accounts"
+            },
+            {
+              "body": "preview a NightMail Server's Nextcloud links in the reading pane",
+              "title": "cloud-docs"
+            },
+            {
+              "body": "sign a Graph account in to a NightMail Server",
+              "title": "accounts"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.45.1",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "Signature button puts back a held-back signature",
+              "title": "compose"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.45.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "hide the signature on replies to internal recipients",
+              "title": "compose"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.44.2",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "offer Report phishing in the touch swipe tray",
+              "title": "email-list"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.44.1",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "show that a meeting invitation repeats",
+              "title": "calendar"
+            },
+            {
+              "body": "answer the occurrence a Gmail invitation names, not the first in its series",
+              "title": "calendar"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.44.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "send phishing reports to a per-account Phishing Inbox",
+              "title": "accounts"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.43.0",
+      "sections": [
+        {
+          "type": "features",
+          "title": "New features",
+          "items": [
+            {
+              "body": "import an HTML signature from a file",
+              "title": "settings"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.42.5",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "return to the email list after reporting junk from a message",
+              "title": "mobile"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.42.4",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "open new /meet/ Teams links in the app, not the browser",
+              "title": "calendar"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "format": "desktop_updater.release_notes.v1",
+      "version": "1.42.2",
+      "sections": [
+        {
+          "type": "fixes",
+          "title": "Fixes",
+          "items": [
+            {
+              "body": "declare the host Info.plist as an input of the helper phase",
+              "title": "macos"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

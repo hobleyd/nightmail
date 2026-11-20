@@ -967,7 +967,24 @@ function replaceComposition(html, sigText, requireBoundary) {
   return JSON.stringify({ok: true});
 }
 
+// Settings shows an account's signature read-only until its Edit button is
+// pressed: the toolbar goes and the body stops taking a caret or input, so
+// what is left is the signature as it will be sent.
+let _readOnly = false;
+
+function setReadOnly(readOnly) {
+  _readOnly = !!readOnly;
+  editor.contentEditable = _readOnly ? 'false' : 'true';
+  document.getElementById('toolbar').style.display = _readOnly ? 'none' : '';
+  if (_readOnly) {
+    closeColorPopup();
+    editor.blur();
+    window.getSelection().removeAllRanges();
+  }
+}
+
 function focusEditor() {
+  if (_readOnly) return;
   editor.focus();
   const sel = window.getSelection();
   if (sel.rangeCount === 0 || !_rangeInEditor(sel.getRangeAt(0))) {

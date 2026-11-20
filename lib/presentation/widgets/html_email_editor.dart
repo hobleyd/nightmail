@@ -22,6 +22,7 @@ class HtmlEmailEditor extends StatefulWidget {
     this.onCaretMoved,
     this.enableScrollHandoff = false,
     this.autofocus = false,
+    this.readOnly = false,
   });
 
   final String initialHtml;
@@ -70,6 +71,10 @@ class HtmlEmailEditor extends StatefulWidget {
   /// loads asynchronously, so this can't be done with a synchronous
   /// `requestFocus()` call from the parent the way the plain-text body works.
   final bool autofocus;
+  /// Hides the toolbar and stops the body taking input — `setReadOnly` in
+  /// `assets/editor/editor.html`. Settings' signature editor sits in this
+  /// state until the account's Edit button is pressed.
+  final bool readOnly;
 
   @override
   State<HtmlEmailEditor> createState() => HtmlEmailEditorState();
@@ -158,7 +163,18 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> with WidgetsBindingObs
     }
   }
 
+  @override
+  void didUpdateWidget(HtmlEmailEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.readOnly != oldWidget.readOnly) {
+      unawaited(_host.run('setReadOnly(${widget.readOnly})'));
+    }
+  }
+
   Future<void> _onPageLoaded() async {
+    if (widget.readOnly) {
+      await _host.run('setReadOnly(true)');
+    }
     if (_pendingHtml.isNotEmpty) {
       await _host.run('setContent(${jsonEncode(_pendingHtml)})');
     }

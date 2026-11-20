@@ -804,17 +804,21 @@ class _ComposeFormatSettingState extends State<_ComposeFormatSetting> {
 /// Signature editor for one account. A controlled component: the parent
 /// (`_AccountsSectionState`) owns the persisted value and is notified of
 /// every change via [onChanged]; this widget just renders whichever editor
-/// matches the app's Compose Format preference.
+/// matches the app's Compose Format preference. Read-only, with no
+/// toolbar and Import HTML disabled, until the account's Edit button sets
+/// [editable].
 class _SignatureEditor extends StatefulWidget {
   const _SignatureEditor({
     super.key,
     required this.initialHtml,
     required this.composeFormat,
+    required this.editable,
     required this.onChanged,
   });
 
   final String initialHtml;
   final EmailBodyType composeFormat;
+  final bool editable;
   final ValueChanged<String> onChanged;
 
   @override
@@ -936,7 +940,8 @@ class _SignatureEditorState extends State<_SignatureEditor> {
             ),
             const Spacer(),
             TextButton.icon(
-              onPressed: () => _importHtml(context),
+              onPressed:
+                  widget.editable ? () => _importHtml(context) : null,
               icon: const Icon(Icons.file_open_outlined, size: 16),
               label: const Text('Import HTML…'),
               style: TextButton.styleFrom(
@@ -959,6 +964,7 @@ class _SignatureEditorState extends State<_SignatureEditor> {
               ? HtmlEmailEditor(
                   key: _htmlEditorKey,
                   initialHtml: widget.initialHtml,
+                  readOnly: !widget.editable,
                   onContentChanged: widget.onChanged,
                   onLinkRequested: () => _onLinkRequested(context),
                   onAttachRequested: () {},
@@ -967,6 +973,7 @@ class _SignatureEditorState extends State<_SignatureEditor> {
                   padding: const EdgeInsets.all(10),
                   child: TextField(
                     controller: _plainController,
+                    readOnly: !widget.editable,
                     maxLines: null,
                     expands: true,
                     textAlignVertical: TextAlignVertical.top,
@@ -1375,6 +1382,7 @@ class _AccountsSectionState extends State<_AccountsSection> {
           key: ValueKey(_selectedAccount!.id),
           initialHtml: _selectedAccount!.signatureHtml,
           composeFormat: _composeFormat,
+          editable: _isEditing,
           onChanged: _onSignatureChanged,
         );
 

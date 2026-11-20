@@ -1,0 +1,192 @@
+# Mail Rules
+
+Settings > Rules, across Microsoft Graph (and Nightware, which implements the
+same resource) and Gmail. Cross-cuts `domain/entities/mail_rule.dart`,
+`data/datasources/remote/mail_rule_codecs.dart`, `presentation/blocs/mail_rules`
+and `presentation/pages/settings/mail_rules_page.dart`. Built in the shape of
+[out-of-office.md](out-of-office.md) — read that first; the account-scoped
+repository, the `UnsupportedFailure` for IMAP, the self-contained page and the
+factory cubit are all the same decisions for the same reasons.
+
+## A rule is a server setting
+
+Graph's inbox `messageRules` (`/me/mailFolders/inbox/messageRules`), Gmail's
+`/users/me/settings/filters`. They run however the user reads their mail and
+nothing is cached; every change is followed by a quiet re-read rather than a
+local patch, because Graph normalises what it is given and a Gmail edit comes
+back under a new id.
+
+**Graph is the standard.** `MailRuleConditionKind` and `MailRuleActionKind`
+are Graph's predicate and action names verbatim — `GraphMailRuleCodec` uses
+`kind.name` as the JSON key — plus three Gmail-only actions (`archive`,
+`star`, `neverSpam`) with no Graph equivalent. What each provider can say is
+a `MailRuleCapabilities` value (`.graph`, `.gmail`); the screen offers exactly
+that set rather than branching on the account type.
+
+## Never rewrite what the form cannot show
+
+Graph **replaces** `conditions`, `exceptions` and `actions` whole on PATCH
+(the same trap as `automaticRepliesSetting`), and a Gmail edit is a delete and
+re-create. So a rule holding anything the entity does not model — Graph's
+`categories`/`assignCategories`/`sensitivity`/`messageActionFlag`, a Gmail
+forward, size test or `CATEGORY_*` label — decodes with
+`hasUnsupportedParts` and opens **view-only**. Turning it on or off,
+reordering and deleting still work: `setMailRuleEnabled` and
+`reorderMailRules` PATCH only `isEnabled`/`sequence`, never the rule. Do not
+"fix" a view-only rule by dropping the unknown keys on save.
+
+`encode` always sends `exceptions` (as `{}` when empty) — omitted, a PATCH
+leaves the old exceptions in place after the user removed them.
+
+Graph's `isReadOnly` (rules Outlook keeps client-side) blocks everything but
+viewing; `hasError` (usually a deleted target folder) is shown on the row.
+
+**Reordering is a neighbour swap, never a renumber.** Graph refuses any PATCH
+to a read-only rule, `sequence` included, so renumbering the whole list fails
+part-way in any mailbox holding one. `MailRulesCubit.move` swaps the two
+rules' sequences (two PATCHes) and `canMove` disables an arrow whose
+neighbour is read-only. Equal sequences — Outlook leaves them — cannot be
+swapped, so the moved rule steps one past its neighbour instead.
+
+**The open side of a size range is written as a true bound**, not 0:
+`maximumSize` Int32-max for "at least", `minimumSize` 0 for "at most". Graph
+does not document what a zero maximum means, and if it is read literally "at
+least 500 KB" matches nothing, with no error.
+
+## Gmail filters
+
+- **No update.** `settings.filters` is create/get/list/delete, so
+  `updateMailRule` creates the new filter **first** and deletes the old one
+  after: a failed create leaves the original. An edit that lands back on the
+  stored settings collides with the still-present original ("Filter already
+  exists") and is treated as a no-op; the same 400 on a *new* filter is
+  reported in words.
+- **Actions are label arithmetic.** Move = add label + remove `INBOX`; copy =
+  add label ("Apply label"); archive = remove `INBOX`; delete = add `TRASH`;
+  mark read = remove `UNREAD`; importance high/low = add/remove `IMPORTANT`;
+  star = add `STARRED`; never spam = remove `SPAM`. User labels are
+  `Label_<n>`; any other system label makes the filter unsupported.
+- **Criteria are search text, carried verbatim** as a single value, so an
+  untouched filter writes back byte-for-byte. Several values are ORed, with
+  multi-word ones bracketed. The editor separates alternatives with `;`
+  (Outlook's separator) because commas occur inside phrases.
+- **No forwarding.** Gmail forwards only to an address verified under
+  Settings > Forwarding; that flow is not built, so forward is not offered and
+  a filter that forwards is view-only.
+- No names, no order, no disable: the list describes each filter from its
+  criteria (`describeMailRule`) and hides the switch and the arrows.
+
+## Permissions
+
+Writing rules needs the same scope as writing an automatic reply —
+`MailboxSettings.ReadWrite` on Graph, `gmail.settings.basic` on Gmail — and
+reading needs nothing new (`MailboxSettings.Read`, `gmail.modify`). So the
+cubit calls `hasOutOfOfficeWriteAccess`/`requestOutOfOfficeWriteAccess`
+directly; everything in out-of-office.md about superseded scopes, refresh
+scopes and shared mailboxes' credential owners applies unchanged.
+
+## Nightware
+
+Nightware may not serve `messageRules` yet; a 404/501 on the list from a
+NightMail Server account becomes `UnsupportedFailure` ("not available on this
+server yet") rather than an error with a useless retry.
+
+## IMAP: rules NightMail runs itself
+
+IMAP has no rules API this app speaks (ManageSieve, RFC 5804, would be the
+server-side route), so an IMAP account's rules are **NightMail's own**: the
+repository hands the screen a `LocalMailRulesDatasource` and
+`LocalMailRuleRunner` applies them. `MailRuleCapabilities.local` is what can
+be tested from an envelope and body and done with plain IMAP — no importance,
+categories, size, headers, redirect; `star` is `\Flagged` here (labelled
+"Flag it"). `runsOnServer: false` is the one flag the rest of the slice
+branches on: no permission prompt (the OAuth scope checks answer false for
+IMAP and would block every save), no connectivity check for edits, and a
+screen header that says plainly the rules run **on this device, while
+NightMail is open**. Mail that arrives while it is closed is handled at the
+next launch; the mobile background service does not run them.
+
+**Storage** is files in the app data directory, like `AppSettings`
+(`MailRuleStore`): rules as Graph `messageRule` JSON, and progress — the
+Inbox UIDVALIDITY and the highest UID offered to the rules — in a separate
+file, because the runner writes it per message and the screen writes the
+rules. Both written via temp-file-and-rename.
+
+**Where it runs.** At the top of the poller's non-delta branch, for
+`ImapAccount`s only (Gmail shares that branch), main window only, inside the
+account's connection gate — first, so the counts and the Inbox page the cycle
+reads already reflect what the rules did. A run that changed the Inbox forces
+the replacing Inbox re-list **even on the baseline-priming first cycle**,
+which otherwise lists nothing and would leave moved rows on screen. A rules
+failure is logged (`[MailRules]` in diagnostics.log), never the cycle's.
+
+The rules that keep it from doing damage:
+
+- **Progress never starts at, or resets to, 0.** Missing or corrupt
+  progress, a changed UIDVALIDITY, or rules switched on from none all start
+  after the Inbox's current newest message (UIDNEXT-1 from a fresh SELECT)
+  and process nothing already there. No enabled rules deletes the progress so
+  the next switch-on starts from that moment. A start from 0 would move,
+  delete or forward the whole Inbox history.
+- **Claim before acting — at most once.** Progress is saved *before* a
+  message's actions run. A missed move leaves mail visibly in the Inbox; a
+  repeated forward or copy goes to other people. Where the Inbox accepts
+  keywords (`\*` in PERMANENTFLAGS) the claim is also `$NightMailRules` on the
+  message, and the search carries `UNKEYWORD $NightMailRules`, so another
+  device (the phone) skips it on its next look. **Only with CONDSTORE is the
+  claim a compare-and-set**: the arrivals fetch reads each MODSEQ and `claim`
+  stores the keyword `UNCHANGEDSINCE` it; a MODIFIED answer means another
+  device got there first, and the message is left. Without CONDSTORE a plain
+  `+FLAGS` succeeds for both, so two devices that poll at the same moment —
+  the usual case, since IDLE wakes both — can both act. Without keywords at
+  all it is per device. The keyword is visible to other clients, some of
+  which show it as a tag. Losing the network mid-message stops the run with
+  that message's actions lost.
+- **Failures stop the run early.** The datasource reports most dropped
+  connections as a plain `ServerException('IMAP error')`, not a
+  `NetworkException`, so a failed claim ends the run (a flag write almost only
+  fails when the connection has gone), and so do two failed actions in a row
+  — otherwise every remaining message in the batch would be claimed and none
+  acted on. A single refused action is logged and the next tried; a rule
+  whose folder has been deleted therefore fails with a log line only (there
+  is no `hasError` for local rules).
+- **`UID n+1:*` matches the last message even when nothing is new** (`*` is
+  the last message and the range is unordered), so results at or below the
+  mark are dropped. After a short batch progress jumps to UIDNEXT-1 from the
+  same SELECT — anything below it not offered was claimed elsewhere or
+  deleted; after a capped batch (50 per cycle) it stays at the last offered.
+- **Bodies are read with `BODY.PEEK[]`** (`peekEmail`), and only when a rule
+  tests the body; `getEmail`'s `BODY[]` would mark every new message read.
+  Text tests match case-insensitively against rendered text, not markup.
+- **Within a message:** rules in sequence; a rule that stops processing, or
+  moves or deletes, ends the list. Actions that leave the message in place
+  run first and the one move/delete last (it changes the id).
+- **Nothing it does can feed itself.**
+  - No move or copy into the Inbox: a copy arrives as new mail above the mark
+    and matches again, every cycle. The picker leaves the Inbox out for IMAP
+    and the runner refuses it anyway (a hand-edited file, an old rule).
+  - No forward of a message whose `Auto-Submitted` header is anything but
+    `no` (RFC 3834; read by a second small FETCH beside MODSEQ, kept apart
+    from the envelope fetch because header fields fetched beside ENVELOPE
+    replace it in the parser), and every rule forward is sent with
+    `Auto-Submitted: auto-forwarded` (`forwardForRule`, not the shared
+    `forwardEmail`). That is what breaks A→B→A between two accounts, and a
+    bounce coming back. Forwards to the account's own address or aliases are
+    refused outright.
+- **Delete is Trash or nothing.** `trashEmail` refuses when the server has no
+  Trash, where the app's own `deleteEmail` falls back to `\Deleted` +
+  EXPUNGE — fine behind a confirmation dialog, not for a rule.
+- **Forwards drop inline images.** `_forwardBuilder` re-attaches
+  attachment-disposition parts only, so an HTML original's `cid:` images
+  arrive broken — true of the app's own forward as well.
+
+## Folder picker
+
+`getMailRuleFolders` reads the local folder cache (the whole tree, walked by
+`EmailRepositoryImpl.getMailFolders`), falling back to the same walk — without
+writing the cache — for an account never opened. Folders are renamed to their
+full path and sorted; Gmail's `__virtual__` path parents and SPAMDB are left
+out, and on Gmail so is every system label (INBOX, SENT, TRASH…): Gmail
+refuses some and reads others back as a different action, which would leave
+the filter view-only the moment it was saved. A rule's current folder is always in the dropdown, as "(unknown folder)"
+if need be: a `DropdownButton` whose value is missing from its items throws.

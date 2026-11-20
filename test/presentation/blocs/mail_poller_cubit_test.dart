@@ -14,6 +14,10 @@ import 'package:nightmail/data/datasources/local/folder_local_datasource.dart';
 import 'package:nightmail/data/datasources/local/pending_operations_datasource.dart';
 import 'package:nightmail/data/datasources/remote/email_remote_datasource.dart';
 import 'package:nightmail/data/datasources/remote/graph_api_datasource_impl.dart';
+import 'package:nightmail/data/datasources/remote/imap_datasource_impl.dart';
+import 'package:nightmail/data/datasources/remote/local_rule_mailbox.dart';
+import 'package:nightmail/data/datasources/local/mail_rule_store.dart';
+import 'package:nightmail/infrastructure/rules/local_mail_rule_runner.dart';
 import 'package:nightmail/data/datasources/remote/thread_index_datasource.dart';
 import 'package:nightmail/core/error/failures.dart';
 import 'package:nightmail/data/models/email_folder_model.dart';
@@ -145,6 +149,7 @@ ThreadIndexEntry _stamp(String threadId, String historyId) =>
   EmailLocalDatasource,
   FolderLocalDatasource,
   GraphApiDatasourceImpl,
+  ImapDatasourceImpl,
   EmailRemoteDatasource,
   GetCachedFolders,
   NotificationService,
@@ -171,7 +176,10 @@ void main() {
   late RecentMutationStore recentMutations;
   late BodyPrefetchService bodyPrefetchService;
 
-  MailPollerCubit makeCubit({DateTime Function()? now}) => MailPollerCubit(
+  MailPollerCubit makeCubit({
+    DateTime Function()? now,
+    LocalMailRuleRunner? localRuleRunner,
+  }) => MailPollerCubit(
         accountManager: mockAccountManager,
         appSettings: mockAppSettings,
         badgeService: mockBadgeService,
@@ -187,6 +195,7 @@ void main() {
         pendingOperations: mockPendingOperations,
         recentMutations: recentMutations,
         spamDbSyncService: mockSpamDbSyncService,
+        localRuleRunner: localRuleRunner,
         now: now ?? DateTime.now,
       );
 
@@ -2670,4 +2679,86 @@ void main() {
           cubit.state.accountsNeedingReauth, isNot(contains(_gmailAccount.id)));
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // IMAP rules NightMail runs itself
+  // ---------------------------------------------------------------------------
+
+  group('MailPollerCubit — IMAP account with local rules', () {
+    const imapAccount = ImapAccount(
+      id: 'imap-1',
+      displayName: 'Me',
+      emailAddress: 'me@example.com',
+      host: 'imap.example.com',
+      port: 993,
+      useSsl: true,
+      smtpHost: 'smtp.example.com',
+      smtpPort: 587,
+      smtpUseSsl: false,
+    );
+    late MockImapDatasourceImpl imapDs;
+
+    setUp(() {
+      imapDs = MockImapDatasourceImpl();
+      when(mockAccountManager.accounts).thenReturn([imapAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(imapAccount);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(imapDs);
+      when(mockAccountManager.emailDatasource).thenReturn(imapDs);
+      when(imapDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: 3)]);
+      when(imapDs.folderStatuses).thenReturn(const {});
+      when(imapDs.getEmails(folderId: 'inbox-id', top: 25))
+          .thenAnswer((_) async => [_email('inbox-id:9')]);
+      when(mockSpamDbSyncService.pullForAccount(any, any))
+          .thenAnswer((_) async {});
+      // The IDLE watch the cycle starts last.
+      when(imapDs.mailboxChanges)
+          .thenAnswer((_) => const Stream<String>.empty());
+    });
+
+    test('rules that changed the Inbox re-list it even on the first cycle',
+        () async {
+      // The first cycle only primes its baselines and lists nothing — so
+      // a message a rule just moved out would stay on screen.
+      final cubit = makeCubit(
+        localRuleRunner: _StubRunner(
+          const LocalRuleRunResult(processed: 1, changedInbox: true),
+        ),
+      );
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      verify(imapDs.getEmails(folderId: 'inbox-id', top: 25)).called(1);
+      expect(cubit.state.syncedFolderIds, contains('inbox-id'));
+    });
+
+    test('a quiet rules run leaves the first cycle a priming one', () async {
+      final cubit = makeCubit(
+        localRuleRunner: _StubRunner(LocalRuleRunResult.none),
+      );
+      addTearDown(cubit.close);
+
+      await cubit.initialize();
+      await pumpEventQueue();
+
+      verifyNever(imapDs.getEmails(
+          folderId: anyNamed('folderId'), top: anyNamed('top')));
+    });
+  });
+}
+
+/// A runner that reports [result] without touching a mailbox.
+class _StubRunner extends LocalMailRuleRunner {
+  _StubRunner(this.result) : super(store: MailRuleStore());
+
+  final LocalRuleRunResult result;
+
+  @override
+  Future<LocalRuleRunResult> run(
+    ImapAccount account,
+    LocalRuleMailbox mailbox,
+  ) async => result;
 }

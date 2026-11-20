@@ -20,6 +20,7 @@ import '../../infrastructure/notifications/meeting_reminder_board.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import 'settings/ai_settings_page.dart';
+import 'settings/mail_rules_page.dart';
 import 'settings/out_of_office_page.dart';
 import '../blocs/account/account_cubit.dart';
 import '../blocs/mail_poller/mail_poller_cubit.dart';
@@ -41,6 +42,7 @@ enum SettingsSection {
   appearance('Appearance'),
   general('General'),
   outOfOffice('Out of Office'),
+  rules('Rules'),
   security('Security');
 
   const SettingsSection(this.label);
@@ -198,6 +200,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         SettingsSection.appearance => const _AppearanceSection(),
                         SettingsSection.general => const _GeneralSection(),
                         SettingsSection.outOfOffice => const OutOfOfficePage(),
+                        SettingsSection.rules => const MailRulesPage(),
                         SettingsSection.security => const _SecuritySection(),
                       },
                     ),
@@ -2093,6 +2096,7 @@ class _MobileSettingsSectionPage extends StatelessWidget {
             SettingsSection.appearance => const _AppearanceSection(),
             SettingsSection.general => const _GeneralSection(),
             SettingsSection.outOfOffice => const OutOfOfficePage(),
+            SettingsSection.rules => const MailRulesPage(),
             SettingsSection.security => const _SecuritySection(),
           },
         ),

@@ -22,6 +22,7 @@ import '../../models/email_address_model.dart';
 import '../../models/email_folder_model.dart';
 import '../../models/email_model.dart';
 import 'email_remote_datasource.dart';
+import 'local_rule_mailbox.dart';
 import 'mail_search_query.dart';
 import 'mime_attachment_builder.dart';
 import 'spam_db_sync_datasource.dart';
@@ -30,7 +31,7 @@ const _spamDbFolderName = 'SPAMDB';
 const _spamDbVersionHeader = 'X-NightMail-SpamDb-Version';
 
 class ImapDatasourceImpl
-    implements EmailRemoteDatasource, SpamDbSyncDatasource {
+    implements EmailRemoteDatasource, SpamDbSyncDatasource, LocalRuleMailbox {
   ImapDatasourceImpl({
     required this._account,
     required this._credentialStorage,
@@ -659,14 +660,27 @@ class ImapDatasourceImpl
     );
   }
 
+  /// [getEmail] without setting `\Seen`: the rule runner reads bodies to
+  /// test them, and opening a message is what marks it read, not a rule
+  /// looking at it.
+  @override
+  Future<EmailModel> peekEmail(String id) {
+    final (mailboxPath, uid) = _splitId(id);
+    return _withMailbox(
+      mailboxPath,
+      () => _getEmailInner(id, mailboxPath, uid, peek: true),
+    );
+  }
+
   /// The body of [getEmail], assuming [mailboxPath] is already selected and the
   /// caller already holds the connection. Called directly by
   /// [updateEmailReadStatus], which must not take a second link.
   Future<EmailModel> _getEmailInner(
     String id,
     String mailboxPath,
-    int uid,
-  ) async {
+    int uid, {
+    bool peek = false,
+  }) async {
     try {
       final client = await _getConnectedClient();
 
@@ -679,7 +693,9 @@ class ImapDatasourceImpl
       // BODY[] to parse; a single-message read does.
       final fetchResult = await client.uidFetchMessages(
         sequence,
-        '(FLAGS INTERNALDATE ENVELOPE BODY[])',
+        peek
+            ? '(FLAGS INTERNALDATE ENVELOPE BODY.PEEK[])'
+            : '(FLAGS INTERNALDATE ENVELOPE BODY[])',
       );
 
       if (fetchResult.messages.isEmpty) {
@@ -1745,6 +1761,49 @@ class ImapDatasourceImpl
     EmailBodyType bodyType = EmailBodyType.text,
     List<LocalAttachment> newAttachments = const [],
   }) async {
+    final builder = await _forwardBuilder(
+      messageId: messageId,
+      toAddresses: toAddresses,
+      ccAddresses: ccAddresses,
+      bccAddresses: bccAddresses,
+      comment: comment,
+      subject: subject,
+      excludedAttachments: excludedAttachments,
+      bodyType: bodyType,
+    );
+    await _addAttachmentsToBuilder(builder, newAttachments);
+    await _sendMime(builder.buildMimeMessage());
+  }
+
+  @override
+  Future<void> forwardForRule({
+    required String messageId,
+    required List<String> toAddresses,
+    required String comment,
+    required EmailBodyType bodyType,
+  }) async {
+    final builder = await _forwardBuilder(
+      messageId: messageId,
+      toAddresses: toAddresses,
+      comment: comment,
+      bodyType: bodyType,
+    );
+    // RFC 3834: what stops this forward being forwarded again by a rule on
+    // the receiving account — including this app's, see InboxArrivals.
+    builder.addHeader('Auto-Submitted', 'auto-forwarded');
+    await _sendMime(builder.buildMimeMessage());
+  }
+
+  Future<MessageBuilder> _forwardBuilder({
+    required String messageId,
+    required List<String> toAddresses,
+    List<String> ccAddresses = const [],
+    List<String> bccAddresses = const [],
+    required String comment,
+    String? subject,
+    List<EmailAttachment> excludedAttachments = const [],
+    EmailBodyType bodyType = EmailBodyType.text,
+  }) async {
     final original = await _fetchOriginal(messageId);
 
     final fwdSubject = _sentSubject(subject) ??
@@ -1784,8 +1843,7 @@ class ImapDatasourceImpl
       );
     }
 
-    await _addAttachmentsToBuilder(builder, newAttachments);
-    await _sendMime(builder.buildMimeMessage());
+    return builder;
   }
 
   Future<void> _addAttachmentsToBuilder(
@@ -1846,6 +1904,170 @@ class ImapDatasourceImpl
     } on ImapException catch (e) {
       throw ServerException(message: e.message ?? 'IMAP error');
     }
+  }
+
+  // ─── NightMail's own rules (LocalRuleMailbox) ───────────────────────────
+
+  static (String, int) _splitId(String id) {
+    final separatorIdx = id.lastIndexOf(':');
+    final mailboxPath =
+        separatorIdx > 0 ? id.substring(0, separatorIdx) : 'INBOX';
+    return (mailboxPath, int.tryParse(id.substring(separatorIdx + 1)) ?? 0);
+  }
+
+  @override
+  Future<InboxArrivals> fetchInboxArrivals({
+    required int? afterUid,
+    required int limit,
+    String? excludeKeyword,
+  }) {
+    return withConnection(() async {
+      try {
+        final client = await _getConnectedClient();
+        // A fresh SELECT every time, never the cached selection
+        // [_selectMailboxPath] skips: UIDVALIDITY, UIDNEXT and PERMANENTFLAGS
+        // only arrive with one, and a UIDNEXT older than the search below
+        // would let the runner skip mail that arrived in between.
+        final mailbox = await client.selectMailboxByPath('INBOX');
+        _selectedMailboxPath = 'INBOX';
+        final keywordsAllowed = mailbox.permanentMessageFlags.contains(r'\*');
+        InboxArrivals result(List<EmailModel> messages) => InboxArrivals(
+          uidValidity: mailbox.uidValidity,
+          uidNext: mailbox.uidNext,
+          keywordsAllowed: keywordsAllowed,
+          messages: messages,
+        );
+        if (afterUid == null) return result(const []);
+
+        final criteria = StringBuffer('UID ${afterUid + 1}:* UNDELETED');
+        if (keywordsAllowed && excludeKeyword != null) {
+          criteria.write(' UNKEYWORD $excludeKeyword');
+        }
+        final search = await client.uidSearchMessages(
+          searchCriteria: criteria.toString(),
+        );
+        // `n:*` with n past the highest UID still matches the highest
+        // message — `*` is "the last one", and the range is unordered — so
+        // anything at or below afterUid is the server being literal, not new.
+        final uids =
+            (search.matchingSequence?.toList() ?? const <int>[])
+                .where((u) => u > afterUid)
+                .toList()
+              ..sort();
+        if (uids.isEmpty) return result(const []);
+
+        final batch = MessageSequence.fromIds(
+          uids.take(limit).toList(),
+          isUid: true,
+        );
+        final fetch = await client.uidFetchMessages(
+          batch,
+          '(FLAGS INTERNALDATE ENVELOPE BODYSTRUCTURE)',
+        );
+        final messages =
+            fetch.messages
+                .map((m) => _parseToModel(m, folderId: 'INBOX'))
+                .toList()
+              ..sort((a, b) => _splitId(a.id).$2.compareTo(_splitId(b.id).$2));
+
+        // A second, small fetch rather than more items on the first: header
+        // fields fetched beside ENVELOPE populate the message's headers,
+        // which the list parser would then read in place of the envelope.
+        // MODSEQ only where CONDSTORE is advertised; asking for it enables
+        // CONDSTORE for the session (RFC 7162).
+        final condStore = client.serverInfo.supports('CONDSTORE');
+        final extra = await client.uidFetchMessages(
+          batch,
+          condStore
+              ? '(MODSEQ BODY.PEEK[HEADER.FIELDS (AUTO-SUBMITTED)])'
+              : '(BODY.PEEK[HEADER.FIELDS (AUTO-SUBMITTED)])',
+        );
+        final modSequences = <String, int>{};
+        final autoSubmitted = <String>{};
+        for (final m in extra.messages) {
+          final id = 'INBOX:${m.uid}';
+          if (m.modSequence != null) modSequences[id] = m.modSequence!;
+          final auto = m.getHeaderValue('auto-submitted')?.trim().toLowerCase();
+          if (auto != null && auto.isNotEmpty && auto != 'no') {
+            autoSubmitted.add(id);
+          }
+        }
+        return InboxArrivals(
+          uidValidity: mailbox.uidValidity,
+          uidNext: mailbox.uidNext,
+          keywordsAllowed: keywordsAllowed,
+          messages: messages,
+          modSequences: modSequences,
+          autoSubmitted: autoSubmitted,
+        );
+      } on ImapException catch (e) {
+        throw ServerException(message: e.message ?? 'IMAP error');
+      }
+    });
+  }
+
+  @override
+  Future<void> addFlags(String id, List<String> flags) {
+    final (mailboxPath, uid) = _splitId(id);
+    return _withMailbox(mailboxPath, () async {
+      try {
+        final client = await _getConnectedClient();
+        await client.uidStore(
+          MessageSequence.fromId(uid, isUid: true),
+          flags,
+          action: StoreAction.add,
+        );
+      } on ImapException catch (e) {
+        throw ServerException(message: e.message ?? 'IMAP error');
+      }
+    });
+  }
+
+  @override
+  Future<bool> claim(String id, String keyword, {int? unchangedSince}) {
+    final (mailboxPath, uid) = _splitId(id);
+    return _withMailbox(mailboxPath, () async {
+      try {
+        final client = await _getConnectedClient();
+        final result = await client.uidStore(
+          MessageSequence.fromId(uid, isUid: true),
+          [keyword],
+          action: StoreAction.add,
+          unchangedSinceModSequence: unchangedSince,
+        );
+        // RFC 7162: the UIDs whose MODSEQ had moved come back as MODIFIED,
+        // and nothing was stored on them.
+        return result.modifiedMessageSequence?.isEmpty ?? true;
+      } on ImapException catch (e) {
+        throw ServerException(message: e.message ?? 'IMAP error');
+      }
+    });
+  }
+
+  @override
+  Future<void> trashEmail(String id) =>
+      withConnection(() => _deleteEmailInner(id, requireTrash: true));
+
+  @override
+  Future<void> copyEmail(String id, String destinationFolderId) {
+    final (mailboxPath, uid) = _splitId(id);
+    return _withMailbox(mailboxPath, () async {
+      try {
+        final client = await _getConnectedClient();
+        // The same abbreviated-namespace normalisation as _moveEmailInner.
+        final resolvedDest =
+            (_inboxFolderPrefix.isNotEmpty &&
+                    !destinationFolderId.toUpperCase().startsWith('INBOX'))
+                ? '$_inboxFolderPrefix$destinationFolderId'
+                : destinationFolderId;
+        await client.uidCopy(
+          MessageSequence.fromId(uid, isUid: true),
+          targetMailboxPath: resolvedDest,
+        );
+      } on ImapException catch (e) {
+        throw ServerException(message: e.message ?? 'IMAP error');
+      }
+    });
   }
 
   @override
@@ -2165,7 +2387,9 @@ class ImapDatasourceImpl
   Future<void> deleteEmail(String id) =>
       withConnection(() => _deleteEmailInner(id));
 
-  Future<void> _deleteEmailInner(String id) async {
+  /// [requireTrash] refuses rather than expunging when the server has no
+  /// Trash — for a rule, which deletes without anyone confirming it.
+  Future<void> _deleteEmailInner(String id, {bool requireTrash = false}) async {
     final separatorIdx = id.lastIndexOf(':');
     final mailboxPath =
         separatorIdx > 0 ? id.substring(0, separatorIdx) : 'INBOX';
@@ -2177,6 +2401,12 @@ class ImapDatasourceImpl
       // Resolve the trash folder before selecting the source mailbox so that
       // the LIST command cannot interfere with the server-side mailbox selection.
       final trashPath = await _findTrashPath(client, currentPath: mailboxPath);
+      if (trashPath == null && requireTrash) {
+        throw const ServerException(
+          message: 'No Trash folder on this server — not deleting the message '
+              'permanently.',
+        );
+      }
 
       // Select source mailbox after the LIST so it remains selected for COPY,
       // STORE, and EXPUNGE.

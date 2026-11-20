@@ -104,6 +104,10 @@ would re-break.
 
 - [`docs/claude/out-of-office.md`](docs/claude/out-of-office.md) — Settings
   > Out of Office, across Microsoft Graph and Gmail
+- [`docs/claude/mail-rules.md`](docs/claude/mail-rules.md) — Settings >
+  Rules: Graph `messageRules` as the standard, Gmail filters as label
+  arithmetic, why a rule with unmodelled parts opens view-only, and IMAP
+  rules NightMail runs itself (never from UID 0, claim before acting)
 - [`docs/claude/ai-subsystem.md`](docs/claude/ai-subsystem.md) — deliberate
   Clean-Architecture deviations in the AI compose/inference slice; the
   System One (typed decision) wire and the Laya-MLX bridge

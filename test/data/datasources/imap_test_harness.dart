@@ -306,6 +306,17 @@ class _ImapSession {
         _write('$tag OK STATUS completed');
       case 'UID FETCH':
         _uidFetch(tag, argv);
+      case 'UID SEARCH':
+        // Only the `UID <set>` criterion is honoured (others match all), and
+        // through the same sequence parsing as FETCH — which, like a real
+        // server, reads `n:*` past the highest UID as including the highest.
+        final box = _server.mailboxes[_selected] ?? {};
+        final uidAt = argv.indexWhere((a) => a.toUpperCase() == 'UID');
+        final uids = uidAt >= 0 && uidAt + 1 < argv.length
+            ? _parseSequence(argv[uidAt + 1], box)
+            : (box.keys.toList()..sort());
+        _write('* SEARCH ${uids.join(' ')}'.trimRight());
+        _write('$tag OK UID SEARCH completed');
       case 'APPEND':
         final path = argv.elementAtOrNull(0) ?? '';
         final flags = argv

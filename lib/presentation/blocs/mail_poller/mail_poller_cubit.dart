@@ -28,6 +28,8 @@ import '../../../infrastructure/accounts/account_manager.dart';
 import '../../../infrastructure/badge/badge_service.dart';
 import '../../../infrastructure/network/connectivity_service.dart';
 import '../../../infrastructure/notifications/notification_service.dart';
+import '../../../data/datasources/remote/local_rule_mailbox.dart';
+import '../../../infrastructure/rules/local_mail_rule_runner.dart';
 import '../../../infrastructure/sync/body_prefetch_service.dart';
 import '../../../infrastructure/sync/imap_connection_gate.dart';
 import '../../../infrastructure/sync/outbox_drain_service.dart';
@@ -53,6 +55,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     required this._pendingOperations,
     required this._recentMutations,
     required this._spamDbSyncService,
+    this._localRuleRunner,
     this._recentChangeTtl = const Duration(seconds: 30),
     this._now = DateTime.now,
   })  : _bodyPrefetch = bodyPrefetchService,
@@ -78,6 +81,10 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   final PendingOperationsDatasource _pendingOperations;
   final RecentMutationStore _recentMutations;
   final SpamDbSyncService _spamDbSyncService;
+
+  /// Runs IMAP accounts' rules, which NightMail keeps itself. Optional only
+  /// so tests that are not about rules need not build one.
+  final LocalMailRuleRunner? _localRuleRunner;
   final Duration _recentChangeTtl;
   final DateTime Function() _now;
 
@@ -669,6 +676,30 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
                   account.id, 'inbox', result.deltaLink);
             }
           } else {
+            // IMAP rules are NightMail's own, run here — first, so the counts
+            // and the Inbox page read below already reflect them. Main window
+            // only, like IDLE: a second window polling would run them twice.
+            // Gated like every other use of the account's one connection.
+            var rulesChangedInbox = false;
+            final runner = _localRuleRunner;
+            final mailbox = ds;
+            if (runner != null &&
+                AppWindow.isMain &&
+                account is ImapAccount &&
+                mailbox is LocalRuleMailbox) {
+              try {
+                final result = await _imapConnectionGate.runExclusive(
+                  account.id,
+                  () => runner.run(account, mailbox as LocalRuleMailbox),
+                );
+                rulesChangedInbox = result.changedInbox;
+              } catch (e) {
+                // Never the cycle's failure: the Inbox still has to be
+                // polled, and the next cycle tries the rules again.
+                debugPrint('[MailRules] ${account.id}: run failed: $e');
+              }
+            }
+
             // Non-delta path: Gmail / IMAP — existing unread-count polling.
             // Gated: an IMAP account's datasource holds one stateful
             // connection shared with OutboxDrainService and account
@@ -712,7 +743,10 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
 
             final totalCount = inboxes.first.totalItemCount;
 
-            if (_shouldPrimeBaseline(account.id, activeId)) {
+            // Not on a cycle where the rules changed the Inbox: priming skips
+            // the re-page, and the rows they moved would stay on screen.
+            if (_shouldPrimeBaseline(account.id, activeId) &&
+                !rulesChangedInbox) {
               _baselineUnread[account.id] = serverUnread;
               _baselineTotal[account.id] = totalCount;
               // The envelope badge mirrors the real unread count for every
@@ -731,7 +765,10 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
             // come from reading/deleting mail on another client, or from an
             // in-app action whose optimistic local update was missed, and would
             // otherwise never self-heal.
-            final countsChanged =
+            // A rule that marked a message read and moved another in can
+            // leave both counts where they were, so what the rules did is a
+            // change in its own right.
+            final countsChanged = rulesChangedInbox ||
                 (prevUnread != null && serverUnread != prevUnread) ||
                     (prevTotal != null && totalCount != prevTotal);
 

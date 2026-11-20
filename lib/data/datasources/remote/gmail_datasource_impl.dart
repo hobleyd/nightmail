@@ -12,6 +12,7 @@ import '../../../domain/entities/email.dart';
 import '../../../domain/entities/email_attachment.dart';
 import '../../../domain/entities/local_attachment.dart';
 import '../../../domain/entities/inline_attachment.dart';
+import '../../../domain/entities/mail_rule.dart';
 import '../../../domain/entities/meeting_invite.dart';
 import '../../../domain/entities/out_of_office_settings.dart';
 import '../../../infrastructure/http/gmail_http_client.dart';
@@ -24,6 +25,8 @@ import 'conversation_folder_datasource.dart';
 import 'email_remote_datasource.dart';
 import 'gmail_message_parser.dart';
 import 'mail_delta_datasource.dart';
+import 'mail_rule_codecs.dart';
+import 'mail_rules_datasource.dart';
 import 'mail_search_query.dart';
 import 'mime_attachment_builder.dart';
 import 'out_of_office_datasource.dart';
@@ -62,6 +65,7 @@ class GmailDatasourceImpl
         MailDeltaDatasource,
         ConversationFolderDatasource,
         OutOfOfficeDatasource,
+        MailRulesDatasource,
         ThreadIndexDatasource {
   GmailDatasourceImpl({
     required GmailHttpClient client,
@@ -1883,6 +1887,98 @@ class GmailDatasourceImpl
     // call spawns an isolate, so per-message would cost more than the parse.
     return compute(parseGmailMetadataMessages, rawBodies);
   }
+
+  // ─── Mail rules (filters) ────────────────────────────────────────────────
+
+  static const _filtersPath = '/users/me/settings/filters';
+
+  @override
+  MailRuleCapabilities get mailRuleCapabilities => MailRuleCapabilities.gmail;
+
+  @override
+  Future<List<MailRule>> getMailRules() async {
+    try {
+      final response = await _dio.get<Map<String, dynamic>>(_filtersPath);
+      // A mailbox with no filters answers `{}`, not an empty list.
+      final filters = response.data?['filter'] as List? ?? const [];
+      return [
+        for (var i = 0; i < filters.length; i++)
+          GmailFilterCodec.decode(
+            filters[i] as Map<String, dynamic>,
+            sequence: i,
+          ),
+      ];
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  @override
+  Future<void> createMailRule(MailRule rule) async {
+    try {
+      await _dio.post<Map<String, dynamic>>(
+        _filtersPath,
+        data: GmailFilterCodec.encode(rule),
+      );
+    } on DioException catch (e) {
+      if (_isDuplicateFilter(e)) {
+        throw const ServerException(
+          message: 'A filter with exactly these settings already exists.',
+          statusCode: 400,
+        );
+      }
+      throw _mapException(e);
+    }
+  }
+
+  /// Gmail has no filter update — `settings.filters` is create, get, list and
+  /// delete. So the edited filter is created first and the old one deleted
+  /// after: a create that fails leaves the original in place rather than
+  /// losing the rule, at the cost of a moment where both exist.
+  @override
+  Future<void> updateMailRule(MailRule rule) async {
+    try {
+      try {
+        await _dio.post<Map<String, dynamic>>(
+          _filtersPath,
+          data: GmailFilterCodec.encode(rule),
+        );
+      } on DioException catch (e) {
+        // The old filter is still there, so an edit that lands back on its
+        // exact settings collides with it. Nothing needs to change then.
+        if (_isDuplicateFilter(e)) return;
+        rethrow;
+      }
+      await _dio.delete<void>('$_filtersPath/${rule.id}');
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  @override
+  Future<void> deleteMailRule(String id) async {
+    try {
+      await _dio.delete<void>('$_filtersPath/$id');
+    } on DioException catch (e) {
+      throw _mapException(e);
+    }
+  }
+
+  @override
+  Future<void> setMailRuleEnabled(String id, bool enabled) =>
+      throw UnsupportedError('Gmail filters cannot be switched off');
+
+  @override
+  Future<void> reorderMailRules(Map<String, int> sequences) =>
+      throw UnsupportedError('Gmail filters have no order');
+
+  /// Google answers a filter identical to an existing one with a 400 whose
+  /// message is "Filter already exists".
+  bool _isDuplicateFilter(DioException e) =>
+      e.response?.statusCode == 400 &&
+      (_extractGoogleErrorMessage(e) ?? '').toLowerCase().contains(
+        'already exists',
+      );
 
   // ─── Out of office (the vacation responder) ─────────────────────────────
 

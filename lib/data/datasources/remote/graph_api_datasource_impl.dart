@@ -14,6 +14,7 @@ import '../../../domain/entities/attendee_availability.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/graph_endpoints.dart';
 import '../../../domain/entities/inline_attachment.dart';
+import '../../../domain/entities/mail_rule.dart';
 import '../../../domain/entities/calendar_recurrence.dart';
 import '../../../domain/entities/meeting_invite.dart';
 import '../../../domain/entities/meeting_room.dart';
@@ -36,6 +37,8 @@ import 'email_remote_datasource.dart';
 import 'phishing_report_datasource.dart';
 import 'graph_import_parser.dart';
 import 'mail_delta_datasource.dart';
+import 'mail_rule_codecs.dart';
+import 'mail_rules_datasource.dart';
 import 'graph_message_parser.dart';
 import 'mail_search_query.dart';
 import 'out_of_office_datasource.dart';
@@ -107,6 +110,7 @@ class GraphApiDatasourceImpl
         TasksRemoteDatasource,
         MailDeltaDatasource,
         OutOfOfficeDatasource,
+        MailRulesDatasource,
         PhishingReportDatasource {
   GraphApiDatasourceImpl({
     required GraphHttpClient client,
@@ -3839,6 +3843,95 @@ class GraphApiDatasourceImpl
           },
         },
       );
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  // ─── Mail rules (inbox messageRules) ────────────────────────────────────
+
+  /// Rules only ever run on the inbox; Graph has no rules on other folders.
+  String get _rulesPath => '$_base/mailFolders/inbox/messageRules';
+
+  @override
+  MailRuleCapabilities get mailRuleCapabilities => MailRuleCapabilities.graph;
+
+  @override
+  Future<List<MailRule>> getMailRules() async {
+    try {
+      final result = await _fetchAllGraphPages(_rulesPath, const {});
+      final rules = [
+        for (final page in result.pages)
+          for (final item
+              in ((jsonDecode(page) as Map<String, dynamic>)['value'] as List?) ??
+                  const [])
+            GraphMailRuleCodec.decode(item as Map<String, dynamic>),
+      ]..sort((a, b) => a.sequence.compareTo(b.sequence));
+      return rules;
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<void> createMailRule(MailRule rule) async {
+    try {
+      await _dio.post<Map<String, dynamic>>(
+        _rulesPath,
+        data: GraphMailRuleCodec.encode(rule),
+      );
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<void> updateMailRule(MailRule rule) async {
+    try {
+      await _dio.patch<Map<String, dynamic>>(
+        '$_rulesPath/${rule.id}',
+        data: GraphMailRuleCodec.encode(rule),
+      );
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  @override
+  Future<void> deleteMailRule(String id) async {
+    try {
+      await _dio.delete<void>('$_rulesPath/$id');
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  /// A PATCH of the one scalar, never the whole rule — this is what keeps a
+  /// rule holding predicates the form cannot draw switchable without loss.
+  @override
+  Future<void> setMailRuleEnabled(String id, bool enabled) async {
+    try {
+      await _dio.patch<Map<String, dynamic>>(
+        '$_rulesPath/$id',
+        data: {'isEnabled': enabled},
+      );
+    } on DioException catch (e) {
+      throw _mapDioException(e);
+    }
+  }
+
+  /// A PATCH of `sequence` alone per rule named — in practice the two
+  /// neighbours being swapped. Sequential so a failure leaves at most one
+  /// applied, which the re-read after it then shows as it is.
+  @override
+  Future<void> reorderMailRules(Map<String, int> sequences) async {
+    try {
+      for (final MapEntry(key: id, value: sequence) in sequences.entries) {
+        await _dio.patch<Map<String, dynamic>>(
+          '$_rulesPath/$id',
+          data: {'sequence': sequence},
+        );
+      }
     } on DioException catch (e) {
       throw _mapDioException(e);
     }

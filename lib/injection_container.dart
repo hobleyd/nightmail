@@ -33,6 +33,9 @@ import 'data/repositories/contact_cache_repository_impl.dart';
 import 'data/repositories/contact_details_repository_impl.dart';
 import 'data/repositories/directory_contacts_repository_impl.dart';
 import 'data/repositories/email_repository_impl.dart';
+import 'data/repositories/mail_rules_repository_impl.dart';
+import 'data/datasources/local/mail_rule_store.dart';
+import 'infrastructure/rules/local_mail_rule_runner.dart';
 import 'data/repositories/out_of_office_repository_impl.dart';
 import 'data/repositories/sender_repository_impl.dart';
 import 'data/repositories/spam_filter_repository_impl.dart';
@@ -75,6 +78,7 @@ import 'domain/usecases/commitments/track_commitment.dart';
 import 'presentation/blocs/commitments/commitments_cubit.dart';
 import 'presentation/blocs/out_of_office/meeting_sweep_cubit.dart';
 import 'presentation/blocs/out_of_office/out_of_office_cubit.dart';
+import 'presentation/blocs/mail_rules/mail_rules_cubit.dart';
 import 'domain/repositories/calendar_repository.dart';
 import 'domain/repositories/cloud_drive_repository.dart';
 import 'domain/repositories/server_discovery_repository.dart';
@@ -114,6 +118,13 @@ import 'domain/usecases/move_folder.dart';
 import 'domain/usecases/get_out_of_office.dart';
 import 'domain/usecases/set_out_of_office.dart';
 import 'domain/repositories/out_of_office_repository.dart';
+import 'domain/repositories/mail_rules_repository.dart';
+import 'domain/usecases/mail_rules/delete_mail_rule.dart';
+import 'domain/usecases/mail_rules/get_mail_rule_folders.dart';
+import 'domain/usecases/mail_rules/get_mail_rules.dart';
+import 'domain/usecases/mail_rules/reorder_mail_rules.dart';
+import 'domain/usecases/mail_rules/save_mail_rule.dart';
+import 'domain/usecases/mail_rules/set_mail_rule_enabled.dart';
 import 'domain/usecases/rename_folder.dart';
 import 'domain/usecases/empty_folder.dart';
 import 'domain/usecases/get_calendar_event.dart';
@@ -346,6 +357,18 @@ Future<void> configureDependencies() async {
       connectivityService: sl<ConnectivityService>(),
     ),
   );
+  sl.registerLazySingleton(() => MailRuleStore());
+  sl.registerLazySingleton(
+    () => LocalMailRuleRunner(store: sl<MailRuleStore>()),
+  );
+  sl.registerLazySingleton<MailRulesRepository>(
+    () => MailRulesRepositoryImpl(
+      accountManager: sl<AccountManager>(),
+      connectivityService: sl<ConnectivityService>(),
+      folderLocalDatasource: sl<FolderLocalDatasource>(),
+      mailRuleStore: sl<MailRuleStore>(),
+    ),
+  );
   sl.registerLazySingleton<SystemContactsRepository>(
     () => SystemContactsRepositoryImpl(),
   );
@@ -437,6 +460,12 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => RenameFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => GetOutOfOffice(sl<OutOfOfficeRepository>()));
   sl.registerLazySingleton(() => SetOutOfOffice(sl<OutOfOfficeRepository>()));
+  sl.registerLazySingleton(() => GetMailRules(sl<MailRulesRepository>()));
+  sl.registerLazySingleton(() => GetMailRuleFolders(sl<MailRulesRepository>()));
+  sl.registerLazySingleton(() => SaveMailRule(sl<MailRulesRepository>()));
+  sl.registerLazySingleton(() => DeleteMailRule(sl<MailRulesRepository>()));
+  sl.registerLazySingleton(() => SetMailRuleEnabled(sl<MailRulesRepository>()));
+  sl.registerLazySingleton(() => ReorderMailRules(sl<MailRulesRepository>()));
   sl.registerLazySingleton(() => MoveFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => DeleteFolder(sl<EmailRepository>()));
   sl.registerLazySingleton(() => DownloadAttachment(sl<EmailRepository>()));
@@ -550,6 +579,7 @@ Future<void> configureDependencies() async {
       pendingOperations: sl<PendingOperationsDatasource>(),
       recentMutations: sl<RecentMutationStore>(),
       spamDbSyncService: sl<SpamDbSyncService>(),
+      localRuleRunner: sl<LocalMailRuleRunner>(),
     ),
   );
   // In-app updates. The service is a singleton because it owns the platform
@@ -823,6 +853,19 @@ Future<void> configureDependencies() async {
     () => OutOfOfficeCubit(
       getOutOfOffice: sl<GetOutOfOffice>(),
       setOutOfOffice: sl<SetOutOfOffice>(),
+      accountManager: sl<AccountManager>(),
+    ),
+  );
+  // A factory for the same reason: a reused cubit would open on the previous
+  // visit's mailbox.
+  sl.registerFactory(
+    () => MailRulesCubit(
+      getMailRules: sl<GetMailRules>(),
+      getMailRuleFolders: sl<GetMailRuleFolders>(),
+      saveMailRule: sl<SaveMailRule>(),
+      deleteMailRule: sl<DeleteMailRule>(),
+      setMailRuleEnabled: sl<SetMailRuleEnabled>(),
+      reorderMailRules: sl<ReorderMailRules>(),
       accountManager: sl<AccountManager>(),
     ),
   );

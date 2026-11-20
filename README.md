@@ -186,6 +186,9 @@ Settings → Accounts.
 - Multiple accounts from different providers simultaneously
 - Per-account folder, calendar, and task views
 - Profile fields (name, title, phone) are filled from the Microsoft or Google directory when an account is added, so signature merge tags start out populated
+- The signature in Settings → Accounts previews with its merge tags filled
+  from your profile, and only becomes editable (with its formatting toolbar)
+  when you press Edit
 - Import an HTML signature from a file (Settings → Accounts) — signature-generator exports and Outlook `.htm` signatures keep their merge tags and `IFEXISTS(...)` calls
 - Replies and reply-alls that include anyone on your own domain open without the signature (Settings → Hide signature on internal replies, on by default); personal Gmail and Outlook.com/Hotmail domains never count as internal
 - Separate **Gmail** and **Google Workspace** sign-ins — Workspace asks for the
@@ -214,6 +217,9 @@ Settings → Accounts.
   that folder's messages into another account's Inbox, with the same resume
   and status reporting; mail it has copied is not copied again by a later
   Migrate Account
+- Both copy the account's rules too once the mail is across — only rules the
+  new server can express exactly, with the rest listed and why — and then ask
+  whether to turn off the old account's copies
 
 ### Out of Office
 - **Settings → Out of Office** sets the mailbox's own automatic reply — a start

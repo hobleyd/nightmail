@@ -187,7 +187,7 @@ void main() {
               (c) => c.finishReason == AgentLoop.toolResultFinishReason)
           .toolResult!;
       expect(result.isError, isFalse);
-      expect(jsonDecode(result.output)['status'], 'shown_to_user');
+      expect(jsonDecode(result.output)['status'], 'put_in_message');
       expect(chunks.last.delta, 'I made it warmer.');
     });
 

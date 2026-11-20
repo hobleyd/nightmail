@@ -52,6 +52,15 @@ class AgentChatPanel extends StatefulWidget {
 
   static String _failureMessage(Failure failure) => failure.message;
 
+  /// The header's height, which a host lines its own title bar up with.
+  static double get headerHeight => touchRowHeight(48);
+
+  /// The input strip's height on the desktop: a 32px box over an 8px foot. A
+  /// host lines its own footer up with it — the compose window's footer
+  /// divider meets the top of the box. Touch screens keep the kit's larger
+  /// tap targets and this does not apply.
+  static const double compactInputBarHeight = 40;
+
   @override
   State<AgentChatPanel> createState() => _AgentChatPanelState();
 }
@@ -372,10 +381,52 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
             borderRadius: BorderRadius.circular(6),
             border: Border.all(color: c.border),
           ),
+          // The kit floors the send button's row at 48 unless the field has
+          // an explicit height. On the desktop that made the box 50 tall;
+          // [compactInputBarHeight] is this: 30 + the 1px border each side,
+          // and no padding above the box.
+          inputHeight: isTouchPlatform ? null : 30,
+          materialPadding:
+              isTouchPlatform ? null : const EdgeInsets.fromLTRB(8, 0, 8, 8),
+          sendButtonBuilder: isTouchPlatform
+              ? null
+              : (onSend) => _CompactInputButton(
+                    icon: Icons.send_rounded,
+                    tooltip: 'Send',
+                    onPressed: onSend,
+                  ),
+          cancelButtonBuilder: isTouchPlatform
+              ? null
+              : (onCancel) => _CompactInputButton(
+                    icon: Icons.stop_rounded,
+                    tooltip: 'Stop',
+                    onPressed: onCancel,
+                  ),
         ),
       ),
     );
   }
+}
+
+class _CompactInputButton extends StatelessWidget {
+  const _CompactInputButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+        icon: Icon(icon, size: 16, color: AppColors.accent),
+        tooltip: tooltip,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+        onPressed: onPressed,
+      );
 }
 
 class _Header extends StatelessWidget {
@@ -395,7 +446,7 @@ class _Header extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     return SizedBox(
-      height: touchRowHeight(48),
+      height: AgentChatPanel.headerHeight,
       child: Padding(
         padding: useBackNavigation
             ? const EdgeInsets.fromLTRB(4, 0, 8, 0)

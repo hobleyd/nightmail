@@ -114,10 +114,14 @@ above the quoted message** — see "The AI Pane Edits Only the Composition" in
   (`RunComposeAssistant.buildSystemPrompt`), never into history. The user
   edits between turns; history holds only what was said, so it does not fill
   `maxHistory` with stale copies of the message.
-- **`propose_draft` changes nothing.** Its result tells the model the
-  proposal was only shown. The tool card is drawn as a `DraftProposalCard`
-  with Apply / Undo / Copy, and applying is the compose form's own action —
-  the domain layer never touches the editor.
+- **What the AI writes goes straight into the message.** `propose_draft`
+  itself changes nothing (the domain layer never touches the editor); the
+  compose form watches the transcript and applies each call once, in order,
+  as a `DraftProposal` it owns — not the card, because the chat kit rebuilds
+  cards and reopening the pane replays the transcript, and neither may apply
+  it twice. The card (`DraftProposalCard`) keeps Undo / Apply again / Copy.
+  It was first built as a proposal waiting for Apply, and that read as the
+  draft landing in the chat instead of the message.
 - **Privacy:** the user's own draft always goes (it is what they asked
   about). The quoted message being replied to or forwarded is background only,
   and is withheld from a cloud provider without the cloud-bodies opt-in, the
@@ -128,5 +132,5 @@ above the quoted message** — see "The AI Pane Edits Only the Composition" in
 - **Errors are never raw provider text** (L12): the pane's `failureText`
   shows only failures this app words itself. A turn refused before the model
   is asked (`AgentChatCubit.refuseTurn`) still shows the user's message, with
-  the reason after it; an Apply refusal is drawn on the proposal card, next
-  to the button that was pressed.
+  the reason after it; a proposal that cannot be applied says why on its
+  card.

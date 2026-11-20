@@ -32,6 +32,7 @@ import '../../domain/usecases/get_raw_email_bytes.dart';
 import '../../domain/usecases/save_server_draft.dart';
 import '../../domain/usecases/send_email.dart';
 import '../blocs/account/account_cubit.dart';
+import '../blocs/ai/ai_folder_chat_state.dart';
 import '../blocs/ai/compose_assistant_cubit.dart';
 import '../blocs/compose/compose_bloc.dart';
 import '../blocs/compose/compose_event.dart';
@@ -436,6 +437,11 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
   // the message, until Back; the header's fold state is put back after.
   bool _assistantSplit = false;
   bool _headerExpandedBeforeSplit = false;
+  // One per propose_draft call, keyed by its transcript id — see
+  // [_proposalFor]. Applied one after another, in the order they arrive.
+  final Map<String, DraftProposal> _proposals = {};
+  StreamSubscription<AiFolderChatState>? _assistantSub;
+  Future<void> _proposalChain = Future<void>.value();
 
   String? _serverDraftId;
   String? _pendingOldDraftId;
@@ -865,7 +871,11 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     _subjectController.removeListener(_onSubjectChanged);
     _bodyController.removeListener(_scheduleDraftSave);
     final assistant = _assistantCubit;
+    unawaited(_assistantSub?.cancel());
     if (assistant != null) unawaited(assistant.close());
+    for (final proposal in _proposals.values) {
+      proposal.dispose();
+    }
     _subjectController.dispose();
     _bodyController.dispose();
     _subjectFocus.dispose();
@@ -1225,11 +1235,46 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     return fold(compositionText).contains(probe);
   }
 
-  ComposeAssistantCubit _ensureAssistantCubit() =>
-      _assistantCubit ??= ComposeAssistantCubit(
-        runAssistant: sl<RunComposeAssistant>(),
-        snapshot: _readDraftSnapshot,
-      );
+  ComposeAssistantCubit _ensureAssistantCubit() {
+    final existing = _assistantCubit;
+    if (existing != null) return existing;
+    final cubit = ComposeAssistantCubit(
+      runAssistant: sl<RunComposeAssistant>(),
+      snapshot: _readDraftSnapshot,
+    );
+    // Proposals are applied from here, not from their cards, so a pane that
+    // is closed — or a card the chat kit never builds — still gets them.
+    _assistantSub = cubit.stream.listen((state) {
+      for (final item in state.messages) {
+        if (item is AiToolItem && item.name == ProposeDraftTool.toolName) {
+          _proposalFor(item);
+        }
+      }
+    });
+    return _assistantCubit = cubit;
+  }
+
+  /// The proposal for a propose_draft call, made — and put into the message
+  /// — the first time the call is seen. What the AI writes goes straight into
+  /// the message; its card in the chat keeps Undo.
+  DraftProposal _proposalFor(AiToolItem item) {
+    final existing = _proposals[item.id];
+    if (existing != null) return existing;
+    final text = item.args['text'];
+    final proposal =
+        DraftProposal(text is String ? text.trim() : '', _applyProposal);
+    _proposals[item.id] = proposal;
+    if (proposal.text.isEmpty) {
+      proposal
+        ..status = DraftProposalStatus.refused
+        ..refusal = 'The AI sent an empty message, so nothing was changed.';
+    } else {
+      _proposalChain = _proposalChain.then((_) async {
+        if (mounted) await proposal.apply();
+      });
+    }
+    return proposal;
+  }
 
   void _toggleAssistant(BuildContext context) {
     _ensureAssistantCubit();
@@ -1294,7 +1339,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
       hintText: 'Ask about this message…',
       onSend: (instruction) => unawaited(cubit.send(instruction)),
       toolCardBuilder: (item) => item.name == ProposeDraftTool.toolName
-          ? DraftProposalCard(item: item, onApply: _applyProposal)
+          ? DraftProposalCard(proposal: _proposalFor(item))
           : ToolCallCard(item: item),
       failureText: _assistantFailureText,
     );
@@ -2455,8 +2500,11 @@ class _TitleBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+    // The AI pane's header height, so the two dividers meet when it is open.
+    return SizedBox(
+      height: AgentChatPanel.headerHeight,
+      child: Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 8, 0),
       child: Row(
         children: [
           Expanded(
@@ -2481,6 +2529,7 @@ class _TitleBar extends StatelessWidget {
             onPressed: onClose,
           ),
         ],
+      ),
       ),
     );
   }
@@ -3186,8 +3235,8 @@ class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
                 label: const Text('Signature', style: TextStyle(fontSize: 13)),
                 style: TextButton.styleFrom(
                   foregroundColor: c.textSecondary,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  padding: EdgeInsets.symmetric(
+                      horizontal: 10, vertical: isTouchPlatform ? 8 : 6),
                   minimumSize: Size(0, touchTarget(0)),
                   tapTargetSize: isTouchPlatform
                       ? MaterialTapTargetSize.padded
@@ -3206,8 +3255,8 @@ class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
               backgroundColor: widget.aiActive
                   ? AppColors.accent.withValues(alpha: 0.14)
                   : null,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              padding: EdgeInsets.symmetric(
+                  horizontal: 10, vertical: isTouchPlatform ? 8 : 6),
               minimumSize: Size(0, touchTarget(0)),
               tapTargetSize: isTouchPlatform
                   ? MaterialTapTargetSize.padded
@@ -3217,6 +3266,14 @@ class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
           const SizedBox(width: 8),
           TextButton(
             onPressed: isSending ? null : widget.onClose,
+            style: isTouchPlatform
+                ? null
+                : TextButton.styleFrom(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
             child: Text(
               'Cancel',
               style: TextStyle(color: c.textMuted, fontSize: 13),
@@ -3288,8 +3345,8 @@ class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
               onPressed: widget.onSend,
               style: FilledButton.styleFrom(
                 backgroundColor: AppColors.accent,
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 16, vertical: 8),
+                padding: EdgeInsets.symmetric(
+                    horizontal: 16, vertical: isTouchPlatform ? 8 : 6),
                 minimumSize: Size(0, touchTarget(0)),
                 tapTargetSize: isTouchPlatform
                     ? MaterialTapTargetSize.padded
@@ -3302,8 +3359,13 @@ class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
               ),
             ),
         ];
+        // On the desktop the one-line footer is the AI pane's input strip's
+        // height less the divider above it, so that divider meets the top of
+        // the pane's input box.
+        final compact = !isTouchPlatform;
         return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          padding: EdgeInsets.symmetric(
+              horizontal: 16, vertical: compact ? 0 : 10),
           child: LayoutBuilder(
             builder: (context, constraints) {
               // The desktop compose window is 600 wide and holds all of this
@@ -3314,11 +3376,17 @@ class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
               final oneLine = constraints.maxWidth >=
                   MediaQuery.textScalerOf(context).scale(460);
               if (oneLine) {
-                return Row(
+                final row = Row(
                   children: [format, ...draftSaved, const Spacer(), ...actions],
                 );
+                return compact
+                    ? SizedBox(
+                        height: AgentChatPanel.compactInputBarHeight - 1,
+                        child: row,
+                      )
+                    : row;
               }
-              return Column(
+              final column = Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Row(children: [format, ...draftSaved, const Spacer()]),
@@ -3326,6 +3394,12 @@ class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
                   Row(children: [const Spacer(), ...actions]),
                 ],
               );
+              return compact
+                  ? Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: column,
+                    )
+                  : column;
             },
           ),
         );

@@ -19,8 +19,8 @@ import 'agent/compose_agent_tools.dart';
 ///
 /// The third agent on [AgentLoop], beside the folder and commitments agents.
 /// Routing reuses [AiCapability.compose]. Its only tool is
-/// [ProposeDraftTool], which changes nothing — applying a proposal is the
-/// user's action in the compose window.
+/// [ProposeDraftTool], which changes nothing itself — the compose window
+/// puts each proposal into the message, with Undo on its card.
 ///
 /// ## The draft lives in the system prompt
 ///
@@ -76,8 +76,10 @@ class RunComposeAssistant {
 
   static const String _toolRules =
       'When the user asks you to write, rewrite, shorten, fix or otherwise '
-      'change the draft, call propose_draft with the complete new message, '
-      'then say in one or two sentences what you changed. Write the proposal '
+      'change the draft, call propose_draft with the complete new message — '
+      'never write the message itself in your reply; it goes straight into '
+      'the compose window — then say in one or two sentences what you wrote '
+      'or changed. Write the proposal '
       'in plain text, paragraphs separated by a blank line: no Markdown, no '
       'subject line, no surrounding quotes. Keep anything the user did not '
       'ask you to change.\n';

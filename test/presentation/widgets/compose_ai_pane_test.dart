@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -197,8 +199,8 @@ void main() {
   }
 
   testWidgets(
-      'the AI button docks a chat beside the message; a proposal replaces '
-      'only what was written above the quote, and Undo puts it back',
+      'the AI button docks a chat beside the message; a proposal goes '
+      'straight into what was written above the quote, and Undo puts it back',
       (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
@@ -226,26 +228,33 @@ void main() {
     expect(snapshot.isReply, isTrue);
     expect(snapshot.originalMessage, 'Lunch on Friday?');
 
+    // The proposal went straight into the message.
     expect(find.byType(DraftProposalCard), findsOneWidget);
-    await tester.tap(find.widgetWithText(TextButton, 'Apply'));
-    await tester.pumpAndSettle();
-
-    expect(controller.text, startsWith('${_FakeRunComposeAssistant.proposal}\n\n'));
-    expect(controller.text, contains('Regards,\nDave'));
-    expect(controller.text, contains('Lunch on Friday?'));
-    expect(controller.text, isNot(contains('Sounds good')));
+    final applied = controller.text;
+    expect(applied, startsWith('${_FakeRunComposeAssistant.proposal}\n\n'));
+    expect(applied, contains('Regards,\nDave'));
+    expect(applied, contains('Lunch on Friday?'));
+    expect(applied, isNot(contains('Sounds good')));
 
     await tester.tap(find.widgetWithText(TextButton, 'Undo'));
     await tester.pumpAndSettle();
     expect(controller.text, before);
 
-    // Closing the pane hands the width back; reopening keeps the chat.
+    await tester.tap(find.widgetWithText(TextButton, 'Apply again'));
+    await tester.pumpAndSettle();
+    expect(controller.text, applied);
+    await tester.tap(find.widgetWithText(TextButton, 'Undo'));
+    await tester.pumpAndSettle();
+
+    // Closing the pane hands the width back; reopening keeps the chat and
+    // does not put the old proposal back in.
     await tester.tap(find.widgetWithText(TextButton, 'AI'));
     await tester.pumpAndSettle();
     expect(find.byType(AgentChatPanel), findsNothing);
     await tester.tap(find.widgetWithText(TextButton, 'AI'));
     await tester.pumpAndSettle();
     expect(find.byType(DraftProposalCard), findsOneWidget);
+    expect(controller.text, before);
   });
 
   testWidgets(
@@ -272,10 +281,47 @@ void main() {
     controller.text = 'Sounds good';
     await sendToAssistant(tester, 'Review it again');
     expect(assistant.snapshots.single.draft, 'Sounds good');
-
-    await tester.tap(find.widgetWithText(TextButton, 'Apply'));
-    await tester.pumpAndSettle();
     expect(controller.text, _FakeRunComposeAssistant.proposal);
+  });
+
+  testWidgets(
+      "the compose title bar and footer line up with the AI pane's header "
+      'and input box', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    await pumpReply(tester, const Size(1200, 800));
+    await tester.tap(find.widgetWithText(TextButton, 'AI'));
+    await tester.pumpAndSettle();
+
+    final pane = tester.getRect(find.byType(AgentChatPanel));
+    final dividers = [
+      for (final e in find.byType(Divider).evaluate())
+        tester.getRect(find.byWidget(e.widget)),
+    ];
+    final paneDividers = dividers.where((r) => r.left >= pane.left);
+    final formDividers = dividers.where((r) => r.right <= pane.left);
+
+    // Header: the two dividers under the titles share a line.
+    final paneHeader = paneDividers.map((r) => r.top).reduce(math.min);
+    expect(formDividers.map((r) => r.top), contains(paneHeader));
+
+    // Footer: the divider above it meets the top of the chat input box.
+    final input = find.byWidgetPredicate((w) =>
+        w is TextField && w.decoration?.hintText == 'Ask about this message…');
+    final box = tester.getRect(find
+        .ancestor(
+            of: input,
+            matching: find.byWidgetPredicate((w) =>
+                w is DecoratedBox &&
+                w.decoration is BoxDecoration &&
+                (w.decoration as BoxDecoration).border != null))
+        .first);
+    final footerDivider = formDividers.map((r) => r.top).reduce(math.max);
+    expect(footerDivider, box.top);
+
+    // And the footer got smaller: under 45px from its divider to the bottom.
+    expect(800 - footerDivider, lessThan(45));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('the pane fits the default 640px compose window',

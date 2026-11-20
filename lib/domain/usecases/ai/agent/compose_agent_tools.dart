@@ -5,12 +5,13 @@ import 'package:fpdart/fpdart.dart';
 import '../../../../core/error/failures.dart';
 import 'agent_tool.dart';
 
-/// The compose assistant's one tool: hands the user a complete revised draft.
+/// The compose assistant's one tool: hands the user a complete new version of
+/// the message.
 ///
-/// It changes nothing. The proposal reaches the compose window as the tool
-/// card the call produces, and the user decides there whether to apply it —
-/// so the edit itself is a presentation-layer action, and the model is told
-/// as much in the result so it does not claim the draft was changed.
+/// It changes nothing itself. The proposal reaches the compose window as the
+/// tool card the call produces, and the compose form puts it into the message
+/// from there (with Undo on the card) — so the edit is a presentation-layer
+/// action, and the result only tells the model what the user will see.
 class ProposeDraftTool implements AgentTool {
   const ProposeDraftTool();
 
@@ -24,9 +25,8 @@ class ProposeDraftTool implements AgentTool {
       'Offer the user a complete new version of the message they are '
       'writing. Pass the whole message — every paragraph, not only the part '
       'that changed — as plain text with paragraphs separated by a blank '
-      'line. Never include the quoted earlier message. The '
-      'user sees it with an Apply button; nothing changes until they press '
-      'it.';
+      'line. Never include the quoted earlier message. It replaces what the '
+      'user has written straight away; they can undo it.';
 
   @override
   Map<String, dynamic> get parametersSchema => const {
@@ -52,9 +52,10 @@ class ProposeDraftTool implements AgentTool {
       }));
     }
     return Right(jsonEncode({
-      'status': 'shown_to_user',
-      'note': 'The proposal is shown to the user with an Apply button. It '
-          'has not been applied; do not say the draft was changed.',
+      'status': 'put_in_message',
+      'note': "The proposal has replaced what the user had written, and they "
+          'can undo it. Say briefly what you wrote or changed; do not repeat '
+          'the message itself.',
     }));
   }
 }

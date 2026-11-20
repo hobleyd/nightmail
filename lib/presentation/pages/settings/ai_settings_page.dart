@@ -534,7 +534,7 @@ class _AiSettingsViewState extends State<_AiSettingsView> {
   /// compose routed to a **cloud** provider sends an instruction only — never
   /// the quoted original mail body. Local/self-hosted providers always receive
   /// the body, so the guard only narrows what leaves the machine to third
-  /// parties. (`ComposeReply` reads the same flag to enforce this end-to-end.)
+  /// parties. (`RunComposeAssistant` reads the same flag to enforce this end-to-end.)
   Widget _buildPrivacy(BuildContext context, AiSettingsState state) {
     final c = context.colors;
     return Column(

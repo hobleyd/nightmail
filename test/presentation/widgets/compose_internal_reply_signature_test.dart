@@ -12,14 +12,12 @@ import 'package:nightmail/domain/repositories/directory_contacts_repository.dart
 import 'package:nightmail/domain/repositories/email_repository.dart';
 import 'package:nightmail/domain/repositories/sender_repository.dart';
 import 'package:nightmail/domain/repositories/system_contacts_repository.dart';
-import 'package:nightmail/domain/usecases/ai/compose_reply.dart';
 import 'package:nightmail/domain/usecases/delete_server_draft.dart';
 import 'package:nightmail/domain/usecases/save_server_draft.dart';
 import 'package:nightmail/domain/usecases/search_contacts.dart';
 import 'package:nightmail/domain/usecases/send_email.dart';
 import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/injection_container.dart';
-import 'package:nightmail/presentation/blocs/ai/ai_compose_cubit.dart';
 import 'package:nightmail/presentation/blocs/compose/compose_bloc.dart';
 import 'package:nightmail/presentation/widgets/compose_body_builder.dart';
 import 'package:nightmail/presentation/widgets/compose_dialog.dart';
@@ -76,8 +74,6 @@ class _FakeContactCacheRepository extends Fake
 class _FakeDirectoryContacts extends Fake
     implements DirectoryContactsRepository {}
 
-class _FakeComposeReply extends Fake implements ComposeReply {}
-
 // ---------------------------------------------------------------------------
 
 /// Settings > Hide signature on internal replies: a reply or reply-all
@@ -95,8 +91,6 @@ void main() {
     ));
     sl.registerSingleton<SaveServerDraft>(SaveServerDraft(repository));
     sl.registerSingleton<DeleteServerDraft>(DeleteServerDraft(repository));
-    sl.registerFactory<AiComposeCubit>(
-        () => AiComposeCubit(composeReply: _FakeComposeReply()));
   });
 
   tearDown(() async {

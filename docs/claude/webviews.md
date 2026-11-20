@@ -531,3 +531,47 @@ file when a message has inline images.
 `test/presentation/widgets/editor_html_sanitization_test.dart` pins the shape of
 all of this, since the behaviour itself only exists inside a real engine.
 
+## The AI Pane Edits Only the Composition
+
+The compose AI pane reviews and rewrites what the user is writing, never the
+quoted reply or forwarded message below it, and never the signature. Three
+functions in `assets/editor/editor.html` find that part of the body
+(`getComposition`, `replaceComposition`, and `_quoteBoundary` behind both);
+`PlainComposition` (`presentation/widgets/compose_composition.dart`) is the
+same rule for a plain-text body.
+
+- **The boundary is searched for anywhere in the DOM, not among top-level
+  children only** (unlike `insertSignature`). A draft reopened from Gmail
+  nests everything, quote included, in one `<div dir="ltr">`. Markers, first
+  in document order wins: this app's `<blockquote>` and the provider wrappers
+  (`.gmail_quote`, `#divRplyFwdMsg` with an `<hr>` just above it,
+  `#appendonsend`, `.moz-cite-prefix`), then a separator *line*:
+  `---------- Original Message ----------`, `---------- Forwarded message
+  ---------`, and the plain body's `---` and `On … wrote:`, which survive a
+  plain → HTML switch as one `<div>` each. The composition is a `Range` from
+  the start of the body to just before that node, so a nested boundary
+  works.
+- **The signature counts only if its text is unchanged.** It is not marked in
+  the markup, and the editor re-serialises whatever it was given, so
+  `_signatureStart` walks back from the boundary comparing whitespace-folded
+  `textContent` with the signature's text. An edited signature falls into the
+  composition; the snapshot says so (`signatureSeparated`) and the model is
+  told to keep any sign-off.
+- **A reply or forward built here must have a boundary while the quote is
+  still there** — not finding one refuses the turn and the apply rather than
+  treating somebody else's mail as the user's writing. "Still there" is
+  judged by the first 60 characters of the original's text
+  (`_quoteStillRequired` in `compose_dialog.dart`): trimming the quote away
+  is routine, and then everything left is the user's.
+- **Apply refuses a composition with an `<img>`**: a text rewrite would
+  delete the picture and orphan its inline attachment.
+- **Apply is plain DOM, not `insertHTML`,** so it lands the same in every
+  engine (the inserted markup still goes through `_parseSanitizedBody`); the
+  proposal card's Undo restores the whole body it saved. The editor's own
+  Cmd+Z does not cover it.
+
+Measured in a bare WKWebView over the asset (reply as built, empty reply,
+forward, plain-switched reply, Gmail-nested draft, Outlook draft, new message,
+edited signature, composition with an image, unmarked reply). WebView2,
+WebKitGTK and Blink are unverified, but nothing here is engine-specific
+beyond `Range` and `TreeWalker`.

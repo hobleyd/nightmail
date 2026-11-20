@@ -215,6 +215,50 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> with WidgetsBindingObs
     }
   }
 
+  /// What the user wrote above the quoted message, less the signature when
+  /// its text is [signatureText] — see `getComposition` in
+  /// `assets/editor/editor.html`. Null if the page could not be asked.
+  Future<EditorComposition?> getComposition(String signatureText) async {
+    final result = _decodeObject(await _host
+        .evalString('getComposition(${jsonEncode(signatureText)})'));
+    if (result == null) return null;
+    return EditorComposition(
+      text: result['text'] as String? ?? '',
+      foundBoundary: result['found'] == true,
+      foundSignature: result['signature'] == true,
+      imageCount: (result['images'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  /// Replaces what [getComposition] reads with [html], leaving signature and
+  /// quote in place. Returns null on success, or why it was refused:
+  /// `boundary` (no quote found where [requireBoundary] needs one), `images`
+  /// (the composition holds pictures), or `unavailable`.
+  Future<String?> replaceComposition(
+    String html,
+    String signatureText, {
+    required bool requireBoundary,
+  }) async {
+    final result = _decodeObject(await _host.evalString(
+        'replaceComposition(${jsonEncode(html)}, ${jsonEncode(signatureText)}, '
+        '$requireBoundary)'));
+    if (result == null) return 'unavailable';
+    return result['ok'] == true ? null : (result['reason'] as String? ?? '');
+  }
+
+  /// A page function's `JSON.stringify` result: bare from WKWebView, quoted
+  /// once more by the desktop bridges and Android — see [getContent].
+  static Map<String, dynamic>? _decodeObject(String? raw) {
+    if (raw == null || raw == 'null') return null;
+    try {
+      var decoded = jsonDecode(raw);
+      if (decoded is String) decoded = jsonDecode(decoded);
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> insertImage(String dataUri, String contentId) async {
     await _host.run(
         'insertImage(${jsonEncode(dataUri)}, ${jsonEncode(contentId)})');
@@ -462,4 +506,25 @@ class _PlatformViewHost implements _EditorHost {
   void dispose() {
     _visible.dispose();
   }
+}
+
+/// The result of [HtmlEmailEditorState.getComposition].
+class EditorComposition {
+  const EditorComposition({
+    required this.text,
+    required this.foundBoundary,
+    required this.foundSignature,
+    required this.imageCount,
+  });
+
+  /// The composition as plain text.
+  final String text;
+
+  /// A quoted reply or forwarded message was found below it.
+  final bool foundBoundary;
+
+  /// The signature was found unedited and left out of [text].
+  final bool foundSignature;
+
+  final int imageCount;
 }

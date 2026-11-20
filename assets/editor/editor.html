@@ -803,6 +803,170 @@ function getContent() {
   return _cleanHtml();
 }
 
+// --- The part of the body the user is writing ------------------------------
+//
+// The compose window's AI pane reviews and rewrites only what the user wrote:
+// everything above the quoted reply or forwarded message, less the signature.
+// See "The AI Pane Edits Only the Composition" in docs/claude/webviews.md.
+
+// Elements that open a quoted message wherever they sit: this app's own quote
+// wrapper and Gmail's, Outlook's and Thunderbird's, in a draft reopened from
+// the provider.
+const _kQuoteElements =
+    'blockquote, .gmail_quote, #divRplyFwdMsg, #appendonsend, .moz-cite-prefix';
+
+// Separator lines: ComposeBodyBuilder's HTML ones, and the plain-text ones
+// (`---`, `On … wrote:`) a body keeps after it is switched to HTML.
+const _kQuoteLineRe =
+    /^(-+ ?(Original Message|Forwarded message) ?-+|-{3}|On .{1,300} wrote:)$/;
+
+function _normText(s) {
+  return String(s).replace(/[\s ​]+/g, ' ').trim();
+}
+
+// The first node, in document order, that starts quoted content; null when the
+// body has none. An Outlook separator rule just above it goes with it.
+function _quoteBoundary() {
+  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_ELEMENT);
+  let el = walker.nextNode();
+  while (el) {
+    if (el.matches(_kQuoteElements)) break;
+    const text = el.textContent;
+    if (text.length < 400 && !el.querySelector('div, p, blockquote, table') &&
+        _kQuoteLineRe.test(_normText(text))) {
+      break;
+    }
+    el = walker.nextNode();
+  }
+  if (!el) return null;
+  const prev = el.previousElementSibling;
+  return prev && prev.tagName === 'HR' ? prev : el;
+}
+
+// Where the signature starts, if the nodes just above [boundary] (or at the
+// end of the body) read exactly as [sigText]; null when it isn't there
+// unedited. Text is compared rather than markup because the editor
+// re-serialises what it was given.
+function _signatureStart(boundary, sigText) {
+  const target = _normText(sigText || '');
+  if (!target) return null;
+  let anchor = boundary;
+  let node = anchor ? anchor.previousSibling : editor.lastChild;
+  while (!node && anchor && anchor.parentNode !== editor) {
+    anchor = anchor.parentNode;
+    node = anchor.previousSibling;
+  }
+  let acc = '';
+  while (node) {
+    acc = _normText(node.textContent + ' ' + acc);
+    if (acc === target) return node;
+    if (acc.length > target.length) return null;
+    node = node.previousSibling;
+  }
+  return null;
+}
+
+// The range from the start of the body to the signature, the quote, or the
+// end, in that order of preference.
+function _compositionRange(boundary, sigText) {
+  const range = document.createRange();
+  range.setStart(editor, 0);
+  const end = _signatureStart(boundary, sigText) || boundary;
+  if (end) {
+    range.setEndBefore(end);
+  } else {
+    range.setEnd(editor, editor.childNodes.length);
+  }
+  return {range: range, followed: !!end};
+}
+
+// Plain text of a fragment, with a line break per block and per <br> — what
+// innerText would give, for nodes that are not laid out.
+function _fragmentText(root) {
+  const out = [];
+  const blocks = /^(DIV|P|LI|UL|OL|H[1-6]|PRE|TR|TABLE|BLOCKQUOTE|HR)$/;
+  // A block edge starts a new line unless one was just started: adjacent
+  // blocks are consecutive lines, and only a blank block is a blank line.
+  function lineBreak() {
+    if (out.length && !/\n$/.test(out[out.length - 1])) out.push('\n');
+  }
+  (function walk(node) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      out.push(node.data.replace(/​/g, ''));
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE &&
+        node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) {
+      return;
+    }
+    if (node.tagName === 'BR') { out.push('\n'); return; }
+    const block = node.tagName && blocks.test(node.tagName);
+    if (block) lineBreak();
+    if (node.tagName === 'LI') out.push('- ');
+    node.childNodes.forEach(walk);
+    if (block) lineBreak();
+  })(root);
+  return out.join('')
+      .replace(/ /g, ' ')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+}
+
+// JSON {found, signature, text, images}: whether a quote boundary was found,
+// whether the signature was found (and so left out), the composition as plain
+// text, and how many images it holds.
+function getComposition(sigText) {
+  const boundary = _quoteBoundary();
+  const signature = _signatureStart(boundary, sigText);
+  const r = _compositionRange(boundary, sigText).range;
+  const frag = r.cloneContents();
+  return JSON.stringify({
+    found: !!boundary,
+    signature: !!signature,
+    text: _fragmentText(frag),
+    images: frag.querySelectorAll('img').length,
+  });
+}
+
+// Replaces the composition with [html], leaving the signature and the quote
+// as they are. JSON {ok, reason}: refused with `boundary` when the caller
+// requires a quote and none is found, and `images` when the composition holds
+// pictures a text rewrite would delete.
+function replaceComposition(html, sigText, requireBoundary) {
+  deselectImage();
+  const boundary = _quoteBoundary();
+  if (requireBoundary && !boundary) {
+    return JSON.stringify({ok: false, reason: 'boundary'});
+  }
+  const c = _compositionRange(boundary, sigText);
+  if (c.range.cloneContents().querySelector('img')) {
+    return JSON.stringify({ok: false, reason: 'images'});
+  }
+  const clean = _parseSanitizedBody(html);
+  const frag = document.createDocumentFragment();
+  Array.from(clean.childNodes).forEach(function(node) {
+    frag.appendChild(document.importNode(node, true));
+  });
+  const last = frag.lastChild;
+  // A blank line between the new text and whatever follows it, the way the
+  // body was built.
+  if (c.followed) frag.appendChild(_blankBlock());
+  c.range.deleteContents();
+  c.range.insertNode(frag);
+  // The caret goes at the end of the new text, inside its last block.
+  if (last) {
+    const sel = window.getSelection();
+    const caret = document.createRange();
+    caret.selectNodeContents(last);
+    caret.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(caret);
+  }
+  scheduleChange();
+  return JSON.stringify({ok: true});
+}
+
 function focusEditor() {
   editor.focus();
   const sel = window.getSelection();

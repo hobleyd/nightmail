@@ -15,14 +15,12 @@ import 'package:nightmail/domain/repositories/directory_contacts_repository.dart
 import 'package:nightmail/domain/repositories/email_repository.dart';
 import 'package:nightmail/domain/repositories/sender_repository.dart';
 import 'package:nightmail/domain/repositories/system_contacts_repository.dart';
-import 'package:nightmail/domain/usecases/ai/compose_reply.dart';
 import 'package:nightmail/domain/usecases/delete_server_draft.dart';
 import 'package:nightmail/domain/usecases/get_raw_email_bytes.dart';
 import 'package:nightmail/domain/usecases/save_server_draft.dart';
 import 'package:nightmail/domain/usecases/search_contacts.dart';
 import 'package:nightmail/domain/usecases/send_email.dart';
 import 'package:nightmail/injection_container.dart';
-import 'package:nightmail/presentation/blocs/ai/ai_compose_cubit.dart';
 import 'package:nightmail/presentation/blocs/compose/compose_bloc.dart';
 import 'package:nightmail/presentation/widgets/compose_dialog.dart';
 import 'package:nightmail/presentation/widgets/forward_as_attachment.dart';
@@ -99,8 +97,6 @@ class _FakeContactCacheRepository extends Fake
 class _FakeDirectoryContacts extends Fake
     implements DirectoryContactsRepository {}
 
-class _FakeComposeReply extends Fake implements ComposeReply {}
-
 /// Answers every fetch from [answer] — by default with the id as the source.
 class _FakeGetRawEmailBytes extends Fake implements GetRawEmailBytes {
   Future<Either<Failure, Uint8List>> Function(String id) answer =
@@ -135,8 +131,6 @@ void main() {
     ));
     sl.registerSingleton<SaveServerDraft>(SaveServerDraft(repository));
     sl.registerSingleton<DeleteServerDraft>(DeleteServerDraft(repository));
-    sl.registerFactory<AiComposeCubit>(
-        () => AiComposeCubit(composeReply: _FakeComposeReply()));
     getRaw = _FakeGetRawEmailBytes();
     sl.registerSingleton<GetRawEmailBytes>(getRaw);
   });

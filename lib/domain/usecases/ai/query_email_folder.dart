@@ -14,8 +14,8 @@ import '../../repositories/ai/ai_settings_repository.dart';
 /// of emails, token-by-token.
 ///
 /// Routes through [AiCapability.compose] (the configured slice) and applies the
-/// same privacy guard as [ComposeReply]: email content is withheld from cloud
-/// providers unless the user has explicitly opted in via
+/// same privacy guard as [RunComposeAssistant]: email content is withheld from
+/// cloud providers unless the user has explicitly opted in via
 /// [AiSettingsRepository.getAllowCloudForBodies].
 class QueryEmailFolder {
   const QueryEmailFolder({

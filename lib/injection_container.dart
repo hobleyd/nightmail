@@ -59,9 +59,8 @@ import 'data/repositories/ai/ai_settings_repository_impl.dart';
 import 'domain/repositories/ai/ai_catalog_repository.dart';
 import 'domain/repositories/ai/ai_inference_repository.dart';
 import 'domain/repositories/ai/ai_settings_repository.dart';
-import 'domain/usecases/ai/compose_reply.dart';
+import 'domain/usecases/ai/run_compose_assistant.dart';
 import 'domain/usecases/ai/run_folder_agent.dart';
-import 'presentation/blocs/ai/ai_compose_cubit.dart';
 import 'presentation/blocs/ai/ai_folder_cubit.dart';
 import 'presentation/blocs/ai/ai_settings_cubit.dart';
 // Commitments (System One-driven ledger over mail)
@@ -788,13 +787,14 @@ Future<void> configureDependencies() async {
   );
 
   // Use cases
+  // The compose window's AI pane. Privacy "cloud bodies" guard (H1): it
+  // resolves the routed provider's kind via the catalog registry to decide
+  // whether the quoted original body may be sent to a cloud provider. The
+  // cubit is made by the compose form itself, over its own editor.
   sl.registerLazySingleton(
-    () => ComposeReply(
+    () => RunComposeAssistant(
       settingsRepository: sl<AiSettingsRepository>(),
       inferenceRepository: sl<AiInferenceRepository>(),
-      // Privacy "cloud bodies" guard (H1): ComposeReply resolves the routed
-      // provider's kind via the catalog registry to decide whether the quoted
-      // original body may be sent to a cloud provider.
       catalogRepository: sl<AiCatalogRepository>(),
     ),
   );
@@ -814,7 +814,6 @@ Future<void> configureDependencies() async {
   );
 
   // Presentation — AI cubits (factories)
-  sl.registerFactory(() => AiComposeCubit(composeReply: sl<ComposeReply>()));
   sl.registerFactory(
     () => AiFolderCubit(runFolderAgent: sl<RunFolderAgent>()),
   );

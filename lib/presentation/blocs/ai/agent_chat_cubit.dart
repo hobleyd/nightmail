@@ -115,6 +115,21 @@ abstract class AgentChatCubit extends Cubit<AiFolderChatState> {
     );
   }
 
+  /// Records [userInstruction] as a turn refused before the agent was asked,
+  /// with [failure] as its outcome — the user still sees what they sent, and
+  /// the reason below it. Never added to the history the model is sent.
+  @protected
+  void refuseTurn(String userInstruction, Failure failure) {
+    final instruction = userInstruction.trim();
+    if (instruction.isEmpty || _subscription != null) return;
+    final thisTurn = _turn++;
+    _currentTurn = thisTurn;
+    final userId = 'u${_seq++}';
+    _display.add(AiTextMessage(id: userId, isUser: true, text: instruction));
+    _turnOf[userId] = thisTurn;
+    _emit(isStreaming: false, failure: failure);
+  }
+
   /// Clears the conversation and returns to the empty state.
   void reset() {
     _subscription?.cancel();

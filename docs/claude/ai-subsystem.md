@@ -30,18 +30,22 @@ the single-shot adapter path returns `Either` the same way rather than mixing
 throw-and-convert with emit-`Left` in one class.
 
 
-### One tool-calling loop, two agents
+### One tool-calling loop, three agents
 
 `AgentLoop` (`lib/domain/usecases/ai/agent/agent_loop.dart`) is the
 stream-a-round / run-the-tools / feed-back-results loop. `RunFolderAgent`
-(mail tools, Compose route, no-tools fallback) and `RunCommitmentsAgent`
+(mail tools, Compose route, no-tools fallback), `RunCommitmentsAgent`
 (ledger tools, Compose route, no fallback — see
-[commitments.md](commitments.md)) both delegate to it; the two sentinel
+[commitments.md](commitments.md)) and `RunComposeAssistant` (one no-op tool,
+Compose route, no-tools fallback — below) all delegate to it; the two sentinel
 finish reasons the UI renders as tool cards live there, with
 `RunFolderAgent` keeping aliases so nothing that imported them moved. On
 the presentation side `AgentChatCubit` owns the transcript (text bubbles
 interleaved with tool cards, turn-tagged history trimming) and
-`AiFolderCubit` / `CommitmentsAgentCubit` only supply the turn.
+`AiFolderCubit` / `CommitmentsAgentCubit` / `ComposeAssistantCubit` only
+supply the turn. The folder and compose panes are both `AgentChatPanel`
+(`presentation/widgets/ai/agent_chat_panel.dart`) over their cubit; the host
+supplies strings, the turn and how a tool card is drawn.
 Each tool card is stamped with the folder and account its turn ran against
 (`AiToolItem.turnFolderId`/`turnAccountId`): a folder agent's email search can
 be re-run in the email list from its card (as can the ids its `show_emails`
@@ -96,3 +100,33 @@ protocol — a loopback URL is classified `local`, anything else `selfHosted`.
 Like Ollama, a System One base URL is normalized to end in `/v1`
 (`AiProvider.defaultBaseUrl`), because every server documents a bare host
 while the route lives under `/v1`.
+
+### The compose pane proposes; the user applies
+
+The compose window's AI button opens a chat pane beside the message (docked
+on the desktop and an iPad; on a phone the compose screen splits, the
+message in the top half and the pane in the bottom half, until Back) instead of the one-shot "describe the reply" prompt that streamed text
+in at the caret. It drafts, reviews and revises **only what the user wrote
+above the quoted message** — see "The AI Pane Edits Only the Composition" in
+[webviews.md](webviews.md) for how that part is found.
+
+- **The draft goes in the system prompt, rebuilt every turn**
+  (`RunComposeAssistant.buildSystemPrompt`), never into history. The user
+  edits between turns; history holds only what was said, so it does not fill
+  `maxHistory` with stale copies of the message.
+- **`propose_draft` changes nothing.** Its result tells the model the
+  proposal was only shown. The tool card is drawn as a `DraftProposalCard`
+  with Apply / Undo / Copy, and applying is the compose form's own action —
+  the domain layer never touches the editor.
+- **Privacy:** the user's own draft always goes (it is what they asked
+  about). The quoted message being replied to or forwarded is background only,
+  and is withheld from a cloud provider without the cloud-bodies opt-in, the
+  same rule as the folder agent.
+- **No-tools fallback** (a cloud model the catalog says cannot call tools):
+  plain chat with the same context; the model is told to give the full
+  revised text for the user to copy.
+- **Errors are never raw provider text** (L12): the pane's `failureText`
+  shows only failures this app words itself. A turn refused before the model
+  is asked (`AgentChatCubit.refuseTurn`) still shows the user's message, with
+  the reason after it; an Apply refusal is drawn on the proposal card, next
+  to the button that was pressed.

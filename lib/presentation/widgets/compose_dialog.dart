@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../injection_container.dart';
+import '../../core/error/failures.dart';
 import '../../core/platform/touch_metrics.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/signature/signature_merge_engine.dart';
@@ -18,22 +19,28 @@ import '../../core/theme/app_colors.dart';
 import '../../core/utils/consumer_email_domain.dart';
 import '../../core/utils/subject_prefixes.dart';
 import '../../infrastructure/accounts/account.dart';
+import '../../domain/entities/ai/compose_draft_snapshot.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_attachment.dart';
 import '../../domain/entities/inline_attachment.dart';
 import '../../domain/entities/local_attachment.dart';
+import '../../domain/usecases/ai/agent/compose_agent_tools.dart';
+import '../../domain/usecases/ai/run_compose_assistant.dart';
 import '../../domain/usecases/delete_server_draft.dart';
 import '../../domain/usecases/download_attachment.dart';
 import '../../domain/usecases/get_raw_email_bytes.dart';
 import '../../domain/usecases/save_server_draft.dart';
 import '../../domain/usecases/send_email.dart';
 import '../blocs/account/account_cubit.dart';
-import '../blocs/ai/ai_compose_cubit.dart';
-import '../blocs/ai/ai_compose_state.dart';
+import '../blocs/ai/compose_assistant_cubit.dart';
 import '../blocs/compose/compose_bloc.dart';
 import '../blocs/compose/compose_event.dart';
 import '../blocs/compose/compose_state.dart';
+import 'ai/agent_chat_panel.dart';
+import 'ai/draft_proposal_card.dart';
+import 'ai/tool_call_card.dart';
 import 'compose_body_builder.dart';
+import 'compose_composition.dart';
 import 'forward_as_attachment.dart';
 import 'html_email_editor.dart';
 import 'insert_link_dialog.dart';
@@ -419,22 +426,16 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     _lastBottomInset = bottomInset;
   }
 
-  // AI compose / smart-reply streaming.
-  late final AiComposeCubit _aiCubit;
-  // Length of the AI text already inserted into the editor this generation, so
-  // each streaming state inserts only the new delta at the caret.
-  int _aiInsertedLen = 0;
-  bool _aiGenerating = false;
-  // Snapshot of the editor HTML taken when an AI draft starts. On the terminal
-  // [AiComposeDone] we rebuild the editor as base + full draft if the streamed
-  // inserts couldn't be trusted (e.g. the webview was still mounting), so no
-  // streamed tokens are ever permanently lost (M3).
-  String _aiBaseHtml = '';
-  // True when the editor was (re)mounted for this generation (plain → HTML
-  // switch). The streamed caret is lost across the remount and early deltas can
-  // race the fresh webview, so on Done we reconcile the full draft via
-  // setContent rather than trusting [_aiInsertedLen].
-  bool _aiReconcileFull = false;
+  // The AI side pane — see "The AI Pane Edits Only the Composition" in
+  // docs/claude/webviews.md. The cubit is made the first time the pane opens
+  // and kept while the window lives, so closing and reopening the pane keeps
+  // the conversation.
+  ComposeAssistantCubit? _assistantCubit;
+  bool _assistantOpen = false;
+  // On a phone the pane takes the bottom half of the compose screen, under
+  // the message, until Back; the header's fold state is put back after.
+  bool _assistantSplit = false;
+  bool _headerExpandedBeforeSplit = false;
 
   String? _serverDraftId;
   String? _pendingOldDraftId;
@@ -482,7 +483,6 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _aiCubit = sl<AiComposeCubit>();
     _selectedAccountId = widget.accountId ??
         (widget.accounts.isNotEmpty ? widget.accounts.first.id : null);
     final bareFrom = _bareAddress(widget.fromAddress).toLowerCase();
@@ -864,7 +864,8 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     _draftTimer?.cancel();
     _subjectController.removeListener(_onSubjectChanged);
     _bodyController.removeListener(_scheduleDraftSave);
-    unawaited(_aiCubit.close());
+    final assistant = _assistantCubit;
+    if (assistant != null) unawaited(assistant.close());
     _subjectController.dispose();
     _bodyController.dispose();
     _subjectFocus.dispose();
@@ -1176,152 +1177,245 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
   }
 
   // ---------------------------------------------------------------------------
-  // AI compose / smart-reply
+  // AI side pane
   // ---------------------------------------------------------------------------
 
-  /// Prompts the user for an instruction and kicks off a streaming AI draft.
-  Future<void> _onAiCompose(BuildContext context) async {
-    // Snapshot the caret BEFORE the prompt dialog steals focus, so the draft
-    // streams in where the user placed the cursor (e.g. above a quoted reply).
-    final editorState = _htmlEditorKey.currentState;
-    await editorState?.saveSelection();
+  /// Below this a phone splits the screen with the pane instead of docking it.
+  static const double _assistantMinDockWidth = 720;
 
-    if (editorState != null) await editorState.hide();
-    if (!context.mounted) return;
-    final instruction = await _promptForAiInstruction(context);
-    if (mounted && editorState != null) await editorState.show();
+  /// The width the form and pane share, as last laid out.
+  double? _assistantHostWidth;
 
-    if (instruction == null || instruction.trim().isEmpty || !mounted) return;
+  /// Docked beside the form, except on a touch screen too narrow to share,
+  /// where it goes under the message instead. The desktop always docks.
+  bool _dockAssistant(BuildContext context) =>
+      !isTouchPlatform ||
+      (_assistantHostWidth ?? MediaQuery.sizeOf(context).width) >=
+          _assistantMinDockWidth;
 
-    // AI streaming renders through the HTML (webview) editor; force it on so the
-    // tokens land somewhere visible even if the draft started as plain text.
-    final remountedEditor = _bodyType != EmailBodyType.html;
-    if (remountedEditor) {
-      _switchToHtml();
-    }
+  bool get _isReply =>
+      widget.mode == ComposeMode.reply || widget.mode == ComposeMode.replyAll;
+  bool get _isForward => widget.mode == ComposeMode.forward;
 
-    _aiInsertedLen = 0;
-    // Capture the pre-draft content and remount state so the terminal Done can
-    // authoritatively rebuild base + full draft if early inserts were dropped.
-    _aiBaseHtml = _htmlBodyCache;
-    _aiReconcileFull = remountedEditor;
+  /// The signature as the body carries it, for the editor to recognise and
+  /// leave alone.
+  String get _signatureText =>
+      ComposeBodyBuilder.stripHtml(widget.signatureHtml);
 
-    final original = widget.originalEmail;
-    final contextText = original == null
-        ? null
-        : (original.bodyType == EmailBodyType.html
-            ? _stripHtml(original.body)
-            : original.body);
+  /// A reply or forward built here opens with the quoted message in the
+  /// body, so not finding where it begins is a reason to stop — not to treat
+  /// somebody else's mail as what the user wrote.
+  bool get _requiresQuoteBoundary =>
+      widget.draftEmail == null &&
+      widget.originalEmail != null &&
+      (_isReply || _isForward);
 
-    setState(() => _aiGenerating = true);
-    _aiCubit.generate(instruction.trim(), context: contextText);
+  /// Whether a body in which no quote boundary was found must still have
+  /// one: only while the quoted message's text is still in it. Trimming the
+  /// quote away is routine, and then all that is left is the user's.
+  bool _quoteStillRequired(String compositionText) {
+    if (!_requiresQuoteBoundary) return false;
+    final original = widget.originalEmail!;
+    String fold(String s) => s.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final quoted = fold(original.bodyType == EmailBodyType.html
+        ? _stripHtml(original.body)
+        : original.body);
+    if (quoted.isEmpty) return false;
+    final probe = quoted.substring(0, math.min(60, quoted.length));
+    return fold(compositionText).contains(probe);
   }
 
-  /// Small modal asking what the AI should write. Returns null on cancel.
-  Future<String?> _promptForAiInstruction(BuildContext context) {
-    final c = context.colors;
-    final controller = TextEditingController();
-    return showDialog<String>(
-      context: context,
-      builder: (dialogContext) {
-        return AdaptiveAlertDialog(
-          backgroundColor: c.surfacePanel,
-          title: Text(
-            'Draft with AI',
-            style: TextStyle(color: c.textPrimary, fontSize: 16),
-          ),
-          content: SizedBox(
-            width: 420,
-            child: TextField(
-              controller: controller,
-              autofocus: true,
-              minLines: 2,
-              maxLines: 5,
-              style: TextStyle(color: c.textPrimary, fontSize: 13),
-              decoration: InputDecoration(
-                hintText: 'Describe the reply you want — e.g. "politely '
-                    'decline and suggest meeting next week".',
-                hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
+  ComposeAssistantCubit _ensureAssistantCubit() =>
+      _assistantCubit ??= ComposeAssistantCubit(
+        runAssistant: sl<RunComposeAssistant>(),
+        snapshot: _readDraftSnapshot,
+      );
+
+  void _toggleAssistant(BuildContext context) {
+    _ensureAssistantCubit();
+    if (!_dockAssistant(context)) {
+      _headerExpandedBeforeSplit = _headerExpanded;
+      _setHeaderExpanded(false);
+      setState(() => _assistantSplit = true);
+      return;
+    }
+    setState(() => _assistantOpen = !_assistantOpen);
+  }
+
+  void _closeAssistantSplit() {
+    setState(() => _assistantSplit = false);
+    if (_headerExpandedBeforeSplit) _setHeaderExpanded(true);
+  }
+
+  /// The form with the pane docked to its right. The form stays the Row's
+  /// first child whether or not the pane is open, so opening it resizes the
+  /// editor rather than remounting it — the desktop overlay re-reads its
+  /// frame on layout.
+  Widget _withAssistantPane(
+      BuildContext context, AppColors c, Widget content) {
+    if (!widget.scrollable) return content;
+    return LayoutBuilder(builder: (context, constraints) {
+      _assistantHostWidth = constraints.maxWidth;
+      final cubit = _assistantCubit;
+      final open = _assistantOpen && cubit != null && _dockAssistant(context);
+      final paneWidth = (constraints.maxWidth * 0.4).clamp(280.0, 400.0);
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(child: content),
+          if (open) ...[
+            VerticalDivider(width: 1, thickness: 1, color: c.border),
+            SizedBox(
+              width: paneWidth,
+              child: _buildAssistantPanel(
+                cubit,
+                onClose: () => setState(() => _assistantOpen = false),
               ),
-              onSubmitted: (v) => Navigator.of(dialogContext).pop(v),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: Text('Cancel', style: TextStyle(color: c.textMuted)),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: AppColors.accent),
-              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
-              child: const Text('Generate'),
             ),
           ],
-        );
-      },
+        ],
+      );
+    });
+  }
+
+  Widget _buildAssistantPanel(
+    ComposeAssistantCubit cubit, {
+    required VoidCallback onClose,
+    bool backNavigation = false,
+  }) {
+    return AgentChatPanel(
+      cubit: cubit,
+      onClose: onClose,
+      useBackNavigation: backNavigation,
+      welcomeTitle: _isReply || _isForward
+          ? 'Ask me to write your message, review it, or change it. I only '
+              'work on what you write above the quoted message.'
+          : 'Ask me to write this message, review it, or change it.',
+      hintText: 'Ask about this message…',
+      onSend: (instruction) => unawaited(cubit.send(instruction)),
+      toolCardBuilder: (item) => item.name == ProposeDraftTool.toolName
+          ? DraftProposalCard(item: item, onApply: _applyProposal)
+          : ToolCallCard(item: item),
+      failureText: _assistantFailureText,
     );
   }
 
-  /// Reacts to streaming state from [AiComposeCubit], inserting each new token
-  /// delta at the saved editor caret via [HtmlEmailEditorState.insertAtCursor]
-  /// (no innerHTML rewrite, no caret reset), so the draft streams in smoothly
-  /// where the user positioned the cursor.
-  /// Inserts any not-yet-rendered portion of [text] at the editor caret.
-  void _insertAiDelta(String text) {
-    if (text.length <= _aiInsertedLen) return;
-    final editor = _htmlEditorKey.currentState;
-    // If the editor isn't mounted yet, don't advance the cursor — the missing
-    // text is retried on the next delta and finally reconciled on Done, so
-    // streamed tokens are never permanently lost (M3).
-    if (editor == null) return;
-    final delta = text.substring(_aiInsertedLen);
-    editor.insertAtCursor(delta);
-    // Advance only after a (best-effort) insert against a mounted editor.
-    _aiInsertedLen = text.length;
+  /// Never a provider's raw error body (L12) — `failure.message` can carry
+  /// one verbatim. Failures this app words itself are shown; anything from
+  /// the wire is logged and replaced by a fixed message.
+  static String _assistantFailureText(Failure failure) {
+    switch (failure) {
+      case NoProviderConfigured():
+        return 'No AI provider is set up for composing. Choose one in '
+            'Settings.';
+      case UnsupportedFailure(:final message)
+          when message == ComposeAssistantCubit.unreadableDraftMessage:
+        return message;
+      default:
+        debugPrint('Compose AI turn failed: ${failure.message}');
+        return "Couldn't get an answer from the AI. Please try again.";
+    }
   }
 
-  /// Finalises the streamed AI draft. When the editor was (re)mounted for this
-  /// generation the streamed caret/inserts can't be trusted (early deltas may
-  /// have raced the fresh webview or been clobbered by its initial setContent),
-  /// so we authoritatively rebuild the editor content as base + full draft
-  /// rather than relying on [_aiInsertedLen]. Otherwise we flush any trailing
-  /// delta into the already-live editor (M3).
-  void _finishAiDraft(String text) {
-    final editor = _htmlEditorKey.currentState;
-    if (editor == null) {
-      _aiReconcileFull = false;
-      return;
-    }
-    if (_aiReconcileFull) {
-      final full = _aiBaseHtml + _plainToHtml(text);
-      editor.setContent(full);
-      _htmlBodyCache = full;
-      _aiInsertedLen = text.length;
+  /// The message as it stands, for one assistant turn: what the user wrote
+  /// above the quote (signature taken out when it is there unedited), the
+  /// header fields, and the message being answered. Null when the quote's
+  /// start can't be found in a body that should have one.
+  Future<ComposeDraftSnapshot?> _readDraftSnapshot() async {
+    final String draft;
+    final bool signatureSeparated;
+    if (_bodyType == EmailBodyType.html) {
+      final composition =
+          await _htmlEditorKey.currentState?.getComposition(_signatureText);
+      if (composition == null) return null;
+      if (!composition.foundBoundary &&
+          _quoteStillRequired(composition.text)) {
+        return null;
+      }
+      draft = composition.text;
+      signatureSeparated = composition.foundSignature;
     } else {
-      _insertAiDelta(text);
+      final body = _bodyController.text;
+      final composition = PlainComposition.locate(body, _signatureText);
+      if (!composition.foundBoundary &&
+          _quoteStillRequired(composition.text(body))) {
+        return null;
+      }
+      draft = composition.text(body);
+      signatureSeparated = composition.foundSignature;
     }
-    _aiReconcileFull = false;
+    if (!mounted) return null;
+    final original = widget.originalEmail;
+    return ComposeDraftSnapshot(
+      draft: draft,
+      subject: _subjectController.text,
+      to: List<String>.of(_toRecipients),
+      cc: List<String>.of(_ccRecipients),
+      isReply: _isReply,
+      isForward: _isForward,
+      signatureSeparated: signatureSeparated,
+      originalMessage: original == null
+          ? null
+          : (original.bodyType == EmailBodyType.html
+              ? _stripHtml(original.body)
+              : original.body),
+    );
   }
 
-  void _onAiComposeStateChanged(BuildContext context, AiComposeState state) {
-    switch (state) {
-      case AiComposeIdle():
-        break;
-      case AiComposeStreaming(:final text):
-        _insertAiDelta(text);
-      case AiComposeDone(:final text):
-        _finishAiDraft(text);
-        setState(() => _aiGenerating = false);
+  /// Puts a proposal in place of what the user wrote, leaving the signature
+  /// and the quoted message as they are. A refusal is shown on the proposal
+  /// card itself, next to the button that was pressed.
+  Future<DraftApplyOutcome> _applyProposal(String text) async {
+    if (_bodyType == EmailBodyType.html) {
+      final editor = _htmlEditorKey.currentState;
+      if (editor == null) {
+        return DraftApplyOutcome.refused(_proposalRefusal(''));
+      }
+      final before = await editor.getContent();
+      final composition = await editor.getComposition(_signatureText);
+      final requireBoundary = composition == null ||
+          composition.foundBoundary ||
+          _quoteStillRequired(composition.text);
+      final refused = await editor.replaceComposition(
+        _plainToHtml(text.trim()),
+        _signatureText,
+        requireBoundary: requireBoundary,
+      );
+      if (refused != null) {
+        return DraftApplyOutcome.refused(_proposalRefusal(refused));
+      }
+      if (!mounted) return DraftApplyOutcome.refused(_proposalRefusal(''));
+      _htmlBodyCache = await editor.getContent();
+      _scheduleDraftSave();
+      return DraftApplyOutcome.applied(() async {
+        final current = _htmlEditorKey.currentState;
+        if (current == null || !mounted) return;
+        await current.setContent(before);
+        _htmlBodyCache = before;
         _scheduleDraftSave();
-      case AiComposeError(:final failure):
-        setState(() => _aiGenerating = false);
-        // Never surface raw provider/exception text — failure.message can carry
-        // verbatim provider error bodies. Log the detail and show a fixed,
-        // user-safe message instead (L12).
-        debugPrint('AI draft failed: ${failure.message}');
-        showNotice("Couldn't generate the AI draft. Please try again.");
+      });
     }
+
+    final body = _bodyController.text;
+    final composition = PlainComposition.locate(body, _signatureText);
+    if (!composition.foundBoundary &&
+        _quoteStillRequired(composition.text(body))) {
+      return DraftApplyOutcome.refused(_proposalRefusal('boundary'));
+    }
+    // The controller's listener schedules the draft save.
+    _bodyController.text = composition.replace(body, text);
+    return DraftApplyOutcome.applied(() async {
+      if (mounted) _bodyController.text = body;
+    });
   }
+
+  static String _proposalRefusal(String reason) => switch (reason) {
+        'boundary' => "Couldn't tell where your message ends and the quoted "
+            'message begins, so nothing was changed. Copy it in instead.',
+        'images' => 'Your message has pictures in it, which applying this '
+            'would remove. Copy it in instead.',
+        _ => "Couldn't update the message. Copy it in instead.",
+      };
 
   void _addDroppedFiles(DropDoneDetails details) {
     Future.wait(details.files.map((f) async {
@@ -1960,15 +2054,11 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
           _notice = (state as ComposeError).message;
         });
       },
-      child: BlocListener<AiComposeCubit, AiComposeState>(
-        bloc: _aiCubit,
-        listener: _onAiComposeStateChanged,
-        child: DropTarget(
-          onDragDone: _addDroppedFiles,
-          onDragEntered: (_) => setState(() => _isDragOver = true),
-          onDragExited: (_) => setState(() => _isDragOver = false),
-          child: _buildContent(context, c),
-        ),
+      child: DropTarget(
+        onDragDone: _addDroppedFiles,
+        onDragEntered: (_) => setState(() => _isDragOver = true),
+        onDragExited: (_) => setState(() => _isDragOver = false),
+        child: _withAssistantPane(context, c, _buildContent(context, c)),
       ),
     );
   }
@@ -1993,7 +2083,8 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
             _switchToHtml();
           }
         },
-        onAiCompose: _aiGenerating ? null : () => _onAiCompose(context),
+        onAiCompose: () => _toggleAssistant(context),
+        aiActive: _assistantOpen,
         onInsertSignature: _signatureHeldBack ? _insertSignature : null,
       );
 
@@ -2029,12 +2120,23 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
         const scrollPadding = EdgeInsets.fromLTRB(16, 16, 16, 8);
         const editorGap = 8.0;
         final foldedPadding = scrollPadding.copyWith(top: 0);
-        return Column(
+        //
+        // With the AI pane open the screen splits: the message on top, the
+        // pane below it in place of the footer, both added or removed as
+        // siblings *after* the editor's `Expanded`, for the same reason. Back
+        // closes the pane rather than the message.
+        final split = _assistantSplit && _assistantCubit != null;
+        return PopScope(
+          canPop: !split,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop && split) _closeAssistantSplit();
+          },
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _TitleBar(title: _title, onClose: () => _requestClose(context)),
             Divider(height: 1, color: c.border),
-            if (!_headerExpanded) ...[
+            if (!_headerExpanded && !split) ...[
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 4, 12, 4),
                 child: _CollapsedFieldsSummary(
@@ -2129,8 +2231,18 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
                 onDismiss: () => setState(() => _notice = null),
               ),
             Divider(height: 1, color: c.border),
-            footer,
+            if (split)
+              Expanded(
+                child: _buildAssistantPanel(
+                  _assistantCubit!,
+                  onClose: _closeAssistantSplit,
+                  backNavigation: true,
+                ),
+              )
+            else
+              footer,
           ],
+          ),
         );
       }
 
@@ -2258,8 +2370,8 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
                 _switchToHtml();
               }
             },
-            onAiCompose:
-                _aiGenerating ? null : () => _onAiCompose(context),
+            // [ComposeDialog] has no room for the side pane; nothing opens it.
+            onAiCompose: null,
             onInsertSignature: _signatureHeldBack ? _insertSignature : null,
           ),
         ],
@@ -2931,6 +3043,7 @@ class _Footer extends StatefulWidget {
     required this.bodyType,
     required this.onBodyTypeChanged,
     this.onAiCompose,
+    this.aiActive = false,
     this.onInsertSignature,
   });
   final VoidCallback onSend;
@@ -2943,8 +3056,10 @@ class _Footer extends StatefulWidget {
   final DateTime? draftSavedAt;
   final EmailBodyType bodyType;
   final ValueChanged<EmailBodyType> onBodyTypeChanged;
-  // Opens the AI draft prompt. Null while a generation is already in flight.
+  // Opens or closes the AI side pane.
   final VoidCallback? onAiCompose;
+  // The pane is open; the button is drawn pressed.
+  final bool aiActive;
   // Puts back a signature an internal reply opened without. Null — and no
   // button — when there is none held back.
   final VoidCallback? onInsertSignature;
@@ -3088,6 +3203,9 @@ class _FooterState extends State<_Footer> with SingleTickerProviderStateMixin {
             label: const Text('AI', style: TextStyle(fontSize: 13)),
             style: TextButton.styleFrom(
               foregroundColor: AppColors.accent,
+              backgroundColor: widget.aiActive
+                  ? AppColors.accent.withValues(alpha: 0.14)
+                  : null,
               padding:
                   const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               minimumSize: Size(0, touchTarget(0)),

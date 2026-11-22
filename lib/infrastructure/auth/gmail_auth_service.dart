@@ -133,6 +133,25 @@ class GmailAuthService implements AuthService {
         granted.contains('https://www.googleapis.com/auth/drive');
   }
 
+  /// Full Drive access, for *sharing* a file the compose window links to with
+  /// recipients who cannot open it (`permissions.create`). Requested
+  /// incrementally — see [extraScopes] — and only when the sender chooses to
+  /// share.
+  ///
+  /// Nothing narrower can do it: `drive.readonly` writes nothing, and
+  /// `drive.file` reaches only files this app created or the user picked
+  /// through Google's own picker, which NightMail's picker is not. Like
+  /// `drive.readonly` it is restricted, which is the reason it is never asked
+  /// for until the moment it is needed.
+  static const driveScope = 'https://www.googleapis.com/auth/drive';
+
+  /// Whether a token's granted `scope` carries [driveScope]. Exact membership:
+  /// every narrower Drive scope starts with the same string.
+  static bool grantsDriveWrite(String? scope) {
+    if (scope == null || scope.isEmpty) return false;
+    return scope.split(RegExp(r'\s+')).contains(driveScope);
+  }
+
   /// Full mailbox access, for permanently deleting mail (`messages.batchDelete`
   /// and `messages.delete`, which accept no lesser scope). Requested
   /// incrementally — see [extraScopes].

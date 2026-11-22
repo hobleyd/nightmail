@@ -16,7 +16,7 @@ class HtmlViewController {
   final _onLinkRequest      = StreamController<void>.broadcast();
   final _onPageLoaded       = StreamController<void>.broadcast();
   final _onLinkOpened       = StreamController<String>.broadcast();
-  final _onAttachRequested  = StreamController<void>.broadcast();
+  final _onAttachRequested  = StreamController<String>.broadcast();
   final _onClickFocus       = StreamController<void>.broadcast();
   final _onImageDoubleClicked = StreamController<String>.broadcast();
   final _onImagePasted      = StreamController<String>.broadcast();
@@ -30,7 +30,9 @@ class HtmlViewController {
   /// cancelled by the native side so the caller can open it externally.
   Stream<String> get onLinkOpened      => _onLinkOpened.stream;
   /// Fires when the user clicks the attachment button in the toolbar.
-  Stream<void>   get onAttachRequested => _onAttachRequested.stream;
+  /// The page's `onAttachRequest`, with whatever value it posted (the compose
+  /// editor posts which attach menu item was chosen; empty for none).
+  Stream<String> get onAttachRequested => _onAttachRequested.stream;
   /// Fires when a raw click forces native OS focus onto the webview (macOS
   /// only — WKWebView is a plain sibling NSView there, so a click steals
   /// first-responder status without Flutter's own FocusNode tree finding
@@ -87,7 +89,7 @@ class HtmlViewController {
         _onLinkOpened.add(map['value'] as String? ?? '');
         break;
       case 'onAttachRequest':
-        _onAttachRequested.add(null);
+        _onAttachRequested.add(map['value'] as String? ?? '');
         break;
       case 'onClickFocus':
         _onClickFocus.add(null);

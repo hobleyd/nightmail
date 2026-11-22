@@ -1053,7 +1053,7 @@ class _SignatureEditorState extends State<_SignatureEditor> {
                   readOnly: !widget.editable,
                   onContentChanged: _onHtmlChanged,
                   onLinkRequested: () => _onLinkRequested(context),
-                  onAttachRequested: () {},
+                  onAttachRequested: (_) {},
                 )
               : Padding(
                   padding: const EdgeInsets.all(10),

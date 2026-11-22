@@ -378,7 +378,7 @@ class _OutOfOfficeViewState extends State<_OutOfOfficeView> {
                       initialHtml: state.saved?.messageHtml ?? '',
                       onContentChanged: _onEditorChanged,
                       onLinkRequested: _onLinkRequested,
-                      onAttachRequested: () {},
+                      onAttachRequested: (_) {},
                     )
                   : Padding(
                       padding: const EdgeInsets.all(10),

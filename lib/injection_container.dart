@@ -27,6 +27,7 @@ import 'data/datasources/local/sender_local_datasource.dart';
 import 'data/datasources/local/sender_local_datasource_impl.dart';
 import 'data/repositories/calendar_repository_impl.dart';
 import 'data/repositories/cloud_drive_repository_impl.dart';
+import 'data/repositories/cloud_file_repository_impl.dart';
 import 'data/repositories/server_discovery_repository_impl.dart';
 import 'data/datasources/remote/nightware_discovery_datasource.dart';
 import 'data/repositories/contact_cache_repository_impl.dart';
@@ -82,6 +83,8 @@ import 'presentation/blocs/out_of_office/out_of_office_cubit.dart';
 import 'presentation/blocs/mail_rules/mail_rules_cubit.dart';
 import 'domain/repositories/calendar_repository.dart';
 import 'domain/repositories/cloud_drive_repository.dart';
+import 'domain/repositories/cloud_file_repository.dart';
+import 'domain/usecases/cloud_files.dart';
 import 'domain/repositories/server_discovery_repository.dart';
 import 'domain/repositories/contact_details_repository.dart';
 import 'domain/repositories/contact_cache_repository.dart';
@@ -411,6 +414,9 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton<CloudDriveRepository>(
     () => CloudDriveRepositoryImpl(accountManager: sl<AccountManager>()),
   );
+  sl.registerLazySingleton<CloudFileRepository>(
+    () => CloudFileRepositoryImpl(accountManager: sl<AccountManager>()),
+  );
   sl.registerLazySingleton<DirectoryContactsRepository>(
     () => DirectoryContactsRepositoryImpl(accountManager: sl<AccountManager>()),
   );
@@ -533,6 +539,12 @@ Future<void> configureDependencies() async {
   sl.registerLazySingleton(() => OfficePreviewService());
   sl.registerLazySingleton(() => MarkdownPreviewService());
   sl.registerLazySingleton(() => FetchCloudDocument(sl<CloudDriveRepository>()));
+  sl.registerLazySingleton(() => ListCloudFiles(sl<CloudFileRepository>()));
+  sl.registerLazySingleton(() => SearchCloudFiles(sl<CloudFileRepository>()));
+  sl.registerLazySingleton(() => DownloadCloudFile(sl<CloudFileRepository>()));
+  sl.registerLazySingleton(
+      () => CheckCloudFileAccess(sl<CloudFileRepository>()));
+  sl.registerLazySingleton(() => ShareCloudFile(sl<CloudFileRepository>()));
   sl.registerLazySingleton(
       () => DiscoverNightwareServer(sl<ServerDiscoveryRepository>()));
   sl.registerLazySingleton(() => GetTaskLists(sl<TasksRepository>()));

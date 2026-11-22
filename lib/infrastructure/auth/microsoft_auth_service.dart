@@ -168,6 +168,32 @@ class MicrosoftAuthService implements AuthService {
   static bool grantsFileAccess(String? scope) =>
       scope != null && scope.contains('Files.Read');
 
+  /// Write access to the account's OneDrive and the SharePoint files it can
+  /// edit, for *sharing* a file the compose window links to with recipients
+  /// who cannot open it (`/items/{id}/invite`). `Files.Read.All` cannot invite
+  /// anybody. Requested incrementally — see [extraScopes] — and only when the
+  /// sender chooses to share, never to browse or attach.
+  static const filesReadWriteScope =
+      'https://graph.microsoft.com/Files.ReadWrite.All';
+
+  /// Whether a token's granted `scope` carries [filesReadWriteScope]. Whole
+  /// tokens, not a substring: [grantsFileAccess]'s `Files.Read` is a prefix of
+  /// it.
+  static bool grantsFileWrite(String? scope) =>
+      _hasScope(scope, filesReadWriteScope, 'Files.ReadWrite.All');
+
+  /// Whether a token carries exactly [filesReadScope] — what a refresh may ask
+  /// for again. [grantsFileAccess] also accepts the write scope, and asking a
+  /// refresh for `Files.Read.All` on a token consented only to the write one
+  /// would fail the refresh.
+  static bool _grantsFileReadExactly(String? scope) =>
+      _hasScope(scope, filesReadScope, 'Files.Read.All');
+
+  static bool _hasScope(String? scope, String full, String short) {
+    if (scope == null || scope.isEmpty) return false;
+    return scope.split(RegExp(r'\s+')).any((s) => s == full || s == short);
+  }
+
   /// Write access to the mailbox's own settings, which is what an automatic
   /// reply ("out of office") is stored in. Requested incrementally — see
   /// [extraScopes].
@@ -242,7 +268,8 @@ class MicrosoftAuthService implements AuthService {
   List<String> _refreshScopes(AuthToken token) => endpoints.isMicrosoft
       ? [
           ..._scopes,
-          if (grantsFileAccess(token.scope)) filesReadScope,
+          if (_grantsFileReadExactly(token.scope)) filesReadScope,
+          if (grantsFileWrite(token.scope)) filesReadWriteScope,
           if (grantsMailboxSettingsWrite(token.scope))
             mailboxSettingsWriteScope,
           if (grantsThreatSubmission(token.scope)) threatSubmissionScope,

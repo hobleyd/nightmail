@@ -115,6 +115,39 @@ body { display: flex; flex-direction: column; }
   background: #cc0000;
 }
 
+/* attach menu: Attach from Computer / Attach from Cloud / Link from Cloud */
+#btn-attach { gap: 1px; }
+#btn-attach .caret { font-size: 9px; opacity: 0.7; }
+.attach-menu {
+  position: absolute;
+  z-index: 100;
+  min-width: 190px;
+  background: var(--toolbar-bg);
+  border: 1px solid var(--toolbar-border);
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  user-select: none;
+}
+.attach-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  color: var(--fg);
+  border: none;
+  border-radius: 4px;
+  padding: 7px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.attach-menu button:hover,
+.attach-menu button:focus-visible { background: var(--btn-hover); outline: none; }
+@media (pointer: coarse) {
+  .attach-menu button { padding: 12px 14px; font-size: 15px; }
+}
+
 /* colour picker popup */
 .color-popup {
   position: absolute;
@@ -317,7 +350,12 @@ body { display: flex; flex-direction: column; }
   <span class="sep"></span>
   <button title="Insert link" id="btn-link" onmousedown="event.preventDefault(); requestLink()">&#x1F517;</button>
   <button title="Remove formatting" id="btn-removeformat" onmousedown="event.preventDefault(); fmt('removeFormat')">&#x2715;</button>
-  <button title="Attach file" style="margin-left:auto" onmousedown="event.preventDefault(); requestAttach()">&#x1F4CE;</button>
+  <button title="Attach" id="btn-attach" style="margin-left:auto" aria-haspopup="menu" onmousedown="event.preventDefault(); toggleAttachMenu()">&#x1F4CE;<span class="caret">&#x25BE;</span></button>
+</div>
+<div class="attach-menu" id="attach-menu" role="menu" style="display:none;">
+  <button role="menuitem" onmousedown="event.preventDefault(); chooseAttach('computer')">Attach from Computer&#x2026;</button>
+  <button role="menuitem" onmousedown="event.preventDefault(); chooseAttach('cloudAttach')">Attach from Cloud&#x2026;</button>
+  <button role="menuitem" onmousedown="event.preventDefault(); chooseAttach('cloudLink')">Link from Cloud&#x2026;</button>
 </div>
 <div class="color-popup" id="color-popup" style="display:none;">
   <div class="color-grid" id="color-grid"></div>
@@ -425,8 +463,15 @@ document.addEventListener('mousedown', function(e) {
     closeColorPopup();
   }
 });
+document.addEventListener('mousedown', function(e) {
+  if (attachMenu.style.display === 'block' &&
+      !attachMenu.contains(e.target) &&
+      !document.getElementById('btn-attach').contains(e.target)) {
+    closeAttachMenu();
+  }
+});
 document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') closeColorPopup();
+  if (e.key === 'Escape') { closeColorPopup(); closeAttachMenu(); }
 });
 
 colorInput.addEventListener('input', function(e) {
@@ -683,7 +728,83 @@ function requestLink() {
 }
 
 function requestAttach() {
-  _flutterNotify('onAttachRequest');
+  _flutterNotify('onAttachRequest', 'computer');
+}
+
+// The paperclip opens a menu rather than the file picker: from the computer,
+// from a cloud drive as an attachment, or from a cloud drive as a link. The
+// menu is drawn here, inside the page, because on the desktop this webview is
+// a native view laid *over* Flutter — nothing Flutter draws can sit on top of
+// the toolbar.
+const attachMenu = document.getElementById('attach-menu');
+
+function toggleAttachMenu() {
+  if (attachMenu.style.display === 'block') { closeAttachMenu(); return; }
+  closeColorPopup();
+  const r = document.getElementById('btn-attach').getBoundingClientRect();
+  attachMenu.style.display = 'block';
+  const w = attachMenu.offsetWidth;
+  let left = r.right - w;
+  if (left < 4) left = 4;
+  attachMenu.style.left = left + 'px';
+  attachMenu.style.top = (r.bottom + 4) + 'px';
+}
+
+function closeAttachMenu() {
+  attachMenu.style.display = 'none';
+}
+
+// A cloud link goes in where the caret was when the menu was opened. The host
+// hides this webview while its file picker is up, and WebKit drops the DOM
+// selection when the view loses first responder (see requestLink below), so
+// the range is snapshotted on the way out, exactly as the link button does.
+var pendingCloudLinkRange = null;
+
+function chooseAttach(source) {
+  closeAttachMenu();
+  pendingCloudLinkRange = null;
+  if (source === 'cloudLink') {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      const r = sel.getRangeAt(0);
+      if (_rangeInEditor(r)) pendingCloudLinkRange = r.cloneRange();
+    }
+  }
+  _flutterNotify('onAttachRequest', source);
+}
+
+function _escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, function(c) {
+    return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+  });
+}
+
+// Inserts a link to a cloud file at the snapshotted caret, titled with the
+// file's name. With text selected, that text becomes the link instead — the
+// same thing the link button does with a selection. Through insertHTML so it
+// is one undo step; the trailing space keeps typing after it out of the link.
+function insertCloudLink(url, name) {
+  editor.focus();
+  const sel = window.getSelection();
+  if (pendingCloudLinkRange && _rangeInEditor(pendingCloudLinkRange)) {
+    sel.removeAllRanges();
+    sel.addRange(pendingCloudLinkRange);
+  } else if (!sel.rangeCount || !_rangeInEditor(sel.getRangeAt(0))) {
+    const end = document.createRange();
+    end.selectNodeContents(editor);
+    end.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(end);
+  }
+  pendingCloudLinkRange = null;
+  const href = _escapeHtml(url);
+  if (sel.rangeCount && !sel.getRangeAt(0).collapsed) {
+    document.execCommand('createLink', false, url);
+  } else {
+    document.execCommand('insertHTML', false,
+        '<a href="' + href + '">' + _escapeHtml(name) + '</a>&nbsp;');
+  }
+  scheduleChange();
 }
 
 function insertLink(url) {

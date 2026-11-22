@@ -42,6 +42,7 @@ import '../http/google_tasks_http_client.dart';
 import '../http/graph_http_client.dart';
 import '../../core/utils/cloud_document_link.dart';
 import '../../domain/entities/cloud_document.dart';
+import '../../domain/entities/cloud_file.dart';
 import '../../domain/entities/graph_endpoints.dart';
 import '../../core/error/failures.dart';
 import 'account.dart';
@@ -448,6 +449,97 @@ class AccountManager {
     };
   }
 
+  /// The accounts the compose window's cloud file picker can browse, active
+  /// account first: every Microsoft 365 and Gmail account, and each NightMail
+  /// Server that fronts a Nextcloud (publishes file sites). Shared Microsoft
+  /// mailboxes are left out — they hold no drive of their own.
+  Future<List<CloudFileSource>> cloudFileSources() async {
+    CloudDriveProvider? providerOf(Account a) => switch (a) {
+          MicrosoftAccount(parentAccountId: final String _) => null,
+          MicrosoftAccount(isNightmailServer: true)
+              when a.endpoints.filesBaseUrls.isEmpty =>
+            null,
+          MicrosoftAccount(isNightmailServer: true) =>
+            CloudDriveProvider.nextcloud,
+          MicrosoftAccount() => CloudDriveProvider.microsoft,
+          GmailAccount() => CloudDriveProvider.google,
+          ImapAccount() => null,
+        };
+    final active = activeAccount;
+    final ordered = [
+      ?active,
+      ..._accounts.where((a) => a.id != active?.id),
+    ];
+    return [
+      for (final account in ordered)
+        if (providerOf(account) case final provider?)
+          CloudFileSource(
+            accountId: account.id,
+            email: account.emailAddress,
+            provider: provider,
+            hasReadAccess: await hasCloudDriveAccess(account.id),
+          ),
+    ];
+  }
+
+  /// The mail domains [accountId] answers at — what an "anyone in my
+  /// organization" sharing link reaches.
+  Set<String> organizationDomainsFor(String accountId) => {
+        for (final address in accountById(accountId)?.allAddresses ?? {})
+          if (address.contains('@')) address.split('@').last,
+      };
+
+  /// Whether [accountId]'s stored token may grant other people access to its
+  /// files — the compose window's "share it with them" after linking one.
+  ///
+  /// A NightMail Server has no incremental consent: its token carries every
+  /// scope it published, so whether the share works is the server's answer.
+  Future<bool> hasCloudDriveShareAccess(String accountId) async {
+    final account = accountById(accountId);
+    if (account is MicrosoftAccount && account.isNightmailServer) return true;
+    final authService =
+        account == null ? null : _buildOAuthServiceForAccount(account);
+    if (authService == null) return false;
+    final token = await authService.getStoredToken();
+    if (token == null) return false;
+    return switch (account) {
+      MicrosoftAccount() => MicrosoftAuthService.grantsFileWrite(token.scope),
+      GmailAccount() => GmailAuthService.grantsDriveWrite(token.scope),
+      _ => false,
+    };
+  }
+
+  /// Runs the interactive sign-in again for [accountId], asking for write
+  /// access to its files so a linked file can be shared with recipients. Same
+  /// shape as [requestCloudDriveAccess]; returns whether it came back granted.
+  ///
+  /// Microsoft is asked for the read scope alongside the write one: a refresh
+  /// re-requests exactly what the token proves, and a token holding only the
+  /// write scope would otherwise lose the read one the preview relies on.
+  Future<bool> requestCloudDriveShareAccess(String accountId) async {
+    final account = accountById(accountId);
+    if (account == null) throw StateError('Unknown account: $accountId');
+    final extraScopes = switch (account) {
+      MicrosoftAccount(isNightmailServer: true) => null,
+      MicrosoftAccount() => const [
+          MicrosoftAuthService.filesReadScope,
+          MicrosoftAuthService.filesReadWriteScope,
+        ],
+      GmailAccount() => const [GmailAuthService.driveScope],
+      ImapAccount() => null,
+    };
+    if (extraScopes == null) return account is MicrosoftAccount;
+
+    final token =
+        await _signInExistingAccount(account, extraScopes: extraScopes);
+    if (accountId == activeAccount?.id) _buildDatasourcesForActiveAccount();
+    return switch (account) {
+      MicrosoftAccount() => MicrosoftAuthService.grantsFileWrite(token.scope),
+      GmailAccount() => GmailAuthService.grantsDriveWrite(token.scope),
+      ImapAccount() => false,
+    };
+  }
+
   /// Whether [accountId]'s stored token already carries Gmail's full-mailbox
   /// scope, which is the only one that can permanently delete mail.
   ///
@@ -654,6 +746,10 @@ class AccountManager {
       case MicrosoftAccount():
         final cfg = _microsoftAuthConfig(account);
         datasource = GraphDriveDatasourceImpl(
+          accountId: account.id,
+          provider: account.isNightmailServer
+              ? CloudDriveProvider.nextcloud
+              : CloudDriveProvider.microsoft,
           client: GraphHttpClient(
             authService: _microsoftAuthServiceFor(cfg),
             onAuthFailure: () =>
@@ -665,6 +761,7 @@ class AccountManager {
         );
       case GmailAccount():
         datasource = GoogleDriveDatasourceImpl(
+          accountId: account.id,
           client: GoogleDriveHttpClient(
             authService: GmailAuthService(
               clientId: account.clientId ?? AppConfig.gmailClientId,

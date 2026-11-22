@@ -15,17 +15,20 @@ import '../../core/error/failures.dart';
 import '../../core/platform/touch_metrics.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/signature/signature_merge_engine.dart';
+import '../../core/error/failures.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/consumer_email_domain.dart';
 import '../../core/utils/subject_prefixes.dart';
 import '../../infrastructure/accounts/account.dart';
 import '../../domain/entities/ai/compose_draft_snapshot.dart';
+import '../../domain/entities/cloud_file.dart';
 import '../../domain/entities/email.dart';
 import '../../domain/entities/email_attachment.dart';
 import '../../domain/entities/inline_attachment.dart';
 import '../../domain/entities/local_attachment.dart';
 import '../../domain/usecases/ai/agent/compose_agent_tools.dart';
 import '../../domain/usecases/ai/run_compose_assistant.dart';
+import '../../domain/usecases/cloud_files.dart';
 import '../../domain/usecases/delete_server_draft.dart';
 import '../../domain/usecases/download_attachment.dart';
 import '../../domain/usecases/get_raw_email_bytes.dart';
@@ -40,7 +43,9 @@ import '../blocs/compose/compose_state.dart';
 import 'ai/agent_chat_panel.dart';
 import 'ai/draft_proposal_card.dart';
 import 'ai/tool_call_card.dart';
+import 'cloud_file_picker_dialog.dart';
 import 'compose_body_builder.dart';
+import 'compose_cloud_links.dart';
 import 'compose_composition.dart';
 import 'forward_as_attachment.dart';
 import 'html_email_editor.dart';
@@ -256,6 +261,15 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
   final FocusNode _bodyFocus = FocusNode();
   List<String> _excludedAttachmentIds = [];
   List<LocalAttachment> _localAttachments = [];
+
+  /// Links "Link from Cloud" put in the body, by URL, so Send can check that
+  /// the recipients can open them — see [prepareCloudLinksForSend]. In memory
+  /// only: a draft reopened later sends its links unchecked.
+  final Map<String, CloudFile> _cloudLinks = {};
+
+  /// "Attach from Cloud" downloads still running. Send waits for them, so a
+  /// message never goes without the file the sender just picked.
+  final Set<Future<void>> _cloudDownloads = {};
   // cid: references the quoted body arrived with that nothing can resolve.
   // See [_hasOrphanedInlineImages].
   Set<String> _inheritedOrphanCids = const {};
@@ -1762,6 +1776,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     }
 
     if (!await _awaitForwardedAttachments()) return;
+    if (!await _awaitCloudDownloads()) return;
 
     final String effectiveBody;
     final EmailBodyType effectiveBodyType;
@@ -1769,10 +1784,10 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     if (_bodyType == EmailBodyType.html) {
       final freshHtml = await _htmlEditorKey.currentState?.getContent();
       if (freshHtml != null) _htmlBodyCache = freshHtml;
-      effectiveBody = _substituteInlineImageSrcs(_htmlBodyCache);
+      final html = _substituteInlineImageSrcs(_htmlBodyCache);
       effectiveBodyType = EmailBodyType.html;
 
-      if (_hasOrphanedInlineImages(effectiveBody)) {
+      if (_hasOrphanedInlineImages(html)) {
         setState(() => _sent = false);
         if (!mounted) return;
         final editorState = _htmlEditorKey.currentState;
@@ -1783,6 +1798,21 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
         if (sendAnyway != true) return;
         setState(() => _sent = true);
       }
+
+      if (!context.mounted) return;
+      final prepared = await prepareCloudLinksForSend(
+        context: context,
+        html: html,
+        links: _cloudLinks,
+        recipients: [...to, ...cc, ...bcc],
+        showOverEditor: _overEditor,
+        showNotice: showNotice,
+      );
+      if (prepared == null) {
+        if (mounted) setState(() => _sent = false);
+        return;
+      }
+      effectiveBody = prepared;
     } else {
       effectiveBody = _bodyController.text.trim();
       effectiveBodyType = EmailBodyType.text;
@@ -1936,6 +1966,112 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
     _scheduleDraftSave();
   }
 
+  Future<void> _onAttachRequested(
+      BuildContext context, AttachSource source) async {
+    switch (source) {
+      case AttachSource.computer:
+        await _pickAttachments();
+      case AttachSource.cloudAttach:
+        final files = await _overEditor(() => showCloudFilePicker(context,
+            purpose: CloudFilePickerPurpose.attach,
+            preferredAccountId: _selectedAccountId));
+        if (files != null && files.isNotEmpty) _attachCloudFiles(files);
+      case AttachSource.cloudLink:
+        final files = await _overEditor(() => showCloudFilePicker(context,
+            purpose: CloudFilePickerPurpose.link,
+            preferredAccountId: _selectedAccountId));
+        if (files != null && files.isNotEmpty) await _linkCloudFiles(files);
+    }
+  }
+
+  /// Runs [dialog] with the editor webview hidden: on the desktop it is a
+  /// native view laid over Flutter, so anything Flutter draws on top of it
+  /// would be underneath it instead (docs/claude/webviews.md).
+  Future<T?> _overEditor<T>(Future<T?> Function() dialog) async {
+    final editorState = _htmlEditorKey.currentState;
+    if (editorState != null) await editorState.hide();
+    try {
+      return await dialog();
+    } finally {
+      if (mounted && editorState != null) await editorState.show();
+    }
+  }
+
+  /// Downloads each picked cloud file and adds it as an attachment once it
+  /// lands. Runs in the background so the sender can keep writing; the notice
+  /// strip says what is happening and what failed.
+  void _attachCloudFiles(List<CloudFile> files) {
+    showNotice(files.length == 1
+        ? 'Downloading ${files.single.name}…'
+        : 'Downloading ${files.length} files…');
+    late final Future<void> download;
+    download = () async {
+      final failures = <String>[];
+      for (final file in files) {
+        final result = await sl<DownloadCloudFile>()(file);
+        if (!mounted) return;
+        result.match(
+          (failure) => failures.add(failure is NetworkFailure
+              ? "Couldn't download ${file.name}: you're offline"
+              : "Couldn't attach ${file.name}: ${failure.message}"),
+          (doc) {
+            setState(() => _localAttachments = [
+                  ..._localAttachments,
+                  LocalAttachment(
+                    name: doc.name,
+                    mimeType: doc.contentType == 'application/octet-stream'
+                        ? LocalAttachment.mimeTypeFromName(doc.name)
+                        : doc.contentType,
+                    bytes: doc.bytes,
+                  ),
+                ]);
+            _scheduleDraftSave();
+          },
+        );
+      }
+      if (!mounted) return;
+      setState(() {
+        _cloudDownloads.remove(download);
+        _notice = failures.isEmpty ? null : failures.join('\n');
+      });
+    }();
+    _cloudDownloads.add(download);
+  }
+
+  /// Waits for [_attachCloudFiles] downloads still running. False when one
+  /// failed (its notice is already showing): the sender decides whether to
+  /// send without it.
+  Future<bool> _awaitCloudDownloads() async {
+    if (_cloudDownloads.isEmpty) return true;
+    await Future.wait(_cloudDownloads.toList());
+    if (!mounted) return false;
+    if (_notice != null) {
+      setState(() => _sent = false);
+      return false;
+    }
+    return true;
+  }
+
+  /// Puts a link to each picked cloud file in the body at the caret, and
+  /// remembers it so Send can check that the recipients can open it.
+  Future<void> _linkCloudFiles(List<CloudFile> files) async {
+    final editor = _htmlEditorKey.currentState;
+    if (editor == null) return;
+    final unlinkable = <String>[];
+    for (final file in files) {
+      final url = file.webUrl;
+      if (url == null || url.isEmpty) {
+        unlinkable.add(file.name);
+        continue;
+      }
+      _cloudLinks[url] = file;
+      await editor.insertCloudLink(url, file.name);
+    }
+    if (unlinkable.isNotEmpty) {
+      showNotice('No link is available for ${unlinkable.join(', ')}');
+    }
+  }
+
   Future<void> _onLinkRequested(BuildContext context) async {
     final editorState = _htmlEditorKey.currentState;
     if (editorState != null) await editorState.hide();
@@ -2045,7 +2181,7 @@ class ComposeFormState extends State<ComposeForm> with WidgetsBindingObserver {
           _scheduleDraftSave();
         },
         onLinkRequested: () => _onLinkRequested(context),
-        onAttachRequested: _pickAttachments,
+        onAttachRequested: (source) => _onAttachRequested(context, source),
         onImagePasted: _onImagePasted,
         onClickFocus: () {
           FocusManager.instance.primaryFocus?.unfocus();

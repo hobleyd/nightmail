@@ -74,6 +74,10 @@ would re-break.
   handling, HTML sanitisation, format-as-you-type (`- `, `1. `, `*bold*`)
 - [`docs/claude/body-links.md`](docs/claude/body-links.md) — `mailto:` and
   cloud-document link handling in a message body
+- [`docs/claude/cloud-attachments.md`](docs/claude/cloud-attachments.md) —
+  the compose paperclip menu: Attach/Link from Cloud across Microsoft 365,
+  NightMail Server and Google Drive, the incremental share scopes, and the
+  send-time check that recipients can open a linked file
 - [`docs/claude/imap.md`](docs/claude/imap.md) — serialising IMAP commands
   through one connection/mailbox selection
 - [`docs/claude/gmail-quota.md`](docs/claude/gmail-quota.md) — what every

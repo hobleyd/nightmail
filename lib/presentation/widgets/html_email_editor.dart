@@ -8,6 +8,26 @@ import 'package:flutter/material.dart';
 import 'package:html_view/html_view.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+/// Which item of the toolbar's attach menu was chosen.
+enum AttachSource {
+  /// A file from this computer, through the system file picker.
+  computer,
+
+  /// A file from a cloud drive, downloaded and attached.
+  cloudAttach,
+
+  /// A file from a cloud drive, put in the body as a link.
+  cloudLink;
+
+  /// The value `editor.html`'s attach menu posts with `onAttachRequest`. An
+  /// empty or unknown value is the plain paperclip: a file from the computer.
+  static AttachSource fromPageValue(String value) => switch (value) {
+        'cloudAttach' => cloudAttach,
+        'cloudLink' => cloudLink,
+        _ => computer,
+      };
+}
+
 class HtmlEmailEditor extends StatefulWidget {
   const HtmlEmailEditor({
     super.key,
@@ -30,9 +50,10 @@ class HtmlEmailEditor extends StatefulWidget {
   /// Called when the user taps the link button in the editor toolbar.
   /// The caller should prompt for a URL and call [insertLink].
   final VoidCallback onLinkRequested;
-  /// Called when the user taps the paperclip button in the editor toolbar.
-  /// The caller should open a file picker and attach the selected files.
-  final VoidCallback onAttachRequested;
+  /// Called when the user picks an item from the toolbar's attach menu. The
+  /// caller opens the matching picker; a cloud link goes back in through
+  /// [insertCloudLink].
+  final ValueChanged<AttachSource> onAttachRequested;
   /// Called when the user pastes an image into the editor. The argument is a
   /// `data:` URL of the pasted image; the caller should register it as an
   /// inline attachment and insert it via [insertImage].
@@ -134,7 +155,7 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> with WidgetsBindingObs
       case 'onLinkRequest':
         widget.onLinkRequested();
       case 'onAttachRequest':
-        widget.onAttachRequested();
+        widget.onAttachRequested(AttachSource.fromPageValue(value));
       case 'onImagePasted':
         widget.onImagePasted?.call(value);
       case 'onOverscroll':
@@ -280,6 +301,12 @@ class HtmlEmailEditorState extends State<HtmlEmailEditor> with WidgetsBindingObs
         'insertImage(${jsonEncode(dataUri)}, ${jsonEncode(contentId)})');
   }
 
+  /// Puts a link to a cloud file at the caret the attach menu was opened
+  /// from, titled [name] — or, when text was selected, links that text.
+  Future<void> insertCloudLink(String url, String name) async {
+    await _host.run('insertCloudLink(${jsonEncode(url)}, ${jsonEncode(name)})');
+  }
+
   Future<void> insertLink(String url) async {
     await _host.run('insertLink(${jsonEncode(url)})');
   }
@@ -361,7 +388,7 @@ class _NativeOverlayHost implements _EditorHost {
             .listen((html) => onEvent('onContentChanged', html)),
         _controller.onLinkRequest.listen((_) => onEvent('onLinkRequest', '')),
         _controller.onAttachRequested
-            .listen((_) => onEvent('onAttachRequest', '')),
+            .listen((value) => onEvent('onAttachRequest', value)),
         _controller.onImagePasted
             .listen((uri) => onEvent('onImagePasted', uri)),
         _controller.onClickFocus.listen((_) => onEvent('onClickFocus', '')),

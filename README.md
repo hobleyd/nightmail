@@ -253,6 +253,8 @@ Settings → Accounts.
   open — never on mail already there, at most once per message, and never in
   a way that could loop (no copies into the Inbox, no forwarding of automatic
   mail)
+- A rule button on each message in the mail list starts a new rule from that
+  message, with its sender already filled in as the condition
 
 ### Updates
 - Checks for a new version at launch and every 6 hours, with a dot on the

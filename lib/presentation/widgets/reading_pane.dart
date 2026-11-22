@@ -1216,6 +1216,8 @@ class _ReadingPaneToolbar extends StatelessWidget {
       accountId: account?.id,
       isO365Account: account is MicrosoftAccount,
       isGmailAccount: account is GmailAccount,
+      isNightmailServerAccount:
+          account is MicrosoftAccount && account.isNightmailServer,
       initialSubject: meetingTitleForSubject(email.subject),
       initialAttendees: guests,
       initialDescription: latestReplyText(email.body, email.bodyType),

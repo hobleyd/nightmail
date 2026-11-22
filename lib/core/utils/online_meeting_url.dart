@@ -38,8 +38,14 @@ String onlineMeetingPlatformName(String url) {
   }
   if (u.contains('meet.google.com')) return 'Google Meet';
   if (u.contains('zoom.us')) return 'Zoom';
+  if (_talkCallPath.hasMatch(u)) return 'Nextcloud Talk';
   return 'Online meeting';
 }
+
+/// A Nextcloud Talk room's public link, `{nextcloud}/call/{token}` (with or
+/// without `index.php`) — what a NightMail Server puts in
+/// `onlineMeeting.joinUrl`.
+final _talkCallPath = RegExp(r'^https?://[^/]+(?:/[^/?#]+)*/call/[a-z0-9]+/?(?:[?#]|$)');
 
 /// A join link anywhere inside free text — how a meeting invitation that only
 /// pastes the link into its body is still made joinable.

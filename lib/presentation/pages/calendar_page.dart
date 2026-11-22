@@ -543,6 +543,17 @@ bool _isO365Account(BuildContext context) {
   return false;
 }
 
+/// A Microsoft-protocol account on a NightMail Server, whose online meetings
+/// are Nextcloud Talk rooms rather than Teams.
+bool _isNightmailServerAccount(BuildContext context) {
+  final state = context.read<AccountCubit>().state;
+  if (state is AccountsLoaded) {
+    final account = state.activeAccount;
+    return account is MicrosoftAccount && account.isNightmailServer;
+  }
+  return false;
+}
+
 bool _isGmailAccount(BuildContext context) {
   final state = context.read<AccountCubit>().state;
   if (state is AccountsLoaded) return state.activeAccount is GmailAccount;
@@ -563,6 +574,7 @@ class _NewEventButton extends StatelessWidget {
           accountId: _accountId(context),
           isO365Account: _isO365Account(context),
           isGmailAccount: _isGmailAccount(context),
+          isNightmailServerAccount: _isNightmailServerAccount(context),
         ),
         borderRadius: BorderRadius.circular(6),
         child: Container(
@@ -861,6 +873,7 @@ class _CalendarDayPanelState extends State<CalendarDayPanel> {
                                   accountId: _accountId(context),
                                   isO365Account: _isO365Account(context),
                                   isGmailAccount: _isGmailAccount(context),
+                                  isNightmailServerAccount: _isNightmailServerAccount(context),
                                 );
                               },
                               child: LayoutBuilder(
@@ -2041,6 +2054,7 @@ class _DayColumnCellState extends State<_DayColumnCell> {
       accountId: _accountId(context),
       isO365Account: _isO365Account(context),
       isGmailAccount: _isGmailAccount(context),
+      isNightmailServerAccount: _isNightmailServerAccount(context),
     );
   }
 
@@ -2227,6 +2241,7 @@ class _PositionedEventState extends State<_PositionedEvent> {
           accountId: _accountId(context),
           isO365Account: _isO365Account(context),
           isGmailAccount: _isGmailAccount(context),
+          isNightmailServerAccount: _isNightmailServerAccount(context),
         );
       } else {
         context.read<CalendarBloc>().add(CalendarEventRescheduleRequested(
@@ -2331,6 +2346,7 @@ class _PositionedEventState extends State<_PositionedEvent> {
       accountId: _accountId(context),
       isO365Account: _isO365Account(context),
       isGmailAccount: _isGmailAccount(context),
+      isNightmailServerAccount: _isNightmailServerAccount(context),
     );
   }
 
@@ -2489,6 +2505,7 @@ Future<void> _openInstanceEditor(
     accountId: _accountId(context),
     isO365Account: _isO365Account(context),
     isGmailAccount: _isGmailAccount(context),
+    isNightmailServerAccount: _isNightmailServerAccount(context),
   );
 }
 
@@ -2501,6 +2518,7 @@ Future<void> _openSeriesEditor(
   final accountId = _accountId(context);
   final isO365 = _isO365Account(context);
   final isGmail = _isGmailAccount(context);
+  final isNightmailServer = _isNightmailServerAccount(context);
   final master =
       await _fetchSeriesMaster(context, event.seriesMasterId ?? event.id);
   if (master == null || !context.mounted) return;
@@ -2510,6 +2528,7 @@ Future<void> _openSeriesEditor(
     accountId: accountId,
     isO365Account: isO365,
     isGmailAccount: isGmail,
+    isNightmailServerAccount: isNightmailServer,
   );
 }
 
@@ -2888,6 +2907,7 @@ Future<void> _openProposeNewTime(
     accountId: _accountId(context),
     isO365Account: _isO365Account(context),
     isGmailAccount: _isGmailAccount(context),
+    isNightmailServerAccount: _isNightmailServerAccount(context),
   );
 }
 

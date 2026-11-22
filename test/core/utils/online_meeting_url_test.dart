@@ -170,6 +170,16 @@ void main() {
     test('Zoom', () {
       expect(onlineMeetingPlatformName('https://acme.zoom.us/j/1'), 'Zoom');
     });
+    test('Nextcloud Talk, as a NightMail Server links it', () {
+      expect(
+          onlineMeetingPlatformName(
+              'https://sharpblue.com.au/cloud/call/abc123xy'),
+          'Nextcloud Talk');
+      expect(
+          onlineMeetingPlatformName(
+              'https://cloud.example.com/index.php/call/k2j9x7q4'),
+          'Nextcloud Talk');
+    });
     test('anything else is still named, never shown as a raw URL', () {
       expect(onlineMeetingPlatformName('https://example.com/room/1'),
           'Online meeting');

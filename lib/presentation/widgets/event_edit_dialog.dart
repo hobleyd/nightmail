@@ -57,6 +57,7 @@ class EventEditDialog extends StatelessWidget {
     this.accountId,
     this.isO365Account = false,
     this.isGmailAccount = false,
+    this.isNightmailServerAccount = false,
     this.initialSubject,
     this.initialAttendees,
     this.initialDescription,
@@ -72,6 +73,7 @@ class EventEditDialog extends StatelessWidget {
   final String? accountId;
   final bool isO365Account;
   final bool isGmailAccount;
+  final bool isNightmailServerAccount;
 
   /// What a *new* meeting starts out with — see [EventEditForm.initialSubject].
   final String? initialSubject;
@@ -99,6 +101,7 @@ class EventEditDialog extends StatelessWidget {
     String? accountId,
     bool isO365Account = false,
     bool isGmailAccount = false,
+    bool isNightmailServerAccount = false,
     String? initialSubject,
     List<String>? initialAttendees,
     String? initialDescription,
@@ -124,6 +127,7 @@ class EventEditDialog extends StatelessWidget {
             accountId: accountId,
             isO365Account: isO365Account,
             isGmailAccount: isGmailAccount,
+            isNightmailServerAccount: isNightmailServerAccount,
             initialSubject: initialSubject,
             initialAttendees: initialAttendees,
             initialDescription: initialDescription,
@@ -144,6 +148,7 @@ class EventEditDialog extends StatelessWidget {
           'accountId': ?accountId,
           if (isO365Account) 'isO365Account': true,
           if (isGmailAccount) 'isGmailAccount': true,
+          if (isNightmailServerAccount) 'isNightmailServerAccount': true,
           'initialSubject': initialSubject,
           'initialAttendees': initialAttendees,
           'initialDescription': initialDescription,
@@ -258,6 +263,7 @@ class _MobileEventEditPage extends StatelessWidget {
     this.accountId,
     this.isO365Account = false,
     this.isGmailAccount = false,
+    this.isNightmailServerAccount = false,
     this.initialSubject,
     this.initialAttendees,
     this.initialDescription,
@@ -271,6 +277,7 @@ class _MobileEventEditPage extends StatelessWidget {
   final String? accountId;
   final bool isO365Account;
   final bool isGmailAccount;
+  final bool isNightmailServerAccount;
   final String? initialSubject;
   final List<String>? initialAttendees;
   final String? initialDescription;
@@ -316,6 +323,7 @@ class _MobileEventEditPage extends StatelessWidget {
               accountId: accountId,
               isO365Account: isO365Account,
               isGmailAccount: isGmailAccount,
+              isNightmailServerAccount: isNightmailServerAccount,
               initialSubject: initialSubject,
               initialAttendees: initialAttendees,
               initialDescription: initialDescription,
@@ -361,6 +369,7 @@ class EventEditForm extends StatefulWidget {
     this.accountId,
     this.isO365Account = false,
     this.isGmailAccount = false,
+    this.isNightmailServerAccount = false,
     required this.onClose,
     this.onTitleChanged,
     this.checkAttendeesAvailability,
@@ -408,6 +417,7 @@ class EventEditForm extends StatefulWidget {
   final String? accountId;
   final bool isO365Account;
   final bool isGmailAccount;
+  final bool isNightmailServerAccount;
   final VoidCallback onClose;
   final ValueChanged<String>? onTitleChanged;
   final CheckAttendeesAvailability? checkAttendeesAvailability;
@@ -1302,13 +1312,20 @@ class _EventEditFormState extends State<EventEditForm> {
                               ? _OnlineMeetingButton(
                                   active: _isOnlineMeeting,
                                   locked: _initialIsOnlineMeeting,
-                                  label:
-                                      widget.isGmailAccount ? 'Meet' : 'Teams',
+                                  // A NightMail Server speaks Graph but opens
+                                  // a Nextcloud Talk room for the meeting.
+                                  label: widget.isGmailAccount
+                                      ? 'Meet'
+                                      : widget.isNightmailServerAccount
+                                          ? 'Talk'
+                                          : 'Teams',
                                   onToggle: (v) {
                                     setState(() => _isOnlineMeeting = v);
                                     final placeholder = widget.isGmailAccount
                                         ? 'Google Meet'
-                                        : 'Microsoft Teams Meeting';
+                                        : widget.isNightmailServerAccount
+                                            ? 'Nextcloud Talk Meeting'
+                                            : 'Microsoft Teams Meeting';
                                     if (v &&
                                         _locationController.text
                                             .trim()

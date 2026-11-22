@@ -66,6 +66,8 @@ class EventEditWindowApp extends StatelessWidget {
     final accountId = arguments['accountId'] as String?;
     final isO365Account = arguments['isO365Account'] as bool? ?? false;
     final isGmailAccount = arguments['isGmailAccount'] as bool? ?? false;
+    final isNightmailServerAccount =
+        arguments['isNightmailServerAccount'] as bool? ?? false;
     final initialSubject = arguments['initialSubject'] as String?;
     final initialAttendees =
         (arguments['initialAttendees'] as List<dynamic>?)?.cast<String>();
@@ -95,6 +97,7 @@ class EventEditWindowApp extends StatelessWidget {
               accountId: accountId,
               isO365Account: isO365Account,
               isGmailAccount: isGmailAccount,
+              isNightmailServerAccount: isNightmailServerAccount,
               initialSubject: initialSubject,
               initialAttendees: initialAttendees,
               initialDescription: initialDescription,
@@ -178,6 +181,7 @@ class _EventEditWindowPage extends StatefulWidget {
     this.accountId,
     this.isO365Account = false,
     this.isGmailAccount = false,
+    this.isNightmailServerAccount = false,
     this.initialSubject,
     this.initialAttendees,
     this.initialDescription,
@@ -190,6 +194,7 @@ class _EventEditWindowPage extends StatefulWidget {
   final String? accountId;
   final bool isO365Account;
   final bool isGmailAccount;
+  final bool isNightmailServerAccount;
   final String? initialSubject;
   final List<String>? initialAttendees;
   final String? initialDescription;
@@ -387,6 +392,7 @@ class _EventEditWindowPageState extends State<_EventEditWindowPage>
             accountId: widget.accountId,
             isO365Account: widget.isO365Account,
             isGmailAccount: widget.isGmailAccount,
+            isNightmailServerAccount: widget.isNightmailServerAccount,
             initialSubject: widget.initialSubject,
             initialAttendees: widget.initialAttendees,
             initialDescription: widget.initialDescription,

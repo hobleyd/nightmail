@@ -1,6 +1,5 @@
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -202,8 +201,6 @@ void main() {
       'the AI button docks a chat beside the message; a proposal goes '
       'straight into what was written above the quote, and Undo puts it back',
       (tester) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
-    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     await pumpReply(tester, const Size(1200, 800));
 
     final controller = bodyField(tester).controller!;
@@ -255,13 +252,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(DraftProposalCard), findsOneWidget);
     expect(controller.text, before);
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
   testWidgets(
       'with the quote deleted, what is left is the message; with only its '
       'separator gone, the turn is refused on screen', (tester) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
-    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     await pumpReply(tester, const Size(1200, 800));
     final controller = bodyField(tester).controller!;
 
@@ -282,13 +277,11 @@ void main() {
     await sendToAssistant(tester, 'Review it again');
     expect(assistant.snapshots.single.draft, 'Sounds good');
     expect(controller.text, _FakeRunComposeAssistant.proposal);
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
   testWidgets(
       "the compose title bar and footer line up with the AI pane's header "
       'and input box', (tester) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
-    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     await pumpReply(tester, const Size(1200, 800));
     await tester.tap(find.widgetWithText(TextButton, 'AI'));
     await tester.pumpAndSettle();
@@ -322,12 +315,10 @@ void main() {
     // And the footer got smaller: under 45px from its divider to the bottom.
     expect(800 - footerDivider, lessThan(45));
     expect(tester.takeException(), isNull);
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
   testWidgets('the pane fits the default 640px compose window',
       (tester) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
-    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     await pumpReply(tester, const Size(640, 520));
 
     await tester.tap(find.widgetWithText(TextButton, 'AI'));
@@ -337,13 +328,11 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(tester.getRect(find.widgetWithText(FilledButton, 'Send')).right,
         lessThanOrEqualTo(tester.getRect(find.byType(AgentChatPanel)).left));
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
   testWidgets(
       'a phone puts the message in the top half and the chat below it; Back '
       'returns to the ordinary compose screen', (tester) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
-    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     await pumpReply(tester, const Size(390, 800));
     final body = find.byWidgetPredicate((w) =>
         w is TextField && w.decoration?.hintText == 'Write your message here…');
@@ -375,5 +364,5 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(AgentChatPanel), findsNothing);
     expect(find.widgetWithText(FilledButton, 'Send'), findsOneWidget);
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 }

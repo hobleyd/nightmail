@@ -32,12 +32,12 @@ Email _email({
 
 void main() {
   late int taps;
-  late int deletes;
+  late int rules;
   late List<DateTime?> flags;
 
   setUp(() {
     taps = 0;
-    deletes = 0;
+    rules = 0;
     flags = [];
   });
 
@@ -68,7 +68,7 @@ void main() {
             showRecipients: showRecipients,
             folderLabel: folderLabel,
             onTap: () => taps++,
-            onDelete: () => deletes++,
+            onCreateRule: () => rules++,
             onFlag: flags.add,
             onDoubleTap: onDoubleTap,
           ),
@@ -240,7 +240,7 @@ void main() {
       await pumpItem(tester, _email(), isDuplicate: true);
 
       expect(find.byType(FlagIconButton), findsNothing);
-      expect(find.byIcon(Icons.delete_outline_rounded), findsNothing);
+      expect(find.byIcon(Icons.rule_rounded), findsNothing);
     });
 
     testWidgets('still reports a tap, so it opens the message', (tester) async {
@@ -302,13 +302,13 @@ void main() {
       expect(taps, 1);
     });
 
-    testWidgets('reports a delete', (tester) async {
+    testWidgets('opens a rule', (tester) async {
       await pumpItem(tester, _email());
 
-      await tester.tap(find.byIcon(Icons.delete_outline_rounded));
+      await tester.tap(find.byIcon(Icons.rule_rounded));
       await tester.pump();
 
-      expect(deletes, 1);
+      expect(rules, 1);
       expect(taps, 0, reason: 'the row must not also open');
     });
 
@@ -325,7 +325,7 @@ void main() {
       await pumpItem(tester, _email(), isDesktop: false);
 
       expect(find.byType(FlagIconButton), findsNothing);
-      expect(find.byIcon(Icons.delete_outline_rounded), findsNothing);
+      expect(find.byIcon(Icons.rule_rounded), findsNothing);
     });
   });
 

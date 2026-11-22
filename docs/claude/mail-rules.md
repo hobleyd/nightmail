@@ -53,6 +53,16 @@ swapped, so the moved rule steps one past its neighbour instead.
 does not document what a zero maximum means, and if it is read literally "at
 least 500 KB" matches nothing, with no error.
 
+## From the mail list
+
+Each desktop list row (and thread header) has a rule button beside the flag,
+where a delete button used to be — delete is still the list toolbar, the
+reading pane and the phone's swipe. `showNewRuleForEmail` opens the
+same editor on the active account with one condition filled in: the sender,
+as `fromAddresses` where the provider has it, else `senderContains` (Gmail).
+No action is pre-chosen; a default one click from Save would usually be a
+move or a delete.
+
 ## Gmail filters
 
 - **No update.** `settings.filters` is create/get/list/delete, so

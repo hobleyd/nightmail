@@ -1,0 +1,201 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:fpdart/fpdart.dart';
+import 'package:mockito/annotations.dart';
+import 'package:mockito/mockito.dart';
+import 'package:nightmail/core/error/failures.dart';
+import 'package:nightmail/domain/entities/email.dart';
+import 'package:nightmail/domain/entities/email_address.dart';
+import 'package:nightmail/domain/entities/email_folder.dart';
+import 'package:nightmail/domain/entities/mail_rule.dart';
+import 'package:nightmail/domain/usecases/mail_rules/delete_mail_rule.dart';
+import 'package:nightmail/domain/usecases/mail_rules/get_mail_rule_folders.dart';
+import 'package:nightmail/domain/usecases/mail_rules/get_mail_rules.dart';
+import 'package:nightmail/domain/usecases/mail_rules/reorder_mail_rules.dart';
+import 'package:nightmail/domain/usecases/mail_rules/save_mail_rule.dart';
+import 'package:nightmail/domain/usecases/mail_rules/set_mail_rule_enabled.dart';
+import 'package:nightmail/infrastructure/accounts/account.dart';
+import 'package:nightmail/infrastructure/accounts/account_manager.dart';
+import 'package:nightmail/injection_container.dart';
+import 'package:nightmail/presentation/blocs/account/account_cubit.dart';
+import 'package:nightmail/presentation/blocs/mail_rules/mail_rules_cubit.dart';
+import 'package:nightmail/presentation/pages/settings/mail_rules_page.dart';
+
+import 'new_rule_for_email_test.mocks.dart';
+
+const _account = MicrosoftAccount(
+  id: 'acct-1',
+  displayName: 'Test',
+  emailAddress: 'me@example.com',
+  tenantId: 'common',
+);
+
+Email _email({String from = 'news@example.com'}) => Email(
+  id: 'email-1',
+  subject: 'Weekly digest',
+  from: EmailAddress(address: from, name: 'News'),
+  toRecipients: const [],
+  ccRecipients: const [],
+  bodyPreview: '',
+  body: '',
+  bodyType: EmailBodyType.text,
+  isRead: true,
+  receivedDateTime: DateTime(2026, 11, 20, 9),
+  importance: EmailImportance.normal,
+);
+
+@GenerateMocks([
+  GetMailRules,
+  GetMailRuleFolders,
+  SaveMailRule,
+  DeleteMailRule,
+  SetMailRuleEnabled,
+  ReorderMailRules,
+  AccountManager,
+  AccountCubit,
+])
+void main() {
+  late MockGetMailRules get;
+  late MockSaveMailRule save;
+  late MockAccountCubit accountCubit;
+
+  setUp(() {
+    provideDummy<Either<Failure, MailRuleSet>>(
+      const Right(MailRuleSet(rules: [], capabilities: MailRuleCapabilities.graph)),
+    );
+    provideDummy<Either<Failure, List<EmailFolder>>>(const Right([]));
+    provideDummy<Either<Failure, Unit>>(const Right(unit));
+    provideDummy<AccountState>(
+      const AccountsLoaded(accounts: [_account], activeIndex: 0),
+    );
+
+    get = MockGetMailRules();
+    save = MockSaveMailRule();
+    final folders = MockGetMailRuleFolders();
+    final accountManager = MockAccountManager();
+    when(accountManager.activeAccount).thenReturn(_account);
+    when(accountManager.hasOutOfOfficeWriteAccess(any))
+        .thenAnswer((_) async => true);
+    when(folders(any)).thenAnswer((_) async => const Right([]));
+    when(save(any)).thenAnswer((_) async => const Right(unit));
+
+    sl.registerFactory<MailRulesCubit>(
+      () => MailRulesCubit(
+        getMailRules: get,
+        getMailRuleFolders: folders,
+        saveMailRule: save,
+        deleteMailRule: MockDeleteMailRule(),
+        setMailRuleEnabled: MockSetMailRuleEnabled(),
+        reorderMailRules: MockReorderMailRules(),
+        accountManager: accountManager,
+      ),
+    );
+
+    accountCubit = MockAccountCubit();
+    when(accountCubit.stream).thenAnswer((_) => const Stream.empty());
+    when(accountCubit.state).thenReturn(
+      const AccountsLoaded(accounts: [_account], activeIndex: 0),
+    );
+  });
+
+  tearDown(() => sl.reset());
+
+  void answerRules(MailRuleCapabilities capabilities) {
+    when(get(any)).thenAnswer(
+      (_) async => Right(MailRuleSet(rules: const [], capabilities: capabilities)),
+    );
+  }
+
+  // The account cubit is provided *below* the MaterialApp, as HomePage does,
+  // so the dialog only sees it if it is handed across.
+  Future<void> open(WidgetTester tester, {Email? email}) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BlocProvider<AccountCubit>.value(
+          value: accountCubit,
+          child: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () => showNewRuleForEmail(context, email ?? _email()),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+  }
+
+  /// Adds "Mark as read" — the editor will not save a rule with no action —
+  /// and saves, returning the rule that reached the use case.
+  Future<MailRule> addActionAndSave(WidgetTester tester) async {
+    await tester.tap(find.text('Add action'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mark as read').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    final params =
+        verify(save(captureAny)).captured.single as SaveMailRuleParams;
+    return params.rule;
+  }
+
+  testWidgets('opens a new rule already matching the sender', (tester) async {
+    answerRules(MailRuleCapabilities.graph);
+    await open(tester);
+
+    expect(find.text('New Rule'), findsOneWidget);
+    expect(find.text('news@example.com'), findsOneWidget);
+    // Only the condition is filled in: no action is chosen for the user.
+    verifyNever(save(any));
+
+    final rule = await addActionAndSave(tester);
+    expect(rule.conditions, [
+      const MailRuleCondition(
+        MailRuleConditionKind.fromAddresses,
+        values: ['news@example.com'],
+      ),
+    ]);
+    expect(find.text('New Rule'), findsNothing, reason: 'the dialog closes');
+  });
+
+  testWidgets('falls back to "from contains" where exact match is missing',
+      (tester) async {
+    answerRules(MailRuleCapabilities.gmail);
+    await open(tester);
+
+    final rule = await addActionAndSave(tester);
+    expect(rule.conditions, [
+      const MailRuleCondition(
+        MailRuleConditionKind.senderContains,
+        values: ['news@example.com'],
+      ),
+    ]);
+  });
+
+  testWidgets('leaves the condition blank for the account\'s own message',
+      (tester) async {
+    answerRules(MailRuleCapabilities.graph);
+    await open(tester, email: _email(from: 'Me@Example.com'));
+
+    expect(find.text('New Rule'), findsOneWidget);
+    expect(find.text('Me@Example.com'), findsNothing);
+  });
+
+  testWidgets('says why when the account has no rules', (tester) async {
+    when(get(any)).thenAnswer(
+      (_) async => const Left(UnsupportedFailure(message: 'Not on this server')),
+    );
+    await open(tester);
+
+    expect(find.text('Rules unavailable'), findsOneWidget);
+    expect(find.text('Not on this server'), findsOneWidget);
+
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+    expect(find.text('Rules unavailable'), findsNothing);
+  });
+}

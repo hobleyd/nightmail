@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/theme/app_colors.dart';
+import '../../../domain/entities/email.dart';
 import '../../../domain/entities/email_folder.dart';
 import '../../../domain/entities/mail_rule.dart';
 import '../../../injection_container.dart';
@@ -243,6 +244,132 @@ Future<bool> _ensurePermission(
   );
   if (proceed != true) return false;
   return cubit.requestPermission();
+}
+
+// ─── New rule from a message ──────────────────────────────────────────────
+
+/// Opens the rule editor on the active account — the one the mail list is
+/// showing — already holding a "from" condition for [email]'s sender: the
+/// mail list's rule button. The actions are left to the user; guessing one
+/// (move it? delete it?) would put a destructive default one click from Save.
+Future<void> showNewRuleForEmail(BuildContext context, Email email) {
+  // Handed in rather than looked up from the dialog: the cubit the mail list
+  // sees may be provided below the MaterialApp, out of a dialog route's reach.
+  final accountCubit = context.read<AccountCubit>();
+  return showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => MultiBlocProvider(
+      providers: [
+        BlocProvider.value(value: accountCubit),
+        BlocProvider<MailRulesCubit>(
+          create: (_) => sl<MailRulesCubit>()..load(),
+        ),
+      ],
+      child: _NewRuleForEmailDialog(email: email),
+    ),
+  );
+}
+
+/// The rule editor once the account's rules (and so its capabilities and
+/// folders) have loaded; a spinner, or why not, until then.
+class _NewRuleForEmailDialog extends StatelessWidget {
+  const _NewRuleForEmailDialog({required this.email});
+
+  final Email email;
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<MailRulesCubit, MailRulesState>(
+      // Only the status: the editor holds its own draft, and a save's busy
+      // and re-read states are none of this dialog's business.
+      buildWhen: (a, b) => a.status != b.status,
+      builder: (context, state) {
+        final c = context.colors;
+        switch (state.status) {
+          case MailRulesStatus.loading:
+            return Dialog(
+              backgroundColor: c.surfacePanel,
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 16),
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Cancel'),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          case MailRulesStatus.unsupported:
+          case MailRulesStatus.error:
+            return AdaptiveAlertDialog(
+              title: const Text('Rules unavailable'),
+              content: Text(
+                state.errorMessage ??
+                    'Rules are not available for this account.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Close'),
+                ),
+              ],
+            );
+          case MailRulesStatus.ready:
+            final cubit = context.read<MailRulesCubit>();
+            final caps = state.capabilities!;
+            final account = _accountFor(context, state.accountId);
+            final google = account is GmailAccount;
+            final sender = _senderCondition(email, caps, account);
+            return _RuleEditorDialog(
+              initial: MailRule(conditions: [?sender]),
+              capabilities: caps,
+              folders: state.folders,
+              google: google,
+              onSave: (draft) async {
+                if (!await _ensurePermission(context, cubit, google)) {
+                  return null;
+                }
+                final ok = await cubit.saveRule(draft);
+                return ok
+                    ? null
+                    : (cubit.state.errorMessage ?? 'Could not save.');
+              },
+            );
+        }
+      },
+    );
+  }
+}
+
+/// "From [email]'s sender", in the strongest form the provider has: Graph's
+/// and IMAP's exact address match, or Gmail's "from contains". None for the
+/// account's own message (Sent): rules run on arriving mail, and "from me"
+/// would never match it.
+MailRuleCondition? _senderCondition(
+  Email email,
+  MailRuleCapabilities caps,
+  Account? account,
+) {
+  final address = email.from.address.trim();
+  if (address.isEmpty ||
+      address.toLowerCase() == account?.emailAddress.toLowerCase()) {
+    return null;
+  }
+  for (final kind in const [
+    MailRuleConditionKind.fromAddresses,
+    MailRuleConditionKind.senderContains,
+  ]) {
+    if (caps.conditions.contains(kind)) {
+      return MailRuleCondition(kind, values: [address]);
+    }
+  }
+  return null;
 }
 
 class _RuleTile extends StatelessWidget {

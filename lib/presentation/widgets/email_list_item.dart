@@ -15,7 +15,7 @@ class EmailListItem extends StatefulWidget {
     required this.email,
     required this.isSelected,
     required this.onTap,
-    required this.onDelete,
+    required this.onCreateRule,
     required this.onFlag,
     this.isCursor,
     this.indent = 0.0,
@@ -29,7 +29,7 @@ class EmailListItem extends StatefulWidget {
     this.onLongPress,
     this.onDoubleTap,
     this.flagFocusNode,
-    this.deleteFocusNode,
+    this.ruleFocusNode,
     this.taskFlag = EmailTaskFlag.none,
   });
 
@@ -61,11 +61,12 @@ class EmailListItem extends StatefulWidget {
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
   final VoidCallback? onDoubleTap;
-  final VoidCallback onDelete;
+  /// Opens a new mail rule filled in from this message.
+  final VoidCallback onCreateRule;
   final void Function(DateTime? dueDate) onFlag;
   final double indent;
   final FocusNode? flagFocusNode;
-  final FocusNode? deleteFocusNode;
+  final FocusNode? ruleFocusNode;
 
   /// Whether a follow-up task is open on this message — colours the flag.
   final EmailTaskFlag taskFlag;
@@ -77,12 +78,12 @@ class EmailListItem extends StatefulWidget {
 class _EmailListItemState extends State<EmailListItem> {
   bool _isHovered = false;
   late final FocusNode _localFlagFn = FocusNode(skipTraversal: true);
-  late final FocusNode _localDeleteFn = FocusNode(skipTraversal: true);
+  late final FocusNode _localRuleFn = FocusNode(skipTraversal: true);
 
   @override
   void dispose() {
     _localFlagFn.dispose();
-    _localDeleteFn.dispose();
+    _localRuleFn.dispose();
     super.dispose();
   }
 
@@ -285,10 +286,11 @@ class _EmailListItemState extends State<EmailListItem> {
                     ),
                     const SizedBox(height: 2),
                     _ActionIcon(
-                      icon: Icons.delete_outline_rounded,
+                      icon: Icons.rule_rounded,
+                      tooltip: 'Create a rule',
                       color: c.textMuted,
-                      focusNode: widget.deleteFocusNode ?? _localDeleteFn,
-                      onTap: widget.onDelete,
+                      focusNode: widget.ruleFocusNode ?? _localRuleFn,
+                      onTap: widget.onCreateRule,
                     ),
                   ],
                 ),
@@ -306,10 +308,12 @@ class _ActionIcon extends StatelessWidget {
     required this.icon,
     required this.color,
     required this.onTap,
+    this.tooltip,
     this.focusNode,
   });
 
   final IconData icon;
+  final String? tooltip;
   final Color color;
   final VoidCallback onTap;
   final FocusNode? focusNode;
@@ -319,6 +323,7 @@ class _ActionIcon extends StatelessWidget {
     return IconButton(
       focusNode: focusNode,
       icon: Icon(icon, size: 15, color: color),
+      tooltip: tooltip,
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
       onPressed: onTap,

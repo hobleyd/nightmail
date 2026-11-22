@@ -25,6 +25,7 @@ import '../../domain/entities/email_folder.dart';
 import '../../infrastructure/accounts/account_manager.dart';
 import '../../injection_container.dart';
 import '../pages/compose_window.dart';
+import '../pages/settings/mail_rules_page.dart';
 import '../../domain/usecases/get_raw_email_bytes.dart';
 import '../../domain/usecases/send_email.dart';
 import '../blocs/email_detail/email_detail_bloc.dart';
@@ -153,7 +154,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
 
   final _listFocusNode = FocusNode();
   final _flagFocusNode = FocusNode(skipTraversal: true);
-  final _deleteFocusNode = FocusNode(skipTraversal: true);
+  final _ruleFocusNode = FocusNode(skipTraversal: true);
 
   @override
   void initState() {
@@ -177,7 +178,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
         case LogicalKeyboardKey.arrowUp:
           _onArrow(-1);
           return KeyEventResult.handled;
-        // Both only while the list itself has focus: a row's flag and delete
+        // Both only while the list itself has focus: a row's flag and rule
         // buttons sit inside this node, and Space is what activates them.
         case LogicalKeyboardKey.space when node.hasPrimaryFocus:
           // Plain Space as well as Cmd/Ctrl-Space: Ctrl-Space is the input
@@ -213,7 +214,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
           _listFocusNode.requestFocus();
           return KeyEventResult.handled;
         case LogicalKeyboardKey.arrowDown:
-          _deleteFocusNode.requestFocus();
+          _ruleFocusNode.requestFocus();
           return KeyEventResult.handled;
         case LogicalKeyboardKey.arrowLeft:
           _listFocusNode.requestFocus();
@@ -223,7 +224,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
       }
     };
 
-    _deleteFocusNode.onKeyEvent = (node, event) {
+    _ruleFocusNode.onKeyEvent = (node, event) {
       if (event is KeyUpEvent) return KeyEventResult.ignored;
       switch (event.logicalKey) {
         case LogicalKeyboardKey.arrowUp:
@@ -430,7 +431,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
     _listFocusNode.removeListener(_onListFocusChanged);
     _listFocusNode.dispose();
     _flagFocusNode.dispose();
-    _deleteFocusNode.dispose();
+    _ruleFocusNode.dispose();
     super.dispose();
   }
 
@@ -1074,7 +1075,7 @@ class _EmailListPanelState extends State<EmailListPanel> {
                                 spamEmailIds: spamEmailIds,
                                 isDesktop: _isDesktop,
                                 flagFocusNode: _flagFocusNode,
-                                deleteFocusNode: _deleteFocusNode,
+                                ruleFocusNode: _ruleFocusNode,
                                 onToggleConversation: (id) => context
                                     .read<EmailListBloc>()
                                     .add(EmailListToggleConversation(conversationId: id)),
@@ -1686,7 +1687,7 @@ class _EmailListView extends StatelessWidget {
     this.onEmailDoubleTapped,
     this.onAutoSelectEmail,
     this.flagFocusNode,
-    this.deleteFocusNode,
+    this.ruleFocusNode,
     this.onRefresh,
     this.cursorEmailId,
   });
@@ -1729,7 +1730,7 @@ class _EmailListView extends StatelessWidget {
   final Set<String> expandedConversationIds;
   final Set<String> spamEmailIds;
   final FocusNode? flagFocusNode;
-  final FocusNode? deleteFocusNode;
+  final FocusNode? ruleFocusNode;
   final ValueChanged<String> onToggleConversation;
   final ValueChanged<Email>? onAutoSelectEmail;
 
@@ -1811,14 +1812,14 @@ class _EmailListView extends StatelessWidget {
             onTap: () => onEmailTapped(email, i),
             onDoubleTap: onEmailDoubleTapped != null ? () => onEmailDoubleTapped!(email) : null,
             onLongPress: () => onEmailLongPressed?.call(email, i),
-            onDelete: onDelete,
+            onCreateRule: () => showNewRuleForEmail(context, email),
             onFlag: onFlag,
             taskFlag: EmailTaskFlag.of(email.id, taskFlags),
             // Withheld from the echo along with the buttons they drive: one
             // FocusNode cannot be attached to two widgets at once, and the
             // header row is already holding these.
             flagFocusNode: isSelected && !isDuplicate ? flagFocusNode : null,
-            deleteFocusNode: isSelected && !isDuplicate ? deleteFocusNode : null,
+            ruleFocusNode: isSelected && !isDuplicate ? ruleFocusNode : null,
           );
           // The echo stays out of the registry: it carries the header's id.
           final child = isDuplicate
@@ -1911,11 +1912,11 @@ class _EmailListView extends StatelessWidget {
           onTap: () => onEmailTapped(conv.anchorEmail, i),
           onLongPress: () => onEmailLongPressed?.call(conv.anchorEmail, i),
           onToggleExpand: () => onToggleConversation(conv.conversationId),
-          onDelete: onConvDelete,
+          onCreateRule: () => showNewRuleForEmail(context, conv.anchorEmail),
           onFlag: onConvFlag,
           taskFlag: EmailTaskFlag.ofAll(conv.allEmailIds, taskFlags),
           flagFocusNode: isConvSelected ? flagFocusNode : null,
-          deleteFocusNode: isConvSelected ? deleteFocusNode : null,
+          ruleFocusNode: isConvSelected ? ruleFocusNode : null,
         );
         final convChild = _RowContext(
           id: conv.anchorEmail.id,
@@ -1976,7 +1977,7 @@ class _ConversationHeader extends StatefulWidget {
     required this.onTap,
     required this.onToggleExpand,
     this.isCursor,
-    required this.onDelete,
+    required this.onCreateRule,
     required this.onFlag,
     this.isDesktop = true,
     this.isMultiSelected = false,
@@ -1985,7 +1986,7 @@ class _ConversationHeader extends StatefulWidget {
     this.folderLabel,
     this.onLongPress,
     this.flagFocusNode,
-    this.deleteFocusNode,
+    this.ruleFocusNode,
     this.taskFlag = EmailTaskFlag.none,
   });
 
@@ -2011,10 +2012,12 @@ class _ConversationHeader extends StatefulWidget {
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
   final VoidCallback onToggleExpand;
-  final VoidCallback onDelete;
+
+  /// Opens a new mail rule filled in from [anchorEmail].
+  final VoidCallback onCreateRule;
   final void Function(DateTime? dueDate) onFlag;
   final FocusNode? flagFocusNode;
-  final FocusNode? deleteFocusNode;
+  final FocusNode? ruleFocusNode;
 
   /// The most urgent follow-up task open on any message in the thread.
   final EmailTaskFlag taskFlag;
@@ -2026,12 +2029,12 @@ class _ConversationHeader extends StatefulWidget {
 class _ConversationHeaderState extends State<_ConversationHeader> {
   bool _isHovered = false;
   late final FocusNode _localFlagFn = FocusNode(skipTraversal: true);
-  late final FocusNode _localDeleteFn = FocusNode(skipTraversal: true);
+  late final FocusNode _localRuleFn = FocusNode(skipTraversal: true);
 
   @override
   void dispose() {
     _localFlagFn.dispose();
-    _localDeleteFn.dispose();
+    _localRuleFn.dispose();
     super.dispose();
   }
 
@@ -2230,10 +2233,11 @@ class _ConversationHeaderState extends State<_ConversationHeader> {
                         ),
                         const SizedBox(height: 2),
                         _ActionIcon(
-                          icon: Icons.delete_outline_rounded,
+                          icon: Icons.rule_rounded,
+                          tooltip: 'Create a rule',
                           color: c.textMuted,
-                          focusNode: widget.deleteFocusNode ?? _localDeleteFn,
-                          onTap: widget.onDelete,
+                          focusNode: widget.ruleFocusNode ?? _localRuleFn,
+                          onTap: widget.onCreateRule,
                         ),
                       ],
                     ),
@@ -2320,10 +2324,12 @@ class _ActionIcon extends StatelessWidget {
     required this.icon,
     required this.color,
     required this.onTap,
+    this.tooltip,
     this.focusNode,
   });
 
   final IconData icon;
+  final String? tooltip;
   final Color color;
   final VoidCallback onTap;
   final FocusNode? focusNode;
@@ -2333,6 +2339,7 @@ class _ActionIcon extends StatelessWidget {
     return IconButton(
       focusNode: focusNode,
       icon: Icon(icon, size: 15, color: color),
+      tooltip: tooltip,
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
       onPressed: onTap,

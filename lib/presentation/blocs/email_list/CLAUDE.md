@@ -265,7 +265,7 @@ Three consequences, none incidental:
 - **The echo row carries the header's id**, so it is the same message for every
   purpose but drawing. That makes it the header's equal for selection and delete
   (`resolveDeleteTargets` keys threads off `anchor.id`), and rules three things
-  out: it takes no flag/delete buttons (one `FocusNode` cannot be attached to two
+  out: it takes no flag/rule buttons (one `FocusNode` cannot be attached to two
   widgets), no drag or swipe wrapper (both would act on the row above), and no
   keyboard stop — `_isNavigable` skips it, or arrow-down would select what is
   already selected and bounce back to the header on the next press.

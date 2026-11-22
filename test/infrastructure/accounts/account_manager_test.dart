@@ -629,6 +629,46 @@ void main() {
       expect(result!.needsReauth, isTrue);
       expect(result.hasAccess, isFalse);
     });
+
+    test(
+        'a NightMail Server token never needs the .Shared scopes: the server '
+        'publishes none and answers the probe itself', () {
+      const server = GraphEndpoints(
+        graphBaseUrl: 'https://mail.example.com/graph/v1.0',
+        graphBetaBaseUrl: 'https://mail.example.com/graph/beta',
+        authorizationEndpoint: 'https://mail.example.com/oauth2/authorize',
+        tokenEndpoint: 'https://mail.example.com/oauth2/token',
+        clientId: 'nightmail',
+        scopes: ['openid', 'email', 'profile', 'offline_access'],
+        serverUrl: 'https://mail.example.com',
+      );
+      const nw = MicrosoftAccount(
+        id: 'nw',
+        displayName: 'Server',
+        emailAddress: 'me@example.com',
+        tenantId: MicrosoftAccount.nightmailServerTenantId,
+        clientId: 'nightmail',
+        server: server,
+      );
+      const ms = MicrosoftAccount(
+        id: 'ms',
+        displayName: 'Microsoft',
+        emailAddress: 'me@contoso.com',
+        tenantId: 'tid',
+      );
+      const serverScope = 'openid email profile offline_access';
+
+      expect(
+          AccountManager.tokenPredatesSharedMailboxScopes(nw, serverScope),
+          isFalse);
+      expect(
+          AccountManager.tokenPredatesSharedMailboxScopes(ms, serverScope),
+          isTrue);
+      expect(
+          AccountManager.tokenPredatesSharedMailboxScopes(
+              ms, '$serverScope https://graph.microsoft.com/Mail.Read.Shared'),
+          isFalse);
+    });
   });
 
   group('shared mailbox accounts', () {

@@ -818,8 +818,10 @@ class AccountManager {
     final ds = directoryDatasourceForAccount(parentAccountId);
     if (ds == null) return null;
 
+    final parent = accountById(parentAccountId);
     final scope = await _storedScope(parentAccountId);
-    if (scope != null && !scope.contains('Mail.Read.Shared')) {
+    if (parent is MicrosoftAccount &&
+        tokenPredatesSharedMailboxScopes(parent, scope)) {
       return (displayName: email, hasAccess: false, needsReauth: true);
     }
 
@@ -830,6 +832,24 @@ class AccountManager {
     final hasAccess = await ds.probeSharedMailboxAccess(email);
     return (displayName: displayName, hasAccess: hasAccess, needsReauth: false);
   }
+
+  /// Whether [owner]'s token [scope] was granted before the `.Shared` scopes
+  /// were requested, so no shared mailbox can be reached until it signs in
+  /// again — see [resolveSharedMailboxCandidate].
+  ///
+  /// Never true on a NightMail Server: its token carries only the scopes the
+  /// server published (`openid email profile offline_access`), never a Graph
+  /// permission URI, and whether the user may open a shared mailbox is the
+  /// server's own answer to the probe (its members-only `/users/{address}`,
+  /// ADR 0004 D4 in nightware). Asking for `Mail.Read.Shared` there would send
+  /// the user to re-authenticate forever, since no sign-in can add it.
+  static bool tokenPredatesSharedMailboxScopes(
+    MicrosoftAccount owner,
+    String? scope,
+  ) =>
+      !owner.isNightmailServer &&
+      scope != null &&
+      !scope.contains('Mail.Read.Shared');
 
   Future<String?> _storedScope(String accountId) async {
     final ts = TokenStorage(_secureStorage, storageKey: 'token_$accountId');

@@ -16,6 +16,8 @@ The app provides a desktop based three-pane layout (folders, message list, readi
 - Bcc recipients, behind an expander on the Cc row; a message can go to Cc or Bcc recipients alone, with no To
 - HTML and plain text rendering
 - Attachment download and upload
+- The compose paperclip is a menu: Attach from Computer, Attach from Cloud, or Link from Cloud — browse OneDrive/SharePoint, a NightMail Server's files or Google Drive (folders, search, several files at once); attached Google Docs, Sheets and Slides go as Office files
+- A message linking a cloud file checks at Send that every recipient can open it, and offers to share it with those who can't (view-only) or send anyway
 - Move messages between folders
 - Mark as read/unread
 - Report junk/spam
@@ -210,6 +212,8 @@ Settings → Accounts.
   NightMail Server instead of Microsoft — enter the server address and NightMail
   reads its `/.well-known/nightware` discovery and signs in with the endpoints it
   publishes
+- A NightMail Server that publishes a change stream has new mail and calendar
+  changes synced as soon as it signals them, rather than at the next poll
 - **Migrate Account** copies mail from one configured account into another,
   mapping special folders by kind rather than name; resumable, with a status
   dialog reporting live progress and any permanent per-message failures

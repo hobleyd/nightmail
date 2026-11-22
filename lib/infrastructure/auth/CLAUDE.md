@@ -269,15 +269,19 @@ Load-bearing:
   server accounts, out-of-office needs no consent, and *Report phishing* is a
   junk move (or the Phishing Inbox) as on Gmail. `tenantId` is the placeholder
   `MicrosoftAccount.nightmailServerTenantId`.
-- **`filesBaseUrls` is the one optional discovery field**, and the one parsed
-  leniently: a bad entry is dropped, never a reason the server cannot be
-  added. It turns on Nextcloud link previews through the server's `/shares`
-  (see `docs/claude/body-links.md`). It is also the one field re-read after
-  sign-in: `AccountCubit` asks each server again at startup
+- **`filesBaseUrls` and `changesUrl` are the optional discovery fields**, and
+  both are parsed leniently: a bad entry is dropped, never a reason the server
+  cannot be added. `changesUrl` (the change stream, nightware ADR 0007; see
+  the mail poller's CLAUDE.md) is kept only on `graphBaseUrl`'s scheme, host
+  and port, because it is opened with the account's bearer token.
+  `filesBaseUrls` turns on Nextcloud link previews through the server's
+  `/shares` (see `docs/claude/body-links.md`). Both are re-read after sign-in:
+  `AccountCubit` asks each server again at startup
   (`AccountManager.refreshServerFileSites`), so an account added before its
-  server published file sites gets them without being re-added. Only the file
-  sites are adopted, and only while the Graph roots, endpoints, client and
-  scopes are unchanged — a server that moved those needs a fresh sign-in, not
+  server published file sites or a change stream gets them without being
+  re-added (`GraphEndpoints.withPublishedFeaturesFrom`). Only those two are
+  adopted, and only while the Graph roots, endpoints, client and scopes are
+  unchanged — a server that moved those needs a fresh sign-in, not
   a silent rewrite of stored endpoints. That refusal is reported, not
   swallowed (`FileSitesRefused`, naming the field via
   `GraphEndpoints.signInChangeFrom`), as is an unreachable server; see

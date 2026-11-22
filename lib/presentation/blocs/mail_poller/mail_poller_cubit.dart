@@ -31,6 +31,7 @@ import '../../../infrastructure/notifications/notification_service.dart';
 import '../../../data/datasources/remote/local_rule_mailbox.dart';
 import '../../../infrastructure/rules/local_mail_rule_runner.dart';
 import '../../../infrastructure/sync/body_prefetch_service.dart';
+import '../../../infrastructure/sync/change_stream_service.dart';
 import '../../../infrastructure/sync/imap_connection_gate.dart';
 import '../../../infrastructure/sync/outbox_drain_service.dart';
 import '../../../infrastructure/sync/pending_removals.dart';
@@ -56,6 +57,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     required this._recentMutations,
     required this._spamDbSyncService,
     this._localRuleRunner,
+    this._changeStreams,
     this._recentChangeTtl = const Duration(seconds: 30),
     this._now = DateTime.now,
   })  : _bodyPrefetch = bodyPrefetchService,
@@ -85,6 +87,11 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   /// Runs IMAP accounts' rules, which NightMail keeps itself. Optional only
   /// so tests that are not about rules need not build one.
   final LocalMailRuleRunner? _localRuleRunner;
+
+  /// NightMail Server change streams (nightware ADR 0007): a `mail` signal
+  /// polls at once instead of at the next tick. Null in tests that do not
+  /// exercise it, and harmless with no server accounts — nothing is watched.
+  final ChangeStreamService? _changeStreams;
   final Duration _recentChangeTtl;
   final DateTime Function() _now;
 
@@ -115,6 +122,12 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
   final List<_UnreadChange> _recentUnreadChanges = [];
   StreamSubscription<void>? _reconnectSub;
   StreamSubscription<String>? _authSuccessSub;
+  StreamSubscription<ChangeSignal>? _changeSignalSub;
+
+  /// A change signal arrived while a cycle was running. [_poll] drops a call
+  /// made mid-cycle, and that cycle may already have synced past the moment
+  /// the change landed, so one more cycle runs when it finishes.
+  bool _pollAgain = false;
 
   /// Consecutive delta failures per [_folderKey]. A delta stream that keeps
   /// failing has its token dropped so the next cycle re-bootstraps — see
@@ -246,6 +259,32 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
       // it directly here.
       _poll();
     });
+
+    _changeSignalSub?.cancel();
+    _changeSignalSub = _changeStreams?.signals.listen(_onChangeSignal);
+  }
+
+  /// A NightMail Server said an account's mail changed — or a stream just
+  /// (re)connected, which covers the gap since the last cycle — so poll now.
+  /// Every account is polled, as for an IMAP IDLE push: the cycle is what
+  /// knows how to sync one, and a quiet account costs one delta request.
+  void _onChangeSignal(ChangeSignal signal) {
+    if (!signal.isReady && !signal.concerns('mail')) return;
+    debugPrint('[MailPoller] ${signal.accountId}: change stream '
+        '${signal.isReady ? 'connected' : 'reported mail'} — polling now');
+    if (_polling) {
+      _pollAgain = true;
+      return;
+    }
+    _poll();
+  }
+
+  /// Keeps a change stream open for every account whose server publishes one,
+  /// and closes the streams of accounts that have gone. Main window only, like
+  /// [_startIdleWatches]: a sub-window must not hold long-lived connections.
+  void _watchChangeStreams(List<Account> accounts) {
+    if (!AppWindow.isMain) return;
+    _changeStreams?.watch(accounts);
   }
 
   @override
@@ -391,6 +430,10 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
           lastPollErrors: Map.of(_errors),
         ));
       }
+      if (_pollAgain && !isClosed) {
+        _pollAgain = false;
+        scheduleMicrotask(_poll);
+      }
     }
   }
 
@@ -432,6 +475,7 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
 
     {
       final accounts = _accountManager.accounts;
+      _watchChangeStreams(accounts);
       if (accounts.isEmpty) return;
 
       final activeId = _accountManager.activeAccount?.id;
@@ -1752,6 +1796,8 @@ class MailPollerCubit extends Cubit<MailPollerState> with WidgetsBindingObserver
     _timer?.cancel();
     _reconnectSub?.cancel();
     _authSuccessSub?.cancel();
+    _changeSignalSub?.cancel();
+    _changeStreams?.watch(const []);
     for (final sub in _idleSubs.values) {
       sub.cancel();
     }

@@ -31,17 +31,17 @@ void main() {
   test('only new file sites is not a sign-in change, and they are adopted', () {
     final next = rediscovered();
     expect(stored.signInChangeFrom(next), isNull);
-    expect(stored.withFileSitesFrom(next).filesBaseUrls,
+    expect(stored.withPublishedFeaturesFrom(next).filesBaseUrls,
         ['https://mail.example.com/cloud']);
   });
 
   test('names the field that moved, and nothing is adopted', () {
     final moved = rediscovered(tokenEndpoint: 'https://auth.example.com/t');
     expect(stored.signInChangeFrom(moved), 'tokenEndpoint');
-    expect(stored.withFileSitesFrom(moved), same(stored));
+    expect(stored.withPublishedFeaturesFrom(moved), same(stored));
 
     final rescoped = rediscovered(scopes: const ['openid', 'email', 'profile']);
     expect(stored.signInChangeFrom(rescoped), 'scopes');
-    expect(stored.withFileSitesFrom(rescoped), same(stored));
+    expect(stored.withPublishedFeaturesFrom(rescoped), same(stored));
   });
 }

@@ -6,6 +6,8 @@ import 'package:fpdart/fpdart.dart' show Either;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../data/datasources/remote/change_stream_datasource.dart';
+import '../sync/change_stream_service.dart';
 import '../../core/config/app_config.dart';
 import '../../core/config/oauth_client_id_storage.dart';
 import '../../data/datasources/remote/caldav_calendar_datasource_impl.dart';
@@ -1189,6 +1191,34 @@ class AccountManager {
         _imapDatasourceCache[account.id] = ds;
         return ds;
     }
+  }
+
+  /// Where [account]'s change stream is (nightware ADR 0007), or null when it
+  /// has none: not a Graph account, or its server publishes no `changesUrl`.
+  /// A shared mailbox watches its own address through its owner's server and
+  /// token — the same resolution every Graph call it makes goes through.
+  ChangeStreamTarget? changeStreamTargetFor(Account account) {
+    if (account is! MicrosoftAccount) return null;
+    final url = _microsoftAuthConfig(account).endpoints.changesUrl;
+    if (url == null) return null;
+    return (
+      url: url,
+      mailbox: account.parentAccountId != null ? account.emailAddress : null,
+    );
+  }
+
+  /// One connection to [account]'s change stream, on a Graph client of its own
+  /// so the bearer token, its refresh and a 401's re-auth flag are exactly
+  /// those of the account's other calls. Errors at once when the account has
+  /// no stream ([changeStreamTargetFor]).
+  Stream<ChangeStreamEvent> openChangeStream(Account account) {
+    final target = changeStreamTargetFor(account);
+    if (target == null || account is! MicrosoftAccount) {
+      return Stream.error(
+          StateError('${account.id} has no change stream to open'));
+    }
+    return ChangeStreamDatasource(_graphClientFor(account).dio)
+        .open(target.url, mailbox: target.mailbox);
   }
 
   /// A Graph client authenticating as [account] — with the parent's

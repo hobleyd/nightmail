@@ -126,6 +126,40 @@ Failures are reported on `lastPollAt`/`lastPollErrors`, including the
 offline skip. A silent `catch (_)` here is how a deterministic failure came to
 look like a quiet mailbox for the life of an install.
 
+## A NightMail Server Says When to Poll
+
+A server that publishes `changesUrl` in its discovery document (nightware ADR
+0007) holds a Server-Sent Events stream open per account: `ready` once it has
+read where the mailbox stands, `changed` with the areas that moved (`mail`,
+`calendar`), `end` when it closes. `ChangeStreamService`
+(`infrastructure/sync/`) keeps one connection per such account — a shared
+mailbox watches its own address (`?mailbox=`) through its owner's server and
+token — and the cycle calls `watch(accounts)` at its top, main window only, the
+same way it restarts IMAP IDLE. A `mail` or `ready` signal runs `_poll()`; a
+`calendar` or `ready` one refreshes that account in `CalendarCacheSyncService`.
+
+Four rules keep it honest:
+
+- **A signal is only a reason to sync sooner.** It carries no ids; the cycle
+  syncs exactly as it would on the timer, and the timer keeps running. A server
+  with no stream, a dropped connection, or a failed reconnect costs latency,
+  never correctness.
+- **`ready` polls.** A change between the last cycle and the stream reading its
+  baseline is never signalled, so every (re)connection is a sync. The server
+  ends a stream 30 s before the token expires (and after 30 min at most), so
+  that is one extra cycle every quarter-hour or so.
+- **A signal mid-cycle is queued, not dropped.** `_poll()` returns at once while
+  `_polling`, and the cycle in progress may already have read past the change,
+  so `_pollAgain` runs one more cycle when it ends (however many signals came).
+- **Reconnects never spin.** A stream that reached `ready` and closed is the
+  server's normal lifecycle and reconnects after 1 s — the `AuthInterceptor`
+  refreshes a token within 5 min of expiry, so the reconnect carries a fresh
+  one. One that failed before `ready` (404 nothing to watch, 429 too many
+  streams, a refused token) backs off 2 s doubling to 2 min. Dio's
+  `receiveTimeout` covers only the headers, so `ChangeStreamDatasource` closes
+  a connection silent for 75 s (the server writes at least every 25 s): that is
+  how a half-open connection after sleep is noticed.
+
 ## Bodies Are Warmed Wherever a Page Lands
 
 A list or delta fetch carries no body on any provider, so a row cached from

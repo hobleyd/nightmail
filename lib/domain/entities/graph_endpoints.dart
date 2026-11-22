@@ -21,6 +21,7 @@ class GraphEndpoints extends Equatable {
     this.scopes,
     this.serverUrl,
     this.filesBaseUrls = const [],
+    this.changesUrl,
   });
 
   /// Microsoft's own endpoints for [tenantId] — byte-for-byte what was
@@ -84,14 +85,26 @@ class GraphEndpoints extends Equatable {
   /// discovered before servers could (the feature is simply off there).
   final List<String> filesBaseUrls;
 
-  /// These endpoints with the file sites [rediscovered] now publishes, when
-  /// it is still the same sign-in and sync configuration; otherwise these,
-  /// unchanged. Only the file sites are adopted: a server that moved its Graph
-  /// root, token endpoint, client or scopes needs a fresh sign-in, which a
-  /// silent rewrite of stored endpoints would only turn into a confusing 401.
-  GraphEndpoints withFileSitesFrom(GraphEndpoints rediscovered) {
+  /// The NightMail Server's change stream (nightware ADR 0007): a
+  /// Server-Sent Events URL that says when this account's mail or calendar
+  /// changed, so the poller syncs then rather than at its next tick. Null for
+  /// Microsoft, for a server that does not publish one, and for an account
+  /// discovered before servers could — the poller's timer alone then, as
+  /// always. Only ever on [graphBaseUrl]'s scheme, host and port, because it
+  /// is opened with the account's bearer token
+  /// (`GraphEndpointsModel.fromDiscoveryJson` drops any other).
+  final String? changesUrl;
+
+  /// These endpoints with the optional features [rediscovered] now publishes
+  /// — its file sites and its change stream — when it is still the same
+  /// sign-in and sync configuration; otherwise these, unchanged. Only those
+  /// are adopted: a server that moved its Graph root, token endpoint, client
+  /// or scopes needs a fresh sign-in, which a silent rewrite of stored
+  /// endpoints would only turn into a confusing 401.
+  GraphEndpoints withPublishedFeaturesFrom(GraphEndpoints rediscovered) {
     if (signInChangeFrom(rediscovered) != null ||
-        _sameList(filesBaseUrls, rediscovered.filesBaseUrls)) {
+        (_sameList(filesBaseUrls, rediscovered.filesBaseUrls) &&
+            changesUrl == rediscovered.changesUrl)) {
       return this;
     }
     return GraphEndpoints(
@@ -103,12 +116,14 @@ class GraphEndpoints extends Equatable {
       scopes: scopes,
       serverUrl: serverUrl,
       filesBaseUrls: List.unmodifiable(rediscovered.filesBaseUrls),
+      changesUrl: rediscovered.changesUrl,
     );
   }
 
   /// The first sign-in or sync setting [rediscovered] no longer agrees with
   /// these on, by its discovery field name, or null when it is the same
-  /// configuration. Non-null is why [withFileSitesFrom] adopts nothing.
+  /// configuration. Non-null is why [withPublishedFeaturesFrom] adopts
+  /// nothing.
   String? signInChangeFrom(GraphEndpoints rediscovered) {
     if (graphBaseUrl != rediscovered.graphBaseUrl) return 'graphBaseUrl';
     if (graphBetaBaseUrl != rediscovered.graphBetaBaseUrl) {
@@ -147,5 +162,6 @@ class GraphEndpoints extends Equatable {
         scopes,
         serverUrl,
         filesBaseUrls,
+        changesUrl,
       ];
 }

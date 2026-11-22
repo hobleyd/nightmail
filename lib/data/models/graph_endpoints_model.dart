@@ -26,11 +26,18 @@ abstract final class GraphEndpointsModel {
   ///   "tokenEndpoint": "https://mail.example.com/oauth2/token",
   ///   "clientId": "nightmail",
   ///   "scopes": ["openid", "email", "profile", "offline_access"],
-  ///   "filesBaseUrls": ["https://cloud.example.com"]
+  ///   "filesBaseUrls": ["https://cloud.example.com"],
+  ///   "changesUrl": "https://mail.example.com/graph/nightware/v1/changes"
   /// }
   /// ```
   ///
-  /// `filesBaseUrls` is the one optional field (see
+  /// `changesUrl` is optional too (see [GraphEndpoints.changesUrl]) and kept
+  /// only on `graphBaseUrl`'s scheme, host and port: it is opened with the
+  /// account's bearer token, so a server cannot point the token anywhere the
+  /// Graph calls do not already go. Anything else is dropped, not refused —
+  /// without it the poller simply keeps to its timer.
+  ///
+  /// `filesBaseUrls` is the other optional field (see
   /// [GraphEndpoints.filesBaseUrls]), and it is read leniently: an entry that
   /// is not an absolute http(s) URL is dropped rather than refusing the whole
   /// document, because a server's file sites are a preview nicety and must
@@ -79,8 +86,9 @@ abstract final class GraphEndpointsModel {
               'non-empty list of strings.');
     }
 
+    final graphBaseUrl = url('graphBaseUrl');
     return GraphEndpoints(
-      graphBaseUrl: url('graphBaseUrl'),
+      graphBaseUrl: graphBaseUrl,
       graphBetaBaseUrl: url('graphBetaBaseUrl'),
       authorizationEndpoint: url('authorizationEndpoint'),
       tokenEndpoint: url('tokenEndpoint'),
@@ -88,7 +96,31 @@ abstract final class GraphEndpointsModel {
       scopes: List.unmodifiable(rawScopes.cast<String>().map((s) => s.trim())),
       serverUrl: serverUrl,
       filesBaseUrls: _filesBaseUrls(json['filesBaseUrls']),
+      changesUrl: changesUrlFor(json['changesUrl'], graphBaseUrl),
     );
+  }
+
+  /// [raw] as a change stream URL for an account whose Graph root is
+  /// [graphBaseUrl], or null: it must be an acceptable endpoint
+  /// ([isAcceptableEndpoint]) on the same scheme, host and port, with no query
+  /// or fragment.
+  static String? changesUrlFor(Object? raw, String graphBaseUrl) {
+    if (raw is! String) return null;
+    final trimmed = _stripTrailingSlash(raw.trim());
+    final uri = Uri.tryParse(trimmed);
+    final graph = Uri.tryParse(graphBaseUrl);
+    if (uri == null ||
+        graph == null ||
+        !isAcceptableEndpoint(trimmed) ||
+        uri.hasQuery ||
+        uri.hasFragment ||
+        uri.userInfo.isNotEmpty ||
+        uri.scheme != graph.scheme ||
+        uri.host.toLowerCase() != graph.host.toLowerCase() ||
+        uri.port != graph.port) {
+      return null;
+    }
+    return trimmed;
   }
 
   /// The usable entries of an optional `filesBaseUrls` list: absolute http(s)
@@ -165,21 +197,24 @@ abstract final class GraphEndpointsModel {
         if (endpoints.scopes != null) 'scopes': endpoints.scopes,
         if (endpoints.filesBaseUrls.isNotEmpty)
           'filesBaseUrls': endpoints.filesBaseUrls,
+        if (endpoints.changesUrl != null) 'changesUrl': endpoints.changesUrl,
       };
 
   /// Reads [toStorageJson]'s output back. Never throws — see the class doc.
   static GraphEndpoints fromStorageJson(Map<String, dynamic> json) {
     String str(String key) => json[key] is String ? json[key] as String : '';
     final scopes = json['scopes'];
+    final graphBaseUrl = str('graphBaseUrl');
     return GraphEndpoints(
       serverUrl: json['serverUrl'] is String ? json['serverUrl'] as String : '',
-      graphBaseUrl: str('graphBaseUrl'),
+      graphBaseUrl: graphBaseUrl,
       graphBetaBaseUrl: str('graphBetaBaseUrl'),
       authorizationEndpoint: str('authorizationEndpoint'),
       tokenEndpoint: str('tokenEndpoint'),
       clientId: json['clientId'] is String ? json['clientId'] as String : null,
       scopes: scopes is List ? scopes.whereType<String>().toList() : null,
       filesBaseUrls: _filesBaseUrls(json['filesBaseUrls']),
+      changesUrl: changesUrlFor(json['changesUrl'], graphBaseUrl),
     );
   }
 }

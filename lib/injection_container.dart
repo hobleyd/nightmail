@@ -175,6 +175,7 @@ import 'infrastructure/notifications/meeting_reminder_board.dart';
 import 'infrastructure/notifications/task_reminder_service.dart';
 import 'infrastructure/notifications/notification_service.dart';
 import 'infrastructure/share/share_intent_service.dart';
+import 'infrastructure/sync/change_stream_service.dart';
 import 'infrastructure/sync/body_prefetch_service.dart';
 import 'infrastructure/sync/cache_membership_repair_service.dart';
 import 'infrastructure/sync/calendar_outbox_drain_service.dart';
@@ -425,12 +426,22 @@ Future<void> configureDependencies() async {
       pendingOpReconciler: sl<CalendarPendingOpReconciler>(),
     ),
   );
+  // NightMail Server change streams (nightware ADR 0007). One per process;
+  // only the main window's poller ever calls `watch`, so a sub-window's copy
+  // stays idle and holds no connection.
+  sl.registerLazySingleton(
+    () => ChangeStreamService(
+      targetFor: sl<AccountManager>().changeStreamTargetFor,
+      open: sl<AccountManager>().openChangeStream,
+    ),
+  );
   sl.registerLazySingleton(
     () => CalendarCacheSyncService(
       accountManager: sl<AccountManager>(),
       cache: sl<CalendarLocalDatasource>(),
       pendingOperations: sl<PendingCalendarOperationsDatasource>(),
       outboxDrainService: sl<CalendarOutboxDrainService>(),
+      changeSignals: sl<ChangeStreamService>().signals,
     ),
   );
   sl.registerLazySingleton<TasksRepository>(
@@ -592,6 +603,7 @@ Future<void> configureDependencies() async {
       recentMutations: sl<RecentMutationStore>(),
       spamDbSyncService: sl<SpamDbSyncService>(),
       localRuleRunner: sl<LocalMailRuleRunner>(),
+      changeStreams: sl<ChangeStreamService>(),
     ),
   );
   // In-app updates. The service is a singleton because it owns the platform

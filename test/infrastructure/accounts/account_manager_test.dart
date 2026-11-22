@@ -997,6 +997,50 @@ void main() {
       await accountManager.initialize();
     });
 
+    test(
+        "watches a change stream only where the server publishes one, a "
+        "shared mailbox by its own address through its owner's server",
+        () async {
+      const streaming = GraphEndpoints(
+        graphBaseUrl: 'https://mail.example.com/graph/v1.0',
+        graphBetaBaseUrl: 'https://mail.example.com/graph/beta',
+        authorizationEndpoint: 'https://mail.example.com/oauth2/authorize',
+        tokenEndpoint: 'https://mail.example.com/oauth2/token',
+        serverUrl: 'https://mail.example.com',
+        changesUrl: 'https://mail.example.com/graph/nightware/v1/changes',
+      );
+      const owner = MicrosoftAccount(
+        id: 'nw',
+        displayName: 'Server',
+        emailAddress: 'me@example.com',
+        tenantId: MicrosoftAccount.nightmailServerTenantId,
+        server: streaming,
+      );
+      const shared = MicrosoftAccount(
+        id: 'support',
+        displayName: 'Support',
+        emailAddress: 'support@example.com',
+        tenantId: MicrosoftAccount.nightmailServerTenantId,
+        parentAccountId: 'nw',
+        server: streaming,
+      );
+
+      expect(accountManager.changeStreamTargetFor(nw), isNull,
+          reason: 'its server published no changesUrl');
+      expect(accountManager.changeStreamTargetFor(ms), isNull);
+      expect(accountManager.changeStreamTargetFor(owner),
+          (url: streaming.changesUrl!, mailbox: null));
+      // A shared mailbox follows its owner's endpoints, not the copy it
+      // carries: the loaded 'nw' publishes no stream.
+      expect(accountManager.changeStreamTargetFor(shared), isNull);
+
+      when(mockAccountStorage.loadAccounts())
+          .thenAnswer((_) async => [owner, shared]);
+      await accountManager.initialize();
+      expect(accountManager.changeStreamTargetFor(shared),
+          (url: streaming.changesUrl!, mailbox: 'support@example.com'));
+    });
+
     group('refreshServerFileSites', () {
       final published = GraphEndpoints(
         graphBaseUrl: server.graphBaseUrl,
@@ -1120,7 +1164,7 @@ void main() {
 
       test('is null once the server has published its file sites', () async {
         await accountManager.refreshServerFileSites(
-            (_) async => Right(server.withFileSitesFrom(GraphEndpoints(
+            (_) async => Right(server.withPublishedFeaturesFrom(GraphEndpoints(
                   graphBaseUrl: server.graphBaseUrl,
                   graphBetaBaseUrl: server.graphBetaBaseUrl,
                   authorizationEndpoint: server.authorizationEndpoint,

@@ -251,13 +251,14 @@ final class MicrosoftAccount extends Account {
     );
   }
 
-  /// This account with the file sites its NightMail Server [rediscovered]
-  /// now publishes (see [GraphEndpoints.withFileSitesFrom]), or itself on a
-  /// Microsoft account or when nothing changed.
+  /// This account with the file sites and change stream its NightMail Server
+  /// [rediscovered] now publishes (see
+  /// [GraphEndpoints.withPublishedFeaturesFrom]), or itself on a Microsoft
+  /// account or when nothing changed.
   MicrosoftAccount withRediscoveredServer(GraphEndpoints rediscovered) {
     final current = server;
     if (current == null) return this;
-    final updated = current.withFileSitesFrom(rediscovered);
+    final updated = current.withPublishedFeaturesFrom(rediscovered);
     if (identical(updated, current)) return this;
     return MicrosoftAccount(
       id: id,

@@ -7,6 +7,7 @@ import '../../data/datasources/local/pending_calendar_operations_datasource.dart
 import '../accounts/account.dart';
 import '../accounts/account_manager.dart';
 import '../sync/calendar_outbox_drain_service.dart';
+import '../sync/change_stream_service.dart';
 
 /// Keeps the local calendar cache stocked so the calendar paints from disk
 /// instead of from a spinner.
@@ -34,12 +35,21 @@ class CalendarCacheSyncService {
     required this._cache,
     required this._pendingOperations,
     required this._outboxDrainService,
+    this._changeSignals,
   });
 
   final AccountManager _accountManager;
   final CalendarLocalDatasource _cache;
   final PendingCalendarOperationsDatasource _pendingOperations;
   final CalendarOutboxDrainService _outboxDrainService;
+
+  /// NightMail Server change streams (nightware ADR 0007): an account whose
+  /// `calendar` changed — or whose stream just (re)connected, covering the gap
+  /// since the last pass — is refreshed at once instead of at the next
+  /// 15-minute tick. Followed only while [startPeriodic] runs, which is the
+  /// main window's.
+  final Stream<ChangeSignal>? _changeSignals;
+  StreamSubscription<ChangeSignal>? _changeSignalSub;
 
   /// How far ahead of today the cache is kept warm.
   static const lookahead = Duration(days: 28);
@@ -73,9 +83,28 @@ class CalendarCacheSyncService {
     stop();
     _startupTimer = Timer(_startupDelay, () => unawaited(syncAll()));
     _timer = Timer.periodic(interval, (_) => unawaited(syncAll()));
+    _changeSignalSub = _changeSignals?.listen((signal) {
+      if (!signal.isReady && !signal.concerns('calendar')) return;
+      debugPrint('CalendarCacheSyncService: ${signal.accountId}: change '
+          'stream ${signal.isReady ? 'connected' : 'reported calendar'}');
+      unawaited(_syncChanged(signal.accountId));
+    });
+  }
+
+  /// [syncAccount] after pushing queued mutations, as [syncAll] does, so the
+  /// refresh a change signal triggers cannot overwrite an optimistic change.
+  Future<void> _syncChanged(String accountId) async {
+    try {
+      await _outboxDrainService.drainAll();
+    } catch (e) {
+      debugPrint('CalendarCacheSyncService: outbox drain failed: $e');
+    }
+    await syncAccount(accountId);
   }
 
   void stop() {
+    _changeSignalSub?.cancel();
+    _changeSignalSub = null;
     _timer?.cancel();
     _timer = null;
     _startupTimer?.cancel();

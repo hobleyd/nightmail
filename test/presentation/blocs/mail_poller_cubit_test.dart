@@ -9,6 +9,7 @@ import 'package:mockito/mockito.dart';
 import 'package:nightmail/core/error/exceptions.dart';
 import 'package:nightmail/core/settings/app_settings.dart';
 import 'package:nightmail/data/datasources/local/delta_token_datasource.dart';
+import 'package:nightmail/data/datasources/remote/change_stream_datasource.dart';
 import 'package:nightmail/data/datasources/local/email_local_datasource.dart';
 import 'package:nightmail/data/datasources/local/folder_local_datasource.dart';
 import 'package:nightmail/data/datasources/local/pending_operations_datasource.dart';
@@ -32,6 +33,7 @@ import 'package:nightmail/infrastructure/badge/badge_service.dart';
 import 'package:nightmail/infrastructure/network/connectivity_service.dart';
 import 'package:nightmail/infrastructure/notifications/notification_service.dart';
 import 'package:nightmail/infrastructure/sync/body_prefetch_service.dart';
+import 'package:nightmail/infrastructure/sync/change_stream_service.dart';
 import 'package:nightmail/infrastructure/sync/imap_connection_gate.dart';
 import 'package:nightmail/infrastructure/sync/outbox_drain_service.dart';
 import 'package:nightmail/infrastructure/sync/recent_mutation_store.dart';
@@ -179,6 +181,7 @@ void main() {
   MailPollerCubit makeCubit({
     DateTime Function()? now,
     LocalMailRuleRunner? localRuleRunner,
+    ChangeStreamService? changeStreams,
   }) => MailPollerCubit(
         accountManager: mockAccountManager,
         appSettings: mockAppSettings,
@@ -196,6 +199,7 @@ void main() {
         recentMutations: recentMutations,
         spamDbSyncService: mockSpamDbSyncService,
         localRuleRunner: localRuleRunner,
+        changeStreams: changeStreams,
         now: now ?? DateTime.now,
       );
 
@@ -416,6 +420,90 @@ void main() {
       await pumpEventQueue();
 
       verify(mockOutboxDrainService.drainAll()).called(1);
+    });
+  });
+
+  group('MailPollerCubit — NightMail Server change stream', () {
+    late StreamController<ChangeStreamEvent> server;
+    late ChangeStreamService streams;
+
+    setUp(() {
+      when(mockAccountManager.accounts).thenReturn([_msAccount]);
+      when(mockAccountManager.activeAccount).thenReturn(_msAccount);
+      when(mockAccountManager.buildEmailDatasourceForAccount(any))
+          .thenReturn(mockGraphDs);
+      when(mockDatabase.loadDeltaToken(any, any))
+          .thenAnswer((_) async => null);
+      when(mockGraphDs.getMailFolders())
+          .thenAnswer((_) async => [_inbox(unread: 0)]);
+      server = StreamController<ChangeStreamEvent>();
+      streams = ChangeStreamService(
+        targetFor: (_) => (url: 'https://x/changes', mailbox: null),
+        open: (_) => server.stream,
+        backoff: (_) => const Duration(hours: 1),
+      );
+      addTearDown(streams.dispose);
+    });
+
+    Future<MailPollerCubit> started() async {
+      final cubit = makeCubit(changeStreams: streams);
+      addTearDown(cubit.close);
+      await cubit.initialize();
+      await pumpEventQueue();
+      streams.watch([_msAccount]);
+      clearInteractions(mockOutboxDrainService);
+      return cubit;
+    }
+
+    test('a mail signal polls at once', () async {
+      await started();
+
+      server.add(const ChangeStreamChanged({'mail'}));
+      await pumpEventQueue();
+
+      verify(mockOutboxDrainService.drainAll()).called(1);
+    });
+
+    test('connecting polls once, to cover the gap since the last cycle',
+        () async {
+      await started();
+
+      server.add(const ChangeStreamReady({'mail', 'calendar'}));
+      await pumpEventQueue();
+
+      verify(mockOutboxDrainService.drainAll()).called(1);
+    });
+
+    test('a calendar-only signal leaves mail alone', () async {
+      await started();
+
+      server.add(const ChangeStreamChanged({'calendar'}));
+      await pumpEventQueue();
+
+      verifyNever(mockOutboxDrainService.drainAll());
+    });
+
+    test('a signal during a cycle runs one more cycle after it', () async {
+      await started();
+      final blocked = Completer<void>();
+      var drains = 0;
+      when(mockOutboxDrainService.drainAll()).thenAnswer((_) {
+        drains++;
+        return drains == 1 ? blocked.future : Future<void>.value();
+      });
+
+      server.add(const ChangeStreamChanged({'mail'}));
+      await pumpEventQueue();
+      server
+        ..add(const ChangeStreamChanged({'mail'}))
+        ..add(const ChangeStreamChanged({'mail'}));
+      await pumpEventQueue();
+      expect(drains, 1, reason: 'the cycle in progress is not doubled up');
+
+      blocked.complete();
+      await pumpEventQueue();
+
+      expect(drains, 2, reason: 'two signals mid-cycle make one more cycle');
     });
   });
 

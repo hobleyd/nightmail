@@ -28,7 +28,7 @@ void main() {
     serverUrl: 'https://mail.example.com',
   );
 
-  group('withFileSitesFrom', () {
+  group('withPublishedFeaturesFrom', () {
     GraphEndpoints rediscovered({
       String tokenEndpoint = 'https://mail.example.com/oauth2/token',
       List<String>? scopes = const [
@@ -51,7 +51,7 @@ void main() {
         );
 
     test('adopts the file sites and keeps everything else as stored', () {
-      final updated = server.withFileSitesFrom(rediscovered());
+      final updated = server.withPublishedFeaturesFrom(rediscovered());
 
       expect(updated.filesBaseUrls, ['https://cloud.example.com']);
       expect(updated.serverUrl, server.serverUrl);
@@ -59,11 +59,11 @@ void main() {
     });
 
     test('a server that stopped publishing file sites turns them off', () {
-      final withSites = server.withFileSitesFrom(rediscovered());
+      final withSites = server.withPublishedFeaturesFrom(rediscovered());
 
       expect(
           withSites
-              .withFileSitesFrom(rediscovered(files: const []))
+              .withPublishedFeaturesFrom(rediscovered(files: const []))
               .filesBaseUrls,
           isEmpty);
     });
@@ -71,16 +71,16 @@ void main() {
     test('returns itself when nothing changed or the server moved', () {
       expect(
           identical(
-              server.withFileSitesFrom(rediscovered(files: const [])), server),
+              server.withPublishedFeaturesFrom(rediscovered(files: const [])), server),
           isTrue);
       expect(
           identical(
-              server.withFileSitesFrom(
+              server.withPublishedFeaturesFrom(
                   rediscovered(tokenEndpoint: 'https://elsewhere/token')),
               server),
           isTrue);
       expect(
-          identical(server.withFileSitesFrom(rediscovered(scopes: null)),
+          identical(server.withPublishedFeaturesFrom(rediscovered(scopes: null)),
               server),
           isTrue);
     });

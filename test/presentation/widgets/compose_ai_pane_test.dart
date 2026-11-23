@@ -317,6 +317,73 @@ void main() {
     expect(tester.takeException(), isNull);
   }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
 
+  testWidgets(
+      'the input box grows with the text up to a fifth of the pane, then '
+      'scrolls', (tester) async {
+    await pumpReply(tester, const Size(1200, 800));
+    await tester.tap(find.widgetWithText(TextButton, 'AI'));
+    await tester.pumpAndSettle();
+
+    final input = find.byWidgetPredicate((w) =>
+        w is TextField && w.decoration?.hintText == 'Ask about this message…');
+    Rect box() => tester.getRect(find
+        .ancestor(
+            of: input,
+            matching: find.byWidgetPredicate((w) =>
+                w is DecoratedBox &&
+                w.decoration is BoxDecoration &&
+                (w.decoration as BoxDecoration).border != null))
+        .first);
+    ScrollPosition scroll() => tester
+        .state<ScrollableState>(find.descendant(
+            of: input, matching: find.byType(Scrollable)))
+        .position;
+    // The field's height less its text's: the padding the text sits in.
+    double fieldSlack() =>
+        tester.getSize(input).height -
+        tester
+            .getSize(find.descendant(
+                of: input, matching: find.byType(EditableText)))
+            .height;
+
+    // At rest, and with a short line: one line.
+    expect(box().height, 32);
+    await tester.enterText(input, 'Short');
+    await tester.pump();
+    expect(box().height, 32);
+    final oneLineSlack = fieldSlack();
+
+    // Three typed lines: taller, every line showing.
+    await tester.enterText(input, 'One\nTwo\nThree');
+    await tester.pump();
+    final threeLines = box().height;
+    expect(threeLines, greaterThan(32));
+    expect(scroll().maxScrollExtent, 0);
+
+    // A long paragraph wraps: taller again, still nothing hidden.
+    await tester.enterText(input, List.filled(30, 'word').join(' '));
+    await tester.pump();
+    expect(box().height, greaterThan(threeLines));
+    expect(scroll().maxScrollExtent, 0);
+    // ...and no spare blank line: the padding around the text is what the
+    // one-line box has.
+    expect(fieldSlack(), oneLineSlack);
+
+    // Far more than fits: capped at a fifth of the pane, and scrollable.
+    final pane = tester.getRect(find.byType(AgentChatPanel));
+    await tester.enterText(input, List.filled(40, 'line').join('\n'));
+    await tester.pump();
+    expect(box().height, lessThanOrEqualTo(pane.height * 0.2 + 2));
+    expect(box().height, greaterThan(pane.height * 0.2 - 48));
+    expect(scroll().maxScrollExtent, greaterThan(0));
+
+    // Clearing it (as a send does) drops back to one line.
+    await tester.enterText(input, '');
+    await tester.pump();
+    expect(box().height, 32);
+    expect(tester.takeException(), isNull);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+
   testWidgets('the pane fits the default 640px compose window',
       (tester) async {
     await pumpReply(tester, const Size(640, 520));

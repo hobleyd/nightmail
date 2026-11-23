@@ -61,6 +61,13 @@ class AgentChatPanel extends StatefulWidget {
   /// tap targets and this does not apply.
   static const double compactInputBarHeight = 40;
 
+  /// The desktop input box's resting height (its 1px border aside): one line.
+  static const double _compactFieldHeight = 30;
+
+  /// How far the desktop box may grow as the text wraps, as a share of the
+  /// pane's height. Past it the text scrolls inside the box.
+  static const double _maxInputShare = 0.2;
+
   @override
   State<AgentChatPanel> createState() => _AgentChatPanelState();
 }
@@ -83,9 +90,14 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
   /// Whether a turn is in flight; drives the LoadingConfig + Stop button.
   bool _isLoading = false;
 
+  /// The text the input's height was last worked out for. The box's height
+  /// depends only on the text, so a caret move or selection doesn't rebuild.
+  String _sizedText = '';
+
   @override
   void initState() {
     super.initState();
+    _inputController.addListener(_onInputChanged);
     // The cubit outlives the pane: closing and reopening it builds a fresh
     // controller, and the listener only hears states emitted from now on, so
     // the conversation so far is replayed once.
@@ -97,6 +109,7 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
   @override
   void dispose() {
     _chatController.dispose();
+    _inputController.removeListener(_onInputChanged);
     _inputController.dispose();
     super.dispose();
   }
@@ -263,6 +276,56 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
     }
   }
 
+  void _onInputChanged() {
+    if (_inputController.text == _sizedText) return;
+    setState(() => _sizedText = _inputController.text);
+  }
+
+  /// The desktop input field's height for [_sizedText] in a pane [paneSize]:
+  /// the one-line [AgentChatPanel._compactFieldHeight], plus each wrapped or
+  /// typed line after the first, capped at [AgentChatPanel._maxInputShare] of
+  /// the pane.
+  ///
+  /// The kit sizes the field and the send button from one fixed `inputHeight`
+  /// (leaving it null floors the row at 48), so the height is worked out here
+  /// rather than left to the field. The text width mirrors the kit's row:
+  /// [_inputMaterialPadding], the box's 1px border, the send button,
+  /// [_inputContentPadding], and the caret margin [RenderEditable] reserves.
+  double _compactInputHeight(Size paneSize, TextStyle style) {
+    const minHeight = AgentChatPanel._compactFieldHeight;
+    final text = _sizedText.isEmpty ? ' ' : _sizedText;
+    final textWidth = paneSize.width -
+        _inputMaterialPadding.horizontal -
+        2 -
+        _CompactInputButton.size -
+        _inputContentPadding.horizontal -
+        3;
+    if (textWidth <= 0 || !paneSize.height.isFinite) return minHeight;
+
+    final scaler = MediaQuery.textScalerOf(context);
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: Directionality.of(context),
+      textScaler: scaler,
+    )..layout(maxWidth: textWidth);
+    final oneLine = TextPainter(
+      text: TextSpan(text: ' ', style: style),
+      textDirection: Directionality.of(context),
+      textScaler: scaler,
+    )..layout();
+    final extra = painter.height - oneLine.height;
+    painter.dispose();
+    oneLine.dispose();
+
+    final maxHeight = (paneSize.height * AgentChatPanel._maxInputShare)
+        .clamp(minHeight, double.infinity);
+    return (minHeight + extra).clamp(minHeight, maxHeight);
+  }
+
+  static const _inputMaterialPadding = EdgeInsets.fromLTRB(8, 0, 8, 8);
+  static const _inputContentPadding =
+      EdgeInsets.symmetric(horizontal: 10, vertical: 8);
+
   void _setLoading(bool loading) {
     if (_isLoading != loading) setState(() => _isLoading = loading);
   }
@@ -285,7 +348,10 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
             child: BlocListener<AgentChatCubit, AiFolderChatState>(
               bloc: widget.cubit,
               listener: _sync,
-              child: _buildChat(c),
+              child: LayoutBuilder(
+                builder: (context, constraints) =>
+                    _buildChat(c, constraints.biggest),
+              ),
             ),
           ),
         ],
@@ -293,7 +359,7 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
     );
   }
 
-  Widget _buildChat(AppColors c) {
+  Widget _buildChat(AppColors c, Size paneSize) {
     final base = Theme.of(context);
     final onAccent =
         AppColors.accent.computeLuminance() > 0.5 ? Colors.black : Colors.white;
@@ -301,6 +367,7 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
     // The kit reads colorScheme.surface / surfaceContainer* for its own
     // backgrounds; align them with the panel palette so the chat surface
     // matches the surrounding dark UI.
+    final inputStyle = TextStyle(color: c.textPrimary, fontSize: 13);
     final theme = base.copyWith(
       colorScheme: base.colorScheme.copyWith(
         primary: AppColors.accent,
@@ -366,14 +433,16 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
 
         inputOptions: InputOptions(
           textController: _inputController,
-          textStyle: TextStyle(color: c.textPrimary, fontSize: 13),
+          textStyle: inputStyle,
+          // Multi-line text grows the box (see [_compactInputHeight]); past
+          // its cap the field scrolls rather than clipping lines.
+          maxLines: isTouchPlatform ? 5 : null,
           sendButtonColor: AppColors.accent,
           decoration: InputDecoration(
             hintText: widget.hintText,
             hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
             border: InputBorder.none,
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            contentPadding: _inputContentPadding,
             isDense: true,
           ),
           containerDecoration: BoxDecoration(
@@ -383,11 +452,13 @@ class _AgentChatPanelState extends State<AgentChatPanel> {
           ),
           // The kit floors the send button's row at 48 unless the field has
           // an explicit height. On the desktop that made the box 50 tall;
-          // [compactInputBarHeight] is this: 30 + the 1px border each side,
-          // and no padding above the box.
-          inputHeight: isTouchPlatform ? null : 30,
-          materialPadding:
-              isTouchPlatform ? null : const EdgeInsets.fromLTRB(8, 0, 8, 8),
+          // [compactInputBarHeight] is the one-line box: 30 + the 1px border
+          // each side, and no padding above the box. Longer text grows it.
+          inputHeight: isTouchPlatform
+              ? null
+              : _compactInputHeight(
+                  paneSize, base.textTheme.bodyLarge!.merge(inputStyle)),
+          materialPadding: isTouchPlatform ? null : _inputMaterialPadding,
           sendButtonBuilder: isTouchPlatform
               ? null
               : (onSend) => _CompactInputButton(
@@ -415,6 +486,9 @@ class _CompactInputButton extends StatelessWidget {
     required this.onPressed,
   });
 
+  /// The button's width and height.
+  static const double size = 28;
+
   final IconData icon;
   final String tooltip;
   final VoidCallback onPressed;
@@ -424,7 +498,7 @@ class _CompactInputButton extends StatelessWidget {
         icon: Icon(icon, size: 16, color: AppColors.accent),
         tooltip: tooltip,
         padding: EdgeInsets.zero,
-        constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+        constraints: const BoxConstraints(minWidth: size, minHeight: size),
         onPressed: onPressed,
       );
 }

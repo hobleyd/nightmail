@@ -25,6 +25,7 @@ import 'settings/ai_settings_page.dart';
 import 'settings/mail_rules_page.dart';
 import 'settings/out_of_office_page.dart';
 import '../blocs/account/account_cubit.dart';
+import '../blocs/email_list/email_list_bloc.dart';
 import '../blocs/mail_poller/mail_poller_cubit.dart';
 import '../blocs/mail_poller/mail_poller_state.dart';
 import '../blocs/theme/theme_cubit.dart';
@@ -66,6 +67,9 @@ class SettingsDialog extends StatefulWidget {
     // the sections read has to be carried across explicitly. _AboutSection
     // reads the update status, hence UpdateCubit.
     final updateCubit = context.read<UpdateCubit>();
+    // The mail list behind Settings, where there is one, so a new rule can be
+    // run on the folder it is showing (MailRulesPage).
+    final listBloc = context.read<EmailListBloc?>();
 
     Widget wrap(Widget child) => MultiBlocProvider(
           providers: [
@@ -73,6 +77,7 @@ class SettingsDialog extends StatefulWidget {
             BlocProvider.value(value: accountCubit),
             BlocProvider.value(value: pollerCubit),
             BlocProvider.value(value: updateCubit),
+            if (listBloc != null) BlocProvider.value(value: listBloc),
           ],
           child: child,
         );
@@ -2125,6 +2130,7 @@ class _MobileSettingsPage extends StatelessWidget {
               final themeCubit = context.read<ThemeCubit>();
               final accountCubit = context.read<AccountCubit>();
               final pollerCubit = context.read<MailPollerCubit>();
+              final listBloc = context.read<EmailListBloc?>();
               Navigator.of(context).push<void>(
                 MaterialPageRoute(
                   builder: (_) => MultiBlocProvider(
@@ -2132,6 +2138,7 @@ class _MobileSettingsPage extends StatelessWidget {
                       BlocProvider.value(value: themeCubit),
                       BlocProvider.value(value: accountCubit),
                       BlocProvider.value(value: pollerCubit),
+                      if (listBloc != null) BlocProvider.value(value: listBloc),
                     ],
                     child: _MobileSettingsSectionPage(section: section),
                   ),

@@ -1,13 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../core/rules/mail_rule_matcher.dart';
+import '../../../core/rules/mail_rule_run_now.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../domain/entities/email.dart';
 import '../../../domain/entities/email_folder.dart';
 import '../../../domain/entities/mail_rule.dart';
+import '../../../domain/usecases/mark_email_as_read.dart';
 import '../../../injection_container.dart';
 import '../../../infrastructure/accounts/account.dart';
 import '../../blocs/account/account_cubit.dart';
+import '../../blocs/email_list/email_list_bloc.dart';
+import '../../blocs/email_list/email_list_event.dart';
+import '../../blocs/email_list/email_list_state.dart';
 import '../../blocs/mail_rules/mail_rules_cubit.dart';
 import '../../blocs/mail_rules/mail_rules_state.dart';
 import '../../widgets/adaptive_alert_dialog.dart';
@@ -193,7 +199,16 @@ class _RuleList extends StatelessWidget {
 
   Future<void> _openEditor(BuildContext context, MailRule? rule) async {
     final cubit = context.read<MailRulesCubit>();
-    final google = _accountFor(context, state.accountId) is GmailAccount;
+    final account = _accountFor(context, state.accountId);
+    final google = account is GmailAccount;
+    // A new rule can be run on the folder behind Settings — the mail list
+    // SettingsDialog.open carries across — when this screen is on the
+    // account that list is showing.
+    final folderRun = rule == null &&
+            account != null &&
+            _isActive(context, account.id)
+        ? _FolderRun.of(context, context.read<EmailListBloc?>())
+        : null;
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -207,6 +222,10 @@ class _RuleList extends StatelessWidget {
           final ok = await cubit.saveRule(draft);
           return ok ? null : (cubit.state.errorMessage ?? 'Could not save.');
         },
+        runNowFolderName: folderRun?.folderName,
+        onRunNow: folderRun == null
+            ? null
+            : (saved) => folderRun.run(saved, account!),
       ),
     );
   }
@@ -252,10 +271,18 @@ Future<bool> _ensurePermission(
 /// showing — already holding a "from" condition for [email]'s sender: the
 /// mail list's rule button. The actions are left to the user; guessing one
 /// (move it? delete it?) would put a destructive default one click from Save.
-Future<void> showNewRuleForEmail(BuildContext context, Email email) {
+///
+/// Given the mail [list] the message was picked from, the editor also offers
+/// to run the new rule on the folder that list is showing.
+Future<void> showNewRuleForEmail(
+  BuildContext context,
+  Email email, {
+  EmailListBloc? list,
+}) {
   // Handed in rather than looked up from the dialog: the cubit the mail list
   // sees may be provided below the MaterialApp, out of a dialog route's reach.
   final accountCubit = context.read<AccountCubit>();
+  final folderRun = _FolderRun.of(context, list);
   return showDialog<void>(
     context: context,
     barrierDismissible: false,
@@ -266,17 +293,157 @@ Future<void> showNewRuleForEmail(BuildContext context, Email email) {
           create: (_) => sl<MailRulesCubit>()..load(),
         ),
       ],
-      child: _NewRuleForEmailDialog(email: email),
+      child: _NewRuleForEmailDialog(
+        email: email,
+        runNow: folderRun?.run,
+        runNowFolderName: folderRun?.folderName,
+      ),
     ),
   );
+}
+
+/// The folder a mail [list] is showing, for running a new rule on it — and
+/// everything the run needs, taken while the opening context is still in
+/// reach (a dialog route cannot see providers below the MaterialApp).
+class _FolderRun {
+  _FolderRun._({
+    required this.list,
+    required this.accounts,
+    required this.folderId,
+    required this.folderName,
+    required this.messenger,
+  });
+
+  /// Null when there is no list, or it is showing a search or a thread
+  /// rather than a folder.
+  static _FolderRun? of(BuildContext context, EmailListBloc? list) {
+    final state = list?.state;
+    if (state is! EmailListLoaded ||
+        !state.isShowingFolder ||
+        state.currentFolderId == null) {
+      return null;
+    }
+    return _FolderRun._(
+      list: list!,
+      accounts: context.read<AccountCubit>(),
+      folderId: state.currentFolderId!,
+      folderName: state.currentFolderName ?? 'this folder',
+      messenger: ScaffoldMessenger.maybeOf(context),
+    );
+  }
+
+  final EmailListBloc list;
+  final AccountCubit accounts;
+  final String folderId;
+  final String folderName;
+  final ScaffoldMessengerState? messenger;
+
+  Future<void> run(MailRule rule, Account account) => _runRuleOnFolder(
+    rule,
+    list: list,
+    accounts: accounts,
+    folderId: folderId,
+    folderName: folderName,
+    account: account,
+    messenger: messenger,
+  );
+}
+
+/// Runs [rule], just saved, over the messages [list] holds for [folderId],
+/// through the list's own move and delete so the rows leave at once and the
+/// outbox carries the changes. Reports what it did in a snack bar.
+Future<void> _runRuleOnFolder(
+  MailRule rule, {
+  required EmailListBloc list,
+  required AccountCubit accounts,
+  required String folderId,
+  required String folderName,
+  required Account account,
+  required ScaffoldMessengerState? messenger,
+}) async {
+  // In place of Settings' own "Rules updated", which says less.
+  void report(String text) => messenger
+    ?..hideCurrentSnackBar()
+    ..showSnackBar(SnackBar(content: Text(text)));
+
+  final state = list.state;
+  final active = accounts.state;
+  // The list may have moved to another folder or a search while the editor
+  // was open — or to another account, whose Inbox has the same id on Gmail
+  // and IMAP.
+  if (active is! AccountsLoaded ||
+      active.activeAccount.id != account.id ||
+      state is! EmailListLoaded ||
+      !state.isShowingFolder ||
+      state.currentFolderId != folderId) {
+    report('Rule saved. $folderName is no longer showing, so it was not run.');
+    return;
+  }
+  final plan = MailRuleRunNow.plan(
+    rule,
+    state.emails,
+    folderId: folderId,
+    matcher: MailRuleMatcher(myAddresses: account.allAddresses),
+    google: account is GmailAccount,
+  );
+  if (plan.isEmpty) {
+    report('Rule saved. Nothing loaded in $folderName needed changing.');
+    return;
+  }
+
+  String messages(int n) => n == 1 ? '1 message' : '$n messages';
+  final removes = plan.moveToFolderId != null || plan.delete;
+  if (plan.markReadIds.isNotEmpty) {
+    if (removes) {
+      // Done here and waited for, not as a list event: the list's events run
+      // concurrently, and a Graph move gives the message a new id, so a mark
+      // read racing it would land on an id that no longer exists.
+      final markRead = sl<MarkEmailAsRead>();
+      await Future.wait([
+        for (final id in plan.markReadIds)
+          markRead(MarkEmailAsReadParams(id: id, isRead: true)),
+      ]);
+    } else {
+      list.add(
+        EmailListMarkThreadReadRequested(
+          emailIds: plan.markReadIds,
+          isRead: true,
+        ),
+      );
+    }
+  }
+  final matched = messages(plan.matchedIds.length);
+  if (plan.moveToFolderId != null) {
+    list.add(
+      EmailListEmailsMoved(
+        emailIds: plan.matchedIds,
+        destinationFolderId: plan.moveToFolderId!,
+      ),
+    );
+    report('Rule saved and run: moved $matched from $folderName.');
+  } else if (plan.delete) {
+    list.add(EmailListEmailsBulkDeleted(emailIds: plan.matchedIds));
+    report('Rule saved and run: deleted $matched from $folderName.');
+  } else {
+    report(
+      'Rule saved and run: marked ${messages(plan.markReadIds.length)} in '
+      '$folderName read.',
+    );
+  }
 }
 
 /// The rule editor once the account's rules (and so its capabilities and
 /// folders) have loaded; a spinner, or why not, until then.
 class _NewRuleForEmailDialog extends StatelessWidget {
-  const _NewRuleForEmailDialog({required this.email});
+  const _NewRuleForEmailDialog({
+    required this.email,
+    this.runNow,
+    this.runNowFolderName,
+  });
 
   final Email email;
+  final Future<void> Function(MailRule rule, Account account)? runNow;
+  final String? runNowFolderName;
 
   @override
   Widget build(BuildContext context) {
@@ -340,11 +507,25 @@ class _NewRuleForEmailDialog extends StatelessWidget {
                     ? null
                     : (cubit.state.errorMessage ?? 'Could not save.');
               },
+              runNowFolderName: runNowFolderName,
+              // Only on the account the list is showing: the rules were
+              // loaded for the active account, which may have changed since.
+              onRunNow:
+                  runNow == null ||
+                      account == null ||
+                      !_isActive(context, account.id)
+                  ? null
+                  : (saved) => runNow!(saved, account),
             );
         }
       },
     );
   }
+}
+
+bool _isActive(BuildContext context, String accountId) {
+  final state = context.read<AccountCubit>().state;
+  return state is AccountsLoaded && state.activeAccount.id == accountId;
 }
 
 /// "From [email]'s sender", in the strongest form the provider has: Graph's
@@ -678,6 +859,8 @@ class _RuleEditorDialog extends StatefulWidget {
     required this.folders,
     required this.google,
     required this.onSave,
+    this.runNowFolderName,
+    this.onRunNow,
   });
 
   final MailRule initial;
@@ -687,6 +870,13 @@ class _RuleEditorDialog extends StatefulWidget {
 
   /// Null when the rule landed, otherwise why it did not.
   final Future<String?> Function(MailRule draft) onSave;
+
+  /// The folder the editor was opened from, for a new rule's "Run on
+  /// [folder] now". Null, or [onRunNow] null, and the choice is not offered.
+  final String? runNowFolderName;
+
+  /// Runs the rule just saved over [runNowFolderName]'s messages.
+  final Future<void> Function(MailRule saved)? onRunNow;
 
   @override
   State<_RuleEditorDialog> createState() => _RuleEditorDialogState();
@@ -698,6 +888,10 @@ class _RuleEditorDialogState extends State<_RuleEditorDialog> {
   late List<MailRuleCondition> _exceptions;
   late List<MailRuleAction> _actions;
   bool _saving = false;
+
+  /// Off by default: running a rule moves or deletes mail already read and
+  /// sorted, which should be asked for, not presumed.
+  bool _runNow = false;
   String? _error;
 
   @override
@@ -764,6 +958,15 @@ class _RuleEditorDialogState extends State<_RuleEditorDialog> {
     final error = await widget.onSave(draft);
     if (!mounted) return;
     if (error == null) {
+      // Only once the rule has landed: a rule that failed to save must not
+      // have acted on anything either.
+      if (_offerRunNow &&
+          _runNow &&
+          MailRuleRunNow.unavailableReason(draft, google: widget.google) ==
+              null) {
+        await widget.onRunNow!(draft);
+        if (!mounted) return;
+      }
       Navigator.of(context).pop();
     } else {
       setState(() {
@@ -771,6 +974,56 @@ class _RuleEditorDialogState extends State<_RuleEditorDialog> {
         _error = error;
       });
     }
+  }
+
+  bool get _offerRunNow =>
+      _isNew && widget.onRunNow != null && widget.runNowFolderName != null;
+
+  Widget _runNowRow(AppColors c) {
+    final reason = MailRuleRunNow.unavailableReason(
+      _draft,
+      google: widget.google,
+    );
+    // Not until there is something to run: a reason on a blank rule is noise.
+    final explain = reason != null && _actions.isNotEmpty;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Checkbox(
+          key: const ValueKey('rule-run-now'),
+          value: _runNow && reason == null,
+          onChanged: reason == null && !_saving
+              ? (v) => setState(() => _runNow = v ?? false)
+              : null,
+        ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Run on ${widget.runNowFolderName} now',
+                  style: TextStyle(
+                    color: reason == null ? c.textPrimary : c.textMuted,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  explain
+                      ? reason
+                      : 'Applies to the messages NightMail has loaded from '
+                            'this folder; older mail is left alone.',
+                  style: TextStyle(color: c.textMuted, fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   EmailFolder? _folderById(String? id) {
@@ -876,6 +1129,10 @@ class _RuleEditorDialogState extends State<_RuleEditorDialog> {
                 ),
               ),
               const SizedBox(height: 12),
+              if (_offerRunNow) ...[
+                _runNowRow(c),
+                const SizedBox(height: 8),
+              ],
               if (_error != null) ...[
                 _Notice(
                   icon: Icons.error_outline_rounded,

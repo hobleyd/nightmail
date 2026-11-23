@@ -63,6 +63,36 @@ as `fromAddresses` where the provider has it, else `senderContains` (Gmail).
 No action is pre-chosen; a default one click from Save would usually be a
 move or a delete.
 
+**"Run on <folder> now"** (`MailRuleRunNow`, `core/rules`) is a checkbox on
+a new rule's editor, unticked by default, naming the folder the mail list is
+showing. From a list row that is the row's folder; from Settings > Rules it
+is the folder behind the Settings dialog — `SettingsDialog.open` carries the
+`EmailListBloc` across (read nullably: the macOS app-menu "About" opens
+Settings from above HomePage's providers, and then there is no checkbox), and
+it is offered only while the screen is on the active account.
+No provider runs a rule on demand (Graph has no call; Gmail's "apply to
+matching conversations" is its own client searching and relabelling), so the
+app does it:
+
+- **Over what the list holds, not the whole folder.** The folder cache is the
+  recent pages only, and paging a Gmail folder costs ~1,010 units per 25 rows
+  ([gmail-quota.md](gmail-quota.md)). The checkbox says older mail is left
+  alone. Only rows that are themselves in the folder (`isMovableFrom`) — a
+  thread's Sent copy listed beside its reply is not moved.
+- **Matched with `MailRuleMatcher`, so only what it can test is offered.** An
+  untestable condition answers false; as an *exception* that would make the
+  run act on more mail than the rule says. Body tests are refused too — a
+  list row has no body — and so is "has attachments" on Gmail, whose
+  `format=metadata` rows never say. The checkbox is disabled with the reason.
+- **Only move, delete and mark read** — what the mail list already does,
+  through its own events so rows leave at once and the outbox carries the
+  change. **Never forward**: that would send old mail on to other people.
+- **Mark read before a move is awaited, not an event**: the list's events run
+  concurrently, and a Graph move re-ids the message under a racing PATCH.
+- Runs only after the save lands, on the draft the user typed, and only if
+  the list still shows that folder on the same account — checked at run
+  time, since `INBOX` is the same id on every Gmail and IMAP account.
+
 ## Gmail filters
 
 - **No update.** `settings.filters` is create/get/list/delete, so

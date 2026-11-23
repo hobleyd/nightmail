@@ -1812,7 +1812,11 @@ class _EmailListView extends StatelessWidget {
             onTap: () => onEmailTapped(email, i),
             onDoubleTap: onEmailDoubleTapped != null ? () => onEmailDoubleTapped!(email) : null,
             onLongPress: () => onEmailLongPressed?.call(email, i),
-            onCreateRule: () => showNewRuleForEmail(context, email),
+            onCreateRule: () => showNewRuleForEmail(
+              context,
+              email,
+              list: context.read<EmailListBloc>(),
+            ),
             onFlag: onFlag,
             taskFlag: EmailTaskFlag.of(email.id, taskFlags),
             // Withheld from the echo along with the buttons they drive: one
@@ -1912,7 +1916,11 @@ class _EmailListView extends StatelessWidget {
           onTap: () => onEmailTapped(conv.anchorEmail, i),
           onLongPress: () => onEmailLongPressed?.call(conv.anchorEmail, i),
           onToggleExpand: () => onToggleConversation(conv.conversationId),
-          onCreateRule: () => showNewRuleForEmail(context, conv.anchorEmail),
+          onCreateRule: () => showNewRuleForEmail(
+            context,
+            conv.anchorEmail,
+            list: context.read<EmailListBloc>(),
+          ),
           onFlag: onConvFlag,
           taskFlag: EmailTaskFlag.ofAll(conv.allEmailIds, taskFlags),
           flagFocusNode: isConvSelected ? flagFocusNode : null,

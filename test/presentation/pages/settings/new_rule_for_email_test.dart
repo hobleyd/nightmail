@@ -19,6 +19,9 @@ import 'package:nightmail/infrastructure/accounts/account.dart';
 import 'package:nightmail/infrastructure/accounts/account_manager.dart';
 import 'package:nightmail/injection_container.dart';
 import 'package:nightmail/presentation/blocs/account/account_cubit.dart';
+import 'package:nightmail/presentation/blocs/email_list/email_list_bloc.dart';
+import 'package:nightmail/presentation/blocs/email_list/email_list_event.dart';
+import 'package:nightmail/presentation/blocs/email_list/email_list_state.dart';
 import 'package:nightmail/presentation/blocs/mail_rules/mail_rules_cubit.dart';
 import 'package:nightmail/presentation/pages/settings/mail_rules_page.dart';
 
@@ -31,8 +34,13 @@ const _account = MicrosoftAccount(
   tenantId: 'common',
 );
 
-Email _email({String from = 'news@example.com'}) => Email(
-  id: 'email-1',
+Email _email({
+  String id = 'email-1',
+  String from = 'news@example.com',
+  bool isRead = true,
+  String? folderId,
+}) => Email(
+  id: id,
   subject: 'Weekly digest',
   from: EmailAddress(address: from, name: 'News'),
   toRecipients: const [],
@@ -40,10 +48,28 @@ Email _email({String from = 'news@example.com'}) => Email(
   bodyPreview: '',
   body: '',
   bodyType: EmailBodyType.text,
-  isRead: true,
+  isRead: isRead,
   receivedDateTime: DateTime(2026, 11, 20, 9),
   importance: EmailImportance.normal,
+  parentFolderId: folderId,
 );
+
+/// The mail list the rule button is pressed in: its state, and the events the
+/// run sends it.
+class _FakeListBloc extends Fake implements EmailListBloc {
+  _FakeListBloc(this.state);
+
+  @override
+  final EmailListState state;
+
+  final added = <EmailListEvent>[];
+
+  @override
+  Stream<EmailListState> get stream => const Stream.empty();
+
+  @override
+  void add(EmailListEvent event) => added.add(event);
+}
 
 @GenerateMocks([
   GetMailRules,
@@ -109,7 +135,11 @@ void main() {
 
   // The account cubit is provided *below* the MaterialApp, as HomePage does,
   // so the dialog only sees it if it is handed across.
-  Future<void> open(WidgetTester tester, {Email? email}) async {
+  Future<void> open(
+    WidgetTester tester, {
+    Email? email,
+    EmailListBloc? list,
+  }) async {
     await tester.pumpWidget(
       MaterialApp(
         home: BlocProvider<AccountCubit>.value(
@@ -117,7 +147,11 @@ void main() {
           child: Builder(
             builder: (context) => Scaffold(
               body: TextButton(
-                onPressed: () => showNewRuleForEmail(context, email ?? _email()),
+                onPressed: () => showNewRuleForEmail(
+                  context,
+                  email ?? _email(),
+                  list: list,
+                ),
                 child: const Text('open'),
               ),
             ),
@@ -129,13 +163,24 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  /// Adds "Mark as read" — the editor will not save a rule with no action —
-  /// and saves, returning the rule that reached the use case.
-  Future<MailRule> addActionAndSave(WidgetTester tester) async {
+  Future<void> addAction(WidgetTester tester, String label) async {
     await tester.tap(find.text('Add action'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Mark as read').last);
+    await tester.tap(find.text(label).last);
     await tester.pumpAndSettle();
+  }
+
+  /// Adds "Mark as read" — the editor will not save a rule with no action —
+  /// and saves, returning the rule that reached the use case.
+  Future<MailRule> addActionAndSave(
+    WidgetTester tester, {
+    bool runNow = false,
+  }) async {
+    await addAction(tester, 'Mark as read');
+    if (runNow) {
+      await tester.tap(find.byKey(const ValueKey('rule-run-now')));
+      await tester.pump();
+    }
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
     final params =
@@ -183,6 +228,166 @@ void main() {
 
     expect(find.text('New Rule'), findsOneWidget);
     expect(find.text('Me@Example.com'), findsNothing);
+  });
+
+  group('run on the folder now', () {
+    final inbox = _FakeListBloc(
+      EmailListLoaded(
+        currentFolderId: 'inbox',
+        currentFolderName: 'Inbox',
+        emails: [
+          _email(id: 'unread', isRead: false, folderId: 'inbox'),
+          _email(id: 'read', folderId: 'inbox'),
+          _email(id: 'other', from: 'boss@example.com', isRead: false, folderId: 'inbox'),
+          // A thread's copy from another folder, listed beside its reply.
+          _email(id: 'elsewhere', isRead: false, folderId: 'archive'),
+        ],
+      ),
+    );
+
+    testWidgets('is offered for a new rule opened from a folder, unticked',
+        (tester) async {
+      answerRules(MailRuleCapabilities.graph);
+      await open(tester, list: inbox);
+
+      expect(find.text('Run on Inbox now'), findsOneWidget);
+      final box = tester.widget<Checkbox>(
+        find.byKey(const ValueKey('rule-run-now')),
+      );
+      expect(box.value, isFalse);
+    });
+
+    testWidgets('is not offered without the list', (tester) async {
+      answerRules(MailRuleCapabilities.graph);
+      await open(tester);
+
+      expect(find.byKey(const ValueKey('rule-run-now')), findsNothing);
+    });
+
+    testWidgets('acts on the matching messages in the folder only',
+        (tester) async {
+      answerRules(MailRuleCapabilities.graph);
+      final list = _FakeListBloc(inbox.state);
+      await open(tester, list: list);
+      await addActionAndSave(tester, runNow: true);
+
+      expect(list.added, [
+        const EmailListMarkThreadReadRequested(
+          emailIds: ['unread'],
+          isRead: true,
+        ),
+      ]);
+      expect(find.textContaining('marked 1 message in Inbox read'), findsOneWidget);
+    });
+
+    testWidgets('deletes only the sender\'s messages in the folder',
+        (tester) async {
+      answerRules(MailRuleCapabilities.graph);
+      final list = _FakeListBloc(inbox.state);
+      await open(tester, list: list);
+      await addAction(tester, 'Delete (to Deleted Items)');
+      await tester.tap(find.byKey(const ValueKey('rule-run-now')));
+      await tester.pump();
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(list.added, [
+        const EmailListEmailsBulkDeleted(emailIds: ['unread', 'read']),
+      ]);
+      expect(find.textContaining('deleted 2 messages from Inbox'), findsOneWidget);
+    });
+
+    testWidgets('does nothing to the folder when left unticked',
+        (tester) async {
+      answerRules(MailRuleCapabilities.graph);
+      final list = _FakeListBloc(inbox.state);
+      await open(tester, list: list);
+      await addActionAndSave(tester);
+
+      expect(list.added, isEmpty);
+    });
+
+    testWidgets('is refused for a rule that forwards', (tester) async {
+      answerRules(MailRuleCapabilities.graph);
+      await open(tester, list: inbox);
+      await addAction(tester, 'Forward to');
+
+      final box = tester.widget<Checkbox>(
+        find.byKey(const ValueKey('rule-run-now')),
+      );
+      expect(box.onChanged, isNull);
+      expect(find.textContaining('runs on new mail only'), findsOneWidget);
+    });
+  });
+
+  group('Settings > Rules', () {
+    // Settings carries the mail list behind it across, as
+    // SettingsDialog.open does.
+    Future<void> openSettings(WidgetTester tester, {EmailListBloc? list}) async {
+      await tester.binding.setSurfaceSize(const Size(1000, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MultiBlocProvider(
+            providers: [
+              BlocProvider<AccountCubit>.value(value: accountCubit),
+              if (list != null) BlocProvider<EmailListBloc>.value(value: list),
+            ],
+            child: const Scaffold(body: MailRulesPage()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('New rule'));
+      await tester.pumpAndSettle();
+    }
+
+    final inbox = _FakeListBloc(
+      EmailListLoaded(
+        currentFolderId: 'inbox',
+        currentFolderName: 'Inbox',
+        emails: [
+          _email(id: 'unread', isRead: false, folderId: 'inbox'),
+          _email(id: 'other', from: 'boss@example.com', isRead: false, folderId: 'inbox'),
+        ],
+      ),
+    );
+
+    testWidgets('a new rule runs on the folder behind Settings', (tester) async {
+      answerRules(MailRuleCapabilities.graph);
+      final list = _FakeListBloc(inbox.state);
+      await openSettings(tester, list: list);
+
+      expect(find.text('Run on Inbox now'), findsOneWidget);
+      await tester.tap(find.text('Add condition'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('From').last);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.widgetWithText(TextField, 'name@example.com; another@example.com'),
+        'news@example.com',
+      );
+      await addAction(tester, 'Mark as read');
+      await tester.tap(find.byKey(const ValueKey('rule-run-now')));
+      await tester.pump();
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(list.added, [
+        const EmailListMarkThreadReadRequested(
+          emailIds: ['unread'],
+          isRead: true,
+        ),
+      ]);
+    });
+
+    testWidgets('is not offered with no mail list behind Settings',
+        (tester) async {
+      answerRules(MailRuleCapabilities.graph);
+      await openSettings(tester);
+
+      expect(find.byKey(const ValueKey('rule-run-now')), findsNothing);
+    });
   });
 
   testWidgets('says why when the account has no rules', (tester) async {

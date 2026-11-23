@@ -2530,6 +2530,32 @@ class _ScheduleGridState extends State<_ScheduleGrid> {
     widget.onTimeSelected(newStart, newStart.add(duration));
   }
 
+  /// Moves the meeting to the previous/next day at the same time of day, the
+  /// way the calendar pane's arrows step its day. The form clears and re-asks
+  /// free/busy on any slot change, so the grid follows to the new day.
+  void _shiftDay(int days) {
+    final s = widget.meetingStart;
+    // Built from fields rather than `add(Duration(days:))` so a DST change
+    // between the two days keeps the wall-clock time.
+    final newStart = DateTime(s.year, s.month, s.day + days, s.hour, s.minute);
+    final duration = widget.meetingEnd.difference(s);
+    widget.onTimeSelected(newStart, newStart.add(duration));
+  }
+
+  Widget _dayArrow(AppColors c, IconData icon, String tooltip, int days) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: () => _shiftDay(days),
+        borderRadius: BorderRadius.circular(6),
+        child: Padding(
+          padding: const EdgeInsets.all(3),
+          child: Icon(icon, size: 18, color: c.textMuted),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -2544,14 +2570,38 @@ class _ScheduleGridState extends State<_ScheduleGrid> {
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Row(
               children: [
-                Text(
-                  'Schedules — $dateLabel',
-                  style: TextStyle(
-                      color: c.textPrimary,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600),
+                Expanded(
+                  child: Row(
+                    children: [
+                      // The pane is only kSchedulePaneWidth wide; the heading
+                      // gives way before the date and its arrows do.
+                      Flexible(
+                        child: Text(
+                          'Schedules',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: c.textPrimary,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      // The arrows bracket the date they move, as the calendar
+                      // pane's day view does.
+                      _dayArrow(
+                          c, Icons.chevron_left_rounded, 'Previous day', -1),
+                      Text(
+                        dateLabel,
+                        style: TextStyle(
+                            color: c.textPrimary,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600),
+                      ),
+                      _dayArrow(c, Icons.chevron_right_rounded, 'Next day', 1),
+                    ],
+                  ),
                 ),
-                const Spacer(),
                 IconButton(
                   onPressed: widget.onClose,
                   icon: Icon(Icons.close_rounded, size: 16, color: c.textMuted),

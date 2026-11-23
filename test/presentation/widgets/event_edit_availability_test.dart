@@ -182,7 +182,7 @@ void main() {
   //
   // It also overflows its own 280px header here, which it does not do in the
   // app: flutter_test substitutes a font whose every glyph is a square of the
-  // font size, so the "Schedules — Wed, Jun 10" title measures roughly twice
+  // font size, so the "Schedules ‹ Wed, Jun 10 ›" title measures roughly twice
   // its real width. Drop those specific errors and let everything else fail
   // the test.
   Future<void> useLargeSurface(WidgetTester tester) async {
@@ -477,6 +477,33 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Existing commitment'), findsOneWidget);
+    });
+
+    testWidgets('the day arrows move the meeting a day, keeping its time, and '
+        're-ask free/busy for the new day', (tester) async {
+      await useLargeSurface(tester);
+      await pumpForm(tester, event: _event());
+      await settleDebounce(tester);
+
+      await tester.tap(find.text('Find a time'));
+      await tester.pumpAndSettle();
+      expect(find.text('Wed, Jun 10'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Next day'));
+      await settleDebounce(tester);
+
+      expect(find.text('Thu, Jun 11'), findsOneWidget);
+      expect(repository.calls.last.start, DateTime(2026, 6, 11, 10));
+      expect(repository.calls.last.end, DateTime(2026, 6, 11, 11));
+
+      await tester.tap(find.byTooltip('Previous day'));
+      await tester.pump();
+      await tester.tap(find.byTooltip('Previous day'));
+      await settleDebounce(tester);
+
+      expect(find.text('Tue, Jun 9'), findsOneWidget);
+      expect(repository.calls.last.start, DateTime(2026, 6, 9, 10));
+      expect(repository.calls.last.end, DateTime(2026, 6, 9, 11));
     });
 
     testWidgets('gives the grid every pixel the form column does not use',

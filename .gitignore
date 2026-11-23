@@ -43,6 +43,14 @@ packages/*/pubspec.lock
 *.mocks.dart
 *.g.dart
 
+# Plugin registrants: `flutter pub get` rewrites these, and their order differs
+# between SDK versions, so a committed copy just shows up as noise.
+/linux/flutter/generated_plugin_registrant.*
+/linux/flutter/generated_plugins.cmake
+/windows/flutter/generated_plugin_registrant.*
+/windows/flutter/generated_plugins.cmake
+/macos/Flutter/GeneratedPluginRegistrant.swift
+
 # Symbolication related
 app.*.symbols
 

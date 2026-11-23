@@ -255,6 +255,9 @@ Settings → Accounts.
   mail)
 - A rule button on each message in the mail list starts a new rule from that
   message, with its sender already filled in as the condition
+- A new rule can also be run straight away on the folder the mail list is
+  showing — moving, deleting or marking read the matching messages already
+  loaded there (never forwarding old mail)
 
 ### Updates
 - Checks for a new version at launch and every 6 hours, with a dot on the

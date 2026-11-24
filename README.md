@@ -172,7 +172,8 @@ Settings → Accounts.
 - A one-on-one is only created when you send the first message
 - People outside your organisation are offered too when you already have a one-on-one chat with them
 - Pictures show in the conversation (Teams pasted images, GIFs and stickers; Google Chat uploads) and open full size on click
-- Each sender has an avatar (directory photo, or initials) and their own pastel colour, so who is talking stands out at a glance
+- Each sender has an avatar (directory photo, or initials) and their own pastel colour — yours is always blue, so who is talking stands out at a glance
+- A red dot on the Chat button when someone has written in a chat you haven't read; opening the chat marks it read in Teams or Google Chat too
 
 ### Contacts
 - Typeahead in the compose window drawing from three sources:

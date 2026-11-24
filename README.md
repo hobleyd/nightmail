@@ -170,6 +170,7 @@ Settings → Accounts.
 - Microsoft Teams chats and channels on Microsoft 365 and NightMail Server, and Google Chat direct messages, group chats and spaces on Google Workspace accounts
 - Double-click the Chat button for a chat window: chats, spaces and Teams channels sorted by latest activity, message history with threads and replies, and search across old messages
 - A one-on-one is only created when you send the first message
+- People outside your organisation are offered too when you already have a one-on-one chat with them
 
 ### Contacts
 - Typeahead in the compose window drawing from three sources:
